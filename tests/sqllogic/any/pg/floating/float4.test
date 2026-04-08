@@ -67,7 +67,7 @@ statement ok
 SET EXTRA_FLOAT_DIGITS = -7;
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 1.0::float4;
 ----
@@ -75,7 +75,7 @@ float4
 1
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 1.0000::float4;
 ----
@@ -83,7 +83,7 @@ float4
 1
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT (2.0 / 3.0)::float4;
 ----
@@ -91,7 +91,7 @@ float4
 0.7
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT (-2.0 / 3.0)::float4;
 ----
@@ -107,7 +107,7 @@ float4
 NaN
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT (-0.0)::float4;
 ----
@@ -133,7 +133,7 @@ statement ok
 SET EXTRA_FLOAT_DIGITS = 3;
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 1.0::float4;
 ----
@@ -141,7 +141,7 @@ float4
 1
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT 1.0000::float4;
 ----
@@ -149,7 +149,7 @@ float4
 1
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT (2.0 / 3.0)::float4;
 ----
@@ -157,7 +157,7 @@ float4
 0.6666667
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT (-2.0 / 3.0)::float4;
 ----
@@ -172,7 +172,7 @@ float4
 NaN
 
 
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT (-0.0)::float4;
 ----

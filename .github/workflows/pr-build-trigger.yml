@@ -1,7 +1,7 @@
 name: auto | pr trigger
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, labeled]
   issue_comment:
     types: [edited]
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   post-checkboxes:
     if: >-
-      github.event_name == 'pull_request' && (
+      github.event_name == 'pull_request_target' && (
         github.event.action == 'opened' ||
         (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
       )
@@ -62,6 +62,7 @@ jobs:
       github.event_name == 'issue_comment' &&
       github.event.action == 'edited' &&
       github.event.issue.pull_request &&
+      github.event.comment.user.login == 'github-actions[bot]' &&
       contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
       contains(github.event.comment.body, '- [x] **Trigger Jobs**')
     runs-on: ubuntu-latest
@@ -69,7 +70,7 @@ jobs:
       actions: write
       contents: read
       pull-requests: write
-      checks: write
+      statuses: write
     steps:
       - name: Get PR info
         id: pr-info
@@ -83,11 +84,13 @@ jobs:
             });
             core.setOutput('branch', pr.head.ref);
             core.setOutput('sha', pr.head.sha);
+            core.setOutput('base_ref', pr.base.ref);
 
       - name: Parse options and trigger build
         env:
           PR_BRANCH: ${{ steps.pr-info.outputs.branch }}
           PR_SHA: ${{ steps.pr-info.outputs.sha }}
+          BASE_REF: ${{ steps.pr-info.outputs.base_ref }}
         uses: actions/github-script@v8
         with:
           script: |
@@ -95,6 +98,7 @@ jobs:
             const body = comment.body || '';
             const branch = process.env.PR_BRANCH;
             const sha = process.env.PR_SHA;
+            const baseRef = process.env.BASE_REF;
 
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
@@ -104,19 +108,18 @@ jobs:
             const enableMsan = isChecked('MSAN');
 
             const { owner, repo } = context.repo;
-            const checkName = 'serenedb | build & test';
+            const statusContext = 'serenedb | build & test';
 
-            const { data: check } = await github.rest.checks.create({
-              owner, repo,
-              head_sha: sha,
-              name: checkName,
-              status: 'in_progress',
-              output: { title: 'Build queued', summary: 'Waiting for workflow to start...' },
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'pending',
+              description: 'Build queued',
+              context: statusContext,
             });
 
-            // Cancel in-progress runs on this branch
+            // Cancel in-progress runs on the base branch
             const { data: runs } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch,
+              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef,
               status: 'in_progress', per_page: 10,
             });
             for (const run of runs.workflow_runs) {
@@ -125,7 +128,7 @@ jobs:
             }
             // Also cancel queued/waiting runs
             const { data: queued } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch,
+              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef,
               status: 'queued', per_page: 10,
             });
             for (const run of queued.workflow_runs) {
@@ -135,34 +138,35 @@ jobs:
 
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch, per_page: 1,
+              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef, per_page: 1,
             });
             const prevId = before.workflow_runs[0]?.id || 0;
 
             await github.rest.actions.createWorkflowDispatch({
               owner, repo,
               workflow_id: 'build-manual.yml',
-              ref: branch,
+              ref: baseRef,
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
                 ENABLE_ASAN: enableAsan.toString(),
                 ENABLE_TSAN: enableTsan.toString(),
                 ENABLE_MSAN: enableMsan.toString(),
                 VALIDATE_PG_TESTS: 'true',
+                PR_SHA: sha,
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
-                  CHECK_RUN_ID: check.id,
+                  PR_STATUS_CONTEXT: statusContext,
                 }),
               },
             });
 
             // Wait for the new run to appear (up to 30s)
-            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(branch)}`;
+            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(baseRef)}`;
             for (let i = 0; i < 6; i++) {
               await new Promise(r => setTimeout(r, 5000));
               const { data: after } = await github.rest.actions.listWorkflowRuns({
-                owner, repo, workflow_id: 'build-manual.yml', branch, per_page: 3,
+                owner, repo, workflow_id: 'build-manual.yml', branch: baseRef, per_page: 3,
               });
               const run = after.workflow_runs.find(r => r.id > prevId);
               if (run) {
@@ -171,13 +175,13 @@ jobs:
               }
             }
 
-            // Update check run with the Actions run URL
-            await github.rest.checks.update({
-              owner, repo,
-              check_run_id: check.id,
-              status: 'in_progress',
-              details_url: runUrl,
-              output: { title: 'Build in progress', summary: `[View Run](${runUrl})` },
+            // Update pending status with run URL so the check is clickable in PR
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'pending',
+              description: 'Build in progress',
+              context: statusContext,
+              target_url: runUrl,
             });
 
             const opts = [

@@ -37,7 +37,7 @@ namespace analysis {
 ///       "c"
 /// @note Configuration (compatible with Lucene PathHierarchyTokenizer):
 ///       - delimiter: path separator (default: "/"); UTF-8 byte sequence
-///       - replacement: optional replacement for delimiter (default: "/")
+///       - replacement: optional replacement for delimiter (default: delimiter)
 ///       - buffer_size: the number of characters read into the term buffer in a
 ///       single pass. Defaults to 1024. The term buffer will grow by this size
 ///       until all the text has been consumed. It is advisable not to change

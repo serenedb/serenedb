@@ -456,6 +456,9 @@ bool ReversePathHierarchyTokenizer::next() {
 }
 
 Analyzer::ptr PathHierarchyTokenizer::make(Options&& options) {
+  if (options.replacement.empty()) {
+    options.replacement = options.delimiter;
+  }
   if (options.reverse) {
     return std::make_unique<ReversePathHierarchyTokenizer>(std::move(options));
   }

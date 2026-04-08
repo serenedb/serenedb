@@ -25,6 +25,7 @@
 #include <vpack/value.h>
 #include <vpack/value_type.h>
 
+#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -33,6 +34,8 @@
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
+#include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
@@ -286,12 +289,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
         _builder.close();
       } else {
         auto value = EraseOptionOrDefault<Option>(prefix);
-        if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
-                                     std::string_view>) {
-          if (value.empty()) {
-            return;
-          }
-        }
         _builder.add(GetVPackName(Option.name), value);
       }
     });
@@ -457,6 +454,31 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
     std::move(CreateTSDictionaryOptions{conn_ctx.EnsureCatalogSnapshot(), db,
                                         current_schema, stmt.definition})
       .Result();
+
+  // Validate analyzer/tokenizer configuration
+  auto analyzer_slice = b.slice().get(kAnalyzerField);
+  if (!analyzer_slice.isNone()) {
+    auto type_slice = analyzer_slice.get(kTypeField);
+    auto properties_slice = analyzer_slice.get(kPropertiesField);
+    if (!type_slice.isNone() && !properties_slice.isNone()) {
+      auto type_str = type_slice.stringView();
+      // Only validate pattern (regex validation) and path_hierarchy tokenizers
+      if (type_str == "pattern" || type_str == "path_hierarchy") {
+        std::string dummy_output;
+        if (!irs::analysis::analyzers::Normalize(
+              dummy_output, type_str, irs::Type<irs::text_format::VPack>::get(),
+              std::string{
+                reinterpret_cast<const char*>(properties_slice.getDataPtr()),
+                properties_slice.byteSize()},
+              false)) {
+          // If validation fails, the error should already be logged
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("Failed to create text search dictionary \"",
+                                  tokenizer_name.relation, "\""));
+        }
+      }
+    }
+  }
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
     ObjectId{0}, tokenizer_name.relation, features,

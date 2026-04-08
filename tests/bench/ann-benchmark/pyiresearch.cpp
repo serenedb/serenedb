@@ -1,4 +1,7 @@
+#include <nanobind/ndarray.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
@@ -25,19 +28,20 @@ static void ensure_init() {
 
 class VectorIndex {
  public:
-  VectorIndex(const std::string& index_dir, int dim, size_t segment_max_size)
+  VectorIndex(const std::string& index_dir, int dim, size_t segment_max_size,
+              int m = 32, int ef_construction = 40)
     : _dim(dim), _max_seg(segment_max_size) {
     ensure_init();
     _dir = std::make_shared<irs::MMapDirectory>(index_dir);
 
     irs::IndexWriterOptions opts;
-    opts.column_info = [dim](std::string_view name) -> irs::ColumnInfo {
+    opts.column_info = [dim, m, ef_construction](std::string_view name) -> irs::ColumnInfo {
       if (name == kVectorField) {
         return {
           .compression = irs::Type<irs::compression::None>::get(),
           .track_prev_doc = false,
           .value_type = irs::ValueType::VectorF32,
-          .hnsw_info = irs::HNSWInfo{.d = dim},
+          .hnsw_info = irs::HNSWInfo{.d = dim, .m = m, .ef_construction = ef_construction},
         };
       }
       if (name == kIdField) {
@@ -55,10 +59,14 @@ class VectorIndex {
     _txn = _writer->GetBatch();
   }
 
+  using NdArrayF32 =
+    nanobind::ndarray<float, nanobind::numpy, nanobind::ndim<1>,
+                      nanobind::device::cpu>;
+
   // Insert a single vector with an associated integer id.
   // vec must be a 1-D float32 numpy array of length `dim`.
-  void insert(int64_t id, const std::vector<float>& vec) {
-    if (vec.size() != static_cast<ssize_t>(_dim)) {
+  void insert(int64_t id, NdArrayF32 vec) {
+    if (vec.shape(0) != static_cast<size_t>(_dim)) {
       throw std::runtime_error("vector length mismatch");
     }
 
@@ -97,7 +105,6 @@ class VectorIndex {
     _doc->Insert<irs::Action::STORE>(VecField{data, static_cast<size_t>(_dim)});
     _doc->NextDocument();
     ++_written;
-    _reader.reset();
   }
 
   void commit() {
@@ -105,12 +112,13 @@ class VectorIndex {
     _doc.reset();
     _txn.Commit();
     _writer->Commit();
+    _reader.reset();
   }
 
   // Search: returns list of (id, distance) pairs
-  std::vector<std::pair<int64_t, float>> search(const std::vector<float>& query,
-                                                int top_k, int ef_search = 64) {
-    if (query.size() != static_cast<ssize_t>(_dim)) {
+  std::vector<std::pair<int64_t, float>> search(NdArrayF32 query, int top_k,
+                                                int ef_search = 64) {
+    if (query.shape(0) != static_cast<size_t>(_dim)) {
       throw std::runtime_error("query length mismatch");
     }
     if (!_reader) {
@@ -178,9 +186,11 @@ class VectorIndex {
 
 NB_MODULE(pyiresearch, m) {
   nanobind::class_<VectorIndex>(m, "VectorIndex")
-    .def(nanobind::init<const std::string&, int, size_t>(),
+    .def(nanobind::init<const std::string&, int, size_t, int, int>(),
          nanobind::arg("index_dir"), nanobind::arg("dim"),
-         nanobind::arg("segment_max_size") = 10000)
+         nanobind::arg("segment_max_size") = 10000,
+         nanobind::arg("m") = 32,
+         nanobind::arg("ef_construction") = 40)
     .def("insert", &VectorIndex::insert, nanobind::arg("id"),
          nanobind::arg("vector"))
     .def("commit", &VectorIndex::commit)

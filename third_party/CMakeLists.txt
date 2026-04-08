@@ -1030,3 +1030,26 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/velox
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/axiom
 )
+
+################################################################################
+## nanobind
+################################################################################
+
+
+if (CMAKE_VERSION VERSION_LESS 3.18)
+  set(DEV_MODULE Development)
+else()
+  set(DEV_MODULE Development.Module)
+endif()
+
+find_package(Python 3.9 COMPONENTS Interpreter ${DEV_MODULE} REQUIRED)
+
+# Propagate Python variables globally so nanobind_add_module works
+# when called from directories outside third_party/
+set(Python_INCLUDE_DIRS "${Python_INCLUDE_DIRS}" CACHE INTERNAL "")
+set(Python_LIBRARIES "${Python_LIBRARIES}" CACHE INTERNAL "")
+set(Python_EXECUTABLE "${Python_EXECUTABLE}" CACHE INTERNAL "")
+set(Python_VERSION "${Python_VERSION}" CACHE INTERNAL "")
+set(Python_INTERPRETER_ID "${Python_INTERPRETER_ID}" CACHE INTERNAL "")
+
+add_subdirectory(nanobind)

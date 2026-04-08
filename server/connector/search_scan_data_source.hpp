@@ -114,8 +114,8 @@ class ANNSearchDataSource final : public velox::connector::DataSource {
     _done = false;
   }
 
-  std::optional<velox::RowVectorPtr> next(
-    uint64_t size, velox::ContinueFuture& future) final;
+  std::optional<velox::RowVectorPtr> next(uint64_t size,
+                                          velox::ContinueFuture& future) final;
 
   void addDynamicFilter(velox::column_index_t,
                         const std::shared_ptr<velox::common::Filter>&) final {

@@ -38,6 +38,7 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/endian.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
@@ -199,6 +200,34 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;
   }
+
+  // Set up column_info for HNSW vector columns.
+  {
+    containers::FlatHashMap<std::string, irs::HNSWInfo> hnsw_cols;
+    for (const auto& [col_id, col_info] : index.GetColumns()) {
+      if (col_info.hnsw_info.has_value()) {
+        std::string field_name(sizeof(col_id), '\0');
+        absl::big_endian::Store(field_name.data(), col_id);
+        hnsw_cols.emplace(std::move(field_name), *col_info.hnsw_info);
+      }
+    }
+    if (!hnsw_cols.empty()) {
+      writer_options.column_info =
+        [hnsw_cols = std::move(hnsw_cols)](
+          std::string_view field_name) -> irs::ColumnInfo {
+        auto it = hnsw_cols.find(std::string{field_name});
+        if (it != hnsw_cols.end()) {
+          return irs::ColumnInfo{
+            .compression = irs::Type<irs::compression::None>::get(),
+            .value_type = irs::ValueType::VectorF32,
+            .hnsw_info = it->second,
+          };
+        }
+        return {};
+      };
+    }
+  }
+
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
 
   if (!path_exists) {

@@ -423,5 +423,7 @@ std::optional<velox::RowVectorPtr> ANNSearchDataSource<Materializer>::next(
 }
 
 template class ANNSearchDataSource<RocksDBMaterializer>;
+template class ANNSearchDataSource<ParquetMaterializer>;
+template class ANNSearchDataSource<TextMaterializer>;
 
 }  // namespace sdb::connector

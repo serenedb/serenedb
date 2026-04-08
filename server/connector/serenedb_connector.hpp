@@ -726,7 +726,8 @@ class ANNTableHandle final : public velox::connector::ConnectorTableHandle {
   bool supportsIndexLookup() const final { return false; }
   const std::string& name() const final { return _name; }
   std::string toString() const final {
-    return absl::StrCat(_name, ", type=ann_search, top_k=", _top_k);
+    return absl::Substitute("$0, type=ann_search, top_k=$1, field=$2", _name,
+                            _top_k, _field_name);
   }
 
   ObjectId TableId() const noexcept { return _table_id; }

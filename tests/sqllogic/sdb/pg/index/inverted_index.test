@@ -845,3 +845,61 @@ a	b
 
 statement ok
 DROP TABLE dense_multi;
+
+
+# Inverted index with array columns: index on scalar fields, SELECT includes arrays
+
+statement ok
+CREATE TABLE arr_idx_tbl (a INTEGER PRIMARY KEY, b TEXT, nums INTEGER[], labels VARCHAR[]);
+
+statement ok
+INSERT INTO arr_idx_tbl VALUES
+  (1, 'quick brown fox jumps', ARRAY[1, 2, 3], ARRAY['alpha', 'beta']),
+  (2, 'lazy dog sleeps all day', ARRAY[4, 5], ARRAY['gamma']),
+  (3, 'quick fox runs fast', ARRAY[1, 3], ARRAY['alpha', 'delta', 'epsilon']),
+  (4, 'brown dog barks loudly', ARRAY[]::INTEGER[], ARRAY[]::VARCHAR[]);
+
+# workaround for https://github.com/serenedb/serenedb/issues/530
+statement ok
+INSERT INTO arr_idx_tbl VALUES (5, 'silent owl watches', NULL, NULL);
+
+statement ok
+CREATE INDEX arr_idx_tbl_idx ON arr_idx_tbl USING inverted(a, b test_english);
+
+query
+SELECT a, b, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'quick') ORDER BY a;
+----
+a	b	nums	labels
+1	quick brown fox jumps	{1,2,3}	{alpha,beta}
+3	quick fox runs fast	{1,3}	{alpha,delta,epsilon}
+
+query
+SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'dog') ORDER BY a;
+----
+a	nums	labels
+2	{4,5}	{gamma}
+4	{}	{}
+
+query
+SELECT a, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+----
+a	labels
+1	{alpha,beta}
+3	{alpha,delta,epsilon}
+
+query
+SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'quick') OR PHRASE(b, 'lazy') ORDER BY a;
+----
+a	nums	labels
+1	{1,2,3}	{alpha,beta}
+2	{4,5}	{gamma}
+3	{1,3}	{alpha,delta,epsilon}
+
+query
+SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'owl') ORDER BY a;
+----
+a	nums	labels
+5	NULL	NULL
+
+statement ok
+DROP TABLE arr_idx_tbl;

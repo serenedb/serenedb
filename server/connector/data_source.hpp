@@ -37,6 +37,7 @@
 #include "connector/common.h"
 #include "connector/key_builder.hpp"
 #include "connector/multiget_context.hpp"
+#include "connector/rocksdb_column_decoder.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/rocksdb_materializer.hpp"
 #include "connector/secondary_sink_writer.hpp"
@@ -124,19 +125,6 @@ class RocksDBPerColumnIteratorDataSource : public RocksDBBaseDataSource {
  private:
   velox::VectorPtr ReadColumn(velox::column_index_t col_idx, uint64_t max_size);
 
-  template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size);
-
-  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size);
-
-  velox::VectorPtr ReadArrayColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                   velox::TypePtr array_type);
-
-  template<velox::TypeKind ElemKind>
-  velox::VectorPtr ReadScalarArrayColumn(rocksdb::Iterator& it,
-                                         uint64_t max_size,
-                                         velox::TypePtr array_type);
-
   velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
 
   template<
@@ -188,11 +176,7 @@ class PointLookupPKColumnBuilder {
   const irs::bitset& PresentRows() const { return _present_rows; }
 
  private:
-  absl::AnyInvocable<void(velox::BaseVector& result, size_t idx,
-                          const rocksdb::PinnableSlice& val)>
-    _writer;
-  velox::TypeKind _type_kind;
-  velox::VectorPtr _vec;
+  std::unique_ptr<RocksDBColumnDecoder> _decoder;
   irs::bitset _present_rows;
 };
 

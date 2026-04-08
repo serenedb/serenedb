@@ -291,8 +291,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
         auto value = EraseOptionOrDefault<Option>(prefix);
         if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
                                      std::string_view>) {
-        if (value.empty()) {
-          return;
+          if (value.empty()) {
+            return;
           }
         }
         _builder.add(GetVPackName(Option.name), value);

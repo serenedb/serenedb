@@ -1,0 +1,126 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA s1;
+
+statement ok
+CREATE TABLE s1.t(id INTEGER, val TEXT);
+
+statement ok
+INSERT INTO s1.t VALUES (1, 'hello'), (2, 'world');
+
+statement ok
+CREATE VIEW s1.v AS SELECT * FROM s1.t;
+
+statement ok
+CREATE FUNCTION s1.f() RETURNS INTEGER AS 'SELECT 42' LANGUAGE SQL;
+
+
+# Crash before rename table is persisted
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+statement error connection closed
+ALTER TABLE s1.t RENAME TO t_renamed;
+
+
+connection after_rename_table
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM s1.t ORDER BY id;
+----
+id	val
+1	hello
+2	world
+
+connection after_rename_table
+statement error
+SELECT * FROM s1.t_renamed;
+----
+db error: ERROR: relation "s1.t_renamed" does not exist
+
+
+# Crash before rename column is persisted
+connection after_rename_table
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+connection after_rename_table
+statement error connection closed
+ALTER TABLE s1.t RENAME COLUMN val TO value;
+
+
+connection after_rename_col
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT val FROM s1.t ORDER BY id;
+----
+val
+hello
+world
+
+
+# Crash before rename view is persisted
+connection after_rename_col
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+connection after_rename_col
+statement error connection closed
+ALTER VIEW s1.v RENAME TO v_renamed;
+
+
+connection after_rename_view
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM s1.v ORDER BY id;
+----
+id	val
+1	hello
+2	world
+
+connection after_rename_view
+statement error
+SELECT * FROM s1.v_renamed;
+----
+db error: ERROR: relation "s1.v_renamed" does not exist
+
+
+# Crash before rename function is persisted
+connection after_rename_view
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+connection after_rename_view
+statement error connection closed
+ALTER FUNCTION s1.f RENAME TO f_renamed;
+
+
+connection after_rename_func
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT * FROM s1.f();
+----
+f
+42
+
+connection after_rename_func
+statement error
+SELECT * FROM s1.f_renamed();
+----
+db error: ERROR: function "s1.f_renamed" does not exist
+
+
+# Cleanup
+connection after_rename_func
+statement ok
+DROP FUNCTION s1.f;
+
+connection after_rename_func
+statement ok
+DROP VIEW s1.v;
+
+connection after_rename_func
+statement ok
+DROP TABLE s1.t;
+
+connection after_rename_func
+statement ok
+DROP SCHEMA s1;

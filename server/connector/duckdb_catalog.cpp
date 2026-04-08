@@ -26,23 +26,28 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
-#include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/database_size.hpp>
 
+#include "catalog/catalog.h"
 #include "catalog/schema.h"
+#include "connector/duckdb_client_state.h"
+#include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 
@@ -50,25 +55,7 @@ SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db,
                                  std::shared_ptr<catalog::Database> database)
   : duckdb::Catalog{db}, _database{std::move(database)} {}
 
-void SereneDBCatalog::Initialize(bool load_builtin) {
-  // Pre-populate with "public" schema so LookupSchema works from the start
-  GetOrCreateSchemaEntry("public");
-}
-
-SereneDBSchemaEntry& SereneDBCatalog::GetOrCreateSchemaEntry(
-  const std::string& schema_name) {
-  auto it = _schemas.find(schema_name);
-  if (it != _schemas.end()) {
-    return *it->second;
-  }
-  auto info = duckdb::make_uniq<duckdb::CreateSchemaInfo>();
-  info->schema = schema_name;
-  auto entry = duckdb::make_uniq<SereneDBSchemaEntry>(*this, *info);
-  auto& ref = *entry;
-  _schemas[schema_name] = std::move(entry);
-  _schema_infos[schema_name] = std::move(info);
-  return ref;
-}
+void SereneDBCatalog::Initialize(bool load_builtin) {}
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
@@ -85,7 +72,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
     throw duckdb::InvalidInputException("Failed to create schema: %s",
                                         std::string{r.errorMessage()});
   }
-  return &GetOrCreateSchemaEntry(info.schema);
+  // New snapshot will have the schema; next LookupSchema will find it
+  return nullptr;
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
@@ -97,23 +85,19 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
   if (schema_name == "main" || schema_name.empty()) {
     schema_name = "public";
   }
-  // Check if schema exists in SereneDB catalog
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto schema = snapshot->GetSchema(GetDatabaseId(), schema_name);
-  if (!schema) {
-    return nullptr;
-  }
-  return &GetOrCreateSchemaEntry(schema_name);
+  // Get connection's snapshot and delegate to its cache
+  auto snapshot =
+    GetSereneDBContext(transaction.GetContext()).EnsureCatalogSnapshot();
+  return snapshot->GetDuckDBCache().GetOrCreateSchema(*this, GetDatabaseId(),
+                                                      schema_name, *snapshot);
 }
 
 void SereneDBCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto schemas = snapshot->GetSchemas(GetDatabaseId());
-  for (auto& schema : schemas) {
-    callback(GetOrCreateSchemaEntry(std::string{schema->GetName()}));
-  }
+  auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
+  snapshot->GetDuckDBCache().ScanSchemas(*this, GetDatabaseId(), callback,
+                                         *snapshot);
 }
 
 void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
@@ -125,8 +109,7 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
     throw duckdb::InvalidInputException("Failed to drop schema: %s",
                                         std::string{r.errorMessage()});
   }
-  _schemas.erase(info.name);
-  _schema_infos.erase(info.name);
+  // No cache to invalidate — schema entries live on snapshot
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
@@ -149,9 +132,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 
   // Use SST bulk insert for COPY FROM / INSERT...SELECT (has child plan).
   // SST bypasses transactions — no conflict detection.
-  bool use_sst =
-    plan != nullptr &&
-    op.on_conflict_info.action_type == duckdb::OnConflictAction::THROW;
+  bool use_sst = plan != nullptr && op.on_conflict_info.action_type ==
+                                      duckdb::OnConflictAction::THROW;
 
   if (use_sst) {
     auto* sorted_plan = plan.get();
@@ -391,10 +373,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // (PK bytes + index column values + serialization for the writer).
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   for (size_t i = 0; i < columns.size(); ++i) {
-    expressions.push_back(
-      duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-        VeloxTypeToDuckDB(columns[i].type),
-        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
+    expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      VeloxTypeToDuckDB(columns[i].type),
+      duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
   }
 
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(

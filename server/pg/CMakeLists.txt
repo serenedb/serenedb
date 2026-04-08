@@ -1,5 +1,6 @@
 add_subdirectory(commands)
 add_subdirectory(functions)
+add_subdirectory(sdb_catalog)
 target_sources(
     sereneserver
     PRIVATE
@@ -21,7 +22,6 @@ target_sources(
         command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
-        sql_statement.cpp
         connection_context.cpp
         copy_file.cpp
         pg_types.cpp
@@ -30,13 +30,10 @@ target_sources(
         progress_tracker.cpp
         sdb_catalog/sdb_log.cpp
         functions.cpp
-        sql_analyzer_velox.cpp
         duckdb_pg_types.cpp
         duckdb_serialize.cpp
-        sql_collector.cpp
         sql_def.cpp
         sql_parser.cpp
-        sql_resolver.cpp
         sql_utils.cpp
         isolation_level.cpp
         option_help.cpp

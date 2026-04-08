@@ -20,6 +20,8 @@
 
 #include "query/duckdb_engine.h"
 
+#include <duckdb/catalog/default/default_functions.hpp>
+#include <duckdb/catalog/default/default_views.hpp>
 #include <iostream>
 
 #include "basics/assert.h"
@@ -27,6 +29,19 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
+#include "pg/system_functions.h"
+#include "pg/system_views.h"
+
+extern "C" const duckdb::DefaultMacro* duckdb_external_macros(
+  duckdb::idx_t* count) {
+  *count = std::size(sdb::pg::kExternalMacros);
+  return sdb::pg::kExternalMacros;
+}
+extern "C" const duckdb::DefaultView* duckdb_external_views(
+  duckdb::idx_t* count) {
+  *count = std::size(sdb::pg::kExternalViews);
+  return sdb::pg::kExternalViews;
+}
 
 namespace sdb::query {
 
@@ -109,6 +124,12 @@ void DuckDBEngine::Initialize() {
   // Intercepts "/dev/stdin" and reads from PG CopyData messages.
   auto& fs = duckdb::FileSystem::GetFileSystem(*_db->instance);
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
+
+  {
+    size_t _;
+    duckdb_external_macros(&_);
+    duckdb_external_views(&_);
+  }
 
   std::cerr << "DuckDB engine initialized with SereneDB storage" << std::endl;
 }

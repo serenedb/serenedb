@@ -26,7 +26,6 @@
 
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
-#include "pg/sql_analyzer_velox.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
@@ -69,7 +68,6 @@ struct SqlStatement {
   std::shared_ptr<QueryString> query_string;
   SqlTree tree;  // SQL query syntax tree
   pg::Objects objects;
-  pg::UniqueIdGenerator id_generator;
   pg::MemoryContextPtr memory_context;
   Params params;
   query::QueryPtr query;

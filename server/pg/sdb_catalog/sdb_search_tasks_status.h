@@ -20,40 +20,25 @@
 
 #pragma once
 
-#include <vpack/slice.h>
-
-#include "function.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_utils.h"
-#include "query/config.h"
+#include "pg/system_table.h"
 
 namespace sdb::pg {
 
-class FunctionImpl {
- public:
-  FunctionImpl() = default;
+// NOLINTBEGIN
+struct SdbSearchTasksStatus {
+  static constexpr uint64_t kId = 999996;  // TODO(codeworse): assign proper OID
+  static constexpr std::string_view kName = "sdb_search_tasks_status";
 
-  Result Init(ObjectId database, std::string_view name, std::string query,
-              bool is_procedure, const Config* config);
-
-  static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          std::unique_ptr<FunctionImpl>& implementation,
-                          bool is_procedure);
-
-  void ToVPack(vpack::Builder& builder) const;
-
-  std::string_view GetQuery() const noexcept { return _query; }
-
-  const RawStmt* GetStatement() const noexcept { return _stmt; }
-
-  pg::Objects& GetObjects() noexcept { return _objects; }
-
- private:
-  std::string _query;
-  pg::MemoryContextPtr _memory_context;
-  const RawStmt* _stmt{nullptr};
-  pg::Objects _objects;
-  // TODO(mbkkt) warnings?
+  Text task_type;
+  uint64_t active_tasks;
+  uint64_t pending_tasks;
+  uint64_t threads;
 };
+// NOLINTEND
+
+template<>
+std::vector<velox::VectorPtr>
+SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData(
+  velox::memory::MemoryPool& pool);
 
 }  // namespace sdb::pg

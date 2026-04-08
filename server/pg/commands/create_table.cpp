@@ -32,7 +32,6 @@
 #include "pg/file_options.h"
 #include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
-#include "pg/sql_analyzer_velox.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"

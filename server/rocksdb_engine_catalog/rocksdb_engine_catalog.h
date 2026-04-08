@@ -222,10 +222,11 @@ class RocksDBEngineCatalog {
 
   Result SyncTableShard(const TableShard& shard);
 
-  Result CreateDefinition(ObjectId parent_id, RocksDBEntryType type,
+  Result CreateDefinition(ObjectId parent_id, catalog::ObjectType type,
                           ObjectId id, WriteProperties properties);
-  Result DropDefinition(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
-  Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
+  Result DropDefinition(ObjectId parent_id, catalog::ObjectType type,
+                        ObjectId id);
+  Result DropEntry(ObjectId parent_id, catalog::ObjectType type);
   Result DropEntry(ObjectId parent_id);
   Result DropRange(std::string_view start, std::string_view end,
                    rocksdb::ColumnFamilyHandle* cf);
@@ -339,7 +340,7 @@ class RocksDBEngineCatalog {
   getCacheMetrics();
 
   Result VisitDefinitions(
-    ObjectId parent_id, RocksDBEntryType type,
+    ObjectId parent_id, catalog::ObjectType type,
     absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
  private:

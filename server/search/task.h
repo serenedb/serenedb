@@ -22,6 +22,7 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
+#include <absl/time/time.h>
 
 #include <concepts>
 #include <functional>
@@ -38,10 +39,13 @@
 namespace sdb::search {
 
 template<typename T>
-concept IndexTaskType = requires(const T& task) {
+concept IndexTaskType = requires(
+  const T& task, std::shared_ptr<InvertedIndexShard>&& inverted_index_shard) {
   { T::ThreadGroup() } -> std::same_as<ThreadGroup>;
   { T::TaskName() } -> std::same_as<std::string_view>;
-  { task.GetContinuos() } -> std::same_as<T>;  // span continuous tasks
+  {
+    task.GetContinuos(std::move(inverted_index_shard))
+  } -> std::same_as<T>;  // span continuous tasks
 };
 
 class Task {
@@ -62,9 +66,12 @@ class Task {
   }
 
   template<IndexTaskType Self>
-  void ScheduleContinue(this const Self& self, absl::Duration delay = {}) {
+  void ScheduleContinue(
+    this const Self& self,
+    std::shared_ptr<InvertedIndexShard>&& inverted_index_shard,
+    absl::Duration delay = {}) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "Scheduling task: ", Self::TaskName());
-    self.GetContinuos().Schedule(delay).Detach();
+    self.GetContinuos(std::move(inverted_index_shard)).Schedule(delay).Detach();
   }
 
  protected:
@@ -85,11 +92,11 @@ class CommitTask : public Task {
              bool wait)
     : Task{inverted_index_shard}, _wait{wait} {}
 
-  CommitTask GetContinuos() const {
-    auto self = _inverted_index_shard.lock();
-    SDB_ASSERT(self);
+  CommitTask GetContinuos(
+    std::shared_ptr<InvertedIndexShard>&& inverted_index_shard) const {
     // continue is always no-wait as we rescheduling next background commit
-    return CommitTask(self, false);
+    SDB_ASSERT(inverted_index_shard);
+    return CommitTask(inverted_index_shard, false);
   }
 
   void operator()();
@@ -119,10 +126,10 @@ class ConsolidationTask : public Task {
     : Task{inverted_index_shard}, _progress{std::move(flush_progress)} {}
 
   void operator()();
-  ConsolidationTask GetContinuos() const {
-    auto self = _inverted_index_shard.lock();
-    SDB_ASSERT(self);
-    return ConsolidationTask(self, _progress);
+  ConsolidationTask GetContinuos(
+    std::shared_ptr<InvertedIndexShard>&& inverted_index_shard) const {
+    SDB_ASSERT(inverted_index_shard);
+    return ConsolidationTask(inverted_index_shard, _progress);
   }
 
  private:

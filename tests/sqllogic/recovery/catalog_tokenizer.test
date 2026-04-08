@@ -1,0 +1,33 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+CREATE TEXT SEARCH DICTIONARY vedernikoff(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+onlyif serenedb
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY vedernikoff;

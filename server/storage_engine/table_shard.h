@@ -54,6 +54,7 @@ class TableShard : public catalog::Object {
   static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
 
   virtual ~TableShard() = default;
+  std::shared_ptr<Object> Clone() const final { return nullptr; }
 
   auto GetTableId() const noexcept { return _table_id; }
 
@@ -67,8 +68,8 @@ class TableShard : public catalog::Object {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
-  void WriteInternal(vpack::Builder& builder) const {
-    vpack::WriteTuple(builder, GetTableStats());
+  void WriteInternal(vpack::Builder& b) const final {
+    vpack::WriteTuple(b, GetTableStats());
   }
   // New table shard ctor
   explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);

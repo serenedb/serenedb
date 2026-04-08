@@ -35,7 +35,6 @@
 
 #include "catalog/table.h"
 #include "connector/serenedb_connector.hpp"
-#include "pg/sql_resolver.h"
 #include "query/cursor.h"
 #include "query/explain_executor.h"
 #include "query/show_executor.h"

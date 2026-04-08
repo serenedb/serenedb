@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,94 +15,35 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
+#include <string>
 
-#include "basics/containers/small_vector.h"
-#include "basics/result.h"
-#include "catalog/fwd.h"
-#include "catalog/identifiers/index_id.h"
 #include "catalog/object.h"
-#include "catalog/types.h"
-#include "query/config.h"
 
 namespace sdb::catalog {
 
-enum class ViewContext {
-  Internal,
-  User,
-  Restore,
-};
-
-enum class ViewType : uint8_t {
-  ViewSearch = 0,
-  ViewSqlQuery,
-};
-
-// NOLINTBEGIN
-struct ViewMeta {
-  vpack::Optional<Identifier> id;
-  std::string name;
-  ViewType type = ViewType::ViewSearch;
-
-  static ViewMeta Make(const View& view);
-};
-
-struct ViewOptions {
-  ViewMeta meta;
-  vpack::Slice properties = vpack::Slice::emptyObjectSlice();
-
-  static Result Read(ViewOptions& options, vpack::Slice slice);
-};
-// NOLINTEND
-
-class View : public SchemaObject {
+// A SQL view stored in the catalog.
+// The view body is stored as SQL text (SELECT query).
+// DuckDB parses it on demand to create view entries.
+class PgSqlView final : public SchemaObject {
  public:
-  using Indexes = containers::SmallVector<IndexId, 1>;
-  // TODO(mbkkt) absl::FunctionRef
-  // visitor for map<CollectionId, set<IndexId>>, Indexes is movable
-  using CollectionVisitor = std::function<bool(ObjectId, Indexes*)>;
+  PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+            std::string query);
 
-  auto GetViewType() const noexcept { return _type; }
+  static std::shared_ptr<PgSqlView> ReadInternal(vpack::Slice slice,
+                                                 ReadContext ctx);
 
-  virtual bool visitCollections(const CollectionVisitor& visitor) const = 0;
+  void WriteInternal(vpack::Builder& b) const final;
+  std::shared_ptr<Object> Clone() const final;
 
-  virtual Result Rename(std::shared_ptr<catalog::View>& new_view,
-                        std::string_view new_name) const = 0;
+  std::string_view GetQuery() const noexcept { return _query; }
 
-  virtual Result Update(std::shared_ptr<catalog::View>& new_view,
-                        vpack::Slice properties,
-                        const Config* config) const = 0;
-
- protected:
-  View(ViewMeta&& options, ObjectId database_id);
-
-  ViewType _type;
+ private:
+  std::string _query;  // SELECT query text
 };
-
-Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx);
 
 }  // namespace sdb::catalog
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t customize::enum_name<sdb::catalog::ViewType>(
-  sdb::catalog::ViewType value) noexcept {
-  switch (value) {
-    case sdb::catalog::ViewType::ViewSearch:
-      return "search-alias";
-    case sdb::catalog::ViewType::ViewSqlQuery:
-      return "sql-query";
-    default:
-      return invalid_tag;
-  }
-}
-
-}  // namespace magic_enum

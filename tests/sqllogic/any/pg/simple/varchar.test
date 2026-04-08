@@ -206,7 +206,7 @@ statement ok
 SET BYTEA_OUTPUT = 'EsCaPe';
 
 # From bytea
-skipif postgres-extended
+skipif pg-wire-extended
 query
 SELECT ('\x01 02 03 4d'::bytea)::varchar;
 ----

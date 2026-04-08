@@ -406,7 +406,7 @@ class FixedPhraseFrequency {
   }
 
   IRS_FORCE_INLINE uint32_t NextPosition() {
-    if constexpr (HasIntervals) {
+    if constexpr (HasIntervals || Offs) {
       return NextPositionGeneric();
     } else {
       return NextPositionOptimized();

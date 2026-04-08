@@ -22,11 +22,8 @@
 
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <shared_mutex>
-#include <duckdb/common/case_insensitive_map.hpp>
-#include <duckdb/parser/parsed_data/create_table_info.hpp>
 
-#include "connector/duckdb_table_entry.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb::connector {
 
@@ -83,16 +80,6 @@ class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) override;
 
-  // Invalidate cached table entry so it picks up new indexed columns.
-  void InvalidateTable(const std::string& table_name);
-
- private:
-  mutable std::shared_mutex _lock;
-  // Keep table entries alive -- DuckDB returns raw pointers from LookupEntry
-  duckdb::case_insensitive_map_t<duckdb::unique_ptr<SereneDBTableEntry>>
-    _table_entries;
-  duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::CreateTableInfo>>
-    _table_infos;
 };
 
 }  // namespace sdb::connector

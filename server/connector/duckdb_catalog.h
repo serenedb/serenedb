@@ -24,9 +24,8 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 
-#include "catalog/catalog.h"
+#include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
-#include "connector/duckdb_schema_entry.h"
 
 namespace sdb::connector {
 
@@ -88,14 +87,8 @@ class SereneDBCatalog final : public duckdb::Catalog {
   bool InMemory() override { return false; }
   std::string GetDBPath() override { return ""; }
 
-  SereneDBSchemaEntry& GetOrCreateSchemaEntry(const std::string& schema_name);
-
  private:
   std::shared_ptr<catalog::Database> _database;
-  duckdb::case_insensitive_map_t<duckdb::unique_ptr<SereneDBSchemaEntry>>
-    _schemas;
-  duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::CreateSchemaInfo>>
-    _schema_infos;
 };
 
 }  // namespace sdb::connector

@@ -20,12 +20,13 @@
 
 #include "catalog/inverted_index.h"
 
+#include <vpack/serializer.h>
+
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
-#include "catalog/index.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
@@ -35,21 +36,50 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   bool is_new, ObjectId id, IndexShardOptions& options) const {
   auto& shard_options =
     basics::downCast<search::InvertedIndexShardOptions>(options);
-  auto inverted_index_shard =
-    search::InvertedIndexShard::Create(id, *this, shard_options, is_new);
-  return inverted_index_shard;
+  return search::InvertedIndexShard::Create(id, *this, shard_options, is_new);
 }
 
-void InvertedIndex::WriteInternal(vpack::Builder& builder) const {
-  Index::WriteInternalImpl(builder,
-                           [&] { vpack::WriteTuple(builder, _options); });
+std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
+                                                           ReadContext ctx) {
+  auto name_slice = slice.get("name");
+  if (!name_slice.isString()) {
+    return nullptr;
+  }
+
+  std::vector<Column::Id> column_ids;
+  if (auto r = vpack::ReadTupleNothrow(slice.get("column_ids"), column_ids);
+      !r.ok()) {
+    return nullptr;
+  }
+
+  ColumnOptions columns;
+  if (auto r = vpack::ReadTupleNothrow(slice.get("columns"), columns);
+      !r.ok()) {
+    return nullptr;
+  }
+
+  return std::make_shared<InvertedIndex>(
+    ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
+    std::string{name_slice.stringView()}, std::move(column_ids),
+    std::move(columns));
+}
+
+void InvertedIndex::WriteInternal(vpack::Builder& b) const {
+  b.openObject();
+  WriteObject(b, [&](vpack::Builder& b) {
+    b.add("column_ids");
+    vpack::WriteTuple(b, _column_ids);
+    b.add("columns");
+    vpack::WriteTuple(b, _columns);
+  });
+  b.close();
 }
 
 ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
-  auto it = _options.columns.find(column_id);
-  if (it == _options.columns.end()) {
+  auto it = _columns.find(column_id);
+  if (it == _columns.end()) {
     SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
               " not found in the index definition");
   }
@@ -71,12 +101,23 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
 
 containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {
   containers::FlatHashSet<ObjectId> res;
-  for (const auto& col : _options.columns) {
+  for (const auto& col : _columns) {
     if (col.second.text_dictionary.isSet()) {
       res.insert(col.second.text_dictionary);
     }
   }
   return res;
+}
+
+std::shared_ptr<Object> InvertedIndex::Clone() const {
+  vpack::Builder b;
+  WriteInternal(b);
+  return ReadInternal(b.slice(), {
+                                   .id = GetId(),
+                                   .database_id = GetDatabaseId(),
+                                   .schema_id = GetSchemaId(),
+                                   .relation_id = GetRelationId(),
+                                 });
 }
 
 }  // namespace sdb::catalog

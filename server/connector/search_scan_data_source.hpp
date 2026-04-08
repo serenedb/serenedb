@@ -22,15 +22,18 @@
 
 #include <velox/connectors/Connector.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <string>
+#include <vector>
 
 #include "basics/fwd.h"
+#include "catalog/table_options.h"
+#include "connector/offsets_collector.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace sdb::connector {
@@ -38,9 +41,11 @@ namespace sdb::connector {
 template<typename Materializer>
 class SearchDataSource final : public velox::connector::DataSource {
  public:
-  SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                   Materializer materializer, const irs::IndexReader& reader,
-                   const irs::Filter::Query& query, const irs::Scorer* scorer);
+  SearchDataSource(
+    velox::memory::MemoryPool& memory_pool, Materializer materializer,
+    const irs::IndexReader& reader, const irs::Filter::Query& query,
+    const irs::Scorer* scorer,
+    std::vector<catalog::Column::OffsetsFieldRequest> offsets_fields);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -69,6 +74,24 @@ class SearchDataSource final : public velox::connector::DataSource {
   const irs::Scorer* _scorer = nullptr;
   irs::ColumnArgsFetcher _fetcher;
   irs::ScoreFunction _score_function;
+  // One entry per requested OFFSETS() column, in the same order as
+  // offsets_fields passed to the constructor.
+  std::vector<catalog::Column::OffsetsFieldRequest> _offsets_fields;
+  // 8-byte big-endian encoding of each column ID + mangle byte, matching
+  // IResearch field names.
+  std::vector<std::string> _binary_field_names;
+  // Per-field offset state, rebuilt on each segment transition.
+  std::vector<PerFieldState> _offsets_field_state;
+  // Pointer to the segment currently being scanned; valid between next_segment
+  // and the following _doc.reset().
+  const irs::SubReader* _current_seg = nullptr;
+
+  void ResetDocOffsets(const irs::SubReader& segment);
+  void CollectDocOffsets(
+    irs::doc_id_t doc_id,
+    std::vector<std::vector<std::vector<int64_t>>>& offsets_data);
+  std::vector<velox::VectorPtr> BuildOffsetsColumns(
+    const std::vector<std::vector<std::vector<int64_t>>>& offsets_data) const;
 };
 
 }  // namespace sdb::connector

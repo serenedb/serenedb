@@ -11,6 +11,7 @@ add_library(
     search_sink_writer.cpp
     search_remove_filter.cpp
     file_table.cpp
+    rocksdb_column_decoder.cpp
     rocksdb_materializer.cpp
     parquet_materializer.cpp
     text_materializer.cpp
@@ -23,6 +24,7 @@ add_library(
     duckdb_storage_extension.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
+    duckdb_entry_cache.cpp
     duckdb_schema_entry.cpp
     duckdb_table_entry.cpp
     duckdb_table_function.cpp

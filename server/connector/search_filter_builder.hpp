@@ -33,6 +33,11 @@
 
 namespace sdb::connector {
 
+// Encodes column_id as an 8-byte big-endian binary string into field_name,
+// matching the IResearch field name produced by
+// MakeFieldName(SearchColumnInfo).
+void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
+
 struct SearchColumnInfo {
   const SereneDBColumn& info;
   catalog::ColumnAnalyzer analyzer;

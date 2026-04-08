@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,62 +15,49 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "view.h"
+#include "catalog/view.h"
 
-#include <vpack/serializer.h>
+#include <vpack/vpack_helper.h>
 
-#include "basics/errors.h"
-#include "catalog/catalog.h"
-#include "catalog/sql_query_view.h"
-#include "general_server/state.h"
+#include "basics/static_strings.h"
+#include "catalog/identifiers/identifier.h"
 
 namespace sdb::catalog {
 
-ViewMeta ViewMeta::Make(const View& view) {
-  return {
-    .id = Identifier{view.GetId().id()},
-    .name = std::string{view.GetName()},
-    .type = view.GetViewType(),
-  };
-}
-
-Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
-  auto r = vpack::ReadObjectNothrow(slice, options.meta,
-                                    {.skip_unknown = true, .strict = true});
-  if (!r.ok()) {
-    return r;
-  }
-
-  options.properties = slice;
-  return {};
-}
-
-View::View(ViewMeta&& options, ObjectId database_id)
+PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+                     std::string query)
   : SchemaObject{{},
                  database_id,
                  {},
-                 *options.id,
-                 std::move(options.name),
-                 ObjectType::View},
-    _type{options.type} {}
+                 id,
+                 std::string{name},
+                 ObjectType::PgSqlView},
+    _query{std::move(query)} {}
 
-Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx) {
-  SDB_ASSERT(ServerState::instance()->IsClientNode());
+std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
+                                                    ReadContext ctx) {
+  auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
+  auto name = basics::VPackHelper::getString(
+    slice, StaticStrings::kDataSourceName, {});
+  auto query = basics::VPackHelper::getString(slice, "query", {});
+  return std::make_shared<PgSqlView>(ctx.database_id, id, name,
+                                     std::string{query});
+}
 
-  switch (options.meta.type) {
-    case ViewType::ViewSqlQuery:
-      SDB_ASSERT(ctx != ViewContext::User);
-      return SqlQueryView::Make(view, database_id, std::move(options), ctx,
-                                nullptr);
-    case ViewType::ViewSearch:
-      break;
-  }
-  return {};
+void PgSqlView::WriteInternal(vpack::Builder& builder) const {
+  builder.openObject();
+  builder.add("_key", Identifier{GetId().id()});
+  builder.add(StaticStrings::kDataSourceName, GetName());
+  builder.add("query", _query);
+  builder.close();
+}
+
+std::shared_ptr<Object> PgSqlView::Clone() const {
+  return std::make_shared<PgSqlView>(GetDatabaseId(), GetId(), GetName(),
+                                     _query);
 }
 
 }  // namespace sdb::catalog

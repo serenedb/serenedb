@@ -454,7 +454,7 @@ static void SereneDBPushdownComplexFilter(
   if (!inverted_index) {
     auto indexes = snapshot->GetIndexesByTable(table_id);
     for (auto& index : indexes) {
-      if (index->GetIndexType() == IndexType::Inverted) {
+      if (index->GetType() == catalog::ObjectType::InvertedIndex) {
         inverted_index =
           std::dynamic_pointer_cast<const catalog::InvertedIndex>(index);
         break;
@@ -593,7 +593,7 @@ static void SereneDBPushdownComplexFilter(
   std::shared_ptr<IndexShard> inverted_shard;
   for (auto& shard : fresh_snapshot->GetIndexShardsByTable(table_id)) {
     if (shard->GetIndexId() == inverted_index->GetId() &&
-        shard->GetType() == IndexType::Inverted) {
+        shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
       inverted_shard = shard;
       break;
     }

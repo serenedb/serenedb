@@ -21,242 +21,30 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
-#include "basics/bit_utils.hpp"
-#include "basics/fwd.h"
-#include "basics/type_traits.h"
-#include "catalog/fwd.h"
-#include "catalog/identifiers/identifier.h"
-#include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 
-namespace sdb {
-namespace aql {
+namespace sdb::catalog {
 
-class ExpressionContext;
-struct AstNode;
-struct Cell;
-using FunctionImpl = Cell (*)(ExpressionContext*, const AstNode&,
-                              std::span<const Cell>);
-
-}  // namespace aql
-namespace search {
-
-class AnalyzerImpl;
-
-}  // namespace search
-namespace pg {
-
-class FunctionImpl;
-
-}  // namespace pg
-namespace catalog {
-
-enum class FunctionLanguage : uint8_t {
-  Invalid = 0,
-  AqlNative,
-  SQL,
-  AnalyzerJson,
-  VeloxNative,
-  Decorator,
-  WasmHex,
-  WasmBase64,
-  WasmBase64Web,
-  WasmText,
-  // PLpgSQL,
-};
-
-enum class FunctionState : uint8_t {
-  Invalid = 0,
-  Immutable,  // deterministic and cachable
-  Stable,     // deterministic but not cachable
-  Volatile,   // non-deterministic and not cacheable
-};
-
-enum class FunctionParallel : uint8_t {
-  Invalid = 0,
-  Safe,
-  Restricted,
-  Unsafe,
-};
-
-enum class FunctionType : uint8_t {
-  Compute = 1 << 0,
-  DQL = 1 << 1,
-  // DML = 1 << 2,
-  DDL = 1 << 3,
-};
-
-enum class FunctionKind : uint8_t {
-  Scalar = 0,
-  Aggregate,
-  Window,
-};
-
-struct FunctionParameter {
-  enum class Mode {
-    Invalid = 0,
-    In,
-    Out,
-    InOut,
-    Variadic,
-  };
-
-  Mode mode;
-  std::string name;
-  velox::TypePtr type;
-
-  // for AQL functions only
-  bool IsCollection() const;
-  void MarkAsCollection();
-};
-
-struct FunctionOptions {
-  double cost = 1;
-  double rows = 0;
-  FunctionLanguage language = FunctionLanguage::Invalid;
-  FunctionState state = FunctionState::Invalid;
-  bool strict = false;    // called on null/returns null
-  bool security = false;  // invoker/definer
-  FunctionParallel parallel = FunctionParallel::Invalid;
-  bool table = false;  // true -- returns table or returns setof
-  // internal options
-  FunctionType type = FunctionType::Compute;
-  bool internal = false;
-  bool no_pushdown = false;
-  bool no_analyzer = false;
-  bool no_eval = false;
-
-  // TODO: maybe better to use velox language types instead of separate enum
-  FunctionKind kind = FunctionKind::Scalar;
-
-  bool IsAggregate() const noexcept { return kind == FunctionKind::Aggregate; }
-  bool IsWindow() const noexcept { return kind == FunctionKind::Window; }
-};
-
-struct FunctionSignature {
-  std::vector<catalog::FunctionParameter> parameters;
-  uint16_t required_arguments = 0;
-  uint16_t max_arguments = 0;
-  velox::TypePtr return_type;
-
-  bool Matches(const std::vector<velox::TypePtr>& arg_types) const;
-  bool ReturnsTable() const;
-  bool ReturnsVoid() const;
-
-  bool IsProcedure() const;
-  void MarkAsProcedure();
-};
-
-template<typename V, typename F>
-  requires(type::kIsOneOf<V, FunctionOptions, FunctionSignature> &&
-           std::invocable<F &&, V&>)
-constexpr V&& operator|(V&& v, F&& f) {
-  std::forward<F>(f)(v);
-  return std::move(v);
-}
-
-// NOLINTBEGIN
-struct FunctionProperties {
-  FunctionSignature signature;
-  FunctionOptions options;
-  std::string name;
-  ObjectId id;
-  vpack::Slice implementation;
-
-  static Result Read(FunctionProperties& options, vpack::Slice slice,
-                     bool is_user_request = false);
-};
-// NOLINTEND
-
-class Function final : public SchemaObject {
+// A SQL function stored in the catalog.
+// The function body is stored as SQL text.
+// DuckDB parses it on demand to create macro entries.
+class PgSqlFunction final : public SchemaObject {
  public:
-  static Result Instantiate(std::shared_ptr<catalog::Function>& function,
-                            ObjectId database_id, vpack::Slice definition,
-                            bool is_user_request);
+  PgSqlFunction(ObjectId database_id, ObjectId id, std::string_view name,
+                std::string sql);
 
-  Function(std::string_view name, FunctionSignature signature,
-           FunctionOptions options);
-
-  Function(FunctionProperties&& properties,
-           std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id);
-
-  ~Function() final;
-
-  void WriteProperties(vpack::Builder& build) const final;
+  static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,
+                                                     ReadContext ctx);
 
   void WriteInternal(vpack::Builder& build) const final;
+  std::shared_ptr<Object> Clone() const final;
 
-  const FunctionSignature& Signature() const noexcept { return _signature; }
-
-  const FunctionOptions& Options() const noexcept { return _options; }
-
-  pg::FunctionImpl& SqlFunction() const noexcept {
-    SDB_ASSERT(_options.language == FunctionLanguage::SQL);
-    SDB_ASSERT(_sql_impl);
-    return *_sql_impl;
-  }
+  std::string_view GetSQL() const noexcept { return _sql; }
 
  private:
-  FunctionSignature _signature;
-  FunctionOptions _options;
-  std::unique_ptr<pg::FunctionImpl> _sql_impl;
+  std::string _sql;  // Full CREATE FUNCTION SQL text
 };
 
-}  // namespace catalog
-}  // namespace sdb
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<sdb::catalog::FunctionLanguage>(
-  sdb::catalog::FunctionLanguage value) noexcept {
-  switch (value) {
-    using enum sdb::catalog::FunctionLanguage;
-    case SQL:
-      return "sql";
-    case AqlNative:
-      return "aql-native";
-    case AnalyzerJson:
-      return "analyzer-json";
-    // TODO(mbkkt) wasm when it will be available
-    default:
-      return invalid_tag;
-  }
-}
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<sdb::catalog::FunctionState>(
-  sdb::catalog::FunctionState value) noexcept {
-  switch (value) {
-    using enum sdb::catalog::FunctionState;
-    case Immutable:
-      return "immutable";
-    case Stable:
-      return "stable";
-    case Volatile:
-      return "volatile";
-    default:
-      return invalid_tag;
-  }
-}
-
-template<>
-constexpr customize::customize_t
-customize::enum_name<sdb::catalog::FunctionParallel>(
-  sdb::catalog::FunctionParallel value) noexcept {
-  switch (value) {
-    using enum sdb::catalog::FunctionParallel;
-    case Safe:
-      return "safe";
-    case Restricted:
-      return "restricted";
-    case Unsafe:
-      return "unsafe";
-    default:
-      return invalid_tag;
-  }
-}
-
-}  // namespace magic_enum
+}  // namespace sdb::catalog

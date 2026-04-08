@@ -22,19 +22,26 @@
 
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/parsed_data/create_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <iostream>
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
-#include "connector/duckdb_catalog.h"
+#include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/view.h"
+#include "connector/duckdb_catalog.h"
+#include "connector/duckdb_client_state.h"
+#include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_shard.h"
@@ -53,139 +60,26 @@ ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   duckdb::CatalogTransaction transaction,
   const duckdb::EntryLookupInfo& lookup_info) {
-  auto type = lookup_info.GetCatalogType();
-  auto table_name = lookup_info.GetEntryName();
-  if (type != duckdb::CatalogType::TABLE_ENTRY) {
-    return nullptr;
-  }
-
-  {
-    std::shared_lock lock{_lock};
-    auto cached = _table_entries.find(std::string{table_name});
-    if (cached != _table_entries.end()) {
-      return cached->second.get();
-    }
-  }
-
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto db_id = GetDatabaseId();
-  auto name_sv = std::string_view{table_name.data(), table_name.size()};
-
-  // Try as table first, then as index (FROM index_name syntax)
-  auto table = snapshot->GetTable(db_id, "public", name_sv);
-  std::shared_ptr<const catalog::InvertedIndex> inverted_index;
-  if (!table) {
-    auto relation = snapshot->GetRelation(db_id, "public", name_sv);
-    if (relation && relation->GetType() == catalog::ObjectType::Index) {
-      auto& index = basics::downCast<catalog::Index>(*relation);
-      table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
-      if (index.GetIndexType() == IndexType::Inverted) {
-        inverted_index =
-          std::dynamic_pointer_cast<const catalog::InvertedIndex>(relation);
-      }
-    }
-    if (!table) {
-      return nullptr;
-    }
-  }
-
-  // Build a CreateTableInfo from the SereneDB table
-  auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
-  info->table = table_name;
-  info->schema = name;
-  for (const auto& col : table->Columns()) {
-    info->columns.AddColumn(
-      duckdb::ColumnDefinition(col.name, VeloxTypeToDuckDB(col.type)));
-  }
-
-  // Add PK constraint if table has explicit PK columns
-  const auto& pk_col_ids = table->PKColumns();
-  if (!pk_col_ids.empty()) {
-    duckdb::vector<duckdb::string> pk_names;
-    for (auto pk_id : pk_col_ids) {
-      for (const auto& col : table->Columns()) {
-        if (col.id == pk_id) {
-          pk_names.push_back(col.name);
-          break;
-        }
-      }
-    }
-    info->constraints.push_back(
-      duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk_names), true));
-  }
-
-  // Discover indexed columns from catalog
-  std::vector<size_t> indexed_col_indices;
-  {
-    auto indexes = snapshot->GetIndexesByTable(table->GetId());
-    const auto& cols = table->Columns();
-    containers::FlatHashSet<size_t> idx_set;
-    for (auto& index : indexes) {
-      for (auto col_id : index->GetColumnIds()) {
-        for (size_t i = 0; i < cols.size(); ++i) {
-          if (cols[i].id == col_id) {
-            idx_set.insert(i);
-            break;
-          }
-        }
-      }
-    }
-    indexed_col_indices.assign(idx_set.begin(), idx_set.end());
-    std::sort(indexed_col_indices.begin(), indexed_col_indices.end());
-  }
-
-  // Create and cache the table entry under write lock
-  std::unique_lock lock{_lock};
-  // Re-check after acquiring write lock
-  auto cached = _table_entries.find(std::string{table_name});
-  if (cached != _table_entries.end()) {
-    return cached->second.get();
-  }
-  auto entry = duckdb::make_uniq<SereneDBTableEntry>(
-    catalog, *this, *info, std::move(table), std::move(indexed_col_indices),
-    std::move(inverted_index));
-  auto* ptr = entry.get();
-  _table_entries[table_name] = std::move(entry);
-  _table_infos[table_name] = std::move(info);
-  return ptr;
+  auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  return snapshot->GetDuckDBCache().GetOrCreateEntry(
+    lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
+    lookup_info.GetEntryName(), *snapshot);
 }
 
 void SereneDBSchemaEntry::Scan(
   duckdb::ClientContext& context, duckdb::CatalogType type,
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  if (type != duckdb::CatalogType::TABLE_ENTRY) {
-    return;
-  }
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto tables = snapshot->GetTables(GetDatabaseId(), "public");
-  std::unique_lock lock{_lock};
-  for (auto& sdb_table : tables) {
-    auto table_name = std::string{sdb_table->GetName()};
-    // Reuse cached entry — never replace (other threads may hold pointers)
-    auto cached = _table_entries.find(table_name);
-    if (cached != _table_entries.end()) {
-      callback(*cached->second);
-      continue;
-    }
-    auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
-    info->table = table_name;
-    info->schema = name;
-    for (const auto& col : sdb_table->Columns()) {
-      info->columns.AddColumn(duckdb::ColumnDefinition(
-        std::string{col.name}, VeloxTypeToDuckDB(col.type)));
-    }
-    auto entry = duckdb::make_uniq<SereneDBTableEntry>(
-      catalog, *this, *info, std::move(sdb_table));
-    callback(*entry);
-    _table_entries[table_name] = std::move(entry);
-    _table_infos[table_name] = std::move(info);
-  }
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  snapshot->GetDuckDBCache().ScanEntries(type, catalog, *this, GetDatabaseId(),
+                                         name, callback, *snapshot);
 }
 
 void SereneDBSchemaEntry::Scan(
   duckdb::CatalogType type,
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  // Without context -- just scan what we have cached
+  // Without context — no snapshot available, skip
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
@@ -245,8 +139,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
 
   // Create table options
   catalog::CreateTableOptions options;
-  auto r = catalog::MakeTableOptions(std::move(request), database_id,
-                                     options, database->GetReplicationFactor(),
+  auto r = catalog::MakeTableOptions(std::move(request), database_id, options,
+                                     database->GetReplicationFactor(),
                                      database->GetWriteConcern(), false);
   if (!r.ok()) {
     throw duckdb::InvalidInputException("Failed to create table options: %s",
@@ -286,15 +180,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
   // Map DuckDB index type to SereneDB IndexType
   // DuckDB default is empty or "ART"; PG default is "btree"
-  IndexType index_type;
+  catalog::ObjectType index_type;
   auto idx_type_str = info.index_type;
   std::transform(idx_type_str.begin(), idx_type_str.end(), idx_type_str.begin(),
                  ::tolower);
   if (idx_type_str.empty() || idx_type_str == "art" ||
       idx_type_str == "btree" || idx_type_str == "secondary") {
-    index_type = IndexType::Secondary;
+    index_type = catalog::ObjectType::SecondaryIndex;
   } else if (idx_type_str == "inverted") {
-    index_type = IndexType::Inverted;
+    index_type = catalog::ObjectType::InvertedIndex;
   } else {
     throw duckdb::CatalogException("access method \"%s\" does not exist",
                                    info.index_type);
@@ -373,19 +267,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     }
   }
 
-  // Build index options
-  catalog::IndexBaseOptions options;
-  options.name = info.index_name;
-  options.type = index_type;
-
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  // Create index based on type
   Result create_result;
-  if (index_type == IndexType::Inverted) {
+  if (index_type == catalog::ObjectType::InvertedIndex) {
     search::InvertedIndexShardOptions shard_options;
-    // Parse WITH options if provided
     auto it = info.options.find("commit_interval");
     if (it != info.options.end()) {
       shard_options.base.commit_interval_ms = it->second.GetValue<int64_t>();
@@ -399,16 +286,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (it != info.options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
-    create_result = catalog_impl.CreateIndex(
-      database_id, "public", sdb_table->GetName(), std::move(idx_columns),
-      std::move(options), shard_options, {.create_with_tombstone = false});
+    create_result = catalog_impl.CreateInvertedIndex(
+      database_id, "public", sdb_table->GetName(),
+      info.index_name, std::move(idx_columns),
+      shard_options);
   } else {
-    SecondaryIndexShardOptions shard_options;
-    shard_options.base.unique =
+    bool unique =
       (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
-    create_result = catalog_impl.CreateIndex(
-      database_id, "public", sdb_table->GetName(), std::move(idx_columns),
-      std::move(options), shard_options, {.create_with_tombstone = false});
+    create_result = catalog_impl.CreateSecondaryIndex(
+      database_id, "public", sdb_table->GetName(),
+      info.index_name, std::move(idx_columns), unique);
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
@@ -425,7 +312,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     new_snapshot->GetRelation(database_id, "public", info.index_name);
   if (catalog_index) {
     auto shard = new_snapshot->GetIndexShard(catalog_index->GetId());
-    if (shard && shard->GetType() == IndexType::Inverted) {
+    if (shard && shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
       auto& inverted_shard =
         basics::downCast<search::InvertedIndexShard>(*shard);
       inverted_shard.StartTasks();
@@ -435,8 +322,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     }
   }
 
-  // Invalidate cached table entries so they pick up new indexed columns
-  _table_entries.erase(std::string{sdb_table->GetName()});
+  // No cache to invalidate — entries live on snapshot, new snapshot picks up
+  // index
 
   std::cerr << "SereneDB: Created index " << info.index_name << " on "
             << sdb_table->GetName() << " via DuckDB" << std::endl;
@@ -445,12 +332,62 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
-  throw duckdb::NotImplementedException("CREATE FUNCTION through DuckDB");
+  auto& catalog_feature =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_impl = catalog_feature.Global();
+  auto database_id = GetDatabaseId();
+
+  auto sql = info.ToString();
+  auto function = std::make_shared<catalog::PgSqlFunction>(
+    database_id, ObjectId{}, info.name, std::move(sql));
+
+  bool replace =
+    info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+  auto r = catalog_impl.CreateFunction(database_id, name, function, replace);
+
+  bool if_not_exists =
+    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return nullptr;
+  }
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to create function: %s",
+                                        std::string{r.errorMessage()});
+  }
+
+  std::cerr << "SereneDB: Created function " << info.name << " via DuckDB"
+            << std::endl;
+  return nullptr;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) {
-  throw duckdb::NotImplementedException("CREATE VIEW through DuckDB");
+  auto& catalog_feature =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_impl = catalog_feature.Global();
+  auto database_id = GetDatabaseId();
+
+  auto sql = info.query->ToString();
+  auto view = std::make_shared<catalog::PgSqlView>(
+    database_id, ObjectId{}, info.view_name, std::move(sql));
+
+  bool replace =
+    info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+  auto r = catalog_impl.CreateView(database_id, name, view, replace);
+
+  bool if_not_exists =
+    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return nullptr;
+  }
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException("Failed to create view: %s",
+                                        std::string{r.errorMessage()});
+  }
+
+  std::cerr << "SereneDB: Created view " << info.view_name << " via DuckDB"
+            << std::endl;
+  return nullptr;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
@@ -491,16 +428,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
 
 void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
                                     duckdb::DropInfo& info) {
-  if (info.type != duckdb::CatalogType::TABLE_ENTRY) {
-    throw duckdb::NotImplementedException(
-      "DROP for type %s not supported", duckdb::CatalogTypeToString(info.type));
-  }
-
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog_impl = catalog_feature.Global();
-  auto r =
-    catalog_impl.DropTable(GetDatabaseId(), "public", info.name);
+
+  Result r;
+  if (info.type == duckdb::CatalogType::TABLE_ENTRY) {
+    r = catalog_impl.DropTable(GetDatabaseId(), name, info.name);
+  } else if (info.type == duckdb::CatalogType::VIEW_ENTRY) {
+    r = catalog_impl.DropView(GetDatabaseId(), name, info.name);
+  } else {
+    throw duckdb::NotImplementedException(
+      "DROP for type %s not supported", duckdb::CatalogTypeToString(info.type));
+  }
   bool if_exists = info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
   if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND) && if_exists) {
     return;
@@ -510,12 +450,8 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
                                         std::string{r.errorMessage()});
   }
 
-  // Remove from our cache
-  {
-    std::unique_lock lock{_lock};
-    _table_entries.erase(info.name);
-    _table_infos.erase(info.name);
-  }
+  // No cache to invalidate — entries live on snapshot, new snapshot won't have
+  // this table
 
   std::cerr << "SereneDB: Dropped table " << info.name << " via DuckDB"
             << std::endl;
@@ -524,11 +460,6 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   throw duckdb::NotImplementedException("ALTER through DuckDB");
-}
-
-void SereneDBSchemaEntry::InvalidateTable(const std::string& table_name) {
-  std::unique_lock lock{_lock};
-  _table_entries.erase(table_name);
 }
 
 }  // namespace sdb::connector

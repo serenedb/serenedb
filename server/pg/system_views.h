@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include <array>
-#include <string_view>
+#include <duckdb/catalog/default/default_views.hpp>
 
 namespace sdb::pg {
 
 // TODO(mkornaukhov) write queries in separate sql file
 // TODO revoke, grant, create rules and other stuff?
-inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
+inline constexpr duckdb::DefaultView kExternalViews[] = {
   // clang-format off
   // PostgreSQL System Views
   //
@@ -43,8 +42,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // cannot write a semicolon immediately followed by an empty line in a
   // string literal (including a function body!) or a multiline comment.
 
-  R"(CREATE VIEW pg_roles AS
-      SELECT
+  {"pg_catalog", "pg_roles",
+   R"(SELECT
           rolname,
           rolsuper,
           rolinherit,
@@ -59,10 +58,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           setconfig as rolconfig,
           pg_authid.oid
       FROM pg_authid LEFT JOIN pg_db_role_setting s
-      ON (pg_authid.oid = setrole AND setdatabase = 0);)",
+      ON (pg_authid.oid = setrole AND setdatabase = 0))"},
 
-  R"(CREATE VIEW pg_shadow AS
-      SELECT
+  {"pg_catalog", "pg_shadow",
+   R"(SELECT
           rolname AS usename,
           pg_authid.oid AS usesysid,
           rolcreatedb AS usecreatedb,
@@ -74,20 +73,20 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           setconfig AS useconfig
       FROM pg_authid LEFT JOIN pg_db_role_setting s
       ON (pg_authid.oid = setrole AND setdatabase = 0)
-      WHERE rolcanlogin;)",
+      WHERE rolcanlogin)"},
 
   // R"(REVOKE ALL ON pg_shadow FROM public;)",
 
-  R"(CREATE VIEW pg_group AS
-      SELECT
+  {"pg_catalog", "pg_group",
+   R"(SELECT
           rolname AS groname,
           oid AS grosysid,
           ARRAY(SELECT member FROM pg_auth_members WHERE roleid = pg_authid.oid) AS grolist
       FROM pg_authid
-      WHERE NOT rolcanlogin;)",
+      WHERE NOT rolcanlogin)"},
 
-  R"(CREATE VIEW pg_user AS
-      SELECT
+  {"pg_catalog", "pg_user",
+   R"(SELECT
           usename,
           usesysid,
           usecreatedb,
@@ -97,11 +96,11 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           '********'::text as passwd,
           valuntil,
           useconfig
-      FROM pg_shadow;)",
+      FROM pg_shadow)"},
 
   // TODO(mbkkt) Use original text when implement implicit cast from unknown to bigint[]
-  R"(CREATE VIEW pg_policies AS
-      SELECT
+  {"pg_catalog", "pg_policies",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS tablename,
           pol.polname AS policyname,
@@ -133,29 +132,29 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           pg_catalog.pg_get_expr(pol.polwithcheck, pol.polrelid) AS with_check
       FROM pg_catalog.pg_policy pol
       JOIN pg_catalog.pg_class C ON (C.oid = pol.polrelid)
-      LEFT JOIN pg_catalog.pg_namespace N ON (N.oid = C.relnamespace);)",
+      LEFT JOIN pg_catalog.pg_namespace N ON (N.oid = C.relnamespace))"},
 
-  R"(CREATE VIEW pg_rules AS
-      SELECT
+  {"pg_catalog", "pg_rules",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS tablename,
           R.rulename AS rulename,
           pg_get_ruledef(R.oid) AS definition
       FROM (pg_rewrite R JOIN pg_class C ON (C.oid = R.ev_class))
           LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
-      WHERE R.rulename != '_RETURN';)",
+      WHERE R.rulename != '_RETURN')"},
 
-  R"(CREATE VIEW pg_views AS
-      SELECT
+  {"pg_catalog", "pg_views",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS viewname,
           pg_get_userbyid(C.relowner) AS viewowner,
           pg_get_viewdef(C.oid) AS definition
       FROM pg_class C LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
-      WHERE C.relkind = 'v';)",
+      WHERE C.relkind = 'v')"},
 
-  R"(CREATE VIEW pg_tables AS
-      SELECT
+  {"pg_catalog", "pg_tables",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS tablename,
           pg_get_userbyid(C.relowner) AS tableowner,
@@ -166,10 +165,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           C.relrowsecurity AS rowsecurity
       FROM pg_class C LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
            LEFT JOIN pg_tablespace T ON (T.oid = C.reltablespace)
-      WHERE C.relkind IN ('r', 'p');)",
+      WHERE C.relkind IN ('r', 'p'))"},
 
-  R"(CREATE VIEW pg_matviews AS
-      SELECT
+  {"pg_catalog", "pg_matviews",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS matviewname,
           pg_get_userbyid(C.relowner) AS matviewowner,
@@ -179,10 +178,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           pg_get_viewdef(C.oid) AS definition
       FROM pg_class C LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
            LEFT JOIN pg_tablespace T ON (T.oid = C.reltablespace)
-      WHERE C.relkind = 'm';)",
+      WHERE C.relkind = 'm')"},
 
-  R"(CREATE VIEW pg_indexes AS
-      SELECT
+  {"pg_catalog", "pg_indexes",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS tablename,
           I.relname AS indexname,
@@ -192,10 +191,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            JOIN pg_class I ON (I.oid = X.indexrelid)
            LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
            LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace)
-      WHERE C.relkind IN ('r', 'm', 'p') AND I.relkind IN ('i', 'I');)",
+      WHERE C.relkind IN ('r', 'm', 'p') AND I.relkind IN ('i', 'I'))"},
 
-  R"(CREATE VIEW pg_sequences AS
-      SELECT
+  {"pg_catalog", "pg_sequences",
+   R"(SELECT
           N.nspname AS schemaname,
           C.relname AS sequencename,
           pg_get_userbyid(C.relowner) AS sequenceowner,
@@ -210,10 +209,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       FROM pg_sequence S JOIN pg_class C ON (C.oid = S.seqrelid)
            LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
       WHERE NOT pg_is_other_temp_schema(N.oid)
-            AND relkind = 'S';)",
+            AND relkind = 'S')"},
 
-  R"(CREATE VIEW pg_stats WITH (security_barrier) AS
-      SELECT
+  {"pg_catalog", "pg_stats",
+   R"(SELECT
           nspname AS schemaname,
           relname AS tablename,
           attname AS attname,
@@ -296,15 +295,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            LEFT JOIN pg_namespace n ON (n.oid = c.relnamespace)
       WHERE NOT attisdropped
       AND has_column_privilege(c.oid, a.attnum, 'select')
-      AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));)",
+      AND (c.relrowsecurity = false OR NOT row_security_active(c.oid)))"},
 
   // R"(REVOKE ALL ON pg_statistic FROM public;)",
 
   // TODO(mbkkt) Use original text when implement LATERAL JOIN
   // TODO(mbkkt) attnames: needs correlated unnest(s.stxkeys) subquery
   // TODO(mbkkt) most_common_*: needs LATERAL pg_mcv_list_items(sd.stxdmcv)
-  R"(CREATE VIEW pg_stats_ext WITH (security_barrier) AS
-      SELECT cn.nspname AS schemaname,
+  {"pg_catalog", "pg_stats_ext",
+   R"(SELECT cn.nspname AS schemaname,
              c.relname AS tablename,
              sn.nspname AS statistics_schemaname,
              s.stxname AS statistics_name,
@@ -324,15 +323,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
            LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
       WHERE pg_has_role(c.relowner, 'USAGE')
-      AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));)",
+      AND (c.relrowsecurity = false OR NOT row_security_active(c.oid)))"},
 
   // TODO(mbkkt) Use original text when implement LATERAL JOIN + row type field access
   // All stat columns come from LATERAL unnest + ::pg_statistic cast, which
   // requires both LATERAL and composite type field access. The INNER JOIN
   // on the LATERAL means no rows are produced without it, so this view
   // correctly returns no rows until these features are implemented.
-  R"(CREATE VIEW pg_stats_ext_exprs WITH (security_barrier) AS
-      SELECT cn.nspname AS schemaname,
+  {"pg_catalog", "pg_stats_ext_exprs",
+   R"(SELECT cn.nspname AS schemaname,
              c.relname AS tablename,
              sn.nspname AS statistics_schemaname,
              s.stxname AS statistics_name,
@@ -353,15 +352,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            LEFT JOIN pg_statistic_ext_data sd ON (s.oid = sd.stxoid)
            LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
            LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
-      WHERE false;)",
+      WHERE false)"},
 
   // unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
   // R"(REVOKE ALL ON pg_statistic_ext_data FROM public;)",
 
   // TODO(mbkkt) Use original text when implement LATERAL JOIN
   // TODO(mbkkt) attnames depends on decorrelate any non-eq subquery
-  R"(CREATE VIEW pg_publication_tables AS
-      SELECT
+  {"pg_catalog", "pg_publication_tables",
+   R"(SELECT
           P.pubname AS pubname,
           N.nspname AS schemaname,
           C.relname AS tablename,
@@ -370,41 +369,41 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       FROM pg_publication P
            JOIN pg_publication_rel PR ON (PR.prpubid = P.oid)
            JOIN pg_class C ON (C.oid = PR.prrelid)
-           JOIN pg_namespace N ON (N.oid = C.relnamespace);)",
+           JOIN pg_namespace N ON (N.oid = C.relnamespace))"},
 
-  R"(CREATE VIEW pg_locks AS
-      SELECT * FROM pg_lock_status() AS L;)",
+  {"pg_catalog", "pg_locks",
+   R"(SELECT * FROM pg_lock_status() AS L)"},
 
-  R"(CREATE VIEW pg_cursors AS
-      SELECT * FROM pg_cursor() AS C;)",
+  {"pg_catalog", "pg_cursors",
+   R"(SELECT * FROM pg_cursor() AS C)"},
 
-  R"(CREATE VIEW pg_available_extensions AS
-      SELECT E.name, E.default_version, X.extversion AS installed_version,
+  {"pg_catalog", "pg_available_extensions",
+   R"(SELECT E.name, E.default_version, X.extversion AS installed_version,
              E.comment
         FROM pg_available_extensions() AS E
-             LEFT JOIN pg_extension AS X ON E.name = X.extname;)",
+             LEFT JOIN pg_extension AS X ON E.name = X.extname)"},
 
-  R"(CREATE VIEW pg_available_extension_versions AS
-      SELECT E.name, E.version, (X.extname IS NOT NULL) AS installed,
+  {"pg_catalog", "pg_available_extension_versions",
+   R"(SELECT E.name, E.version, (X.extname IS NOT NULL) AS installed,
              E.superuser, E.trusted, E.relocatable,
              E.schema, E.requires, E.comment
         FROM pg_available_extension_versions() AS E
              LEFT JOIN pg_extension AS X
-               ON E.name = X.extname AND E.version = X.extversion;)",
+               ON E.name = X.extname AND E.version = X.extversion)"},
 
-  R"(CREATE VIEW pg_prepared_xacts AS
-      SELECT P.transaction, P.gid, P.prepared,
+  {"pg_catalog", "pg_prepared_xacts",
+   R"(SELECT P.transaction, P.gid, P.prepared,
              U.rolname AS owner, D.datname AS database
       FROM pg_prepared_xact() AS P
            LEFT JOIN pg_authid U ON P.ownerid = U.oid
-           LEFT JOIN pg_database D ON P.dbid = D.oid;)",
+           LEFT JOIN pg_database D ON P.dbid = D.oid)"},
 
-  R"(CREATE VIEW pg_prepared_statements AS
-      SELECT * FROM pg_prepared_statement() AS P;)",
+  {"pg_catalog", "pg_prepared_statements",
+   R"(SELECT * FROM pg_prepared_statement() AS P)"},
 
   // TODO(mbkkt) Restore tableoid join conditions when tableoid system column is supported
-  R"(CREATE VIEW pg_seclabels AS
-  SELECT
+  {"pg_catalog", "pg_seclabels",
+   R"(SELECT
       l.objoid, l.classoid, l.objsubid,
       CASE WHEN rel.relkind IN ('r', 'p') THEN 'table'::text
            WHEN rel.relkind = 'v' THEN 'view'::text
@@ -577,10 +576,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       l.provider, l.label
   FROM
       pg_shseclabel l
-      JOIN pg_authid rol ON l.objoid = rol.oid;)",
+      JOIN pg_authid rol ON l.objoid = rol.oid)"},
 
-  R"(CREATE VIEW pg_settings AS
-      SELECT * FROM pg_show_all_settings() AS A;)",
+  {"pg_catalog", "pg_settings",
+   R"(SELECT * FROM pg_show_all_settings() AS A)"},
 
   // R"(CREATE RULE pg_settings_u AS
   //     ON UPDATE TO pg_settings
@@ -593,59 +592,59 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
 
   // R"(GRANT SELECT, UPDATE ON pg_settings TO PUBLIC;)",
 
-  R"(CREATE VIEW pg_file_settings AS
-     SELECT * FROM pg_show_all_file_settings() AS A;)",
+  {"pg_catalog", "pg_file_settings",
+   R"(SELECT * FROM pg_show_all_file_settings() AS A)"},
 
   // R"(REVOKE ALL ON pg_file_settings FROM PUBLIC;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_show_all_file_settings() FROM PUBLIC;)",
 
-  R"(CREATE VIEW pg_hba_file_rules AS
-     SELECT * FROM pg_hba_file_rules() AS A;)",
+  {"pg_catalog", "pg_hba_file_rules",
+   R"(SELECT * FROM pg_hba_file_rules() AS A)"},
 
   // R"(REVOKE ALL ON pg_hba_file_rules FROM PUBLIC;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_hba_file_rules() FROM PUBLIC;)",
 
-  R"(CREATE VIEW pg_ident_file_mappings AS
-     SELECT * FROM pg_ident_file_mappings() AS A;)",
+  {"pg_catalog", "pg_ident_file_mappings",
+   R"(SELECT * FROM pg_ident_file_mappings() AS A)"},
 
   // R"(REVOKE ALL ON pg_ident_file_mappings FROM PUBLIC;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_ident_file_mappings() FROM PUBLIC;)",
 
-  R"(CREATE VIEW pg_timezone_abbrevs AS
-      SELECT * FROM pg_timezone_abbrevs_zone() z
+  {"pg_catalog", "pg_timezone_abbrevs",
+   R"(SELECT * FROM pg_timezone_abbrevs_zone() z
       UNION ALL
       (SELECT * FROM pg_timezone_abbrevs_abbrevs() a
        WHERE NOT EXISTS (SELECT 1 FROM pg_timezone_abbrevs_zone() z2
                          WHERE z2.abbrev = a.abbrev))
-      ORDER BY abbrev;)",
+      ORDER BY abbrev)"},
 
-  R"(CREATE VIEW pg_timezone_names AS
-      SELECT * FROM pg_timezone_names();)",
+  {"pg_catalog", "pg_timezone_names",
+   R"(SELECT * FROM pg_timezone_names())"},
 
-  R"(CREATE VIEW pg_config AS
-      SELECT * FROM pg_config();)",
+  {"pg_catalog", "pg_config",
+   R"(SELECT * FROM pg_config())"},
 
   // R"(REVOKE ALL ON pg_config FROM PUBLIC;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_config() FROM PUBLIC;)",
 
-  R"(CREATE VIEW pg_shmem_allocations AS
-      SELECT * FROM pg_get_shmem_allocations();)",
+  {"pg_catalog", "pg_shmem_allocations",
+   R"(SELECT * FROM pg_get_shmem_allocations())"},
 
   // R"(REVOKE ALL ON pg_shmem_allocations FROM PUBLIC;)",
   // R"(GRANT SELECT ON pg_shmem_allocations TO pg_read_all_stats;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_shmem_allocations() FROM PUBLIC;)",
   // R"(GRANT EXECUTE ON FUNCTION pg_get_shmem_allocations() TO pg_read_all_stats;)",
 
-  R"(CREATE VIEW pg_shmem_allocations_numa AS
-      SELECT * FROM pg_get_shmem_allocations_numa();)",
+  {"pg_catalog", "pg_shmem_allocations_numa",
+   R"(SELECT * FROM pg_get_shmem_allocations_numa())"},
 
   // R"(REVOKE ALL ON pg_shmem_allocations_numa FROM PUBLIC;)",
   // R"(GRANT SELECT ON pg_shmem_allocations_numa TO pg_read_all_stats;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_shmem_allocations_numa() FROM PUBLIC;)",
   // R"(GRANT EXECUTE ON FUNCTION pg_get_shmem_allocations_numa() TO pg_read_all_stats;)",
 
-  R"(CREATE VIEW pg_backend_memory_contexts AS
-      SELECT * FROM pg_get_backend_memory_contexts();)",
+  {"pg_catalog", "pg_backend_memory_contexts",
+   R"(SELECT * FROM pg_get_backend_memory_contexts())"},
 
   // R"(REVOKE ALL ON pg_backend_memory_contexts FROM PUBLIC;)",
   // R"(GRANT SELECT ON pg_backend_memory_contexts TO pg_read_all_stats;)",
@@ -654,8 +653,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
 
   // Statistics views
 
-  R"(CREATE VIEW pg_stat_all_tables AS
-      SELECT
+  {"pg_catalog", "pg_stat_all_tables",
+   R"(SELECT
               C.oid AS relid,
               N.nspname AS schemaname,
               C.relname AS relname,
@@ -691,10 +690,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            pg_index I ON C.oid = I.indrelid
            LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
       WHERE C.relkind IN ('r', 't', 'm', 'p')
-      GROUP BY C.oid, N.nspname, C.relname;)",
+      GROUP BY C.oid, N.nspname, C.relname)"},
 
-  R"(CREATE VIEW pg_stat_xact_all_tables AS
-      SELECT
+  {"pg_catalog", "pg_stat_xact_all_tables",
+   R"(SELECT
               C.oid AS relid,
               N.nspname AS schemaname,
               C.relname AS relname,
@@ -712,31 +711,31 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            pg_index I ON C.oid = I.indrelid
            LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
       WHERE C.relkind IN ('r', 't', 'm', 'p')
-      GROUP BY C.oid, N.nspname, C.relname;)",
+      GROUP BY C.oid, N.nspname, C.relname)"},
 
-  R"(CREATE VIEW pg_stat_sys_tables AS
-      SELECT * FROM pg_stat_all_tables
+  {"pg_catalog", "pg_stat_sys_tables",
+   R"(SELECT * FROM pg_stat_all_tables
       WHERE schemaname IN ('pg_catalog', 'information_schema') OR
-            schemaname ~ '^pg_toast';)",
+            schemaname ~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_stat_xact_sys_tables AS
-      SELECT * FROM pg_stat_xact_all_tables
+  {"pg_catalog", "pg_stat_xact_sys_tables",
+   R"(SELECT * FROM pg_stat_xact_all_tables
       WHERE schemaname IN ('pg_catalog', 'information_schema') OR
-            schemaname ~ '^pg_toast';)",
+            schemaname ~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_stat_user_tables AS
-      SELECT * FROM pg_stat_all_tables
+  {"pg_catalog", "pg_stat_user_tables",
+   R"(SELECT * FROM pg_stat_all_tables
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
-            schemaname !~ '^pg_toast';)",
+            schemaname !~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_stat_xact_user_tables AS
-      SELECT * FROM pg_stat_xact_all_tables
+  {"pg_catalog", "pg_stat_xact_user_tables",
+   R"(SELECT * FROM pg_stat_xact_all_tables
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
-            schemaname !~ '^pg_toast';)",
+            schemaname !~ '^pg_toast')"},
 
   // TODO(mbkkt) Use original text when implement LATERAL JOIN
-  R"(CREATE VIEW pg_statio_all_tables AS
-      SELECT
+  {"pg_catalog", "pg_statio_all_tables",
+   R"(SELECT
               C.oid AS relid,
               N.nspname AS schemaname,
               C.relname AS relname,
@@ -758,20 +757,20 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               LEFT JOIN pg_index I ON (I.indrelid = C.oid)
               LEFT JOIN pg_index TI ON (TI.indrelid = T.oid)
       WHERE C.relkind IN ('r', 't', 'm')
-      GROUP BY C.oid, N.nspname, C.relname, T.oid;)",
+      GROUP BY C.oid, N.nspname, C.relname, T.oid)"},
 
-  R"(CREATE VIEW pg_statio_sys_tables AS
-      SELECT * FROM pg_statio_all_tables
+  {"pg_catalog", "pg_statio_sys_tables",
+   R"(SELECT * FROM pg_statio_all_tables
       WHERE schemaname IN ('pg_catalog', 'information_schema') OR
-            schemaname ~ '^pg_toast';)",
+            schemaname ~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_statio_user_tables AS
-      SELECT * FROM pg_statio_all_tables
+  {"pg_catalog", "pg_statio_user_tables",
+   R"(SELECT * FROM pg_statio_all_tables
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
-            schemaname !~ '^pg_toast';)",
+            schemaname !~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_stat_all_indexes AS
-      SELECT
+  {"pg_catalog", "pg_stat_all_indexes",
+   R"(SELECT
               C.oid AS relid,
               I.oid AS indexrelid,
               N.nspname AS schemaname,
@@ -785,20 +784,20 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               pg_index X ON C.oid = X.indrelid JOIN
               pg_class I ON I.oid = X.indexrelid
               LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
-      WHERE C.relkind IN ('r', 't', 'm');)",
+      WHERE C.relkind IN ('r', 't', 'm'))"},
 
-  R"(CREATE VIEW pg_stat_sys_indexes AS
-      SELECT * FROM pg_stat_all_indexes
+  {"pg_catalog", "pg_stat_sys_indexes",
+   R"(SELECT * FROM pg_stat_all_indexes
       WHERE schemaname IN ('pg_catalog', 'information_schema') OR
-            schemaname ~ '^pg_toast';)",
+            schemaname ~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_stat_user_indexes AS
-      SELECT * FROM pg_stat_all_indexes
+  {"pg_catalog", "pg_stat_user_indexes",
+   R"(SELECT * FROM pg_stat_all_indexes
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
-            schemaname !~ '^pg_toast';)",
+            schemaname !~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_statio_all_indexes AS
-      SELECT
+  {"pg_catalog", "pg_statio_all_indexes",
+   R"(SELECT
               C.oid AS relid,
               I.oid AS indexrelid,
               N.nspname AS schemaname,
@@ -811,20 +810,20 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               pg_index X ON C.oid = X.indrelid JOIN
               pg_class I ON I.oid = X.indexrelid
               LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
-      WHERE C.relkind IN ('r', 't', 'm');)",
+      WHERE C.relkind IN ('r', 't', 'm'))"},
 
-  R"(CREATE VIEW pg_statio_sys_indexes AS
-      SELECT * FROM pg_statio_all_indexes
+  {"pg_catalog", "pg_statio_sys_indexes",
+   R"(SELECT * FROM pg_statio_all_indexes
       WHERE schemaname IN ('pg_catalog', 'information_schema') OR
-            schemaname ~ '^pg_toast';)",
+            schemaname ~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_statio_user_indexes AS
-      SELECT * FROM pg_statio_all_indexes
+  {"pg_catalog", "pg_statio_user_indexes",
+   R"(SELECT * FROM pg_statio_all_indexes
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
-            schemaname !~ '^pg_toast';)",
+            schemaname !~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_statio_all_sequences AS
-      SELECT
+  {"pg_catalog", "pg_statio_all_sequences",
+   R"(SELECT
               C.oid AS relid,
               N.nspname AS schemaname,
               C.relname AS relname,
@@ -833,20 +832,20 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               pg_stat_get_blocks_hit(C.oid) AS blks_hit
       FROM pg_class C
               LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
-      WHERE C.relkind = 'S';)",
+      WHERE C.relkind = 'S')"},
 
-  R"(CREATE VIEW pg_statio_sys_sequences AS
-      SELECT * FROM pg_statio_all_sequences
+  {"pg_catalog", "pg_statio_sys_sequences",
+   R"(SELECT * FROM pg_statio_all_sequences
       WHERE schemaname IN ('pg_catalog', 'information_schema') OR
-            schemaname ~ '^pg_toast';)",
+            schemaname ~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_statio_user_sequences AS
-      SELECT * FROM pg_statio_all_sequences
+  {"pg_catalog", "pg_statio_user_sequences",
+   R"(SELECT * FROM pg_statio_all_sequences
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
-            schemaname !~ '^pg_toast';)",
+            schemaname !~ '^pg_toast')"},
 
-  R"(CREATE VIEW pg_stat_activity AS
-      SELECT
+  {"pg_catalog", "pg_stat_activity",
+   R"(SELECT
               S.datid AS datid,
               D.datname AS datname,
               S.pid,
@@ -871,10 +870,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               S.backend_type
       FROM pg_stat_get_activity(NULL::integer) AS S
           LEFT JOIN pg_database AS D ON (S.datid = D.oid)
-          LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);)",
+          LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid))"},
 
-  R"(CREATE VIEW pg_stat_replication AS
-      SELECT
+  {"pg_catalog", "pg_stat_replication",
+   R"(SELECT
               S.pid,
               S.usesysid,
               U.rolname AS usename,
@@ -897,10 +896,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               W.reply_time
       FROM pg_stat_get_activity(NULL::integer) AS S
           JOIN pg_stat_get_wal_senders() AS W ON (S.pid = W.pid)
-          LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);)",
+          LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid))"},
 
-  R"(CREATE VIEW pg_stat_slru AS
-      SELECT
+  {"pg_catalog", "pg_stat_slru",
+   R"(SELECT
               s.name,
               s.blks_zeroed,
               s.blks_hit,
@@ -910,10 +909,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               s.flushes,
               s.truncates,
               s.stats_reset
-      FROM pg_stat_get_slru() s;)",
+      FROM pg_stat_get_slru() s)"},
 
-  R"(CREATE VIEW pg_stat_wal_receiver AS
-      SELECT
+  {"pg_catalog", "pg_stat_wal_receiver",
+   R"(SELECT
               s.pid,
               s.status,
               s.receive_start_lsn,
@@ -930,10 +929,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               s.sender_port,
               s.conninfo
       FROM pg_stat_get_wal_receiver() s
-      WHERE s.pid IS NOT NULL;)",
+      WHERE s.pid IS NOT NULL)"},
 
-  R"(CREATE VIEW pg_stat_recovery_prefetch AS
-      SELECT
+  {"pg_catalog", "pg_stat_recovery_prefetch",
+   R"(SELECT
               s.stats_reset,
               s.prefetch,
               s.hit,
@@ -944,10 +943,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               s.wal_distance,
               s.block_distance,
               s.io_depth
-       FROM pg_stat_get_recovery_prefetch() s;)",
+       FROM pg_stat_get_recovery_prefetch() s)"},
 
-  R"(CREATE VIEW pg_stat_subscription AS
-      SELECT
+  {"pg_catalog", "pg_stat_subscription",
+   R"(SELECT
               su.oid AS subid,
               su.subname,
               st.worker_type,
@@ -961,10 +960,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               st.latest_end_time
       FROM pg_subscription su
               LEFT JOIN pg_stat_get_subscription(NULL::oid) st
-                        ON (st.subid = su.oid);)",
+                        ON (st.subid = su.oid))"},
 
-  R"(CREATE VIEW pg_stat_ssl AS
-      SELECT
+  {"pg_catalog", "pg_stat_ssl",
+   R"(SELECT
               S.pid,
               S.ssl,
               S.sslversion AS version,
@@ -974,20 +973,20 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               S.ssl_client_serial AS client_serial,
               S.ssl_issuer_dn AS issuer_dn
       FROM pg_stat_get_activity(NULL::integer) AS S
-      WHERE S.client_port IS NOT NULL;)",
+      WHERE S.client_port IS NOT NULL)"},
 
-  R"(CREATE VIEW pg_stat_gssapi AS
-      SELECT
+  {"pg_catalog", "pg_stat_gssapi",
+   R"(SELECT
               S.pid,
               S.gss_auth AS gss_authenticated,
               S.gss_princ AS principal,
               S.gss_enc AS encrypted,
               S.gss_delegation AS credentials_delegated
       FROM pg_stat_get_activity(NULL::integer) AS S
-      WHERE S.client_port IS NOT NULL;)",
+      WHERE S.client_port IS NOT NULL)"},
 
-  R"(CREATE VIEW pg_replication_slots AS
-      SELECT
+  {"pg_catalog", "pg_replication_slots",
+   R"(SELECT
               L.slot_name,
               L.plugin,
               L.slot_type,
@@ -1010,11 +1009,11 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               L.failover,
               L.synced
       FROM pg_get_replication_slots() AS L
-              LEFT JOIN pg_database D ON (L.datoid = D.oid);)",
+              LEFT JOIN pg_database D ON (L.datoid = D.oid))"},
 
   // TODO(mbkkt) Use original text when implement LATERAL JOIN
-  R"(CREATE VIEW pg_stat_replication_slots AS
-      SELECT
+  {"pg_catalog", "pg_stat_replication_slots",
+   R"(SELECT
               s.slot_name,
               s.spill_txns,
               s.spill_count,
@@ -1028,11 +1027,11 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       FROM pg_replication_slots as r,
            pg_stat_get_replication_slot(NULL::TEXT) as s
       WHERE r.slot_name = s.slot_name
-            AND r.datoid IS NOT NULL; -- excluding physical slots)",
+            AND r.datoid IS NOT NULL; -- excluding physical slots)"},
 
   // TODO(mbkkt) Use original text when implement implicit casts for UNION
-  R"(CREATE VIEW pg_stat_database AS
-      SELECT
+  {"pg_catalog", "pg_stat_database",
+   R"(SELECT
               D.oid AS datid,
               D.datname AS datname,
                   CASE
@@ -1071,10 +1070,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           SELECT 0::oid AS oid, NULL::name AS datname
           UNION ALL
           SELECT oid, datname FROM pg_database
-      ) D;)",
+      ) D)"},
 
-  R"(CREATE VIEW pg_stat_database_conflicts AS
-      SELECT
+  {"pg_catalog", "pg_stat_database_conflicts",
+   R"(SELECT
               D.oid AS datid,
               D.datname AS datname,
               pg_stat_get_db_conflict_tablespace(D.oid) AS confl_tablespace,
@@ -1083,10 +1082,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               pg_stat_get_db_conflict_bufferpin(D.oid) AS confl_bufferpin,
               pg_stat_get_db_conflict_startup_deadlock(D.oid) AS confl_deadlock,
               pg_stat_get_db_conflict_logicalslot(D.oid) AS confl_active_logicalslot
-      FROM pg_database D;)",
+      FROM pg_database D)"},
 
-  R"(CREATE VIEW pg_stat_user_functions AS
-      SELECT
+  {"pg_catalog", "pg_stat_user_functions",
+   R"(SELECT
               P.oid AS funcid,
               N.nspname AS schemaname,
               P.proname AS funcname,
@@ -1095,10 +1094,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               pg_stat_get_function_self_time(P.oid) AS self_time
       FROM pg_proc P LEFT JOIN pg_namespace N ON (N.oid = P.pronamespace)
       WHERE P.prolang != 12  -- fast check to eliminate built-in functions
-            AND pg_stat_get_function_calls(P.oid) IS NOT NULL;)",
+            AND pg_stat_get_function_calls(P.oid) IS NOT NULL)"},
 
-  R"(CREATE VIEW pg_stat_xact_user_functions AS
-      SELECT
+  {"pg_catalog", "pg_stat_xact_user_functions",
+   R"(SELECT
               P.oid AS funcid,
               N.nspname AS schemaname,
               P.proname AS funcname,
@@ -1107,10 +1106,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               pg_stat_get_xact_function_self_time(P.oid) AS self_time
       FROM pg_proc P LEFT JOIN pg_namespace N ON (N.oid = P.pronamespace)
       WHERE P.prolang != 12  -- fast check to eliminate built-in functions
-            AND pg_stat_get_xact_function_calls(P.oid) IS NOT NULL;)",
+            AND pg_stat_get_xact_function_calls(P.oid) IS NOT NULL)"},
 
-  R"(CREATE VIEW pg_stat_archiver AS
-      SELECT
+  {"pg_catalog", "pg_stat_archiver",
+   R"(SELECT
           s.archived_count,
           s.last_archived_wal,
           s.last_archived_time,
@@ -1118,17 +1117,17 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           s.last_failed_wal,
           s.last_failed_time,
           s.stats_reset
-      FROM pg_stat_get_archiver() s;)",
+      FROM pg_stat_get_archiver() s)"},
 
-  R"(CREATE VIEW pg_stat_bgwriter AS
-      SELECT
+  {"pg_catalog", "pg_stat_bgwriter",
+   R"(SELECT
           pg_stat_get_bgwriter_buf_written_clean() AS buffers_clean,
           pg_stat_get_bgwriter_maxwritten_clean() AS maxwritten_clean,
           pg_stat_get_buf_alloc() AS buffers_alloc,
-          pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;)",
+          pg_stat_get_bgwriter_stat_reset_time() AS stats_reset)"},
 
-  R"(CREATE VIEW pg_stat_checkpointer AS
-      SELECT
+  {"pg_catalog", "pg_stat_checkpointer",
+   R"(SELECT
           pg_stat_get_checkpointer_num_timed() AS num_timed,
           pg_stat_get_checkpointer_num_requested() AS num_requested,
           pg_stat_get_checkpointer_num_performed() AS num_done,
@@ -1139,10 +1138,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           pg_stat_get_checkpointer_sync_time() AS sync_time,
           pg_stat_get_checkpointer_buffers_written() AS buffers_written,
           pg_stat_get_checkpointer_slru_written() AS slru_written,
-          pg_stat_get_checkpointer_stat_reset_time() AS stats_reset;)",
+          pg_stat_get_checkpointer_stat_reset_time() AS stats_reset)"},
 
-  R"(CREATE VIEW pg_stat_io AS
-  SELECT
+  {"pg_catalog", "pg_stat_io",
+   R"(SELECT
          b.backend_type,
          b.object,
          b.context,
@@ -1163,19 +1162,19 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
          b.fsyncs,
          b.fsync_time,
          b.stats_reset
-  FROM pg_stat_get_io() b;)",
+  FROM pg_stat_get_io() b)"},
 
-  R"(CREATE VIEW pg_stat_wal AS
-      SELECT
+  {"pg_catalog", "pg_stat_wal",
+   R"(SELECT
           w.wal_records,
           w.wal_fpi,
           w.wal_bytes,
           w.wal_buffers_full,
           w.stats_reset
-      FROM pg_stat_get_wal() w;)",
+      FROM pg_stat_get_wal() w)"},
 
-  R"(CREATE VIEW pg_stat_progress_analyze AS
-      SELECT
+  {"pg_catalog", "pg_stat_progress_analyze",
+   R"(SELECT
           S.pid AS pid, S.datid AS datid, D.datname AS datname,
           CAST(S.relid AS oid) AS relid,
           CASE S.param1 WHEN 0 THEN 'initializing'
@@ -1194,10 +1193,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           CAST(S.param8 AS oid) AS current_child_table_relid,
           S.param9 / 1000000::double precision AS delay_time
       FROM pg_stat_get_progress_info('ANALYZE') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid;)",
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 
-  R"(CREATE VIEW pg_stat_progress_vacuum AS
-      SELECT
+  {"pg_catalog", "pg_stat_progress_vacuum",
+   R"(SELECT
           S.pid AS pid, S.datid AS datid, D.datname AS datname,
           S.relid AS relid,
           CASE S.param1 WHEN 0 THEN 'initializing'
@@ -1215,10 +1214,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           S.param10 AS indexes_processed,
           S.param11 / 1000000::double precision AS delay_time
       FROM pg_stat_get_progress_info('VACUUM') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid;)",
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 
-  R"(CREATE VIEW pg_stat_progress_cluster AS
-      SELECT
+  {"pg_catalog", "pg_stat_progress_cluster",
+   R"(SELECT
           S.pid AS pid,
           S.datid AS datid,
           D.datname AS datname,
@@ -1242,10 +1241,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           S.param7 AS heap_blks_scanned,
           S.param8 AS index_rebuild_count
       FROM pg_stat_get_progress_info('CLUSTER') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid;)",
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 
-  R"(CREATE VIEW pg_stat_progress_create_index AS
-      SELECT
+  {"pg_catalog", "pg_stat_progress_create_index",
+   R"(SELECT
           S.pid AS pid, S.datid AS datid, D.datname AS datname,
           S.relid AS relid,
           CAST(S.param7 AS oid) AS index_relid,
@@ -1282,10 +1281,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           S.param14 AS partitions_total,
           S.param15 AS partitions_done
       FROM pg_stat_get_progress_info('CREATE INDEX') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid;)",
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 
-  R"(CREATE VIEW pg_stat_progress_basebackup AS
-      SELECT
+  {"pg_catalog", "pg_stat_progress_basebackup",
+   R"(SELECT
           S.pid AS pid,
           CASE S.param1 WHEN 0 THEN 'initializing'
                         WHEN 1 THEN 'waiting for checkpoint to finish'
@@ -1298,10 +1297,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           S.param3 AS backup_streamed,
           S.param4 AS tablespaces_total,
           S.param5 AS tablespaces_streamed
-      FROM pg_stat_get_progress_info('BASEBACKUP') AS S;)",
+      FROM pg_stat_get_progress_info('BASEBACKUP') AS S)"},
 
-  R"(CREATE VIEW pg_stat_progress_copy AS
-      SELECT
+  {"pg_catalog", "pg_stat_progress_copy",
+   R"(SELECT
           S.pid AS pid, S.datid AS datid, D.datname AS datname,
           S.relid AS relid,
           CASE S.param5 WHEN 1 THEN 'COPY FROM'
@@ -1318,10 +1317,10 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           S.param4 AS tuples_excluded,
           S.param7 AS tuples_skipped
       FROM pg_stat_get_progress_info('COPY') AS S
-          LEFT JOIN pg_database D ON S.datid = D.oid;)",
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 
-  R"(CREATE VIEW pg_user_mappings AS
-      SELECT
+  {"pg_catalog", "pg_user_mappings",
+   R"(SELECT
           U.oid       AS umid,
           S.oid       AS srvid,
           S.srvname   AS srvname,
@@ -1340,13 +1339,13 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                    ELSE NULL END AS umoptions
       FROM pg_user_mapping U
           JOIN pg_foreign_server S ON (U.umserver = S.oid)
-          LEFT JOIN pg_authid A ON (A.oid = U.umuser);)",
+          LEFT JOIN pg_authid A ON (A.oid = U.umuser))"},
 
   // R"(REVOKE ALL ON pg_user_mapping FROM public;)",
 
-  R"(CREATE VIEW pg_replication_origin_status AS
-      SELECT *
-      FROM pg_show_replication_origin_status();)",
+  {"pg_catalog", "pg_replication_origin_status",
+   R"(SELECT *
+      FROM pg_show_replication_origin_status())"},
 
   // R"(REVOKE ALL ON pg_replication_origin_status FROM public;)",
 
@@ -1358,8 +1357,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   //               subslotname, subsynccommit, subpublications, suborigin)
   //     ON pg_subscription TO public;)",
 
-  R"(CREATE VIEW pg_stat_subscription_stats AS
-      SELECT
+  {"pg_catalog", "pg_stat_subscription_stats",
+   R"(SELECT
           ss.subid,
           s.subname,
           ss.apply_error_count,
@@ -1374,13 +1373,13 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           ss.stats_reset
       FROM pg_subscription as s,
            pg_stat_get_subscription_stats(NULL::oid) as ss
-      WHERE ss.subid = s.oid;)",
+      WHERE ss.subid = s.oid)"},
 
-  R"(CREATE VIEW pg_wait_events AS
-      SELECT * FROM pg_get_wait_events();)",
+  {"pg_catalog", "pg_wait_events",
+   R"(SELECT * FROM pg_get_wait_events())"},
 
-  R"(CREATE VIEW pg_aios AS
-      SELECT * FROM pg_get_aios();)",
+  {"pg_catalog", "pg_aios",
+   R"(SELECT * FROM pg_get_aios())"},
   // R"(REVOKE ALL ON pg_aios FROM PUBLIC;)",
   // R"(GRANT SELECT ON pg_aios TO pg_read_all_stats;)",
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_aios() FROM PUBLIC;)",
@@ -1436,8 +1435,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.3
   // INFORMATION_SCHEMA_CATALOG_NAME view
 
-  R"(CREATE VIEW information_schema_catalog_name AS
-      SELECT CAST(current_database() AS sql_identifier) AS catalog_name;)",
+  {"information_schema", "information_schema_catalog_name",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS catalog_name)"},
 
   // R"(GRANT SELECT ON information_schema_catalog_name TO PUBLIC;)",
 
@@ -1458,8 +1457,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.10
   // APPLICABLE_ROLES view
 
-  R"(CREATE VIEW applicable_roles AS
-      SELECT CAST(a.rolname AS sql_identifier) AS grantee,
+  {"information_schema", "applicable_roles",
+   R"(SELECT CAST(a.rolname AS sql_identifier) AS grantee,
              CAST(b.rolname AS sql_identifier) AS role_name,
              CAST(CASE WHEN m.admin_option THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
       FROM (SELECT member, roleid, admin_option FROM pg_auth_members
@@ -1472,25 +1471,25 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            )  m
            JOIN pg_authid a ON (m.member = a.oid)
            JOIN pg_authid b ON (m.roleid = b.oid)
-      WHERE pg_has_role(a.oid, 'USAGE');)",
+      WHERE pg_has_role(a.oid, 'USAGE'))"},
 
   // R"(GRANT SELECT ON applicable_roles TO PUBLIC;)",
 
   // 6.9
   // ADMINISTRABLE_ROLE_AUTHORIZATIONS view
 
-  R"(CREATE VIEW administrable_role_authorizations AS
-      SELECT *
+  {"information_schema", "administrable_role_authorizations",
+   R"(SELECT *
       FROM information_schema.applicable_roles
-      WHERE is_grantable = 'YES';)",
+      WHERE is_grantable = 'YES')"},
 
   // R"(GRANT SELECT ON administrable_role_authorizations TO PUBLIC;)",
 
   // 6.12
   // ATTRIBUTES view
 
-  R"(CREATE VIEW attributes AS
-      SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
+  {"information_schema", "attributes",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
              CAST(nc.nspname AS sql_identifier) AS udt_schema,
              CAST(c.relname AS sql_identifier) AS udt_name,
              CAST(a.attname AS sql_identifier) AS attribute_name,
@@ -1572,15 +1571,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       WHERE a.attnum > 0 AND NOT a.attisdropped
             AND c.relkind IN ('c')
             AND (pg_has_role(c.relowner, 'USAGE')
-                 OR has_type_privilege(c.reltype, 'USAGE'));)",
+                 OR has_type_privilege(c.reltype, 'USAGE')))"},
 
   // R"(GRANT SELECT ON attributes TO PUBLIC;)",
 
   // 6.13
   // CHARACTER_SETS view
 
-  R"(CREATE VIEW character_sets AS
-      SELECT CAST(null AS sql_identifier) AS character_set_catalog,
+  {"information_schema", "character_sets",
+   R"(SELECT CAST(null AS sql_identifier) AS character_set_catalog,
              CAST(null AS sql_identifier) AS character_set_schema,
              CAST(getdatabaseencoding() AS sql_identifier) AS character_set_name,
              CAST(CASE WHEN getdatabaseencoding() = 'UTF8' THEN 'UCS' ELSE getdatabaseencoding() END AS sql_identifier) AS character_repertoire,
@@ -1593,15 +1592,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                ON (datcollate = collcollate AND datctype = collctype)
       WHERE d.datname = current_database()
       ORDER BY char_length(c.collname) DESC, c.collname ASC -- prefer full/canonical name
-      LIMIT 1;)",
+      LIMIT 1)"},
 
   // R"(GRANT SELECT ON character_sets TO PUBLIC;)",
 
   // 6.14
   // CHECK_CONSTRAINT_ROUTINE_USAGE view
 
-  R"(CREATE VIEW check_constraint_routine_usage AS
-      SELECT DISTINCT
+  {"information_schema", "check_constraint_routine_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(nc.nspname AS sql_identifier) AS constraint_schema,
              CAST(c.conname AS sql_identifier) AS constraint_name,
@@ -1616,7 +1615,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
         AND d.refobjid = p.oid
         AND d.refclassid = 'pg_catalog.pg_proc'::regclass
         AND p.pronamespace = np.oid
-        AND pg_has_role(p.proowner, 'USAGE');)",
+        AND pg_has_role(p.proowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON check_constraint_routine_usage TO PUBLIC;)",
 
@@ -1624,8 +1623,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // CHECK_CONSTRAINTS view
 
   // TODO(mbkkt) Use original text when implement proper types
-  R"(CREATE VIEW check_constraints AS
-      SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
+  {"information_schema", "check_constraints",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(rs.nspname AS sql_identifier) AS constraint_schema,
              CAST(con.conname AS sql_identifier) AS constraint_name,
              CAST(pg_get_expr(con.conbin, coalesce(c.oid, 0)) AS character_data) AS check_clause
@@ -1648,29 +1647,29 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
               LEFT JOIN pg_type t ON t.oid = con.contypid
               LEFT JOIN pg_attribute at ON (con.conrelid = at.attrelid AND con.conkey[1] = at.attnum)
        WHERE pg_has_role(coalesce(c.relowner, t.typowner), 'USAGE'::text)
-         AND con.contype = 'n';)",
+         AND con.contype = 'n')"},
 
   // R"(GRANT SELECT ON check_constraints TO PUBLIC;)",
 
   // 6.16
   // COLLATIONS view
 
-  R"(CREATE VIEW collations AS
-      SELECT CAST(current_database() AS sql_identifier) AS collation_catalog,
+  {"information_schema", "collations",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS collation_catalog,
              CAST(nc.nspname AS sql_identifier) AS collation_schema,
              CAST(c.collname AS sql_identifier) AS collation_name,
              CAST('NO PAD' AS character_data) AS pad_attribute
       FROM pg_collation c, pg_namespace nc
       WHERE c.collnamespace = nc.oid
-            AND collencoding IN (-1, (SELECT encoding FROM pg_database WHERE datname = current_database()));)",
+            AND collencoding IN (-1, (SELECT encoding FROM pg_database WHERE datname = current_database())))"},
 
   // R"(GRANT SELECT ON collations TO PUBLIC;)",
 
   // 6.17
   // COLLATION_CHARACTER_SET_APPLICABILITY view
 
-  R"(CREATE VIEW collation_character_set_applicability AS
-      SELECT CAST(current_database() AS sql_identifier) AS collation_catalog,
+  {"information_schema", "collation_character_set_applicability",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS collation_catalog,
              CAST(nc.nspname AS sql_identifier) AS collation_schema,
              CAST(c.collname AS sql_identifier) AS collation_name,
              CAST(null AS sql_identifier) AS character_set_catalog,
@@ -1678,15 +1677,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(getdatabaseencoding() AS sql_identifier) AS character_set_name
       FROM pg_collation c, pg_namespace nc
       WHERE c.collnamespace = nc.oid
-            AND collencoding IN (-1, (SELECT encoding FROM pg_database WHERE datname = current_database()));)",
+            AND collencoding IN (-1, (SELECT encoding FROM pg_database WHERE datname = current_database())))"},
 
   // R"(GRANT SELECT ON collation_character_set_applicability TO PUBLIC;)",
 
   // 6.18
   // COLUMN_COLUMN_USAGE view
 
-  R"(CREATE VIEW column_column_usage AS
-      SELECT DISTINCT
+  {"information_schema", "column_column_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(n.nspname AS sql_identifier) AS table_schema,
              CAST(c.relname AS sql_identifier) AS table_name,
@@ -1708,15 +1707,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND d.refobjid = ac.attrelid
             AND d.refobjsubid = ac.attnum
             AND ad.attgenerated <> ''
-            AND pg_has_role(c.relowner, 'USAGE');)",
+            AND pg_has_role(c.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON column_column_usage TO PUBLIC;)",
 
   // 6.19
   // COLUMN_DOMAIN_USAGE view
 
-  R"(CREATE VIEW column_domain_usage AS
-      SELECT CAST(current_database() AS sql_identifier) AS domain_catalog,
+  {"information_schema", "column_domain_usage",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS domain_catalog,
              CAST(nt.nspname AS sql_identifier) AS domain_schema,
              CAST(t.typname AS sql_identifier) AS domain_name,
              CAST(current_database() AS sql_identifier) AS table_catalog,
@@ -1735,7 +1734,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND c.relkind IN ('r', 'v', 'f', 'p')
             AND a.attnum > 0
             AND NOT a.attisdropped
-            AND pg_has_role(t.typowner, 'USAGE');)",
+            AND pg_has_role(t.typowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON column_domain_usage TO PUBLIC;)",
 
@@ -1743,8 +1742,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // COLUMN_PRIVILEGES
 
   // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
-  R"(CREATE VIEW column_privileges AS
-      SELECT CAST(null AS sql_identifier) AS grantor,
+  {"information_schema", "column_privileges",
+   R"(SELECT CAST(null AS sql_identifier) AS grantor,
              CAST(null AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(null AS sql_identifier) AS table_schema,
@@ -1752,15 +1751,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(null AS sql_identifier) AS column_name,
              CAST(null AS character_data) AS privilege_type,
              CAST(null AS yes_or_no) AS is_grantable
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON column_privileges TO PUBLIC;)",
 
   // 6.21
   // COLUMN_UDT_USAGE view
 
-  R"(CREATE VIEW column_udt_usage AS
-      SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
+  {"information_schema", "column_udt_usage",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
              CAST(coalesce(nbt.nspname, nt.nspname) AS sql_identifier) AS udt_schema,
              CAST(coalesce(bt.typname, t.typname) AS sql_identifier) AS udt_name,
              CAST(current_database() AS sql_identifier) AS table_catalog,
@@ -1778,15 +1777,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND nc.oid = c.relnamespace
             AND a.attnum > 0 AND NOT a.attisdropped
             AND c.relkind in ('r', 'v', 'f', 'p')
-            AND pg_has_role(coalesce(bt.typowner, t.typowner), 'USAGE');)",
+            AND pg_has_role(coalesce(bt.typowner, t.typowner), 'USAGE'))"},
 
   // R"(GRANT SELECT ON column_udt_usage TO PUBLIC;)",
 
   // 6.22
   // COLUMNS view
 
-  R"(CREATE VIEW columns AS
-      SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
+  {"information_schema", "columns",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(nc.nspname AS sql_identifier) AS table_schema,
              CAST(c.relname AS sql_identifier) AS table_name,
              CAST(a.attname AS sql_identifier) AS column_name,
@@ -1905,15 +1904,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
 
             AND (pg_has_role(c.relowner, 'USAGE')
                  OR has_column_privilege(c.oid, a.attnum,
-                                         'SELECT, INSERT, UPDATE, REFERENCES'));)",
+                                         'SELECT, INSERT, UPDATE, REFERENCES')))"},
 
   // R"(GRANT SELECT ON columns TO PUBLIC;)",
 
   // 6.23
   // CONSTRAINT_COLUMN_USAGE view
 
-  R"(CREATE VIEW constraint_column_usage AS
-      SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
+  {"information_schema", "constraint_column_usage",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(tblschema AS sql_identifier) AS table_schema,
              CAST(tblname AS sql_identifier) AS table_name,
              CAST(colname AS sql_identifier) AS column_name,
@@ -1968,15 +1967,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
 
         ) AS x (tblschema, tblname, tblowner, colname, cstrschema, cstrname)
 
-      WHERE pg_has_role(x.tblowner, 'USAGE');)",
+      WHERE pg_has_role(x.tblowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON constraint_column_usage TO PUBLIC;)",
 
   // 6.25
   // CONSTRAINT_TABLE_USAGE view
 
-  R"(CREATE VIEW constraint_table_usage AS
-      SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
+  {"information_schema", "constraint_table_usage",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(nr.nspname AS sql_identifier) AS table_schema,
              CAST(r.relname AS sql_identifier) AS table_name,
              CAST(current_database() AS sql_identifier) AS constraint_catalog,
@@ -1990,7 +1989,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND ( (c.contype = 'f' AND c.confrelid = r.oid)
                OR (c.contype IN ('p', 'u') AND c.conrelid = r.oid) )
             AND r.relkind IN ('r', 'p')
-            AND pg_has_role(r.relowner, 'USAGE');)",
+            AND pg_has_role(r.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON constraint_table_usage TO PUBLIC;)",
 
@@ -1999,8 +1998,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.29
   // DOMAIN_CONSTRAINTS view
 
-  R"(CREATE VIEW domain_constraints AS
-      SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
+  {"information_schema", "domain_constraints",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(rs.nspname AS sql_identifier) AS constraint_schema,
              CAST(con.conname AS sql_identifier) AS constraint_name,
              CAST(current_database() AS sql_identifier) AS domain_catalog,
@@ -2015,15 +2014,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND n.oid = t.typnamespace
             AND t.oid = con.contypid
             AND (pg_has_role(t.typowner, 'USAGE')
-                 OR has_type_privilege(t.oid, 'USAGE'));)",
+                 OR has_type_privilege(t.oid, 'USAGE')))"},
 
   // R"(GRANT SELECT ON domain_constraints TO PUBLIC;)",
 
   // DOMAIN_UDT_USAGE view
   // apparently removed in SQL:2003
 
-  R"(CREATE VIEW domain_udt_usage AS
-      SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
+  {"information_schema", "domain_udt_usage",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
              CAST(nbt.nspname AS sql_identifier) AS udt_schema,
              CAST(bt.typname AS sql_identifier) AS udt_name,
              CAST(current_database() AS sql_identifier) AS domain_catalog,
@@ -2037,15 +2036,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND t.typbasetype = bt.oid
             AND bt.typnamespace = nbt.oid
             AND t.typtype = 'd'
-            AND pg_has_role(bt.typowner, 'USAGE');)",
+            AND pg_has_role(bt.typowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON domain_udt_usage TO PUBLIC;)",
 
   // 6.30
   // DOMAINS view
 
-  R"(CREATE VIEW domains AS
-      SELECT CAST(current_database() AS sql_identifier) AS domain_catalog,
+  {"information_schema", "domains",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS domain_catalog,
              CAST(nt.nspname AS sql_identifier) AS domain_schema,
              CAST(t.typname AS sql_identifier) AS domain_name,
 
@@ -2120,7 +2119,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              ON t.typcollation = co.oid AND (nco.nspname, co.collname) <> ('pg_catalog', 'default')
 
       WHERE (pg_has_role(t.typowner, 'USAGE')
-             OR has_type_privilege(t.oid, 'USAGE'));)",
+             OR has_type_privilege(t.oid, 'USAGE')))"},
 
   // R"(GRANT SELECT ON domains TO PUBLIC;)",
 
@@ -2129,18 +2128,18 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.32
   // ENABLED_ROLES view
 
-  R"(CREATE VIEW enabled_roles AS
-      SELECT CAST(a.rolname AS sql_identifier) AS role_name
+  {"information_schema", "enabled_roles",
+   R"(SELECT CAST(a.rolname AS sql_identifier) AS role_name
       FROM pg_authid a
-      WHERE pg_has_role(a.oid, 'USAGE');)",
+      WHERE pg_has_role(a.oid, 'USAGE'))"},
 
   // R"(GRANT SELECT ON enabled_roles TO PUBLIC;)",
 
   // 6.34
   // KEY_COLUMN_USAGE view
 
-  R"(CREATE VIEW key_column_usage AS
-      SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
+  {"information_schema", "key_column_usage",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(nc.nspname AS sql_identifier) AS constraint_schema,
              CAST(c.conname AS sql_identifier) AS constraint_name,
              CAST(current_database() AS sql_identifier) AS table_catalog,
@@ -2166,7 +2165,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND (NOT pg_is_other_temp_schema(nr.oid))
             AND (pg_has_role(r.relowner, 'USAGE')
                  OR has_column_privilege(r.oid, a.attnum,
-                                         'SELECT, INSERT, UPDATE, REFERENCES'));)",
+                                         'SELECT, INSERT, UPDATE, REFERENCES')))"},
 
   // R"(GRANT SELECT ON key_column_usage TO PUBLIC;)",
 
@@ -2174,8 +2173,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // PARAMETERS view
 
   // TODO(mbkkt) Use original text when implement _pg_expandarray / row field access
-  R"(CREATE VIEW parameters AS
-      SELECT CAST(current_database() AS sql_identifier) AS specific_catalog,
+  {"information_schema", "parameters",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(null AS sql_identifier) AS specific_schema,
              CAST(null AS sql_identifier) AS specific_name,
              CAST(null AS cardinal_number) AS ordinal_position,
@@ -2207,15 +2206,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(null AS cardinal_number) AS maximum_cardinality,
              CAST(null AS sql_identifier) AS dtd_identifier,
              CAST(null AS character_data) AS parameter_default
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON parameters TO PUBLIC;)",
 
   // 6.42
   // REFERENTIAL_CONSTRAINTS view
 
-  R"(CREATE VIEW referential_constraints AS
-      SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
+  {"information_schema", "referential_constraints",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(ncon.nspname AS sql_identifier) AS constraint_schema,
              CAST(con.conname AS sql_identifier) AS constraint_name,
              CAST(
@@ -2266,15 +2265,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       WHERE pg_has_role(c.relowner, 'USAGE')
             -- SELECT privilege omitted, per SQL standard
             OR has_table_privilege(c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-            OR has_any_column_privilege(c.oid, 'INSERT, UPDATE, REFERENCES') ;)",
+            OR has_any_column_privilege(c.oid, 'INSERT, UPDATE, REFERENCES'))"},
 
   // R"(GRANT SELECT ON referential_constraints TO PUBLIC;)",
 
   // 6.43
   // ROLE_COLUMN_GRANTS view
 
-  R"(CREATE VIEW role_column_grants AS
-      SELECT grantor,
+  {"information_schema", "role_column_grants",
+   R"(SELECT grantor,
              grantee,
              table_catalog,
              table_schema,
@@ -2284,7 +2283,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              is_grantable
       FROM information_schema.column_privileges
       WHERE grantor IN (SELECT role_name FROM information_schema.enabled_roles)
-            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles);)",
+            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles))"},
 
   // R"(GRANT SELECT ON role_column_grants TO PUBLIC;)",
 
@@ -2302,8 +2301,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.49
   // ROUTINE_COLUMN_USAGE view
 
-  R"(CREATE VIEW routine_column_usage AS
-      SELECT DISTINCT
+  {"information_schema", "routine_column_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(np.nspname AS sql_identifier) AS specific_schema,
              CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier) AS specific_name,
@@ -2327,7 +2326,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND t.relkind IN ('r', 'v', 'f', 'p')
             AND t.oid = a.attrelid
             AND d.refobjsubid = a.attnum
-            AND pg_has_role(t.relowner, 'USAGE');)",
+            AND pg_has_role(t.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON routine_column_usage TO PUBLIC;)",
 
@@ -2335,8 +2334,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // ROUTINE_PRIVILEGES view
 
   // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
-  R"(CREATE VIEW routine_privileges AS
-      SELECT CAST(null AS sql_identifier) AS grantor,
+  {"information_schema", "routine_privileges",
+   R"(SELECT CAST(null AS sql_identifier) AS grantor,
              CAST(null AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(null AS sql_identifier) AS specific_schema,
@@ -2346,15 +2345,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(null AS sql_identifier) AS routine_name,
              CAST('EXECUTE' AS character_data) AS privilege_type,
              CAST(null AS yes_or_no) AS is_grantable
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON routine_privileges TO PUBLIC;)",
 
   // 6.43
   // ROLE_ROUTINE_GRANTS view
 
-  R"(CREATE VIEW role_routine_grants AS
-      SELECT grantor,
+  {"information_schema", "role_routine_grants",
+   R"(SELECT grantor,
              grantee,
              specific_catalog,
              specific_schema,
@@ -2366,15 +2365,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              is_grantable
       FROM information_schema.routine_privileges
       WHERE grantor IN (SELECT role_name FROM information_schema.enabled_roles)
-            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles);)",
+            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles))"},
 
   // R"(GRANT SELECT ON role_routine_grants TO PUBLIC;)",
 
   // 6.52
   // ROUTINE_ROUTINE_USAGE view
 
-  R"(CREATE VIEW routine_routine_usage AS
-      SELECT DISTINCT
+  {"information_schema", "routine_routine_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(np.nspname AS sql_identifier) AS specific_schema,
              CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier) AS specific_name,
@@ -2392,15 +2391,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND d.refclassid = 'pg_catalog.pg_proc'::regclass
             AND p1.pronamespace = np1.oid
             AND p.prokind IN ('f', 'p') AND p1.prokind IN ('f', 'p')
-            AND pg_has_role(p1.proowner, 'USAGE');)",
+            AND pg_has_role(p1.proowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON routine_routine_usage TO PUBLIC;)",
 
   // 6.53
   // ROUTINE_SEQUENCE_USAGE view
 
-  R"(CREATE VIEW routine_sequence_usage AS
-      SELECT DISTINCT
+  {"information_schema", "routine_sequence_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(np.nspname AS sql_identifier) AS specific_schema,
              CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier) AS specific_name,
@@ -2421,15 +2420,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND d.refclassid = 'pg_catalog.pg_class'::regclass
             AND s.relnamespace = ns.oid
             AND s.relkind = 'S'
-            AND pg_has_role(s.relowner, 'USAGE');)",
+            AND pg_has_role(s.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON routine_sequence_usage TO PUBLIC;)",
 
   // 6.54
   // ROUTINE_TABLE_USAGE view
 
-  R"(CREATE VIEW routine_table_usage AS
-      SELECT DISTINCT
+  {"information_schema", "routine_table_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(np.nspname AS sql_identifier) AS specific_schema,
              CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier) AS specific_name,
@@ -2450,15 +2449,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND d.refclassid = 'pg_catalog.pg_class'::regclass
             AND t.relnamespace = nt.oid
             AND t.relkind IN ('r', 'v', 'f', 'p')
-            AND pg_has_role(t.relowner, 'USAGE');)",
+            AND pg_has_role(t.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON routine_table_usage TO PUBLIC;)",
 
   // 6.55
   // ROUTINES view
 
-  R"(CREATE VIEW routines AS
-      SELECT CAST(current_database() AS sql_identifier) AS specific_catalog,
+  {"information_schema", "routines",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(n.nspname AS sql_identifier) AS specific_schema,
              CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier) AS specific_name,
              CAST(current_database() AS sql_identifier) AS routine_catalog,
@@ -2565,15 +2564,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            ON p.prorettype = t.oid AND p.prokind <> 'p'
 
       WHERE (pg_has_role(p.proowner, 'USAGE')
-             OR has_function_privilege(p.oid, 'EXECUTE'));)",
+             OR has_function_privilege(p.oid, 'EXECUTE')))"},
 
   // R"(GRANT SELECT ON routines TO PUBLIC;)",
 
   // 6.56
   // SCHEMATA view
 
-  R"(CREATE VIEW schemata AS
-      SELECT CAST(current_database() AS sql_identifier) AS catalog_name,
+  {"information_schema", "schemata",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS catalog_name,
              CAST(n.nspname AS sql_identifier) AS schema_name,
              CAST(u.rolname AS sql_identifier) AS schema_owner,
              CAST(null AS sql_identifier) AS default_character_set_catalog,
@@ -2583,15 +2582,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       FROM pg_namespace n, pg_authid u
       WHERE n.nspowner = u.oid
             AND (pg_has_role(n.nspowner, 'USAGE')
-                 OR has_schema_privilege(n.oid, 'CREATE, USAGE'));)",
+                 OR has_schema_privilege(n.oid, 'CREATE, USAGE')))"},
 
   // R"(GRANT SELECT ON schemata TO PUBLIC;)",
 
   // 6.57
   // SEQUENCES view
 
-  R"(CREATE VIEW sequences AS
-      SELECT CAST(current_database() AS sql_identifier) AS sequence_catalog,
+  {"information_schema", "sequences",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS sequence_catalog,
              CAST(nc.nspname AS sql_identifier) AS sequence_schema,
              CAST(c.relname AS sql_identifier) AS sequence_name,
              CAST(format_type(s.seqtypid, null) AS character_data) AS data_type,
@@ -2610,7 +2609,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND (NOT pg_is_other_temp_schema(nc.oid))
             AND c.oid = s.seqrelid
             AND (pg_has_role(c.relowner, 'USAGE')
-                 OR has_sequence_privilege(c.oid, 'SELECT, UPDATE, USAGE') );)",
+                 OR has_sequence_privilege(c.oid, 'SELECT, UPDATE, USAGE') ))"},
 
   // R"(GRANT SELECT ON sequences TO PUBLIC;)",
 
@@ -2724,8 +2723,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.62
   // TABLE_CONSTRAINTS view
 
-  R"(CREATE VIEW table_constraints AS
-      SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
+  {"information_schema", "table_constraints",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(nc.nspname AS sql_identifier) AS constraint_schema,
              CAST(c.conname AS sql_identifier) AS constraint_name,
              CAST(current_database() AS sql_identifier) AS table_catalog,
@@ -2761,7 +2760,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND (pg_has_role(r.relowner, 'USAGE')
                  -- SELECT privilege omitted, per SQL standard
                  OR has_table_privilege(r.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-                 OR has_any_column_privilege(r.oid, 'INSERT, UPDATE, REFERENCES') );)",
+                 OR has_any_column_privilege(r.oid, 'INSERT, UPDATE, REFERENCES') ))"},
 
   // R"(GRANT SELECT ON table_constraints TO PUBLIC;)",
 
@@ -2769,8 +2768,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // TABLE_PRIVILEGES view
 
   // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
-  R"(CREATE VIEW table_privileges AS
-      SELECT CAST(null AS sql_identifier) AS grantor,
+  {"information_schema", "table_privileges",
+   R"(SELECT CAST(null AS sql_identifier) AS grantor,
              CAST(null AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(null AS sql_identifier) AS table_schema,
@@ -2778,15 +2777,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(null AS character_data) AS privilege_type,
              CAST(null AS yes_or_no) AS is_grantable,
              CAST(null AS yes_or_no) AS with_hierarchy
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON table_privileges TO PUBLIC;)",
 
   // 6.45
   // ROLE_TABLE_GRANTS view
 
-  R"(CREATE VIEW role_table_grants AS
-      SELECT grantor,
+  {"information_schema", "role_table_grants",
+   R"(SELECT grantor,
              grantee,
              table_catalog,
              table_schema,
@@ -2796,15 +2795,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              with_hierarchy
       FROM information_schema.table_privileges
       WHERE grantor IN (SELECT role_name FROM information_schema.enabled_roles)
-            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles);)",
+            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles))"},
 
   // R"(GRANT SELECT ON role_table_grants TO PUBLIC;)",
 
   // 6.65
   // TABLES view
 
-  R"(CREATE VIEW tables AS
-      SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
+  {"information_schema", "tables",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(nc.nspname AS sql_identifier) AS table_schema,
              CAST(c.relname AS sql_identifier) AS table_name,
 
@@ -2839,15 +2838,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND (NOT pg_is_other_temp_schema(nc.oid))
             AND (pg_has_role(c.relowner, 'USAGE')
                  OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-                 OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES') );)",
+                 OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES') ))"},
 
   // R"(GRANT SELECT ON tables TO PUBLIC;)",
 
   // 6.66
   // TRANSFORMS view
 
-  R"(CREATE VIEW transforms AS
-      SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
+  {"information_schema", "transforms",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
              CAST(nt.nspname AS sql_identifier) AS udt_schema,
              CAST(t.typname AS sql_identifier) AS udt_name,
              CAST(current_database() AS sql_identifier) AS specific_catalog,
@@ -2877,30 +2876,29 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
            JOIN pg_namespace nt ON t.typnamespace = nt.oid
            JOIN pg_namespace np ON p.pronamespace = np.oid
 
-    ORDER BY udt_catalog, udt_schema, udt_name, group_name, transform_type  -- some sensible grouping for interactive use
-  ;)",
+    ORDER BY udt_catalog, udt_schema, udt_name, group_name, transform_type  -- some sensible grouping for interactive use)"},
 
   // 6.68
   // TRIGGERED_UPDATE_COLUMNS view
 
   // TODO(mbkkt) Use original text when implement _pg_expandarray / row field access
-  R"(CREATE VIEW triggered_update_columns AS
-      SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
+  {"information_schema", "triggered_update_columns",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
              CAST(null AS sql_identifier) AS trigger_schema,
              CAST(null AS sql_identifier) AS trigger_name,
              CAST(current_database() AS sql_identifier) AS event_object_catalog,
              CAST(null AS sql_identifier) AS event_object_schema,
              CAST(null AS sql_identifier) AS event_object_table,
              CAST(null AS sql_identifier) AS event_object_column
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON triggered_update_columns TO PUBLIC;)",
 
   // 6.74
   // TRIGGERS view
 
-  R"(CREATE VIEW triggers AS
-      SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
+  {"information_schema", "triggers",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
              CAST(n.nspname AS sql_identifier) AS trigger_schema,
              CAST(t.tgname AS sql_identifier) AS trigger_name,
              CAST(em.text AS character_data) AS event_manipulation,
@@ -2958,7 +2956,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND (pg_has_role(c.relowner, 'USAGE')
                  -- SELECT privilege omitted, per SQL standard
                  OR has_table_privilege(c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-                 OR has_any_column_privilege(c.oid, 'INSERT, UPDATE, REFERENCES') );)",
+                 OR has_any_column_privilege(c.oid, 'INSERT, UPDATE, REFERENCES') ))"},
 
   // R"(GRANT SELECT ON triggers TO PUBLIC;)",
 
@@ -2966,23 +2964,23 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // UDT_PRIVILEGES view
 
   // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
-  R"(CREATE VIEW udt_privileges AS
-      SELECT CAST(null AS sql_identifier) AS grantor,
+  {"information_schema", "udt_privileges",
+   R"(SELECT CAST(null AS sql_identifier) AS grantor,
              CAST(null AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS udt_catalog,
              CAST(null AS sql_identifier) AS udt_schema,
              CAST(null AS sql_identifier) AS udt_name,
              CAST('TYPE USAGE' AS character_data) AS privilege_type,
              CAST(null AS yes_or_no) AS is_grantable
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON udt_privileges TO PUBLIC;)",
 
   // 6.48
   // ROLE_UDT_GRANTS view
 
-  R"(CREATE VIEW role_udt_grants AS
-      SELECT grantor,
+  {"information_schema", "role_udt_grants",
+   R"(SELECT grantor,
              grantee,
              udt_catalog,
              udt_schema,
@@ -2991,7 +2989,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              is_grantable
       FROM information_schema.udt_privileges
       WHERE grantor IN (SELECT role_name FROM information_schema.enabled_roles)
-            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles);)",
+            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles))"},
 
   // R"(GRANT SELECT ON role_udt_grants TO PUBLIC;)",
 
@@ -2999,8 +2997,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // USAGE_PRIVILEGES view
 
   // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
-  R"(CREATE VIEW usage_privileges AS
-      SELECT CAST(null AS sql_identifier) AS grantor,
+  {"information_schema", "usage_privileges",
+   R"(SELECT CAST(null AS sql_identifier) AS grantor,
              CAST(null AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS object_catalog,
              CAST(null AS sql_identifier) AS object_schema,
@@ -3008,15 +3006,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              CAST(null AS character_data) AS object_type,
              CAST(null AS character_data) AS privilege_type,
              CAST(null AS yes_or_no) AS is_grantable
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON usage_privileges TO PUBLIC;)",
 
   // 6.47
   // ROLE_USAGE_GRANTS view
 
-  R"(CREATE VIEW role_usage_grants AS
-      SELECT grantor,
+  {"information_schema", "role_usage_grants",
+   R"(SELECT grantor,
              grantee,
              object_catalog,
              object_schema,
@@ -3026,15 +3024,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              is_grantable
       FROM information_schema.usage_privileges
       WHERE grantor IN (SELECT role_name FROM information_schema.enabled_roles)
-            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles);)",
+            OR grantee IN (SELECT role_name FROM information_schema.enabled_roles))"},
 
   // R"(GRANT SELECT ON role_usage_grants TO PUBLIC;)",
 
   // 6.77
   // USER_DEFINED_TYPES view
 
-  R"(CREATE VIEW user_defined_types AS
-      SELECT CAST(current_database() AS sql_identifier) AS user_defined_type_catalog,
+  {"information_schema", "user_defined_types",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS user_defined_type_catalog,
              CAST(n.nspname AS sql_identifier) AS user_defined_type_schema,
              CAST(c.relname AS sql_identifier) AS user_defined_type_name,
              CAST('STRUCTURED' AS character_data) AS user_defined_type_category,
@@ -3070,15 +3068,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND t.typrelid = c.oid
             AND c.relkind = 'c'
             AND (pg_has_role(t.typowner, 'USAGE')
-                 OR has_type_privilege(t.oid, 'USAGE'));)",
+                 OR has_type_privilege(t.oid, 'USAGE')))"},
 
   // R"(GRANT SELECT ON user_defined_types TO PUBLIC;)",
 
   // 6.78
   // VIEW_COLUMN_USAGE
 
-  R"(CREATE VIEW view_column_usage AS
-      SELECT DISTINCT
+  {"information_schema", "view_column_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS view_catalog,
              CAST(nv.nspname AS sql_identifier) AS view_schema,
              CAST(v.relname AS sql_identifier) AS view_name,
@@ -3106,15 +3104,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND t.relkind IN ('r', 'v', 'f', 'p')
             AND t.oid = a.attrelid
             AND dt.refobjsubid = a.attnum
-            AND pg_has_role(t.relowner, 'USAGE');)",
+            AND pg_has_role(t.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON view_column_usage TO PUBLIC;)",
 
   // 6.80
   // VIEW_ROUTINE_USAGE
 
-  R"(CREATE VIEW view_routine_usage AS
-      SELECT DISTINCT
+  {"information_schema", "view_routine_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(nv.nspname AS sql_identifier) AS table_schema,
              CAST(v.relname AS sql_identifier) AS table_name,
@@ -3136,15 +3134,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND dp.refclassid = 'pg_catalog.pg_proc'::regclass
             AND dp.refobjid = p.oid
             AND p.pronamespace = np.oid
-            AND pg_has_role(p.proowner, 'USAGE');)",
+            AND pg_has_role(p.proowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON view_routine_usage TO PUBLIC;)",
 
   // 6.81
   // VIEW_TABLE_USAGE
 
-  R"(CREATE VIEW view_table_usage AS
-      SELECT DISTINCT
+  {"information_schema", "view_table_usage",
+   R"(SELECT DISTINCT
              CAST(current_database() AS sql_identifier) AS view_catalog,
              CAST(nv.nspname AS sql_identifier) AS view_schema,
              CAST(v.relname AS sql_identifier) AS view_name,
@@ -3168,15 +3166,15 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND dt.refobjid = t.oid
             AND t.relnamespace = nt.oid
             AND t.relkind IN ('r', 'v', 'f', 'p')
-            AND pg_has_role(t.relowner, 'USAGE');)",
+            AND pg_has_role(t.relowner, 'USAGE'))"},
 
   // R"(GRANT SELECT ON view_table_usage TO PUBLIC;)",
 
   // 6.82
   // VIEWS view
 
-  R"(CREATE VIEW views AS
-      SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
+  {"information_schema", "views",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(nc.nspname AS sql_identifier) AS table_schema,
              CAST(c.relname AS sql_identifier) AS table_name,
 
@@ -3231,7 +3229,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND (NOT pg_is_other_temp_schema(nc.oid))
             AND (pg_has_role(c.relowner, 'USAGE')
                  OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-                 OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES') );)",
+                 OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES') ))"},
 
   // R"(GRANT SELECT ON views TO PUBLIC;)",
 
@@ -3240,8 +3238,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // 6.26
   // DATA_TYPE_PRIVILEGES view
 
-  R"(CREATE VIEW data_type_privileges AS
-      SELECT CAST(current_database() AS sql_identifier) AS object_catalog,
+  {"information_schema", "data_type_privileges",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS object_catalog,
              CAST(x.objschema AS sql_identifier) AS object_schema,
              CAST(x.objname AS sql_identifier) AS object_name,
              CAST(x.objtype AS character_data) AS object_type,
@@ -3258,7 +3256,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
           SELECT specific_schema, specific_name, 'ROUTINE'::text, dtd_identifier FROM information_schema.parameters
           UNION ALL
           SELECT specific_schema, specific_name, 'ROUTINE'::text, dtd_identifier FROM information_schema.routines
-        ) AS x (objschema, objname, objtype, objdtdid);)",
+        ) AS x (objschema, objname, objtype, objdtdid))"},
 
   // R"(GRANT SELECT ON data_type_privileges TO PUBLIC;)",
 
@@ -3266,8 +3264,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
   // ELEMENT_TYPES view
 
   // TODO(mbkkt) Use original text when implement implicit cast for UNION.
-  R"(CREATE VIEW element_types AS
-      SELECT CAST(current_database() AS sql_identifier) AS object_catalog,
+  {"information_schema", "element_types",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS object_catalog,
              CAST(n.nspname AS sql_identifier) AS object_schema,
              CAST(x.objname AS sql_identifier) AS object_name,
              CAST(x.objtype AS character_data) AS object_type,
@@ -3347,7 +3345,7 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
                   AND dtp.object_name = x.objname
                   AND dtp.object_type = x.objtype
                   AND dtp.dtd_identifier = CAST(x.objdtdid AS sql_identifier)
-            );)",
+            ))"},
 
   // R"(GRANT SELECT ON element_types TO PUBLIC;)",
 
@@ -3355,8 +3353,8 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
 
   // Base view for foreign table columns
 
-  R"(CREATE VIEW _pg_foreign_table_columns AS
-      SELECT n.nspname,
+  {"information_schema", "_pg_foreign_table_columns",
+   R"(SELECT n.nspname,
              c.relname,
              a.attname,
              a.attfdwoptions
@@ -3369,27 +3367,27 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND c.oid = t.ftrelid
             AND c.relkind = 'f'
             AND a.attrelid = c.oid
-            AND a.attnum > 0;)",
+            AND a.attnum > 0)"},
 
   // 24.3
   // COLUMN_OPTIONS view
 
   // TODO(mbkkt) Use original text when implement (func(...)).field row field access
-  R"(CREATE VIEW column_options AS
-      SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
+  {"information_schema", "column_options",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
              CAST(null AS sql_identifier) AS table_schema,
              CAST(null AS sql_identifier) AS table_name,
              CAST(null AS sql_identifier) AS column_name,
              CAST(null AS sql_identifier) AS option_name,
              CAST(null AS character_data) AS option_value
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON column_options TO PUBLIC;)",
 
   // Base view for foreign-data wrappers
 
-  R"(CREATE VIEW _pg_foreign_data_wrappers AS
-      SELECT w.oid,
+  {"information_schema", "_pg_foreign_data_wrappers",
+   R"(SELECT w.oid,
              w.fdwowner,
              w.fdwoptions,
              CAST(current_database() AS sql_identifier) AS foreign_data_wrapper_catalog,
@@ -3399,38 +3397,38 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       FROM pg_foreign_data_wrapper w, pg_authid u
       WHERE u.oid = w.fdwowner
             AND (pg_has_role(fdwowner, 'USAGE')
-                 OR has_foreign_data_wrapper_privilege(w.oid, 'USAGE'));)",
+                 OR has_foreign_data_wrapper_privilege(w.oid, 'USAGE')))"},
 
   // 24.5
   // FOREIGN_DATA_WRAPPER_OPTIONS view
 
   // TODO(mbkkt) Use original text when implement (func(...)).field row field access
-  R"(CREATE VIEW foreign_data_wrapper_options AS
-      SELECT CAST(current_database() AS sql_identifier) AS foreign_data_wrapper_catalog,
+  {"information_schema", "foreign_data_wrapper_options",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS foreign_data_wrapper_catalog,
              CAST(null AS sql_identifier) AS foreign_data_wrapper_name,
              CAST(null AS sql_identifier) AS option_name,
              CAST(null AS character_data) AS option_value
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON foreign_data_wrapper_options TO PUBLIC;)",
 
   // 24.6
   // FOREIGN_DATA_WRAPPERS view
 
-  R"(CREATE VIEW foreign_data_wrappers AS
-      SELECT foreign_data_wrapper_catalog,
+  {"information_schema", "foreign_data_wrappers",
+   R"(SELECT foreign_data_wrapper_catalog,
              foreign_data_wrapper_name,
              authorization_identifier,
              CAST(NULL AS character_data) AS library_name,
              foreign_data_wrapper_language
-      FROM information_schema._pg_foreign_data_wrappers w;)",
+      FROM information_schema._pg_foreign_data_wrappers w)"},
 
   // R"(GRANT SELECT ON foreign_data_wrappers TO PUBLIC;)",
 
   // Base view for foreign servers
 
-  R"(CREATE VIEW _pg_foreign_servers AS
-      SELECT s.oid,
+  {"information_schema", "_pg_foreign_servers",
+   R"(SELECT s.oid,
              s.srvoptions,
              CAST(current_database() AS sql_identifier) AS foreign_server_catalog,
              CAST(srvname AS sql_identifier) AS foreign_server_name,
@@ -3443,40 +3441,40 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
       WHERE w.oid = s.srvfdw
             AND u.oid = s.srvowner
             AND (pg_has_role(s.srvowner, 'USAGE')
-                 OR has_server_privilege(s.oid, 'USAGE'));)",
+                 OR has_server_privilege(s.oid, 'USAGE')))"},
 
   // 24.7
   // FOREIGN_SERVER_OPTIONS view
 
   // TODO(mbkkt) Use original text when implement (func(...)).field row field access
-  R"(CREATE VIEW foreign_server_options AS
-      SELECT CAST(current_database() AS sql_identifier) AS foreign_server_catalog,
+  {"information_schema", "foreign_server_options",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS foreign_server_catalog,
              CAST(null AS sql_identifier) AS foreign_server_name,
              CAST(null AS sql_identifier) AS option_name,
              CAST(null AS character_data) AS option_value
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON TABLE foreign_server_options TO PUBLIC;)",
 
   // 24.8
   // FOREIGN_SERVERS view
 
-  R"(CREATE VIEW foreign_servers AS
-      SELECT foreign_server_catalog,
+  {"information_schema", "foreign_servers",
+   R"(SELECT foreign_server_catalog,
              foreign_server_name,
              foreign_data_wrapper_catalog,
              foreign_data_wrapper_name,
              foreign_server_type,
              foreign_server_version,
              authorization_identifier
-      FROM information_schema._pg_foreign_servers;)",
+      FROM information_schema._pg_foreign_servers)"},
 
   // R"(GRANT SELECT ON foreign_servers TO PUBLIC;)",
 
   // Base view for foreign tables
 
-  R"(CREATE VIEW _pg_foreign_tables AS
-      SELECT
+  {"information_schema", "_pg_foreign_tables",
+   R"(SELECT
              CAST(current_database() AS sql_identifier) AS foreign_table_catalog,
              CAST(n.nspname AS sql_identifier) AS foreign_table_schema,
              CAST(c.relname AS sql_identifier) AS foreign_table_name,
@@ -3494,39 +3492,39 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
             AND n.oid = c.relnamespace
             AND c.oid = t.ftrelid
             AND c.relkind = 'f'
-            AND s.oid = t.ftserver;)",
+            AND s.oid = t.ftserver)"},
 
   // 24.9
   // FOREIGN_TABLE_OPTIONS view
 
   // TODO(mbkkt) Use original text when implement (func(...)).field row field access
-  R"(CREATE VIEW foreign_table_options AS
-      SELECT CAST(current_database() AS sql_identifier) AS foreign_table_catalog,
+  {"information_schema", "foreign_table_options",
+   R"(SELECT CAST(current_database() AS sql_identifier) AS foreign_table_catalog,
              CAST(null AS sql_identifier) AS foreign_table_schema,
              CAST(null AS sql_identifier) AS foreign_table_name,
              CAST(null AS sql_identifier) AS option_name,
              CAST(null AS character_data) AS option_value
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON TABLE foreign_table_options TO PUBLIC;)",
 
   // 24.10
   // FOREIGN_TABLES view
 
-  R"(CREATE VIEW foreign_tables AS
-      SELECT foreign_table_catalog,
+  {"information_schema", "foreign_tables",
+   R"(SELECT foreign_table_catalog,
              foreign_table_schema,
              foreign_table_name,
              foreign_server_catalog,
              foreign_server_name
-      FROM information_schema._pg_foreign_tables;)",
+      FROM information_schema._pg_foreign_tables)"},
 
   // R"(GRANT SELECT ON foreign_tables TO PUBLIC;)",
 
   // Base view for user mappings
 
-  R"(CREATE VIEW _pg_user_mappings AS
-      SELECT um.oid,
+  {"information_schema", "_pg_user_mappings",
+   R"(SELECT um.oid,
              um.umoptions,
              um.umuser,
              CAST(COALESCE(u.rolname,'PUBLIC') AS sql_identifier ) AS authorization_identifier,
@@ -3535,33 +3533,33 @@ inline constexpr auto kSystemViewsQueries = std::to_array<std::string_view>({
              s.authorization_identifier AS srvowner
       FROM pg_user_mapping um LEFT JOIN pg_authid u ON (u.oid = um.umuser),
            information_schema._pg_foreign_servers s
-      WHERE s.oid = um.umserver;)",
+      WHERE s.oid = um.umserver)"},
 
   // 24.13
   // USER_MAPPING_OPTIONS view
 
   // TODO(mbkkt) Use original text when implement lateral set-returning function refs
-  R"(CREATE VIEW user_mapping_options AS
-      SELECT CAST(null AS sql_identifier) AS authorization_identifier,
+  {"information_schema", "user_mapping_options",
+   R"(SELECT CAST(null AS sql_identifier) AS authorization_identifier,
              CAST(current_database() AS sql_identifier) AS foreign_server_catalog,
              CAST(null AS sql_identifier) AS foreign_server_name,
              CAST(null AS sql_identifier) AS option_name,
              CAST(null AS character_data) AS option_value
-      WHERE false;)",
+      WHERE false)"},
 
   // R"(GRANT SELECT ON user_mapping_options TO PUBLIC;)",
 
   // 24.14
   // USER_MAPPINGS view
 
-  R"(CREATE VIEW user_mappings AS
-      SELECT authorization_identifier,
+  {"information_schema", "user_mappings",
+   R"(SELECT authorization_identifier,
              foreign_server_catalog,
              foreign_server_name
-      FROM information_schema._pg_user_mappings;)",
+      FROM information_schema._pg_user_mappings)"},
 
   // R"(GRANT SELECT ON user_mappings TO PUBLIC;)",
   // clang-format on
-});
+};
 
 }  // namespace sdb::pg

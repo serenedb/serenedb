@@ -82,7 +82,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   ObjectId database_id;
   std::string index_name;
   std::string table_name;
-  IndexType index_type = IndexType::Secondary;
+  catalog::ObjectType index_type = catalog::ObjectType::SecondaryIndex;
 
   // Column metadata (for serialization in Sink)
   ObjectId table_id;
@@ -157,9 +157,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   std::transform(idx_type_str.begin(), idx_type_str.end(), idx_type_str.begin(),
                  ::tolower);
   if (idx_type_str == "inverted") {
-    state->index_type = IndexType::Inverted;
+    state->index_type = catalog::ObjectType::InvertedIndex;
   } else {
-    state->index_type = IndexType::Secondary;
+    state->index_type = catalog::ObjectType::SecondaryIndex;
   }
 
   // Build CreateIndexColumn vector
@@ -204,16 +204,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
   }
 
-  // Create index in catalog with tombstone
-  catalog::IndexBaseOptions options;
-  options.name = _info->index_name;
-  options.type = state->index_type;
-
   bool if_not_exists =
     _info->on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
   Result create_result;
-  if (state->index_type == IndexType::Inverted) {
+  if (state->index_type == catalog::ObjectType::InvertedIndex) {
     search::InvertedIndexShardOptions shard_options;
     auto it = _info->options.find("commit_interval");
     if (it != _info->options.end()) {
@@ -228,16 +223,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it != _info->options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
-    create_result = catalog_impl.CreateIndex(
-      _database_id, "public", _table->GetName(), std::move(idx_columns),
-      std::move(options), shard_options, {.create_with_tombstone = true});
+    create_result = catalog_impl.CreateInvertedIndex(
+      _database_id, "public", _table->GetName(),
+      _info->index_name, std::move(idx_columns),
+      shard_options, {.create_with_tombstone = true});
   } else {
-    SecondaryIndexShardOptions shard_options;
-    shard_options.base.unique =
+    bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
-    create_result = catalog_impl.CreateIndex(
-      _database_id, "public", _table->GetName(), std::move(idx_columns),
-      std::move(options), shard_options, {.create_with_tombstone = true});
+    create_result = catalog_impl.CreateSecondaryIndex(
+      _database_id, "public", _table->GetName(),
+      _info->index_name, std::move(idx_columns),
+      unique, {.create_with_tombstone = true});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
@@ -261,7 +257,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->index_shard = shard;
 
   // Start background tasks for inverted indexes
-  if (shard->GetType() == IndexType::Inverted) {
+  if (shard->GetType() == catalog::ObjectType::InvertedIndex) {
     auto& inverted_shard =
       basics::downCast<search::InvertedIndexShard>(*shard);
     inverted_shard.StartTasks();
@@ -291,7 +287,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto index = snapshot->GetObject<catalog::Index>(catalog_index->GetId());
   SDB_ASSERT(index);
 
-  if (state->index_type == IndexType::Secondary) {
+  if (state->index_type == catalog::ObjectType::SecondaryIndex) {
     auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
     auto sk_columns = BuildSKColumnsForBackfill(*index, *_table);
     auto& trx = conn_ctx.EnsureRocksDBTransaction();
@@ -382,7 +378,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   // For inverted indexes: flush writer, commit, then finish creation
-  if (gstate.index_type == IndexType::Inverted && gstate.index_shard) {
+  if (gstate.index_type == catalog::ObjectType::InvertedIndex && gstate.index_shard) {
     // Close the writer and IResearch transaction so data is available for commit
     gstate.writer.reset();
     gstate.search_trx.reset();

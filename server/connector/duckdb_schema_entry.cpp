@@ -33,9 +33,9 @@
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
+#include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/secondary_index.h"
-#include "catalog/sql_query_view.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/view.h"
@@ -180,15 +180,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
 
   // Map DuckDB index type to SereneDB IndexType
   // DuckDB default is empty or "ART"; PG default is "btree"
-  IndexType index_type;
+  catalog::ObjectType index_type;
   auto idx_type_str = info.index_type;
   std::transform(idx_type_str.begin(), idx_type_str.end(), idx_type_str.begin(),
                  ::tolower);
   if (idx_type_str.empty() || idx_type_str == "art" ||
       idx_type_str == "btree" || idx_type_str == "secondary") {
-    index_type = IndexType::Secondary;
+    index_type = catalog::ObjectType::SecondaryIndex;
   } else if (idx_type_str == "inverted") {
-    index_type = IndexType::Inverted;
+    index_type = catalog::ObjectType::InvertedIndex;
   } else {
     throw duckdb::CatalogException("access method \"%s\" does not exist",
                                    info.index_type);
@@ -267,19 +267,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     }
   }
 
-  // Build index options
-  catalog::IndexBaseOptions options;
-  options.name = info.index_name;
-  options.type = index_type;
-
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  // Create index based on type
   Result create_result;
-  if (index_type == IndexType::Inverted) {
+  if (index_type == catalog::ObjectType::InvertedIndex) {
     search::InvertedIndexShardOptions shard_options;
-    // Parse WITH options if provided
     auto it = info.options.find("commit_interval");
     if (it != info.options.end()) {
       shard_options.base.commit_interval_ms = it->second.GetValue<int64_t>();
@@ -293,16 +286,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (it != info.options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
-    create_result = catalog_impl.CreateIndex(
-      database_id, "public", sdb_table->GetName(), std::move(idx_columns),
-      std::move(options), shard_options, {.create_with_tombstone = false});
+    create_result = catalog_impl.CreateInvertedIndex(
+      database_id, "public", sdb_table->GetName(),
+      info.index_name, std::move(idx_columns),
+      shard_options);
   } else {
-    SecondaryIndexShardOptions shard_options;
-    shard_options.base.unique =
+    bool unique =
       (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
-    create_result = catalog_impl.CreateIndex(
-      database_id, "public", sdb_table->GetName(), std::move(idx_columns),
-      std::move(options), shard_options, {.create_with_tombstone = false});
+    create_result = catalog_impl.CreateSecondaryIndex(
+      database_id, "public", sdb_table->GetName(),
+      info.index_name, std::move(idx_columns), unique);
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
@@ -319,7 +312,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     new_snapshot->GetRelation(database_id, "public", info.index_name);
   if (catalog_index) {
     auto shard = new_snapshot->GetIndexShard(catalog_index->GetId());
-    if (shard && shard->GetType() == IndexType::Inverted) {
+    if (shard && shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
       auto& inverted_shard =
         basics::downCast<search::InvertedIndexShard>(*shard);
       inverted_shard.StartTasks();
@@ -344,30 +337,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
-  // Get the SQL representation for storage
   auto sql = info.ToString();
-
-  // Build VPack with name + implementation for catalog storage
-  vpack::Builder builder;
-  builder.openObject();
-  builder.add("name", info.name);
-  builder.add("implementation");
-  builder.openObject();
-  builder.add("sql", sql);
-  builder.close();
-  builder.close();
-
-  std::shared_ptr<catalog::Function> function;
-  auto r =
-    catalog::Function::Instantiate(function, database_id, builder.slice());
-  if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create function: %s",
-                                        std::string{r.errorMessage()});
-  }
+  auto function = std::make_shared<catalog::PgSqlFunction>(
+    database_id, ObjectId{}, info.name, std::move(sql));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-  r = catalog_impl.CreateFunction(database_id, name, function, replace);
+  auto r = catalog_impl.CreateFunction(database_id, name, function, replace);
 
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
@@ -391,31 +367,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
-  // Store the view query as SQL string
   auto sql = info.query->ToString();
-
-  catalog::ViewOptions options;
-  options.meta.name = info.view_name;
-  options.meta.type = catalog::ViewType::ViewSqlQuery;
-
-  vpack::Builder builder;
-  builder.openObject();
-  builder.add("query", sql);
-  builder.close();
-  options.properties = builder.slice();
-
-  std::shared_ptr<catalog::View> view;
-  // DuckDB already validated the view at bind time, skip Check()
-  auto r = SqlQueryView::Make(view, database_id, std::move(options),
-                              catalog::ViewContext::User, nullptr);
-  if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create view: %s",
-                                        std::string{r.errorMessage()});
-  }
+  auto view = std::make_shared<catalog::PgSqlView>(
+    database_id, ObjectId{}, info.view_name, std::move(sql));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-  r = catalog_impl.CreateView(database_id, name, view, replace);
+  auto r = catalog_impl.CreateView(database_id, name, view, replace);
 
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;

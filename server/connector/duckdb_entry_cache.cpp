@@ -29,8 +29,6 @@
 
 #include "basics/down_cast.h"
 #include "catalog/function.h"
-#include "catalog/sql_function_impl.h"
-#include "catalog/sql_query_view.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
 
@@ -254,18 +252,12 @@ DuckDBEntryCache::BuildViewEntry(
   const catalog::Snapshot& snapshot) {
   // Look up the view in the snapshot — it's a SchemaObject (View subclass)
   auto relation = snapshot.GetRelation(db_id, schema_name, view_name);
-  if (!relation || relation->GetType() != catalog::ObjectType::View) {
+  if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
     return nullptr;
   }
 
   // Get the SQL query string from the view
-  // Views are stored via BaseQueryView which has a "query" property
-  auto view = basics::downCast<catalog::View>(relation);
-  // The query is stored in the view's properties — need to extract it
-  // For SqlQueryView, the query string is accessible via the view object
-  // We use ToString() on CreateViewInfo to build the SQL
-  // Get the SQL query text from the view
-  auto& sql_view = basics::downCast<const SqlQueryView>(*view);
+  auto& sql_view = basics::downCast<const catalog::PgSqlView>(*relation);
   auto query_sql = std::string{sql_view.GetQuery()};
   if (query_sql.empty()) {
     return nullptr;
@@ -300,8 +292,7 @@ DuckDBEntryCache::BuildFunctionEntry(
   }
 
   // Get the stored SQL and parse it to build a DuckDB macro
-  auto& impl = function->GetImpl();
-  auto sql = std::string{impl.GetSQL()};
+  auto sql = std::string{function->GetSQL()};
   if (sql.empty()) {
     return nullptr;
   }

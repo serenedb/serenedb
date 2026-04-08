@@ -24,29 +24,27 @@
 #include <string>
 
 #include "catalog/object.h"
+
 namespace sdb::catalog {
 
 // A SQL function stored in the catalog.
-// The function body is stored as SQL text in FunctionImpl.
+// The function body is stored as SQL text.
 // DuckDB parses it on demand to create macro entries.
-class Function final : public SchemaObject {
+class PgSqlFunction final : public SchemaObject {
  public:
-  Function(std::string_view name, std::unique_ptr<pg::FunctionImpl> impl,
-           ObjectId database_id);
+  PgSqlFunction(ObjectId database_id, ObjectId id, std::string_view name,
+                std::string sql);
 
-  ~Function() final;
+  static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,
+                                                     ReadContext ctx);
 
-  void WriteProperties(vpack::Builder& build) const final;
   void WriteInternal(vpack::Builder& build) const final;
+  std::shared_ptr<Object> Clone() const final;
 
-  pg::FunctionImpl& GetImpl() const noexcept { return *_impl; }
-
-  // Create from VPack (RocksDB load)
-  static Result Instantiate(std::shared_ptr<Function>& function,
-                            ObjectId database_id, vpack::Slice definition);
+  std::string_view GetSQL() const noexcept { return _sql; }
 
  private:
-  std::unique_ptr<pg::FunctionImpl> _impl;
+  std::string _sql;  // Full CREATE FUNCTION SQL text
 };
 
 }  // namespace sdb::catalog

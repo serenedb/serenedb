@@ -27,68 +27,36 @@
 
 namespace sdb::catalog {
 
-namespace {
-
-struct FunctionMeta {
-  Identifier id;
-  std::string_view name;
-};
-
-}  // namespace
-
-Function::Function(std::string_view name,
-                   std::unique_ptr<pg::FunctionImpl> impl,
-                   ObjectId database_id)
+PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
+                             std::string_view name, std::string sql)
   : SchemaObject{{},
                  database_id,
                  {},
-                 {},
+                 id,
                  std::string{name},
-                 ObjectType::Function},
-    _impl{std::move(impl)} {
-  SDB_ASSERT(!this->GetName().empty());
-  SDB_ASSERT(_impl);
-}
+                 ObjectType::PgSqlFunction},
+    _sql{std::move(sql)} {}
 
-Function::~Function() = default;
-
-Result Function::Instantiate(std::shared_ptr<Function>& function,
-                             ObjectId database_id, vpack::Slice definition) {
+std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(
+  vpack::Slice slice, ReadContext ctx) {
+  auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
   auto name = basics::VPackHelper::getString(
-    definition, StaticStrings::kDataSourceName, {});
-  if (name.empty()) {
-    return {ERROR_BAD_PARAMETER, "Function name must be non-empty"};
-  }
-
-  auto impl_slice = definition.get("implementation");
-  std::unique_ptr<pg::FunctionImpl> impl;
-  auto r = pg::FunctionImpl::FromVPack(impl_slice, impl);
-  if (!r.ok()) {
-    return r;
-  }
-
-  function = std::make_shared<Function>(name, std::move(impl), database_id);
-  return {};
+    slice, StaticStrings::kDataSourceName, {});
+  auto sql = basics::VPackHelper::getString(slice, "sql", {});
+  return std::make_shared<PgSqlFunction>(ctx.database_id, id, name,
+                                         std::string{sql});
 }
 
-void Function::WriteProperties(vpack::Builder& builder) const {
+void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
   SDB_ASSERT(builder.isOpenObject());
-  vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{
-                                .id = Identifier{GetId().id()},
-                                .name = GetName(),
-                              }});
-  builder.add("implementation");
-  _impl->ToVPack(builder);
+  builder.add("_key", Identifier{GetId().id()});
+  builder.add(StaticStrings::kDataSourceName, GetName());
+  builder.add("sql", _sql);
 }
 
-void Function::WriteInternal(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
-  vpack::WriteObject(builder, vpack::Embedded{FunctionMeta{
-                                .id = Identifier{GetId().id()},
-                                .name = GetName(),
-                              }});
-  builder.add("implementation");
-  _impl->ToVPack(builder);
+std::shared_ptr<Object> PgSqlFunction::Clone() const {
+  return std::make_shared<PgSqlFunction>(GetDatabaseId(), GetId(), GetName(),
+                                         _sql);
 }
 
 }  // namespace sdb::catalog

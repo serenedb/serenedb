@@ -29,7 +29,6 @@ namespace sdb::connector {
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
-  // Delegate to SereneDB's transaction commit
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB commit failed: %s",

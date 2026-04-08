@@ -123,6 +123,11 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
                              duckdb::idx_t idx,
                              const duckdb::LogicalType& type) {
   switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN: {
+      auto val = duckdb::FlatVector::GetData<bool>(vec)[idx];
+      key.push_back(val ? '\x01' : '\x00');
+      break;
+    }
     case duckdb::LogicalTypeId::TINYINT: {
       auto val = duckdb::FlatVector::GetData<int8_t>(vec)[idx];
       auto base = key.size();
@@ -177,6 +182,23 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
     case duckdb::LogicalTypeId::VARCHAR: {
       // String PK: escape null bytes (\0 -> \0\1) and terminate with \0\0
       // Same encoding as primary_key::AppendTypedValue for StringView
+      static constexpr std::string_view kNullEsc{"\0\1", 2};
+      static constexpr std::string_view kStringEnd{"\0\0", 2};
+      auto str = duckdb::FlatVector::GetData<duckdb::string_t>(vec)[idx];
+      auto* data = str.GetData();
+      auto size = str.GetSize();
+      for (duckdb::idx_t i = 0; i < size; ++i) {
+        if (data[i]) {
+          key.push_back(data[i]);
+        } else {
+          key.append(kNullEsc);
+        }
+      }
+      key.append(kStringEnd);
+      break;
+    }
+    case duckdb::LogicalTypeId::BLOB: {
+      // Same encoding as VARCHAR (escape null bytes)
       static constexpr std::string_view kNullEsc{"\0\1", 2};
       static constexpr std::string_view kStringEnd{"\0\0", 2};
       auto str = duckdb::FlatVector::GetData<duckdb::string_t>(vec)[idx];

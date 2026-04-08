@@ -68,11 +68,25 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   }
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto table =
-    snapshot->GetTable(GetDatabaseId(), "public",
-                       std::string_view{table_name.data(), table_name.size()});
+  auto db_id = GetDatabaseId();
+  auto name_sv = std::string_view{table_name.data(), table_name.size()};
+
+  // Try as table first, then as index (FROM index_name syntax)
+  auto table = snapshot->GetTable(db_id, "public", name_sv);
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index;
   if (!table) {
-    return nullptr;
+    auto relation = snapshot->GetRelation(db_id, "public", name_sv);
+    if (relation && relation->GetType() == catalog::ObjectType::Index) {
+      auto& index = basics::downCast<catalog::Index>(*relation);
+      table = snapshot->GetObject<catalog::Table>(index.GetRelationId());
+      if (index.GetIndexType() == IndexType::Inverted) {
+        inverted_index =
+          std::dynamic_pointer_cast<const catalog::InvertedIndex>(relation);
+      }
+    }
+    if (!table) {
+      return nullptr;
+    }
   }
 
   // Build a CreateTableInfo from the SereneDB table
@@ -128,7 +142,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
     return cached->second.get();
   }
   auto entry = duckdb::make_uniq<SereneDBTableEntry>(
-    catalog, *this, *info, std::move(table), std::move(indexed_col_indices));
+    catalog, *this, *info, std::move(table), std::move(indexed_col_indices),
+    std::move(inverted_index));
   auto* ptr = entry.get();
   _table_entries[table_name] = std::move(entry);
   _table_infos[table_name] = std::move(info);
@@ -331,9 +346,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   } else {
     // Try parsed_expressions -- extract column names from ColumnRefExpression
     for (auto& expr : info.parsed_expressions) {
+      std::cerr << "  parsed_expr type=" << (int)expr->GetExpressionType()
+                << " str=" << expr->ToString() << std::endl;
       if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
         auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
-        auto col_name = col_ref.GetColumnName();
+        auto& col_name = col_ref.GetColumnName();
         const catalog::Column* cat_col = nullptr;
         for (const auto& col : columns) {
           if (col.name == col_name) {
@@ -412,6 +429,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       auto& inverted_shard =
         basics::downCast<search::InvertedIndexShard>(*shard);
       inverted_shard.StartTasks();
+      // No backfill yet — mark creation as finished so background commits
+      // register the flush subscription and run periodically.
+      inverted_shard.FinishCreation();
     }
   }
 
@@ -504,6 +524,11 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   throw duckdb::NotImplementedException("ALTER through DuckDB");
+}
+
+void SereneDBSchemaEntry::InvalidateTable(const std::string& table_name) {
+  std::unique_lock lock{_lock};
+  _table_entries.erase(table_name);
 }
 
 }  // namespace sdb::connector

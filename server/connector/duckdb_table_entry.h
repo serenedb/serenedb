@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
+#include "catalog/inverted_index.h"
 #include "catalog/table.h"
 
 namespace sdb::connector {
@@ -37,13 +38,14 @@ velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type);
 class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
  public:
   // indexed_col_indices: table column indices that are part of any index
-  // (secondary or inverted). These are added to virtual columns so
-  // DELETE/UPDATE scans return them automatically.
+  // inverted_index: set when entry was created from an index name (FROM idx)
   SereneDBTableEntry(duckdb::Catalog& catalog,
                      duckdb::SchemaCatalogEntry& schema,
                      duckdb::CreateTableInfo& info,
                      std::shared_ptr<catalog::Table> sdb_table,
-                     std::vector<size_t> indexed_col_indices = {});
+                     std::vector<size_t> indexed_col_indices = {},
+                     std::shared_ptr<const catalog::InvertedIndex>
+                       inverted_index = nullptr);
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext& context, duckdb::column_t column_id) override;
@@ -75,11 +77,16 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
     return _indexed_col_indices;
   }
 
+  const std::shared_ptr<const catalog::InvertedIndex>& GetInvertedIndex() const {
+    return _inverted_index;
+  }
+
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
-  // Table column indices that are part of any secondary/inverted index.
-  // Used to add virtual columns so DELETE/UPDATE scans fetch old values.
   std::vector<size_t> _indexed_col_indices;
+  // Set when entry was created from an index name (FROM idx_name).
+  // Used by pushdown_complex_filter to know which inverted index to query.
+  std::shared_ptr<const catalog::InvertedIndex> _inverted_index;
 };
 
 }  // namespace sdb::connector

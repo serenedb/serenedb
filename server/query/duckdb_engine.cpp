@@ -23,6 +23,8 @@
 #include <iostream>
 
 #include "basics/assert.h"
+#include "connector/duckdb_physical_create_index.h"
+#include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
 
 namespace sdb::query {
@@ -75,6 +77,33 @@ void DuckDBEngine::Initialize() {
                             duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
+
+  // Register search stub functions (sdb_phrase, sdb_term_eq)
+  connector::RegisterSearchFunctions(*_db->instance);
+
+  // Register SereneDB index types.
+  // These provide create_plan callbacks that bypass DuckDB's native
+  // PhysicalCreateIndex (which requires DuckTableEntry).
+  auto& index_types = _db->instance->config.GetIndexTypes();
+  {
+    duckdb::IndexType secondary;
+    secondary.name = "secondary";
+    secondary.create_plan = &connector::SereneDBCreateIndexPlan;
+    index_types.RegisterIndexType(secondary);
+  }
+  {
+    duckdb::IndexType btree;
+    btree.name = "btree";
+    btree.create_plan = &connector::SereneDBCreateIndexPlan;
+    index_types.RegisterIndexType(btree);
+  }
+  {
+    duckdb::IndexType inverted;
+    inverted.name = "inverted";
+    inverted.create_plan = &connector::SereneDBCreateIndexPlan;
+    index_types.RegisterIndexType(inverted);
+  }
+
   std::cerr << "DuckDB engine initialized with SereneDB storage" << std::endl;
 }
 

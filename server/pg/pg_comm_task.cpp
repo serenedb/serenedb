@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 
 #include <duckdb/catalog/catalog_search_path.hpp>
@@ -52,6 +53,7 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/duckdb_engine.h"
+#include "search/inverted_index_shard.h"
 
 // PG protocol constants from libpg_query
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -1054,6 +1056,8 @@ void PgSQLCommTaskBase::SendBatch(const duckdb::DataChunk& chunk) {
   if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
     SDB_ASSERT(batch_rows == 1);
     portal.rows += chunk.GetValue(0, 0).GetValue<int64_t>();
+    return;
+  } else if (return_type == duckdb::StatementReturnType::NOTHING) {
     return;
   }
 

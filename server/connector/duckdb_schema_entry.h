@@ -83,6 +83,9 @@ class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) override;
 
+  // Invalidate cached table entry so it picks up new indexed columns.
+  void InvalidateTable(const std::string& table_name);
+
  private:
   mutable std::shared_mutex _lock;
   // Keep table entries alive -- DuckDB returns raw pointers from LookupEntry

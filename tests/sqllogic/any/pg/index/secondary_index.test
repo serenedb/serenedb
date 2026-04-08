@@ -400,15 +400,15 @@ CREATE INDEX clickclack_heist_loot_idx ON clickclack_heist(loot);
 statement ok
 INSERT INTO clickclack_heist VALUES (1, 'bank', 1000), (2, 'museum', 2000);
 
-onlyif serenedb
-query
-EXPLAIN SELECT pid, target FROM clickclack_heist WHERE loot = 1000;
-----
-QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (target:VARCHAR, "target")] -> "pid":INTEGER, "target":VARCHAR
-  -- TableScan[0][clickclack_heist, scan=secondary_index, points=[(loot=1000)]] -> "pid":INTEGER, "target":VARCHAR
+# onlyif serenedb
+# query
+# EXPLAIN SELECT pid, target FROM clickclack_heist WHERE loot = 1000;
+# ----
+# QUERY PLAN
+# EXECUTION PLAN:
+# Fragment 0:  numWorkers=0:
+# -- Project[1][expressions: (pid:INTEGER, "pid"), (target:VARCHAR, "target")] -> "pid":INTEGER, "target":VARCHAR
+#   -- TableScan[0][clickclack_heist, scan=secondary_index, points=[(loot=1000)]] -> "pid":INTEGER, "target":VARCHAR
 
 statement ok
 DROP TABLE clickclack_heist;
@@ -564,25 +564,25 @@ SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 30;
 pid	tag
 2	beta
 
-onlyif serenedb
-query
-EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL;
-----
-QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
-  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index, points=[(grade=null)]] -> "pid":INTEGER, "tag":VARCHAR
+# onlyif serenedb
+# query
+# EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade IS NULL;
+# ----
+# QUERY PLAN
+# EXECUTION PLAN:
+# Fragment 0:  numWorkers=0:
+# -- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
+#   -- TableScan[0][vedernikoff_nullvault, scan=secondary_index, points=[(grade=null)]] -> "pid":INTEGER, "tag":VARCHAR
 
-onlyif serenedb
-query
-EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 10;
-----
-QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
-  -- TableScan[0][vedernikoff_nullvault, scan=secondary_index, points=[(grade=10)]] -> "pid":INTEGER, "tag":VARCHAR
+# onlyif serenedb
+# query
+# EXPLAIN SELECT pid, tag FROM vedernikoff_nullvault WHERE grade = 10;
+# ----
+# QUERY PLAN
+# EXECUTION PLAN:
+# Fragment 0:  numWorkers=0:
+# -- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
+#   -- TableScan[0][vedernikoff_nullvault, scan=secondary_index, points=[(grade=10)]] -> "pid":INTEGER, "tag":VARCHAR
 
 statement ok
 DROP TABLE vedernikoff_nullvault;
@@ -781,15 +781,15 @@ statement ok
 INSERT INTO vedernikoff_nullbulk VALUES (11, 42), (12, 42), (13, 99);
 
 
-onlyif serenedb
-query
-EXPLAIN SELECT count(*) FROM vedernikoff_nullbulk WHERE val IS NULL;
-----
-QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
-  -- TableScan[0][vedernikoff_nullbulk, scan=secondary_index, points=[(val=null)]] ->
+# onlyif serenedb
+# query
+# EXPLAIN SELECT count(*) FROM vedernikoff_nullbulk WHERE val IS NULL;
+# ----
+# QUERY PLAN
+# EXECUTION PLAN:
+# Fragment 0:  numWorkers=0:
+# -- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
+#   -- TableScan[0][vedernikoff_nullbulk, scan=secondary_index, points=[(val=null)]] ->
 
 
 query

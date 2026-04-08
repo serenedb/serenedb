@@ -114,10 +114,12 @@ velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type) {
 SereneDBTableEntry::SereneDBTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
-  std::vector<size_t> indexed_col_indices)
+  std::vector<size_t> indexed_col_indices,
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index)
   : duckdb::TableCatalogEntry(catalog, schema, info),
     _sdb_table(std::move(sdb_table)),
-    _indexed_col_indices(std::move(indexed_col_indices)) {}
+    _indexed_col_indices(std::move(indexed_col_indices)),
+    _inverted_index(std::move(inverted_index)) {}
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
   duckdb::ClientContext& context, duckdb::column_t column_id) {

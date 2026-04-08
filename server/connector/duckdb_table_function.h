@@ -23,7 +23,15 @@
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 
+#include <iresearch/search/filter.hpp>
+
 #include "catalog/table.h"
+
+namespace irs {
+class IndexReader;
+}
+
+#include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
 
@@ -31,10 +39,15 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   std::shared_ptr<catalog::Table> table;
   std::vector<catalog::Column::Id> column_ids;
   std::vector<duckdb::LogicalType> column_types;
-  // If true, the last output column is a BLOB containing the PK bytes (rowid)
   bool has_rowid = false;
-  // Reference to the DuckDB table entry (needed for GetTable() in binder)
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
+
+  // Search state (set by pushdown_complex_filter)
+  irs::Filter::Query::ptr search_query;
+  search::InvertedIndexSnapshotPtr search_snapshot;
+  const irs::IndexReader* search_reader = nullptr;
+
+  bool IsSearchScan() const { return search_query != nullptr; }
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;
   bool Equals(const duckdb::FunctionData& other) const override;

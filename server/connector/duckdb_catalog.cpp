@@ -325,19 +325,82 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::TableCatalogEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
-  // Handle CREATE INDEX entirely at bind time -- create the index in SereneDB
-  // catalog directly, bypassing DuckDB's PhysicalCreateIndex which requires
-  // DuckTableEntry.
-  auto create_info =
+  // Create LogicalCreateIndex directly without IndexBinder
+  // (IndexBinder::BindCreateIndex casts bind_data to TableScanBindData
+  // which fails for our SereneDBScanBindData).
+  auto create_index_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateIndexInfo>(
       std::move(stmt.info));
-  auto& schema_entry = table.schema;
-  auto txn = schema_entry.GetCatalogTransaction(binder.context);
-  schema_entry.CreateIndex(txn, *create_info, table);
 
-  // Return the scan plan -- DuckDB will wrap it in a dummy result.
-  // The index is already created, nothing more to execute.
-  return plan;
+  // Normalize index type to our registered types ("secondary" / "inverted").
+  // DuckDB defaults to empty or "ART", PG defaults to "btree".
+  {
+    auto& idx_type = create_index_info->index_type;
+    std::string lower;
+    lower.resize(idx_type.size());
+    std::transform(idx_type.begin(), idx_type.end(), lower.begin(), ::tolower);
+    if (lower.empty() || lower == "art" || lower == "btree") {
+      create_index_info->index_type = "secondary";
+    } else if (lower == "secondary" || lower == "inverted") {
+      create_index_info->index_type = lower;
+    } else {
+      throw duckdb::CatalogException("access method \"%s\" does not exist",
+                                     idx_type);
+    }
+  }
+
+  // Fill in column IDs and scan types from table columns + parsed expressions
+  auto& sdb_entry = table.Cast<SereneDBTableEntry>();
+  auto sdb_table = sdb_entry.GetSereneDBTable();
+  const auto& columns = sdb_table->Columns();
+
+  // Map column names from parsed expressions to column indices
+  for (auto& expr : create_index_info->parsed_expressions) {
+    if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+      auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
+      auto col_name = col_ref.GetColumnName();
+      for (size_t i = 0; i < columns.size(); ++i) {
+        if (columns[i].name == col_name) {
+          create_index_info->column_ids.push_back(i);
+          create_index_info->scan_types.push_back(
+            VeloxTypeToDuckDB(columns[i].type));
+          break;
+        }
+      }
+    }
+  }
+  create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
+  auto& get = plan->Cast<duckdb::LogicalGet>();
+  // The binder creates an empty LogicalGet. Populate column_ids for all
+  // table columns so the scan outputs everything the backfill needs.
+  if (get.GetColumnIds().empty()) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+      get.AddColumnId(static_cast<duckdb::column_t>(i));
+    }
+    get.types.clear();
+    for (size_t i = 0; i < columns.size(); ++i) {
+      get.types.push_back(VeloxTypeToDuckDB(columns[i].type));
+    }
+  }
+  create_index_info->names = get.names;
+  create_index_info->schema = table.schema.name;
+  create_index_info->catalog = table.catalog.GetName();
+
+  // Build BoundColumnRefExpression for ALL table columns so DuckDB's
+  // column pruning keeps them in the scan. The backfill needs all columns
+  // (PK bytes + index column values + serialization for the writer).
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
+  for (size_t i = 0; i < columns.size(); ++i) {
+    expressions.push_back(
+      duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        VeloxTypeToDuckDB(columns[i].type),
+        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
+  }
+
+  auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
+    std::move(create_index_info), std::move(expressions), table, nullptr);
+  result->children.push_back(std::move(plan));
+  return result;
 }
 
 duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(

@@ -98,20 +98,18 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   return duckdb::make_uniq<SereneDBTransactionManager>(db);
 }
 
-void DropSereneDB(
-  duckdb::optional_ptr<duckdb::StorageExtensionInfo> storage_info,
-  duckdb::ClientContext& context, const duckdb::string& name,
-  duckdb::OnEntryNotFound if_not_found) {
+void DropSereneDB(duckdb::DatabaseManager& db_manager,
+                  duckdb::ClientContext& context, const duckdb::string& name,
+                  duckdb::OnEntryNotFound if_not_found) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
   if (state && state->GetConnectionContext().GetDatabase() == name) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_IN_USE),
-      ERR_MSG("cannot drop the currently open database"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("cannot drop the currently open database"));
   }
   const auto& exec_ctx =
     state ? state->GetConnectionContext() : ExecContext::superuser();
-  auto r = catalog::DropDatabase(exec_ctx, name);
+  auto r = catalog::DropDatabase(exec_ctx, name, db_manager);
   if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
     if (if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
       return;

@@ -32,7 +32,9 @@ namespace sdb {
 class ConnectionContext : public ExecContext, public query::Transaction {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
-                    ObjectId database_id, message::Buffer* send_buffer,
+                    ObjectId database_id,
+                    std::shared_ptr<catalog::Database> database,
+                    message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue);
 
   std::string GetCurrentSchema() const;
@@ -49,7 +51,14 @@ class ConnectionContext : public ExecContext, public query::Transaction {
 
   auto StealNotices() { return std::exchange(_notices, {}); }
 
+  // Keeps the database alive for this connection's lifetime
+  // (prevents async drop until connection closes — matches PG behavior)
+  const std::shared_ptr<catalog::Database>& GetDatabasePtr() const {
+    return _database;
+  }
+
  private:
+  std::shared_ptr<catalog::Database> _database;
   std::vector<pg::SqlErrorData> _notices;
   message::Buffer* _send_buffer;
   pg::CopyMessagesQueue* _copy_queue;

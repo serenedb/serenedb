@@ -127,9 +127,7 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 
  private:
   void AddImpl(velox::vector_size_t idx, std::string_view value) {
-#ifdef SDB_DEV
     SDB_ASSERT(idx < _allocated_rows);
-#endif
     if (value.empty()) {
       if (!_null_buf) {
         // Capacity matches max_rows passed at construction. The buffer is
@@ -238,9 +236,8 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 
     _elem_offset += elem_count;
   }
-#ifdef SDB_DEV
-  velox::vector_size_t _allocated_rows;
-#endif
+
+  [[maybe_unused]] velox::vector_size_t _allocated_rows;
 };
 
 class UnknownColumnDecoder final : public RocksDBColumnDecoder {

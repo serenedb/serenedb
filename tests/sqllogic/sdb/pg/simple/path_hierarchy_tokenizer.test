@@ -84,14 +84,19 @@ SELECT ts_lexize('path_forward', '/a/b/c');
 ts_lexize
 {/a,/a/b,/a/b/c}
 
-# --- Error forward hierarchy: empty delimiter ---
+# --- Forward hierarchy: empty delimiter -> "/" ---
 
-statement error Failed to create text search dictionary
+statement ok
 CREATE TEXT SEARCH DICTIONARY path_forward_empty_delim(
     template = 'path_hierarchy',
     delimiter = ''
 )
 
+query
+SELECT ts_lexize('path_forward_empty_delim', '/a/b/c');
+----
+ts_lexize
+{/a,/a/b,/a/b/c}
 
 # --- Path without leading slash ---
 

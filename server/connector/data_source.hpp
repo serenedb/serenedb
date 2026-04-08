@@ -34,10 +34,10 @@
 #include "basics/containers/bitset.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "connector/column_decoder.hpp"
 #include "connector/common.h"
 #include "connector/key_builder.hpp"
 #include "connector/multiget_context.hpp"
+#include "connector/rocksdb_column_decoder.hpp"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/rocksdb_materializer.hpp"
 #include "connector/secondary_sink_writer.hpp"
@@ -184,7 +184,7 @@ class PointLookupPKColumnBuilder {
   const irs::bitset& PresentRows() const { return _present_rows; }
 
  private:
-  std::unique_ptr<IColumnDecoder> _decoder;
+  std::unique_ptr<RocksDBColumnDecoder> _decoder;
   irs::bitset _present_rows;
 };
 

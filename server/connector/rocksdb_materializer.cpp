@@ -22,9 +22,9 @@
 
 #include <velox/vector/FlatVector.h>
 
-#include "column_decoder.hpp"
 #include "key_utils.hpp"
 #include "primary_key.hpp"
+#include "rocksdb_column_decoder.hpp"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
@@ -124,8 +124,8 @@ velox::RowVectorPtr RocksDBMaterializer::ReadRows(
     }
 
     key_utils::AppendColumnKey(key, read_column_id);
-    columns.push_back(ReadColumnKeys(row_keys, column_id,
-                                     _row_type->childAt(col_idx)->kind(), key));
+    columns.push_back(
+      ReadColumnKeys(row_keys, column_id, _row_type->childAt(col_idx), key));
   }
   SDB_ASSERT(absl::c_all_of(columns,
                             [&](const velox::VectorPtr& vec) {
@@ -277,15 +277,22 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
 
 velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
   std::span<const std::string> row_keys, catalog::Column::Id column_id,
-  velox::TypeKind kind, std::string_view column_key) {
+  const velox::TypePtr& type, std::string_view column_key) {
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadGeneratedColumnKeys(row_keys);
   }
-  if (kind == velox::TypeKind::UNKNOWN) {
+  if (type->kind() == velox::TypeKind::UNKNOWN) {
     return ReadUnknownColumnKeys(row_keys);
   }
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumnKeys, kind,
-                                            row_keys, column_key, column_id);
+  const auto n = static_cast<velox::vector_size_t>(row_keys.size());
+  auto decoder = MakeRocksDBColumnDecoder(type, n, _memory_pool);
+  DispatchColumnRead(
+    column_key, column_id, row_keys,
+    [&](size_t original_idx, [[maybe_unused]] std::string_view,
+        std::string_view value) {
+      decoder->Add(static_cast<velox::vector_size_t>(original_idx), value);
+    });
+  return decoder->Finish(n);
 }
 
 velox::VectorPtr RocksDBMaterializer::ReadGeneratedColumnKeys(
@@ -328,21 +335,6 @@ void RocksDBMaterializer::DispatchColumnRead(
   } else {
     IterateColumnKeys(column_key, row_keys, func);
   }
-}
-
-template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBMaterializer::ReadScalarColumnKeys(
-  std::span<const std::string> row_keys, std::string_view column_key,
-  catalog::Column::Id column_id) {
-  const auto n = static_cast<velox::vector_size_t>(row_keys.size());
-  auto decoder = MakeColumnDecoder(velox::Type::create<Kind>(), n, _memory_pool);
-  DispatchColumnRead(
-    column_key, column_id, row_keys,
-    [&](size_t original_idx, [[maybe_unused]] std::string_view key,
-        std::string_view value) {
-      decoder->Add(static_cast<velox::vector_size_t>(original_idx), value);
-    });
-  return decoder->Finish(n);
 }
 
 }  // namespace sdb::connector

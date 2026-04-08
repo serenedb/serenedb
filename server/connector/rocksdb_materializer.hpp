@@ -55,7 +55,7 @@ class RocksDBMaterializer {
 
   velox::VectorPtr ReadColumnKeys(std::span<const std::string> row_keys,
                                   catalog::Column::Id column_id,
-                                  velox::TypeKind kind,
+                                  const velox::TypePtr& type,
                                   std::string_view column_key);
 
   void PrepareSortedBatch(std::span<const std::string> row_keys);
@@ -86,11 +86,6 @@ class RocksDBMaterializer {
     std::span<const std::string> row_keys);
 
   velox::VectorPtr ReadUnknownColumnKeys(std::span<const std::string> row_keys);
-
-  template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumnKeys(std::span<const std::string> row_keys,
-                                        std::string_view column_key,
-                                        catalog::Column::Id column_id);
 
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::DB* _db;

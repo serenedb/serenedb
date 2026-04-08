@@ -29,10 +29,10 @@
 #include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "column_decoder.hpp"
 #include "connector/primary_key.hpp"
 #include "key_utils.hpp"
 #include "parquet_materializer.hpp"
+#include "rocksdb_column_decoder.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "text_materializer.hpp"
 
@@ -45,10 +45,10 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
 // Dispatch once per column: Kind is resolved by the caller via
 // VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH, so the MultiGet callback is fully typed.
-template<velox::TypeKind Kind, typename Ctx, typename Source>
+template<typename Ctx, typename Source>
 void FillColumnFromMultiGet(Ctx& ctx, Source& source,
                             std::span<const rocksdb::Slice> slices,
-                            IColumnDecoder& decoder, size_t& collected) {
+                            RocksDBColumnDecoder& decoder, size_t& collected) {
   ctx.MultiGet(source, slices, [&](const auto&, auto& val, const auto& st) {
     SDB_ENSURE(st.ok(), rocksutils::ConvertStatus(st));
     decoder.Add(collected++, val.ToStringView());
@@ -75,7 +75,7 @@ void MakeExclusiveUpperBound(std::string& key) {
 void PointLookupPKColumnBuilder::Init(const velox::TypePtr& type,
                                       size_t capacity,
                                       velox::memory::MemoryPool& pool) {
-  _decoder = MakeColumnDecoder(type, capacity, pool);
+  _decoder = MakeRocksDBColumnDecoder(type, capacity, pool);
   _present_rows.reset(capacity);
 }
 
@@ -302,10 +302,10 @@ template<velox::TypeKind Kind>
 velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadScalarColumn(
   rocksdb::Iterator& it, uint64_t max_size) {
   const auto n = static_cast<velox::vector_size_t>(max_size);
-  auto decoder = MakeColumnDecoder(velox::Type::create<Kind>(), n, _memory_pool);
+  auto decoder =
+    MakeRocksDBColumnDecoder(velox::Type::create<Kind>(), n, _memory_pool);
   const auto vector_size = IterateColumn(
-    it, max_size,
-    [&](uint64_t idx, std::string_view, std::string_view value) {
+    it, max_size, [&](uint64_t idx, std::string_view, std::string_view value) {
       decoder->Add(static_cast<velox::vector_size_t>(idx), value);
     });
   return decoder->Finish(static_cast<velox::vector_size_t>(vector_size));
@@ -324,10 +324,9 @@ template<typename Source>
 velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadArrayColumn(
   rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
   const auto n = static_cast<velox::vector_size_t>(max_size);
-  auto decoder = MakeColumnDecoder(array_type, n, _memory_pool);
+  auto decoder = MakeRocksDBColumnDecoder(array_type, n, _memory_pool);
   const auto vector_size = IterateColumn(
-    it, max_size,
-    [&](uint64_t idx, std::string_view, std::string_view value) {
+    it, max_size, [&](uint64_t idx, std::string_view, std::string_view value) {
       decoder->Add(static_cast<velox::vector_size_t>(idx), value);
     });
   return decoder->Finish(static_cast<velox::vector_size_t>(vector_size));
@@ -544,15 +543,12 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Policy>::next(
       const auto col_id = _column_ids[col_idx];
       const auto& type = _read_type->childAt(col_idx);
 
-      auto decoder = MakeColumnDecoder(type, found_count, _memory_pool);
+      auto decoder = MakeRocksDBColumnDecoder(type, found_count, _memory_pool);
 
       const auto slices =
         _key_builder.BuildPresentKeys(col_id, _collector.PresentRows());
       size_t collected = 0;
-      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillColumnFromMultiGet, type->kind(),
-                                         _ctx, _source, slices, *decoder,
-                                         collected);
-
+      FillColumnFromMultiGet(_ctx, _source, slices, *decoder, collected);
       columns[col_idx] = decoder->Finish(found_count);
     }
 

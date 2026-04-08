@@ -1473,5 +1473,14 @@ Text Search Dictionary:
     break (string) [default: alpha] - Token boundary detection mode: all, graphic, alpha
   pipeline:
     (no additional options)
+  pattern:
+    pattern[required] (string) [default: none] - RE2 regular expression pattern for matching or splitting
+    group (integer) [default: -1] - Capture group to extract: -1=split, 0=whole match, N>0=Nth group
+  path_hierarchy:
+    delimiter (string) [default: /] - Path separator character or string (UTF-8)
+    replacement (string) - Replacement for delimiter in tokens
+    reverse (boolean) [default: false] - Use reverse tokenization for domain-like hierarchies
+    skip (integer) [default: 0] - Number of initial tokens to skip
+    buffersize (integer) [default: 1024] - Term buffer size hint (characters per pass)
   copy_from:
     from[required] (string) [default: none] - the source tokenizer name

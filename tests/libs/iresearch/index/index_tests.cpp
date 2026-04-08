@@ -14641,6 +14641,7 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
 
   auto check_recall = [&](irs::DirectoryReader& reader,
                           const auto& expected_vectors) {
+    float recall = 0.0f;
     faiss::SearchParametersHNSW params;
     params.efSearch = 32;
     for (size_t i = 0; i < kQueries; ++i) {
@@ -14671,9 +14672,10 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
             return p.second == docs[k];
           }) != expected.end();
       }
-      float recall = static_cast<float>(correct) / kTopK;
-      ASSERT_GT(recall, .85f);
+      float current_recall = static_cast<float>(correct) / kTopK;
+      recall += current_recall;
     }
+    ASSERT_GT(recall, .9f);
   };
 
   irs::IndexReaderOptions reader_opts;
@@ -14803,28 +14805,13 @@ TEST_P(IndexTestCase14, hnsw_range_search_basic) {
         radius,
         params,
       };
+      faiss::RangeSearchResult range_result(1);
+      reader.RangeSearch(kColumnName, info, range_result);
+
       std::vector<std::pair<float, uint64_t>> found;
-      for (size_t segment_id = 0; segment_id < reader.size(); ++segment_id) {
-        const auto& segment = reader[segment_id];
-        const auto* column = segment.column(kColumnName);
-        if (!column) {
-          continue;
-        }
-        faiss::RangeSearchResult seg_result(1);
-        irs::HNSWRangeResultHandler handler{&seg_result, radius};
-        irs::HNSWRangeSearchContext context{
-          info,
-          static_cast<uint32_t>(segment_id),
-          faiss::VisitedTable{0},
-          handler,
-        };
-        column->RangeSearch(context);
-        // seg_result is finalized when HNSWRangeSegmentResultHandler inside
-        // RangeSearch() is destroyed (at function return).
-        for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
-          found.emplace_back(seg_result.distances[i],
-                             static_cast<uint64_t>(seg_result.labels[i]));
-        }
+      for (size_t i = range_result.lims[0]; i < range_result.lims[1]; ++i) {
+        found.emplace_back(range_result.distances[i],
+                           static_cast<uint64_t>(range_result.labels[i]));
       }
 
       for (const auto& [dist, packed_id] : found) {

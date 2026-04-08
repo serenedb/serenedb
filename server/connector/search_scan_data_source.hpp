@@ -96,26 +96,21 @@ class SearchDataSource final : public velox::connector::DataSource {
 };
 
 template<typename Materializer>
-class ANNSearchDataSource final : public velox::connector::DataSource {
+class VectorSearchDataSourceBase : public velox::connector::DataSource {
  public:
-  ANNSearchDataSource(velox::memory::MemoryPool& memory_pool,
-                      Materializer materializer, const irs::IndexReader& reader,
-                      std::string field_name, std::vector<float> query,
-                      size_t top_k)
+  VectorSearchDataSourceBase(velox::memory::MemoryPool& memory_pool,
+                             Materializer materializer,
+                             const irs::IndexReader& reader,
+                             std::string field_name)
     : _memory_pool{memory_pool},
       _materializer{std::move(materializer)},
       _reader{reader},
-      _field_name{std::move(field_name)},
-      _query{std::move(query)},
-      _top_k{top_k} {}
+      _field_name{std::move(field_name)} {}
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
     _split = std::move(split);
     _done = false;
   }
-
-  std::optional<velox::RowVectorPtr> next(uint64_t size,
-                                          velox::ContinueFuture& future) final;
 
   void addDynamicFilter(velox::column_index_t,
                         const std::shared_ptr<velox::common::Filter>&) final {
@@ -129,16 +124,60 @@ class ANNSearchDataSource final : public velox::connector::DataSource {
   }
   void cancel() final {}
 
- private:
+ protected:
   velox::memory::MemoryPool& _memory_pool;
   Materializer _materializer;
   const irs::IndexReader& _reader;
   std::string _field_name;
-  std::vector<float> _query;
-  size_t _top_k;
   std::shared_ptr<velox::connector::ConnectorSplit> _split;
   bool _done = false;
   uint64_t _produced = 0;
+};
+
+template<typename Materializer>
+class ANNSearchDataSource final
+  : public VectorSearchDataSourceBase<Materializer> {
+ public:
+  using VectorSearchDataSourceBase<Materializer>::VectorSearchDataSourceBase;
+  ANNSearchDataSource(velox::memory::MemoryPool& memory_pool,
+                      Materializer materializer, const irs::IndexReader& reader,
+                      std::string field_name, std::vector<float> query,
+                      size_t top_k)
+    : VectorSearchDataSourceBase<Materializer>{memory_pool,
+                                               std::move(materializer), reader,
+                                               std::move(field_name)},
+      _query{std::move(query)},
+      _top_k{top_k} {}
+
+  std::optional<velox::RowVectorPtr> next(uint64_t size,
+                                          velox::ContinueFuture& future) final;
+
+ private:
+  std::vector<float> _query;
+  size_t _top_k;
+};
+
+template<typename Materializer>
+class RangeSearchDataSource final
+  : public VectorSearchDataSourceBase<Materializer> {
+ public:
+  using VectorSearchDataSourceBase<Materializer>::VectorSearchDataSourceBase;
+
+  RangeSearchDataSource(velox::memory::MemoryPool& memory_pool,
+                        Materializer materializer,
+                        const irs::IndexReader& reader, std::string field_name,
+                        std::vector<float> query, float radius)
+    : VectorSearchDataSourceBase<Materializer>{memory_pool,
+                                               std::move(materializer), reader,
+                                               std::move(field_name)},
+      _query{std::move(query)},
+      _radius{radius} {}
+  std::optional<velox::RowVectorPtr> next(uint64_t size,
+                                          velox::ContinueFuture& future) final;
+
+ private:
+  std::vector<float> _query;
+  float _radius;
 };
 
 }  // namespace sdb::connector

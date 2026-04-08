@@ -369,10 +369,10 @@ template class SearchDataSource<TextMaterializer>;
 template<typename Materializer>
 std::optional<velox::RowVectorPtr> ANNSearchDataSource<Materializer>::next(
   uint64_t size, velox::ContinueFuture& future) {
-  if (_done || !_split) {
+  if (this->_done || !this->_split) {
     return nullptr;
   }
-  _done = true;
+  this->_done = true;
 
   std::vector<float> dis(_top_k, std::numeric_limits<float>::max());
   std::vector<int64_t> ids(_top_k, -1);
@@ -382,10 +382,10 @@ std::optional<velox::RowVectorPtr> ANNSearchDataSource<Materializer>::next(
     .top_k = _top_k,
     .params = {},
   };
-  _reader.Search(_field_name, info, dis.data(), ids.data());
+  this->_reader.Search(this->_field_name, info, dis.data(), ids.data());
 
-  primary_key::Keys index_keys{_memory_pool};
-  index_keys.reserve(_top_k);
+  primary_key::Keys index_keys{this->_memory_pool};
+  index_keys.reserve(this->_top_k);
 
   for (size_t i = 0; i < _top_k; ++i) {
     if (ids[i] < 0) {
@@ -394,7 +394,7 @@ std::optional<velox::RowVectorPtr> ANNSearchDataSource<Materializer>::next(
     auto [seg_idx, doc_id] =
       irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
 
-    const auto& segment = _reader[seg_idx];
+    const auto& segment = this->_reader[seg_idx];
     const auto* pk_col = segment.column(connector::kPkFieldName);
     if (!pk_col) {
       continue;
@@ -414,16 +414,76 @@ std::optional<velox::RowVectorPtr> ANNSearchDataSource<Materializer>::next(
   }
 
   if (index_keys.empty()) {
-    _split.reset();
+    this->_split.reset();
     return nullptr;
   }
 
-  _produced += index_keys.size();
-  return _materializer.ReadRows(index_keys, nullptr, {});
+  this->_produced += index_keys.size();
+  return this->_materializer.ReadRows(index_keys, nullptr, {});
 }
 
 template class ANNSearchDataSource<RocksDBMaterializer>;
 template class ANNSearchDataSource<ParquetMaterializer>;
 template class ANNSearchDataSource<TextMaterializer>;
+
+template<typename Materializer>
+std::optional<velox::RowVectorPtr> RangeSearchDataSource<Materializer>::next(
+  uint64_t size, velox::ContinueFuture& future) {
+  if (this->_done || !this->_split) {
+    return nullptr;
+  }
+  this->_done = true;
+
+  irs::HNSWRangeSearchInfo info{
+    .query = reinterpret_cast<const irs::byte_type*>(_query.data()),
+    .radius = _radius,
+    .params = {},
+  };
+  faiss::RangeSearchResult result{1};
+  this->_reader.RangeSearch(this->_field_name, info, result);
+
+  size_t result_size = result.lims[1] - result.lims[0];
+  primary_key::Keys index_keys{this->_memory_pool};
+  index_keys.reserve(result_size);
+
+  for (size_t i = 0; i < result_size; ++i) {
+    auto id = static_cast<int64_t>(result.labels[i]);
+    if (id < 0) {
+      continue;
+    }
+    auto [seg_idx, doc_id] =
+      irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
+
+    const auto& segment = this->_reader[seg_idx];
+    const auto* pk_col = segment.column(connector::kPkFieldName);
+    if (!pk_col) {
+      continue;
+    }
+    auto pk_itr = pk_col->iterator(irs::ColumnHint::Normal);
+    if (!pk_itr) {
+      continue;
+    }
+    const auto* pk_val = irs::get<irs::PayAttr>(*pk_itr);
+    if (!pk_val) {
+      continue;
+    }
+    if (pk_itr->seek(doc_id) != doc_id) {
+      continue;
+    }
+    index_keys.emplace_back(irs::ViewCast<char>(pk_val->value));
+  }
+
+  if (index_keys.empty()) {
+    this->_split.reset();
+    return nullptr;
+  }
+
+  this->_produced += index_keys.size();
+  return this->_materializer.ReadRows(index_keys, nullptr, {});
+}
+
+template class RangeSearchDataSource<RocksDBMaterializer>;
+template class RangeSearchDataSource<ParquetMaterializer>;
+template class RangeSearchDataSource<TextMaterializer>;
 
 }  // namespace sdb::connector

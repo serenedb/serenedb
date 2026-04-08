@@ -757,6 +757,65 @@ class ANNTableHandle final : public velox::connector::ConnectorTableHandle {
   containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
 };
 
+class RangeSearchTableHandle final
+  : public velox::connector::ConnectorTableHandle {
+ public:
+  using FilterColumn = SereneDBConnectorTableHandle::FilterColumn;
+
+  RangeSearchTableHandle(const IndexTable& table, ObjectId index_id,
+                         std::string field_name, std::vector<float> query,
+                         float radius)
+    : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
+      _name{table.name()},
+      _table_id{table.GetIndex().GetRelationId()},
+      _transaction{table.GetTransaction()},
+      _index_id{index_id},
+      _underlying_table{table.GetTable()},
+      _field_name{std::move(field_name)},
+      _query{std::move(query)},
+      _radius{radius} {
+    _effective_column_id = ComputeEffectiveColumnId(table.columnMap());
+    for (const auto& [orig_name, col_ptr] : table.columnMap()) {
+      const auto* scol = basics::downCast<const SereneDBColumn>(col_ptr);
+      _table_column_map.emplace(orig_name,
+                                FilterColumn{scol->Id(), scol->type()});
+    }
+  }
+
+  bool supportsIndexLookup() const final { return false; }
+  const std::string& name() const final { return _name; }
+  std::string toString() const final {
+    return absl::Substitute("$0, type=range_search, radius=$1, field=$2", _name,
+                            _radius, _field_name);
+  }
+
+  ObjectId TableId() const noexcept { return _table_id; }
+  catalog::Column::Id GetEffectiveColumnId() const noexcept {
+    return _effective_column_id;
+  }
+  auto& GetTransaction() const noexcept { return _transaction; }
+  ObjectId GetIndexId() const noexcept { return _index_id; }
+  const std::string& GetFieldName() const noexcept { return _field_name; }
+  const std::vector<float>& GetQuery() const noexcept { return _query; }
+  float GetRadius() const noexcept { return _radius; }
+  const axiom::connector::Table& GetUnderlyingTable() const noexcept {
+    return *_underlying_table;
+  }
+  const auto& GetTableColumnMap() const noexcept { return _table_column_map; }
+
+ private:
+  std::string _name;
+  ObjectId _table_id;
+  catalog::Column::Id _effective_column_id;
+  query::Transaction& _transaction;
+  ObjectId _index_id;
+  axiom::connector::TablePtr _underlying_table;
+  std::string _field_name;
+  std::vector<float> _query;
+  float _radius;
+  containers::FlatHashMap<std::string, FilterColumn> _table_column_map;
+};
+
 class SecondaryIndexTableHandle final
   : public velox::connector::ConnectorTableHandle {
  public:
@@ -1102,6 +1161,13 @@ class SereneDBConnector final : public velox::connector::Connector {
       return CreateANNSearchDataSource(output_type, *ann_handle,
                                        std::move(column_oids), column_handles,
                                        connector_query_ctx);
+    }
+
+    if (const auto* range_handle =
+          dynamic_cast<const RangeSearchTableHandle*>(table_handle.get())) {
+      return CreateRangeSearchDataSource(output_type, *range_handle,
+                                         std::move(column_oids), column_handles,
+                                         connector_query_ctx);
     }
 
     const auto& serene_table_handle =
@@ -1713,6 +1779,42 @@ class SereneDBConnector final : public velox::connector::Connector {
         return std::make_unique<ANNSearchDataSource<Mat>>(
           pool, std::move(mat), search_snapshot.reader, handle.GetFieldName(),
           handle.GetQuery(), handle.GetTopK());
+      });
+  }
+
+  std::unique_ptr<velox::connector::DataSource> CreateRangeSearchDataSource(
+    const velox::RowTypePtr& output_type, const RangeSearchTableHandle& handle,
+    std::vector<catalog::Column::Id> column_oids,
+    const velox::connector::ColumnHandleMap& column_handles,
+    velox::connector::ConnectorQueryCtx* connector_query_ctx) {
+    if (column_oids.empty()) {
+      SDB_ASSERT(output_type->size() == 0);
+      column_oids.push_back(handle.GetEffectiveColumnId());
+    }
+
+    auto& transaction = handle.GetTransaction();
+    const bool needs_read_your_own_writes =
+      transaction.HasRocksDBWrite() &&
+      transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
+    if (needs_read_your_own_writes) {
+      SDB_THROW(
+        ERROR_NOT_IMPLEMENTED,
+        "sdb_read_your_own_writes is not supported for range search index");
+    }
+
+    auto& pool = *connector_query_ctx->memoryPool();
+    const auto& search_snapshot =
+      transaction.EnsureSearchSnapshot(handle.GetIndexId());
+
+    return CreateWithMaterializer(
+      handle, output_type, output_type, column_oids, column_handles, pool,
+      search_snapshot.snapshot->GetSnapshot(),
+      [&](auto mat,
+          auto& source) -> std::unique_ptr<velox::connector::DataSource> {
+        using Mat = decltype(mat);
+        return std::make_unique<RangeSearchDataSource<Mat>>(
+          pool, std::move(mat), search_snapshot.reader, handle.GetFieldName(),
+          handle.GetQuery(), handle.GetRadius());
       });
   }
 

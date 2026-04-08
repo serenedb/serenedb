@@ -20,6 +20,9 @@
 
 #include "serenedb_connector.hpp"
 
+#include <velox/vector/ComplexVector.h>
+#include <velox/vector/FlatVector.h>
+
 #include <iresearch/search/all_filter.hpp>
 
 #include "basics/static_strings.h"
@@ -36,6 +39,95 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 namespace {
+
+struct VectorRangeMatch {
+  std::string field_name;
+  std::vector<float> query;
+  float radius;
+};
+
+std::optional<VectorRangeMatch> TryMatchVectorRangeFilter(
+  const velox::core::TypedExprPtr& filter) {
+  const auto* lt =
+    dynamic_cast<const velox::core::CallTypedExpr*>(filter.get());
+  if (!lt || lt->name() != "lt" || lt->inputs().size() != 2) {
+    return std::nullopt;
+  }
+
+  const auto* dist =
+    dynamic_cast<const velox::core::CallTypedExpr*>(lt->inputs()[0].get());
+  if (!dist || dist->name() != "sdb_l2_distance" ||
+      dist->inputs().size() != 2) {
+    return std::nullopt;
+  }
+
+  const auto* field = dynamic_cast<const velox::core::FieldAccessTypedExpr*>(
+    dist->inputs()[0].get());
+  if (!field) {
+    return std::nullopt;
+  }
+
+  const auto* array_expr = dynamic_cast<const velox::core::ConstantTypedExpr*>(
+    dist->inputs()[1].get());
+  if (!array_expr || !array_expr->type()->isArray() ||
+      !array_expr->hasValueVector()) {
+    return std::nullopt;
+  }
+
+  const auto* radius_expr =
+    dynamic_cast<const velox::core::ConstantTypedExpr*>(lt->inputs()[1].get());
+  if (!radius_expr) {
+    return std::nullopt;
+  }
+
+  const auto* arr_vec = array_expr->valueVector()->as<velox::ArrayVector>();
+  if (!arr_vec) {
+    return std::nullopt;
+  }
+  const auto start = arr_vec->offsetAt(0);
+  const auto length = arr_vec->sizeAt(0);
+  const auto* elements = arr_vec->elements().get();
+
+  std::vector<float> query;
+  query.reserve(length);
+  if (elements->typeKind() == velox::TypeKind::REAL) {
+    const auto* flat = elements->as<velox::FlatVector<float>>();
+    for (auto i = start; i < start + length; ++i) {
+      query.push_back(flat->valueAt(i));
+    }
+  } else if (elements->typeKind() == velox::TypeKind::DOUBLE) {
+    const auto* flat = elements->as<velox::FlatVector<double>>();
+    for (auto i = start; i < start + length; ++i) {
+      query.push_back(static_cast<float>(flat->valueAt(i)));
+    }
+  } else {
+    return std::nullopt;
+  }
+
+  float radius;
+  auto extract_scalar = [&](const velox::Variant& v) -> bool {
+    if (v.kind() == velox::TypeKind::REAL) {
+      radius = v.value<float>();
+      return true;
+    }
+    if (v.kind() == velox::TypeKind::DOUBLE) {
+      radius = static_cast<float>(v.value<double>());
+      return true;
+    }
+    return false;
+  };
+  if (radius_expr->hasValueVector()) {
+    if (!extract_scalar(radius_expr->valueVector()->variantAt(0))) {
+      return std::nullopt;
+    }
+  } else {
+    if (!extract_scalar(radius_expr->value())) {
+      return std::nullopt;
+    }
+  }
+
+  return VectorRangeMatch{field->name(), std::move(query), radius};
+}
 
 void RejectFilter(velox::core::TypedExprPtr filter,
                   std::vector<velox::core::TypedExprPtr>& rejected_filters) {
@@ -177,6 +269,22 @@ SereneDBTableLayout::createTableHandle(
   if (idx_table &&
       idx_table->GetIndex().GetType() == catalog::ObjectType::InvertedIndex) {
     const auto* inv_index = idx_table;
+
+    for (size_t fi = 0; fi < filters.size(); ++fi) {
+      auto match = TryMatchVectorRangeFilter(filters[fi]);
+      if (!match || !inv_index->findColumn(match->field_name)) {
+        continue;
+      }
+      for (size_t fj = 0; fj < filters.size(); ++fj) {
+        if (fj != fi) {
+          rejected_filters.push_back(std::move(filters[fj]));
+        }
+      }
+      return std::make_shared<RangeSearchTableHandle>(
+        *inv_index, inv_index->GetIndex().GetId(), std::move(match->field_name),
+        std::move(match->query), match->radius);
+    }
+
     const auto& index =
       basics::downCast<const catalog::InvertedIndex>(inv_index->GetIndex());
     auto column_getter =

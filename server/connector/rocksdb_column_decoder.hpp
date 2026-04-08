@@ -34,14 +34,15 @@ namespace sdb::connector {
 
 class RocksDBColumnDecoder {
  public:
-  using Writer = absl::AnyInvocable<void(velox::vector_size_t,
-                                         std::string_view) const>;
+  using Writer =
+    absl::AnyInvocable<void(velox::vector_size_t, std::string_view) const>;
 
   explicit RocksDBColumnDecoder(Writer&& writer) : _writer(std::move(writer)) {}
   virtual ~RocksDBColumnDecoder() = default;
 
-  // Called on each slice read for the column. Values could be added out of order.
-  // It is caller responsibility to sync access and to maintain proper idx.  
+  // Called on each slice read for the column. Values could be added out of
+  // order. It is caller responsibility to sync access and to maintain proper
+  // idx.
   void Add(velox::vector_size_t idx, std::string_view value) {
     _writer(idx, value);
   }

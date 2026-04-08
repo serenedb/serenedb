@@ -278,9 +278,11 @@ void RocksDBMaterializer::SeekIterateColumnKeys(
 velox::VectorPtr RocksDBMaterializer::ReadColumnKeys(
   std::span<const std::string> row_keys, catalog::Column::Id column_id,
   const velox::TypePtr& type, std::string_view column_key) {
+  // special case - exists only here
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadGeneratedColumnKeys(row_keys);
   }
+  // we know that all rows are present - special case of reading UNKNOWN
   if (type->kind() == velox::TypeKind::UNKNOWN) {
     return ReadUnknownColumnKeys(row_keys);
   }

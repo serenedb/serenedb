@@ -125,8 +125,6 @@ class RocksDBPerColumnIteratorDataSource : public RocksDBBaseDataSource {
  private:
   velox::VectorPtr ReadColumn(velox::column_index_t col_idx, uint64_t max_size);
 
-  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size);
-
   velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
 
   template<

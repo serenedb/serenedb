@@ -286,26 +286,13 @@ velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadColumn(
   }
 
   const auto& type = _read_type->childAt(col_idx);
-  if (type->kind() == velox::TypeKind::UNKNOWN) {
-    return ReadUnknownColumn(it, max_size);
-  }
-
-  auto decoder =
-    MakeRocksDBColumnDecoder(type, static_cast<velox::vector_size_t>(max_size), _memory_pool);
+  auto decoder = MakeRocksDBColumnDecoder(
+    type, static_cast<velox::vector_size_t>(max_size), _memory_pool);
   const auto vector_size = IterateColumn(
     it, max_size, [&](uint64_t idx, std::string_view, std::string_view value) {
       decoder->Add(static_cast<velox::vector_size_t>(idx), value);
     });
   return decoder->Finish(static_cast<velox::vector_size_t>(vector_size));
-}
-
-template<typename Source>
-velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadUnknownColumn(
-  rocksdb::Iterator& it, uint64_t max_size) {
-  uint64_t vector_size = IterateColumn(
-    it, max_size, [](uint64_t, std::string_view, std::string_view) {});
-  return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
-                                               &_memory_pool);
 }
 
 template<typename Source>

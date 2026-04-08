@@ -31,7 +31,6 @@
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace sdb::connector {
-
 namespace {
 
 // Write one non-empty string_view into a typed FlatVector slot.
@@ -101,7 +100,7 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 
   velox::BufferPtr _offsets_buf;
   velox::BufferPtr _sizes_buf;
-  velox::BufferPtr _null_buf;  // lazy — allocated on first NULL row
+  velox::BufferPtr _null_buf;  // lazy -- allocated on first NULL row
   velox::vector_size_t* _raw_offsets;
   velox::vector_size_t* _raw_sizes;
 
@@ -246,9 +245,26 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 
     _elem_offset += elem_count;
   }
-  #ifdef SDB_DEV
+#ifdef SDB_DEV
   velox::vector_size_t _allocated_rows;
-  #endif
+#endif
+};
+
+// ---------------------------------------------------------------------------
+// UnknownColumnDecoder
+// ---------------------------------------------------------------------------
+class UnknownColumnDecoder final : public RocksDBColumnDecoder {
+  velox::memory::MemoryPool& _pool;
+
+ public:
+  explicit UnknownColumnDecoder(velox::memory::MemoryPool& pool)
+    : RocksDBColumnDecoder([](velox::vector_size_t, std::string_view) {}),
+      _pool{pool} {}
+
+  velox::VectorPtr Finish(velox::vector_size_t actual_rows) final {
+    return velox::BaseVector::createNullConstant(velox::UNKNOWN(), actual_rows,
+                                                 &_pool);
+  }
 };
 
 template<velox::TypeKind Kind>
@@ -270,6 +286,9 @@ std::unique_ptr<RocksDBColumnDecoder> MakeArrayDecoder(
 std::unique_ptr<RocksDBColumnDecoder> MakeRocksDBColumnDecoder(
   const velox::TypePtr& type, velox::vector_size_t max_rows,
   velox::memory::MemoryPool& pool) {
+  if (type->kind() == velox::TypeKind::UNKNOWN) {
+    return std::make_unique<UnknownColumnDecoder>(pool);
+  }
   if (type->isArray()) {
     const auto elem_kind = type->asArray().elementType()->kind();
     return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(MakeArrayDecoder, elem_kind, type,

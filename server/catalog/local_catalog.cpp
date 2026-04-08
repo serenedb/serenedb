@@ -60,6 +60,7 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
+#include "connector/duckdb_entry_cache.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -77,7 +78,6 @@
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
-#include "pg/sql_resolver.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -124,7 +124,15 @@ class SnapshotImpl : public Snapshot {
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
     result->_object_dependencies = _object_dependencies;
+    // New snapshot starts with empty DuckDB cache (lazily populated)
     return result;
+  }
+
+  connector::DuckDBEntryCache& GetDuckDBCache() const override {
+    if (!_duckdb_cache) {
+      _duckdb_cache = std::make_unique<connector::DuckDBEntryCache>();
+    }
+    return *_duckdb_cache;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
@@ -864,6 +872,7 @@ class SnapshotImpl : public Snapshot {
   ResolutionTable _resolution_table;
   ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
+  mutable std::unique_ptr<connector::DuckDBEntryCache> _duckdb_cache;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)

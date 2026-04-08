@@ -20,19 +20,16 @@
 
 #pragma once
 
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
+
 #include "catalog/base_query_view.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_utils.h"
 
 namespace sdb {
 
 class SqlQueryViewImpl {
  public:
   struct State {
-    pg::MemoryContextPtr memory_context;
-    const RawStmt* stmt = nullptr;
-    pg::Objects objects;
-    // TODO(mbkkt) warnings?
+    duckdb::unique_ptr<duckdb::CreateViewInfo> view_info;
   };
 
   static constexpr auto Type() noexcept {

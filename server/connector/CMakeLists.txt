@@ -23,6 +23,7 @@ add_library(
     duckdb_storage_extension.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
+    duckdb_entry_cache.cpp
     duckdb_schema_entry.cpp
     duckdb_table_entry.cpp
     duckdb_table_function.cpp

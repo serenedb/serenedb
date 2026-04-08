@@ -50,6 +50,10 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/index_shard.h"
 
+namespace sdb::connector {
+class DuckDBEntryCache;
+}
+
 namespace sdb::catalog {
 
 template<typename T>
@@ -88,6 +92,10 @@ constexpr ObjectType GetObjectType() noexcept {
 
 struct Snapshot {
   virtual ~Snapshot() = default;
+
+  // Lazy cache of DuckDB CatalogEntry objects for this snapshot.
+  // Built on demand, destroyed with the snapshot.
+  virtual connector::DuckDBEntryCache& GetDuckDBCache() const = 0;
   virtual std::vector<std::shared_ptr<Role>> GetRoles() const = 0;
   virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
   virtual std::vector<std::shared_ptr<Schema>> GetSchemas(

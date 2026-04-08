@@ -19,7 +19,6 @@ target_sources(
         index.cpp
         view.cpp
         function.cpp
-        native_functions.cpp
         base_query_view.cpp
         sql_query_view.cpp
         validators.cpp

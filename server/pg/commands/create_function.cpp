@@ -31,7 +31,6 @@
 #include "pg/connection_context.h"
 #include "pg/options_parser.h"
 #include "pg/pg_list_utils.h"
-#include "pg/sql_analyzer_velox.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -147,9 +146,6 @@ std::shared_ptr<catalog::Function> CreateFunctionImpl(
 
   auto function_name =
     ParseObjectName(stmt.funcname, database_name, current_schema).relation;
-
-  catalog::FunctionProperties properties;
-  properties.name = std::string{function_name};
 
   std::string function_body;
   std::tie(function_body, properties.options) =

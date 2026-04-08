@@ -407,11 +407,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
 
   gstate.finalized = true;
 
-  // Invalidate cached table entries so they pick up new indexed columns
-  if (gstate.schema_entry) {
-    gstate.schema_entry->InvalidateTable(gstate.table_name);
-  }
-
   std::cerr << "SereneDB: Index " << gstate.index_name
             << " backfill complete (" << gstate.backfill_count << " rows)"
             << std::endl;

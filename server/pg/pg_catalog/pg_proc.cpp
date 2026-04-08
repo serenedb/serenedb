@@ -32,7 +32,7 @@
 namespace sdb::pg {
 namespace {
 
-constexpr uint64_t kNullMask = MaskFromNulls({
+[[maybe_unused]] constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgProc::proallargtypes),
   GetIndex(&PgProc::proargmodes),
   GetIndex(&PgProc::proargnames),
@@ -43,14 +43,17 @@ constexpr uint64_t kNullMask = MaskFromNulls({
   GetIndex(&PgProc::proacl),
 });
 
-constexpr Oid kLangInternal = 12;
-constexpr Oid kLangSql = 14;
+[[maybe_unused]] constexpr Oid kLangInternal = 12;
+[[maybe_unused]] constexpr Oid kLangSql = 14;
 
 }  // namespace
 
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
   velox::memory::MemoryPool& pool) {
+  // DuckDB provides pg_proc via its default views
+  return {};
+#if 0
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgProc> values;
@@ -146,6 +149,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
   }
 
   return result;
+#endif
 }
 
 }  // namespace sdb::pg

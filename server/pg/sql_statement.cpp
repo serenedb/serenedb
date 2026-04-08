@@ -35,7 +35,6 @@
 #include "pg/sql_collector.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-#include "pg/sql_resolver.h"
 #include "pg/sql_statement.h"
 #include "query/velox_executor.h"
 

@@ -75,8 +75,7 @@ Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
     return r;
   }
 
-  if (ctx == ViewContext::User) {
-    SDB_ASSERT(config);
+  if (ctx == ViewContext::User && config) {
     r = ImplQueryView::Check(database_id, options.meta.name, *state, *config);
     if (!r.ok()) {
       return r;

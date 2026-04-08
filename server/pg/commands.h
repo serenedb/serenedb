@@ -68,9 +68,6 @@ yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt);
 yaclib::Future<> CreateFunction(ExecContext& ctx,
                                 const CreateFunctionStmt& stmt);
 
-std::shared_ptr<catalog::Function> CreateSystemFunction(
-  const CreateFunctionStmt& stmt);
-
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
                                  const IntoClause& into, bool if_not_exists,
                                  CTASState& state, velox::RowVectorPtr& batch);

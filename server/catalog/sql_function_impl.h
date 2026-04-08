@@ -20,40 +20,30 @@
 
 #pragma once
 
+#include <vpack/builder.h>
 #include <vpack/slice.h>
 
-#include "function.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_utils.h"
-#include "query/config.h"
+#include <string>
+
+#include "basics/result.h"
 
 namespace sdb::pg {
 
+// Stores a SQL function/macro as its SQL text representation.
+// On demand, DuckDB parses the SQL to build macro entries.
 class FunctionImpl {
  public:
-  FunctionImpl() = default;
+  explicit FunctionImpl(std::string sql) : _sql(std::move(sql)) {}
 
-  Result Init(ObjectId database, std::string_view name, std::string query,
-              bool is_procedure, const Config* config);
-
-  static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          std::unique_ptr<FunctionImpl>& implementation,
-                          bool is_procedure);
+  static Result FromVPack(vpack::Slice slice,
+                          std::unique_ptr<FunctionImpl>& out);
 
   void ToVPack(vpack::Builder& builder) const;
 
-  std::string_view GetQuery() const noexcept { return _query; }
-
-  const RawStmt* GetStatement() const noexcept { return _stmt; }
-
-  pg::Objects& GetObjects() noexcept { return _objects; }
+  std::string_view GetSQL() const noexcept { return _sql; }
 
  private:
-  std::string _query;
-  pg::MemoryContextPtr _memory_context;
-  const RawStmt* _stmt{nullptr};
-  pg::Objects _objects;
-  // TODO(mbkkt) warnings?
+  std::string _sql;  // e.g. "CREATE FUNCTION add1(x INT) RETURNS INT ..."
 };
 
 }  // namespace sdb::pg

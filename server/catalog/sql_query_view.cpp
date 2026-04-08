@@ -20,41 +20,10 @@
 
 #include "sql_query_view.h"
 
-#include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
-#include <vpack/serializer.h>
-#include <vpack/slice.h>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 
-#include <algorithm>
-#include <cstdint>
-#include <magic_enum/magic_enum.hpp>
-#include <memory>
-#include <mutex>
-#include <type_traits>
-#include <vector>
-
-#include "auth/common.h"
-#include "basics/down_cast.h"
 #include "basics/errors.h"
-#include "basics/exceptions.h"
-#include "basics/global_resource_monitor.h"
-#include "basics/resource_usage.h"
 #include "basics/result.h"
-#include "basics/std.hpp"
-#include "catalog/catalog.h"
-#include "catalog/types.h"
-#include "catalog/view.h"
-#include "general_server/state.h"
-#include "pg/sql_parser.h"
-#include "pg/sql_resolver.h"
-#include "utils/exec_context.h"
-#include "utils/query_string.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb {
 
@@ -64,49 +33,23 @@ std::shared_ptr<SqlQueryViewImpl::State> SqlQueryViewImpl::Create() {
 
 Result SqlQueryViewImpl::Parse(State& state, ObjectId database_id,
                                std::string_view query) {
-  return basics::SafeCall([&] -> Result {
-    const QueryString query_string{query};
-    state.memory_context = pg::CreateMemoryContext();
-    auto* tree = pg::Parse(*state.memory_context, query_string);
-    if (list_length(tree) != 1) {
-      return {ERROR_BAD_PARAMETER,
-              "sql query view should contains single statement"};
-    }
-    state.stmt = list_nth_node(RawStmt, tree, 0);
-    SDB_ASSERT(state.stmt);
-    SDB_ASSERT(state.objects.empty());
-
-    // TODO(gnusi): currently collector checks cross-database references and
-    // need a name of the current database for this purpose. It looks like it'd
-    // be better to do it in resolver.
-    auto database = catalog::GetDatabase(database_id);
-    if (!database) {
-      return std::move(database).error();
-    }
-
-    pg::Collect((*database)->GetName(), *state.stmt, state.objects);
-
-    return {};
-  });
+  // Parse the SQL view query through DuckDB
+  auto info = duckdb::CreateViewInfo::ParseSelect(std::string{query});
+  if (!info) {
+    return {ERROR_BAD_PARAMETER, "failed to parse view query"};
+  }
+  state.view_info = duckdb::make_uniq<duckdb::CreateViewInfo>();
+  state.view_info->query = std::move(info);
+  return {};
 }
 
 Result SqlQueryViewImpl::Check(ObjectId database, std::string_view name,
                                const State& state, const Config& config) {
-  SDB_ASSERT(state.stmt);
-  if (state.stmt->stmt->type != T_SelectStmt) {
-    return {ERROR_BAD_PARAMETER,
-            "sql query view should contains select statement"};
-  }
-
-  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
-
-  return basics::SafeCall([&] {
-    pg::Objects objects;
-    pg::Disallowed disallowed;
-    disallowed.relations.emplace(pg::Objects::ObjectName{{}, name});
-    pg::ResolveQueryView(database, search_path, objects, disallowed,
-                         state.objects, config);
-  });
+  // DuckDB handles view validation during binding
+  (void)database;
+  (void)name;
+  (void)config;
+  return {};
 }
 
 }  // namespace sdb

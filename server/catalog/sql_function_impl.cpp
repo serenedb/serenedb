@@ -22,107 +22,21 @@
 
 #include <vpack/vpack_helper.h>
 
-#include "catalog/catalog.h"
-#include "pg/sql_parser.h"
-#include "pg/sql_resolver.h"
-#include "utils/query_string.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-LIBPG_QUERY_INCLUDES_END
-
 namespace sdb::pg {
-namespace {
 
-Result Parse(ObjectId database_id, std::string_view query, pg::Objects& objects,
-             pg::MemoryContextPtr& memory_context, const RawStmt*& stmt,
-             bool is_procedure) {
-  return basics::SafeCall([&] -> Result {
-    const QueryString query_string{query};
-    memory_context = pg::CreateMemoryContext();
-    auto* tree = pg::Parse(*memory_context, query_string);
-    if (list_length(tree) != 1) {
-      // TODO: SQL function bodies (not the procedure ones) are atomic and can't
-      // be partially executed. so not to forget this fact when we'll implement
-      // multi-statement functions.
-      return {ERROR_BAD_PARAMETER,
-              "sql function should contain a single statement"};
-    }
-    stmt = list_nth_node(RawStmt, tree, 0);
-    SDB_ASSERT(stmt);
-    SDB_ASSERT(objects.empty());
-
-    if (!is_procedure && stmt->stmt->type != T_SelectStmt) {
-      return {ERROR_BAD_PARAMETER,
-              "only SELECT statements are allowed in SQL function body"};
-    }
-
-    // TODO(gnusi): currently collector checks cross-database references and
-    // need a name of the current database for this purpose. It looks like it'd
-    // be better to do it in resolver.
-    auto database = catalog::GetDatabase(database_id);
-    if (!database) {
-      return std::move(database).error();
-    }
-
-    pg::Collect((*database)->GetName(), *stmt, objects);
-
-    return {};
-  });
-}
-
-}  // namespace
-
-Result FunctionImpl::Init(ObjectId database, std::string_view name,
-                          std::string query, bool is_procedure,
-                          const Config* config) {
-  auto r =
-    Parse(database, query, _objects, _memory_context, _stmt, is_procedure);
-  if (!r.ok()) {
-    return r;
+Result FunctionImpl::FromVPack(vpack::Slice slice,
+                               std::unique_ptr<FunctionImpl>& out) {
+  auto sql = basics::VPackHelper::getString(slice, "sql", {});
+  if (sql.empty()) {
+    return {ERROR_BAD_PARAMETER, "function must contain sql field"};
   }
-  if (config) {
-    // config is present -> non system view, need for validation
-    auto search_path = config->Get<VariableType::PgSearchPath>("search_path");
-    r = basics::SafeCall([&] {
-      pg::Objects objects;
-      pg::Disallowed disallowed;
-      disallowed.functions.emplace(pg::Objects::ObjectName{{}, name});
-      pg::ResolveSqlFunction(database, search_path, objects, disallowed,
-                             _objects, *config);
-    });
-  }
-
-  if (!r.ok()) {
-    return r;
-  }
-  _query = std::move(query);
-  return r;
-}
-
-Result FunctionImpl::FromVPack(ObjectId database, vpack::Slice slice,
-                               std::unique_ptr<FunctionImpl>& implementation,
-                               bool is_procedure) {
-  auto query = basics::VPackHelper::getString(slice, "query", {});
-  if (query.empty()) {
-    return {ERROR_BAD_PARAMETER,
-            "function implementation query must be a non-empty string"};
-  }
-  auto impl = std::make_unique<FunctionImpl>();
-  auto r = Parse(database, query, impl->_objects, impl->_memory_context,
-                 impl->_stmt, is_procedure);
-  if (!r.ok()) {
-    return r;
-  }
-  implementation = std::move(impl);
+  out = std::make_unique<FunctionImpl>(std::string{sql});
   return {};
 }
 
 void FunctionImpl::ToVPack(vpack::Builder& builder) const {
   builder.openObject();
-  builder.add("query", _query);
+  builder.add("sql", _sql);
   builder.close();
 }
 

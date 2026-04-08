@@ -32,9 +32,6 @@
 
 namespace sdb::connector {
 
-// ---------------------------------------------------------------------------
-// IColumnDecoder — accumulate per-row slices, produce a VectorPtr.
-// ---------------------------------------------------------------------------
 class RocksDBColumnDecoder {
  public:
   using Writer = absl::AnyInvocable<void(velox::vector_size_t,
@@ -43,12 +40,13 @@ class RocksDBColumnDecoder {
   explicit RocksDBColumnDecoder(Writer&& writer) : _writer(std::move(writer)) {}
   virtual ~RocksDBColumnDecoder() = default;
 
+  // Called on each slice read for the column. Values could be added out of order.
+  // It is caller responsibility to sync access and to maintain proper idx.  
   void Add(velox::vector_size_t idx, std::string_view value) {
     _writer(idx, value);
   }
 
-  // Finalise and return the vector. actual_rows <= max_rows given at
-  // construction.
+  // Finalise and return the vector.
   virtual velox::VectorPtr Finish(velox::vector_size_t actual_rows) = 0;
 
  private:

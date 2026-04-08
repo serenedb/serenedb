@@ -70,6 +70,7 @@ class ScalarColumnDecoder final : public RocksDBColumnDecoder {
                       velox::memory::MemoryPool& pool)
     : RocksDBColumnDecoder(
         [this](velox::vector_size_t idx, std::string_view value) {
+          SDB_ASSERT(_vec->size() > idx);
           if (value.empty()) {
             _vec->setNull(idx, true);
           } else {
@@ -80,6 +81,7 @@ class ScalarColumnDecoder final : public RocksDBColumnDecoder {
         velox::Type::create<Kind>(), max_rows, &pool)) {}
 
   velox::VectorPtr Finish(velox::vector_size_t actual_rows) final {
+    SDB_ASSERT(_vec->size() >= actual_rows);
     _vec->resize(actual_rows, false);
     return std::move(_vec);
   }
@@ -113,16 +115,17 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
         [this](velox::vector_size_t idx, std::string_view value) {
           this->AddImpl(idx, value);
         }),
-      _pool(pool),
-      _array_type(std::move(array_type)),
-      _offsets_buf(
-        velox::AlignedBuffer::allocate<velox::vector_size_t>(max_rows, &pool)),
-      _sizes_buf(
-        velox::AlignedBuffer::allocate<velox::vector_size_t>(max_rows, &pool)),
-      _raw_offsets(_offsets_buf->asMutable<velox::vector_size_t>()),
-      _raw_sizes(_sizes_buf->asMutable<velox::vector_size_t>()),
-      _elements(velox::BaseVector::create<velox::FlatVector<ElemT>>(
-        _array_type->asArray().elementType(), 0, &pool)) {}
+      _pool{pool},
+      _array_type{std::move(array_type)},
+      _offsets_buf{
+        velox::AlignedBuffer::allocate<velox::vector_size_t>(max_rows, &pool)},
+      _sizes_buf{
+        velox::AlignedBuffer::allocate<velox::vector_size_t>(max_rows, &pool)},
+      _raw_offsets{_offsets_buf->asMutable<velox::vector_size_t>()},
+      _raw_sizes{_sizes_buf->asMutable<velox::vector_size_t>()},
+      _elements{velox::BaseVector::create<velox::FlatVector<ElemT>>(
+        _array_type->asArray().elementType(), 0, &pool)},
+      _allocated_rows{max_rows} {}
 
   velox::VectorPtr Finish(velox::vector_size_t actual_rows) final {
     return std::make_shared<velox::ArrayVector>(
@@ -132,6 +135,9 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 
  private:
   void AddImpl(velox::vector_size_t idx, std::string_view value) {
+#ifdef SDB_DEV
+    SDB_ASSERT(idx < _allocated_rows);
+#endif
     if (value.empty()) {
       if (!_null_buf) {
         // Capacity matches max_rows passed at construction. The buffer is
@@ -240,6 +246,9 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 
     _elem_offset += elem_count;
   }
+  #ifdef SDB_DEV
+  velox::vector_size_t _allocated_rows;
+  #endif
 };
 
 template<velox::TypeKind Kind>

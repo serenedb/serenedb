@@ -2577,3 +2577,35 @@ id	val
 
 statement ok
 DROP TABLE t_dml_corner;
+
+statement ok
+CREATE TABLE choices_array (a INTEGER PRIMARY KEY, nums INTEGER[], labels VARCHAR[]);
+
+statement ok
+INSERT INTO choices_array VALUES
+  (1, ARRAY[1, 2, 3], ARRAY['alpha', 'beta']),
+  (2, ARRAY[4, 5], ARRAY['gamma']),
+  (3, ARRAY[1, 3], ARRAY['alpha', 'delta', 'epsilon']),
+  (4, ARRAY[]::INTEGER[], ARRAY[]::VARCHAR[]);
+
+# workaround for https://github.com/serenedb/serenedb/issues/530
+statement ok
+INSERT INTO choices_array VALUES (5, NULL, NULL);
+
+
+onlyif serenedb
+query
+EXPLAIN (ANALYZE) SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 OR a = 5 ORDER BY a;
+----
+QUERY PLAN
+<slt:ignore>[choices_array, type=rocksdb_point_lookup, points=[(a=1), (a=3), (a=4), (a=5)]]<slt:ignore>
+
+
+query
+SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 OR a = 5 ORDER BY a;
+----
+a	nums	labels
+1	{1,2,3}	{alpha,beta}
+3	{1,3}	{alpha,delta,epsilon}
+4	{}	{}
+5	NULL	NULL

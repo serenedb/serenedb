@@ -29,11 +29,10 @@
 #include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "common.h"
 #include "connector/primary_key.hpp"
-#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "parquet_materializer.hpp"
+#include "rocksdb_column_decoder.hpp"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "text_materializer.hpp"
 
@@ -44,66 +43,17 @@ namespace {
 
 constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
-template<typename T>
-void SetResultValue(std::string_view value, size_t idx,
-                    velox::FlatVector<T>& result) {
-  if constexpr (std::is_same_v<T, velox::StringView>) {
-    const size_t offset = value[0] == 0 ? 1 : 0;
-    result.set(idx,
-               velox::StringView(value.data() + offset, value.size() - offset));
-  } else if constexpr (std::is_same_v<T, bool>) {
-    SDB_ASSERT(value.size() == kTrueValue.size(),
-               "RocksDBDataSource: unexpected value size for bool column");
-    result.set(idx, value == kTrueValue);
-  } else {
-    SDB_ASSERT(value.size() == sizeof(T),
-               "RocksDBDataSource: unexpected value size for scalar column");
-    T tmp;
-    memcpy(&tmp, value.data(), sizeof(T));
-    result.set(idx, tmp);
-  }
-}
-
-// Allocate an output FlatVector for a column with `count` found rows.
-template<velox::TypeKind Kind>
-velox::VectorPtr CreatePointsColumnVector(size_t count,
-                                          velox::memory::MemoryPool& pool) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  return velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), count, &pool);
-}
-
-// Set a single pinnable value into a typed flat vector at idx.
-// Used by both PrimaryKeyColumnBuilder::Fill and FillColumnFromMultiGet
-// so that the null-check/set logic lives in exactly one place.
-template<velox::TypeKind Kind>
-void SetPinnableValue(velox::BaseVector& result, size_t idx,
-                      const rocksdb::PinnableSlice& val) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto& flat = static_cast<velox::FlatVector<T>&>(result);
-  if (val.empty()) {
-    flat.setNull(idx, true);
-  } else {
-    SetResultValue(val.ToStringView(), idx, flat);
-  }
-}
-
 // Dispatch once per column: Kind is resolved by the caller via
 // VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH, so the MultiGet callback is fully typed.
-template<velox::TypeKind Kind, typename Ctx, typename Source>
+template<typename Ctx, typename Source>
 void FillColumnFromMultiGet(Ctx& ctx, Source& source,
                             std::span<const rocksdb::Slice> slices,
-                            velox::BaseVector& col_vec, size_t& collected) {
+                            RocksDBColumnDecoder& decoder, size_t& collected) {
   ctx.MultiGet(source, slices, [&](const auto&, auto& val, const auto& st) {
     SDB_ENSURE(st.ok(), rocksutils::ConvertStatus(st));
-    SetPinnableValue<Kind>(col_vec, collected++, val);
+    decoder.Add(collected++, val.ToStringView());
   });
 }
-
-template<velox::TypeKind Kind>
-auto MakeWriter() {
-  return SetPinnableValue<Kind>;
-};
 
 // Advances the last byte of `key` to make it an exclusive upper bound that
 // covers all keys sharing `key` as a prefix. Clears `key` to empty if all
@@ -125,25 +75,19 @@ void MakeExclusiveUpperBound(std::string& key) {
 void PointLookupPKColumnBuilder::Init(const velox::TypePtr& type,
                                       size_t capacity,
                                       velox::memory::MemoryPool& pool) {
-  _type_kind = type->kind();
-  _vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(CreatePointsColumnVector,
-                                            _type_kind, capacity, pool);
-
-  _writer = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(MakeWriter, _type_kind);
+  _decoder = MakeRocksDBColumnDecoder(type, capacity, pool);
   _present_rows.reset(capacity);
 }
 
 void PointLookupPKColumnBuilder::Fill(size_t batch_idx, size_t found_idx,
                                       const rocksdb::PinnableSlice& val) {
   _present_rows.set(batch_idx);
-  SDB_ASSERT(_writer);
-  _writer(*_vec, found_idx, val);
+  _decoder->Add(found_idx, val.ToStringView());
 }
 
 velox::VectorPtr PointLookupPKColumnBuilder::Finish(size_t found_count) {
   SDB_ASSERT(_present_rows.count() == found_count);
-  _vec->resize(found_count);
-  return std::move(_vec);
+  return _decoder->Finish(found_count);
 }
 
 template<typename Source>
@@ -336,213 +280,19 @@ velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadColumn(
   auto& it = *_iterators[col_idx];
   auto column_id = _column_ids[col_idx];
 
+  // special case possible only here
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadColumnFromKey(it, max_size);
   }
 
   const auto& type = _read_type->childAt(col_idx);
-  if (type->kind() == velox::TypeKind::UNKNOWN) {
-    return ReadUnknownColumn(it, max_size);
-  }
-
-  if (type->kind() == velox::TypeKind::ARRAY) {
-    return ReadArrayColumn(it, max_size, type);
-  }
-
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumn, type->kind(), it,
-                                            max_size);
-}
-
-template<typename Source>
-template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadScalarColumn(
-  rocksdb::Iterator& it, uint64_t max_size) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto result = velox::BaseVector::create<velox::FlatVector<T>>(
-    velox::Type::create<Kind>(), kInitialVectorSize, &_memory_pool);
-  result->resize(max_size, false);
-
+  auto decoder = MakeRocksDBColumnDecoder(
+    type, static_cast<velox::vector_size_t>(max_size), _memory_pool);
   const auto vector_size = IterateColumn(
-    it, max_size,
-    [&](uint64_t value_idx, std::string_view, std::string_view value) {
-      if (!value.empty()) {
-        SetResultValue(value, value_idx, *result);
-      } else {
-        result->setNull(value_idx, true);
-      }
+    it, max_size, [&](uint64_t idx, std::string_view, std::string_view value) {
+      decoder->Add(static_cast<velox::vector_size_t>(idx), value);
     });
-
-  if (vector_size != result->size()) {
-    SDB_ASSERT(vector_size < result->size(),
-               "RocksDBDataSource: inconsistent vector size");
-    result->resize(vector_size, false);
-  }
-  return result;
-}
-
-template<typename Source>
-velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadUnknownColumn(
-  rocksdb::Iterator& it, uint64_t max_size) {
-  uint64_t vector_size = IterateColumn(
-    it, max_size, [](uint64_t, std::string_view, std::string_view) {});
-  return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
-                                               &_memory_pool);
-}
-
-template<typename Source>
-velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadArrayColumn(
-  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
-  const auto elem_kind = array_type->asArray().elementType()->kind();
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-    ReadScalarArrayColumn, elem_kind, it, max_size, std::move(array_type));
-}
-
-template<typename Source>
-template<velox::TypeKind ElemKind>
-velox::VectorPtr
-RocksDBPerColumnIteratorDataSource<Source>::ReadScalarArrayColumn(
-  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
-  using ElemT = typename velox::TypeTraits<ElemKind>::NativeType;
-  static_assert(!std::is_same_v<ElemT, void>,
-                "Complex element types are not supported in array columns");
-
-  const auto& elem_type = array_type->asArray().elementType();
-
-  auto offsets_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
-    max_size, &_memory_pool);
-  auto sizes_buf = velox::AlignedBuffer::allocate<velox::vector_size_t>(
-    max_size, &_memory_pool);
-  auto* raw_offsets = offsets_buf->template asMutable<velox::vector_size_t>();
-  auto* raw_sizes = sizes_buf->template asMutable<velox::vector_size_t>();
-
-  auto elements = velox::BaseVector::create<velox::FlatVector<ElemT>>(
-    elem_type, 0, &_memory_pool);
-
-  velox::BufferPtr null_buf;
-  velox::vector_size_t elem_offset = 0;
-
-  const auto vector_size = IterateColumn(
-    it, max_size,
-    [&](uint64_t value_idx, std::string_view, std::string_view value) {
-      if (value.empty()) {
-        // NULL array
-        if (!null_buf) {
-          null_buf = velox::allocateNulls(max_size, &_memory_pool);
-        }
-        velox::bits::setNull(null_buf->asMutable<uint64_t>(), value_idx);
-        return;
-      }
-
-      raw_offsets[value_idx] = elem_offset;
-      const auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
-      const uint32_t elem_count = irs::vread<uint32_t>(ptr);
-      raw_sizes[value_idx] = static_cast<velox::vector_size_t>(elem_count);
-
-      if (elem_count == 0) {
-        return;
-      }
-      elements->resize(elem_offset + elem_count, true);
-
-      const auto flags = static_cast<ValueFlags>(*ptr++);
-      const bool is_constant =
-        (flags & ValueFlags::Constant) != ValueFlags::None;
-      const bool have_nulls =
-        (flags & ValueFlags::HaveNulls) != ValueFlags::None;
-      const bool have_length =
-        (flags & ValueFlags::HaveLength) != ValueFlags::None;
-
-      uint32_t length_array_size = 0;
-      if (have_length) {
-        length_array_size = irs::vread<uint32_t>(ptr);
-      }
-
-      if (is_constant) {
-        SDB_ASSERT(!have_nulls);
-        // Remaining bytes are the single constant value (or none for null).
-        const auto remaining_size = static_cast<size_t>(
-          reinterpret_cast<const uint8_t*>(value.data()) + value.size() - ptr);
-        if (remaining_size == 0) {
-          for (uint32_t i = 0; i < elem_count; i++) {
-            elements->setNull(elem_offset + i, true);
-          }
-        } else {
-          const std::string_view constant_val{
-            reinterpret_cast<const char*>(ptr), remaining_size};
-          for (uint32_t i = 0; i < elem_count; i++) {
-            SetResultValue(constant_val, elem_offset + i, *elements);
-          }
-        }
-      } else {
-        // Read optional nulls bitmap.
-        const uint8_t* elem_nulls = nullptr;
-        if (have_nulls) {
-          elem_nulls = ptr;
-          ptr += velox::bits::nbytes(elem_count);
-        }
-
-        if constexpr (ElemKind == velox::TypeKind::BOOLEAN) {
-          // Boolean data is a packed bitset.
-          const auto bool_bytes = velox::bits::nbytes(elem_count);
-          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
-            for (uint32_t i = 0; i < elem_count; i++) {
-              if constexpr (HasNulls) {
-                if (!velox::bits::isBitSet(elem_nulls, i)) {
-                  elements->setNull(elem_offset + i, true);
-                  continue;
-                }
-              }
-              elements->set(elem_offset + i, velox::bits::isBitSet(ptr, i));
-            }
-          });
-          ptr += bool_bytes;
-        } else if constexpr (!velox::TypeTraits<ElemKind>::isFixedWidth) {
-          // Variable-length elements (e.g., VARCHAR).
-          // Layout: [length_array: length_array_size bytes][string data]
-          const uint8_t* lptr = ptr;
-          ptr += length_array_size;
-          const uint8_t* data_ptr = ptr;
-
-          irs::ResolveBool(elem_nulls, [&]<bool HasNulls> {
-            for (uint32_t i = 0; i < elem_count; i++) {
-              const uint32_t len = irs::vread<uint32_t>(lptr);
-              if constexpr (HasNulls) {
-                if (!velox::bits::isBitSet(elem_nulls, i)) {
-                  elements->setNull(elem_offset + i, true);
-                  data_ptr += len;
-                  continue;
-                }
-              }
-              elements->set(elem_offset + i,
-                            velox::StringView(
-                              reinterpret_cast<const char*>(data_ptr), len));
-              data_ptr += len;
-            }
-          });
-        } else {
-          // Fixed-width scalar: packed array of count * sizeof(ElemT) bytes.
-          memcpy(elements->mutableRawValues() + elem_offset, ptr,
-                 elem_count * sizeof(ElemT));
-          ptr += elem_count * sizeof(ElemT);
-          if (have_nulls) {
-            for (uint32_t i = 0; i < elem_count; i++) {
-              if (!velox::bits::isBitSet(elem_nulls, i)) {
-                elements->setNull(elem_offset + i, true);
-              }
-            }
-          }
-        }
-      }
-
-      elem_offset += elem_count;
-    });
-
-  SDB_ASSERT(vector_size <= max_size);
-
-  rocksutils::CheckIteratorStatus(it);
-
-  return std::make_shared<velox::ArrayVector>(
-    &_memory_pool, std::move(array_type), std::move(null_buf), vector_size,
-    std::move(offsets_buf), std::move(sizes_buf), std::move(elements));
+  return decoder->Finish(static_cast<velox::vector_size_t>(vector_size));
 }
 
 template<typename Source>
@@ -756,17 +506,13 @@ std::optional<velox::RowVectorPtr> RocksDBPointLookupDataSource<Policy>::next(
       const auto col_id = _column_ids[col_idx];
       const auto& type = _read_type->childAt(col_idx);
 
-      auto col_vec = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-        CreatePointsColumnVector, type->kind(), found_count, _memory_pool);
+      auto decoder = MakeRocksDBColumnDecoder(type, found_count, _memory_pool);
 
       const auto slices =
         _key_builder.BuildPresentKeys(col_id, _collector.PresentRows());
       size_t collected = 0;
-      VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(FillColumnFromMultiGet, type->kind(),
-                                         _ctx, _source, slices, *col_vec,
-                                         collected);
-
-      columns[col_idx] = std::move(col_vec);
+      FillColumnFromMultiGet(_ctx, _source, slices, *decoder, collected);
+      columns[col_idx] = decoder->Finish(found_count);
     }
 
     SDB_ASSERT(

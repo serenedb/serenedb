@@ -280,6 +280,7 @@ velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadColumn(
   auto& it = *_iterators[col_idx];
   auto column_id = _column_ids[col_idx];
 
+  // special case possible only here
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadColumnFromKey(it, max_size);
   }
@@ -289,21 +290,8 @@ velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadColumn(
     return ReadUnknownColumn(it, max_size);
   }
 
-  if (type->kind() == velox::TypeKind::ARRAY) {
-    return ReadArrayColumn(it, max_size, type);
-  }
-
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumn, type->kind(), it,
-                                            max_size);
-}
-
-template<typename Source>
-template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadScalarColumn(
-  rocksdb::Iterator& it, uint64_t max_size) {
-  const auto n = static_cast<velox::vector_size_t>(max_size);
   auto decoder =
-    MakeRocksDBColumnDecoder(velox::Type::create<Kind>(), n, _memory_pool);
+    MakeRocksDBColumnDecoder(type, static_cast<velox::vector_size_t>(max_size), _memory_pool);
   const auto vector_size = IterateColumn(
     it, max_size, [&](uint64_t idx, std::string_view, std::string_view value) {
       decoder->Add(static_cast<velox::vector_size_t>(idx), value);
@@ -318,18 +306,6 @@ velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadUnknownColumn(
     it, max_size, [](uint64_t, std::string_view, std::string_view) {});
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
                                                &_memory_pool);
-}
-
-template<typename Source>
-velox::VectorPtr RocksDBPerColumnIteratorDataSource<Source>::ReadArrayColumn(
-  rocksdb::Iterator& it, uint64_t max_size, velox::TypePtr array_type) {
-  const auto n = static_cast<velox::vector_size_t>(max_size);
-  auto decoder = MakeRocksDBColumnDecoder(array_type, n, _memory_pool);
-  const auto vector_size = IterateColumn(
-    it, max_size, [&](uint64_t idx, std::string_view, std::string_view value) {
-      decoder->Add(static_cast<velox::vector_size_t>(idx), value);
-    });
-  return decoder->Finish(static_cast<velox::vector_size_t>(vector_size));
 }
 
 template<typename Source>

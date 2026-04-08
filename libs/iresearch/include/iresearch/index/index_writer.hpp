@@ -30,6 +30,7 @@
 #include <functional>
 #include <limits>
 #include <string_view>
+#include <yaclib/exe/executor.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
@@ -165,6 +166,8 @@ struct IndexWriterOptions : public SegmentOptions {
   // Acquire an exclusive lock on the repository to guard against index
   // corruption from multiple index_writers
   bool lock_repository{true};
+
+  yaclib::IExecutorPtr executor;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -468,7 +471,7 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return false;
       }
-      return _writer->FlushRequired(*segment->writer);
+      return _writer->FlushRequired(*segment->active.writer);
     }
 
     bool Valid() const noexcept { return _writer != nullptr; }
@@ -609,9 +612,9 @@ class IndexWriter : private util::Noncopyable {
   // public because we want to use std::make_shared
   IndexWriter(ConstructToken, IndexLock::ptr&& lock,
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
-              Format::ptr codec, size_t segment_pool_size,
-              const SegmentOptions& segment_limits, const Comparer* comparator,
-              const ColumnInfoProvider& column_info,
+              Format::ptr codec, yaclib::IExecutorPtr executor,
+              size_t segment_pool_size, const SegmentOptions& segment_limits,
+              const Comparer* comparator, const ColumnInfoProvider& column_info,
               const FeatureInfoProvider& feature_info,
               const PayloadProvider& meta_payload_provider,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
@@ -706,11 +709,33 @@ class IndexWriter : private util::Noncopyable {
     using segment_meta_generator_t = std::function<SegmentMeta()>;
     using ptr = std::unique_ptr<SegmentContext>;
 
+    struct ActiveGeneration {
+      // ref tracking for SegmentWriter to allow for easy ref removal on
+      // SegmentWriter reset
+      RefTrackingDirectory::ptr dir;
+
+      std::unique_ptr<SegmentWriter> writer;
+      // the SegmentMeta this writer was initialized with
+      IndexSegment writer_meta;
+
+      size_t committed_buffered_docs{0};
+
+      ActiveGeneration(Directory& dir, const SegmentWriterOptions& options)
+        : dir{std::make_unique<RefTrackingDirectory>(dir)},
+          writer{SegmentWriter::make(*this->dir, options)} {}
+    };
+
+    [[nodiscard]] ActiveGeneration TakeActiveGeneration() {
+      ActiveGeneration result =
+        std::exchange(active, ActiveGeneration{**active.dir, options});
+      return result;
+    }
+
+    ActiveGeneration active;
+    SegmentWriterOptions options;
+
     // for use with index_writer::buffered_docs(), asynchronous call
     std::atomic_size_t buffered_docs{0};
-    // ref tracking for SegmentWriter to allow for easy ref removal on
-    // SegmentWriter reset
-    RefTrackingDirectory dir;
 
     // sequential list of pending modification
     ManagedVector<QueryContext> queries;
@@ -728,15 +753,12 @@ class IndexWriter : private util::Noncopyable {
     size_t flushed_queries{0};
     // Transaction::Commit was not called for these:
     size_t committed_queries{0};
-    size_t committed_buffered_docs{0};
+
     size_t committed_flushed_docs{0};
 
     uint64_t first_tick{writer_limits::kMaxTick};
     uint64_t last_tick{writer_limits::kMinTick};
 
-    std::unique_ptr<SegmentWriter> writer;
-    // the SegmentMeta this writer was initialized with
-    IndexSegment writer_meta;
     // TODO(mbkkt) Better to be per FlushedSegment
     bool has_replace{false};
 
@@ -750,6 +772,30 @@ class IndexWriter : private util::Noncopyable {
     void Rollback() noexcept;
 
     void Commit(uint64_t queries, uint64_t last_tick);
+
+    using SealedGeneration = ActiveGeneration;
+
+    struct FlushOutput {
+      DocMap old2new;
+      DocsMask docs_mask;
+    };
+
+    [[nodiscard]] FlushOutput RunPhysicalFlush(SealedGeneration& sealed);
+    void HarvestFlushOutput(SealedGeneration&& sealed,
+                            IndexWriter::SegmentContext::FlushOutput&& output,
+                            std::span<SegmentWriter::DocContext> docs_context);
+
+    struct PendingFlush {
+      SealedGeneration sealed;
+      FlushOutput output;
+    };
+
+    std::optional<PendingFlush> pending_flush;
+
+    bool StartFlushSync();
+    void HarvestPendingFlush();
+
+    void DrainPendingFlush();
 
     // Flush current writer state into a materialized segment.
     // Return tick of last committed transaction.
@@ -965,6 +1011,7 @@ class IndexWriter : private util::Noncopyable {
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;
   Format::ptr _codec;
+  yaclib::IExecutorPtr _executor;
   // Prevent concurrent Begin/Commit/Rollback/Clear and multiple Consolidate
   absl::Mutex _commit_lock;
   struct {

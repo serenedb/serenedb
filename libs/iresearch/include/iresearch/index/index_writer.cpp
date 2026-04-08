@@ -661,8 +661,8 @@ IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
 IndexWriter::Document::Document(SegmentContext& segment,
                                 SegmentWriter::DocContext doc,
                                 doc_id_t batch_size, QueryContext* query)
-  : _writer{*segment.writer}, _query{query} {
-  SDB_ASSERT(segment.writer != nullptr);
+  : _writer{*segment.active.writer}, _query{query} {
+  SDB_ASSERT(segment.active.writer != nullptr);
   // ensure Reset() will be noexcept
   _doc_id = _writer.begin(doc, batch_size);
   SDB_ASSERT(irs::doc_limits::valid(_doc_id));
@@ -734,7 +734,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
   }
 
   auto& segment = *_active.Segment();
-  auto& writer = *segment.writer;
+  auto& writer = *segment.active.writer;
 
   if (writer.initialized()) [[likely]] {
     if (disable_flush || !_writer->FlushRequired(writer)) {
@@ -747,13 +747,13 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
               ", docs limit=", _writer->_segment_limits.Docs(),
               ", memory limit=", _writer->_segment_limits.Memory());
 
+    auto meta_name = segment.active.writer_meta.meta.name;
     try {
       segment.Flush();
     } catch (...) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("while flushing segment '", segment.writer_meta.meta.name,
-                     "', error: failed to flush segment"));
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                absl::StrCat("while flushing segment '", meta_name,
+                             "', error: failed to flush segment"));
       // TODO(mbkkt) What the goal are we want to achieve
       //  with keeping already flushed data?
       segment.Reset(true);
@@ -918,39 +918,35 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
 IndexWriter::SegmentContext::SegmentContext(
   Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
-  : dir{dir},
+  : active(dir, options),
+    options(options),
     queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
     flushed_docs{{options.resource_manager}},
-    meta_generator{std::move(meta_generator)},
-    writer{SegmentWriter::make(this->dir, options)} {
+    meta_generator{std::move(meta_generator)} {
   SDB_ASSERT(this->meta_generator);
 }
 
-void IndexWriter::SegmentContext::Flush() {
-  if (!writer->initialized() || writer->buffered_docs() == 0) {
-    flushed_queries = queries.size();
-    SDB_ASSERT(committed_buffered_docs == 0);
-    return;  // Skip flushing an empty writer
-  }
-  SDB_ASSERT(writer->buffered_docs() <= doc_limits::eof());
-
-  Finally reset_writer = [&]() noexcept {
-    writer->reset();
-    committed_buffered_docs = 0;
-  };
-
+IndexWriter::SegmentContext::FlushOutput
+IndexWriter::SegmentContext::RunPhysicalFlush(SealedGeneration& sealed) {
   DocsMask docs_mask{.set{flushed_docs.get_allocator()}};
-  auto old2new = writer->flush(writer_meta, docs_mask);
-  if (writer_meta.meta.live_docs_count == 0) {
+  auto old2new = sealed.writer->flush(sealed.writer_meta, docs_mask);
+  return {std::move(old2new), std::move(docs_mask)};
+}
+
+void IndexWriter::SegmentContext::HarvestFlushOutput(
+  SealedGeneration&& sealed, FlushOutput&& output,
+  std::span<SegmentWriter::DocContext> docs_context) {
+  if (sealed.writer_meta.meta.live_docs_count == 0) {
     return;
   }
-  const auto docs_context = writer->docs_context();
-  SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
-  SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
-  flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size());
+  SDB_ASSERT(sealed.writer_meta.meta.live_docs_count <=
+             sealed.writer_meta.meta.docs_count);
+  SDB_ASSERT(sealed.writer_meta.meta.docs_count == docs_context.size());
+
+  flushed.emplace_back(std::move(sealed.writer_meta), std::move(output.old2new),
+                       std::move(output.docs_mask), flushed_docs.size());
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -959,7 +955,52 @@ void IndexWriter::SegmentContext::Flush() {
     throw;
   }
   flushed_queries = queries.size();
-  committed_flushed_docs += committed_buffered_docs;
+  committed_flushed_docs += sealed.committed_buffered_docs;
+}
+
+bool IndexWriter::SegmentContext::StartFlushSync() {
+  if (!active.writer->initialized() || active.writer->buffered_docs() == 0) {
+    flushed_queries = queries.size();
+    SDB_ASSERT(active.committed_buffered_docs == 0);
+    return false;  // Skip flushing an empty writer
+  }
+  SDB_ASSERT(active.writer->buffered_docs() <= doc_limits::eof());
+
+  auto sealed = TakeActiveGeneration();
+  SDB_ASSERT(pending_flush.has_value() == false);
+
+  try {
+    auto flush_output = RunPhysicalFlush(sealed);
+    pending_flush.emplace(std::move(sealed), std::move(flush_output));
+    return true;
+  } catch (...) {
+    sealed.writer->reset();
+    throw;
+  }
+}
+
+void IndexWriter::SegmentContext::HarvestPendingFlush() {
+  SDB_ASSERT(pending_flush.has_value());
+  auto pending = std::move(*pending_flush);
+  pending_flush.reset();
+
+  Finally reset_writer = [&]() noexcept { pending.sealed.writer->reset(); };
+
+  const auto docs_context = pending.sealed.writer->docs_context();
+  HarvestFlushOutput(std::move(pending.sealed), std::move(pending.output),
+                     docs_context);
+}
+
+void IndexWriter::SegmentContext::DrainPendingFlush() {
+  if (pending_flush.has_value()) {
+    HarvestPendingFlush();
+  }
+}
+
+void IndexWriter::SegmentContext::Flush() {
+  if (StartFlushSync()) {
+    HarvestPendingFlush();
+  }
 }
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
@@ -970,13 +1011,17 @@ IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
 }
 
 void IndexWriter::SegmentContext::Prepare() {
-  SDB_ASSERT(!writer->initialized());
-  writer_meta.filename.clear();
-  writer_meta.meta = meta_generator();
-  writer->reset(writer_meta.meta);
+  DrainPendingFlush();
+  SDB_ASSERT(!active.writer->initialized());
+
+  active.writer_meta.filename.clear();
+  active.writer_meta.meta = meta_generator();
+  active.writer->reset(active.writer_meta.meta);
 }
 
 void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
+  SDB_ASSERT(!pending_flush.has_value());
+
   buffered_docs.store(0, std::memory_order_relaxed);
 
   if (store_flushed) [[unlikely]] {
@@ -997,19 +1042,21 @@ void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
     last_tick = writer_limits::kMinTick;
     has_replace = false;
   }
-  committed_buffered_docs = 0;
+  active.committed_buffered_docs = 0;
 
-  if (writer->initialized()) {
-    writer->reset();  // try to reduce number of files flushed below
+  if (active.writer->initialized()) {
+    active.writer->reset();  // try to reduce number of files flushed below
   }
 
   // TODO(mbkkt) Is it ok to release refs in case of store_flushed?
   // release refs only after clearing writer state to ensure
   // 'writer_' does not hold any files
-  dir.clear_refs();
+  active.dir->clear_refs();
 }
 
 void IndexWriter::SegmentContext::Rollback() noexcept {
+  SDB_ASSERT(!pending_flush.has_value());
+
   // rollback modification queries
   SDB_ASSERT(committed_queries <= queries.size());
   queries.resize(committed_queries);
@@ -1022,7 +1069,7 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   });
   if (it != end) {
     // because committed docs point to flushed
-    SDB_ASSERT(committed_buffered_docs == 0);
+    SDB_ASSERT(active.committed_buffered_docs == 0);
     const auto docs_end = it->GetDocsEnd();
     if (it->SetCommitted(committed_flushed_docs)) {
       flushed.erase(it + 1, end);
@@ -1036,17 +1083,18 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   }
 
   // rollback inserts located inside the writer
-  if (committed_buffered_docs == 0) {
-    writer->reset();
+  if (active.committed_buffered_docs == 0) {
+    active.writer->reset();
     return;
   }
-  const auto buffered_docs = writer->buffered_docs();
-  for (auto doc_id = buffered_docs - 1 + doc_limits::min(),
-            doc_id_rend = committed_buffered_docs - 1 + doc_limits::min();
+  const auto buffered_docs = active.writer->buffered_docs();
+  for (auto
+         doc_id = buffered_docs - 1 + doc_limits::min(),
+         doc_id_rend = active.committed_buffered_docs - 1 + doc_limits::min();
        doc_id > doc_id_rend; --doc_id) {
     SDB_ASSERT(doc_limits::invalid() < doc_id);
     SDB_ASSERT(doc_id <= doc_limits::eof());
-    writer->remove(static_cast<doc_id_t>(doc_id));
+    active.writer->remove(static_cast<doc_id_t>(doc_id));
   }
 
   // If it will be first or last part of flushed segment in future,
@@ -1054,19 +1102,22 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   // TODO(mbkkt) Maybe we can just move docs_begin/end when FlushedSegment
   //  will be ready? Also what about assign last_committed_tick
   //  only for first and last value in range?
-  const auto docs = writer->docs_context();
-  const auto last_committed_tick = docs[committed_buffered_docs - 1].tick;
-  std::for_each(docs.begin() + committed_buffered_docs, docs.end(),
+  const auto docs = active.writer->docs_context();
+  const auto last_committed_tick =
+    docs[active.committed_buffered_docs - 1].tick;
+  std::for_each(docs.begin() + active.committed_buffered_docs, docs.end(),
                 [&](auto& doc) {
                   doc.tick = last_committed_tick;
                   doc.query_id = writer_limits::kInvalidOffset;
                 });
 
-  committed_buffered_docs = buffered_docs;
+  active.committed_buffered_docs = buffered_docs;
 }
 
 void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
                                          uint64_t commit_last_tick) {
+  DrainPendingFlush();
+
   SDB_ASSERT(commit_last_tick < writer_limits::kMaxTick);
   SDB_ASSERT(commit_queries <= commit_last_tick);
   const auto commit_first_tick = commit_last_tick - commit_queries;
@@ -1084,10 +1135,10 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
                 flushed_docs.end(), update_tick);
   committed_flushed_docs = flushed_docs.size();
 
-  const auto docs = writer->docs_context();
-  std::for_each(docs.begin() + committed_buffered_docs, docs.end(),
+  const auto docs = active.writer->docs_context();
+  std::for_each(docs.begin() + active.committed_buffered_docs, docs.end(),
                 update_tick);
-  committed_buffered_docs = docs.size();
+  active.committed_buffered_docs = docs.size();
 
   if (first_tick == writer_limits::kMaxTick) {
     first_tick = commit_first_tick;
@@ -1098,9 +1149,9 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
 
 IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
-  Directory& dir, Format::ptr codec, size_t segment_pool_size,
-  const SegmentOptions& segment_limits, const Comparer* comparator,
-  const ColumnInfoProvider& column_info,
+  Directory& dir, Format::ptr codec, yaclib::IExecutorPtr executor,
+  size_t segment_pool_size, const SegmentOptions& segment_limits,
+  const Comparer* comparator, const ColumnInfoProvider& column_info,
   const FeatureInfoProvider& feature_info,
   const PayloadProvider& meta_payload_provider,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
@@ -1109,6 +1160,7 @@ IndexWriter::IndexWriter(
     _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
+    _executor{std::move(executor)},
     _dir{dir},
     _committed_reader{std::move(committed_reader)},
     _segment_limits{segment_limits},
@@ -1246,8 +1298,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
 
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
-    std::move(codec), options.segment_pool_size, SegmentOptions{options},
-    options.comparator,
+    std::move(codec), options.executor, options.segment_pool_size,
+    SegmentOptions{options}, options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.features ? options.features : kDefaultFeatureInfo,
     options.meta_payload_provider, std::move(reader));
@@ -1658,8 +1710,10 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
     options);
 
   // recreate writer if it reserved more memory than allowed by current limits
-  if (_segment_limits.Memory() < segment_ctx->writer->memory_reserved()) {
-    segment_ctx->writer = SegmentWriter::make(segment_ctx->dir, options);
+  if (_segment_limits.Memory() <
+      segment_ctx->active.writer->memory_reserved()) {
+    segment_ctx->active.writer =
+      SegmentWriter::make(*segment_ctx->active.dir, options);
   }
 
   return {segment_ctx, _segments_active};
@@ -1728,7 +1782,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       if (query.tick <= _committed_tick) {
         continue;  // skip queries from previous Commit
       }
-      if (tick < query.tick) {
+      if (query.tick > tick) {
         break;  // skip queries from next Commit
       }
       func(query);
@@ -2009,7 +2063,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       SDB_ASSERT(segment);
 
       // was updated after flush
-      SDB_ASSERT(segment->committed_buffered_docs == 0);
+      SDB_ASSERT(segment->active.committed_buffered_docs == 0);
       SDB_ASSERT(segment->committed_flushed_docs ==
                  segment->flushed_docs.size());
       // process individually each flushed SegmentMeta from the SegmentContext

@@ -28,14 +28,14 @@
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
+#include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/pattern_tokenizer.hpp>
-#include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
@@ -168,7 +168,8 @@ inline constexpr OptionInfo kPattern{
   "RE2 regular expression pattern for matching or splitting"};
 
 inline constexpr OptionInfo kGroup{
-  "group", -1, "Capture group to extract: -1=split, 0=whole match, N>0=Nth group"};
+  "group", -1,
+  "Capture group to extract: -1=split, 0=whole match, N>0=Nth group"};
 
 // Path Hierarchy
 
@@ -181,8 +182,8 @@ inline constexpr OptionInfo kPathReplacement{
 inline constexpr OptionInfo kReverse{
   "reverse", false, "Use reverse tokenization for domain-like hierarchies"};
 
-inline constexpr OptionInfo kSkip{
-  "skip", 0, "Number of initial tokens to skip"};
+inline constexpr OptionInfo kSkip{"skip", 0,
+                                  "Number of initial tokens to skip"};
 
 inline constexpr OptionInfo kBufferSize{
   "buffersize", 1024, "Term buffer size hint (characters per pass)"};

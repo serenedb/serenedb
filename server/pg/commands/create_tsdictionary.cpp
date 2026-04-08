@@ -467,21 +467,18 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
     auto type_slice = analyzer_slice.get(kTypeField);
     auto properties_slice = analyzer_slice.get(kPropertiesField);
     if (!type_slice.isNone() && !properties_slice.isNone()) {
-      auto type_str = type_slice.stringView();
-      // Only validate pattern (regex validation) and path_hierarchy tokenizers
-      if (type_str == "pattern" || type_str == "path_hierarchy") {
-        std::string dummy_output;
-        if (!irs::analysis::analyzers::Normalize(
-              dummy_output, type_str, irs::Type<irs::text_format::VPack>::get(),
-              std::string{
-                reinterpret_cast<const char*>(properties_slice.getDataPtr()),
-                properties_slice.byteSize()},
-              false)) {
-          // If validation fails, the error should already be logged
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                          ERR_MSG("Failed to create text search dictionary \"",
-                                  tokenizer_name.relation, "\""));
-        }
+      std::string dummy_output;
+      if (!irs::analysis::analyzers::Normalize(
+            dummy_output, type_slice.stringView(),
+            irs::Type<irs::text_format::VPack>::get(),
+            std::string{
+              reinterpret_cast<const char*>(properties_slice.getDataPtr()),
+              properties_slice.byteSize()},
+            false)) {
+        // If validation fails, the error should already be logged
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("Failed to create text search dictionary \"",
+                                tokenizer_name.relation, "\""));
       }
     }
   }

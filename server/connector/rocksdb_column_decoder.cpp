@@ -33,11 +33,10 @@
 namespace sdb::connector {
 namespace {
 
-// Write one non-empty string_view into a typed FlatVector slot.
-// Null-checking is the caller's responsibility.
 template<typename T>
 void SetScalarValue(std::string_view value, velox::vector_size_t idx,
                     velox::FlatVector<T>& vec) {
+  SDB_ASSERT(!value.empty());
   if constexpr (std::is_same_v<T, velox::StringView>) {
     const size_t offset = value[0] == 0 ? 1 : 0;
     vec.set(idx,
@@ -55,9 +54,6 @@ void SetScalarValue(std::string_view value, velox::vector_size_t idx,
   }
 }
 
-// ---------------------------------------------------------------------------
-// ScalarColumnDecoder
-// ---------------------------------------------------------------------------
 template<velox::TypeKind Kind>
 class ScalarColumnDecoder final : public RocksDBColumnDecoder {
   using T = typename velox::TypeTraits<Kind>::NativeType;
@@ -86,9 +82,6 @@ class ScalarColumnDecoder final : public RocksDBColumnDecoder {
   }
 };
 
-// ---------------------------------------------------------------------------
-// ArrayColumnDecoder
-// ---------------------------------------------------------------------------
 template<velox::TypeKind ElemKind>
 class ArrayColumnDecoder final : public RocksDBColumnDecoder {
   using ElemT = typename velox::TypeTraits<ElemKind>::NativeType;
@@ -250,9 +243,6 @@ class ArrayColumnDecoder final : public RocksDBColumnDecoder {
 #endif
 };
 
-// ---------------------------------------------------------------------------
-// UnknownColumnDecoder
-// ---------------------------------------------------------------------------
 class UnknownColumnDecoder final : public RocksDBColumnDecoder {
   velox::memory::MemoryPool& _pool;
 
@@ -289,6 +279,7 @@ std::unique_ptr<RocksDBColumnDecoder> MakeRocksDBColumnDecoder(
   if (type->kind() == velox::TypeKind::UNKNOWN) {
     return std::make_unique<UnknownColumnDecoder>(pool);
   }
+
   if (type->isArray()) {
     const auto elem_kind = type->asArray().elementType()->kind();
     return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(MakeArrayDecoder, elem_kind, type,

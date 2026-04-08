@@ -40,21 +40,16 @@ class RocksDBColumnDecoder {
   explicit RocksDBColumnDecoder(Writer&& writer) : _writer(std::move(writer)) {}
   virtual ~RocksDBColumnDecoder() = default;
 
-  // Called on each slice read for the column. Values could be added out of
-  // order. It is caller responsibility to sync access and to maintain proper
-  // idx.
   void Add(velox::vector_size_t idx, std::string_view value) {
     _writer(idx, value);
   }
 
-  // Finalise and return the vector.
   virtual velox::VectorPtr Finish(velox::vector_size_t actual_rows) = 0;
 
  private:
   Writer _writer;
 };
 
-// Factory: create a decoder for the given Velox type.
 std::unique_ptr<RocksDBColumnDecoder> MakeRocksDBColumnDecoder(
   const velox::TypePtr& type, velox::vector_size_t max_rows,
   velox::memory::MemoryPool& pool);

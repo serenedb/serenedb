@@ -1,4 +1,4 @@
-skipif postgres-extended
+skipif pg-wire-extended
 query
 BEGIN; 
 SELECT 'chinchopa'; 

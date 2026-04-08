@@ -118,7 +118,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
                                        const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
-  : IndexShard{id, index.GetId(), IndexType::Inverted},
+  : IndexShard{id, index.GetId(), catalog::ObjectType::InvertedIndexShard},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
@@ -277,18 +277,12 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
   }
 }
 
-void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
-  vpack::WriteTuple(builder, _options.base);
-}
-
-Snapshot InvertedIndexShard::GetSnapshot() const {
-  return {shared_from_this(), GetInvertedIndexSnapshot()};
+void InvertedIndexShard::WriteInternal(vpack::Builder& b) const {
+  vpack::WriteTuple(b, _options.base);
 }
 
 void InvertedIndexShard::ScheduleConsolidation(absl::Duration delay) {
-  ConsolidationTask task{shared_from_this(), [self = shared_from_this()] {
-                           return /* TODO */ true;
-                         }};
+  ConsolidationTask task{shared_from_this(), [] { return /* TODO */ true; }};
 
   _state->pending_consolidations.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay).Detach();

@@ -1,0 +1,51 @@
+control substitution on
+
+statement ok
+CREATE TABLE pudge(id INTEGER, val TEXT);
+
+statement ok
+INSERT INTO pudge VALUES (1, 'clickclack'), (2, 'deadinside'), (3, 'babsky');
+
+statement ok
+CREATE INDEX vedernikoff ON pudge(id);
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT val FROM pudge WHERE id = 2;
+----
+val
+deadinside
+
+connection after_crash
+query
+SELECT val FROM pudge WHERE id > 1 ORDER BY id;
+----
+val
+deadinside
+babsky
+
+connection after_crash
+statement ok
+INSERT INTO pudge VALUES (4, 'kostya');
+
+connection after_crash
+query
+SELECT val FROM pudge WHERE id = 4;
+----
+val
+kostya
+
+connection after_crash
+statement ok
+DROP INDEX vedernikoff;
+
+connection after_crash
+statement ok
+DROP TABLE pudge;

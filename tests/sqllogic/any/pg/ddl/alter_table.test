@@ -1,0 +1,107 @@
+statement ok
+CREATE TABLE rubick(a integer CONSTRAINT rubick_pos CHECK (a > 0), b integer CONSTRAINT rubick_nonneg CHECK (b >= 0));
+
+statement ok
+INSERT INTO rubick VALUES (1, 0);
+
+statement ok
+ALTER TABLE rubick DROP CONSTRAINT rubick_pos;
+
+statement ok
+INSERT INTO rubick VALUES (-1, 0);
+
+statement error
+ALTER TABLE rubick DROP CONSTRAINT rubick_pos;
+----
+db error: ERROR: constraint "rubick_pos" of relation "rubick" does not exist
+
+
+statement ok
+ALTER TABLE rubick DROP CONSTRAINT IF EXISTS rubick_pos;
+
+statement ok
+ALTER TABLE rubick DROP CONSTRAINT rubick_nonneg;
+
+statement ok
+INSERT INTO rubick VALUES (5, -10);
+
+query
+SELECT * FROM rubick ORDER BY a;
+----
+a	b
+-1	0
+1	0
+5	-10
+
+statement ok
+DROP TABLE rubick;
+
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff DROP CONSTRAINT foo;
+
+statement error
+ALTER TABLE vedernikoff DROP CONSTRAINT foo;
+----
+db error: ERROR: relation "vedernikoff" does not exist
+
+
+statement ok
+ALTER TABLE IF EXISTS vedernikoff DROP CONSTRAINT IF EXISTS foo;
+
+
+statement ok
+CREATE TABLE tinker(a integer, b text);
+
+statement ok
+CREATE VIEW tinker_view AS SELECT * FROM tinker;
+
+statement error
+ALTER TABLE tinker_view DROP CONSTRAINT foo;
+----
+db error: ERROR: ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"
+DETAIL: This operation is not supported for views.
+
+
+statement error
+ALTER TABLE tinker_view DROP CONSTRAINT IF EXISTS foo;
+----
+db error: ERROR: ALTER action DROP CONSTRAINT cannot be performed on relation "tinker_view"
+DETAIL: This operation is not supported for views.
+
+
+statement ok
+DROP VIEW tinker_view;
+
+statement ok
+DROP TABLE tinker;
+
+
+statement ok
+CREATE TABLE invoker(val integer CONSTRAINT invoker_bound CHECK (val > 0), name text);
+
+statement ok
+INSERT INTO invoker VALUES (10, 'babsky');
+
+statement error
+INSERT INTO invoker VALUES (-1, 'kostya');
+----
+db error: ERROR: new row for relation "invoker" violates check constraint "invoker_bound"
+DETAIL: Failing row contains (-1, kostya).
+
+
+statement ok
+ALTER TABLE invoker DROP CONSTRAINT invoker_bound;
+
+statement ok
+INSERT INTO invoker VALUES (-1, 'kostya');
+
+query
+SELECT * FROM invoker ORDER BY val;
+----
+val	name
+-1	kostya
+10	babsky
+
+statement ok
+DROP TABLE invoker;

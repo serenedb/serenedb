@@ -50,12 +50,6 @@ enum class FileFormat : uint8_t {
   Orc = 4,
 };
 
-enum class IndexType : uint8_t {
-  Unknown = 0,
-  Secondary,
-  Inverted,
-};
-
 enum class IndexSerialization : uint8_t {
   /// serialize index
   Basics = 0,

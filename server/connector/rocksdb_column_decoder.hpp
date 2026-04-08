@@ -20,31 +20,38 @@
 
 #pragma once
 
-#include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <absl/functional/any_invocable.h>
+#include <velox/common/memory/MemoryPool.h>
+#include <velox/type/Type.h>
+#include <velox/vector/BaseVector.h>
 
-#include "catalog/base_query_view.h"
+#include <memory>
+#include <string_view>
 
-namespace sdb {
+#include "basics/fwd.h"
 
-class SqlQueryViewImpl {
+namespace sdb::connector {
+
+class RocksDBColumnDecoder {
  public:
-  struct State {
-    duckdb::unique_ptr<duckdb::CreateViewInfo> view_info;
-  };
+  using Writer =
+    absl::AnyInvocable<void(velox::vector_size_t, std::string_view) const>;
 
-  static constexpr auto Type() noexcept {
-    return catalog::ViewType::ViewSqlQuery;
+  explicit RocksDBColumnDecoder(Writer&& writer) : _writer(std::move(writer)) {}
+  virtual ~RocksDBColumnDecoder() = default;
+
+  void Add(velox::vector_size_t idx, std::string_view value) {
+    _writer(idx, value);
   }
 
- protected:
-  static std::shared_ptr<State> Create();
+  virtual velox::VectorPtr Finish(velox::vector_size_t actual_rows) = 0;
 
-  static Result Parse(State& state, ObjectId database, std::string_view query);
-
-  static Result Check(ObjectId database, std::string_view name,
-                      const State& state, const Config& config);
+ private:
+  Writer _writer;
 };
 
-using SqlQueryView = catalog::BaseQueryView<SqlQueryViewImpl>;
+std::unique_ptr<RocksDBColumnDecoder> MakeRocksDBColumnDecoder(
+  const velox::TypePtr& type, velox::vector_size_t max_rows,
+  velox::memory::MemoryPool& pool);
 
-}  // namespace sdb
+}  // namespace sdb::connector

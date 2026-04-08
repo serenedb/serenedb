@@ -37,6 +37,9 @@ inline constexpr std::string_view kNgramMatch = "sdb_ngram_match";
 inline constexpr std::string_view kLevenshteinMatch = "sdb_levenshtein_match";
 inline constexpr std::string_view kBoost = "sdb_boost";
 
+// Pseudo-functions that are completely replaced by columns
+inline constexpr std::string_view kOffsets = "offsets";
+
 void RegisterSearchFunctions();
 
 }  // namespace sdb::functions

@@ -18,26 +18,27 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/sql_function_impl.h"
+#pragma once
 
-#include <vpack/vpack_helper.h>
+#include "pg/system_table.h"
 
 namespace sdb::pg {
 
-Result FunctionImpl::FromVPack(vpack::Slice slice,
-                               std::unique_ptr<FunctionImpl>& out) {
-  auto sql = basics::VPackHelper::getString(slice, "sql", {});
-  if (sql.empty()) {
-    return {ERROR_BAD_PARAMETER, "function must contain sql field"};
-  }
-  out = std::make_unique<FunctionImpl>(std::string{sql});
-  return {};
-}
+// NOLINTBEGIN
+struct SdbSearchTasksStatus {
+  static constexpr uint64_t kId = 999996;  // TODO(codeworse): assign proper OID
+  static constexpr std::string_view kName = "sdb_search_tasks_status";
 
-void FunctionImpl::ToVPack(vpack::Builder& builder) const {
-  builder.openObject();
-  builder.add("sql", _sql);
-  builder.close();
-}
+  Text task_type;
+  uint64_t active_tasks;
+  uint64_t pending_tasks;
+  uint64_t threads;
+};
+// NOLINTEND
+
+template<>
+std::vector<velox::VectorPtr>
+SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData(
+  velox::memory::MemoryPool& pool);
 
 }  // namespace sdb::pg

@@ -28,12 +28,27 @@ Schema::Schema(ObjectId database_id, SchemaOptions options)
   : DatabaseObject{options.owner_id, database_id, options.id,
                    std::move(options.name), ObjectType::Schema} {}
 
-void Schema::WriteInternal(vpack::Builder& build) const {
-  vpack::WriteTuple(build, SchemaOptions{
-                             .owner_id = GetOwnerId(),
-                             .id = GetId(),
-                             .name = _name,
-                           });
+std::shared_ptr<Schema> Schema::ReadInternal(vpack::Slice slice,
+                                             ReadContext ctx) {
+  SchemaOptions options;
+  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+    return nullptr;
+  }
+  return std::make_shared<Schema>(ctx.database_id, std::move(options));
+}
+
+void Schema::WriteInternal(vpack::Builder& b) const {
+  vpack::WriteTuple(b, SchemaOptions{
+                         .owner_id = GetOwnerId(),
+                         .id = GetId(),
+                         .name = _name,
+                       });
+}
+
+std::shared_ptr<Object> Schema::Clone() const {
+  vpack::Builder b;
+  WriteInternal(b);
+  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
 }
 
 }  // namespace sdb::catalog

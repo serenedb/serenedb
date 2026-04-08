@@ -24,11 +24,6 @@
 #include <string>
 
 #include "catalog/object.h"
-
-namespace sdb::pg {
-class FunctionImpl;
-}
-
 namespace sdb::catalog {
 
 // A SQL function stored in the catalog.

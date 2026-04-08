@@ -32,6 +32,7 @@
 #include "basics/debugging.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/revision_id.h"
+#include "catalog/object.h"
 #include "catalog/types.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 
@@ -51,15 +52,15 @@ class RocksDBKey {
 class DefinitionKey : public RocksDBKey {
  public:
   ObjectId GetParentId() const;
-  RocksDBEntryType GetEntryType() const;
+  catalog::ObjectType GetEntryType() const;
   ObjectId GetObjectId() const;
 
-  static std::string Create(ObjectId parent_id, RocksDBEntryType entry,
+  static std::string Create(ObjectId parent_id, catalog::ObjectType entry,
                             ObjectId id);
 
   static std::pair<std::string, std::string> CreateInterval(ObjectId parent_id);
   static std::pair<std::string, std::string> CreateInterval(
-    ObjectId parent_id, RocksDBEntryType entry);
+    ObjectId parent_id, catalog::ObjectType entry);
 };
 
 class SettingsKey : public RocksDBKey {

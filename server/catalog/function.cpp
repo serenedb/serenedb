@@ -24,7 +24,6 @@
 
 #include "basics/static_strings.h"
 #include "catalog/identifiers/identifier.h"
-#include "catalog/sql_function_impl.h"
 
 namespace sdb::catalog {
 

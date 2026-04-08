@@ -48,10 +48,11 @@ std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(
 }
 
 void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
-  SDB_ASSERT(builder.isOpenObject());
+  builder.openObject();
   builder.add("_key", Identifier{GetId().id()});
   builder.add(StaticStrings::kDataSourceName, GetName());
   builder.add("sql", _sql);
+  builder.close();
 }
 
 std::shared_ptr<Object> PgSqlFunction::Clone() const {

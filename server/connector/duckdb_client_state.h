@@ -29,6 +29,14 @@ namespace sdb {
 class ConnectionContext;
 }
 
+namespace sdb::message {
+class Buffer;
+}
+
+namespace sdb::pg {
+class CopyMessagesQueue;
+}
+
 namespace sdb::connector {
 
 inline constexpr const char* kSereneDBClientStateKey = "serenedb";
@@ -44,6 +52,17 @@ class SereneDBClientState final : public duckdb::ClientContextState {
     : _connection_ctx{std::move(connection_ctx)} {}
 
   ConnectionContext& GetConnectionContext() const { return *_connection_ctx; }
+
+  // Set by PG layer before query execution.
+  // Read by SereneDBCopyFileSystem to bridge PG protocol into DuckDB I/O.
+  pg::CopyMessagesQueue* copy_queue = nullptr;
+  message::Buffer* send_buffer = nullptr;
+
+  // Buffer for COPY FROM STDIN data. DuckDB opens /dev/stdin multiple
+  // times (for sniffing and reading). Data read on first opens is saved
+  // here and replayed on the final open.
+  std::shared_ptr<std::string> copy_stdin_buffer;
+  int copy_stdin_open_count = 0;
 
   // Transaction lifecycle callbacks
   void TransactionCommit(duckdb::MetaTransaction& transaction,

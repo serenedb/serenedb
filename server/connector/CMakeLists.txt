@@ -28,6 +28,7 @@ add_library(
     duckdb_table_function.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
+    duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_sst_insert.cpp
     duckdb_physical_create_index.cpp

@@ -46,6 +46,10 @@ void SereneDBClientState::TransactionRollback(
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
+  copy_queue = nullptr;
+  send_buffer = nullptr;
+  copy_stdin_buffer.reset();
+  copy_stdin_open_count = 0;
   _connection_ctx->OnNewStatement();
 }
 

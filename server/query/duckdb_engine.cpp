@@ -23,6 +23,7 @@
 #include <iostream>
 
 #include "basics/assert.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
@@ -103,6 +104,11 @@ void DuckDBEngine::Initialize() {
     inverted.create_plan = &connector::SereneDBCreateIndexPlan;
     index_types.RegisterIndexType(inverted);
   }
+
+  // Register filesystem for COPY FROM STDIN support.
+  // Intercepts "/dev/stdin" and reads from PG CopyData messages.
+  auto& fs = duckdb::FileSystem::GetFileSystem(*_db->instance);
+  fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
   std::cerr << "DuckDB engine initialized with SereneDB storage" << std::endl;
 }

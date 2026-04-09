@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
+#include <numkong/numkong.h>
 
 #include <cstddef>
 #include <iresearch/utils/vector.hpp>
@@ -70,6 +71,136 @@ class DistanceFixture : public benchmark::Fixture {
   std::vector<float> rdata;
 };
 
+#ifdef YDB_DISTANCES_BENCH
+// from:
+// Dot -
+// https://github.com/ydb-platform/ydb/blob/main/library/cpp/dot_product/dot_product_avx2.cpp
+// L1 -
+// https://github.com/ydb-platform/ydb/blob/main/library/cpp/l1_distance/l1_distance.h
+// L2 -
+// https://github.com/ydb-platform/ydb/blob/main/library/cpp/l2_distance/l2_distance.cpp
+
+constexpr int64_t Bits(int n) {
+  return int64_t(-1) ^ ((int64_t(1) << (64 - n)) - 1);
+}
+
+constexpr __m256 BlendMask32[8] = {
+  __m256i{Bits(64), Bits(64), Bits(64), Bits(64)},
+  __m256i{Bits(32), Bits(64), Bits(64), Bits(64)},
+  __m256i{0, Bits(64), Bits(64), Bits(64)},
+  __m256i{0, Bits(32), Bits(64), Bits(64)},
+  __m256i{0, 0, Bits(64), Bits(64)},
+  __m256i{0, 0, Bits(32), Bits(64)},
+  __m256i{0, 0, 0, Bits(64)},
+  __m256i{0, 0, 0, Bits(32)},
+};
+// Horizontal sum of eight float values in an avx register
+float HsumFloat(__m256 v) {
+  __m256 y = _mm256_permute2f128_ps(v, v, 1);
+  v = _mm256_add_ps(v, y);
+  v = _mm256_hadd_ps(v, v);
+  return _mm256_cvtss_f32(_mm256_hadd_ps(v, v));
+}
+
+[[gnu::noinline]] float YdbDotProduct(const float* lhs, const float* rhs,
+                                      size_t length) noexcept {
+  __m256 sum1 = _mm256_setzero_ps();
+  __m256 sum2 = _mm256_setzero_ps();
+  __m256 a1, b1, a2, b2;
+
+  if (const auto leftover = length % 8; leftover != 0) {
+    a1 = _mm256_blendv_ps(_mm256_loadu_ps(lhs), _mm256_setzero_ps(),
+                          BlendMask32[leftover]);
+    b1 = _mm256_blendv_ps(_mm256_loadu_ps(rhs), _mm256_setzero_ps(),
+                          BlendMask32[leftover]);
+    sum1 = _mm256_mul_ps(a1, b1);
+    lhs += leftover;
+    rhs += leftover;
+    length -= leftover;
+  }
+
+  while (length >= 16) {
+    a1 = _mm256_loadu_ps(lhs);
+    b1 = _mm256_loadu_ps(rhs);
+    a2 = _mm256_loadu_ps(lhs + 8);
+    b2 = _mm256_loadu_ps(rhs + 8);
+
+    sum1 = _mm256_fmadd_ps(a1, b1, sum1);
+    sum2 = _mm256_fmadd_ps(a2, b2, sum2);
+
+    length -= 16;
+    lhs += 16;
+    rhs += 16;
+  }
+
+  if (length > 0) {
+    a1 = _mm256_loadu_ps(lhs);
+    b1 = _mm256_loadu_ps(rhs);
+    sum1 = _mm256_fmadd_ps(a1, b1, sum1);
+  }
+
+  return HsumFloat(_mm256_add_ps(sum1, sum2));
+}
+
+[[gnu::noinline]] float YdbL1Distance(const float* lhs, const float* rhs,
+                                      int length) {
+  __m128 res = _mm_setzero_ps();
+  __m128 absMask = _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff));
+
+  while (length >= 4) {
+    __m128 a = _mm_loadu_ps(lhs);
+    __m128 b = _mm_loadu_ps(rhs);
+    __m128 d = _mm_sub_ps(a, b);
+    res = _mm_add_ps(_mm_and_ps(d, absMask), res);
+    rhs += 4;
+    lhs += 4;
+    length -= 4;
+  }
+
+  alignas(16) float r[4];
+  _mm_store_ps(r, res);
+  float sum = r[0] + r[1] + r[2] + r[3];
+
+  while (length) {
+    sum += std::abs(*lhs - *rhs);
+    ++lhs;
+    ++rhs;
+    --length;
+  }
+
+  return sum;
+}
+
+template<class T>
+static constexpr T Sqr(const T t) noexcept {
+  return t * t;
+}
+
+[[gnu::noinline]] float YdbL2Distance(const float* lhs, const float* rhs,
+                                      int length) {
+  __m128 sum = _mm_setzero_ps();
+
+  while (length >= 4) {
+    __m128 a = _mm_loadu_ps(lhs);
+    __m128 b = _mm_loadu_ps(rhs);
+    __m128 delta = _mm_sub_ps(a, b);
+    sum = _mm_add_ps(sum, _mm_mul_ps(delta, delta));
+    length -= 4;
+    rhs += 4;
+    lhs += 4;
+  }
+
+  alignas(16) float res[4];
+  _mm_store_ps(res, sum);
+
+  while (length--) {
+    res[0] += Sqr(*rhs++ - *lhs++);
+  }
+
+  return res[0] + res[1] + res[2] + res[3];
+}
+#endif
+
 [[gnu::noinline]] float SdbComputeL2(const float* left, const float* right,
                                      size_t sz) {
   return irs::vector::L2Space<float, float, float>::Dist(
@@ -110,6 +241,17 @@ class DistanceFixture : public benchmark::Fixture {
   return static_cast<float>(product / (norm_x * norm_y));
 }
 
+#ifdef NUMKONG_DISTANCES_BENCH
+[[gnu::noinline]] float NumKongComputeCosine(const float* left,
+                                             const float* right, size_t sz) {
+  double dot;
+  nk_dot_f32(left, right, sz, &dot);
+  float norm_l = SdbComputeDotProduct(left, left, sz);
+  float norm_r = SdbComputeDotProduct(right, right, sz);
+  return static_cast<float>(dot / std::sqrt(norm_l * norm_r));
+}
+#endif
+
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   for (auto _ : state) {
     float result = SdbComputeL2(ldata.data(), rdata.data(), ldata.size());
@@ -118,6 +260,29 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
 }
 
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
+
+#ifdef NUMKONG_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture, NumKongL2Squared)(benchmark::State& state) {
+  for (auto _ : state) {
+    double result;
+    nk_euclidean_f32(ldata.data(), rdata.data(), ldata.size(), &result);
+    benchmark::DoNotOptimize(result);
+  }
+}
+
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, NumKongL2Squared);
+#endif
+
+#ifdef YDB_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture, YdbL2Squared)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = YdbL2Distance(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbL2Squared);
+
+#endif
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -142,6 +307,17 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL1Distance)(benchmark::State& state) {
 }
 
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL1Distance);
+
+#ifdef YDB_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture, YdbL1Distance)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = YdbL1Distance(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbL1Distance);
+
+#endif
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -168,6 +344,30 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
 
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
 
+#ifdef NUMKONG_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture,
+                   NumKongDotProduct)(benchmark::State& state) {
+  for (auto _ : state) {
+    double result;
+    nk_dot_f32(ldata.data(), rdata.data(), ldata.size(), &result);
+    benchmark::DoNotOptimize(result);
+  }
+}
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, NumKongDotProduct);
+
+#endif
+
+#ifdef YDB_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture, YdbDotProduct)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = YdbDotProduct(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbDotProduct);
+
+#endif
+
 #ifdef VELOX_ENABLE_FAISS
 
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
@@ -190,6 +390,18 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
   }
 }
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
+
+#ifdef NUMKONG_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture, NumKongCosine)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result =
+      NumKongComputeCosine(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, NumKongCosine);
+#endif
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {

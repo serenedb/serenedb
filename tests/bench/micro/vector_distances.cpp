@@ -249,9 +249,10 @@ static constexpr T Sqr(const T t) noexcept {
                                              const float* right, size_t sz) {
   double dot;
   nk_dot_f32(left, right, sz, &dot);
-  float norm_l = SdbComputeDotProduct(left, left, sz);
-  float norm_r = SdbComputeDotProduct(right, right, sz);
-  return static_cast<float>(dot / std::sqrt(norm_l * norm_r));
+  double norm_l, norm_r;
+  nk_dot_f32(left, left, sz, &norm_l);
+  nk_dot_f32(right, right, sz, &norm_r);
+  return static_cast<float>(dot / std::sqrt(norm_l) * std::sqrt(norm_r));
 }
 #endif
 

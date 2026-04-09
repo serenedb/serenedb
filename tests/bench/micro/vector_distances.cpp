@@ -232,7 +232,7 @@ static constexpr T Sqr(const T t) noexcept {
       reinterpret_cast<const irs::byte_type*>(left),
       reinterpret_cast<const irs::byte_type*>(right),
       static_cast<uint16_t>(sz));
-  return static_cast<float>(lr / std::sqrt(ll * rr));
+  return static_cast<float>(lr / std::sqrt(ll) * std::sqrt(rr));
 }
 
 [[gnu::noinline]] float VeloxComputeCosine(const float* left,

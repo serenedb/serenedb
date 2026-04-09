@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/types/hugeint.hpp>
+#include <duckdb/common/types/uuid.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <limits>
 #include <string_view>
@@ -748,35 +749,15 @@ void SerializeUuid(SerializationContext context,
     vdata.unified
       .GetData<duckdb::hugeint_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
-    // Format is "%08x-%04x-%04x-%04x-%012x"
-    static constexpr size_t kUUIDStrSize = 8 + 1 + 4 + 1 + 4 + 1 + 4 + 1 + 12;
+    static constexpr size_t kUUIDStrSize = 36;  // 8-4-4-4-12
     auto* data = context.buffer->GetContiguousData(kUUIDStrSize);
-    char* buf = reinterpret_cast<char*>(data);
-
-    static constexpr size_t kMaxHexSize = 16;
-    char hex_buf[kMaxHexSize];
-    char* const hex_buf_end = hex_buf + kMaxHexSize;
-    auto write_hex = [&](uint64_t value, uint8_t pad) {
-      absl::numbers_internal::FastHexToBufferZeroPad16(value, hex_buf);
-      std::memcpy(buf, hex_buf_end - pad, pad);
-      buf += pad;
-    };
-
-    const uint64_t high = static_cast<uint64_t>(uuid.upper);
-    const uint64_t low = uuid.lower;
-
-    write_hex(high >> 32, 8);
-    *buf++ = '-';
-    write_hex((high >> 16) & 0xFFFF, 4);
-    *buf++ = '-';
-    write_hex(high & 0xFFFF, 4);
-    *buf++ = '-';
-    write_hex(low >> 48, 4);
-    *buf++ = '-';
-    write_hex(low & 0xFFFF'FFFF'FFFF, 12);
+    duckdb::BaseUUID::ToString(uuid, reinterpret_cast<char*>(data));
   } else {
+    // Binary format: flip top bit back to get original UUID bytes
     auto* data = context.buffer->GetContiguousData(16);
-    absl::big_endian::Store64(data, static_cast<uint64_t>(uuid.upper));
+    const uint64_t high =
+      static_cast<uint64_t>(uuid.upper) ^ (uint64_t{1} << 63);
+    absl::big_endian::Store64(data, high);
     absl::big_endian::Store64(data + 8, uuid.lower);
   }
 }

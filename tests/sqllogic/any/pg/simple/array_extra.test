@@ -105,7 +105,6 @@ array_ndims
 1
 
 
-skipif serenedb
 query
 SELECT array_ndims(ARRAY[[1,2],[3,4]]);
 ----
@@ -133,7 +132,6 @@ array_upper
 
 # array_dims
 
-skipif serenedb
 query
 SELECT array_dims(ARRAY[[1,2,3],[4,5,6]]);
 ----

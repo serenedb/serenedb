@@ -28,9 +28,10 @@
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_array_cast.h"
 #include "connector/duckdb_physical_create_index.h"
-#include "connector/duckdb_vacuum_function.h"
 #include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
+#include "connector/duckdb_vacuum_function.h"
+#include "connector/functions/array.h"
 #include "pg/system_functions.h"
 #include "pg/system_views.h"
 
@@ -101,6 +102,9 @@ void DuckDBEngine::Initialize() {
 
   // Register PG-compatible VARCHAR → LIST cast ('{1,2,3}'::int[])
   connector::RegisterPgArrayCast(*_db->instance);
+
+  // Register PG array functions
+  connector::RegisterPgArrayFunctions(*_db->instance);
 
   // Register VACUUM function (CALL serenedb_vacuum(...))
   connector::RegisterVacuumFunction(*_db->instance);

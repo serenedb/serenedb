@@ -57,3 +57,5 @@ target_link_libraries(
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?
 # we need rocksdb utils and logical collection but sereneserver is a single monolithic target without proper include dirs setup
 target_include_directories(serene_connector PUBLIC "${CMAKE_SOURCE_DIR}/server")
+
+add_subdirectory(functions)

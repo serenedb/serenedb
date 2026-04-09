@@ -847,6 +847,32 @@ inline constexpr duckdb::DefaultMacro kExternalMacros[] = {
              NULL::BOOLEAN, NULL::BOOLEAN, NULL::BOOLEAN
       WHERE false;
   END;)"},
+  // PG array functions missing from DuckDB
+
+  {DEFAULT_SCHEMA, "array_remove",
+   R"((arr, elem) AS list_filter(arr, x -> x IS DISTINCT FROM elem))"},
+
+  {DEFAULT_SCHEMA, "trim_array",
+   R"((arr, n) AS arr[:len(arr) - n])"},
+
+  {DEFAULT_SCHEMA, "array_positions",
+   R"((arr, elem) AS list_filter(generate_series(1, len(arr)), i -> arr[i] IS NOT DISTINCT FROM elem))"},
+
+  {DEFAULT_SCHEMA, "array_replace",
+   R"((arr, old_elem, new_elem) AS list_transform(arr, x -> CASE WHEN x IS NOT DISTINCT FROM old_elem THEN new_elem ELSE x END))"},
+
+  {DEFAULT_SCHEMA, "array_ndims",
+   R"((arr) AS CASE WHEN arr IS NULL THEN NULL ELSE 1 END)"},
+
+  {DEFAULT_SCHEMA, "array_lower",
+   R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE 1 END)"},
+
+  {DEFAULT_SCHEMA, "array_upper",
+   R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE len(arr) END)"},
+
+  {DEFAULT_SCHEMA, "array_dims",
+   R"((arr) AS CASE WHEN arr IS NULL THEN NULL ELSE '[1:' || len(arr) || ']' END)"},
+
   // clang-format on
 };
 

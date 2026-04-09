@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <limits>
 #include <string_view>
@@ -258,6 +259,59 @@ void SerializeVarchar(SerializationContext context,
     }
   } else {
     context.buffer->WriteUncommitted(value);
+  }
+}
+
+template<VarFormat Format>
+void SerializeHugeint(SerializationContext context,
+                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                      duckdb::idx_t row) {
+  // HUGEINT is equivalent to DECIMAL(38, 0) — same physical storage
+  auto value =
+    vdata.unified
+      .GetData<duckdb::hugeint_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Hugeint::ToString(value);
+    context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
+      memcpy(data, str.data(), str.size());
+      return str.size();
+    });
+  } else {
+    // Reuse PG numeric binary layout (scale=0)
+    static constexpr size_t kBaseSystem = 10'000;
+    static constexpr int16_t kPositive = 0x0000;
+    static constexpr int16_t kNegative = 0x4000;
+
+    auto sign = (value < 0) ? kNegative : kPositive;
+    value = value < 0 ? -value : value;
+
+    int16_t ndigits = [](auto value) -> int16_t {
+      if (value == 0) {
+        return 0;
+      }
+      int16_t ndigits = 0;
+      for (; value != 0; value /= kBaseSystem) {
+        ++ndigits;
+      }
+      return ndigits;
+    }(value);
+
+    auto weight = static_cast<int16_t>(ndigits - 1);
+    auto* data = context.buffer->GetContiguousData(8 + ndigits * 2);
+    absl::big_endian::Store16(data, ndigits);
+    absl::big_endian::Store16(data + 2, weight);
+    absl::big_endian::Store16(data + 4, sign);
+    absl::big_endian::Store16(data + 6, 0);  // dscale = 0
+    data += 8 + ndigits * 2;
+
+    while (value != 0) {
+      data -= 2;
+      ndigits--;
+      absl::big_endian::Store16(
+        data, static_cast<int16_t>(static_cast<int64_t>(value % kBaseSystem)));
+      value /= kBaseSystem;
+    }
+    SDB_ASSERT(ndigits == 0);
   }
 }
 
@@ -985,6 +1039,10 @@ DuckDBSerializationFunction GetDuckDBSerialization(
     CASE_SERIALIZATION(duckdb::LogicalTypeId::SMALLINT)
     CASE_SERIALIZATION(duckdb::LogicalTypeId::INTEGER)
     CASE_SERIALIZATION(duckdb::LogicalTypeId::BIGINT)
+    case duckdb::LogicalTypeId::HUGEINT: {
+      RETURN_SERIALIZATION(SerializeHugeint<VarFormat::Text>,
+                           SerializeHugeint<VarFormat::Binary>);
+    }
     CASE_SERIALIZATION(duckdb::LogicalTypeId::BOOLEAN)
     CASE_SERIALIZATION(duckdb::LogicalTypeId::TIMESTAMP)
     case duckdb::LogicalTypeId::FLOAT: {

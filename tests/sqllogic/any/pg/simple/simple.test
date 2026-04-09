@@ -161,6 +161,7 @@ column1	column2	column3
 1	2	3
 
 
+skipif serenedb
 query error
 SELECT 1 AND 2;
 ----

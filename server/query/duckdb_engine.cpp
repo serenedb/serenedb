@@ -32,6 +32,8 @@
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
+#include "connector/functions/inout.h"
+#include "connector/functions/string.h"
 #include "pg/system_functions.h"
 #include "pg/system_views.h"
 
@@ -105,6 +107,12 @@ void DuckDBEngine::Initialize() {
 
   // Register PG array functions
   connector::RegisterPgArrayFunctions(*_db->instance);
+
+  // Register PG string functions (initcap, etc.)
+  connector::RegisterPgStringFunctions(*_db->instance);
+
+  // Register PG I/O functions and casts (byteain/byteaout, etc.)
+  connector::RegisterPgInOutFunctions(*_db->instance);
 
   // Register VACUUM function (CALL serenedb_vacuum(...))
   connector::RegisterVacuumFunction(*_db->instance);

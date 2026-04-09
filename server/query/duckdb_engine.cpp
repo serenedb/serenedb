@@ -27,6 +27,7 @@
 #include "basics/assert.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
+#include "connector/duckdb_vacuum_function.h"
 #include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
 #include "pg/system_functions.h"
@@ -96,6 +97,9 @@ void DuckDBEngine::Initialize() {
 
   // Register search stub functions (sdb_phrase, sdb_term_eq)
   connector::RegisterSearchFunctions(*_db->instance);
+
+  // Register VACUUM function (CALL serenedb_vacuum(...))
+  connector::RegisterVacuumFunction(*_db->instance);
 
   // Register SereneDB index types.
   // These provide create_plan callbacks that bypass DuckDB's native

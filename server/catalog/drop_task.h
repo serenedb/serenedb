@@ -23,6 +23,7 @@
 #include <absl/strings/substitute.h>
 
 #include <chrono>
+#include <duckdb/main/database_manager.hpp>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -271,8 +272,12 @@ struct DatabaseDrop final : public DropTask,
     : DropTask{db_id, id::kInstance, true}, _schemas{std::move(schemas)} {}
 
   DatabaseDrop(const std::shared_ptr<Database>& db,
-               std::vector<std::shared_ptr<SchemaDrop>> schemas)
-    : DropTask{db, id::kInstance, true}, _schemas{std::move(schemas)} {}
+               std::vector<std::shared_ptr<SchemaDrop>> schemas,
+               duckdb::DatabaseManager& db_manager)
+    : DropTask{db, id::kInstance, true},
+      _schemas{std::move(schemas)},
+      _db_name{db->GetName()},
+      _db_manager{&db_manager} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("DatabaseDrop(database $0)", _id.id());
@@ -290,8 +295,12 @@ struct DatabaseDrop final : public DropTask,
     });
   }
 
+  std::string_view GetDbName() const noexcept { return _db_name; }
+
  private:
   std::vector<std::shared_ptr<SchemaDrop>> _schemas;
+  std::string _db_name;
+  duckdb::DatabaseManager* _db_manager{nullptr};
 };
 
 }  // namespace sdb::catalog

@@ -678,8 +678,8 @@ Result CatalogFeature::Open() {
     auto conn = query::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
       auto id_str = std::to_string(db->GetId().id());
-      auto query = "ATTACH '" + id_str + "' AS \"" + db->GetName() +
-                   "\" (TYPE serenedb)";
+      auto query =
+        "ATTACH '" + id_str + "' AS \"" + db->GetName() + "\" (TYPE serenedb)";
       auto result = conn->Query(query);
       if (result->HasError()) {
         std::cerr << "Failed to attach database " << db->GetName() << ": "

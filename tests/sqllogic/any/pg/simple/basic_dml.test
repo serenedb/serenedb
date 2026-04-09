@@ -71,19 +71,19 @@ a	b	c
 query
 SELECT COUNT(1) from series_table;
 ----
-count(1)
+count
 8000
 
 query
 SELECT COUNT(a) from series_table;
 ----
-count(a)
+count
 8000
 
 query
 SELECT COUNT( DISTINCT a) from series_table;
 ----
-count(DISTINCT a)
+count
 20
 
 statement count 8000

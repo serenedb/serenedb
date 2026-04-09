@@ -63,7 +63,6 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
-#include "connector/duckdb_entry_cache.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
@@ -79,6 +78,7 @@
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
+#include "connector/duckdb_entry_cache.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
@@ -135,14 +135,11 @@ class SnapshotImpl : public Snapshot {
   }
 
   connector::DuckDBEntryCache& GetDuckDBCache() const override {
-    if (!_duckdb_cache) {
-      _duckdb_cache = std::make_unique<connector::DuckDBEntryCache>();
-    }
     return *_duckdb_cache;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
-    const std::shared_ptr<Database>& db) {
+    const std::shared_ptr<Database>& db, duckdb::DatabaseManager& db_manager) {
     auto db_deps = GetDependency<DatabaseDependency>(db->GetId());
     auto schemas_drop = db_deps->schemas |
                         std::views::transform([&](ObjectId id) {
@@ -152,7 +149,7 @@ class SnapshotImpl : public Snapshot {
                         }) |
                         std::ranges::to<std::vector>();
     auto drop_task =
-      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop));
+      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop), db_manager);
     return drop_task;
   }
 
@@ -887,7 +884,8 @@ class SnapshotImpl : public Snapshot {
   ResolutionTable _resolution_table;
   ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
-  mutable std::unique_ptr<connector::DuckDBEntryCache> _duckdb_cache;
+  std::unique_ptr<connector::DuckDBEntryCache> _duckdb_cache =
+    std::make_unique<connector::DuckDBEntryCache>();
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1672,7 +1670,8 @@ Result LocalCatalog::DropRole(std::string_view role) {
   return {};
 }
 
-Result LocalCatalog::DropDatabase(std::string_view name) {
+Result LocalCatalog::DropDatabase(std::string_view name,
+                                  duckdb::DatabaseManager& db_manager) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     auto db = clone->GetDatabase(name);
@@ -1680,7 +1679,7 @@ Result LocalCatalog::DropDatabase(std::string_view name) {
       return Result{ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
                     "\" does not exist"};
     }
-    auto task = clone->CreateDatabaseDrop(db);
+    auto task = clone->CreateDatabaseDrop(db, db_manager);
 
     if (auto r = GetServerEngine().WriteTombstone(id::kInstance, db->GetId());
         !r.ok()) {

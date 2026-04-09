@@ -281,20 +281,22 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       return;
     }
 
-    auto database = _feature.server()
+    // Pin the catalog snapshot at connection time — all operations
+    // on this connection use the same snapshot until statement/transaction end.
+    auto snapshot = _feature.server()
                       .getFeature<catalog::CatalogFeature>()
                       .Global()
-                      .GetCatalogSnapshot()
-                      ->GetDatabase(DatabaseName());
+                      .GetCatalogSnapshot();
+    auto database = snapshot->GetDatabase(DatabaseName());
     if (!database) {
-      // sending invalid schema name as SQLSTATE
       return SendError(
         absl::StrCat("Database ", DatabaseName(), " is not accessible"),
         ERRCODE_INVALID_SCHEMA_NAME);
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId(), &_send, &_copy_queue);
+      UserName(), DatabaseName(), database->GetId(), std::move(database),
+      &_send, &_copy_queue);
     // TODO(codeworse): Move this to ctor and add more parameters there.
     _connection_ctx->SetSetting("session_authorization",
                                 std::string{UserName()}, false);
@@ -381,8 +383,9 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
           connector::kSereneDBClientStateKey, std::move(state));
       }
       // Set default catalog to the user's database
-      // TODO: use CatalogSearchPath::Set directly instead of parsing a query
-      _duckdb_conn->Query(absl::StrCat("USE \"", DatabaseName(), "\""));
+      _duckdb_conn->context->client_data->catalog_search_path->Set(
+        duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
+        duckdb::CatalogSetPathType::SET_DIRECTLY);
 
       _send.Write(ToBuffer(kReadyForQuery), true);
       std::move(cleanup).Cancel();

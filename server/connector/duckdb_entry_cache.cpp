@@ -73,6 +73,9 @@ void DuckDBEntryCache::ScanSchemas(
   duckdb::Catalog& catalog, ObjectId db_id,
   const std::function<void(duckdb::SchemaCatalogEntry&)>& callback,
   const catalog::Snapshot& snapshot) {
+  if (!snapshot.GetDatabase(db_id)) {
+    return;
+  }
   auto schemas = snapshot.GetSchemas(db_id);
   for (auto& schema : schemas) {
     auto entry = GetOrCreateSchema(

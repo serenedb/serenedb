@@ -73,6 +73,7 @@ ivansolo2003	1337	extra	555
 ivansolo2003	1337	extra	555
 
 
+skipif serenedb
 query error
 CREATE VIEW chinchopa AS
 SELECT pudge

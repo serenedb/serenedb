@@ -143,8 +143,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
                                      database->GetReplicationFactor(),
                                      database->GetWriteConcern(), false);
   if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create table options: %s",
-                                        std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
 
   bool if_not_exists =
@@ -153,12 +152,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
 
   r = catalog_impl.CreateTable(database_id, "public", std::move(options),
                                op_options);
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return nullptr;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    if (if_not_exists) {
+      return nullptr;
+    }
+    throw duckdb::CatalogException("relation \"%s\" already exists",
+                                   table_info.table);
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create table: %s",
-                                        std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
 
   std::cerr << "SereneDB: Created table " << table_info.table << " via DuckDB"
@@ -257,12 +259,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       info.index_name, std::move(idx_columns), unique);
   }
 
-  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return nullptr;
+  if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    if (if_not_exists) {
+      return nullptr;
+    }
+    throw duckdb::CatalogException("relation \"%s\" already exists",
+                                   info.index_name);
   }
   if (!create_result.ok()) {
-    throw duckdb::CatalogException("Failed to create index: %s",
-                                   std::string{create_result.errorMessage()});
+    SDB_THROW(std::move(create_result));
   }
 
   // Start background tasks for inverted indexes
@@ -304,14 +309,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   auto r = catalog_impl.CreateFunction(database_id, name, function, replace);
 
-  bool if_not_exists =
-    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return nullptr;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
+      return nullptr;
+    }
+    throw duckdb::CatalogException("relation \"%s\" already exists", info.name);
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create function: %s",
-                                        std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
 
   std::cerr << "SereneDB: Created function " << info.name << " via DuckDB"
@@ -334,14 +339,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   auto r = catalog_impl.CreateView(database_id, name, view, replace);
 
-  bool if_not_exists =
-    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return nullptr;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
+      return nullptr;
+    }
+    if (replace) {
+      throw duckdb::CatalogException("\"%s\" is not a view", info.view_name);
+    }
+    throw duckdb::CatalogException("relation \"%s\" already exists",
+                                   info.view_name);
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create view: %s",
-                                        std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
 
   std::cerr << "SereneDB: Created view " << info.view_name << " via DuckDB"
@@ -401,12 +410,16 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
       "DROP for type %s not supported", duckdb::CatalogTypeToString(info.type));
   }
   bool if_exists = info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-  if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND) && if_exists) {
-    return;
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (if_exists) {
+      return;
+    }
+    auto type_name = duckdb::CatalogTypeToString(info.type);
+    throw duckdb::CatalogException("%s \"%s\" does not exist", type_name,
+                                   info.name);
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to drop table: %s",
-                                        std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
 
   // No cache to invalidate — entries live on snapshot, new snapshot won't have

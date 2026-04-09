@@ -19,7 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <benchmark/benchmark.h>
+
+#ifdef NUMKONG_DISTANCES_BENCH
 #include <numkong/numkong.h>
+#endif
 
 #include <cstddef>
 #include <iresearch/utils/vector.hpp>

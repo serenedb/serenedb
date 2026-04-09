@@ -461,7 +461,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   }
 
   auto& types = prepared.GetTypes();
-  auto& names = prepared.GetNames();
+  auto names = query::ToAliases(prepared.GetNames());
   const uint16_t num_fields = types.size();
 
   if (num_fields == 0) {

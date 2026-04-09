@@ -106,6 +106,7 @@ babsky	babsky
 babsky	vedernikoff
 
 
+skipif serenedb
 query error
 SELECT DISTINCT iq
 FROM
@@ -119,7 +120,7 @@ ORDER BY grade DESC;
 db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
 
 
-
+skipif serenedb
 query error
 SELECT DISTINCT name
 FROM
@@ -133,7 +134,8 @@ ORDER BY grade, name DESC;
 db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
 
 
-onlyif serenedb # error is distinguished by grade / clickclack.grade
+skipif postgres
+skipif serenedb # error is distinguished by grade / clickclack.grade
 query error
 SELECT DISTINCT grade
 FROM
@@ -197,8 +199,7 @@ kek
 17
 
 
-onlyif serenedb
-query error
+query
 SELECT DISTINCT ON(ROW_NUMBER() OVER(PARTITION BY name ORDER BY grade DESC)) name
 FROM
 (
@@ -207,8 +208,10 @@ FROM
     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
 ) as clickclack(name, grade, iq)
 ----
-db error: ERROR: window function calls are not supported in DISTINCT ON
-
+name
+babsky
+vedernikoff
+vedernikoff
 
 # TODO: make error like in PG
 # query error

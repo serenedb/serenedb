@@ -867,6 +867,18 @@ inline constexpr duckdb::DefaultMacro kExternalMacros[] = {
   {DEFAULT_SCHEMA, "array_upper",
    R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE len(arr) END)"},
 
+  // regexp_like: alias registered in duckdb functions.json -> regexp_matches
+
+  // overlay(string placing string from int for int) -> string
+  // Parser transforms: overlay(s PLACING r FROM p FOR n) -> overlay(s, r, p, n)
+  {DEFAULT_SCHEMA, "overlay",
+   R"((s, repl, start, count) AS substr(s, 1, start - 1) || repl || substr(s, start + count))"},
+  // 3-arg form: overlay(string placing string from int) — count defaults to length of replacement
+  {DEFAULT_SCHEMA, "overlay",
+   R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
+
+  // set_config: registered as C++ function in connector/functions/system.cpp
+
   // clang-format on
 };
 

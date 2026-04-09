@@ -636,7 +636,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   auto& sql_stmt = stmt.extracted[stmt.current_stmt_idx];
   stmt.prepared = _duckdb_conn->Prepare(sql_stmt->query);
   if (stmt.prepared->HasError()) {
-    SendError(stmt.prepared->GetError(), ERRCODE_INTERNAL_ERROR);
+    SendError(stmt.prepared->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
     return;
   }
   _current_query = stmt.prepared->query;
@@ -668,7 +668,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
     auto& next = stmt.extracted[stmt.current_stmt_idx];
     stmt.prepared = _duckdb_conn->Prepare(next->query);
     if (stmt.prepared->HasError()) {
-      SendError(stmt.prepared->GetError(), ERRCODE_INTERNAL_ERROR);
+      SendError(stmt.prepared->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
       return;
     }
     _current_query = stmt.prepared->query;
@@ -977,7 +977,7 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   auto& prepared = *portal.stmt->prepared;
   portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
   if (portal.pending->HasError()) {
-    SendError(portal.pending->GetError(), ERRCODE_INTERNAL_ERROR);
+    SendError(portal.pending->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
     portal.pending.reset();
     return;
   }
@@ -1104,7 +1104,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         portal.result = portal.pending->Execute();
         portal.pending.reset();
         if (portal.result->HasError()) {
-          SendError(portal.result->GetError(), ERRCODE_INTERNAL_ERROR);
+          SendError(portal.result->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
           ReleaseResult(portal);
           _success_packet = false;
           return ProcessState::DonePacket;
@@ -1129,14 +1129,14 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         portal.result = portal.pending->Execute();
         portal.pending.reset();
         if (portal.result->HasError()) {
-          SendError(portal.result->GetError(), ERRCODE_INTERNAL_ERROR);
+          SendError(portal.result->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
           ReleaseResult(portal);
           _success_packet = false;
           return ProcessState::DonePacket;
         }
         break;
       case duckdb::PendingExecutionResult::EXECUTION_ERROR:
-        SendError(portal.pending->GetError(), ERRCODE_INTERNAL_ERROR);
+        SendError(portal.pending->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
         ReleaseResult(portal);
         _success_packet = false;
         return ProcessState::DonePacket;

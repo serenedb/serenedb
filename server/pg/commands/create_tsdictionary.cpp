@@ -84,6 +84,7 @@ const absl::flat_hash_map<std::string_view, std::string_view> kNameMappings = {
   {tokenizer_options::kModelLocation.name, "model_location"},
   {tokenizer_options::kTopK.name, "top_k"},
   {tokenizer_options::kNumHashes.name, "numHashes"},
+  {tokenizer_options::kNgramSize.name, "ngramSize"},
 };
 
 template<const auto& Array>
@@ -302,6 +303,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if constexpr (Group.name == tokenizer_options::kMinHashGroup.name) {
       ParseMinHash(prefix);
       return;
+    } else if constexpr (Group.name == tokenizer_options::kWildcardGroup.name) {
+      ParseWildcard(prefix);
+      return;
     } else if constexpr (Group.name == tokenizer_options::kPipelineGroup.name) {
       ParsePipeline(prefix);
       return;
@@ -368,6 +372,35 @@ class CreateTSDictionaryOptions : public OptionsParser {
       step++;
     }
     _builder.close();  // close array for pipeline
+  }
+
+  void ParseWildcard(std::string_view prefix) {
+    auto analyzer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
+    std::string_view type;
+    bool type_from_template = false;
+    if (OptionsParser::HasOption(tokenizer_options::kTemplate,
+                                 analyzer_prefix) ||
+        _copy_from.empty()) {
+      type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+        analyzer_prefix);
+    } else {
+      SDB_ASSERT(!_copy_from.empty());
+      auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
+                               _copy_from.back().second);
+      type = slice.get(kTypeField).stringView();
+      _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
+      type_from_template = true;
+    }
+    SDB_ASSERT(!type.empty());
+    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+    Parse<false>(type, analyzer_prefix);
+    _builder.close();  // close analyzer
+    if (type_from_template) {
+      _copy_from.pop_back();
+    }
+    int ngram_size =
+      EraseOptionOrDefault<tokenizer_options::kNgramSize>(prefix);
+    _builder.add(GetVPackName(tokenizer_options::kNgramSize.name), ngram_size);
   }
 
   void ParseMinHash(std::string_view prefix) {

@@ -34,6 +34,7 @@
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
@@ -129,6 +130,13 @@ void CheckNumHashes(int);
 inline constexpr OptionInfo kNumHashes{
   "numhashes", 1, "Number of hash functions to use", CheckNumHashes};
 
+// Wildcard
+
+void CheckNgramSize(int);
+inline constexpr OptionInfo kNgramSize{
+  "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
+  CheckNgramSize};
+
 // Segmentation
 
 inline constexpr OptionInfo kBreak{
@@ -189,6 +197,8 @@ inline constexpr OptionInfo kMultiDelimiterOptions[] = {kDelimiters};
 inline constexpr OptionInfo kCopyFromOptions[] = {kFrom};
 
 inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
+
+inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
@@ -254,6 +264,11 @@ inline constexpr OptionGroup kMinHashGroup{
   kMinHashOptions,
   {},
 };
+inline constexpr OptionGroup kWildcardGroup{
+  irs::analysis::WildcardAnalyzer::type_name(),
+  kWildcardOptions,
+  {},
+};
 inline constexpr OptionGroup kNormGroup{
   irs::analysis::NormalizingTokenizer::type_name(),
   kNormOptions,
@@ -271,10 +286,13 @@ inline constexpr OptionGroup kPipelineGroup{
 };
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,         kTextGroup,      kNGramGroup,
-  kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
-  kClassificationGroup,   kCollationGroup, kDelimiterGroup,
-  kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
-  kSegmentationGroup,     kPipelineGroup,  kCopyFromGroup};
+  kFeaturesGroup,       kTextGroup,
+  kNGramGroup,          kNearestNeighborsGroup,
+  kStemmingGroup,       kStopwordsGroup,
+  kClassificationGroup, kCollationGroup,
+  kDelimiterGroup,      kMultiDelimiterGroup,
+  kMinHashGroup,        kWildcardGroup,
+  kNormGroup,           kSegmentationGroup,
+  kPipelineGroup,       kCopyFromGroup};
 
 }  // namespace sdb::pg::tokenizer_options

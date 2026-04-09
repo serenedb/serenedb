@@ -1413,6 +1413,215 @@ ts_lexize
 {CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
 
 
+# WILDCARD TEMPLATE
+
+# --- Valid: defaults (ngramsize defaults to 3), delimiter base analyzer ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_default(
+    template = 'wildcard',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+)
+
+
+# --- Valid: explicit ngramsize=2 (minimum allowed) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_ngram2(
+    template = 'wildcard',
+    ngramsize = 2,
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+)
+
+
+# --- Valid: explicit ngramsize=5, segmentation base analyzer ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_ngram5_seg(
+    template = 'wildcard',
+    ngramsize = 5,
+    analyzer_template = 'segmentation',
+    analyzer_case = 'lower'
+)
+
+
+# --- Valid: text base analyzer ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_text_base(
+    template = 'wildcard',
+    ngramsize = 3,
+    analyzer_template = 'text',
+    analyzer_locale = 'en_US.UTF-8',
+    analyzer_stemming = false,
+    analyzer_case = 'lower'
+)
+
+
+# --- Invalid: ngramsize=1 (below minimum 2) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram1(
+    template = 'wildcard',
+    ngramsize = 1,
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+)
+----
+db error: ERROR: ngramsize must be at least 2
+HINT: N-gram size for wildcard prefix indexing (minimum 2)
+
+
+# --- Invalid: ngramsize=0 ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram0(
+    template = 'wildcard',
+    ngramsize = 0,
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+)
+----
+db error: ERROR: ngramsize must be at least 2
+HINT: N-gram size for wildcard prefix indexing (minimum 2)
+
+
+# --- Invalid: ngramsize not an integer ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram_str(
+    template = 'wildcard',
+    ngramsize = 'three',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+)
+----
+db error: ERROR: invalid input syntax for type integer: "three"
+
+
+# --- Invalid: option not applicable to wildcard ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_option(
+    template = 'wildcard',
+    ngramsize = 3,
+    locale = 'en_US.UTF-8',
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+)
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Invalid: missing required analyzer_template ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_no_analyzer(
+    template = 'wildcard',
+    ngramsize = 3
+)
+----
+db error: ERROR: required parameter "template" was not found
+
+
+# --- Invalid: inner tokenizer missing its required option (delimiter without delimiter param) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner(
+    template = 'wildcard',
+    ngramsize = 3,
+    analyzer_template = 'delimiter'
+)
+----
+db error: ERROR: required parameter "delimiter" was not found
+
+
+# --- ts_lexize: wildcard terms contain binary sentinel bytes (\xFF), inspected via bytea escaping ---
+# Backslash in bytea escape output (\377 = 0xFF) appears as \\377 in test expectations.
+
+query
+SELECT encode(t::bytea, 'escape')
+FROM unnest(ts_lexize('wildcard_default', 'hello')) AS t
+ORDER BY 1;
+----
+encode
+\\377he
+ell
+hel
+llo
+lo\\377
+o\\377
+
+
+query T
+SELECT encode(t::bytea, 'escape')
+FROM unnest(ts_lexize('wildcard_ngram2', 'hello')) AS t
+ORDER BY 1;
+----
+encode
+\\377h
+el
+he
+ll
+lo
+o\\377
+
+
+query
+SELECT encode(t::bytea, 'escape')
+FROM unnest(ts_lexize('wildcard_default', 'hello world')) AS t
+ORDER BY 1;
+----
+encode
+\\377he
+\\377wo
+d\\377
+ell
+hel
+ld\\377
+llo
+lo\\377
+o\\377
+orl
+rld
+wor
+
+
+query
+SELECT encode(t::bytea, 'escape')
+FROM unnest(ts_lexize('wildcard_ngram5_seg', 'quick')) AS t
+ORDER BY 1;
+----
+encode
+\\377quic
+ck\\377
+ick\\377
+k\\377
+quick
+uick\\377
+
+
+query
+SELECT encode(t::bytea, 'escape')
+FROM unnest(ts_lexize('wildcard_text_base', 'Fox juMps')) AS t
+ORDER BY 1;
+----
+encode
+\\377fo
+\\377ju
+fox
+jum
+mps
+ox\\377
+ps\\377
+s\\377
+ump
+x\\377
+
+
 # HELP
 
 statement error
@@ -1464,6 +1673,8 @@ Text Search Dictionary:
     delimiters[required] (string) [default: none] - The list of delimiters(e.g., '",", "|", "!"'
   minhash:
     numhashes (integer) [default: 1] - Number of hash functions to use
+  wildcard:
+    ngramsize (integer) [default: 3] - N-gram size for wildcard prefix indexing (minimum 2)
   norm:
     locale (string) - ICU locale string (e.g. en_US.UTF-8)
     case (string) [default: none] - Text case conversion: none, lower, upper

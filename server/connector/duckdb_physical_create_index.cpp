@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <iostream>
 
@@ -162,45 +163,33 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->index_type = catalog::ObjectType::SecondaryIndex;
   }
 
-  // Build CreateIndexColumn vector
+  // Build CreateIndexColumn vector from parsed_expressions.
+  // _info->names has ALL scan columns, not just index columns.
+  // _info->parsed_expressions has the actual index column refs.
   const auto& columns = _table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
-  for (const auto& col_name : _info->names) {
-    const catalog::Column* cat_col = nullptr;
-    for (const auto& col : columns) {
-      if (col.name == col_name) {
-        cat_col = &col;
-        break;
-      }
-    }
-    if (!cat_col) {
-      throw duckdb::CatalogException("column \"%s\" not found in table",
-                                     col_name);
-    }
-    idx_columns.push_back(catalog::CreateIndexColumn{
-      .catalog_column = cat_col,
-      .name = cat_col->name,
-    });
-  }
-
-  // Fallback: use column_ids if names are empty
-  if (idx_columns.empty() && !_info->column_ids.empty()) {
-    for (auto col_id : _info->column_ids) {
+  for (auto& expr : _info->parsed_expressions) {
+    if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+      auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
+      auto col_name = col_ref.GetColumnName();
       const catalog::Column* cat_col = nullptr;
       for (const auto& col : columns) {
-        if (col.id == static_cast<catalog::Column::Id>(col_id)) {
+        if (col.name == col_name) {
           cat_col = &col;
           break;
         }
       }
       if (!cat_col) {
-        throw duckdb::CatalogException("column index %d not found in table",
-                                       static_cast<int>(col_id));
+        throw duckdb::CatalogException("column \"%s\" not found in table",
+                                       col_name);
       }
       idx_columns.push_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->name,
       });
+    } else {
+      throw duckdb::CatalogException(
+        "Expression-based index columns are not supported");
     }
   }
 

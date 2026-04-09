@@ -35,6 +35,7 @@ add_library(
     duckdb_physical_sst_insert.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
+    duckdb_pg_array_cast.cpp
     duckdb_search_sink_writer.cpp
     duckdb_search_functions.cpp
     duckdb_vacuum_function.cpp

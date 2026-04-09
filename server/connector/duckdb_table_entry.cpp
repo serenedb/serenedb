@@ -141,6 +141,15 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
   data->has_rowid = true;
   data->table_entry = this;
+
+  // If this entry was created from a secondary index name, use SK scan
+  if (HasSecondaryIndex()) {
+    data->scan_source = SecondaryIndexScan{
+      .shard_id = _sk_shard_id,
+      .is_unique = _sk_unique,
+    };
+  }
+
   bind_data = std::move(data);
   return CreateSereneDBScanFunction();
 }

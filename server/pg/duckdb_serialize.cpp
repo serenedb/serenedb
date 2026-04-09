@@ -271,9 +271,9 @@ void SerializeDecimal(SerializationContext context,
   auto value =
     vdata.unified.GetData<UnscaledType>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
-    // Use DuckDB's Value::ToString for text decimal formatting
-    auto dec_value =
-      duckdb::Value::DECIMAL(duckdb::hugeint_t(value), precision, scale);
+    // Use DuckDB's Value::ToString for text decimal formatting.
+    // Must use the correct DECIMAL overload matching the physical storage type.
+    auto dec_value = duckdb::Value::DECIMAL(value, precision, scale);
     auto str = dec_value.ToString();
     context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
       memcpy(data, str.data(), str.size());
@@ -764,7 +764,19 @@ DuckDBSerializationFunction GetArraySerialization(
 
   if (type.id() == duckdb::LogicalTypeId::DECIMAL) {
     auto width = duckdb::DecimalType::GetWidth(type);
-    if (width <= 18) {
+    if (width <= 4) {
+      static constexpr auto kSerializeText =
+        SerializeDecimal<VarFormat::Text, int16_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeDecimal<VarFormat::Binary, int16_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1700);
+    } else if (width <= 9) {
+      static constexpr auto kSerializeText =
+        SerializeDecimal<VarFormat::Text, int32_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeDecimal<VarFormat::Binary, int32_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1700);
+    } else if (width <= 18) {
       static constexpr auto kSerializeText =
         SerializeDecimal<VarFormat::Text, int64_t>;
       static constexpr auto kSerializeBinary =
@@ -938,7 +950,21 @@ DuckDBSerializationFunction GetDuckDBSerialization(
   // Handle decimal first (needs width check)
   if (type.id() == duckdb::LogicalTypeId::DECIMAL) {
     auto width = duckdb::DecimalType::GetWidth(type);
-    if (width <= 18) {
+    // DuckDB stores decimals with different physical types based on width.
+    // Must match: width ≤ 4 → int16_t, ≤ 9 → int32_t, ≤ 18 → int64_t, else hugeint_t
+    if (width <= 4) {
+      static constexpr auto kSerializeText =
+        SerializeDecimal<VarFormat::Text, int16_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeDecimal<VarFormat::Binary, int16_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    } else if (width <= 9) {
+      static constexpr auto kSerializeText =
+        SerializeDecimal<VarFormat::Text, int32_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeDecimal<VarFormat::Binary, int32_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    } else if (width <= 18) {
       static constexpr auto kSerializeText =
         SerializeDecimal<VarFormat::Text, int64_t>;
       static constexpr auto kSerializeBinary =

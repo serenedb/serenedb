@@ -25,6 +25,9 @@
 
 #include <iresearch/search/filter.hpp>
 
+#include <variant>
+
+#include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 
 namespace irs {
@@ -35,6 +38,22 @@ class IndexReader;
 
 namespace sdb::connector {
 
+// Scan source variants — determines how the scan function reads data.
+struct FullTableScan {};
+
+struct SearchScan {
+  irs::Filter::Query::ptr query;
+  search::InvertedIndexSnapshotPtr snapshot;
+  const irs::IndexReader* reader = nullptr;
+};
+
+struct SecondaryIndexScan {
+  ObjectId shard_id;
+  bool is_unique = false;
+};
+
+using ScanSource = std::variant<FullTableScan, SearchScan, SecondaryIndexScan>;
+
 struct SereneDBScanBindData : public duckdb::FunctionData {
   std::shared_ptr<catalog::Table> table;
   std::vector<catalog::Column::Id> column_ids;
@@ -42,12 +61,14 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   bool has_rowid = false;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
 
-  // Search state (set by pushdown_complex_filter)
-  irs::Filter::Query::ptr search_query;
-  search::InvertedIndexSnapshotPtr search_snapshot;
-  const irs::IndexReader* search_reader = nullptr;
+  ScanSource scan_source;
 
-  bool IsSearchScan() const { return search_query != nullptr; }
+  bool IsSearchScan() const {
+    return std::holds_alternative<SearchScan>(scan_source);
+  }
+  bool IsSecondaryIndexScan() const {
+    return std::holds_alternative<SecondaryIndexScan>(scan_source);
+  }
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;
   bool Equals(const duckdb::FunctionData& other) const override;

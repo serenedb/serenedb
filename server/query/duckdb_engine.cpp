@@ -26,6 +26,7 @@
 
 #include "basics/assert.h"
 #include "connector/duckdb_copy_filesystem.h"
+#include "connector/duckdb_pg_array_cast.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/duckdb_search_functions.h"
@@ -97,6 +98,9 @@ void DuckDBEngine::Initialize() {
 
   // Register search stub functions (sdb_phrase, sdb_term_eq)
   connector::RegisterSearchFunctions(*_db->instance);
+
+  // Register PG-compatible VARCHAR → LIST cast ('{1,2,3}'::int[])
+  connector::RegisterPgArrayCast(*_db->instance);
 
   // Register VACUUM function (CALL serenedb_vacuum(...))
   connector::RegisterVacuumFunction(*_db->instance);

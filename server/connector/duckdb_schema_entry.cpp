@@ -199,9 +199,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   const auto& columns = sdb_table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
 
-  if (!info.names.empty()) {
-    // Use column names (available from parser)
-    for (const auto& col_name : info.names) {
+  // parsed_expressions has the actual index columns (from CREATE INDEX ON t (col))
+  // info.names has ALL table scan columns — don't use it for index columns!
+  for (auto& expr : info.parsed_expressions) {
+    if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+      auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
+      auto col_name = col_ref.GetColumnName();
       const catalog::Column* cat_col = nullptr;
       for (const auto& col : columns) {
         if (col.name == col_name) {
@@ -217,53 +220,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
         .catalog_column = cat_col,
         .name = cat_col->name,
       });
-    }
-  } else if (!info.column_ids.empty()) {
-    // Fallback: use column IDs if available
-    for (auto col_id : info.column_ids) {
-      const catalog::Column* cat_col = nullptr;
-      for (const auto& col : columns) {
-        if (col.id == static_cast<catalog::Column::Id>(col_id)) {
-          cat_col = &col;
-          break;
-        }
-      }
-      if (!cat_col) {
-        throw duckdb::CatalogException("column index %d not found in table",
-                                       static_cast<int>(col_id));
-      }
-      idx_columns.push_back(catalog::CreateIndexColumn{
-        .catalog_column = cat_col,
-        .name = cat_col->name,
-      });
-    }
-  } else {
-    // Try parsed_expressions -- extract column names from ColumnRefExpression
-    for (auto& expr : info.parsed_expressions) {
-      std::cerr << "  parsed_expr type=" << (int)expr->GetExpressionType()
-                << " str=" << expr->ToString() << std::endl;
-      if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
-        auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
-        auto& col_name = col_ref.GetColumnName();
-        const catalog::Column* cat_col = nullptr;
-        for (const auto& col : columns) {
-          if (col.name == col_name) {
-            cat_col = &col;
-            break;
-          }
-        }
-        if (!cat_col) {
-          throw duckdb::CatalogException("column \"%s\" not found in table",
-                                         col_name);
-        }
-        idx_columns.push_back(catalog::CreateIndexColumn{
-          .catalog_column = cat_col,
-          .name = cat_col->name,
-        });
-      } else {
-        throw duckdb::CatalogException(
-          "Expression-based index columns are not supported");
-      }
+    } else {
+      throw duckdb::CatalogException(
+        "Expression-based index columns are not supported");
     }
   }
 

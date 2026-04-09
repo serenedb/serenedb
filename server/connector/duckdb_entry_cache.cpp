@@ -29,6 +29,9 @@
 
 #include "basics/down_cast.h"
 #include "catalog/function.h"
+#include "catalog/index.h"
+#include "catalog/inverted_index.h"
+#include "catalog/secondary_index.h"
 #include "catalog/view.h"
 #include "connector/duckdb_table_entry.h"
 
@@ -94,8 +97,38 @@ DuckDBEntryCache::BuildTableEntry(
   ObjectId db_id, std::string_view schema_name, std::string_view table_name,
   const catalog::Snapshot& snapshot) {
   auto table = snapshot.GetTable(db_id, schema_name, table_name);
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index;
+  ObjectId sk_shard_id;
+  bool sk_unique = false;
+
   if (!table) {
-    return nullptr;
+    // Not a table — try resolving as an index name.
+    // Enables SELECT * FROM index_name WHERE phrase(col, 'text')
+    auto relation = snapshot.GetRelation(db_id, schema_name, table_name);
+    if (relation &&
+        (relation->GetType() == catalog::ObjectType::SecondaryIndex ||
+         relation->GetType() == catalog::ObjectType::InvertedIndex)) {
+      auto& index = basics::downCast<const catalog::Index>(*relation);
+      table = snapshot.GetObject<catalog::Table>(index.GetRelationId());
+      if (relation->GetType() == catalog::ObjectType::InvertedIndex) {
+        inverted_index =
+          std::dynamic_pointer_cast<const catalog::InvertedIndex>(relation);
+      } else {
+        // Secondary index — find shard ID for scanning
+        auto& sec_index =
+          basics::downCast<const catalog::SecondaryIndex>(index);
+        sk_unique = sec_index.IsUnique();
+        for (auto& shard : snapshot.GetIndexShardsByTable(table->GetId())) {
+          if (shard->GetIndexId() == index.GetId()) {
+            sk_shard_id = shard->GetId();
+            break;
+          }
+        }
+      }
+    }
+    if (!table) {
+      return nullptr;
+    }
   }
 
   auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
@@ -145,7 +178,11 @@ DuckDBEntryCache::BuildTableEntry(
   auto key = std::string{table_name};
   auto& cache = _entry_caches[std::string{schema_name}];
   auto entry = duckdb::make_uniq<SereneDBTableEntry>(
-    catalog, schema, *info, std::move(table), std::move(indexed_col_indices));
+    catalog, schema, *info, std::move(table), std::move(indexed_col_indices),
+    std::move(inverted_index));
+  if (sk_shard_id != ObjectId{}) {
+    entry->SetSecondaryIndex(sk_shard_id, sk_unique);
+  }
   auto* ptr = entry.get();
   cache.tables[key] = std::move(entry);
   cache.table_infos[key] = std::move(info);

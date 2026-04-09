@@ -81,12 +81,23 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
     return _inverted_index;
   }
 
+  ObjectId GetSecondaryIndexShardId() const { return _sk_shard_id; }
+  bool IsSecondaryIndexUnique() const { return _sk_unique; }
+  bool HasSecondaryIndex() const { return _sk_shard_id != ObjectId{}; }
+
+  void SetSecondaryIndex(ObjectId shard_id, bool is_unique) {
+    _sk_shard_id = shard_id;
+    _sk_unique = is_unique;
+  }
+
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
   std::vector<size_t> _indexed_col_indices;
   // Set when entry was created from an index name (FROM idx_name).
-  // Used by pushdown_complex_filter to know which inverted index to query.
   std::shared_ptr<const catalog::InvertedIndex> _inverted_index;
+  // Set when entry was created from a secondary index name.
+  ObjectId _sk_shard_id;
+  bool _sk_unique = false;
 };
 
 }  // namespace sdb::connector

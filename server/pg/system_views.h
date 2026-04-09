@@ -556,7 +556,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
       l.provider, l.label
   FROM
       pg_shseclabel l
-      JOIN pg_database dat ON l.objoid = dat.oid
+      JOIN pg_database dat ON l.objoid = datt.oid
   UNION ALL
   SELECT
       l.objoid, l.classoid, 0::int4 AS objsubid,
@@ -1640,12 +1640,13 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
       SELECT current_database()::sql_identifier AS constraint_catalog,
              rs.nspname::sql_identifier AS constraint_schema,
              con.conname::sql_identifier AS constraint_name,
-             (coalesce(at.attname, 'VALUE') || ' IS NOT NULL')::character_data AS check_clause
+             (coalesce(att.attname, 'VALUE') || ' IS NOT NULL')::character_data AS check_clause
        FROM pg_constraint con
               LEFT JOIN pg_namespace rs ON rs.oid = con.connamespace
               LEFT JOIN pg_class c ON c.oid = con.conrelid
               LEFT JOIN pg_type t ON t.oid = con.contypid
-              LEFT JOIN pg_attribute at ON (con.conrelid = at.attrelid AND con.conkey[1] = at.attnum)
+              -- NB: "at" is a reserved word in DuckDB (time-travel), renamed to "att"
+              LEFT JOIN pg_attribute att ON (con.conrelid = att.attrelid AND con.conkey[1] = att.attnum)
        WHERE pg_has_role(coalesce(c.relowner, t.typowner), 'USAGE'::text)
          AND con.contype = 'n')"},
 
@@ -3300,7 +3301,8 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
              CAST(null AS cardinal_number) AS maximum_cardinality,
              CAST('a' || CAST(x.objdtdid AS text) AS sql_identifier) AS dtd_identifier
 
-      FROM pg_namespace n, pg_type at, pg_namespace nbt, pg_type bt,
+      -- NB: "at" is a reserved word in DuckDB (time-travel), renamed to "att"
+      FROM pg_namespace n, pg_type att, pg_namespace nbt, pg_type bt,
            (
              /* columns, attributes */
              SELECT c.relnamespace, CAST(c.relname AS sql_identifier),
@@ -3334,9 +3336,9 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
              ON x.objcollation = co.oid AND (nco.nspname, co.collname) <> ('pg_catalog', 'default')
 
       WHERE n.oid = x.objschema
-            AND at.oid = x.objtypeid
-            AND (at.typelem <> 0 AND at.typlen = -1)
-            AND at.typelem = bt.oid
+            AND att.oid = x.objtypeid
+            AND (att.typelem <> 0 AND att.typlen = -1)
+            AND att.typelem = bt.oid
             AND nbt.oid = bt.typnamespace
 
             AND EXISTS (

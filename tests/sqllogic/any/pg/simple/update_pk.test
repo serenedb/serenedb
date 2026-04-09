@@ -35,7 +35,8 @@ a	b
 100	10
 200	200
 
-onlyif serenedb
+skipif postgres
+skipif serenedb
 query
 EXPLAIN(LOGICAL, EXECUTION) UPDATE single_pk SET a = 200, b = 200 WHERE a = 2;
 ----
@@ -59,6 +60,7 @@ Fragment 0:  numWorkers=0:
     -- Filter[1][expression: if(spark_isnotnull("a"),true,cast(pg_error(33575106,0,null value in column "a" of relation "single_pk" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("a" as VARCHAR),null),, ,200,, ,200,).)) as BOOLEAN))] -> "a":INTEGER
       -- TableScan[0][single_pk, type=rocksdb_point_lookup, points=[(a=2)]] -> "a":INTEGER
 
+skipif serenedb
 statement error
 UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;
 ----

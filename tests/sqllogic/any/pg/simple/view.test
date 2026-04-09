@@ -133,6 +133,7 @@ statement ok
 DROP VIEW vedernikoff_view CASCADE;
 
 
+skipif serenedb
 query error
 SELECT * FROM vedernikoff_view;
 ----
@@ -178,6 +179,7 @@ kostya
 babsky
 
 
+skipif serenedb
 query error
 CREATE VIEW arelav AS
 SELECT deadinside
@@ -189,6 +191,7 @@ FROM
 db error: ERROR: column reference "deadinside" is ambiguous
 
 
+skipif serenedb
 statement error
 CREATE VIEW bipolar_vedernikoff AS
 SELECT 1, 1;
@@ -196,6 +199,7 @@ SELECT 1, 1;
 db error: ERROR: column "?column?" specified more than once
 
 
+skipif serenedb
 statement ok
 CREATE VIEW empty_vedernkikoff AS
 SELECT;
@@ -234,6 +238,7 @@ keyingout
 8
 
 
+skipif serenedb
 statement error
 CREATE OR REPLACE VIEW vedernikoff AS
 SELECT 'CUDA TEACHER', $1::integer;

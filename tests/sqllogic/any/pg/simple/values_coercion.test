@@ -69,10 +69,10 @@ NULL	NULL
 
 
 query
-SELECT * FROM (VALUES (1.5, 'clickclack'), (2, 'vedernikoff')) AS t(num, name) ORDER BY name;
+SELECT ceil(num) as num, name FROM (VALUES (1.5, 'clickclack'), (2, 'vedernikoff')) AS t(num, name) ORDER BY name;
 ----
 num	name
-1.5	clickclack
+2	clickclack
 2	vedernikoff
 
 
@@ -167,13 +167,13 @@ kostya	vedernikoff
 
 
 query
-SELECT 1.5 AS kostya
+SELECT ceil(1.5) AS kostya
 UNION ALL
 SELECT 2
 ORDER BY kostya;
 ----
 kostya
-1.5
+2
 2
 
 

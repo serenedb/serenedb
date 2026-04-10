@@ -201,7 +201,11 @@ jobs:
           DOCKER_REGISTRY: serenedb
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
-          DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+          # 'latest' is appended automatically when creating a GitHub release
+          DOCKER_EXTRA_TAGS: >-
+            ${{ inputs.CREATE_GITHUB_RELEASE
+              && (inputs.DOCKER_EXTRA_TAGS != '' && format('{0},latest', inputs.DOCKER_EXTRA_TAGS) || 'latest')
+              || inputs.DOCKER_EXTRA_TAGS }}
           DOCKER_TAG: ${{ env.DOCKER_TAG }}
         run: ./packages/push_docker.bash
 

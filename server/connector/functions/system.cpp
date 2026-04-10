@@ -287,6 +287,43 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
+  // width_bucket(operand, low, high, count) -> int
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "width_bucket",
+    {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE,
+     duckdb::LogicalType::DOUBLE, duckdb::LogicalType::INTEGER},
+    duckdb::LogicalType::INTEGER,
+    [](duckdb::DataChunk& args, duckdb::ExpressionState&,
+       duckdb::Vector& result) {
+      duckdb::GenericExecutor::ExecuteQuaternary<
+        duckdb::PrimitiveType<double>, duckdb::PrimitiveType<double>,
+        duckdb::PrimitiveType<double>, duckdb::PrimitiveType<int32_t>,
+        duckdb::PrimitiveType<int32_t>>(
+        args.data[0], args.data[1], args.data[2], args.data[3], result,
+        args.size(),
+        [](duckdb::PrimitiveType<double> operand,
+           duckdb::PrimitiveType<double> low,
+           duckdb::PrimitiveType<double> high,
+           duckdb::PrimitiveType<int32_t> count)
+          -> duckdb::PrimitiveType<int32_t> {
+          if (count.val <= 0) {
+            throw duckdb::InvalidInputException("count must be greater than 0");
+          }
+          if (low.val >= high.val) {
+            throw duckdb::InvalidInputException(
+              "lower bound must be less than upper bound");
+          }
+          if (operand.val < low.val) {
+            return {0};
+          }
+          if (operand.val >= high.val) {
+            return {count.val + 1};
+          }
+          return {static_cast<int32_t>(
+            (operand.val - low.val) / (high.val - low.val) * count.val + 1)};
+        });
+    }});
+
   // --- pg_*_size functions ---
   // --- pg_*_size functions: all take regclass (implicit cast from text) ---
 

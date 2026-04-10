@@ -20,6 +20,7 @@
 
 #include "rocksdb_column_decoder.hpp"
 
+#include <velox/functions/prestosql/types/JsonType.h>
 #include <velox/vector/ComplexVector.h>
 #include <velox/vector/FlatVector.h>
 
@@ -62,7 +63,8 @@ class ScalarColumnDecoder final : public RocksDBColumnDecoder {
 
  public:
   ScalarColumnDecoder(velox::vector_size_t max_rows,
-                      velox::memory::MemoryPool& pool)
+                      velox::memory::MemoryPool& pool,
+                      velox::TypePtr type = velox::Type::create<Kind>())
     : RocksDBColumnDecoder(
         [this](velox::vector_size_t idx, std::string_view value) {
           SDB_ASSERT(_vec->size() > idx);
@@ -72,8 +74,8 @@ class ScalarColumnDecoder final : public RocksDBColumnDecoder {
             SetScalarValue(value, idx, *_vec);
           }
         }),
-      _vec(velox::BaseVector::create<velox::FlatVector<T>>(
-        velox::Type::create<Kind>(), max_rows, &pool)) {}
+      _vec(velox::BaseVector::create<velox::FlatVector<T>>(std::move(type),
+                                                           max_rows, &pool)) {}
 
   velox::VectorPtr Finish(velox::vector_size_t actual_rows) final {
     SDB_ASSERT(_vec->size() >= actual_rows);
@@ -275,6 +277,13 @@ std::unique_ptr<RocksDBColumnDecoder> MakeRocksDBColumnDecoder(
   velox::memory::MemoryPool& pool) {
   if (type->kind() == velox::TypeKind::UNKNOWN) {
     return std::make_unique<UnknownColumnDecoder>(pool);
+  }
+
+  // JsonType::kind() returns VARCHAR, so it must be handled before the generic
+  // dispatch to preserve the JsonType singleton in the materialized vector.
+  if (facebook::velox::isJsonType(type)) {
+    return std::make_unique<ScalarColumnDecoder<velox::TypeKind::VARCHAR>>(
+      max_rows, pool, type);
   }
 
   if (type->isArray()) {

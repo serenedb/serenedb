@@ -53,6 +53,22 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
   absl::big_endian::Store(name_buffer.data(), column_id);
 }
 
+// Reconstructs a string value from RocksDB cell slices.
+// Strings that start with kStringPrefix are stored with a leading prefix byte
+// (or two slices when written inline). Returns the raw string without the
+// prefix byte.
+std::string_view StringFromSlices(std::span<const rocksdb::Slice> cell_slices) {
+  SDB_ASSERT(!cell_slices.empty() && cell_slices.size() <= 2);
+  if (!cell_slices.front().starts_with(kStringPrefix)) {
+    return {cell_slices.front().data(), cell_slices.front().size()};
+  }
+  if (cell_slices.size() == 1) {
+    // re-indexing case: single slice with prefix byte
+    return {cell_slices.front().data() + 1, cell_slices.front().size() - 1};
+  }
+  return {cell_slices[1].data(), cell_slices[1].size()};
+}
+
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
@@ -208,13 +224,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
-// Questions:
-// - Do we need special catalog::Column::ID for each column? Look like no, just
-// mangling path for now?
-// - Backfill wants to write varchar instead of json. Find out why
+// TODO fix backfill so that it pass json, not varchar
 
-// Key:
-// column_id.
 void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   catalog::Column::Id column_id, bool have_nulls) {
   // Build the column_id prefix once and store in _json_path_buffer.
@@ -223,9 +234,10 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   _json_column_prefix_len = _json_path_buffer.size();
 
   // Prepare per-type leaf fields.
-  // JSON string leaves use the verbatim identity tokenizer so that TERM_EQ and
-  // TERM_LIKE can match exact values (e.g. "server-01").  A text analyzer
-  // would split the value into sub-tokens, making exact-match queries fail.
+  // JSON string leaves use the verbatim (TODO use set up one for string)
+  // identity tokenizer. Also option for all fields? so that TERM_EQ and
+  // TERM_LIKE can match exact values (e.g. "server-01").
+  // TODO Prepare once per sink, not per column?
   _json_str_field.PrepareForVerbatimStringValue();
   _json_num_field.PrepareForNumericValue();
   _json_bool_field.PrepareForBooleanValue();
@@ -241,51 +253,24 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   _current_writer = [&](std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
     (void)full_key;
-    // Reconstruct the JSON string from RocksDB slices.
-    // Same logic as WriteStringValue: may have a kStringPrefix byte.
-    std::string_view json_str;
-    SDB_ASSERT(1 <= cell_slices.size() && cell_slices.size() <= 2);
-    if (!cell_slices.front().starts_with(kStringPrefix)) {
-      json_str = {cell_slices.front().data(), cell_slices.front().size()};
-    } else if (cell_slices.size() == 1) {
-      json_str = {cell_slices.front().data() + 1,
-                  cell_slices.front().size() - 1};
-    } else {
-      json_str = {cell_slices[1].data(), cell_slices[1].size()};
-    }
+    auto json_str = StringFromSlices(cell_slices);
 
     // If the stored value is a JSON-encoded string (outer quotes + escaping),
     // unescape it first to get the raw JSON, then re-parse.
     SDB_PRINT("json_str=", json_str);
     _json_parser.PrepareJson(json_str);
-    {
-      auto doc = _json_parser.GetJsonDocument();
-      SDB_PRINT("zalupa=", doc.raw_json().value());
-      SDB_PRINT("zalupa2=", doc.type().value());
-      if (doc.type() == simdjson::ondemand::json_type::string) {
-        std::string_view unescaped;
-        auto error = doc.get_string().get(unescaped);
-        if (error == simdjson::SUCCESS) {
-          SDB_PRINT("unescaped json=", unescaped);
-          _json_parser.PrepareJson(unescaped);
-        } else {
-          SDB_PRINT("zalupa =", error);
-        }
-      }
-      // SDB_PRINT("root val type = ", root_val.type().value());
+    auto doc = _json_parser.GetJsonDocument();
+    simdjson::ondemand::value root_val;
+    if (doc.get_value().get(root_val)) {
+      VELOX_FAIL("Cannot get value from document");
+      return;
     }
-    {
-      auto doc = _json_parser.GetJsonDocument();
-      simdjson::ondemand::value root_val;
-      if (doc.get_value().get(root_val)) {
-        return;
-      }
-      // Restore path buffer to just the column prefix before traversal.
-      _json_path_buffer.resize(_json_column_prefix_len);
-      TraverseJsonValue(root_val, 0);
-    }
+    // Restore path buffer to just the column prefix before traversal.
+    _json_path_buffer.resize(_json_column_prefix_len);
+    TraverseJsonValue(root_val, 0);
   };
 
+  // TODO what if json column is PK?
   // Never emit PK a second time through the standard path for this column;
   // the pk emission is handled by the outer wrapper set in SetupColumnWriter.
   // For JSON columns we skip the PK wrapper here -- it's already been emitted
@@ -528,24 +513,7 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
   SearchSinkInsertBaseImpl::Field& field) {
-  SDB_ASSERT(!cell_slices.empty());
-  // if string is prefixed during Insert - two slices will be present
-  // one is prefix, second is actual string data
-  // But if we are re-indexing from existing data (Update operation) - only one
-  // slice will be present
-  SDB_ASSERT(cell_slices.size() <= 2);
-  if (!cell_slices.front().starts_with(kStringPrefix)) {
-    field.SetStringValue(
-      {cell_slices.front().data(), cell_slices.front().size()});
-  } else {
-    if (cell_slices.size() == 1) {
-      // re-indexing case
-      field.SetStringValue(
-        {cell_slices.front().data() + 1, cell_slices.front().size() - 1});
-    } else {
-      field.SetStringValue({cell_slices[1].data(), cell_slices[1].size()});
-    }
-  }
+  field.SetStringValue(StringFromSlices(cell_slices));
   return field;
 }
 

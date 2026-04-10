@@ -32,6 +32,7 @@
 #include <velox/type/Type.h>
 
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
@@ -45,6 +46,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
@@ -653,12 +655,28 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   }
 
   search::mangling::MangleString(field_name);
-  auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
-                                      : AddFilter<irs::ByWildcard>(filter);
-  wildcard_filter.boost(ctx.boost);
-  *wildcard_filter.mutable_field() = field_name;
-  wildcard_filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
-    static_cast<std::string_view>(value.value().value<velox::StringView>())));
+  if (column_info->analyzer.analyzer->type() ==
+      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+    auto& wildcard_filter = ctx.negated
+                              ? Negate<irs::WildcardFilter>(filter)
+                              : AddFilter<irs::WildcardFilter>(filter);
+    wildcard_filter.boost(ctx.boost);
+    *wildcard_filter.mutable_field() = field_name;
+    *wildcard_filter.mutable_options() = {
+      static_cast<std::string_view>(value.value().value<velox::StringView>()),
+      basics::downCast<irs::analysis::WildcardAnalyzer>(
+        *column_info->analyzer.analyzer.get()),
+      (column_info->analyzer.features & irs::IndexFeatures::Pos) ==
+        irs::IndexFeatures::Pos};
+  } else {
+    auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
+                                        : AddFilter<irs::ByWildcard>(filter);
+    wildcard_filter.boost(ctx.boost);
+    *wildcard_filter.mutable_field() = field_name;
+    wildcard_filter.mutable_options()->term.assign(
+      irs::ViewCast<irs::byte_type>(static_cast<std::string_view>(
+        value.value().value<velox::StringView>())));
+  }
   return {};
 }
 

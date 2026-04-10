@@ -39,6 +39,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 
 #include "catalog/mangling.h"
 
@@ -206,6 +207,15 @@ void StringifyWildcard(std::string* out, const ByWildcard& filter, FT&& ft) {
 }
 
 template<typename FT>
+void StringifyWildcardNgramFilter(std::string* out,
+                                  const WildcardFilter& filter, FT&& ft) {
+  absl::StrAppend(out, "WILDCARD_NGRAM[", ft(filter.field()), ", '",
+                  TermToString(filter.options().token),
+                  "', has_pos=", filter.options().has_pos,
+                  ", parts=", filter.options().parts.size(), "]");
+}
+
+template<typename FT>
 void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
   struct PartVisitor : util::Noncopyable {
     auto operator()(const ByTermOptions& opts) const {
@@ -299,6 +309,9 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
                              static_cast<const ByColumnExistence&>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {
     StringifyWildcard(&out, static_cast<const ByWildcard&>(filter), ft);
+  } else if (type == Type<WildcardFilter>::id()) {
+    StringifyWildcardNgramFilter(
+      &out, static_cast<const WildcardFilter&>(filter), ft);
   } else if (type == Type<Empty>::id()) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {

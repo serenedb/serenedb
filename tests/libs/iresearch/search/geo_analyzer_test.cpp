@@ -25,6 +25,7 @@
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/geo_filter.h"
 #include "iresearch/utils/vpack_utils.hpp"
 #include "tests_shared.hpp"
@@ -68,85 +69,83 @@ TEST(GeoBench, sizes) {
   vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Point",
       "coordinates": [ 6.537, 50.332 ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPoint",
         "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPoint",
         "coordinates": [ [ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "LineString",
         "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiLineString",
         "coordinates": [ [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ],
                          [ [ 6.621, 50.332 ], [ 6.621, 50.376 ] ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,52.1], [6.1,51.1], [6.1,50.1] ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPolygon",
@@ -154,71 +153,71 @@ TEST(GeoBench, sizes) {
                              [6.501,51.1], [6.501,50.1] ] ],
                          [ [ [6.1,50.1], [6.5,50.1], [6.5,51.1], [6.1,51.1], [6.1,50.1] ] ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,51.1], [6.1,51.1], [6.1,50.1] ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "LineString",
         "coordinates": [ [ 5.437, 50.332 ], [ 7.537, 50.376 ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [1,1], [4,1], [4,4], [1,4], [1,1] ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [1.1,1.1], [4.1,1.1], [4.1,4.1], [1.1,4.1], [1.1,1.1] ] ]
       })=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 
   builder = vpack::Parser::fromJson(
     R"=({"type": "Polygon","coordinates": [[[100.318391,13.535502],[100.318391,14.214848],[101.407575,14.214848],[101.407575,13.535502],[100.318391,13.535502]]]})=");
+  vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
+  s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(vpack_analyzer.get(), builder->slice()).size()
-    << std::endl;
-  std::cerr
-    << GeoJsonAnalyzer::store(s2_analyzer.get(), builder->slice()).size()
-    << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*vpack_analyzer)->value.size()
+            << std::endl;
+  std::cerr << irs::get<irs::StoreAttr>(*s2_analyzer)->value.size()
+            << std::endl;
 }
 
 TEST(GeoPointAnalyzerTest, constants) {

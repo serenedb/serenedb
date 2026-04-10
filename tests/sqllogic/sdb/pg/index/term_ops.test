@@ -99,3 +99,120 @@ a
 
 statement ok
 DROP TABLE test_term_ops;
+
+# --- Wildcard text dictionary tests ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_wildcard_dict(
+    template = 'wildcard',
+    ngramsize = 3,
+    analyzer_template = 'delimiter',
+    analyzer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_wildcard_ops (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_wildcard_ops_idx ON test_wildcard_ops USING inverted(a, b test_wildcard_dict);
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (1, 'hello');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (2, 'help');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (3, 'herald');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (4, 'world');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (5, 'testing');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (6, 'ten');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (7, 'percent_value');
+
+statement ok
+VACUUM (UPDATE_INDEXES) test_wildcard_ops;
+
+# Match all values starting with 'hel' (hello, help; herald starts with 'her')
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'hel%') ORDER BY a;
+----
+a
+1
+2
+
+# Match values ending with 'ld' (herald, world)
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, '%ld') ORDER BY a;
+----
+a
+3
+4
+
+# Match values with single character wildcard: 'hel_o' matches 'hello'
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'hel_o') ORDER BY a;
+----
+a
+1
+
+# Match all 'he' prefix with any suffix
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'he%') ORDER BY a;
+----
+a
+1
+2
+3
+
+# Match values where 4th and 5th chars are 'st': 'te%st%'
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'te%') ORDER BY a;
+----
+a
+5
+6
+
+# Match using _ for each character: 'h____' matches 5-char words starting with h (hello=5, help=4)
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'h____') ORDER BY a;
+----
+a
+1
+
+# Escaped _ is treated as a literal underscore - matches 'percent_value'
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'percent\_value') ORDER BY a;
+----
+a
+7
+
+# Escaped _ - literal underscore, no rows have 'hel_o' with literal underscore
+query
+SELECT a FROM test_wildcard_ops_idx WHERE TERM_LIKE(b, 'hel\_o') ORDER BY a;
+----
+a
+
+# NOT TERM_LIKE - exclude all 'hel%' matches (hello, help); herald, world, testing, ten, percent_value remain
+query
+SELECT a FROM test_wildcard_ops_idx WHERE NOT TERM_LIKE(b, 'hel%') ORDER BY a;
+----
+a
+3
+4
+5
+6
+7
+
+statement ok
+DROP TABLE test_wildcard_ops;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY test_wildcard_dict;

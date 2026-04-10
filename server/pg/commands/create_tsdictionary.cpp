@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 #include <unicode/locid.h>
 #include <vpack/builder.h>
@@ -47,7 +46,6 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
-#include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"

@@ -22,6 +22,7 @@
 
 #include <velox/vector/ComplexVector.h>
 
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
 
 #include "catalog/inverted_index.h"
@@ -85,8 +86,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     }
 
     bool Write(irs::DataOutput& out) const {
-      if (!irs::IsNull(value)) {
-        out.WriteBytes(value.data(), value.size());
+      if (store_attr && !irs::IsNull(store_attr->value)) {
+        out.WriteBytes(store_attr->value.data(), store_attr->value.size());
       }
 
       return true;
@@ -109,8 +110,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     search::AnalyzerImpl::CacheType::ptr analyzer;
     std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
     std::string_view name;
-    irs::bytes_view value;
     irs::IndexFeatures index_features;
+    const irs::StoreAttr* store_attr = nullptr;
   };
 
   using Writer = std::function<void(
@@ -119,15 +120,17 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   // Write executors. For INDEX, INDEX and STORE, Sort etc.
   // Could be more than one when we have index meta and different indexing
   // options.
-  template<typename WriteFunc>
+  template<bool HasStore, typename WriteFunc>
   Writer MakeIndexWriter(WriteFunc&& write_func);
 
   // Actual value processors. It is set to write executor (see MakeIndexWriter)
   // as a template. This methods are responsible for extracting value from
   // rocksdb slices and setting it to Field structure accordingly.
+  template<bool HasStore>
   static Field& WriteStringValue(std::string_view full_key,
                                  std::span<const rocksdb::Slice> cell_slices,
                                  Field& field);
+
   static Field& WriteBooleanValue(std::string_view full_key,
                                   std::span<const rocksdb::Slice> cell_slices,
                                   Field& field);
@@ -150,7 +153,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   std::string _null_name_buffer;
   irs::IndexWriter::Transaction& _trx;
   std::optional<irs::IndexWriter::Document> _document;
-
   Writer _current_writer;
   bool _emit_pk{true};
 };

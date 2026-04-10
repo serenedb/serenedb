@@ -50,7 +50,19 @@ struct WildcardFilterOptions {
   bool has_pos{true};
   std::shared_ptr<icu::RegexMatcher> matcher;
 
-  bool operator==(const WildcardFilterOptions&) const noexcept { return false; }
+  bool operator==(const WildcardFilterOptions& other) const noexcept {
+    if (parts != other.parts || token != other.token ||
+        has_pos != other.has_pos) {
+      return false;
+    }
+    if (!matcher && !other.matcher) {
+      return true;
+    }
+    if (!matcher || !other.matcher) {
+      return false;
+    }
+    return matcher->pattern().pattern() == other.matcher->pattern().pattern();
+  }
 
   WildcardFilterOptions() noexcept = default;
   WildcardFilterOptions(WildcardFilterOptions&&) noexcept = default;

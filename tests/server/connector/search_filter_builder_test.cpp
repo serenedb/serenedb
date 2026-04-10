@@ -22,6 +22,7 @@
 
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
@@ -31,6 +32,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 
 #include "app/options/program_options.h"
 #include "axiom/common/Session.h"
@@ -129,6 +131,25 @@ class SearchFilterBuilderTest : public ::testing::Test {
     auto tokenizer = gNgramTokenizer.GetTokenizer();
     if (!tokenizer) {
       SDB_THROW(ERROR_INTERNAL, "Failed to create ngram tokenizer");
+    }
+    return {.analyzer = *std::move(tokenizer),
+            .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
+  }
+
+  static catalog::ColumnAnalyzer WildcardAnalyzerProvider(catalog::Column::Id) {
+    auto make_wildcard = [] {
+      auto builder = vpack::Parser::fromJson(
+        "{ \"analyzer\": {\"type\":\"wildcard\","
+        "\"properties\":{\"ngramSize\":3,"
+        "\"analyzer\":{\"type\":\"identity\"}}}}");
+      return std::string(builder->slice().startAs<char>(),
+                         builder->slice().byteSize());
+    };
+    static catalog::Tokenizer gWildcardTokenizer(
+      ObjectId{12348}, "test_wildcard", {}, make_wildcard());
+    auto tokenizer = gWildcardTokenizer.GetTokenizer();
+    if (!tokenizer) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to create wildcard tokenizer");
     }
     return {.analyzer = *std::move(tokenizer),
             .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
@@ -455,6 +476,21 @@ class SearchFilterBuilderTest : public ::testing::Test {
         irs::ViewCast<irs::byte_type>(value);
     }
     return wc;
+  }
+
+  template<typename Filter>
+  irs::WildcardFilter& AddWildcardNgramFilter(Filter& root,
+                                              catalog::Column::Id column,
+                                              std::string_view pattern,
+                                              bool has_positions) {
+    auto column_analyzer = WildcardAnalyzerProvider(column);
+    auto& wf = AddFilter<irs::WildcardFilter>(root);
+    *wf.mutable_field() = MakeFieldName<velox::StringView>(column);
+    *wf.mutable_options() = {pattern,
+                             basics::downCast<irs::analysis::WildcardAnalyzer>(
+                               *column_analyzer.analyzer.get()),
+                             has_positions};
+    return wf;
   }
 
  protected:
@@ -2178,6 +2214,49 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'foo'), -1.0)",
                std::move(columns), false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE TERM_LIKE(b, '%foo_')",
+               std::move(columns), true, WildcardAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_NotConst) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
+  AssertFilter(expected, "SELECT * FROM foo WHERE TERM_LIKE(a, b)",
+               std::move(columns), false, WildcardAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_WithNot) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddWildcardNgramFilter(not_filter, 1, "%foo_", true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(TERM_LIKE(a, '%foo_'))",
+               std::move(columns), true, WildcardAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_WildcardFilter) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "foo%", true).boost(3.0f);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(TERM_LIKE(b, 'foo%'), 3.0)",
+               std::move(columns), true, WildcardAnalyzerProvider);
 }
 
 }  // namespace

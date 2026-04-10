@@ -20,7 +20,6 @@
 
 #include "search_sink_writer.hpp"
 
-#include <velox/functions/prestosql/types/JsonType.h>
 #include <velox/type/Type.h>
 #include <velox/vector/FlatVector.h>
 
@@ -51,6 +50,25 @@ irs::UnboundedObjectPool<search::AnalyzerImpl::Builder> gNullStreamPool(
 void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
   SDB_ASSERT(name_buffer.size() >= sizeof(column_id));
   absl::big_endian::Store(name_buffer.data(), column_id);
+}
+
+std::string_view DecodeString(std::span<const rocksdb::Slice> cell_slices) {
+  // if string is prefixed during Insert - two slices will be present
+  // one is prefix, second is actual string data
+  // But if we are re-indexing from existing data (Update operation) - only one
+  // slice will be present
+  SDB_ASSERT(cell_slices.size() <= 2);
+  if (!cell_slices.front().starts_with(kStringPrefix)) {
+    SDB_ASSERT(cell_slices.size() == 1);
+    return {cell_slices.front().data(), cell_slices.front().size()};
+  } else {
+    if (cell_slices.size() == 1) {
+      // re-indexing case
+      return {cell_slices.front().data() + 1, cell_slices.front().size() - 1};
+    } else {
+      return {cell_slices[1].data(), cell_slices[1].size()};
+    }
+  }
 }
 
 }  // namespace
@@ -133,7 +151,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     };
 
   if constexpr (Kind == velox::TypeKind::UNKNOWN) {
-    _current_writer = MakeIndexWriter(
+    _current_writer = MakeIndexWriter<false>(
       [&](std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
         SDB_ASSERT(cell_slices.size() == 1);
@@ -144,30 +162,34 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
                        Kind == velox::TypeKind::VARBINARY) {
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_analyzer_provider(column_id));
-    if (have_nulls) {
+    auto column_analyzer = _analyzer_provider(column_id);
+    const auto* store_attr =
+      irs::get<irs::StoreAttr>(*column_analyzer.analyzer);
+    _field.PrepareForStringValue(std::move(column_analyzer));
+    _field.store_attr = store_attr;
+    irs::ResolveBool(store_attr != nullptr, [&]<bool HasStore> {
       _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteStringValue));
-    } else {
-      _current_writer = MakeIndexWriter(&WriteStringValue);
-    }
+        have_nulls ? MakeIndexWriter<HasStore>(
+                       make_nullable_writer_func(&WriteStringValue<HasStore>))
+                   : MakeIndexWriter<HasStore>(&WriteStringValue<HasStore>);
+    });
   } else if constexpr (std::is_same_v<T, bool>) {
     search::mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
     if (have_nulls) {
       _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteBooleanValue));
+        MakeIndexWriter<false>(make_nullable_writer_func(&WriteBooleanValue));
     } else {
-      _current_writer = MakeIndexWriter(&WriteBooleanValue);
+      _current_writer = MakeIndexWriter<false>(&WriteBooleanValue);
     }
   } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
     search::mangling::MangleNumeric(_name_buffer);
     _field.PrepareForNumericValue();
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
+      _current_writer = MakeIndexWriter<false>(
+        make_nullable_writer_func(&WriteNumericValue<T>));
     } else {
-      _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
+      _current_writer = MakeIndexWriter<false>(&WriteNumericValue<T>);
     }
   } else {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
@@ -185,7 +207,9 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
-      _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
+      irs::StoreAttr pk_store;
+      pk_store.value = irs::ViewCast<irs::byte_type>(row_key);
+      _pk_field.store_attr = &pk_store;
       _pk_field.SetStringValue(row_key);
       // We need indexed PK for removes
       VELOX_CHECK(
@@ -198,14 +222,23 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
-template<typename WriteFunc>
+template<bool HasStore, typename WriteFunc>
 SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
   WriteFunc&& write_func) {
   return
     [&, func = std::forward<WriteFunc>(write_func)](
       std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
-      VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(
-                    &func(full_key, cell_slices, _field)),
+      auto& field = func(full_key, cell_slices, _field);
+      if constexpr (HasStore) {
+        if (field.store_attr) {
+          VELOX_CHECK(
+            _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
+              &field),
+            "Failed to insert and store field into IResearch document");
+          return;
+        }
+      }
+      VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(&field),
                   "Failed to insert field into IResearch document");
     };
 }
@@ -219,27 +252,13 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   _emit_pk = true;
 }
 
+template<bool HasStore>
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
   SearchSinkInsertBaseImpl::Field& field) {
   SDB_ASSERT(!cell_slices.empty());
-  // if string is prefixed during Insert - two slices will be present
-  // one is prefix, second is actual string data
-  // But if we are re-indexing from existing data (Update operation) - only one
-  // slice will be present
-  SDB_ASSERT(cell_slices.size() <= 2);
-  if (!cell_slices.front().starts_with(kStringPrefix)) {
-    field.SetStringValue(
-      {cell_slices.front().data(), cell_slices.front().size()});
-  } else {
-    if (cell_slices.size() == 1) {
-      // re-indexing case
-      field.SetStringValue(
-        {cell_slices.front().data() + 1, cell_slices.front().size() - 1});
-    } else {
-      field.SetStringValue({cell_slices[1].data(), cell_slices[1].size()});
-    }
-  }
+  auto decoded_string = DecodeString(cell_slices);
+  field.SetStringValue(decoded_string);
   return field;
 }
 

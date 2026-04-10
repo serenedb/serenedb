@@ -186,10 +186,16 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
   bool reset(std::string_view value) final {
     if constexpr (kIsS2) {
       _data.encoder.clear();
-      return ResetImpl(value, _data.coding, &_data.encoder);
+      if (!ResetImpl(value, _data.coding, &_data.encoder)) {
+        return false;
+      }
     } else {
-      return ResetImpl(value, geo::coding::Options::Invalid, nullptr);
+      if (!ResetImpl(value, geo::coding::Options::Invalid, nullptr)) {
+        return false;
+      }
     }
+    StoreImpl(value);
+    return true;
   }
 
   void prepare(GeoFilterOptionsBase& options) const final {
@@ -212,7 +218,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
     }
   }
 
-  irs::bytes_view StoreImpl(irs::Tokenizer* ctx, vpack::Slice slice) final;
+  void StoreImpl(std::string_view value) final;
 
  protected:
   static constexpr bool kIsS2 = std::is_same_v<Data, S2AnalyzerData>;
@@ -252,21 +258,6 @@ irs::analysis::Analyzer::ptr GeoPointAnalyzer::make(std::string_view args) {
   return std::make_unique<GeoPointAnalyzer>(options);
 }
 
-irs::bytes_view GeoPointAnalyzer::store(irs::Tokenizer* ctx,
-                                        vpack::Slice slice) {
-  SDB_ASSERT(ctx != nullptr);
-  auto& impl = basics::downCast<GeoPointAnalyzer>(*ctx);
-  auto& point = impl._point;
-#ifdef SDB_DEV
-  S2LatLng slice_point;
-  SDB_ASSERT(impl.ParsePoint(slice, slice_point));
-  SDB_ASSERT(slice_point == point);
-#endif
-  impl._builder.clear();
-  sdb::geo::PointToVPack(impl._builder, point);
-  return irs::slice_to_view<irs::byte_type>(impl._builder.slice());
-}
-
 GeoPointAnalyzer::GeoPointAnalyzer(const Options& options)
   : GeoAnalyzer{S2Options(options.options, true)},
     _from_array{options.latitude.empty()},
@@ -279,6 +270,12 @@ bool GeoPointAnalyzer::reset(std::string_view value) {
   if (!ParsePoint(view_to_slice(value), _point)) {
     return false;
   }
+
+  _builder.clear();
+  sdb::geo::PointToVPack(_builder, _point);
+  auto* store = irs::GetMutable<StoreAttr>(this);
+  SDB_ASSERT(store);
+  store->value = irs::slice_to_view<irs::byte_type>(_builder.slice());
 
   GeoAnalyzer::reset(_indexer.GetIndexTerms(_point.ToPoint(), {}));
   return true;
@@ -373,53 +370,44 @@ bool GeoJsonAnalyzer::ResetImpl(std::string_view value,
   return true;
 }
 
-irs::bytes_view GeoJsonAnalyzer::store(irs::Tokenizer* ctx,
-                                       vpack::Slice slice) {
-  SDB_ASSERT(ctx != nullptr);
-  auto& impl = basics::downCast<GeoJsonAnalyzer>(*ctx);
-  return impl.StoreImpl(ctx, slice);
-}
-
 template<>
-irs::bytes_view GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl(
-  irs::Tokenizer* ctx, vpack::Slice slice) {
-  SDB_ASSERT(ctx != nullptr);
-  auto& impl = basics::downCast<GeoJsonAnalyzerImpl<vpack::Builder>>(*ctx);
-  if (impl._type == Type::Centroid) {
-    SDB_ASSERT(!impl._shape.empty());
-    const S2LatLng centroid{impl._shape.centroid()};
-    impl._data.clear();
-    sdb::geo::PointToVPack(impl._data, centroid);
-    slice = impl._data.slice();
+void GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl(std::string_view value) {
+  vpack::Slice slice = view_to_slice(value);
+  if (_type == Type::Centroid) {
+    SDB_ASSERT(!_shape.empty());
+    const S2LatLng centroid{_shape.centroid()};
+    _data.clear();
+    sdb::geo::PointToVPack(_data, centroid);
+    slice = _data.slice();
   }
-  auto data = irs::slice_to_view<irs::byte_type>(slice);
-  return data;
+  auto* store = irs::GetMutable<StoreAttr>(this);
+  SDB_ASSERT(store);
+  store->value = irs::slice_to_view<irs::byte_type>(slice);
 }
 
 template<>
-irs::bytes_view GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(
-  irs::Tokenizer* ctx, vpack::Slice slice) {
-  SDB_ASSERT(ctx);
-  auto& impl = basics::downCast<GeoJsonAnalyzerImpl<S2AnalyzerData>>(*ctx);
-  if (impl._data.encoder.length() == 0) {
-    SDB_ASSERT(impl._type == Type::Centroid);
-    SDB_ASSERT(impl._data.coding != geo::coding::Options::Invalid);
-    impl._data.encoder.put8(0);
-    if (geo::coding::IsOptionsS2(impl._data.coding)) {
-      geo::EncodePoint(impl._data.encoder, impl._centroid);
+void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(std::string_view) {
+  if (_data.encoder.length() == 0) {
+    SDB_ASSERT(_type == Type::Centroid);
+    SDB_ASSERT(_data.coding != geo::coding::Options::Invalid);
+    _data.encoder.put8(0);
+    if (geo::coding::IsOptionsS2(_data.coding)) {
+      geo::EncodePoint(_data.encoder, _centroid);
     } else {
-      S2LatLng lat_lng{impl._centroid};
-      geo::EncodeLatLng(impl._data.encoder, lat_lng, impl._data.coding);
+      S2LatLng lat_lng{_centroid};
+      geo::EncodeLatLng(_data.encoder, lat_lng, _data.coding);
     }
   }
-  auto data = irs::bytes_view{
-    reinterpret_cast<const irs::byte_type*>(impl._data.encoder.base()),
-    impl._data.encoder.length()};
-  if (impl._type != Type::Shape) {
+  irs::bytes_view data{
+    reinterpret_cast<const irs::byte_type*>(_data.encoder.base()),
+    _data.encoder.length()};
+  if (_type != Type::Shape) {
     // For points we do not need type
     data = data.substr(1);
   }
-  return data;
+  auto* store = irs::GetMutable<StoreAttr>(this);
+  SDB_ASSERT(store);
+  store->value = data;
 }
 
 void GeoAnalyzer::init() {

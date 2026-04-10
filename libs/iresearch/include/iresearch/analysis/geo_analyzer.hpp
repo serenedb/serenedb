@@ -68,7 +68,7 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
   S2RegionTermIndexer _indexer;
 
  private:
-  using Attributes = std::tuple<IncAttr, TermAttr>;
+  using Attributes = std::tuple<IncAttr, TermAttr, StoreAttr>;
 
   std::vector<std::string> _terms;
   const std::string* _begin{_terms.data()};
@@ -90,9 +90,6 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
   static constexpr std::string_view type_name() noexcept { return "geopoint"; }
   static bool normalize(std::string_view args, std::string& out);
   static analysis::Analyzer::ptr make(std::string_view args);
-
-  // store point as [lng, lat] array to be GeoJSON compliant
-  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
 
   explicit GeoPointAnalyzer(const Options& options);
 
@@ -151,8 +148,6 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
   static bool normalize(std::string_view args, std::string& out);
   static analysis::Analyzer::ptr make(std::string_view args);
-  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
-
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoJsonAnalyzer>::id();
   }
@@ -167,7 +162,7 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   bool ResetImpl(std::string_view value, sdb::geo::coding::Options options,
                  Encoder* encoder);
 
-  virtual bytes_view StoreImpl(Tokenizer* ctx, vpack::Slice slice) = 0;
+  virtual void StoreImpl(std::string_view value) = 0;
 
   sdb::geo::ShapeContainer _shape;
   S2Point _centroid;

@@ -25,7 +25,6 @@ target_sources(
         secondary_index.cpp
         identity_analyzer.cpp
         inverted_index.cpp
-        analyzer.cpp
         mangling.cpp
         tokenizer.cpp
 )

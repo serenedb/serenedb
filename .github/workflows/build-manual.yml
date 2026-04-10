@@ -27,10 +27,6 @@ on:
         description: 'Run tests with Memory Sanitizer'
         type: boolean
         default: false
-      ENABLE_COVERAGE:
-        description: 'Run tests with coverage instrumentation'
-        type: boolean
-        default: false
       FULL_SANITIZER_TESTS:
         description: 'Include slow tests for sanitizers run'
         type: boolean
@@ -65,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}{4}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '', inputs.ENABLE_COVERAGE && ',"coverage"' || '')) }}
+        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
@@ -81,7 +77,7 @@ jobs:
       fail-fast: false
       matrix:
         location: ${{ fromJSON(inputs.LOCATION == 'all' && '["linux-amd64","linux-arm64"]' || format('["{0}"]', inputs.LOCATION)) }}
-        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}{4}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '', inputs.ENABLE_COVERAGE && ',"coverage"' || '')) }}
+        instrumentation: ${{ fromJSON(format('["{0}"{1}{2}{3}]', 'none', inputs.ENABLE_ASAN && ',"asan"' || '', inputs.ENABLE_TSAN && ',"tsan"' || '', inputs.ENABLE_MSAN && ',"msan"' || '')) }}
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}

@@ -36,7 +36,6 @@ jobs:
               '- [ ] ASAN',
               '- [ ] TSAN',
               '- [ ] MSAN',
-              '- [ ] Coverage',
               '',
               '---',
               '- [ ] **Trigger Jobs**',
@@ -107,7 +106,6 @@ jobs:
             const enableAsan = isChecked('ASAN');
             const enableTsan = isChecked('TSAN');
             const enableMsan = isChecked('MSAN');
-            const enableCoverage = isChecked('Coverage');
 
             const { owner, repo } = context.repo;
             const statusContext = 'serenedb | build & test';
@@ -153,7 +151,6 @@ jobs:
                 ENABLE_ASAN: enableAsan.toString(),
                 ENABLE_TSAN: enableTsan.toString(),
                 ENABLE_MSAN: enableMsan.toString(),
-                ENABLE_COVERAGE: enableCoverage.toString(),
                 VALIDATE_PG_TESTS: 'true',
                 PR_SHA: sha,
                 BUILD_CONFIG: JSON.stringify({
@@ -191,7 +188,6 @@ jobs:
               enableAsan && 'asan',
               enableTsan && 'tsan',
               enableMsan && 'msan',
-              enableCoverage && 'coverage',
               allArch && 'all arch',
             ].filter(Boolean);
             const optsStr = opts.length > 0 ? opts.join(', ') : 'default';

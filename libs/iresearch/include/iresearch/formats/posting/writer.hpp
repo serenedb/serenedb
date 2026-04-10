@@ -124,7 +124,11 @@ struct PayBuffer : SkipBuffer {
 
 inline WandWriter::ptr PrepareWandWriter(ScorerPtr scorer,
                                          size_t max_levels) {
-  return (*scorer).prepare_wand_writer(max_levels);
+  WandWriter::ptr writer = nullptr;
+  if (scorer) {
+    writer = (*scorer).prepare_wand_writer(max_levels);
+  }
+  return writer;
 }
 
 // Assume that doc_count = 28, skip_n = skip_0 = 12
@@ -316,6 +320,8 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
                                         const FlushState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
+
+  std::cout << "PostingsWriterBase::Prepare" << std::endl;
 
   std::string name;
 

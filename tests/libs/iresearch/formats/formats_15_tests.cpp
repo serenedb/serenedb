@@ -309,7 +309,7 @@ class Format15TestCase : public tests::FormatTestCase {
 
 std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr>
 Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
-                                irs::ScorerPtr scorers,
+                                irs::ScorerPtr scorer,
                                 irs::IndexFeatures features) {
   // If this assertion breaks and you really need to test wanderators
   // with different number of buckets you should adjust GetWanderator
@@ -327,7 +327,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
       .dir = &dir,
       .columns = &provider,
       .name = "segment_name",
-      .scorers = scorers,
+      .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,
     };
@@ -343,9 +343,9 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     writer->Write(it, term_meta);
     const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
-    const uint64_t expected_wand_mask{irs::IndexFeatures::None !=
+    const uint64_t expected_has_wand{irs::IndexFeatures::None !=
                                       (features & irs::IndexFeatures::Freq)};
-    EXPECT_EQ(expected_wand_mask, stats.wand_mask);
+    EXPECT_EQ(expected_has_wand, stats.has_wand);
     writer->Encode(*out, term_meta);
     writer->End();
   }
@@ -353,7 +353,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   irs::SegmentMeta meta;
   meta.name = "segment_name";
 
-  const irs::ReaderState state{.dir = &dir, .meta = &meta, .scorers = scorers};
+  const irs::ReaderState state{.dir = &dir, .meta = &meta, .scorer = scorer};
 
   auto in = dir.open("attributes", irs::IOAdvice::NORMAL);
   EXPECT_FALSE(!in);
@@ -766,7 +766,7 @@ void Format15TestCase::AssertPostings(DocsView docs,
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
   auto [meta, reader] =
-    WriteReadMeta(*dir, docs, std::span{&scorer_ptr, 1}, field_features);
+    WriteReadMeta(*dir, docs, scorer_ptr, field_features);
   ASSERT_NE(nullptr, reader);
 
   {
@@ -811,7 +811,7 @@ void Format15TestCase::AssertWandPostings(DocsView docs, uint32_t threshold,
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
   auto [meta, reader] =
-    WriteReadMeta(*dir, docs, std::span{&scorer_ptr, 1}, kFreq);
+    WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
   ASSERT_NE(nullptr, reader);
 
   {

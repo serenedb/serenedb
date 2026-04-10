@@ -1079,12 +1079,15 @@ void FieldsData::flush(FieldWriter& fw, FlushState& state) {
 
   TermReaderImpl terms(_sorted_postings, state.docmap);
 
+  std::cout << "before fw.prepare(state);" << std::endl;
   fw.prepare(state);
+  std::cout << "after fw.prepare(state);" << std::endl;
   for (auto* field : _sorted_fields) {
     // Reset reader
     terms.Reset(*field);
 
     // Write inverted data
+    std::cout << "before fw.write(terms);" << std::endl;
     fw.write(terms);
   }
 

@@ -586,8 +586,11 @@ class IndexWriter : private util::Noncopyable {
   bool Commit(const CommitInfo& info = {}) {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
+    std::cout << "OOOOOOOOOOO" << std::endl;
     const bool modified = Start(info);
+    std::cout << "OIFJOEJFPOIJE" << std::endl;
     Finish();
+    std::cout << "EPPEPPPEPEPEP" << std::endl;
     return modified;
   }
 

@@ -195,7 +195,9 @@ void SegmentWriter::FlushFields(FlushState& state) {
   SDB_ASSERT(_field_writer);
 
   try {
+    std::cout << "before _fields.flush(*_field_writer, state);" << std::endl;
     _fields.flush(*_field_writer, state);
+    std::cout << "after _fields.flush(*_field_writer, state);" << std::endl;
   } catch (...) {
     _field_writer.reset();  // invalidate field writer
     throw;
@@ -244,11 +246,15 @@ void SegmentWriter::FlushFields(FlushState& state) {
   }
 
   // Flush columnstore
+  std::cout << "EFK{POPWOIJFPOIEJWF}" << std::endl;
   meta.column_store = _col_writer->commit(state);
+  std::cout << "EFEOFOEFOEOFOEOFOOEOFOEOFOEOFOEOFOOEOOFOEOF" << std::endl;
 
   // Flush fields metadata & inverted data,
   if (state.doc_count != 0) {
+    std::cout << "eeeeeeee" << std::endl;
     FlushFields(state);
+    std::cout << "qipoqiwpeoijpoijqfe" << std::endl;
   }
 
   // Get document mask

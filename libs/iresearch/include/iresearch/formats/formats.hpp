@@ -65,7 +65,7 @@ struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;
   const FeatureInfoProvider& feature_info;
   const IndexFeatures scorers_features;
-  ScorerPtr scorer;
+  ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
   IResourceManager& resource_manager{IResourceManager::gNoop};
@@ -455,7 +455,7 @@ struct FlushState {
   const DocMap* docmap{};
   const ColumnProvider* columns{};
   const std::string_view name;  // segment name
-  ScorerPtr scorer;
+  ScorerPtr scorer = nullptr;
   const size_t doc_count;
   // Accumulated segment index features
   IndexFeatures index_features{IndexFeatures::None};
@@ -464,7 +464,7 @@ struct FlushState {
 struct ReaderState {
   const Directory* dir;
   const SegmentMeta* meta;
-  ScorerPtr scorer;
+  ScorerPtr scorer = nullptr;
 };
 
 void FormatBlock128Init();

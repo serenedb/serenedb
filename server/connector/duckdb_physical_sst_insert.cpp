@@ -198,45 +198,18 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   duckdb_primary_key::CreateBatchWithColumnSlot(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // Write each column to its SST file.
-  // Only overwrites ColumnId in-place per column -- no string copy.
+  // Write each column to its SST file via WriteColumn + SstWriter
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
     const auto& meta = gstate.columns[col];
-    auto& writer = *gstate.writers[col];
-
-    bool is_complex = meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST ||
-                      meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP ||
-                      meta.duckdb_type.id() == duckdb::LogicalTypeId::STRUCT;
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
-
-      rocksdb::Slice slice;
-      if (is_complex) {
-        auto& vec = chunk.data[meta.input_col_idx];
-        if (!duckdb::FlatVector::Validity(vec).RowIsValid(row)) {
-          slice = {};
-        } else {
-          gstate.serializer->ResetForNewRow();
-          if (meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST) {
-            gstate.serializer->WriteListValue(vec, row, meta.duckdb_type);
-          } else if (meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP) {
-            gstate.serializer->WriteMapValue(vec, row, meta.duckdb_type);
-          } else {
-            gstate.serializer->WriteStructValue(vec, row, meta.duckdb_type);
-          }
-          slice = gstate.serializer->Finalize(gstate.value_buffer);
-        }
-      } else {
-        slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
-                                     meta.duckdb_type, gstate.value_buffer);
-      }
-
-      auto status = writer.Put(gstate.row_keys[row], slice);
-      if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
-      }
     }
+
+    DuckDBColumnSerializer::SstWriter sst_writer{gstate.writers[col].get()};
+    gstate.serializer->WriteColumn(sst_writer, chunk.data[meta.input_col_idx],
+                                   meta.duckdb_type, num_rows, gstate.row_keys,
+                                   {});
   }
 
   // Update indexes via transaction path (different key ordering than SST)
@@ -258,39 +231,16 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
         continue;
       }
 
-      bool is_complex_idx =
-        meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST ||
-        meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP ||
-        meta.duckdb_type.id() == duckdb::LogicalTypeId::STRUCT;
-
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
-
-        rocksdb::Slice slice;
-        if (is_complex_idx) {
-          auto& vec = chunk.data[meta.input_col_idx];
-          if (!duckdb::FlatVector::Validity(vec).RowIsValid(row)) {
-            slice = {};
-          } else {
-            gstate.serializer->ResetForNewRow();
-            if (meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST) {
-              gstate.serializer->WriteListValue(vec, row, meta.duckdb_type);
-            } else if (meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP) {
-              gstate.serializer->WriteMapValue(vec, row, meta.duckdb_type);
-            } else {
-              gstate.serializer->WriteStructValue(vec, row, meta.duckdb_type);
-            }
-            slice = gstate.serializer->Finalize(gstate.value_buffer);
-          }
-        } else {
-          slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
-                                       meta.duckdb_type, gstate.value_buffer);
-        }
-
-        for (auto* writer : gstate.active_writers) {
-          writer->Write({&slice, 1}, gstate.row_keys[row]);
-        }
       }
+
+      // Use a noop writer for data — index writers handle themselves
+      DuckDBColumnSerializer::SstWriter noop{nullptr};
+      gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
+                                     meta.duckdb_type, num_rows,
+                                     gstate.row_keys,
+                                     gstate.active_writers);
     }
 
     for (auto& writer : gstate.index_writers) {

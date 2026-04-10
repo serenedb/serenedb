@@ -63,7 +63,6 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
 
   // Reusable buffers
   std::vector<std::string> row_keys;
-  std::vector<bool> skip_row;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
   std::string value_buffer;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
@@ -148,7 +147,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
   // 2. Conflict detection for explicit PKs
-  gstate.skip_row.assign(num_rows, false);
   if (!gstate.has_generated_pk) {
     rocksdb::ReadOptions ro;
     ro.snapshot = txn->GetSnapshot();
@@ -163,7 +161,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       auto s = txn->Get(ro, gstate.cf, gstate.row_keys[row], &check_value);
       if (s.ok()) {
         if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
-          gstate.skip_row[row] = true;
+          gstate.row_keys[row].clear();  // mark as skipped
           continue;
         }
         if (_on_conflict == duckdb::OnConflictAction::REPLACE) {
@@ -184,7 +182,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
 
   // 4. Write each column via DuckDBColumnSerializer
-  gstate.serializer->SetWriter({.txn = txn, .cf = gstate.cf});
+  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
@@ -200,14 +198,14 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
     // Setup ColumnId in all row keys for this column
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      if (!gstate.skip_row[row]) {
+      if (!gstate.row_keys[row].empty()) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
       }
     }
 
-    gstate.serializer->WriteColumn(chunk.data[col.input_col_idx],
+    gstate.serializer->WriteColumn(txn_writer, chunk.data[col.input_col_idx],
                                    col.duckdb_type, num_rows, gstate.row_keys,
-                                   gstate.skip_row, gstate.active_writers);
+                                   gstate.active_writers);
   }
 
   // 5. Finish index writers
@@ -216,7 +214,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
 
   auto skipped =
-    std::count(gstate.skip_row.begin(), gstate.skip_row.end(), true);
+    std::count_if(gstate.row_keys.begin(), gstate.row_keys.end(),
+                  [](const auto& k) { return k.empty(); });
   gstate.insert_count += num_rows - skipped;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }

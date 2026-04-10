@@ -130,9 +130,10 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &planner.ResolveDefaultsProjection(op, *plan);
   }
 
-  // TODO(mbkkt): Re-enable SST when DuckDBColumnSerializer is ported to SST
-  // writer path. For now, always use transaction-based insert.
-  bool use_sst = false;
+  // Use SST bulk insert for COPY FROM / INSERT...SELECT (has child plan).
+  // SST bypasses transactions -- no conflict detection.
+  bool use_sst = plan != nullptr && op.on_conflict_info.action_type ==
+                                      duckdb::OnConflictAction::THROW;
 
   if (use_sst) {
     auto* sorted_plan = plan.get();

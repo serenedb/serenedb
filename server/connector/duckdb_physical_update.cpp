@@ -269,17 +269,15 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   }
 
   // 3. Write updated columns via serializer
-  gstate.serializer->SetWriter({.txn = txn, .cf = gstate.cf});
-  // No skip_row for UPDATE -- all rows are updated
-  std::vector<bool> no_skip(num_rows, false);
+  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
 
   for (const auto& col : gstate.update_columns) {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
     }
-    gstate.serializer->WriteColumn(chunk.data[col.input_col_idx],
+    gstate.serializer->WriteColumn(txn_writer,chunk.data[col.input_col_idx],
                                    col.duckdb_type, num_rows, gstate.row_keys,
-                                   no_skip, {});
+                                   {});
   }
 
   // 4. Insert new index entries
@@ -346,8 +344,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col_meta.id);
       }
-      gstate.serializer->WriteColumn(chunk.data[src_col], col_meta.duckdb_type,
-                                     num_rows, gstate.row_keys, no_skip,
+      gstate.serializer->WriteColumn(txn_writer,chunk.data[src_col], col_meta.duckdb_type,
+                                     num_rows, gstate.row_keys,
                                      gstate.active_writers);
     }
 

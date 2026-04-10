@@ -37,6 +37,7 @@ namespace rocksdb {
 
 class Transaction;
 class ColumnFamilyHandle;
+class SstFileWriter;
 
 }  // namespace rocksdb
 namespace sdb::connector {
@@ -63,11 +64,19 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
 //     into _row_slices (zero-copy where possible).
 class DuckDBColumnSerializer {
  public:
-  // Data writer -- wraps RocksDB Put (transaction or SST).
-  // Same role as old DataWriterType template parameter.
-  struct DataWriter {
-    rocksdb::Transaction* txn = nullptr;
-    rocksdb::ColumnFamilyHandle* cf = nullptr;
+  // Data writer — wraps RocksDB Put. Concrete types passed as template param
+  // to WriteColumn (same as old DataWriterype template on RocksDBDataSinkBase).
+  struct TxnWriter {
+    rocksdb::Transaction* txn;
+    rocksdb::ColumnFamilyHandle* cf;
+
+    void Write(const std::vector<rocksdb::Slice>& slices,
+               std::string_view key) const;
+    void WriteNull(std::string_view key) const;
+  };
+
+  struct SstWriter {
+    rocksdb::SstFileWriter* writer;
 
     void Write(const std::vector<rocksdb::Slice>& slices,
                std::string_view key) const;
@@ -76,17 +85,14 @@ class DuckDBColumnSerializer {
 
   DuckDBColumnSerializer();
 
-  void SetWriter(DataWriter writer) { _writer = writer; }
-
   // --- Layer 1: Per-column write (one RocksDB Put per row) ---
+  // Templated on Writer (TxnWriter or SstWriter) — inlined, no virtual dispatch.
 
-  // Write an entire column. Dispatches by vector type and logical type.
-  // row_keys: pre-built keys with ColumnId slot already set.
-  // skip_row: per-row skip mask (from conflict detection).
-  // index_writers: index writers to notify per row.
-  void WriteColumn(const duckdb::Vector& vec, const duckdb::LogicalType& type,
-                   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
-                   const std::vector<bool>& skip_row,
+  // row_keys with empty string = skipped row (same as old SetupRowKey→nullptr)
+  template<typename Writer>
+  void WriteColumn(Writer& writer, const duckdb::Vector& vec,
+                   const duckdb::LogicalType& type, duckdb::idx_t num_rows,
+                   std::vector<std::string>& row_keys,
                    std::span<DuckDBSinkIndexWriter*> index_writers);
 
   // --- Layer 2: Sub-vector serialization (into _row_slices) ---
@@ -135,24 +141,23 @@ class DuckDBColumnSerializer {
   bool WriteNullBitmap(const duckdb::ValidityMask& validity,
                        duckdb::idx_t offset, duckdb::idx_t count);
 
-  // Layer 1 helpers
-  template<typename T>
-  void WriteFlatColumn(const duckdb::Vector& vec, duckdb::idx_t num_rows,
+  // Layer 1 helpers — templated on Writer
+  template<typename Writer, typename T>
+  void WriteFlatColumn(Writer& writer, const duckdb::Vector& vec,
+                       duckdb::idx_t num_rows,
                        std::vector<std::string>& row_keys,
-                       const std::vector<bool>& skip_row,
                        std::span<DuckDBSinkIndexWriter*> index_writers);
 
-  void WriteComplexColumn(const duckdb::Vector& vec,
+  template<typename Writer>
+  void WriteComplexColumn(Writer& writer, const duckdb::Vector& vec,
                           const duckdb::LogicalType& type,
                           duckdb::idx_t num_rows,
                           std::vector<std::string>& row_keys,
-                          const std::vector<bool>& skip_row,
                           std::span<DuckDBSinkIndexWriter*> index_writers);
 
-  void WriteRowSlices(std::string_view key,
+  template<typename Writer>
+  void WriteRowSlices(Writer& writer, std::string_view key,
                       std::span<DuckDBSinkIndexWriter*> index_writers);
-
-  DataWriter _writer;
   duckdb::ArenaAllocator _arena;
   std::vector<rocksdb::Slice> _row_slices;
 };

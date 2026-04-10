@@ -85,7 +85,7 @@ jobs:
     uses: ./.github/workflows/build-reusable.yml
     with:
       LOCATION: ${{ matrix.location }}
-      KIND: ${{ (matrix.instrumentation == 'none' || matrix.instrumentation == 'coverage') && 'functional' || (inputs.FULL_SANITIZER_TESTS && 'functional' || 'functional_fast') }}
+      KIND: ${{ matrix.instrumentation == 'none' && 'functional' || (inputs.FULL_SANITIZER_TESTS && 'functional' || 'functional_fast') }}
       DEV: true
       INSTRUMENTATION: ${{ matrix.instrumentation }}
       PR_SHA: ${{ inputs.PR_SHA }}

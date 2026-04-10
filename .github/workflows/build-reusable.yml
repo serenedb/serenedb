@@ -1,6 +1,50 @@
 name: task | serenedb build & test
 
 on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      KIND:
+        description: "What to test"
+        type: choice
+        required: true
+        options:
+          - both
+          - unit
+          - functional
+          - functional_fast
+          - none
+      DEV:
+        description: "Enable assertions (SDB_DEV)"
+        type: boolean
+        required: false
+        default: true
+      INSTRUMENTATION:
+        description: "Sanitizer or coverage"
+        type: choice
+        required: false
+        default: "none"
+        options:
+          - none
+          - coverage
+          - asan
+          - msan
+          - tsan
+          - ubsan
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags (rare overrides)"
+        type: string
+        required: false
+        default: ""
+      PR_SHA:
+        description: "Commit SHA to checkout (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:

@@ -79,6 +79,9 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
     _trx{trx} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
+  _json_num_field.PrepareForNumericValue();
+  _json_bool_field.PrepareForBooleanValue();
+  _json_null_field.PrepareForNullValue();
 }
 
 bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
@@ -94,14 +97,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
   // ranges depend on that.
   SDB_ASSERT(!type.providesCustomComparison());
 
-  // JSON columns get special multi-field traversal.
-  // Note: the Velox scan layer delivers VarcharType vectors even for JSON
-  // columns -- the JsonType singleton is lost. We detect JSON columns by name.
-  SDB_PRINT("SwitchColumn id=", column_id, " type.kind=", (int)type.kind(),
-            " type.name=", type.name());
-  if (type.kind() == facebook::velox::TypeKind::VARCHAR &&
-      std::string_view{type.name()} == "JSON") {
-    SDB_PRINT("-> SetupJsonColumnWriter");
+  if (std::string_view{type.name()} == "JSON") {
     SetupJsonColumnWriter(column_id, have_nulls);
   } else if (type.kind() == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
@@ -224,8 +220,6 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
-// TODO fix backfill so that it pass json, not varchar
-
 void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   catalog::Column::Id column_id, bool have_nulls) {
   // Build the column_id prefix once and store in _json_path_buffer.
@@ -233,15 +227,8 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   absl::big_endian::Store(_json_path_buffer.data(), column_id);
   _json_column_prefix_len = _json_path_buffer.size();
 
-  // Prepare per-type leaf fields.
-  // JSON string leaves use the verbatim (TODO use set up one for string)
-  // identity tokenizer. Also option for all fields? so that TERM_EQ and
-  // TERM_LIKE can match exact values (e.g. "server-01").
-  // TODO Prepare once per sink, not per column?
-  _json_str_field.PrepareForVerbatimStringValue();
-  _json_num_field.PrepareForNumericValue();
-  _json_bool_field.PrepareForBooleanValue();
-  _json_null_field.PrepareForNullValue();
+  // String leaves use the column's configured text analyzer.
+  _json_str_field.PrepareForStringValue(_analyzer_provider(column_id));
 
   // The null field name for null leaves is the column prefix + mangled-null.
   // We reuse _null_name_buffer to keep the mangled name stable.
@@ -255,9 +242,6 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
     (void)full_key;
     auto json_str = StringFromSlices(cell_slices);
 
-    // If the stored value is a JSON-encoded string (outer quotes + escaping),
-    // unescape it first to get the raw JSON, then re-parse.
-    SDB_PRINT("json_str=", json_str);
     _json_parser.PrepareJson(json_str);
     auto doc = _json_parser.GetJsonDocument();
     simdjson::ondemand::value root_val;

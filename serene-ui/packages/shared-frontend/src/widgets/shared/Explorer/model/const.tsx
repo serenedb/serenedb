@@ -408,7 +408,7 @@ SELECT
     i.indisprimary,
     pg_get_indexdef(i.indexrelid) AS index_def
 FROM pg_index i
-JOIN pg_class c 
+JOIN pg_class c
     ON c.oid = i.indexrelid
 WHERE i.indrelid = ${node.context?.tableId};
 `,

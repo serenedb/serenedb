@@ -51,6 +51,7 @@
 #include "storage_engine/index_shard.h"
 
 namespace sdb::connector {
+
 class DuckDBEntryCache;
 }
 

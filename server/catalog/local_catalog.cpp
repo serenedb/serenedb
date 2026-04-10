@@ -1279,18 +1279,19 @@ Result LocalCatalog::CreateTable(
     auto col = absl::c_find_if(options.columns,
                                [&](const auto& c) { return c.id == pk_id; });
     SDB_ASSERT(col != options.columns.end());
-    // PK must be default sortable or we can not guarantee table scan order
-    if (col->type->providesCustomComparison()) {
-      return {
-        ERROR_BAD_PARAMETER, "Column ", col->name,
-        " has type with custom comparison and can not be part of primary key"};
-    }
-    // this is current limitation of our pirmary key builder. And might be
-    // lifted some day.
-    if (!col->type->isPrimitiveType()) {
-      return {ERROR_BAD_PARAMETER, "Column ", col->name,
-              " has non primitive type and can not be part of primary key"};
-    }
+    // // PK must be default sortable or we can not guarantee table scan order
+    // if (col->type->providesCustomComparison()) {
+    //   return {
+    //     ERROR_BAD_PARAMETER, "Column ", col->name,
+    //     " has type with custom comparison and can not be part of primary
+    //     key"};
+    // }
+    // // this is current limitation of our pirmary key builder. And might be
+    // // lifted some day.
+    // if (!col->type->isPrimitiveType()) {
+    //   return {ERROR_BAD_PARAMETER, "Column ", col->name,
+    //           " has non primitive type and can not be part of primary key"};
+    // }
   }
   auto table = std::make_shared<Table>(std::move(options), database_id);
   if (operation_options.create_with_tombstone) {

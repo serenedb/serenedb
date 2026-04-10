@@ -94,7 +94,6 @@ struct PgClass {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
-  velox::memory::MemoryPool& pool);
+std::vector<duckdb::Vector> SystemTableSnapshot<PgClass>::GetTableData();
 
 }  // namespace sdb::pg

@@ -24,6 +24,7 @@
 #include <velox/connectors/Connector.h>
 #include <velox/core/ExpressionEvaluator.h>
 #include <velox/core/Expressions.h>
+#include <velox/expression/Expr.h>
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 #include <velox/vector/FlatVector.h>

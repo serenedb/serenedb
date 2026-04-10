@@ -20,10 +20,11 @@
 
 #include "catalog/column_expr.h"
 
+#include <vpack/vpack_helper.h>
+
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <vpack/vpack_helper.h>
 
 namespace sdb {
 
@@ -50,9 +51,8 @@ void ColumnExpr::ToVPack(vpack::Builder& builder) const {
   _expr->Serialize(serializer);
   builder.openObject();
   builder.add("duckdb_expr",
-              std::string_view(
-                reinterpret_cast<const char*>(stream.GetData()),
-                stream.GetPosition()));
+              std::string_view(reinterpret_cast<const char*>(stream.GetData()),
+                               stream.GetPosition()));
   builder.close();
 }
 

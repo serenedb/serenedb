@@ -26,11 +26,9 @@
 #include "functions/search.h"
 
 namespace sdb::connector {
-
 namespace {
 
-void SearchStubFunction(duckdb::DataChunk& args,
-                        duckdb::ExpressionState& state,
+void SearchStubFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
   throw duckdb::InvalidInputException(
     "Inverted index function called outside inverted index context. "

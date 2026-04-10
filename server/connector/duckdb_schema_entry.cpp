@@ -79,7 +79,7 @@ void SereneDBSchemaEntry::Scan(
 void SereneDBSchemaEntry::Scan(
   duckdb::CatalogType type,
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
-  // Without context — no snapshot available, skip
+  // Without context -- no snapshot available, skip
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
@@ -97,7 +97,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     catalog::Column sdb_col;
     sdb_col.id = next_col_id++;
     sdb_col.name = col.Name();
-    sdb_col.type = DuckDBTypeToVelox(col.Type());
+    sdb_col.type = col.Type();
     request.columns.push_back(std::move(sdb_col));
   }
 
@@ -201,8 +201,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   const auto& columns = sdb_table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
 
-  // parsed_expressions has the actual index columns (from CREATE INDEX ON t (col))
-  // info.names has ALL table scan columns — don't use it for index columns!
+  // parsed_expressions has the actual index columns (from CREATE INDEX ON t
+  // (col)) info.names has ALL table scan columns -- don't use it for index
+  // columns!
   for (auto& expr : info.parsed_expressions) {
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
@@ -248,15 +249,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      database_id, "public", sdb_table->GetName(),
-      info.index_name, std::move(idx_columns),
-      shard_options);
+      database_id, "public", sdb_table->GetName(), info.index_name,
+      std::move(idx_columns), shard_options);
   } else {
-    bool unique =
-      (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
+    bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      database_id, "public", sdb_table->GetName(),
-      info.index_name, std::move(idx_columns), unique);
+      database_id, "public", sdb_table->GetName(), info.index_name,
+      std::move(idx_columns), unique);
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -280,13 +279,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       auto& inverted_shard =
         basics::downCast<search::InvertedIndexShard>(*shard);
       inverted_shard.StartTasks();
-      // No backfill yet — mark creation as finished so background commits
+      // No backfill yet -- mark creation as finished so background commits
       // register the flush subscription and run periodically.
       inverted_shard.FinishCreation();
     }
   }
 
-  // No cache to invalidate — entries live on snapshot, new snapshot picks up
+  // No cache to invalidate -- entries live on snapshot, new snapshot picks up
   // index
 
   std::cerr << "SereneDB: Created index " << info.index_name << " on "
@@ -422,7 +421,7 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
     SDB_THROW(std::move(r));
   }
 
-  // No cache to invalidate — entries live on snapshot, new snapshot won't have
+  // No cache to invalidate -- entries live on snapshot, new snapshot won't have
   // this table
 
   std::cerr << "SereneDB: Dropped table " << info.name << " via DuckDB"

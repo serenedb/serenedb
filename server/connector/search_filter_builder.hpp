@@ -25,10 +25,8 @@
 
 #include <iresearch/search/boolean_filter.hpp>
 
-#include "axiom/connectors/ConnectorMetadata.h"
 #include "basics/fwd.h"
 #include "basics/result.h"
-#include "connector/serenedb_connector.hpp"
 #include "velox/core/ITypedExpr.h"
 
 namespace sdb::connector {
@@ -37,6 +35,11 @@ namespace sdb::connector {
 // matching the IResearch field name produced by
 // MakeFieldName(SearchColumnInfo).
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
+
+struct SereneDBColumn {
+  uint64_t Id() const { return 0; }
+  velox::TypePtr type() const { return velox::UNKNOWN(); }
+};
 
 struct SearchColumnInfo {
   const SereneDBColumn& info;

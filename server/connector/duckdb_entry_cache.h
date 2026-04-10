@@ -23,8 +23,8 @@
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
@@ -54,17 +54,16 @@ class DuckDBEntryCache {
 
   // Table/function/view lookup (within a schema)
   duckdb::optional_ptr<duckdb::CatalogEntry> GetOrCreateEntry(
-    duckdb::CatalogType type,
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    ObjectId db_id, std::string_view schema_name, std::string_view name,
+    duckdb::CatalogType type, duckdb::Catalog& catalog,
+    duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+    std::string_view schema_name, std::string_view name,
     const catalog::Snapshot& snapshot);
 
-  void ScanEntries(
-    duckdb::CatalogType type,
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    ObjectId db_id, std::string_view schema_name,
-    const std::function<void(duckdb::CatalogEntry&)>& callback,
-    const catalog::Snapshot& snapshot);
+  void ScanEntries(duckdb::CatalogType type, duckdb::Catalog& catalog,
+                   duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
+                   std::string_view schema_name,
+                   const std::function<void(duckdb::CatalogEntry&)>& callback,
+                   const catalog::Snapshot& snapshot);
 
  private:
   duckdb::optional_ptr<duckdb::CatalogEntry> BuildTableEntry(
@@ -85,8 +84,7 @@ class DuckDBEntryCache {
   mutable std::shared_mutex _lock;
 
   // Schema entries
-  containers::NodeHashMap<std::string,
-                          duckdb::unique_ptr<SereneDBSchemaEntry>>
+  containers::NodeHashMap<std::string, duckdb::unique_ptr<SereneDBSchemaEntry>>
     _schemas;
   containers::NodeHashMap<std::string,
                           duckdb::unique_ptr<duckdb::CreateSchemaInfo>>

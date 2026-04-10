@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <axiom/connectors/ConnectorMetadata.h>
-
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -84,12 +82,6 @@ class Objects : public irs::memory::Managed {
     std::shared_ptr<void> catalog_data;
     const catalog::Table& CatalogTable() const;
     const std::vector<std::shared_ptr<catalog::Index>>& Indexes() const;
-
-    // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
-    // to implement connector::Table without allocation.
-    // This probably requires changing axiom::connector::Table.
-    void EnsureTable(query::Transaction& transaction) const;
-    mutable std::shared_ptr<axiom::connector::Table> table;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;

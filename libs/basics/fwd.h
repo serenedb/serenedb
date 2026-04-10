@@ -22,7 +22,7 @@
 
 #include <memory>
 
-// TODO(Dronplane) make velox/axiom includes common
+// TODO(Dronplane) make velox includes common
 
 namespace facebook::velox {
 
@@ -30,7 +30,5 @@ class Type;
 using TypePtr = std::shared_ptr<const Type>;
 
 }  // namespace facebook::velox
-namespace facebook::axiom {}
 
 namespace velox = facebook::velox;
-namespace axiom = facebook::axiom;

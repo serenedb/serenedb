@@ -72,6 +72,8 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
   std::string value_buffer;
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
+    duckdb::make_uniq<DuckDBColumnSerializer>();
 };
 
 struct SereneDBUpdateSourceState : public duckdb::GlobalSourceState {
@@ -115,7 +117,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     }
     state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{
       .id = col.id,
-      .duckdb_type = VeloxTypeToDuckDB(col.type),
+      .duckdb_type = col.type,
     });
   }
 
@@ -124,7 +126,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     const auto& col = columns[table_col_idx];
     state->update_columns.push_back(UpdateColumnMeta{
       .id = col.id,
-      .duckdb_type = VeloxTypeToDuckDB(col.type),
+      .duckdb_type = col.type,
       .table_col_idx = table_col_idx,
       .input_col_idx = _update_col_input_indices[i],
     });
@@ -135,7 +137,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     if (i < pk_col_ids.size()) {
       for (const auto& col : columns) {
         if (col.id == pk_col_ids[i]) {
-          pk_type = VeloxTypeToDuckDB(col.type);
+          pk_type = col.type;
           break;
         }
       }
@@ -244,18 +246,18 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   duckdb_primary_key::CreateBatchWithColumnSlot(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // 2. Delete old index entries — old values are in the input chunk
+  // 2. Delete old index entries -- old values are in the input chunk
   if (!gstate.delete_index_writers.empty()) {
     for (auto& writer : gstate.delete_index_writers) {
       writer->Init(num_rows, chunk);
     }
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      auto pk_bytes = std::string_view{
-        gstate.row_keys[row].data() + sizeof(catalog::Column::Id) +
-          sizeof(ObjectId),
-        gstate.row_keys[row].size() - sizeof(catalog::Column::Id) -
-          sizeof(ObjectId)};
+      auto pk_bytes =
+        std::string_view{gstate.row_keys[row].data() +
+                           sizeof(catalog::Column::Id) + sizeof(ObjectId),
+                         gstate.row_keys[row].size() -
+                           sizeof(catalog::Column::Id) - sizeof(ObjectId)};
       for (auto& writer : gstate.delete_index_writers) {
         writer->DeleteRow(pk_bytes);
       }
@@ -266,19 +268,18 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     }
   }
 
-  // 3. Write updated columns — only overwrites ColumnId in-place
+  // 3. Write updated columns via serializer
+  gstate.serializer->SetWriter({.txn = txn, .cf = gstate.cf});
+  // No skip_row for UPDATE -- all rows are updated
+  std::vector<bool> no_skip(num_rows, false);
+
   for (const auto& col : gstate.update_columns) {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
-
-      auto slice = SerializeScalarValue(chunk.data[col.input_col_idx], row,
-                                        col.duckdb_type, gstate.value_buffer);
-
-      auto status = txn->Put(gstate.cf, gstate.row_keys[row], slice);
-      if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL, "RocksDB update failed: ", status.ToString());
-      }
     }
+    gstate.serializer->WriteColumn(chunk.data[col.input_col_idx],
+                                   col.duckdb_type, num_rows, gstate.row_keys,
+                                   no_skip, {});
   }
 
   // 4. Insert new index entries
@@ -344,14 +345,10 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col_meta.id);
-
-        auto slice = SerializeScalarValue(
-          chunk.data[src_col], row, col_meta.duckdb_type, gstate.value_buffer);
-
-        for (auto* writer : gstate.active_writers) {
-          writer->Write({&slice, 1}, gstate.row_keys[row]);
-        }
       }
+      gstate.serializer->WriteColumn(chunk.data[src_col], col_meta.duckdb_type,
+                                     num_rows, gstate.row_keys, no_skip,
+                                     gstate.active_writers);
     }
 
     for (auto& writer : gstate.insert_index_writers) {

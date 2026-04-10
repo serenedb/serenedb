@@ -21,8 +21,8 @@
 #pragma once
 
 #include <duckdb.hpp>
-#include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/execution/index/index_type.hpp>
+#include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 
 #include "catalog/identifiers/object_id.h"

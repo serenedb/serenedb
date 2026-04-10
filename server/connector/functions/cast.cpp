@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_pg_array_cast.h"
+#include "connector/functions/cast.h"
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -31,10 +31,9 @@
 #include "pg/parse_array.h"
 
 namespace sdb::connector {
-
 namespace {
 
-// Cast VARCHAR → LIST(VARCHAR) by parsing PG array literal format.
+// Cast VARCHAR -> LIST(VARCHAR) by parsing PG array literal format.
 // Input:  '{1,2,3}' or '{hello,world,NULL}'
 // Output: ['1','2','3'] or ['hello','world',NULL]
 bool PgArrayTextToList(duckdb::Vector& source, duckdb::Vector& result,
@@ -74,31 +73,32 @@ bool PgArrayTextToList(duckdb::Vector& source, duckdb::Vector& result,
         total_elements++;
       },
       [&](std::string_view msg) {
-        throw duckdb::InvalidInputException(
-          "Failed to parse array literal: %s", std::string{msg});
+        throw duckdb::InvalidInputException("Failed to parse array literal: %s",
+                                            std::string{msg});
       });
 
-    duckdb::ListVector::GetData(result)[i] = duckdb::list_entry_t{
-      list_offset, total_elements - list_offset};
+    duckdb::ListVector::GetData(result)[i] =
+      duckdb::list_entry_t{list_offset, total_elements - list_offset};
   }
 
   duckdb::ListVector::SetListSize(result, total_elements);
   return true;
 }
 
-// Bind function: VARCHAR → LIST(T)
-// Chains: VARCHAR → LIST(VARCHAR) [our parser] → LIST(T) [DuckDB native cast]
+// Bind function: VARCHAR -> LIST(T)
+// Chains: VARCHAR -> LIST(VARCHAR) [our parser] -> LIST(T) [DuckDB native cast]
 duckdb::BoundCastInfo PgArrayCastBind(duckdb::BindCastInput& input,
                                       const duckdb::LogicalType& source,
                                       const duckdb::LogicalType& target) {
   auto child_type = duckdb::ListType::GetChildType(target);
 
   if (child_type.id() == duckdb::LogicalTypeId::VARCHAR) {
-    // VARCHAR → LIST(VARCHAR): direct parse, no chain needed
+    // VARCHAR -> LIST(VARCHAR): direct parse, no chain needed
     return duckdb::BoundCastInfo(PgArrayTextToList);
   }
 
-  // VARCHAR → LIST(T): parse to LIST(VARCHAR), then cast LIST(VARCHAR) → LIST(T)
+  // VARCHAR -> LIST(T): parse to LIST(VARCHAR),
+  // then cast LIST(VARCHAR) -> LIST(T)
   auto varchar_list = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   duckdb::GetCastFunctionInput get_input(input.context);
   auto child_cast =
@@ -120,12 +120,12 @@ duckdb::BoundCastInfo PgArrayCastBind(duckdb::BindCastInput& input,
                      duckdb::CastParameters& parameters) -> bool {
     auto& data = parameters.cast_data->Cast<ChainCastData>();
 
-    // Step 1: VARCHAR → LIST(VARCHAR)
+    // Step 1: VARCHAR -> LIST(VARCHAR)
     duckdb::Vector intermediate(
       duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR), count);
     PgArrayTextToList(source, intermediate, count, parameters);
 
-    // Step 2: LIST(VARCHAR) → LIST(T) via DuckDB native cast
+    // Step 2: LIST(VARCHAR) -> LIST(T) via DuckDB native cast
     duckdb::CastParameters child_params(
       parameters, data.child_cast.cast_data.get(), nullptr);
     return data.child_cast.function(intermediate, result, count, child_params);
@@ -136,14 +136,16 @@ duckdb::BoundCastInfo PgArrayCastBind(duckdb::BindCastInput& input,
 
 }  // namespace
 
-void RegisterPgArrayCast(duckdb::DatabaseInstance& db) {
+void RegisterPgCasts(duckdb::DatabaseInstance& db) {
   auto& config = duckdb::DBConfig::GetConfig(db);
   auto& casts = config.GetCastFunctions();
 
-  // Register bind function for VARCHAR → LIST(ANY)
-  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,
-                             duckdb::LogicalType::LIST(duckdb::LogicalType::ANY),
-                             PgArrayCastBind, 100);
+  // Register PG-compatible VARCHAR -> LIST cast so that '{1,2,3}'::int[] works.
+  // Parses PostgreSQL text-format array literals into DuckDB lists.
+  // Register bind function for VARCHAR -> LIST(ANY)
+  casts.RegisterCastFunction(
+    duckdb::LogicalType::VARCHAR,
+    duckdb::LogicalType::LIST(duckdb::LogicalType::ANY), PgArrayCastBind, 100);
 }
 
 }  // namespace sdb::connector

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,23 +20,10 @@
 
 #pragma once
 
-#include <optional>
+#include <duckdb.hpp>
 
-#include "query/executor.h"
+namespace sdb::connector {
 
-namespace sdb::query {
+void RegisterPgCasts(duckdb::DatabaseInstance& db);
 
-class ExplainExecutor final : public Executor {
- public:
-  void Init(Query& query) final { _query = &query; }
-
-  yaclib::Future<> Execute(velox::RowVectorPtr& batch) final;
-  yaclib::Future<> RequestCancel() final { return {}; }
-
- private:
-  velox::RowVectorPtr BuildExplainBatch();
-
-  Query* _query = nullptr;
-};
-
-}  // namespace sdb::query
+}  // namespace sdb::connector

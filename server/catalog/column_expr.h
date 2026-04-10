@@ -20,9 +20,10 @@
 
 #pragma once
 
-#include <duckdb/parser/parsed_expression.hpp>
 #include <vpack/builder.h>
 #include <vpack/slice.h>
+
+#include <duckdb/parser/parsed_expression.hpp>
 
 #include "basics/assert.h"
 #include "basics/result.h"

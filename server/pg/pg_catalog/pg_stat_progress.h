@@ -60,8 +60,7 @@ struct SdbStatProgress {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SdbStatProgress>::GetTableData(
-  velox::memory::MemoryPool& pool);
+std::vector<duckdb::Vector>
+SystemTableSnapshot<SdbStatProgress>::GetTableData();
 
 }  // namespace sdb::pg

@@ -79,7 +79,6 @@ class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
                  duckdb::DropInfo& info) override;
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) override;
-
 };
 
 }  // namespace sdb::connector

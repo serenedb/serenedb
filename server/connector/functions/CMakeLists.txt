@@ -1,8 +1,4 @@
 target_sources(
     serene_connector
-    PRIVATE
-        array.cpp
-        inout.cpp
-        string.cpp
-        system.cpp
+    PRIVATE array.cpp cast.cpp inout.cpp string.cpp system.cpp
 )

@@ -24,6 +24,7 @@
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+
 #include "pg/serialize.h"
 #include "pg/sql_utils.h"
 
@@ -34,11 +35,12 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+namespace {
 
 // PostgreSQL initcap: capitalize first letter of each word, lowercase the rest.
 // Word boundaries are any non-alphanumeric character.
-static void InitcapFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                            duckdb::Vector& result) {
+void InitcapFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
@@ -51,8 +53,8 @@ static void InitcapFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       for (duckdb::idx_t i = 0; i < len; i++) {
         auto c = static_cast<unsigned char>(data[i]);
         if (std::isalpha(c)) {
-          output[i] = static_cast<char>(new_word ? std::toupper(c)
-                                                 : std::tolower(c));
+          output[i] =
+            static_cast<char>(new_word ? std::toupper(c) : std::tolower(c));
           new_word = false;
         } else {
           output[i] = data[i];
@@ -64,10 +66,10 @@ static void InitcapFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// to_bin(int32/int64) -> text — ported from PgToBin
+// to_bin(int32/int64) -> text -- ported from PgToBin
 template<typename T>
-static void ToBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                          duckdb::Vector& result) {
+void ToBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                   duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
     args.data[0], result, args.size(), [&](T value) -> duckdb::string_t {
       using U = std::make_unsigned_t<T>;
@@ -86,10 +88,10 @@ static void ToBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// to_oct(int32/int64) -> text — ported from PgToOct
+// to_oct(int32/int64) -> text -- ported from PgToOct
 template<typename T>
-static void ToOctFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                          duckdb::Vector& result) {
+void ToOctFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                   duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
     args.data[0], result, args.size(), [&](T value) -> duckdb::string_t {
       using U = std::make_unsigned_t<T>;
@@ -108,10 +110,10 @@ static void ToOctFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// to_hex(int32/int64) -> text — PG-compatible lowercase hex
+// to_hex(int32/int64) -> text -- PG-compatible lowercase hex
 template<typename T>
-static void ToHexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                          duckdb::Vector& result) {
+void ToHexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                   duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<T, duckdb::string_t>(
     args.data[0], result, args.size(), [&](T value) -> duckdb::string_t {
       using U = std::make_unsigned_t<T>;
@@ -131,9 +133,9 @@ static void ToHexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// get_byte(bytea, offset) -> integer — ported from PgGetByte
-static void GetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                            duckdb::Vector& result) {
+// get_byte(bytea, offset) -> integer -- ported from PgGetByte
+void GetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, int32_t, int32_t>(
     args.data[0], args.data[1], result, args.size(),
     [](duckdb::string_t data, int32_t offset) -> int32_t {
@@ -146,21 +148,20 @@ static void GetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// set_byte(bytea, offset, value) -> bytea — ported from PgSetByte
-static void SetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                            duckdb::Vector& result) {
+// set_byte(bytea, offset, value) -> bytea -- ported from PgSetByte
+void SetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
   duckdb::TernaryExecutor::Execute<duckdb::string_t, int32_t, int32_t,
                                    duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
-    [&](duckdb::string_t data, int32_t offset, int32_t value)
-      -> duckdb::string_t {
+    [&](duckdb::string_t data, int32_t offset,
+        int32_t value) -> duckdb::string_t {
       if (offset < 0 || offset >= static_cast<int32_t>(data.GetSize())) {
         throw duckdb::InvalidInputException(
           "index %d out of valid range, 0..%d", offset,
           static_cast<int32_t>(data.GetSize()) - 1);
       }
-      auto target =
-        duckdb::StringVector::EmptyString(result, data.GetSize());
+      auto target = duckdb::StringVector::EmptyString(result, data.GetSize());
       auto out = target.GetDataWriteable();
       memcpy(out, data.GetData(), data.GetSize());
       out[offset] = static_cast<char>(value & 0xff);
@@ -169,18 +170,15 @@ static void SetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// convert_from(bytea, encoding) -> text — ported from PgConvertFrom
-static void ConvertFromFunction(duckdb::DataChunk& args,
-                                duckdb::ExpressionState&,
-                                duckdb::Vector& result) {
+// convert_from(bytea, encoding) -> text -- ported from PgConvertFrom
+void ConvertFromFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                         duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t encoding)
-      -> duckdb::string_t {
+    [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
       std::string_view enc(encoding.GetData(), encoding.GetSize());
-      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" &&
-          enc != "utf-8") {
+      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
         throw duckdb::InvalidInputException(
           "conversion from %s is not supported", std::string{enc});
       }
@@ -188,39 +186,34 @@ static void ConvertFromFunction(duckdb::DataChunk& args,
     });
 }
 
-// convert_to(text, encoding) -> bytea — ported from PgConvertTo
-static void ConvertToFunction(duckdb::DataChunk& args,
-                              duckdb::ExpressionState&,
-                              duckdb::Vector& result) {
+// convert_to(text, encoding) -> bytea -- ported from PgConvertTo
+void ConvertToFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                       duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t data, duckdb::string_t encoding)
-      -> duckdb::string_t {
+    [&](duckdb::string_t data, duckdb::string_t encoding) -> duckdb::string_t {
       std::string_view enc(encoding.GetData(), encoding.GetSize());
-      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" &&
-          enc != "utf-8") {
-        throw duckdb::InvalidInputException(
-          "conversion to %s is not supported", std::string{enc});
+      if (enc != "UTF8" && enc != "UTF-8" && enc != "utf8" && enc != "utf-8") {
+        throw duckdb::InvalidInputException("conversion to %s is not supported",
+                                            std::string{enc});
       }
       return duckdb::StringVector::AddStringOrBlob(result, data);
     });
 }
 
-// pg_client_encoding() -> name — ported from PgClientEncoding
-static void PgClientEncodingFunction(duckdb::DataChunk&,
-                                     duckdb::ExpressionState&,
-                                     duckdb::Vector& result) {
+// pg_client_encoding() -> name -- ported from PgClientEncoding
+void PgClientEncodingFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
+                              duckdb::Vector& result) {
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::ConstantVector::GetData<duckdb::string_t>(result)[0] =
     duckdb::StringVector::AddString(result, "UTF8");
 }
 
-// quote_ident(text) -> text — ported from QuoteIdentFunction
+// quote_ident(text) -> text -- ported from QuoteIdentFunction
 // Uses libpg_query's ScanKeywordLookup for reserved word detection.
-static void QuoteIdentFunction(duckdb::DataChunk& args,
-                               duckdb::ExpressionState&,
-                               duckdb::Vector& result) {
+void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
@@ -228,8 +221,7 @@ static void QuoteIdentFunction(duckdb::DataChunk& args,
       bool needs_quoting = str.empty() || (str[0] >= '0' && str[0] <= '9');
       if (!needs_quoting) {
         for (auto c : str) {
-          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-                c == '_')) {
+          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
             needs_quoting = true;
             break;
           }
@@ -237,10 +229,8 @@ static void QuoteIdentFunction(duckdb::DataChunk& args,
       }
       if (!needs_quoting) {
         std::string null_terminated{str};
-        int kwnum =
-          ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
-        if (kwnum >= 0 &&
-            ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
+        int kwnum = ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
+        if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
           needs_quoting = true;
         }
       }
@@ -262,13 +252,12 @@ static void QuoteIdentFunction(duckdb::DataChunk& args,
     });
 }
 
-// octet_length(text) -> int: byte length (DuckDB has it for BLOB/BIT, not VARCHAR)
-static void OctetLengthFunction(duckdb::DataChunk& args,
-                                duckdb::ExpressionState&,
-                                duckdb::Vector& result) {
+// octet_length(text) -> int: byte length (DuckDB has it for BLOB/BIT, not
+// VARCHAR)
+void OctetLengthFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                         duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(),
-    [](duckdb::string_t input) -> int64_t {
+    args.data[0], result, args.size(), [](duckdb::string_t input) -> int64_t {
       return static_cast<int64_t>(input.GetSize());
     });
 }
@@ -276,9 +265,8 @@ static void OctetLengthFunction(duckdb::DataChunk& args,
 // string_to_array(text, delimiter, null_string) -> text[]
 // 3-arg form: splits then replaces null_string matches with NULL.
 // When null_string is NULL, behaves like 2-arg form (no NULL replacement).
-static void StringToArray3Function(duckdb::DataChunk& args,
-                                   duckdb::ExpressionState&,
-                                   duckdb::Vector& result) {
+void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
   auto count = args.size();
   auto& str_data = args.data[0];
   auto& delim_data = args.data[1];
@@ -303,12 +291,15 @@ static void StringToArray3Function(duckdb::DataChunk& args,
       continue;
     }
 
-    auto str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(str_fmt)[str_idx];
-    auto delim = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(delim_fmt)[delim_idx];
+    auto str =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(str_fmt)[str_idx];
+    auto delim = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+      delim_fmt)[delim_idx];
     bool has_null_str = null_str_fmt.validity.RowIsValid(null_str_idx);
     std::string_view ns;
     if (has_null_str) {
-      auto null_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(null_str_fmt)[null_str_idx];
+      auto null_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+        null_str_fmt)[null_str_idx];
       ns = {null_str.GetData(), null_str.GetSize()};
     }
 
@@ -336,8 +327,7 @@ static void StringToArray3Function(duckdb::DataChunk& args,
 
     duckdb::ListVector::Reserve(result, current_size + parts.size());
     auto& child_validity = duckdb::FlatVector::Validity(child);
-    auto child_data =
-      duckdb::FlatVector::GetData<duckdb::string_t>(child);
+    auto child_data = duckdb::FlatVector::GetData<duckdb::string_t>(child);
     for (size_t j = 0; j < parts.size(); j++) {
       if (has_null_str && parts[j] == ns) {
         child_validity.SetInvalid(current_size + j);
@@ -353,8 +343,8 @@ static void StringToArray3Function(duckdb::DataChunk& args,
 }
 
 // PG encode(bytea, format) -> text
-static void EncodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                           duckdb::Vector& result) {
+void EncodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
@@ -376,21 +366,21 @@ static void EncodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         return duckdb::StringVector::AddString(result, encoded);
       }
       if (format == "escape") {
-        // PG escape format — same as byteaout escape
+        // PG escape format -- same as byteaout escape
         auto required = pg::ByteaOutEscapeLength<false>(input);
         auto target = duckdb::StringVector::EmptyString(result, required);
         pg::ByteaOutEscape<false>(target.GetDataWriteable(), input);
         target.Finalize();
         return target;
       }
-      throw duckdb::InvalidInputException(
-        "unrecognized encoding: \"%s\"", std::string{format});
+      throw duckdb::InvalidInputException("unrecognized encoding: \"%s\"",
+                                          std::string{format});
     });
 }
 
 // PG decode(text, format) -> bytea
-static void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                           duckdb::Vector& result) {
+void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
@@ -403,9 +393,15 @@ static void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         auto out = target.GetDataWriteable();
         for (size_t i = 0; i < input.size(); i += 2) {
           auto hex_val = [](char c) -> int {
-            if (c >= '0' && c <= '9') return c - '0';
-            if (c >= 'a' && c <= 'f') return 10 + c - 'a';
-            if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+            if (c >= '0' && c <= '9') {
+              return c - '0';
+            }
+            if (c >= 'a' && c <= 'f') {
+              return 10 + c - 'a';
+            }
+            if (c >= 'A' && c <= 'F') {
+              return 10 + c - 'A';
+            }
             return -1;
           };
           int h1 = hex_val(input[i]);
@@ -423,16 +419,15 @@ static void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         auto blob = duckdb::Blob::FromBase64(data);
         return duckdb::StringVector::AddStringOrBlob(result, blob);
       }
-      throw duckdb::InvalidInputException(
-        "unrecognized encoding: \"%s\"", std::string{format});
+      throw duckdb::InvalidInputException("unrecognized encoding: \"%s\"",
+                                          std::string{format});
     });
 }
 
 // normalize(text) -> text: NFC normalization
 // TODO: call ICU nfc_normalize when available
-static void NormalizeFunction(duckdb::DataChunk& args,
-                              duckdb::ExpressionState&,
-                              duckdb::Vector& result) {
+void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                       duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
@@ -440,10 +435,9 @@ static void NormalizeFunction(duckdb::DataChunk& args,
     });
 }
 
-// PG format(text, ...) — implements %s, %I, %L, %%, positional %n$s, width
-static void PgFormatFunction(duckdb::DataChunk& args,
-                             duckdb::ExpressionState&,
-                             duckdb::Vector& result) {
+// PG format(text, ...) -- implements %s, %I, %L, %%, positional %n$s, width
+void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
   auto count = args.size();
   auto ncols = args.ColumnCount();
 
@@ -463,15 +457,14 @@ static void PgFormatFunction(duckdb::DataChunk& args,
       result_validity.SetInvalid(row);
       continue;
     }
-    auto fmt_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-      vdata[0])[fmt_idx];
+    auto fmt_str =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(vdata[0])[fmt_idx];
     std::string_view fmt{fmt_str.GetData(), fmt_str.GetSize()};
 
     // Helper to get arg as string
     auto get_arg = [&](duckdb::idx_t arg_idx) -> std::optional<std::string> {
       if (arg_idx >= ncols) {
-        throw duckdb::InvalidInputException(
-          "too few arguments for format()");
+        throw duckdb::InvalidInputException("too few arguments for format()");
       }
       auto idx = vdata[arg_idx].sel->get_index(row);
       if (!vdata[arg_idx].validity.RowIsValid(idx)) {
@@ -487,41 +480,55 @@ static void PgFormatFunction(duckdb::DataChunk& args,
       bool needs_quoting = s.empty();
       if (!needs_quoting) {
         for (auto c : s) {
-          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-                c == '_')) {
+          if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
             needs_quoting = true;
             break;
           }
         }
       }
-      if (!needs_quoting) return s;
+      if (!needs_quoting) {
+        return s;
+      }
       std::string out = "\"";
       for (auto c : s) {
-        if (c == '"') out += "\"\"";
-        else out += c;
+        if (c == '"') {
+          out += "\"\"";
+        } else {
+          out += c;
+        }
       }
       out += '"';
       return out;
     };
 
     // Helper: quote literal
-    auto quote_literal = [](const std::optional<std::string>& s) -> std::string {
-      if (!s) return "NULL";
+    auto quote_literal =
+      [](const std::optional<std::string>& s) -> std::string {
+      if (!s) {
+        return "NULL";
+      }
       bool has_backslash = s->find('\\') != std::string::npos;
       std::string out;
-      if (has_backslash) out += "E";
+      if (has_backslash) {
+        out += "E";
+      }
       out += '\'';
       for (auto c : *s) {
-        if (c == '\'') out += "''";
-        else if (c == '\\') out += "\\\\";
-        else out += c;
+        if (c == '\'') {
+          out += "''";
+        } else if (c == '\\') {
+          out += "\\\\";
+        } else {
+          out += c;
+        }
       }
       out += '\'';
       return out;
     };
 
     std::string out;
-    duckdb::idx_t next_arg = 1;  // next sequential arg (1-based, 0 is format string)
+    duckdb::idx_t next_arg =
+      1;  // next sequential arg (1-based, 0 is format string)
 
     for (size_t i = 0; i < fmt.size();) {
       if (fmt[i] != '%') {
@@ -543,7 +550,9 @@ static void PgFormatFunction(duckdb::DataChunk& args,
       duckdb::idx_t arg_pos = 0;
       bool has_position = false;
       size_t save_i = i;
-      while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') i++;
+      while (i < fmt.size() && fmt[i] >= '0' && fmt[i] <= '9') {
+        i++;
+      }
       if (i < fmt.size() && fmt[i] == '$' && i > save_i) {
         arg_pos = std::stoul(std::string{fmt.substr(save_i, i - save_i)});
         has_position = true;
@@ -574,28 +583,28 @@ static void PgFormatFunction(duckdb::DataChunk& args,
 
       std::string formatted;
       switch (spec) {
-      case 's': {
-        auto val = get_arg(arg_idx);
-        formatted = val.value_or("");
-        break;
-      }
-      case 'I': {
-        auto val = get_arg(arg_idx);
-        if (!val) {
-          throw duckdb::InvalidInputException(
-            "null values cannot be formatted as an SQL identifier");
+        case 's': {
+          auto val = get_arg(arg_idx);
+          formatted = val.value_or("");
+          break;
         }
-        formatted = quote_ident(*val);
-        break;
-      }
-      case 'L': {
-        auto val = get_arg(arg_idx);
-        formatted = quote_literal(val);
-        break;
-      }
-      default:
-        throw duckdb::InvalidInputException(
-          "unrecognized format() type specifier \"%c\"", spec);
+        case 'I': {
+          auto val = get_arg(arg_idx);
+          if (!val) {
+            throw duckdb::InvalidInputException(
+              "null values cannot be formatted as an SQL identifier");
+          }
+          formatted = quote_ident(*val);
+          break;
+        }
+        case 'L': {
+          auto val = get_arg(arg_idx);
+          formatted = quote_literal(val);
+          break;
+        }
+        default:
+          throw duckdb::InvalidInputException(
+            "unrecognized format() type specifier \"%c\"", spec);
       }
 
       // Apply width
@@ -614,6 +623,8 @@ static void PgFormatFunction(duckdb::DataChunk& args,
     result_data[row] = duckdb::StringVector::AddString(result, out);
   }
 }
+
+}  // namespace
 
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
@@ -638,97 +649,114 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
-  // format(text, ...) -> text  (PG-compatible, overrides DuckDB's fmt-style format)
+  // format(text, ...) -> text  (PG-compatible, overrides DuckDB's fmt-style
+  // format)
   {
-    duckdb::ScalarFunction func{
-      "format", {duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR, PgFormatFunction};
+    duckdb::ScalarFunction func{"format",
+                                {duckdb::LogicalType::VARCHAR},
+                                duckdb::LogicalType::VARCHAR,
+                                PgFormatFunction};
     func.varargs = duckdb::LogicalType::ANY;
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);
   }
 
   // normalize(text) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "normalize", {duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::VARCHAR, NormalizeFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"normalize",
+                                                 {duckdb::LogicalType::VARCHAR},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 NormalizeFunction});
 
   // encode(bytea, text) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{
     "encode",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::VARCHAR, EncodeFunction});
+    duckdb::LogicalType::VARCHAR,
+    EncodeFunction});
 
   // decode(text, text) -> bytea
   loader.RegisterFunction(duckdb::ScalarFunction{
     "decode",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BLOB, DecodeFunction});
+    duckdb::LogicalType::BLOB,
+    DecodeFunction});
 
   // octet_length(varchar) -> bigint
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "octet_length", {duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BIGINT, OctetLengthFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"octet_length",
+                                                 {duckdb::LogicalType::VARCHAR},
+                                                 duckdb::LogicalType::BIGINT,
+                                                 OctetLengthFunction});
 
   // to_bin(int32), to_bin(int64)
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "to_bin", {duckdb::LogicalType::INTEGER}, duckdb::LogicalType::VARCHAR,
-    ToBinFunction<int32_t>});
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "to_bin", {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::VARCHAR,
-    ToBinFunction<int64_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{"to_bin",
+                                                 {duckdb::LogicalType::INTEGER},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 ToBinFunction<int32_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{"to_bin",
+                                                 {duckdb::LogicalType::BIGINT},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 ToBinFunction<int64_t>});
 
   // to_oct(int32), to_oct(int64)
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "to_oct", {duckdb::LogicalType::INTEGER}, duckdb::LogicalType::VARCHAR,
-    ToOctFunction<int32_t>});
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "to_oct", {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::VARCHAR,
-    ToOctFunction<int64_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{"to_oct",
+                                                 {duckdb::LogicalType::INTEGER},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 ToOctFunction<int32_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{"to_oct",
+                                                 {duckdb::LogicalType::BIGINT},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 ToOctFunction<int64_t>});
 
   // to_hex(int32), to_hex(int64)
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "to_hex", {duckdb::LogicalType::INTEGER}, duckdb::LogicalType::VARCHAR,
-    ToHexFunction<int32_t>});
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "to_hex", {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::VARCHAR,
-    ToHexFunction<int64_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{"to_hex",
+                                                 {duckdb::LogicalType::INTEGER},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 ToHexFunction<int32_t>});
+  loader.RegisterFunction(duckdb::ScalarFunction{"to_hex",
+                                                 {duckdb::LogicalType::BIGINT},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 ToHexFunction<int64_t>});
 
   // get_byte(bytea, int) -> int
   loader.RegisterFunction(duckdb::ScalarFunction{
     "get_byte",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::INTEGER},
-    duckdb::LogicalType::INTEGER, GetByteFunction});
+    duckdb::LogicalType::INTEGER,
+    GetByteFunction});
 
   // set_byte(bytea, int, int) -> bytea
   loader.RegisterFunction(duckdb::ScalarFunction{
     "set_byte",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::INTEGER,
      duckdb::LogicalType::INTEGER},
-    duckdb::LogicalType::BLOB, SetByteFunction});
+    duckdb::LogicalType::BLOB,
+    SetByteFunction});
 
   // convert_from(bytea, encoding) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{
     "convert_from",
     {duckdb::LogicalType::BLOB, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::VARCHAR, ConvertFromFunction});
+    duckdb::LogicalType::VARCHAR,
+    ConvertFromFunction});
 
   // convert_to(text, encoding) -> bytea
   loader.RegisterFunction(duckdb::ScalarFunction{
     "convert_to",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BLOB, ConvertToFunction});
+    duckdb::LogicalType::BLOB,
+    ConvertToFunction});
 
   // pg_client_encoding() -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "pg_client_encoding", {}, duckdb::LogicalType::VARCHAR,
-    PgClientEncodingFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"pg_client_encoding",
+                                                 {},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 PgClientEncodingFunction});
 
   // quote_ident(text) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "quote_ident", {duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::VARCHAR, QuoteIdentFunction});
-
+  loader.RegisterFunction(duckdb::ScalarFunction{"quote_ident",
+                                                 {duckdb::LogicalType::VARCHAR},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 QuoteIdentFunction});
 }
 
 }  // namespace sdb::connector

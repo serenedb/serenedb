@@ -87,7 +87,6 @@ struct PgIndex {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgIndex>::GetTableData(
-  velox::memory::MemoryPool& pool);
+std::vector<duckdb::Vector> SystemTableSnapshot<PgIndex>::GetTableData();
 
 }  // namespace sdb::pg

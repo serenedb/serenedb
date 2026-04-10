@@ -97,7 +97,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     }
     state->columns.push_back(DeleteColumnMeta{
       .id = col.id,
-      .duckdb_type = VeloxTypeToDuckDB(col.type),
+      .duckdb_type = col.type,
     });
   }
 
@@ -107,7 +107,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     if (i < pk_col_ids.size()) {
       for (const auto& col : columns) {
         if (col.id == pk_col_ids[i]) {
-          pk_type = VeloxTypeToDuckDB(col.type);
+          pk_type = col.type;
           break;
         }
       }
@@ -219,7 +219,7 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
   duckdb_primary_key::CreateBatchWithColumnSlot(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // 2. Delete index entries — old values are in the input chunk
+  // 2. Delete index entries -- old values are in the input chunk
   if (!gstate.index_writers.empty()) {
     for (auto& writer : gstate.index_writers) {
       writer->Init(num_rows, chunk);
@@ -227,11 +227,11 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       // DeleteRow needs PK bytes (without ColumnId prefix)
-      auto pk_bytes = std::string_view{
-        gstate.row_keys[row].data() + sizeof(catalog::Column::Id) +
-          sizeof(ObjectId),
-        gstate.row_keys[row].size() - sizeof(catalog::Column::Id) -
-          sizeof(ObjectId)};
+      auto pk_bytes =
+        std::string_view{gstate.row_keys[row].data() +
+                           sizeof(catalog::Column::Id) + sizeof(ObjectId),
+                         gstate.row_keys[row].size() -
+                           sizeof(catalog::Column::Id) - sizeof(ObjectId)};
       for (auto& writer : gstate.index_writers) {
         writer->DeleteRow(pk_bytes);
       }
@@ -242,7 +242,7 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     }
   }
 
-  // 3. Delete all column cells — only overwrites ColumnId in-place
+  // 3. Delete all column cells -- only overwrites ColumnId in-place
   for (const auto& col : gstate.columns) {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);

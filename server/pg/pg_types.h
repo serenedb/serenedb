@@ -22,24 +22,23 @@
 
 #include <velox/type/Type.h>
 
+#include <duckdb/common/types/value.hpp>
 #include <expected>
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
-#include "pg/duckdb_pg_types.h"
 
 namespace sdb {
 namespace catalog {
 
 struct Snapshot;
 
-}
+}  // namespace catalog
 
 class ConnectionContext;
 
-}  // namespace sdb
-namespace sdb::pg {
+namespace pg {
 
 using ParamIndex = int16_t;
 
@@ -114,53 +113,10 @@ enum PgTypeOID : int32_t {
   kXid8Array = 271,
 };
 
-constexpr int32_t Kind2Oid(velox::TypeKind kind, bool in_array) {
-  switch (kind) {
-    case velox::TypeKind::UNKNOWN: {
-      return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
-    }
-    case velox::TypeKind::BOOLEAN: {
-      return in_array ? PgTypeOID::kBoolArray : PgTypeOID::kBool;
-    }
-    case velox::TypeKind::TINYINT: {
-      return in_array ? PgTypeOID::kCharArray : PgTypeOID::kChar;
-    }
-    case velox::TypeKind::SMALLINT: {
-      return in_array ? PgTypeOID::kInt2Array : PgTypeOID::kInt2;
-    }
-    case velox::TypeKind::INTEGER: {
-      return in_array ? PgTypeOID::kInt4Array : PgTypeOID::kInt4;
-    }
-    case velox::TypeKind::BIGINT: {
-      return in_array ? PgTypeOID::kInt8Array : PgTypeOID::kInt8;
-    }
-    case velox::TypeKind::REAL: {
-      return in_array ? PgTypeOID::kFloat4Array : PgTypeOID::kFloat4;
-    }
-    case velox::TypeKind::DOUBLE: {
-      return in_array ? PgTypeOID::kFloat8Array : PgTypeOID::kFloat8;
-    }
-    case velox::TypeKind::TIMESTAMP: {
-      return in_array ? PgTypeOID::kTimestampArray : PgTypeOID::kTimestamp;
-    }
-    case velox::TypeKind::VARCHAR: {
-      return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
-    }
-    case velox::TypeKind::VARBINARY: {
-      return in_array ? PgTypeOID::kByteaArray : PgTypeOID::kBytea;
-    }
-    default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "unsupported converting velox -> pg type kind: ",
-                magic_enum::enum_name(kind));
-  }
-}
+int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
+duckdb::LogicalType Oid2Type(int32_t oid);
 
-int32_t Type2Oid(const velox::TypePtr& type, bool in_array = false);
-velox::TypePtr Oid2Type(int32_t oid);
-
-std::string ToPgTypeString(const velox::Type& type);
-std::string ToPgTypeString(const velox::TypePtr& type);
+std::string ToPgTypeString(const duckdb::LogicalType& type);
 
 inline constexpr uint64_t kInvalidOid = 0;
 
@@ -175,7 +131,11 @@ uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);
 
 enum class VarFormat : int16_t;
 
-std::expected<velox::Variant, DeserializeError> DeserializeParameter(
-  const velox::Type& type, VarFormat format, std::string_view data);
+enum class DeserializeError { InvalidRepresentation };
 
-}  // namespace sdb::pg
+// Deserialize a PG wire protocol parameter value into a DuckDB Value.
+std::expected<duckdb::Value, DeserializeError> DuckDBDeserializeParameter(
+  const duckdb::LogicalType& type, VarFormat format, std::string_view data);
+
+}  // namespace pg
+}  // namespace sdb

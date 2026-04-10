@@ -109,7 +109,7 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
     throw duckdb::InvalidInputException("Failed to drop schema: %s",
                                         std::string{r.errorMessage()});
   }
-  // No cache to invalidate — schema entries live on snapshot
+  // No cache to invalidate -- schema entries live on snapshot
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
@@ -130,10 +130,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &planner.ResolveDefaultsProjection(op, *plan);
   }
 
-  // Use SST bulk insert for COPY FROM / INSERT...SELECT (has child plan).
-  // SST bypasses transactions — no conflict detection.
-  bool use_sst = plan != nullptr && op.on_conflict_info.action_type ==
-                                      duckdb::OnConflictAction::THROW;
+  // TODO(mbkkt): Re-enable SST when DuckDBColumnSerializer is ported to SST
+  // writer path. For now, always use transaction-based insert.
+  bool use_sst = false;
 
   if (use_sst) {
     auto* sorted_plan = plan.get();
@@ -154,7 +153,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
             auto col_expr =
               duckdb::make_uniq_base<duckdb::Expression,
                                      duckdb::BoundReferenceExpression>(
-                VeloxTypeToDuckDB(columns[i].type), i);
+                columns[i].type, i);
             orders.emplace_back(duckdb::OrderType::ASCENDING,
                                 duckdb::OrderByNullType::NULLS_FIRST,
                                 std::move(col_expr));
@@ -344,8 +343,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       for (size_t i = 0; i < columns.size(); ++i) {
         if (columns[i].name == col_name) {
           create_index_info->column_ids.push_back(i);
-          create_index_info->scan_types.push_back(
-            VeloxTypeToDuckDB(columns[i].type));
+          create_index_info->scan_types.push_back(columns[i].type);
           break;
         }
       }
@@ -361,7 +359,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
     get.types.clear();
     for (size_t i = 0; i < columns.size(); ++i) {
-      get.types.push_back(VeloxTypeToDuckDB(columns[i].type));
+      get.types.push_back(columns[i].type);
     }
   }
   create_index_info->names = get.names;
@@ -374,7 +372,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   for (size_t i = 0; i < columns.size(); ++i) {
     expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-      VeloxTypeToDuckDB(columns[i].type),
+      columns[i].type,
       duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
   }
 

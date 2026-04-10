@@ -29,19 +29,15 @@ namespace sdb::catalog {
 
 PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
                              std::string_view name, std::string sql)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 id,
-                 std::string{name},
-                 ObjectType::PgSqlFunction},
+  : SchemaObject{{}, database_id,       {},
+                 id, std::string{name}, ObjectType::PgSqlFunction},
     _sql{std::move(sql)} {}
 
-std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(
-  vpack::Slice slice, ReadContext ctx) {
+std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
+                                                           ReadContext ctx) {
   auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
-  auto name = basics::VPackHelper::getString(
-    slice, StaticStrings::kDataSourceName, {});
+  auto name =
+    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
   auto sql = basics::VPackHelper::getString(slice, "sql", {});
   return std::make_shared<PgSqlFunction>(ctx.database_id, id, name,
                                          std::string{sql});

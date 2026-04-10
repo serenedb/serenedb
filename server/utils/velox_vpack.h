@@ -25,6 +25,11 @@
 #include <velox/type/Type.h>
 #include <vpack/vpack.h>
 
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/types.hpp>
+
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 
@@ -83,3 +88,29 @@ void VPackRead(auto ctx, velox::TypePtr& type) {
 }
 
 }  // namespace facebook::velox
+namespace duckdb {
+
+void VPackWrite(auto ctx, const duckdb::LogicalType& type) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(type, stream);
+  auto data = stream.GetData();
+  auto size = stream.GetPosition();
+  ctx.vpack().add(std::string_view{reinterpret_cast<const char*>(data), size});
+}
+
+void VPackRead(auto ctx, duckdb::LogicalType& type) {
+  auto vpack = ctx.vpack();
+  if (vpack.isString()) {
+    auto str = vpack.stringViewUnchecked();
+    duckdb::MemoryStream stream(
+      const_cast<duckdb::data_t*>(
+        reinterpret_cast<const duckdb::data_t*>(str.data())),
+      str.size());
+    duckdb::BinaryDeserializer deserializer(stream);
+    type = duckdb::LogicalType::Deserialize(deserializer);
+  } else {
+    type = duckdb::LogicalType::VARCHAR;
+  }
+}
+
+}  // namespace duckdb

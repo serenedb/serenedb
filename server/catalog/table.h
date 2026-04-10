@@ -21,8 +21,9 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
 #include <vpack/slice.h>
+
+#include <duckdb/common/types.hpp>
 
 #include "basics/fwd.h"
 #include "catalog/identifiers/identifier.h"
@@ -123,7 +124,7 @@ class Table : public SchemaObject {
 
   const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
 
-  velox::RowTypePtr MakeTypeFromColIds(
+  duckdb::LogicalType MakeTypeFromColIds(
     std::span<const catalog::Column::Id> ids) const;
 
  private:
@@ -136,13 +137,13 @@ class Table : public SchemaObject {
     LookupCache(std::span<const catalog::Column> columns,
                 std::span<const catalog::Column::Id> pk_columns);
 
-    velox::RowTypePtr MakeTypeFromColIds(
+    duckdb::LogicalType MakeTypeFromColIds(
       std::span<const catalog::Column::Id> ids) const;
 
     NameToColumnMap name2column;
     IdToColumnMap id2column;
-    velox::RowTypePtr pk_type;
-    velox::RowTypePtr row_type;
+    duckdb::LogicalType pk_type;
+    duckdb::LogicalType row_type;
   };
 
   const TableType _type = TableType::Unknown;

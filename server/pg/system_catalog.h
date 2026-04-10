@@ -45,7 +45,4 @@ std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
 std::shared_ptr<catalog::PgSqlView> GetView(std::string_view name);
 std::shared_ptr<catalog::PgSqlView> GetInfoSchemaView(std::string_view name);
 
-void RegisterSystemViews();
-void RegisterSystemFunctions();
-
 }  // namespace sdb::pg

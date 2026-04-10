@@ -38,7 +38,6 @@ struct SdbLog {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<SdbLog>::GetTableData(
-  velox::memory::MemoryPool& pool);
+std::vector<duckdb::Vector> SystemTableSnapshot<SdbLog>::GetTableData();
 
 }  // namespace sdb::pg

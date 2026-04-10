@@ -20,11 +20,12 @@
 
 #include "connector/duckdb_tokenizer_function.h"
 
+#include <vpack/builder.h>
+#include <vpack/value.h>
+
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <vpack/builder.h>
-#include <vpack/value.h>
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
@@ -82,7 +83,7 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   builder.add(std::string_view{"properties"},
               vpack::Value(vpack::ValueType::Object));
   for (auto& [key, value] : options) {
-    // Skip feature options — handled separately
+    // Skip feature options -- handled separately
     if (key == "frequency" || key == "position" || key == "offset" ||
         key == "norm") {
       continue;
@@ -105,7 +106,7 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   builder.close();  // close properties
   builder.close();  // close analyzer
 
-  // features array — needs a key inside the root object
+  // features array -- needs a key inside the root object
   search::Features features;
   for (auto& [key, value] : options) {
     if ((key == "frequency" || key == "position" || key == "offset" ||
@@ -145,9 +146,8 @@ void CreateTSDictionaryPragma(duckdb::ClientContext& context,
   auto databases = snapshot->GetDatabases();
   SDB_ASSERT(!databases.empty());
 
-  auto r =
-    catalog.CreateTokenizer(databases.front()->GetId(), "public",
-                            std::move(tokenizer));
+  auto r = catalog.CreateTokenizer(databases.front()->GetId(), "public",
+                                   std::move(tokenizer));
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
     return;

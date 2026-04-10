@@ -23,10 +23,12 @@
 #include <duckdb/common/file_system.hpp>
 
 namespace sdb::message {
+
 class Buffer;
 }
 
 namespace sdb::pg {
+
 class CopyMessagesQueue;
 }
 
@@ -54,18 +56,17 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
     const std::string& path, duckdb::FileOpenFlags flags,
     duckdb::optional_ptr<duckdb::FileOpener> opener) override;
 
-  // Sequential read — reads from CopyMessagesQueue
+  // Sequential read -- reads from CopyMessagesQueue
   int64_t Read(duckdb::FileHandle& handle, void* buffer,
                int64_t nr_bytes) override;
-  // Positional read — not supported for streaming
+  // Positional read -- not supported for streaming
   void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
             duckdb::idx_t location) override;
 
   bool FileExists(const std::string& filename,
                   duckdb::optional_ptr<duckdb::FileOpener> opener) override;
   duckdb::vector<duckdb::OpenFileInfo> Glob(
-    const std::string& path,
-    duckdb::FileOpener* opener) override;
+    const std::string& path, duckdb::FileOpener* opener) override;
 
   int64_t GetFileSize(duckdb::FileHandle& handle) override;
   bool CanSeek() override { return false; }

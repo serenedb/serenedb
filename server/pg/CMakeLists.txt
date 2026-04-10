@@ -1,4 +1,3 @@
-add_subdirectory(commands)
 add_subdirectory(functions)
 add_subdirectory(sdb_catalog)
 target_sources(
@@ -30,10 +29,7 @@ target_sources(
         progress_tracker.cpp
         sdb_catalog/sdb_log.cpp
         functions.cpp
-        duckdb_pg_types.cpp
-        duckdb_serialize.cpp
         sql_def.cpp
-        sql_parser.cpp
         sql_utils.cpp
         isolation_level.cpp
         option_help.cpp

@@ -5,12 +5,10 @@ add_library(
     data_sink.cpp
     primary_key.cpp
     data_source.cpp
-    serenedb_connector.cpp
     key_utils.cpp
     rocksdb_sink_writer.cpp
     search_sink_writer.cpp
     search_remove_filter.cpp
-    file_table.cpp
     rocksdb_column_decoder.cpp
     rocksdb_materializer.cpp
     parquet_materializer.cpp
@@ -36,7 +34,6 @@ add_library(
     duckdb_tokenizer_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
-    duckdb_pg_array_cast.cpp
     duckdb_search_sink_writer.cpp
     duckdb_search_functions.cpp
     duckdb_vacuum_function.cpp

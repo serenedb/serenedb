@@ -60,21 +60,14 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgNamespace>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+std::vector<duckdb::Vector> SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
   auto snapshot = _config.EnsureCatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, *snapshot);
 
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<PgNamespace>);
-  boost::pfr::for_each_field(
-    PgNamespace{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
-    });
+  auto result = CreateColumns<PgNamespace>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
   return result;
 }

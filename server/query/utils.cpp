@@ -35,20 +35,6 @@ std::string CleanColumnNames(std::string text) {
   return text;
 }
 
-bool Equals(const axiom::logical_plan::Expr& lhs,
-            const axiom::logical_plan::Expr& rhs) {
-  return axiom::logical_plan::ExprPrinter::toText(lhs) ==
-         axiom::logical_plan::ExprPrinter::toText(rhs);
-}
-
-bool Equals(const axiom::logical_plan::Expr* lhs,
-            const axiom::logical_plan::Expr* rhs) {
-  if (lhs && rhs) {
-    return Equals(*lhs, *rhs);
-  }
-  return !lhs && !rhs;
-}
-
 std::string_view ToAlias(std::string_view name) {
   return name.substr(0, name.find_last_of(kColumnSeparator));
 }

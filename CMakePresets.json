@@ -28,6 +28,7 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "Address",
         "SDB_DEV": "On",
         "SDB_ALLOC": "SYS"
       }

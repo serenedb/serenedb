@@ -145,8 +145,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
 }
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+std::vector<duckdb::Vector> SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   auto catalog = _config.EnsureCatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, *catalog);
@@ -154,7 +153,10 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   {
     VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {
       auto row_type = table.RowType();
-      int16_t natts = row_type ? static_cast<int16_t>(row_type->size()) : 0;
+      int16_t natts = row_type.id() == duckdb::LogicalTypeId::STRUCT
+                        ? static_cast<int16_t>(
+                            duckdb::StructType::GetChildTypes(row_type).size())
+                        : 0;
       PgClass row{
         .oid = table.Id().id(),
         .relname = table.Name(),
@@ -231,10 +233,10 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
     });
   }
 
-  auto result = CreateColumns<PgClass>(values, &pool);
+  auto result = CreateColumns<PgClass>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
 
   return result;

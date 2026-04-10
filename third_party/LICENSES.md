@@ -6,7 +6,6 @@
 
 * [Abseil - C++ Common Libraries](https://abseil.io)
 * [Velox](https://github.com/facebookincubator/velox)
-* [Axiom](https://github.com/facebookincubator/axiom)
 * [fastvalidate-utf8](https://github.com/lemire/fastvalidate-utf-8)
 * [RocksDB](https://github.com/facebook/rocksdb)
 * [S2 Geometry Library](https://s2geometry.io/)

@@ -22,15 +22,14 @@
 
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
-
 #include <iresearch/search/filter.hpp>
-
 #include <variant>
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 
 namespace irs {
+
 class IndexReader;
 }
 
@@ -38,7 +37,7 @@ class IndexReader;
 
 namespace sdb::connector {
 
-// Scan source variants — determines how the scan function reads data.
+// Scan source variants -- determines how the scan function reads data.
 struct FullTableScan {};
 
 struct SearchScan {

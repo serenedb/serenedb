@@ -20,11 +20,10 @@
 
 #include "connector/duckdb_copy_filesystem.h"
 
-#include <duckdb/common/file_opener.hpp>
-#include <duckdb/main/client_context.hpp>
-
 #include <absl/base/internal/endian.h>
 
+#include <duckdb/common/file_opener.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <iostream>
 
 #include "basics/assert.h"
@@ -42,9 +41,8 @@ constexpr std::string_view kDevStdin = "/dev/stdin";
 
 // Sends CopyInResponse to the PG client.
 void SendCopyInResponse(message::Buffer& send_buffer, size_t column_count) {
-  const size_t msg_size = sizeof(uint8_t) + sizeof(int32_t) +
-                          sizeof(uint8_t) + sizeof(int16_t) +
-                          (column_count * sizeof(int16_t));
+  const size_t msg_size = sizeof(uint8_t) + sizeof(int32_t) + sizeof(uint8_t) +
+                          sizeof(int16_t) + (column_count * sizeof(int16_t));
   auto* data = send_buffer.GetContiguousData(msg_size);
   data[0] = PQ_MSG_COPY_IN_RESPONSE;
   absl::big_endian::Store32(data + 1, static_cast<int32_t>(msg_size - 1));
@@ -58,20 +56,21 @@ void SendCopyInResponse(message::Buffer& send_buffer, size_t column_count) {
 
 // FileHandle that reads from the PG CopyMessagesQueue.
 //
-// DuckDB opens /dev/stdin twice — once for CSV sniffing (during Prepare),
+// DuckDB opens /dev/stdin twice -- once for CSV sniffing (during Prepare),
 // once for actual data reading (during Execute). The first open sends
 // CopyInResponse, reads from the queue, and buffers everything.
 // The second open replays from the buffer then continues from the queue.
 struct CopyQueueFileHandle final : public duckdb::FileHandle {
-  CopyQueueFileHandle(duckdb::FileSystem& fs,
-                      SereneDBClientState& client_state)
-    : duckdb::FileHandle(fs, std::string{kDevStdin},
-                         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
+  CopyQueueFileHandle(duckdb::FileSystem& fs, SereneDBClientState& client_state)
+    : duckdb::FileHandle(
+        fs, std::string{kDevStdin},
+        duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
       state(client_state),
       iterator(*client_state.copy_queue) {
     auto open_idx = state.copy_stdin_open_count++;
     if (open_idx == 0) {
-      // Very first open: CopyInResponse + StartListening already done by PG layer.
+      // Very first open: CopyInResponse + StartListening already done by PG
+      // layer.
       state.copy_stdin_buffer = std::make_shared<std::string>();
     }
     buffer = state.copy_stdin_buffer;
@@ -137,22 +136,21 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   auto client_context = duckdb::FileOpener::TryGetClientContext(opener);
 
   // Print backtrace-style info to see who is opening the file
-  std::cerr << ">>> CopyFS::OpenFile path=" << path
-            << " open#=" << (client_context ?
-                std::to_string(client_context->registered_state
-                  ->Get<SereneDBClientState>(kSereneDBClientStateKey)
-                  ->copy_stdin_open_count) : "?")
+  std::cerr << ">>> CopyFS::OpenFile path=" << path << " open#="
+            << (client_context ? std::to_string(client_context->registered_state
+                                                  ->Get<SereneDBClientState>(
+                                                    kSereneDBClientStateKey)
+                                                  ->copy_stdin_open_count)
+                               : "?")
             << std::endl;
   SDB_ASSERT(client_context, "No ClientContext available for COPY FROM STDIN");
 
-  auto sdb_state =
-    client_context->registered_state->Get<SereneDBClientState>(
-      kSereneDBClientStateKey);
+  auto sdb_state = client_context->registered_state->Get<SereneDBClientState>(
+    kSereneDBClientStateKey);
   SDB_ASSERT(sdb_state, "SereneDB client state not registered");
   SDB_ASSERT(sdb_state->copy_queue,
              "CopyMessagesQueue not set for COPY FROM STDIN");
-  SDB_ASSERT(sdb_state->send_buffer,
-             "Send buffer not set for COPY FROM STDIN");
+  SDB_ASSERT(sdb_state->send_buffer, "Send buffer not set for COPY FROM STDIN");
 
   return duckdb::make_uniq<CopyQueueFileHandle>(*this, *sdb_state);
 }
@@ -165,8 +163,11 @@ int64_t SereneDBCopyFileSystem::Read(duckdb::FileHandle& handle, void* buffer,
     std::cerr << ">>> CopyFS::Read " << result << " bytes: [";
     auto* p = static_cast<char*>(buffer);
     for (int64_t i = 0; i < std::min(result, int64_t(80)); ++i) {
-      if (p[i] >= 32 && p[i] < 127) std::cerr << p[i];
-      else std::cerr << "\\x" << std::hex << (int)(unsigned char)p[i] << std::dec;
+      if (p[i] >= 32 && p[i] < 127) {
+        std::cerr << p[i];
+      } else {
+        std::cerr << "\\x" << std::hex << (int)(unsigned char)p[i] << std::dec;
+      }
     }
     std::cerr << "]" << std::endl;
   }
@@ -205,8 +206,7 @@ void SereneDBCopyFileSystem::Reset(duckdb::FileHandle& handle) {
     "Reset not supported for COPY FROM STDIN");
 }
 
-duckdb::idx_t SereneDBCopyFileSystem::SeekPosition(
-  duckdb::FileHandle& handle) {
+duckdb::idx_t SereneDBCopyFileSystem::SeekPosition(duckdb::FileHandle& handle) {
   return 0;
 }
 

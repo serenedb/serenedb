@@ -31,11 +31,11 @@
 
 namespace sdb::connector {
 
-// PG-compatible byteain — ported from server/pg/functions/inout.cpp
+// PG-compatible byteain -- ported from server/pg/functions/inout.cpp
 // ByteaInFunction. Handles \x hex format (whitespace between pairs ignored)
 // and PG escape format (\\ and \NNN octal).
 static duckdb::string_t PgByteaIn(std::string_view input,
-                                   duckdb::Vector& result_vec) {
+                                  duckdb::Vector& result_vec) {
   if (input.starts_with("\\x")) {
     std::string_view payload{input.begin() + 2, input.end()};
     // Worst case: every 2 chars = 1 byte
@@ -51,8 +51,8 @@ static duckdb::string_t PgByteaIn(std::string_view input,
       }
       const char h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
       if (h1 == -1) {
-        throw duckdb::InvalidInputException(
-          "invalid hexadecimal digit: \"%c\"", c);
+        throw duckdb::InvalidInputException("invalid hexadecimal digit: \"%c\"",
+                                            c);
       }
       if (i + 1 >= payload.size()) {
         throw duckdb::InvalidInputException(
@@ -61,14 +61,13 @@ static duckdb::string_t PgByteaIn(std::string_view input,
       const char h2 =
         absl::kHexValueStrict[static_cast<unsigned char>(payload[i + 1])];
       if (h2 == -1) {
-        throw duckdb::InvalidInputException(
-          "invalid hexadecimal digit: \"%c\"", payload[i + 1]);
+        throw duckdb::InvalidInputException("invalid hexadecimal digit: \"%c\"",
+                                            payload[i + 1]);
       }
       *out++ = static_cast<char>((h1 << 4) + h2);
       i += 2;
     }
-    auto new_size =
-      static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
+    auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
     target.Finalize();
     return duckdb::StringVector::AddStringOrBlob(
       result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
@@ -98,31 +97,27 @@ static duckdb::string_t PgByteaIn(std::string_view input,
       throw duckdb::InvalidInputException(
         "invalid input syntax for type bytea");
     }
-    if (input[i + 1] >= '0' && input[i + 1] <= '3' &&
-        input[i + 2] >= '0' && input[i + 2] <= '7' &&
-        input[i + 3] >= '0' && input[i + 3] <= '7') {
-      *out++ = static_cast<char>(((input[i + 1] - '0') << 6) +
-                                  ((input[i + 2] - '0') << 3) +
-                                  (input[i + 3] - '0'));
+    if (input[i + 1] >= '0' && input[i + 1] <= '3' && input[i + 2] >= '0' &&
+        input[i + 2] <= '7' && input[i + 3] >= '0' && input[i + 3] <= '7') {
+      *out++ =
+        static_cast<char>(((input[i + 1] - '0') << 6) +
+                          ((input[i + 2] - '0') << 3) + (input[i + 3] - '0'));
       i += 4;
     } else {
       throw duckdb::InvalidInputException(
         "invalid input syntax for type bytea");
     }
   }
-  auto new_size =
-    static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
+  auto new_size = static_cast<duckdb::idx_t>(out - target.GetDataWriteable());
   target.Finalize();
   return duckdb::StringVector::AddStringOrBlob(
     result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
 }
 
 static bool PgVarcharToBlobCast(duckdb::Vector& source, duckdb::Vector& result,
-                                duckdb::idx_t count,
-                                duckdb::CastParameters&) {
+                                duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    source, result, count,
-    [&](duckdb::string_t input) -> duckdb::string_t {
+    source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
       return PgByteaIn({input.GetData(), input.GetSize()}, result);
     });
   return true;
@@ -136,7 +131,7 @@ struct ByteaOutCastData : public duckdb::BoundCastData {
   }
 };
 
-// PG-compatible byteaout — ported from server/pg/functions/inout.cpp
+// PG-compatible byteaout -- ported from server/pg/functions/inout.cpp
 // ByteaOutFunction. Respects bytea_output setting (hex or escape).
 static bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                                 duckdb::idx_t count,
@@ -147,13 +142,11 @@ static bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   }
 
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    source, result, count,
-    [&](duckdb::string_t input) -> duckdb::string_t {
+    source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view value{input.GetData(), input.GetSize()};
       if (use_escape) {
         const auto required_size = pg::ByteaOutEscapeLength<false>(value);
-        auto target =
-          duckdb::StringVector::EmptyString(result, required_size);
+        auto target = duckdb::StringVector::EmptyString(result, required_size);
         pg::ByteaOutEscape<false>(target.GetDataWriteable(), value);
         target.Finalize();
         return target;
@@ -168,9 +161,9 @@ static bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
-static duckdb::BoundCastInfo PgBlobToVarcharBind(
-  duckdb::BindCastInput& input, const duckdb::LogicalType&,
-  const duckdb::LogicalType&) {
+static duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
+                                                 const duckdb::LogicalType&,
+                                                 const duckdb::LogicalType&) {
   bool use_escape = false;
   if (input.context) {
     duckdb::Value value;

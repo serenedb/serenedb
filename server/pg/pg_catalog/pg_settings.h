@@ -40,11 +40,8 @@ struct SdbShowAllSettings {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SdbShowAllSettings>::GetTableData(
-  velox::memory::MemoryPool& pool) {
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<SdbShowAllSettings>);
+inline std::vector<duckdb::Vector>
+SystemTableSnapshot<SdbShowAllSettings>::GetTableData() {
   std::vector<SdbShowAllSettings> values;
 
   _config.VisitFullDescription([&](std::string_view name,
@@ -54,21 +51,15 @@ SystemTableSnapshot<SdbShowAllSettings>::GetTableData(
                         std::string{description});
   });
 
-  boost::pfr::for_each_field(
-    SdbShowAllSettings{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
-    });
-
+  auto result = CreateColumns<SdbShowAllSettings>(values.size());
   static constexpr uint64_t kNullMask = MaskFromNonNulls({
     GetIndex(&SdbShowAllSettings::name),
     GetIndex(&SdbShowAllSettings::value),
     GetIndex(&SdbShowAllSettings::description),
   });
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
-
   return result;
 }
 

@@ -27,7 +27,6 @@
 #include <string>
 #include <vector>
 
-#include "pg/duckdb_serialize.h"
 #include "pg/serialize.h"
 
 namespace sdb::pg {

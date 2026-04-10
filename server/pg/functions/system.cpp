@@ -375,25 +375,25 @@ struct FormatTypeFunction {
   }
 };
 
-template<typename T>
-struct PgTypeofFunction {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
+// template<typename T>
+// struct PgTypeofFunction {
+//   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void initialize(
-    const std::vector<velox::TypePtr>& inputTypes,
-    const velox::core::QueryConfig& config, const arg_type<velox::Any>* input) {
-    _type_oid = Type2Oid(inputTypes[0]);
-  }
+//   FOLLY_ALWAYS_INLINE void initialize(
+//     const std::vector<velox::TypePtr>& inputTypes,
+//     const velox::core::QueryConfig& config, const arg_type<velox::Any>*
+//     input) { _type_oid = Type2Oid(inputTypes[0]);
+//   }
 
-  FOLLY_ALWAYS_INLINE bool callNullable(out_type<int64_t>& result,
-                                        const arg_type<velox::Any>* input) {
-    result = _type_oid;
-    return true;
-  }
+//   FOLLY_ALWAYS_INLINE bool callNullable(out_type<int64_t>& result,
+//                                         const arg_type<velox::Any>* input) {
+//     result = _type_oid;
+//     return true;
+//   }
 
- private:
-  int32_t _type_oid;
-};
+//  private:
+//   int32_t _type_oid;
+// };
 
 }  // namespace
 
@@ -451,8 +451,8 @@ void RegisterSystemFunctions(const std::string& prefix) {
   velox::registerFunction<NowFunction, velox::Timestamp>(
     {prefix + "postmaster_start_time"});
 
-  velox::registerFunction<PgTypeofFunction, RegtypeCustomType, velox::Any>(
-    {prefix + "typeof"});
+  // velox::registerFunction<PgTypeofFunction, RegtypeCustomType, velox::Any>(
+  //   {prefix + "typeof"});
 
   velox::registerFunction<FormatTypeFunction, velox::Varchar, OidCustomType,
                           int32_t>({prefix + "format_type"});

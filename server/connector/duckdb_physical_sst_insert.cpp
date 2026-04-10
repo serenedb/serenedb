@@ -42,7 +42,6 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
-
 namespace {
 
 inline constexpr std::string_view kBulkInsertDir = "bulk_insert";
@@ -58,7 +57,7 @@ struct SSTInsertColumnMeta {
 struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   duckdb::idx_t insert_count = 0;
 
-  // SST writers — one per data column
+  // SST writers -- one per data column
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> writers;
   std::vector<SSTInsertColumnMeta> columns;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
@@ -70,13 +69,15 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
-  // Index writers — created once, reused per Sink() call
+  // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
 
-  // Reusable buffers — allocated once, reused across Sink() calls
+  // Reusable buffers -- allocated once, reused across Sink() calls
   std::vector<std::string> row_keys;  // [ColumnId(reserved)][ObjectId][PK]
   std::string value_buffer;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
+    duckdb::make_uniq<DuckDBColumnSerializer>();
 
   bool has_data = false;
   bool finalized = false;
@@ -120,7 +121,7 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   state->table_key = key_utils::PrepareTableKey(state->table_id);
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
 
-  // Build column metadata — skip generated PK column
+  // Build column metadata -- skip generated PK column
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
   for (const auto& col : columns) {
@@ -130,7 +131,7 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
     }
     state->columns.push_back(SSTInsertColumnMeta{
       .id = col.id,
-      .duckdb_type = VeloxTypeToDuckDB(col.type),
+      .duckdb_type = col.type,
       .input_col_idx = input_idx,
     });
     ++input_idx;
@@ -198,16 +199,38 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
   // Write each column to its SST file.
-  // Only overwrites ColumnId in-place per column — no string copy.
+  // Only overwrites ColumnId in-place per column -- no string copy.
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
     const auto& meta = gstate.columns[col];
     auto& writer = *gstate.writers[col];
 
+    bool is_complex = meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST ||
+                      meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP ||
+                      meta.duckdb_type.id() == duckdb::LogicalTypeId::STRUCT;
+
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
 
-      auto slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
-                                        meta.duckdb_type, gstate.value_buffer);
+      rocksdb::Slice slice;
+      if (is_complex) {
+        auto& vec = chunk.data[meta.input_col_idx];
+        if (!duckdb::FlatVector::Validity(vec).RowIsValid(row)) {
+          slice = {};
+        } else {
+          gstate.serializer->ResetForNewRow();
+          if (meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST) {
+            gstate.serializer->WriteListValue(vec, row, meta.duckdb_type);
+          } else if (meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP) {
+            gstate.serializer->WriteMapValue(vec, row, meta.duckdb_type);
+          } else {
+            gstate.serializer->WriteStructValue(vec, row, meta.duckdb_type);
+          }
+          slice = gstate.serializer->Finalize(gstate.value_buffer);
+        }
+      } else {
+        slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
+                                     meta.duckdb_type, gstate.value_buffer);
+      }
 
       auto status = writer.Put(gstate.row_keys[row], slice);
       if (!status.ok()) {
@@ -235,11 +258,34 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
         continue;
       }
 
+      bool is_complex_idx =
+        meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST ||
+        meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP ||
+        meta.duckdb_type.id() == duckdb::LogicalTypeId::STRUCT;
+
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
 
-        auto slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
-                                          meta.duckdb_type, gstate.value_buffer);
+        rocksdb::Slice slice;
+        if (is_complex_idx) {
+          auto& vec = chunk.data[meta.input_col_idx];
+          if (!duckdb::FlatVector::Validity(vec).RowIsValid(row)) {
+            slice = {};
+          } else {
+            gstate.serializer->ResetForNewRow();
+            if (meta.duckdb_type.id() == duckdb::LogicalTypeId::LIST) {
+              gstate.serializer->WriteListValue(vec, row, meta.duckdb_type);
+            } else if (meta.duckdb_type.id() == duckdb::LogicalTypeId::MAP) {
+              gstate.serializer->WriteMapValue(vec, row, meta.duckdb_type);
+            } else {
+              gstate.serializer->WriteStructValue(vec, row, meta.duckdb_type);
+            }
+            slice = gstate.serializer->Finalize(gstate.value_buffer);
+          }
+        } else {
+          slice = SerializeScalarValue(chunk.data[meta.input_col_idx], row,
+                                       meta.duckdb_type, gstate.value_buffer);
+        }
 
         for (auto* writer : gstate.active_writers) {
           writer->Write({&slice, 1}, gstate.row_keys[row]);

@@ -21,8 +21,20 @@
 #include "connector/duckdb_rocksdb_reader.h"
 
 #include <cstring>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
 
 #include "basics/assert.h"
+#include "connector/common.h"
+
+namespace sdb::connector {
+
+// Forward declaration -- defined below after anonymous namespace
+void DeserializeListValue(std::string_view value, duckdb::Vector& output,
+                          const duckdb::LogicalType& type, duckdb::idx_t idx);
+
+}  // namespace sdb::connector
 #include "connector/common.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 
@@ -152,6 +164,22 @@ static duckdb::idx_t ReadDateColumn(rocksdb::Iterator& it,
                        });
 }
 
+static duckdb::idx_t ReadListColumn(rocksdb::Iterator& it,
+                                    duckdb::Vector& output,
+                                    const duckdb::LogicalType& type,
+                                    duckdb::idx_t max_rows) {
+  auto& validity = duckdb::FlatVector::Validity(output);
+
+  return IterateColumn(it, max_rows,
+                       [&](duckdb::idx_t idx, std::string_view value) {
+                         if (value.empty()) {
+                           validity.SetInvalid(idx);
+                           return;
+                         }
+                         DeserializeListValue(value, output, type, idx);
+                       });
+}
+
 duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
                                    duckdb::Vector& output,
                                    const duckdb::LogicalType& type,
@@ -181,6 +209,8 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadDateColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::HUGEINT:
       return ReadScalarColumn<duckdb::hugeint_t>(it, output, max_rows);
+    case duckdb::LogicalTypeId::LIST:
+      return ReadListColumn(it, output, type, max_rows);
     default:
       // Fallback: read as varchar
       return ReadVarcharColumn(it, output, max_rows);
@@ -311,11 +341,176 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
         duckdb::date_t(v);
       break;
     }
+    case duckdb::LogicalTypeId::LIST: {
+      DeserializeListValue(value, output, type, idx);
+      break;
+    }
     default:
       duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data(), value.size());
       break;
   }
+}
+
+namespace {
+
+// Deserialize sub-vector elements into a DuckDB child Vector.
+// Port of ArrayColumnDecoder::AddImpl (rocksdb_column_decoder.cpp:129).
+void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
+                                  duckdb::Vector& child,
+                                  duckdb::idx_t child_offset,
+                                  uint32_t elem_count, bool have_nulls,
+                                  bool have_length, uint32_t length_array_size,
+                                  const duckdb::LogicalType& child_type) {
+  auto& child_validity = duckdb::FlatVector::Validity(child);
+
+  const uint8_t* elem_nulls = nullptr;
+  if (have_nulls) {
+    elem_nulls = ptr;
+    ptr += (elem_count + 7) / 8;
+  }
+
+  switch (child_type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN: {
+      auto* out = duckdb::FlatVector::GetData<bool>(child);
+      auto bool_bytes = (elem_count + 7) / 8;
+      for (uint32_t i = 0; i < elem_count; i++) {
+        if (elem_nulls && !(elem_nulls[i / 8] & (1 << (i % 8)))) {
+          child_validity.SetInvalid(child_offset + i);
+        } else {
+          out[child_offset + i] = (ptr[i / 8] >> (i % 8)) & 1;
+        }
+      }
+      ptr += bool_bytes;
+      break;
+    }
+    case duckdb::LogicalTypeId::VARCHAR:
+    case duckdb::LogicalTypeId::BLOB: {
+      // Variable-length: read length array, then string data
+      const uint8_t* lptr = ptr;
+      ptr += length_array_size;
+      for (uint32_t i = 0; i < elem_count; i++) {
+        auto len = irs::vread<uint32_t>(lptr);
+        if (elem_nulls && !(elem_nulls[i / 8] & (1 << (i % 8)))) {
+          child_validity.SetInvalid(child_offset + i);
+          ptr += len;
+        } else {
+          duckdb::FlatVector::GetData<duckdb::string_t>(
+            child)[child_offset + i] =
+            duckdb::StringVector::AddString(
+              child, reinterpret_cast<const char*>(ptr), len);
+          ptr += len;
+        }
+      }
+      break;
+    }
+    default: {
+      // Fixed-width types -- dispatch by type to get correct GetData<T>
+      auto copy_fixed = [&]<typename T>(T*) {
+        auto* out = duckdb::FlatVector::GetData<T>(child);
+        std::memcpy(&out[child_offset], ptr, elem_count * sizeof(T));
+        ptr += elem_count * sizeof(T);
+        if (elem_nulls) {
+          for (uint32_t i = 0; i < elem_count; i++) {
+            if (!(elem_nulls[i / 8] & (1 << (i % 8)))) {
+              child_validity.SetInvalid(child_offset + i);
+            }
+          }
+        }
+      };
+      switch (child_type.id()) {
+        case duckdb::LogicalTypeId::TINYINT:
+          copy_fixed(static_cast<int8_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::SMALLINT:
+          copy_fixed(static_cast<int16_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::INTEGER:
+          copy_fixed(static_cast<int32_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::BIGINT:
+          copy_fixed(static_cast<int64_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::FLOAT:
+          copy_fixed(static_cast<float*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::DOUBLE:
+          copy_fixed(static_cast<double*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::TIMESTAMP:
+        case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+          copy_fixed(static_cast<duckdb::timestamp_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::DATE:
+          copy_fixed(static_cast<duckdb::date_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::HUGEINT:
+          copy_fixed(static_cast<duckdb::hugeint_t*>(nullptr));
+          break;
+        default:
+          SDB_ASSERT(false, "Unsupported fixed-width element type in list");
+      }
+      break;
+    }
+  }
+}
+
+}  // namespace
+
+void DeserializeListValue(std::string_view value, duckdb::Vector& output,
+                          const duckdb::LogicalType& type, duckdb::idx_t idx) {
+  auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
+  auto* end = ptr + value.size();
+
+  auto elem_count = irs::vread<uint32_t>(ptr);
+  if (elem_count == 0) {
+    duckdb::ListVector::GetData(output)[idx] = duckdb::list_entry_t{0, 0};
+    return;
+  }
+
+  auto flags = static_cast<ValueFlags>(*ptr++);
+  bool is_constant = (flags & ValueFlags::Constant) != ValueFlags::None;
+  bool have_nulls = (flags & ValueFlags::HaveNulls) != ValueFlags::None;
+  bool have_length = (flags & ValueFlags::HaveLength) != ValueFlags::None;
+
+  uint32_t length_array_size = 0;
+  if (have_length) {
+    length_array_size = irs::vread<uint32_t>(ptr);
+  }
+
+  auto current_size = duckdb::ListVector::GetListSize(output);
+  duckdb::ListVector::Reserve(output, current_size + elem_count);
+  duckdb::ListVector::GetData(output)[idx] =
+    duckdb::list_entry_t{current_size, elem_count};
+
+  auto& child = duckdb::ListVector::GetEntry(output);
+  auto& child_type = duckdb::ListType::GetChildType(type);
+
+  if (is_constant) {
+    // Constant: single value replicated
+    SDB_ASSERT(!have_nulls);
+    auto remaining = static_cast<size_t>(end - ptr);
+    if (remaining == 0) {
+      // All NULLs
+      auto& child_validity = duckdb::FlatVector::Validity(child);
+      for (uint32_t i = 0; i < elem_count; i++) {
+        child_validity.SetInvalid(current_size + i);
+      }
+    } else {
+      // Single value, replicate
+      for (uint32_t i = 0; i < elem_count; i++) {
+        auto val_sv =
+          std::string_view{reinterpret_cast<const char*>(ptr), remaining};
+        DeserializeValueIntoDuckDB(val_sv, child, child_type, current_size + i);
+      }
+    }
+  } else {
+    DeserializeSubVectorElements(ptr, end, child, current_size, elem_count,
+                                 have_nulls, have_length, length_array_size,
+                                 child_type);
+  }
+
+  duckdb::ListVector::SetListSize(output, current_size + elem_count);
 }
 
 }  // namespace sdb::connector

@@ -39,278 +39,121 @@
 #include "query/types.h"
 
 namespace sdb::pg {
-namespace {
 
-int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
-  if (type->isTimestamp()) {
-    return in_array ? PgTypeOID::kTimestampArray : PgTypeOID::kTimestamp;
+int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::BOOLEAN:
+      return in_array ? PgTypeOID::kBoolArray : PgTypeOID::kBool;
+    case duckdb::LogicalTypeId::SMALLINT:
+      return in_array ? PgTypeOID::kInt2Array : PgTypeOID::kInt2;
+    case duckdb::LogicalTypeId::INTEGER:
+      return in_array ? PgTypeOID::kInt4Array : PgTypeOID::kInt4;
+    case duckdb::LogicalTypeId::BIGINT:
+      return in_array ? PgTypeOID::kInt8Array : PgTypeOID::kInt8;
+    case duckdb::LogicalTypeId::DATE:
+      return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      return in_array ? PgTypeOID::kTimestampArray : PgTypeOID::kTimestamp;
+    case duckdb::LogicalTypeId::DECIMAL:
+      return in_array ? PgTypeOID::kNumericArray : PgTypeOID::kNumeric;
+    case duckdb::LogicalTypeId::FLOAT:
+      return in_array ? PgTypeOID::kFloat4Array : PgTypeOID::kFloat4;
+    case duckdb::LogicalTypeId::DOUBLE:
+      return in_array ? PgTypeOID::kFloat8Array : PgTypeOID::kFloat8;
+    case duckdb::LogicalTypeId::VARCHAR:
+      return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
+    case duckdb::LogicalTypeId::BLOB:
+      return in_array ? PgTypeOID::kByteaArray : PgTypeOID::kBytea;
+    case duckdb::LogicalTypeId::INTERVAL:
+      return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      return in_array ? PgTypeOID::kTimestampTzArray : PgTypeOID::kTimestampTz;
+    case duckdb::LogicalTypeId::HUGEINT:
+      return in_array ? PgTypeOID::kNumericArray : PgTypeOID::kNumeric;
+    case duckdb::LogicalTypeId::UUID:
+      return in_array ? PgTypeOID::kUuidArray : PgTypeOID::kUuid;
+    case duckdb::LogicalTypeId::ARRAY:
+      return Type2Oid(duckdb::ListType::GetChildType(type), true);
+    default:
+      return -1;
   }
-  if (isJsonType(type)) {
-    return in_array ? PgTypeOID::kJsonArray : PgTypeOID::kJson;
-  }
-  if (isUuidType(type)) {
-    return in_array ? PgTypeOID::kUuidArray : PgTypeOID::kUuid;
-  }
-  if (type->isDecimal()) {
-    return in_array ? PgTypeOID::kNumericArray : PgTypeOID::kNumeric;
-  }
-  if (type->isArray()) {
-    return Type2Oid(type->asArray().elementType(), true);
-  }
-  if (isTimestampWithTimeZoneType(type)) {
-    return in_array ? PgTypeOID::kTimestampTzArray : PgTypeOID::kTimestampTz;
-  }
-  if (type->isDate()) {
-    return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
-  }
-  if (IsInterval(type)) {
-    return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
-  }
-  if (IsOid(type)) {
-    return in_array ? PgTypeOID::kOidArray : PgTypeOID::kOid;
-  }
-  if (IsXid(type)) {
-    return in_array ? PgTypeOID::kXidArray : PgTypeOID::kXid;
-  }
-  if (IsCid(type)) {
-    return in_array ? PgTypeOID::kCidArray : PgTypeOID::kCid;
-  }
-  if (IsTid(type)) {
-    return in_array ? PgTypeOID::kTidArray : PgTypeOID::kTid;
-  }
-  if (IsXid8(type)) {
-    return in_array ? PgTypeOID::kXid8Array : PgTypeOID::kXid8;
-  }
-  if (IsName(type)) {
-    return in_array ? PgTypeOID::kNameArray : PgTypeOID::kName;
-  }
-  if (IsRegproc(type)) {
-    return in_array ? PgTypeOID::kRegprocArray : PgTypeOID::kRegproc;
-  }
-  if (IsRegtype(type)) {
-    return in_array ? PgTypeOID::kRegtypeArray : PgTypeOID::kRegtype;
-  }
-  if (IsRegclass(type)) {
-    return in_array ? PgTypeOID::kRegclassArray : PgTypeOID::kRegclass;
-  }
-  if (IsRegnamespace(type)) {
-    return in_array ? PgTypeOID::kRegnamespaceArray : PgTypeOID::kRegnamespace;
-  }
-  if (IsRegoper(type)) {
-    return in_array ? PgTypeOID::kRegoperArray : PgTypeOID::kRegoper;
-  }
-  if (IsRegoperator(type)) {
-    return in_array ? PgTypeOID::kRegoperatorArray : PgTypeOID::kRegoperator;
-  }
-  if (IsRegprocedure(type)) {
-    return in_array ? PgTypeOID::kRegprocedureArray : PgTypeOID::kRegprocedure;
-  }
-  if (IsRegrole(type)) {
-    return in_array ? PgTypeOID::kRegroleArray : PgTypeOID::kRegrole;
-  }
-  if (IsRegconfig(type)) {
-    return in_array ? PgTypeOID::kRegconfigArray : PgTypeOID::kRegconfig;
-  }
-  if (IsRegdictionary(type)) {
-    return in_array ? PgTypeOID::kRegdictionaryArray
-                    : PgTypeOID::kRegdictionary;
-  }
-  if (IsRegcollation(type)) {
-    return in_array ? PgTypeOID::kRegcollationArray : PgTypeOID::kRegcollation;
-  }
-  return -1;
 }
 
-}  // namespace
-
-int32_t Type2Oid(const velox::TypePtr& type, bool in_array) {
-  int32_t composite_oid = GetCompositeOID(type, in_array);
-  if (composite_oid >= 0) {
-    return composite_oid;
-  }
-  return Kind2Oid(type->kind(), in_array);
-}
-
-velox::TypePtr Oid2Type(int32_t oid) {
+duckdb::LogicalType Oid2Type(int32_t oid) {
   switch (oid) {
       // clang-format off
-    case PgTypeOID::kBool:                return velox::BOOLEAN();
-    case PgTypeOID::kChar:                return velox::TINYINT();
-    case PgTypeOID::kInt2:                return velox::SMALLINT();
-    case PgTypeOID::kInt4:                return velox::INTEGER();
-    case PgTypeOID::kInt8:                return velox::BIGINT();
-    case PgTypeOID::kFloat4:              return velox::REAL();
-    case PgTypeOID::kFloat8:              return velox::DOUBLE();
-    case PgTypeOID::kText:                return velox::VARCHAR();
-    case PgTypeOID::kName:                return PGNAME();
-    case PgTypeOID::kBytea:               return velox::VARBINARY();
-    case PgTypeOID::kDate:                return velox::DATE();
-    case PgTypeOID::kTimestamp:           return velox::TIMESTAMP();
-    case PgTypeOID::kOid:                 return PGOID();
-    case PgTypeOID::kXid:                 return PGXID();
-    case PgTypeOID::kCid:                 return PGCID();
-    case PgTypeOID::kTid:                 return PGTID();
-    case PgTypeOID::kXid8:                return PGXID8();
-    case PgTypeOID::kRegproc:             return REGPROC();
-    case PgTypeOID::kRegtype:             return REGTYPE();
-    case PgTypeOID::kRegclass:            return REGCLASS();
-    case PgTypeOID::kRegnamespace:        return REGNAMESPACE();
-    case PgTypeOID::kRegoper:             return REGOPER();
-    case PgTypeOID::kRegoperator:         return REGOPERATOR();
-    case PgTypeOID::kRegprocedure:        return REGPROCEDURE();
-    case PgTypeOID::kRegrole:             return REGROLE();
-    case PgTypeOID::kRegconfig:           return REGCONFIG();
-    case PgTypeOID::kRegdictionary:       return REGDICTIONARY();
-    case PgTypeOID::kRegcollation:        return REGCOLLATION();
-    case PgTypeOID::kJson:                return velox::JSON();
-    case PgTypeOID::kUuid:                return velox::UUID();
-    case PgTypeOID::kTimestampTz:         return velox::TIMESTAMP_WITH_TIME_ZONE();
-    case PgTypeOID::kInterval:            return INTERVAL();
+    case PgTypeOID::kBool:                return duckdb::LogicalType::BOOLEAN;
+    case PgTypeOID::kChar:                return duckdb::LogicalType::TINYINT;
+    case PgTypeOID::kInt2:                return duckdb::LogicalType::SMALLINT;
+    case PgTypeOID::kInt4:                return duckdb::LogicalType::INTEGER;
+    case PgTypeOID::kInt8:                return duckdb::LogicalType::BIGINT;
+    case PgTypeOID::kFloat4:              return duckdb::LogicalType::FLOAT;
+    case PgTypeOID::kFloat8:              return duckdb::LogicalType::DOUBLE;
+    case PgTypeOID::kText:                return duckdb::LogicalType::VARCHAR;
+    // case PgTypeOID::kName:                return PGNAME();
+    case PgTypeOID::kBytea:               return duckdb::LogicalType::BLOB;
+    case PgTypeOID::kDate:                return duckdb::LogicalType::DATE;
+    case PgTypeOID::kTimestamp:           return duckdb::LogicalType::TIMESTAMP;
+    // case PgTypeOID::kOid:                 return PGOID();
+    // case PgTypeOID::kXid:                 return PGXID();
+    // case PgTypeOID::kCid:                 return PGCID();
+    // case PgTypeOID::kTid:                 return PGTID();
+    // case PgTypeOID::kXid8:                return PGXID8();
+    // case PgTypeOID::kRegproc:             return REGPROC();
+    // case PgTypeOID::kRegtype:             return REGTYPE();
+    // case PgTypeOID::kRegclass:            return REGCLASS();
+    // case PgTypeOID::kRegnamespace:        return REGNAMESPACE();
+    // case PgTypeOID::kRegoper:             return REGOPER();
+    // case PgTypeOID::kRegoperator:         return REGOPERATOR();
+    // case PgTypeOID::kRegprocedure:        return REGPROCEDURE();
+    // case PgTypeOID::kRegrole:             return REGROLE();
+    // case PgTypeOID::kRegconfig:           return REGCONFIG();
+    // case PgTypeOID::kRegdictionary:       return REGDICTIONARY();
+    // case PgTypeOID::kRegcollation:        return REGCOLLATION();
+    case PgTypeOID::kJson:                return duckdb::LogicalType::JSON();
+    case PgTypeOID::kUuid:                return duckdb::LogicalType::UUID;
+    case PgTypeOID::kTimestampTz:         return duckdb::LogicalType::TIMESTAMP_TZ;
+    case PgTypeOID::kInterval:            return duckdb::LogicalType::INTERVAL;
 
-    case PgTypeOID::kBoolArray:           return velox::ARRAY(velox::BOOLEAN());
-    case PgTypeOID::kCharArray:           return velox::ARRAY(velox::TINYINT());
-    case PgTypeOID::kInt2Array:           return velox::ARRAY(velox::SMALLINT());
-    case PgTypeOID::kInt4Array:           return velox::ARRAY(velox::INTEGER());
-    case PgTypeOID::kInt8Array:           return velox::ARRAY(velox::BIGINT());
-    case PgTypeOID::kFloat4Array:         return velox::ARRAY(velox::REAL());
-    case PgTypeOID::kFloat8Array:         return velox::ARRAY(velox::DOUBLE());
-    case PgTypeOID::kTextArray:           return velox::ARRAY(velox::VARCHAR());
-    case PgTypeOID::kNameArray:           return velox::ARRAY(PGNAME());
-    case PgTypeOID::kByteaArray:          return velox::ARRAY(velox::VARBINARY());
-    case PgTypeOID::kDateArray:           return velox::ARRAY(velox::DATE());
-    case PgTypeOID::kTimestampArray:      return velox::ARRAY(velox::TIMESTAMP());
-    case PgTypeOID::kOidArray:            return velox::ARRAY(PGOID());
-    case PgTypeOID::kXidArray:            return velox::ARRAY(PGXID());
-    case PgTypeOID::kCidArray:            return velox::ARRAY(PGCID());
-    case PgTypeOID::kTidArray:            return velox::ARRAY(PGTID());
-    case PgTypeOID::kXid8Array:           return velox::ARRAY(PGXID8());
-    case PgTypeOID::kRegprocArray:        return velox::ARRAY(REGPROC());
-    case PgTypeOID::kRegtypeArray:        return velox::ARRAY(REGTYPE());
-    case PgTypeOID::kRegclassArray:       return velox::ARRAY(REGCLASS());
-    case PgTypeOID::kRegnamespaceArray:   return velox::ARRAY(REGNAMESPACE());
-    case PgTypeOID::kRegoperArray:        return velox::ARRAY(REGOPER());
-    case PgTypeOID::kRegoperatorArray:    return velox::ARRAY(REGOPERATOR());
-    case PgTypeOID::kRegprocedureArray:   return velox::ARRAY(REGPROCEDURE());
-    case PgTypeOID::kRegroleArray:        return velox::ARRAY(REGROLE());
-    case PgTypeOID::kRegconfigArray:      return velox::ARRAY(REGCONFIG());
-    case PgTypeOID::kRegdictionaryArray:  return velox::ARRAY(REGDICTIONARY());
-    case PgTypeOID::kRegcollationArray:   return velox::ARRAY(REGCOLLATION());
-    case PgTypeOID::kJsonArray:           return velox::ARRAY(velox::JSON());
-    case PgTypeOID::kUuidArray:           return velox::ARRAY(velox::UUID());
-    case PgTypeOID::kTimestampTzArray:    return velox::ARRAY(velox::TIMESTAMP_WITH_TIME_ZONE());
-    case PgTypeOID::kIntervalArray:       return velox::ARRAY(INTERVAL());
-    default:                              return nullptr;
+    case PgTypeOID::kBoolArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::BOOLEAN);
+    case PgTypeOID::kCharArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::TINYINT);
+    case PgTypeOID::kInt2Array:           return duckdb::LogicalType::LIST(duckdb::LogicalType::SMALLINT);
+    case PgTypeOID::kInt4Array:           return duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+    case PgTypeOID::kInt8Array:           return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+    case PgTypeOID::kFloat4Array:         return duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT);
+    case PgTypeOID::kFloat8Array:         return duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
+    case PgTypeOID::kTextArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+    // case PgTypeOID::kNameArray:           return duckdb::LogicalType::LIST(PGNAME());
+    case PgTypeOID::kByteaArray:          return duckdb::LogicalType::LIST(duckdb::LogicalType::BLOB);
+    case PgTypeOID::kDateArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::DATE);
+    case PgTypeOID::kTimestampArray:      return duckdb::LogicalType::LIST(duckdb::LogicalType::TIMESTAMP);
+    // case PgTypeOID::kOidArray:            return duckdb::LogicalType::LIST(PGOID());
+    // case PgTypeOID::kXidArray:            return duckdb::LogicalType::LIST(PGXID());
+    // case PgTypeOID::kCidArray:            return duckdb::LogicalType::LIST(PGCID());
+    // case PgTypeOID::kTidArray:            return duckdb::LogicalType::LIST(PGTID());
+    // case PgTypeOID::kXid8Array:           return duckdb::LogicalType::LIST(PGXID8());
+    // case PgTypeOID::kRegprocArray:        return duckdb::LogicalType::LIST(REGPROC());
+    // case PgTypeOID::kRegtypeArray:        return duckdb::LogicalType::LIST(REGTYPE());
+    // case PgTypeOID::kRegclassArray:       return duckdb::LogicalType::LIST(REGCLASS());
+    // case PgTypeOID::kRegnamespaceArray:   return duckdb::LogicalType::LIST(REGNAMESPACE());
+    // case PgTypeOID::kRegoperArray:        return duckdb::LogicalType::LIST(REGOPER());
+    // case PgTypeOID::kRegoperatorArray:    return duckdb::LogicalType::LIST(REGOPERATOR());
+    // case PgTypeOID::kRegprocedureArray:   return duckdb::LogicalType::LIST(REGPROCEDURE());
+    // case PgTypeOID::kRegroleArray:        return duckdb::LogicalType::LIST(REGROLE());
+    // case PgTypeOID::kRegconfigArray:      return duckdb::LogicalType::LIST(REGCONFIG());
+    // case PgTypeOID::kRegdictionaryArray:  return duckdb::LogicalType::LIST(REGDICTIONARY());
+    // case PgTypeOID::kRegcollationArray:   return duckdb::LogicalType::LIST(REGCOLLATION());
+    case PgTypeOID::kJsonArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::JSON());
+    case PgTypeOID::kUuidArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::UUID);
+    case PgTypeOID::kTimestampTzArray:    return duckdb::LogicalType::LIST(duckdb::LogicalType::TIMESTAMP_TZ);
+    case PgTypeOID::kIntervalArray:       return duckdb::LogicalType::LIST(duckdb::LogicalType::INTERVAL);
+    default:                              return {};
       // clang-format on
   }
 }
 
-std::string ToPgTypeString(const velox::Type& type) {
-  return ToPgTypeString(velox::TypePtr{velox::TypePtr{}, &type});
-}
-
-std::string ToPgTypeString(const velox::TypePtr& type) {
-  if (!type || IsUnknown(type)) [[unlikely]] {
-    return "unknown";
-  }
-  if (type->isArray()) {
-    return ToPgTypeString(type->asArray().elementType()) + "[]";
-  }
-  if (type->isDecimal()) {
-    return "numeric";
-  }
-  if (type->isDate()) {
-    return "date";
-  }
-  if (IsInterval(type)) {
-    return "interval";
-  }
-  if (IsOid(type)) {
-    return "oid";
-  }
-  if (IsXid(type)) {
-    return "xid";
-  }
-  if (IsCid(type)) {
-    return "cid";
-  }
-  if (IsTid(type)) {
-    return "tid";
-  }
-  if (IsXid8(type)) {
-    return "xid8";
-  }
-  if (IsName(type)) {
-    return "name";
-  }
-  if (IsRegproc(type)) {
-    return "regproc";
-  }
-  if (IsRegtype(type)) {
-    return "regtype";
-  }
-  if (IsRegclass(type)) {
-    return "regclass";
-  }
-  if (IsRegnamespace(type)) {
-    return "regnamespace";
-  }
-  if (IsRegoper(type)) {
-    return "regoper";
-  }
-  if (IsRegoperator(type)) {
-    return "regoperator";
-  }
-  if (IsRegprocedure(type)) {
-    return "regprocedure";
-  }
-  if (IsRegrole(type)) {
-    return "regrole";
-  }
-  if (IsRegconfig(type)) {
-    return "regconfig";
-  }
-  if (IsRegdictionary(type)) {
-    return "regdictionary";
-  }
-  if (IsRegcollation(type)) {
-    return "regcollation";
-  }
-  if (isUuidType(type)) {
-    return "uuid";
-  }
-  if (isJsonType(type)) {
-    return "json";
-  }
-  if (isTimestampWithTimeZoneType(type)) {
-    return "timestamp with time zone";
-  }
-  switch (type->kind()) {
-    case velox::TypeKind::BOOLEAN:
-      return "boolean";
-    case velox::TypeKind::TINYINT:
-      return "character";
-    case velox::TypeKind::SMALLINT:
-      return "smallint";
-    case velox::TypeKind::INTEGER:
-      return "integer";
-    case velox::TypeKind::BIGINT:
-      return "bigint";
-    case velox::TypeKind::REAL:
-      return "real";
-    case velox::TypeKind::DOUBLE:
-      return "double precision";
-    case velox::TypeKind::VARCHAR:
-      return "text";
-    case velox::TypeKind::VARBINARY:
-      return "bytea";
-    case velox::TypeKind::TIMESTAMP:
-      return "timestamp without time zone";
-    case velox::TypeKind::UNKNOWN:
-      return "unknown";
-    default:
-      SDB_ASSERT(false);  // better to specify the name
-      return "unknown";
-  }
+std::string ToPgTypeString(const duckdb::LogicalType& type) {
+  return type.ToString();
 }
 
 // clang-format off
@@ -414,304 +257,202 @@ uint64_t RegtypeIn(std::string_view name) {
 #undef SDB_REGTYPE_IN
 // clang-format on
 
-namespace {
-
-const velox::Type& GetNestedArrayBaseElementType(const velox::Type& type) {
-  if (type.kind() == velox::TypeKind::ARRAY) {
-    return GetNestedArrayBaseElementType(*type.asArray().elementType());
-  }
-  return type;
-}
-
-velox::Variant BuildNestedArray(
-  const std::vector<velox::Variant>& flat_elements,
-  const std::vector<int32_t>& dimensions, size_t dim_index,
-  size_t& element_index) {
-  if (dim_index == dimensions.size() - 1) {
-    std::vector<velox::Variant> inner;
-    inner.reserve(dimensions[dim_index]);
-    for (int32_t i = 0; i < dimensions[dim_index]; ++i) {
-      inner.push_back(flat_elements[element_index++]);
-    }
-    return velox::Variant::array(std::move(inner));
-  }
-
-  std::vector<velox::Variant> outer;
-  outer.reserve(dimensions[dim_index]);
-  for (int32_t i = 0; i < dimensions[dim_index]; ++i) {
-    outer.push_back(BuildNestedArray(flat_elements, dimensions, dim_index + 1,
-                                     element_index));
-  }
-  return velox::Variant::array(std::move(outer));
-}
-
-std::expected<std::vector<velox::Variant>, DeserializeError>
-DeserializeArrayBinary(const velox::Type& element_type, std::string_view data) {
-  if (data.size() < 12) {
-    return std::unexpected{DeserializeError::InvalidRepresentation};
-  }
-
-  int32_t ndim = absl::big_endian::Load32(data.data());
-  [[maybe_unused]] int32_t has_nulls =
-    absl::big_endian::Load32(data.data() + 4);
-  [[maybe_unused]] int32_t elem_oid = absl::big_endian::Load32(data.data() + 8);
-
-  size_t offset = 12;
-
-  if (ndim == 0) {
-    return std::vector<velox::Variant>{};
-  }
-
-  if (offset + ndim * 8 > data.size()) {
-    return std::unexpected{DeserializeError::InvalidRepresentation};
-  }
-
-  std::vector<int32_t> dimensions;
-  dimensions.reserve(ndim);
-  int32_t total_elements = 1;
-  for (int32_t d = 0; d < ndim; ++d) {
-    int32_t dim_size = absl::big_endian::Load32(data.data() + offset);
-    [[maybe_unused]] int32_t lower_bound =
-      absl::big_endian::Load32(data.data() + offset + 4);
-    offset += 8;
-
-    if (dim_size < 0) {
-      return std::unexpected{DeserializeError::InvalidRepresentation};
-    }
-    dimensions.push_back(dim_size);
-    total_elements *= dim_size;
-  }
-
-  const velox::Type& base_type = GetNestedArrayBaseElementType(element_type);
-
-  // First, deserialize all elements into a flat vector, then nest them
-  // accordingly
-  std::vector<velox::Variant> flat_elements;
-  flat_elements.reserve(total_elements);
-
-  for (int32_t i = 0; i < total_elements; ++i) {
-    if (offset + 4 > data.size()) {
-      return std::unexpected{DeserializeError::InvalidRepresentation};
-    }
-
-    int32_t elem_len = absl::big_endian::Load32(data.data() + offset);
-    offset += 4;
-
-    if (elem_len == -1) {
-      flat_elements.emplace_back(velox::Variant::null(base_type.kind()));
-      continue;
-    }
-
-    if (elem_len < 0 || offset + elem_len > data.size()) {
-      return std::unexpected{DeserializeError::InvalidRepresentation};
-    }
-
-    std::string_view elem_data{data.data() + offset,
-                               static_cast<size_t>(elem_len)};
-    auto result = DeserializeParameter(base_type, VarFormat::Binary, elem_data);
-    if (!result) {
-      return std::unexpected{result.error()};
-    }
-
-    flat_elements.emplace_back(*result);
-    offset += elem_len;
-  }
-
-  if (ndim == 1) {
-    return flat_elements;
-  }
-
-  size_t element_index = 0;
-  std::vector<velox::Variant> result;
-  result.reserve(dimensions[0]);
-  for (int32_t i = 0; i < dimensions[0]; ++i) {
-    result.push_back(
-      BuildNestedArray(flat_elements, dimensions, 1, element_index));
-  }
-
-  return result;
-}
-
-}  // namespace
-
-std::expected<velox::Variant, DeserializeError> DeserializeParameter(
-  const velox::Type& type, VarFormat format, std::string_view data) {
+std::expected<duckdb::Value, DeserializeError> DuckDBDeserializeParameter(
+  const duckdb::LogicalType& type, VarFormat format, std::string_view data) {
   if (format == VarFormat::Binary) {
-    if (IsInterval(type)) {
-      velox::int128_t packed = absl::big_endian::Load128(data.data());
-      return velox::Variant{packed};
-    }
-
-    switch (type.kind()) {
-      case velox::TypeKind::BOOLEAN: {
+    switch (type.id()) {
+      case duckdb::LogicalTypeId::BOOLEAN: {
         if (data.size() != 1) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{data[0] != 0};
+        return duckdb::Value::BOOLEAN(data[0] != 0);
       }
-      case velox::TypeKind::TINYINT: {
+      case duckdb::LogicalTypeId::TINYINT: {
         if (data.size() != 1) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{static_cast<int8_t>(data[0])};
+        return duckdb::Value::TINYINT(static_cast<int8_t>(data[0]));
       }
-      case velox::TypeKind::SMALLINT: {
+      case duckdb::LogicalTypeId::SMALLINT: {
         if (data.size() != 2) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
         int16_t val = absl::big_endian::Load16(data.data());
-        return velox::Variant{val};
+        return duckdb::Value::SMALLINT(val);
       }
-      case velox::TypeKind::INTEGER: {
+      case duckdb::LogicalTypeId::INTEGER: {
         if (data.size() != 4) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
         int32_t val = absl::big_endian::Load32(data.data());
-        return velox::Variant{val};
+        return duckdb::Value::INTEGER(val);
       }
-      case velox::TypeKind::BIGINT: {
+      case duckdb::LogicalTypeId::BIGINT: {
         if (data.size() != 8) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
         int64_t val = absl::big_endian::Load64(data.data());
-        return velox::Variant{val};
+        return duckdb::Value::BIGINT(val);
       }
-      case velox::TypeKind::REAL: {
+      case duckdb::LogicalTypeId::FLOAT: {
         if (data.size() != 4) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
         uint32_t bits = absl::big_endian::Load32(data.data());
         float val = std::bit_cast<float>(bits);
-        return velox::Variant{val};
+        return duckdb::Value::FLOAT(val);
       }
-      case velox::TypeKind::DOUBLE: {
+      case duckdb::LogicalTypeId::DOUBLE: {
         if (data.size() != 8) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
         uint64_t bits = absl::big_endian::Load64(data.data());
         double val = std::bit_cast<double>(bits);
-        return velox::Variant{val};
+        return duckdb::Value::DOUBLE(val);
       }
-      case velox::TypeKind::VARCHAR:
-      case velox::TypeKind::VARBINARY: {
-        return velox::Variant{std::string{data.data(), data.size()}};
+      case duckdb::LogicalTypeId::VARCHAR: {
+        return duckdb::Value(std::string{data});
       }
-      case velox::TypeKind::ARRAY: {
-        const auto& array_type = type.asArray();
-        const auto& element_type = array_type.elementType();
-
-        auto elements_result = DeserializeArrayBinary(*element_type, data);
-        if (!elements_result) {
-          return std::unexpected{elements_result.error()};
+      case duckdb::LogicalTypeId::BLOB: {
+        return duckdb::Value::BLOB(std::string{data});
+      }
+      case duckdb::LogicalTypeId::TIMESTAMP:
+      case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+        if (data.size() != 8) {
+          return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-
-        return velox::Variant::array(std::move(*elements_result));
+        // PG binary: microseconds since 2000-01-01
+        int64_t pg_us = absl::big_endian::Load64(data.data());
+        // Convert to microseconds since epoch (1970-01-01)
+        static constexpr int64_t kGapUs =
+          946684800LL * 1000000LL;  // 2000-01-01 in us since epoch
+        return duckdb::Value::TIMESTAMP(duckdb::timestamp_t(pg_us + kGapUs));
       }
+      case duckdb::LogicalTypeId::DATE: {
+        if (data.size() != 4) {
+          return std::unexpected{DeserializeError::InvalidRepresentation};
+        }
+        // PG binary: days since 2000-01-01
+        int32_t pg_days = absl::big_endian::Load32(data.data());
+        static constexpr int32_t kGapDays = 10957;  // 2000-01-01 - 1970-01-01
+        return duckdb::Value::DATE(duckdb::date_t(pg_days + kGapDays));
+      }
+      case duckdb::LogicalTypeId::UUID: {
+        if (data.size() != 16) {
+          return std::unexpected{DeserializeError::InvalidRepresentation};
+        }
+        duckdb::hugeint_t val;
+        val.upper = absl::big_endian::Load64(data.data());
+        val.lower = absl::big_endian::Load64(data.data() + 8);
+        return duckdb::Value::UUID(val);
+      }
+      case duckdb::LogicalTypeId::INTERVAL: {
+        if (data.size() != 16) {
+          return std::unexpected{DeserializeError::InvalidRepresentation};
+        }
+        duckdb::interval_t interval;
+        interval.micros = absl::big_endian::Load64(data.data());
+        interval.days = absl::big_endian::Load32(data.data() + 8);
+        interval.months = absl::big_endian::Load32(data.data() + 12);
+        return duckdb::Value::INTERVAL(interval.months, interval.days,
+                                       interval.micros);
+      }
+      // TODO: ARRAY binary deserialization
       default:
-        SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                  "unsupported binary format type: ", type.toString());
+        SDB_ASSERT(false, "unsupported binary parameter type");
+        return std::unexpected{DeserializeError::InvalidRepresentation};
     }
   }
 
+  // Text format -- DuckDB can parse most text representations via
+  // Value::CreateValue
   if (format == VarFormat::Text) {
-    if (IsInterval(type)) {
-      auto packed = IntervalIn(data, /*range=*/0, /*precision=*/6);
-      return velox::Variant{packed};
-    }
-
-    switch (type.kind()) {
-      case velox::TypeKind::BOOLEAN: {
+    switch (type.id()) {
+      case duckdb::LogicalTypeId::BOOLEAN: {
         if (data == "t" || data == "true" || data == "1") {
-          return velox::Variant{true};
+          return duckdb::Value::BOOLEAN(true);
         } else if (data == "f" || data == "false" || data == "0") {
-          return velox::Variant{false};
+          return duckdb::Value::BOOLEAN(false);
         }
         return std::unexpected{DeserializeError::InvalidRepresentation};
       }
-      case velox::TypeKind::TINYINT: {
+      case duckdb::LogicalTypeId::TINYINT: {
         int8_t val;
         if (!absl::SimpleAtoi(data, &val)) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{static_cast<int8_t>(val)};
+        return duckdb::Value::TINYINT(val);
       }
-      case velox::TypeKind::SMALLINT: {
+      case duckdb::LogicalTypeId::SMALLINT: {
         int16_t val;
         if (!absl::SimpleAtoi(data, &val)) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{val};
+        return duckdb::Value::SMALLINT(val);
       }
-      case velox::TypeKind::INTEGER: {
+      case duckdb::LogicalTypeId::INTEGER: {
         int32_t val;
         if (!absl::SimpleAtoi(data, &val)) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{val};
+        return duckdb::Value::INTEGER(val);
       }
-      case velox::TypeKind::BIGINT: {
+      case duckdb::LogicalTypeId::BIGINT: {
         int64_t val;
         if (!absl::SimpleAtoi(data, &val)) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{val};
+        return duckdb::Value::BIGINT(val);
       }
-      case velox::TypeKind::REAL: {
+      case duckdb::LogicalTypeId::FLOAT: {
         float val;
         if (!absl::SimpleAtof(data, &val)) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{val};
+        return duckdb::Value::FLOAT(val);
       }
-      case velox::TypeKind::DOUBLE: {
+      case duckdb::LogicalTypeId::DOUBLE: {
         double val;
         if (!absl::SimpleAtod(data, &val)) {
           return std::unexpected{DeserializeError::InvalidRepresentation};
         }
-        return velox::Variant{val};
+        return duckdb::Value::DOUBLE(val);
       }
-      // case velox::TypeKind::VARBINARY:
-      // TODO: use pg_byteain (make helper function for the existing one)
-      case velox::TypeKind::VARCHAR: {
-        return velox::Variant{std::string{data}};
+      case duckdb::LogicalTypeId::VARCHAR: {
+        return duckdb::Value(std::string{data});
       }
-      case velox::TypeKind::ARRAY: {
-        const auto& element_type = type.asArray().elementType();
-        std::vector<velox::Variant> elements;
-        std::optional<DeserializeError> parse_error;
-        sdb::pg::ParsePgTextArray(
-          data,
-          [&](std::string_view token, bool is_null) {
-            if (parse_error) {
-              return;
-            }
-            if (is_null) {
-              elements.emplace_back(velox::Variant::null(element_type->kind()));
-              return;
-            }
-            auto res =
-              DeserializeParameter(*element_type, VarFormat::Text, token);
-            if (!res) {
-              parse_error = res.error();
-            } else {
-              elements.emplace_back(std::move(*res));
-            }
-          },
-          [&](std::string_view) {
-            parse_error = DeserializeError::InvalidRepresentation;
-          });
-        if (parse_error) {
-          return std::unexpected{*parse_error};
-        }
-        return velox::Variant::array(std::move(elements));
+      case duckdb::LogicalTypeId::BLOB: {
+        return duckdb::Value::BLOB(std::string{data});
       }
+      case duckdb::LogicalTypeId::TIMESTAMP:
+      case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
+        auto ts = duckdb::Timestamp::FromString(std::string{data}, false);
+        return duckdb::Value::TIMESTAMP(ts);
+      }
+      case duckdb::LogicalTypeId::DATE: {
+        auto dt = duckdb::Date::FromString(std::string{data});
+        return duckdb::Value::DATE(dt);
+      }
+      case duckdb::LogicalTypeId::UUID: {
+        return duckdb::Value::UUID(std::string{data});
+      }
+      case duckdb::LogicalTypeId::INTERVAL: {
+        // DuckDB can parse interval strings
+        return duckdb::Value(std::string{data})
+          .DefaultCastAs(duckdb::LogicalType::INTERVAL);
+      }
+      case duckdb::LogicalTypeId::DECIMAL: {
+        // DuckDB handles decimal parsing
+        return duckdb::Value(std::string{data}).DefaultCastAs(type);
+      }
+      // TODO: ARRAY text deserialization (ParsePgTextArray equivalent)
       default:
-        SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                  "unsupported text format type: ", type.toString());
+        // Fallback: let DuckDB try to parse as string and cast
+        return duckdb::Value(std::string{data}).DefaultCastAs(type);
     }
   }
 
-  SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported parameter format");
+  return std::unexpected{DeserializeError::InvalidRepresentation};
 }
 
 std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {

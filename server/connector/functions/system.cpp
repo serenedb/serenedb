@@ -1,6 +1,21 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2026 SereneDB GmbH, Berlin, Germany
-/// Licensed under the Apache License, Version 2.0
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "connector/functions/system.h"
@@ -14,9 +29,9 @@ namespace sdb::connector {
 
 // current_setting(name, missing_ok) -> text
 // Ported from server/pg/functions/system.cpp CurrentSettingMissingOkFunction.
-static void CurrentSetting2Function(duckdb::DataChunk& args,
-                                    duckdb::ExpressionState& state,
-                                    duckdb::Vector& result) {
+void CurrentSetting2Function(duckdb::DataChunk& args,
+                             duckdb::ExpressionState& state,
+                             duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto count = args.size();
 
@@ -42,9 +57,8 @@ static void CurrentSetting2Function(duckdb::DataChunk& args,
 
 // set_config(name, value, is_local) -> text
 // Ported from server/pg/functions/system.cpp SetConfigFunction.
-static void SetConfigFunction(duckdb::DataChunk& args,
-                              duckdb::ExpressionState& state,
-                              duckdb::Vector& result) {
+void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                       duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& db_config = duckdb::DBConfig::GetConfig(*context.db);
 
@@ -59,8 +73,8 @@ static void SetConfigFunction(duckdb::DataChunk& args,
       duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
       auto setting_index = db_config.TryGetSettingIndex(key, option);
       if (setting_index.IsValid()) {
-        context.config.user_settings.SetUserSetting(
-          setting_index.GetIndex(), duckdb::Value(val));
+        context.config.user_settings.SetUserSetting(setting_index.GetIndex(),
+                                                    duckdb::Value(val));
       } else {
         throw duckdb::InvalidInputException(
           "unrecognized configuration parameter \"%s\"", key);
@@ -71,9 +85,8 @@ static void SetConfigFunction(duckdb::DataChunk& args,
 
 // num_nonnulls(...) -> int
 // Ported from PG: counts non-null arguments.
-static void NumNonNullsFunction(duckdb::DataChunk& args,
-                                duckdb::ExpressionState&,
-                                duckdb::Vector& result) {
+void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                         duckdb::Vector& result) {
   auto count = args.size();
   auto result_data = duckdb::FlatVector::GetData<int32_t>(result);
 
@@ -93,9 +106,8 @@ static void NumNonNullsFunction(duckdb::DataChunk& args,
 
 // num_nulls(...) -> int
 // Ported from PG: counts null arguments.
-static void NumNullsFunction(duckdb::DataChunk& args,
-                             duckdb::ExpressionState&,
-                             duckdb::Vector& result) {
+void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
   auto count = args.size();
   auto result_data = duckdb::FlatVector::GetData<int32_t>(result);
 
@@ -121,7 +133,8 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     duckdb::ScalarFunction func{
       "current_setting",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BOOLEAN},
-      duckdb::LogicalType::VARCHAR, CurrentSetting2Function};
+      duckdb::LogicalType::VARCHAR,
+      CurrentSetting2Function};
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);
   }
@@ -131,13 +144,15 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
     "set_config",
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
      duckdb::LogicalType::BOOLEAN},
-    duckdb::LogicalType::VARCHAR, SetConfigFunction});
+    duckdb::LogicalType::VARCHAR,
+    SetConfigFunction});
 
   // num_nonnulls(...) -> int
   {
-    duckdb::ScalarFunction func{
-      "num_nonnulls", {duckdb::LogicalType::ANY},
-      duckdb::LogicalType::INTEGER, NumNonNullsFunction};
+    duckdb::ScalarFunction func{"num_nonnulls",
+                                {duckdb::LogicalType::ANY},
+                                duckdb::LogicalType::INTEGER,
+                                NumNonNullsFunction};
     func.varargs = duckdb::LogicalType::ANY;
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);
@@ -145,9 +160,10 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
 
   // num_nulls(...) -> int
   {
-    duckdb::ScalarFunction func{
-      "num_nulls", {duckdb::LogicalType::ANY},
-      duckdb::LogicalType::INTEGER, NumNullsFunction};
+    duckdb::ScalarFunction func{"num_nulls",
+                                {duckdb::LogicalType::ANY},
+                                duckdb::LogicalType::INTEGER,
+                                NumNullsFunction};
     func.varargs = duckdb::LogicalType::ANY;
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);

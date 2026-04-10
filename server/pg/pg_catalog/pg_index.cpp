@@ -56,8 +56,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgIndex>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+std::vector<duckdb::Vector> SystemTableSnapshot<PgIndex>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgIndex> values;
@@ -113,10 +112,10 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgIndex>::GetTableData(
     }
   }
 
-  auto result = CreateColumns<PgIndex>(values, &pool);
+  auto result = CreateColumns<PgIndex>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
 
   return result;

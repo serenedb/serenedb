@@ -66,10 +66,6 @@
 	path = third_party/googletest
 	url = https://github.com/serenedb/googletest.git
 	shallow = true
-[submodule "third_party/axiom"]
-	path = third_party/axiom
-	url = https://github.com/serenedb/axiom.git
-	shallow = true
 [submodule "third_party/fmt"]
 	path = third_party/fmt
 	url = https://github.com/serenedb/fmt.git

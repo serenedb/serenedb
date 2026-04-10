@@ -30,10 +30,12 @@ class ConnectionContext;
 }
 
 namespace sdb::message {
+
 class Buffer;
 }
 
 namespace sdb::pg {
+
 class CopyMessagesQueue;
 }
 

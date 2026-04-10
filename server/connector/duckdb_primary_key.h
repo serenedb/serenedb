@@ -31,8 +31,8 @@
 #include "catalog/identifiers/revision_id.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_writer.h"
-#include "connector/duckdb_table_entry.h"  // for VeloxTypeToDuckDB
-#include "connector/primary_key.hpp"       // for AppendSigned, ReadSigned
+#include "connector/duckdb_table_entry.h"
+#include "connector/primary_key.hpp"  // for AppendSigned, ReadSigned
 
 namespace sdb::connector::duckdb_primary_key {
 
@@ -56,7 +56,7 @@ inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
       if (columns[i].id == pk_id) {
         result.push_back(PKColumn{
           .input_col_idx = i,
-          .type = VeloxTypeToDuckDB(columns[i].type),
+          .type = columns[i].type,
         });
         break;
       }
@@ -108,11 +108,12 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
 
 // Build pre-formatted row keys with reserved ColumnId slot.
 // Layout: [ColumnId(8B reserved)][ObjectId(8B)][PK bytes]
-// Use key_utils::SetupColumnForKey() to fill in ColumnId per column — no copy.
+// Use key_utils::SetupColumnForKey() to fill in ColumnId per column -- no copy.
 // This mirrors the Velox MakeColumnKey pattern.
-inline void CreateBatchWithColumnSlot(
-  const duckdb::DataChunk& chunk, std::span<const PKColumn> pk_columns,
-  std::string_view object_id, std::vector<std::string>& keys) {
+inline void CreateBatchWithColumnSlot(const duckdb::DataChunk& chunk,
+                                      std::span<const PKColumn> pk_columns,
+                                      std::string_view object_id,
+                                      std::vector<std::string>& keys) {
   SDB_ASSERT(object_id.size() == sizeof(ObjectId));
   const auto num_rows = chunk.size();
   keys.resize(num_rows);
@@ -130,8 +131,8 @@ inline void CreateBatchWithColumnSlot(
       Create(chunk, pk_columns, row, key);
     }
 
-    // Copy ObjectId to offset 0 — SetupColumnForKey will overwrite offset 8.
-    // Final layout: [ObjectId][ColumnId][PK] — matches RocksDB key format.
+    // Copy ObjectId to offset 0 -- SetupColumnForKey will overwrite offset 8.
+    // Final layout: [ObjectId][ColumnId][PK] -- matches RocksDB key format.
     std::memcpy(key.data(), object_id.data(), sizeof(ObjectId));
   }
 }

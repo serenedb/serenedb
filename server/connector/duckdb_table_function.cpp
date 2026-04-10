@@ -68,7 +68,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
   copy->column_types = column_types;
   copy->has_rowid = has_rowid;
   copy->table_entry = table_entry;
-  // SearchScan has non-copyable fields — only copy for secondary/full
+  // SearchScan has non-copyable fields -- only copy for secondary/full
   if (std::holds_alternative<SecondaryIndexScan>(scan_source)) {
     copy->scan_source = std::get<SecondaryIndexScan>(scan_source);
   }
@@ -243,9 +243,9 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
                                        duckdb::TableFunctionInput& data,
                                        duckdb::DataChunk& output);
 
-static void SereneDBSecondaryIndexScanFunction(
-  duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
-  duckdb::DataChunk& output);
+static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
+                                               duckdb::TableFunctionInput& data,
+                                               duckdb::DataChunk& output);
 
 static void SereneDBScanFunction(duckdb::ClientContext& context,
                                  duckdb::TableFunctionInput& data,
@@ -337,7 +337,7 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
   output.SetCardinality(count);
 }
 
-// --- Search scan: IResearch query → PKs → RocksDB materialization ---
+// --- Search scan: IResearch query -> PKs -> RocksDB materialization ---
 
 static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
                                        duckdb::TableFunctionInput& data,
@@ -387,8 +387,8 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
 
     SDB_ASSERT(doc_id == gstate.search_pk_iter->seek(doc_id));
     auto pk_view = gstate.search_pk_value->value;
-    pk_bytes.emplace_back(
-      reinterpret_cast<const char*>(pk_view.data()), pk_view.size());
+    pk_bytes.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
+                          pk_view.size());
   }
 
   if (pk_bytes.empty()) {
@@ -430,19 +430,20 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
         continue;
       }
       SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
-      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj],
-                                 type, row);
+      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
+                                 row);
     }
   }
 
   output.SetCardinality(num_rows);
 }
 
-// --- Secondary index scan: iterate SK keys → PKs → RocksDB materialization ---
+// --- Secondary index scan: iterate SK keys -> PKs -> RocksDB materialization
+// ---
 
-static void SereneDBSecondaryIndexScanFunction(
-  duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
-  duckdb::DataChunk& output) {
+static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
+                                               duckdb::TableFunctionInput& data,
+                                               duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
 
@@ -503,8 +504,7 @@ static void SereneDBSecondaryIndexScanFunction(
     // Debug: print key hex prefix (first 20 bytes)
     std::cerr << "SK entry: key_size=" << key.size()
               << " val_size=" << val.size()
-              << " val[0]=" << (int)(unsigned char)val[0]
-              << " key_hex=";
+              << " val[0]=" << (int)(unsigned char)val[0] << " key_hex=";
     for (size_t b = 0; b < key.size(); ++b) {
       char buf[4];
       snprintf(buf, sizeof(buf), "%02x", (unsigned char)key.data()[b]);
@@ -533,7 +533,7 @@ static void SereneDBSecondaryIndexScanFunction(
     return;
   }
 
-  // Materialize rows by PK — same pattern as search scan
+  // Materialize rows by PK -- same pattern as search scan
   const auto num_rows = pk_bytes.size();
   auto& engine = GetServerEngine();
   auto* db = engine.db();
@@ -572,8 +572,8 @@ static void SereneDBSecondaryIndexScanFunction(
         continue;
       }
       SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
-      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj],
-                                 type, row);
+      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
+                                 row);
     }
   }
 
@@ -603,7 +603,7 @@ static void SereneDBPushdownComplexFilter(
   auto table_id = bind_data.table->GetId();
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
 
-  // Find inverted index — prefer the one from the table entry (FROM idx_name)
+  // Find inverted index -- prefer the one from the table entry (FROM idx_name)
   std::shared_ptr<const catalog::InvertedIndex> inverted_index;
   if (bind_data.table_entry &&
       dynamic_cast<const SereneDBTableEntry*>(&*bind_data.table_entry)) {
@@ -648,7 +648,7 @@ static void SereneDBPushdownComplexFilter(
       continue;
     }
 
-    // Child 0: column reference — get name
+    // Child 0: column reference -- get name
     if (func_expr.children[0]->expression_class !=
           duckdb::ExpressionClass::BOUND_COLUMN_REF &&
         func_expr.children[0]->expression_class !=
@@ -710,8 +710,8 @@ static void SereneDBPushdownComplexFilter(
       auto* phrase_opts = phrase.mutable_options();
 
       std::cerr << "Search: col_name=" << col_name << " col_id=" << col_id
-                << " field_name_size=" << field_name.size()
-                << " search_text='" << search_text << "'"
+                << " field_name_size=" << field_name.size() << " search_text='"
+                << search_text << "'"
                 << " has_analyzer=" << (analyzer.analyzer != nullptr)
                 << std::endl;
 
@@ -720,8 +720,8 @@ static void SereneDBPushdownComplexFilter(
       int token_count = 0;
       while (tokenizer.next()) {
         auto& term_attr = *irs::get<irs::TermAttr>(tokenizer);
-        phrase_opts->push_back<irs::ByTermOptions>()
-          .term.assign(term_attr.value.data(), term_attr.value.size());
+        phrase_opts->push_back<irs::ByTermOptions>().term.assign(
+          term_attr.value.data(), term_attr.value.size());
         ++token_count;
       }
       std::cerr << "Search: phrase token_count=" << token_count << std::endl;
@@ -743,13 +743,13 @@ static void SereneDBPushdownComplexFilter(
   }
 
   // Get search snapshot via connection context.
-  // EnsureSearchSnapshot takes the INDEX ID (not shard ID) — it finds the
+  // EnsureSearchSnapshot takes the INDEX ID (not shard ID) -- it finds the
   // shard internally via GetIndexShard.
   // BUT GetIndexShard actually takes a SHARD ID. The old Velox code passes
-  // shard.GetId(). Let's use the connection context's snapshot to find the shard.
-  // Get search reader directly from a fresh catalog snapshot.
-  // Don't use conn_ctx.EnsureSearchSnapshot — it uses the connection's cached
-  // catalog snapshot which may be stale (from before CREATE INDEX).
+  // shard.GetId(). Let's use the connection context's snapshot to find the
+  // shard. Get search reader directly from a fresh catalog snapshot. Don't use
+  // conn_ctx.EnsureSearchSnapshot -- it uses the connection's cached catalog
+  // snapshot which may be stale (from before CREATE INDEX).
   auto fresh_snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   std::shared_ptr<IndexShard> inverted_shard;
   for (auto& shard : fresh_snapshot->GetIndexShardsByTable(table_id)) {

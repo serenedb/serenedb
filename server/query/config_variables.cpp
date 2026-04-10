@@ -63,27 +63,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "true",
       },
     },
-    // axiom specific variables
-    {
-      "execution_threads",
-      {
-        VariableType::U32,
-        "Sets the number of threads used for query execution. If set to 0, "
-        "serial execution (execution in connection thread) is used. "
-        "Otherwise the execution is separated from connection thread and "
-        "desired number of threads will be tried to be used.",
-        "0",
-      },
-    },
-    {
-      "join_order_algorithm",
-      {
-        VariableType::JoinOrderAlgorithm,
-        "Sets the join algorithm to be used for query execution. "
-        "Valid values are 'cost' (the default), 'greedy', and 'syntactic'.",
-        "cost",
-      },
-    },
     // pg specific variables
     {
       "search_path",

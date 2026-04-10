@@ -84,11 +84,9 @@ void VacuumExecute(duckdb::ClientContext& context,
   // Resolve tables
   std::vector<std::shared_ptr<catalog::Table>> tables;
   if (!bind_data.table_name.empty()) {
-    auto schema = bind_data.schema_name.empty()
-                    ? conn_ctx.GetCurrentSchema()
-                    : bind_data.schema_name;
-    auto table =
-      snapshot->GetTable(database_id, schema, bind_data.table_name);
+    auto schema = bind_data.schema_name.empty() ? conn_ctx.GetCurrentSchema()
+                                                : bind_data.schema_name;
+    auto table = snapshot->GetTable(database_id, schema, bind_data.table_name);
     if (!table) {
       throw duckdb::CatalogException("relation '%s' not found",
                                      bind_data.table_name);
@@ -108,8 +106,7 @@ void VacuumExecute(duckdb::ClientContext& context,
       for (auto shard : snapshot->GetIndexShardsByTable(table->GetId())) {
         if (shard &&
             shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
-          auto& inverted =
-            basics::downCast<search::InvertedIndexShard>(*shard);
+          auto& inverted = basics::downCast<search::InvertedIndexShard>(*shard);
           std::ignore = std::move(inverted.CommitWait()).Get().Ok();
         }
       }

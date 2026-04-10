@@ -23,11 +23,11 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <velox/type/Type.h>
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
 #include <cstdint>
+#include <duckdb/common/types.hpp>
 #include <limits>
 #include <vector>
 
@@ -150,9 +150,9 @@ struct Column {
     return absl::StrCat(kOffsetsNamePrefix, column_id);
   }
 
-  // ARRAY(BIGINT) -- flat offsets column: interleaved start,end pairs.
-  static velox::TypePtr MakeOffsetsType() {
-    return velox::ARRAY(velox::BIGINT());
+  // LIST(BIGINT) -- flat offsets column: interleaved start,end pairs.
+  static duckdb::LogicalType MakeOffsetsType() {
+    return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
   }
 
   // Request for a single OFFSETS() column: which catalog column to extract
@@ -167,7 +167,7 @@ struct Column {
   };
 
   Id id;
-  velox::TypePtr type;
+  duckdb::LogicalType type;
   std::string name;
   // if generated type is not kNone, expr = generated expression
   // else expr = default value expression (if any)

@@ -20,14 +20,6 @@
 
 #include "search_filter_builder.hpp"
 
-#include "rocksdb_filter.hpp"
-
-// NOLINTBEGIN
-// Need this header to stay before iresearch/utils/wildcard_utils.hpp to avoid
-// conflict in DCHECK macros see issue #230
-#include "serenedb_connector.hpp"
-// NOLINTEND
-
 #include <velox/expression/ExprConstants.h>
 #include <velox/type/Type.h>
 
@@ -50,6 +42,7 @@
 
 #include "catalog/mangling.h"
 #include "functions/search.h"
+#include "rocksdb_filter.hpp"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 #include "velox/type/CppToType.h"

@@ -32,7 +32,7 @@ PG wire (pg_comm_task.cpp) -> DuckDB (plan + execute)
 - **Transactions** -- `ConnectionContext` accessible via `SereneDBClientState` registered on DuckDB's `ClientContext`. Physical operators use `GetSereneDBContext(context.client)` to access RocksDB transaction. BEGIN/COMMIT/ROLLBACK work.
 - **Per-session DuckDB connection** -- stored on `PgSQLCommTaskBase::_duckdb_conn`, created during PG auth
 - **Config (SET/SHOW)** -- PG variables registered via `AddExtensionOption`. SHOW patched in DuckDB parser (`transform_show.cpp`) to use `current_setting()`.
-- **Extended protocol** -- Parse/Bind/Execute with proper binary serialization via `duckdb_serialize.cpp`
+- **Extended protocol** -- Parse/Bind/Execute with proper binary serialization via `serialize.cpp`
 - **EXPLAIN** -- DuckDB native, projection pushdown visible
 - **Scan rescan** -- fixed via LookupEntry cache in schema entry
 - **Command tags** -- proper INSERT/UPDATE/DELETE/CREATE/DROP tags
@@ -40,7 +40,7 @@ PG wire (pg_comm_task.cpp) -> DuckDB (plan + execute)
 - **core_functions extension** -- enabled for `current_setting()`, `version()`, etc.
 
 ### Serialization
-- `duckdb_serialize.cpp` -- full PG wire serializer adapted from Velox version, supports text+binary for all standard types (int, float, varchar, bool, timestamp, date, interval, uuid, decimal, bytea, arrays)
+- `serialize.cpp` -- full PG wire serializer adapted from Velox version, supports text+binary for all standard types (int, float, varchar, bool, timestamp, date, interval, uuid, decimal, bytea, arrays)
 - Used by extended protocol for proper format negotiation
 
 ## Key Files
@@ -50,7 +50,7 @@ PG wire (pg_comm_task.cpp) -> DuckDB (plan + execute)
 |------|---------|
 | `server/query/duckdb_engine.h/cpp` | Singleton DuckDB instance, connection factory, config registration |
 | `server/pg/duckdb_query_handler.h/cpp` | Simple protocol: execute SQL, serialize results to PG wire |
-| `server/pg/duckdb_serialize.h/cpp` | DuckDB Vector -> PG wire serialization (text+binary) |
+| `server/pg/serialize.h/cpp` | DuckDB Vector -> PG wire serialization (text+binary) |
 
 ### Storage Extension (Catalog)
 | File | Purpose |

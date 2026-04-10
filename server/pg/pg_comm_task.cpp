@@ -44,11 +44,11 @@
 #include "connector/duckdb_client_state.h"
 #include "general_server/general_server_feature.h"
 #include "pg/connection_context.h"
-#include "pg/duckdb_pg_types.h"
-#include "pg/duckdb_serialize.h"
 #include "pg/hba.h"
 #include "pg/pg_feature.h"
+#include "pg/pg_types.h"
 #include "pg/protocol.h"
+#include "pg/serialize.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -281,7 +281,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       return;
     }
 
-    // Pin the catalog snapshot at connection time — all operations
+    // Pin the catalog snapshot at connection time -- all operations
     // on this connection use the same snapshot until statement/transaction end.
     auto snapshot = _feature.server()
                       .getFeature<catalog::CatalogFeature>()
@@ -479,7 +479,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
     _send.WriteUncommitted({"\0", 1});
     int32_t table_oid = 0;
     int16_t attr_number = 0;
-    int32_t type_oid = DuckDBTypeToOid(types[i]);
+    int32_t type_oid = Type2Oid(types[i]);
     int16_t type_size = -1;
     int32_t type_modifier = -1;
     const auto format_code = i < formats.size() ? formats[i] : default_format;
@@ -636,7 +636,8 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   auto& sql_stmt = stmt.extracted[stmt.current_stmt_idx];
   stmt.prepared = _duckdb_conn->Prepare(sql_stmt->query);
   if (stmt.prepared->HasError()) {
-    SendError(stmt.prepared->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
+    SendError(stmt.prepared->GetErrorObject().RawMessage(),
+              ERRCODE_INTERNAL_ERROR);
     return;
   }
   _current_query = stmt.prepared->query;
@@ -668,7 +669,8 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
     auto& next = stmt.extracted[stmt.current_stmt_idx];
     stmt.prepared = _duckdb_conn->Prepare(next->query);
     if (stmt.prepared->HasError()) {
-      SendError(stmt.prepared->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
+      SendError(stmt.prepared->GetErrorObject().RawMessage(),
+                ERRCODE_INTERNAL_ERROR);
       return;
     }
     _current_query = stmt.prepared->query;
@@ -977,7 +979,8 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   auto& prepared = *portal.stmt->prepared;
   portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
   if (portal.pending->HasError()) {
-    SendError(portal.pending->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
+    SendError(portal.pending->GetErrorObject().RawMessage(),
+              ERRCODE_INTERNAL_ERROR);
     portal.pending.reset();
     return;
   }
@@ -1104,7 +1107,8 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         portal.result = portal.pending->Execute();
         portal.pending.reset();
         if (portal.result->HasError()) {
-          SendError(portal.result->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
+          SendError(portal.result->GetErrorObject().RawMessage(),
+                    ERRCODE_INTERNAL_ERROR);
           ReleaseResult(portal);
           _success_packet = false;
           return ProcessState::DonePacket;
@@ -1129,14 +1133,16 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         portal.result = portal.pending->Execute();
         portal.pending.reset();
         if (portal.result->HasError()) {
-          SendError(portal.result->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
+          SendError(portal.result->GetErrorObject().RawMessage(),
+                    ERRCODE_INTERNAL_ERROR);
           ReleaseResult(portal);
           _success_packet = false;
           return ProcessState::DonePacket;
         }
         break;
       case duckdb::PendingExecutionResult::EXECUTION_ERROR:
-        SendError(portal.pending->GetErrorObject().RawMessage(), ERRCODE_INTERNAL_ERROR);
+        SendError(portal.pending->GetErrorObject().RawMessage(),
+                  ERRCODE_INTERNAL_ERROR);
         ReleaseResult(portal);
         _success_packet = false;
         return ProcessState::DonePacket;

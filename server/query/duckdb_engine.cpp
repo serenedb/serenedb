@@ -26,13 +26,13 @@
 
 #include "basics/assert.h"
 #include "connector/duckdb_copy_filesystem.h"
-#include "connector/duckdb_pg_array_cast.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
+#include "connector/functions/cast.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
@@ -53,8 +53,8 @@ extern "C" const duckdb::DefaultView* duckdb_external_views(
 namespace sdb::query {
 
 DuckDBEngine& DuckDBEngine::Instance() {
-  static DuckDBEngine instance;
-  return instance;
+  static DuckDBEngine gInstance;
+  return gInstance;
 }
 
 void DuckDBEngine::Initialize() {
@@ -97,36 +97,27 @@ void DuckDBEngine::Initialize() {
                             duckdb::LogicalType::VARCHAR,
                             duckdb::Value("postgres"));
   config.AddExtensionOption("application_name", "Application name",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value(""));
+                            duckdb::LogicalType::VARCHAR, duckdb::Value(""));
   config.AddExtensionOption("integer_datetimes", "Integer datetimes",
                             duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
-  // Register search stub functions (sdb_phrase, sdb_term_eq)
-  connector::RegisterSearchFunctions(*_db->instance);
+  connector::RegisterTokenizerPragma(*_db->instance);
 
-  // Register PG-compatible VARCHAR → LIST cast ('{1,2,3}'::int[])
-  connector::RegisterPgArrayCast(*_db->instance);
+  connector::RegisterPgCasts(*_db->instance);
 
-  // Register PG array functions
-  connector::RegisterPgArrayFunctions(*_db->instance);
-
-  // Register PG string functions (initcap, etc.)
-  connector::RegisterPgStringFunctions(*_db->instance);
-
-  // Register PG I/O functions and casts (byteain/byteaout, etc.)
-  connector::RegisterPgInOutFunctions(*_db->instance);
-
-  // Register PG system functions (current_setting 2-arg, set_config, etc.)
   connector::RegisterPgSystemFunctions(*_db->instance);
 
-  // Register VACUUM function (CALL serenedb_vacuum(...))
+  connector::RegisterPgInOutFunctions(*_db->instance);
+
+  connector::RegisterPgStringFunctions(*_db->instance);
+
+  connector::RegisterPgArrayFunctions(*_db->instance);
+
   connector::RegisterVacuumFunction(*_db->instance);
 
-  // Register CREATE TEXT SEARCH DICTIONARY pragma
-  connector::RegisterTokenizerPragma(*_db->instance);
+  connector::RegisterSearchFunctions(*_db->instance);
 
   // Register SereneDB index types.
   // These provide create_plan callbacks that bypass DuckDB's native

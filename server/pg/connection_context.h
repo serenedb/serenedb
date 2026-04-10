@@ -52,7 +52,7 @@ class ConnectionContext : public ExecContext, public query::Transaction {
   auto StealNotices() { return std::exchange(_notices, {}); }
 
   // Keeps the database alive for this connection's lifetime
-  // (prevents async drop until connection closes — matches PG behavior)
+  // (prevents async drop until connection closes -- matches PG behavior)
   const std::shared_ptr<catalog::Database>& GetDatabasePtr() const {
     return _database;
   }

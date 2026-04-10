@@ -49,8 +49,7 @@ namespace {
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+std::vector<duckdb::Vector> SystemTableSnapshot<PgProc>::GetTableData() {
   // DuckDB provides pg_proc via its default views
   return {};
 #if 0
@@ -142,10 +141,10 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgProc>::GetTableData(
     }
   }
 
-  auto result = CreateColumns<PgProc>(values, &pool);
+  auto result = CreateColumns<PgProc>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
 
   return result;

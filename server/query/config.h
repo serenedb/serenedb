@@ -23,7 +23,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
-#include <axiom/optimizer/OptimizerOptions.h>
 #include <velox/common/config/IConfig.h>
 #include <velox/type/Type.h>
 
@@ -33,7 +32,6 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/exceptions.h"
-#include "basics/fwd.h"
 #include "basics/system-compiler.h"
 #include "catalog/types.h"
 
@@ -85,7 +83,7 @@ std::optional<VariableDescription> GetDefaultDescription(std::string_view name);
 
 std::string_view GetOriginalName(std::string_view name);
 
-class Config : public velox::config::IConfig {
+class Config : public facebook::velox::config::IConfig {
  public:
   enum class VariableContext : uint8_t {
     Session = 0,
@@ -158,17 +156,6 @@ class Config : public velox::config::IConfig {
       SDB_ASSERT(absl::EqualsIgnoreCase("replace", *value_str),
                  "sdb_write_conflict_policy is not validated");
       return WriteConflictPolicy::Replace;
-    } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
-      SDB_ASSERT(key == "join_order_algorithm");
-      if (absl::EqualsIgnoreCase("cost", *value_str)) {
-        return axiom::optimizer::JoinOrder::kCost;
-      } else if (absl::EqualsIgnoreCase("greedy", *value_str)) {
-        return axiom::optimizer::JoinOrder::kGreedy;
-      } else {
-        SDB_ASSERT(absl::EqualsIgnoreCase("syntactic", *value_str),
-                   "join_order_algorithm is not validated");
-        return axiom::optimizer::JoinOrder::kSyntactic;
-      }
     } else if constexpr (T == VariableType::U32) {
       uint32_t r = 0;
       const bool ok = absl::SimpleAtoi<uint32_t>(*value_str, &r);

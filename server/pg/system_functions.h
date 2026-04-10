@@ -873,7 +873,7 @@ inline constexpr duckdb::DefaultMacro kExternalMacros[] = {
   // Parser transforms: overlay(s PLACING r FROM p FOR n) -> overlay(s, r, p, n)
   {DEFAULT_SCHEMA, "overlay",
    R"((s, repl, start, count) AS substr(s, 1, start - 1) || repl || substr(s, start + count))"},
-  // 3-arg form: overlay(string placing string from int) — count defaults to length of replacement
+  // 3-arg form: overlay(string placing string from int) -- count defaults to length of replacement
   {DEFAULT_SCHEMA, "overlay",
    R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
 

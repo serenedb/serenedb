@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <axiom/optimizer/FunctionRegistry.h>
 #include <velox/dwio/parquet/RegisterParquetReader.h>
 #include <velox/dwio/parquet/RegisterParquetWriter.h>
 #include <velox/dwio/text/RegisterTextReader.h>
@@ -188,7 +187,6 @@ inline void RegisterVeloxFunctionsAndTypes() {
   velox::functions::prestosql::registerAllScalarFunctions("presto_");
   velox::aggregate::prestosql::registerAllAggregateFunctions("presto_");
   velox::window::prestosql::registerAllWindowFunctions("presto_");
-  axiom::optimizer::FunctionRegistry::registerPrestoFunctions("presto_");
 
   pg::RegisterTypes();
   pg::functions::RegisterFunctions("pg_");

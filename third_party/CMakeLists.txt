@@ -1016,18 +1016,10 @@ set(VELOX_SIMDJSON_SKIPUTF8VALIDATION OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "velox" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(velox)
 
-################################################################################
-## axiom
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "axiom" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(axiom)
-
 target_include_directories(
     velox
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/velox
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/axiom
 )
 
 ################################################################################

@@ -164,18 +164,19 @@ void EmitColumnsForTable(const catalog::Table& table,
 void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
                                std::vector<PgAttribute>& values) {
   auto row_type = table.RowType();
-  if (!row_type) {
+  if (row_type.id() != duckdb::LogicalTypeId::STRUCT) {
     return;
   }
+  auto& children = duckdb::StructType::GetChildTypes(row_type);
 
-  for (size_t i = 0; i < row_type->size(); ++i) {
-    auto child_type = row_type->childAt(i);
+  for (size_t i = 0; i < children.size(); ++i) {
+    auto& child_type = children[i].second;
     auto type_oid = Type2Oid(child_type);
     auto phys = GetPhysicalInfo(type_oid);
 
     PgAttribute row{
       .attrelid = table.Id().id(),
-      .attname = row_type->nameOf(i),
+      .attname = children[i].first,
       .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -202,8 +203,7 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgAttribute>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+std::vector<duckdb::Vector> SystemTableSnapshot<PgAttribute>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgAttribute> values;
@@ -220,10 +220,10 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgAttribute>::GetTableData(
       EmitColumnsForSystemTable(table, values);
     });
 
-  auto result = CreateColumns<PgAttribute>(values, &pool);
+  auto result = CreateColumns<PgAttribute>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
 
   return result;

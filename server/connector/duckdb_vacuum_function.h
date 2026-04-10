@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 
 namespace duckdb {
+
 class DatabaseInstance;
 }
 

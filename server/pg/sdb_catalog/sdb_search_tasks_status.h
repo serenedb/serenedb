@@ -37,8 +37,7 @@ struct SdbSearchTasksStatus {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData(
-  velox::memory::MemoryPool& pool);
+std::vector<duckdb::Vector>
+SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData();
 
 }  // namespace sdb::pg

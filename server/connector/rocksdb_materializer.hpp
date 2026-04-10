@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <velox/common/memory/HashStringAllocator.h>
 #include <velox/common/memory/MemoryPool.h>
 #include <velox/connectors/Connector.h>
 #include <velox/vector/ComplexVector.h>

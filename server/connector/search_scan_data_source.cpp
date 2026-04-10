@@ -160,7 +160,7 @@ std::vector<velox::VectorPtr>
 SearchDataSource<Materializer>::BuildOffsetsColumns(
   const std::vector<std::vector<std::vector<int64_t>>>& offsets_data) const {
   const auto n_docs = static_cast<velox::vector_size_t>(offsets_data[0].size());
-  auto offsets_type = catalog::Column::MakeOffsetsType();
+  auto offsets_type = velox::ARRAY(velox::BIGINT());
 
   std::vector<velox::VectorPtr> offsets_per_field;
   for (size_t fi = 0; fi < offsets_data.size(); ++fi) {

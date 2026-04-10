@@ -40,17 +40,13 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+std::vector<duckdb::Vector>
+SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
   if (!SerenedServer::Instance()
          .getFeature<search::SearchEngine>()
          .isEnabled()) {
-    return std::vector<velox::VectorPtr>(
-      boost::pfr::tuple_size_v<SdbSearchTasksStatus>);
+    return CreateColumns<SdbSearchTasksStatus>(0);
   }
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<SdbSearchTasksStatus>);
   constexpr auto kThreadGroups =
     magic_enum::enum_entries<search::ThreadGroup>();
   std::vector<SdbSearchTasksStatus> values;
@@ -68,14 +64,9 @@ SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData(
     });
   }
 
-  boost::pfr::for_each_field(
-    SdbSearchTasksStatus{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
-    });
-
+  auto result = CreateColumns<SdbSearchTasksStatus>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
   return result;
 }

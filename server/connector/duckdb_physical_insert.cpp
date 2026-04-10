@@ -66,6 +66,8 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<bool> skip_row;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
   std::string value_buffer;
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
+    duckdb::make_uniq<DuckDBColumnSerializer>();
 };
 
 struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
@@ -105,7 +107,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
     }
     state->columns.push_back(InsertColumnMeta{
       .id = columns[i].id,
-      .duckdb_type = VeloxTypeToDuckDB(columns[i].type),
+      .duckdb_type = columns[i].type,
       .input_col_idx = i,
     });
   }
@@ -181,8 +183,9 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     writer->Init(num_rows, chunk);
   }
 
-  // 4. Write each column: data + index writers
-  // Only overwrites ColumnId in-place per column — no string copy.
+  // 4. Write each column via DuckDBColumnSerializer
+  gstate.serializer->SetWriter({.txn = txn, .cf = gstate.cf});
+
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
@@ -195,25 +198,16 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       }
     }
 
+    // Setup ColumnId in all row keys for this column
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      if (gstate.skip_row[row]) {
-        continue;
-      }
-
-      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
-
-      auto slice = SerializeScalarValue(chunk.data[col.input_col_idx], row,
-                                        col.duckdb_type, gstate.value_buffer);
-
-      auto status = txn->Put(gstate.cf, gstate.row_keys[row], slice);
-      if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-      }
-
-      for (auto* writer : gstate.active_writers) {
-        writer->Write({&slice, 1}, gstate.row_keys[row]);
+      if (!gstate.skip_row[row]) {
+        key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
       }
     }
+
+    gstate.serializer->WriteColumn(chunk.data[col.input_col_idx],
+                                   col.duckdb_type, num_rows, gstate.row_keys,
+                                   gstate.skip_row, gstate.active_writers);
   }
 
   // 5. Finish index writers

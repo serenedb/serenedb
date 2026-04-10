@@ -108,7 +108,6 @@
 #include "pg/pg_feature.h"
 #include "pg/sdb_catalog/sdb_log.h"
 #include "pg/sdb_catalog/sdb_search_tasks_status.h"
-#include "pg/sql_parser.h"
 #include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
@@ -334,16 +333,6 @@ std::shared_ptr<PgSqlView> GetView(std::string_view name) {
     return nullptr;
   }
   return it->second;
-}
-
-void RegisterSystemViews() {
-  // System views are now registered in DuckDB's pg_catalog via weak symbols
-  // (see duckdb_engine.cpp + system_views.h kExternalViews)
-}
-
-void RegisterSystemFunctions() {
-  // System functions are now registered in DuckDB's pg_catalog via weak symbols
-  // (see duckdb_engine.cpp + system_functions.h kExternalMacros)
 }
 
 }  // namespace sdb::pg

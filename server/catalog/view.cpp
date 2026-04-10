@@ -29,19 +29,15 @@ namespace sdb::catalog {
 
 PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
                      std::string query)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 id,
-                 std::string{name},
-                 ObjectType::PgSqlView},
+  : SchemaObject{{}, database_id,       {},
+                 id, std::string{name}, ObjectType::PgSqlView},
     _query{std::move(query)} {}
 
 std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
-                                                    ReadContext ctx) {
+                                                   ReadContext ctx) {
   auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
-  auto name = basics::VPackHelper::getString(
-    slice, StaticStrings::kDataSourceName, {});
+  auto name =
+    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
   auto query = basics::VPackHelper::getString(slice, "query", {});
   return std::make_shared<PgSqlView>(ctx.database_id, id, name,
                                      std::string{query});

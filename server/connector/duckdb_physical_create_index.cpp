@@ -68,7 +68,7 @@ std::vector<duckdb_secondary_key::SKColumn> BuildSKColumnsForBackfill(
       if (columns[i].id == col_id) {
         result.push_back(duckdb_secondary_key::SKColumn{
           .input_col_idx = i,
-          .type = VeloxTypeToDuckDB(columns[i].type),
+          .type = columns[i].type,
         });
         break;
       }
@@ -109,8 +109,9 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   ~CreateIndexGlobalState() {
     if (created && !finalized) {
       try {
-        auto& catalog =
-          SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+        auto& catalog = SerenedServer::Instance()
+                          .getFeature<catalog::CatalogFeature>()
+                          .Global();
         std::ignore = catalog.DropIndex(database_id, "public", index_name);
         std::cerr << "SereneDB: Rolled back index " << index_name << std::endl;
       } catch (...) {
@@ -213,16 +214,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      _database_id, "public", _table->GetName(),
-      _info->index_name, std::move(idx_columns),
-      shard_options, {.create_with_tombstone = true});
+      _database_id, "public", _table->GetName(), _info->index_name,
+      std::move(idx_columns), shard_options, {.create_with_tombstone = true});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      _database_id, "public", _table->GetName(),
-      _info->index_name, std::move(idx_columns),
-      unique, {.create_with_tombstone = true});
+      _database_id, "public", _table->GetName(), _info->index_name,
+      std::move(idx_columns), unique, {.create_with_tombstone = true});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
@@ -247,8 +246,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   // Start background tasks for inverted indexes
   if (shard->GetType() == catalog::ObjectType::InvertedIndex) {
-    auto& inverted_shard =
-      basics::downCast<search::InvertedIndexShard>(*shard);
+    auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
     inverted_shard.StartTasks();
   }
 
@@ -261,7 +259,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
     state->columns.push_back(InsertColumnMeta{
       .id = columns[i].id,
-      .duckdb_type = VeloxTypeToDuckDB(columns[i].type),
+      .duckdb_type = columns[i].type,
       .input_col_idx = i,
     });
   }
@@ -282,25 +280,21 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     auto& trx = conn_ctx.EnsureRocksDBTransaction();
 
     if (sec_index.IsUnique()) {
-      state->writer =
-        std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(
-          trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
+      state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(
+        trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
     } else {
-      state->writer =
-        std::make_unique<DuckDBSecondarySinkInsertWriter<false>>(
-          trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
+      state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<false>>(
+        trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
     }
   } else {
-    auto& inverted_shard =
-      basics::downCast<search::InvertedIndexShard>(*shard);
+    auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
     state->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
       inverted_shard.GetTransaction());
     auto& inverted_index =
       basics::downCast<const catalog::InvertedIndex>(*index);
     auto analyzer_provider = MakeAnalyzerProvider(snapshot, inverted_index);
     state->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
-      *state->search_trx, std::move(analyzer_provider),
-      index->GetColumnIds());
+      *state->search_trx, std::move(analyzer_provider), index->GetColumnIds());
   }
 
   std::cerr << "SereneDB: Created index " << _info->index_name
@@ -331,7 +325,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   // Init writer for this batch
   gstate.writer->Init(num_rows, chunk);
 
-  // Iterate columns — same pattern as INSERT, but only write to the index
+  // Iterate columns -- same pattern as INSERT, but only write to the index
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
@@ -367,8 +361,10 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
 
   // For inverted indexes: flush writer, commit, then finish creation
-  if (gstate.index_type == catalog::ObjectType::InvertedIndex && gstate.index_shard) {
-    // Close the writer and IResearch transaction so data is available for commit
+  if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
+      gstate.index_shard) {
+    // Close the writer and IResearch transaction so data is available for
+    // commit
     gstate.writer.reset();
     gstate.search_trx.reset();
 
@@ -380,7 +376,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     inverted_shard.FinishCreation();
   }
 
-  // Remove tombstone — index is now fully built
+  // Remove tombstone -- index is now fully built
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto r =
@@ -392,9 +388,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
 
   gstate.finalized = true;
 
-  std::cerr << "SereneDB: Index " << gstate.index_name
-            << " backfill complete (" << gstate.backfill_count << " rows)"
-            << std::endl;
+  std::cerr << "SereneDB: Index " << gstate.index_name << " backfill complete ("
+            << gstate.backfill_count << " rows)" << std::endl;
   return duckdb::SinkFinalizeType::READY;
 }
 
@@ -433,8 +428,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto sdb_table = table_entry.GetSereneDBTable();
   auto& sdb_catalog = table_entry.schema.catalog.Cast<SereneDBCatalog>();
   auto database_id = sdb_catalog.GetDatabaseId();
-  auto& schema_entry =
-    dynamic_cast<SereneDBSchemaEntry&>(table_entry.schema);
+  auto& schema_entry = dynamic_cast<SereneDBSchemaEntry&>(table_entry.schema);
 
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
     std::move(sdb_table), database_id, std::move(op.info), schema_entry,

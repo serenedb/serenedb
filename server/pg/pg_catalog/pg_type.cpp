@@ -702,16 +702,10 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgType>::GetTableData(
-  velox::memory::MemoryPool& pool) {
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<PgType>);
-  boost::pfr::for_each_field(PgType{}, [&]<typename Field>(const Field& field) {
-    auto column = CreateColumn<Field>(kSampleData.size(), &pool);
-    result.push_back(std::move(column));
-  });
+std::vector<duckdb::Vector> SystemTableSnapshot<PgType>::GetTableData() {
+  auto result = CreateColumns<PgType>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
-    WriteData(result, kSampleData[row], kNullMask, row, &pool);
+    WriteData(result, kSampleData[row], kNullMask, row);
   }
   return result;
 }

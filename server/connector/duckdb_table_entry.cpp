@@ -33,84 +33,6 @@
 
 namespace sdb::connector {
 
-duckdb::LogicalType VeloxTypeToDuckDB(const velox::TypePtr& type) {
-  switch (type->kind()) {
-    case velox::TypeKind::BOOLEAN:
-      return duckdb::LogicalType::BOOLEAN;
-    case velox::TypeKind::TINYINT:
-      return duckdb::LogicalType::TINYINT;
-    case velox::TypeKind::SMALLINT:
-      return duckdb::LogicalType::SMALLINT;
-    case velox::TypeKind::INTEGER:
-      return duckdb::LogicalType::INTEGER;
-    case velox::TypeKind::BIGINT:
-      return duckdb::LogicalType::BIGINT;
-    case velox::TypeKind::REAL:
-      return duckdb::LogicalType::FLOAT;
-    case velox::TypeKind::DOUBLE:
-      return duckdb::LogicalType::DOUBLE;
-    case velox::TypeKind::VARCHAR:
-      return duckdb::LogicalType::VARCHAR;
-    case velox::TypeKind::VARBINARY:
-      return duckdb::LogicalType::BLOB;
-    case velox::TypeKind::TIMESTAMP:
-      return duckdb::LogicalType::TIMESTAMP;
-    case velox::TypeKind::HUGEINT:
-      return duckdb::LogicalType::HUGEINT;
-    case velox::TypeKind::ARRAY: {
-      auto child = VeloxTypeToDuckDB(type->asArray().elementType());
-      return duckdb::LogicalType::LIST(std::move(child));
-    }
-    case velox::TypeKind::MAP: {
-      auto key = VeloxTypeToDuckDB(type->asMap().keyType());
-      auto val = VeloxTypeToDuckDB(type->asMap().valueType());
-      return duckdb::LogicalType::MAP(std::move(key), std::move(val));
-    }
-    case velox::TypeKind::ROW: {
-      auto& row = type->asRow();
-      duckdb::child_list_t<duckdb::LogicalType> children;
-      for (size_t i = 0; i < row.size(); ++i) {
-        children.emplace_back(row.nameOf(i), VeloxTypeToDuckDB(row.childAt(i)));
-      }
-      return duckdb::LogicalType::STRUCT(std::move(children));
-    }
-    default:
-      return duckdb::LogicalType::VARCHAR;
-  }
-}
-
-velox::TypePtr DuckDBTypeToVelox(const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::BOOLEAN:
-      return velox::BOOLEAN();
-    case duckdb::LogicalTypeId::TINYINT:
-      return velox::TINYINT();
-    case duckdb::LogicalTypeId::SMALLINT:
-      return velox::SMALLINT();
-    case duckdb::LogicalTypeId::INTEGER:
-      return velox::INTEGER();
-    case duckdb::LogicalTypeId::BIGINT:
-      return velox::BIGINT();
-    case duckdb::LogicalTypeId::FLOAT:
-      return velox::REAL();
-    case duckdb::LogicalTypeId::DOUBLE:
-      return velox::DOUBLE();
-    case duckdb::LogicalTypeId::VARCHAR:
-      return velox::VARCHAR();
-    case duckdb::LogicalTypeId::BLOB:
-      return velox::VARBINARY();
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      return velox::TIMESTAMP();
-    case duckdb::LogicalTypeId::DATE:
-      return velox::DATE();
-    case duckdb::LogicalTypeId::HUGEINT:
-      return velox::HUGEINT();
-    default:
-      return velox::VARCHAR();
-  }
-}
-
 SereneDBTableEntry::SereneDBTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
@@ -136,7 +58,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
       continue;  // Skip generated PK -- not a real column
     }
     data->column_ids.push_back(col.id);
-    data->column_types.push_back(VeloxTypeToDuckDB(col.type));
+    data->column_types.push_back(col.type);
   }
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
   data->has_rowid = true;
@@ -229,8 +151,7 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
     for (size_t i = 0; i < columns.size(); ++i) {
       if (columns[i].id == pk_id) {
         result.insert({duckdb::VIRTUAL_COLUMN_START + i,
-                       duckdb::TableColumn(
-                         columns[i].name, VeloxTypeToDuckDB(columns[i].type))});
+                       duckdb::TableColumn(columns[i].name, columns[i].type)});
         break;
       }
     }
@@ -241,8 +162,7 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
     auto virt_id = duckdb::VIRTUAL_COLUMN_START + idx;
     if (!result.contains(virt_id)) {
       result.insert(
-        {virt_id, duckdb::TableColumn(columns[idx].name,
-                                      VeloxTypeToDuckDB(columns[idx].type))});
+        {virt_id, duckdb::TableColumn(columns[idx].name, columns[idx].type)});
     }
   }
 

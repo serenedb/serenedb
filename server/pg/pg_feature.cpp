@@ -25,7 +25,6 @@
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
-#include "connector/serenedb_connector.hpp"
 #include "pg/system_catalog.h"
 #include "pg_functions_registration.hpp"
 #include "query/duckdb_engine.h"
@@ -84,42 +83,21 @@ void PostgresFeature::UnregisterTask(uint64_t key) {
 }
 
 void PostgresFeature::prepare() {
-  folly::SingletonVault::singleton()->registrationComplete();
-
-  velox::memory::MemoryManager::initialize(
-    velox::memory::MemoryManager::Options{});
-
-  velox::filesystems::registerS3FileSystem();
-
-  RegisterVeloxFunctionsAndTypes();
-
   query::DuckDBEngine::Instance().Initialize();
 }
 
 void PostgresFeature::start() {
-  RegisterSystemFunctions();
-  RegisterSystemViews();
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
-    auto& engine = GetServerEngine();
     auto* cf = RocksDBColumnFamilyManager::get(
       RocksDBColumnFamilyManager::Family::Default);
     SDB_ASSERT(cf);
-
-    auto connector = std::make_shared<connector::SereneDBConnector>(
-      StaticStrings::kSereneDBConnector, nullptr, *engine.db(), *cf);
-    velox::connector::registerConnector(std::move(connector));
-    auto connector_metadata =
-      std::make_shared<connector::SereneDBConnectorMetadata>();
-    axiom::connector::ConnectorMetadata::registerMetadata(
-      StaticStrings::kSereneDBConnector, connector_metadata);
   }
 }
 
 void PostgresFeature::unprepare() {
   query::DuckDBEngine::Instance().Shutdown();
   velox::filesystems::finalizeS3FileSystem();
-  folly::SingletonVault::singleton()->destroyInstancesFinal();
 }
 
 }  // namespace sdb::pg

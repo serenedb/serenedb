@@ -232,7 +232,6 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SereneDBUpdateGlobalState>();
 
-  chunk.Flatten();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -275,7 +274,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
     }
-    gstate.serializer->WriteColumn(txn_writer,chunk.data[col.input_col_idx],
+    gstate.serializer->WriteColumn(txn_writer, chunk.data[col.input_col_idx],
                                    col.duckdb_type, num_rows, gstate.row_keys,
                                    {});
   }
@@ -344,9 +343,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col_meta.id);
       }
-      gstate.serializer->WriteColumn(txn_writer,chunk.data[src_col], col_meta.duckdb_type,
-                                     num_rows, gstate.row_keys,
-                                     gstate.active_writers);
+      gstate.serializer->WriteColumn(txn_writer, chunk.data[src_col],
+                                     col_meta.duckdb_type, num_rows,
+                                     gstate.row_keys, gstate.active_writers);
     }
 
     for (auto& writer : gstate.insert_index_writers) {

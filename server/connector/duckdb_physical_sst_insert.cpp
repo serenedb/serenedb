@@ -184,7 +184,6 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SSTInsertGlobalState>();
 
-  chunk.Flatten();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -235,12 +234,11 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
         key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
       }
 
-      // Use a noop writer for data — index writers handle themselves
+      // Use a noop writer for data -- index writers handle themselves
       DuckDBColumnSerializer::SstWriter noop{nullptr};
       gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
                                      meta.duckdb_type, num_rows,
-                                     gstate.row_keys,
-                                     gstate.active_writers);
+                                     gstate.row_keys, gstate.active_writers);
     }
 
     for (auto& writer : gstate.index_writers) {

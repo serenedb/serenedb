@@ -105,6 +105,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::string value_buffer;
   duckdb::idx_t backfill_count = 0;
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
+    duckdb::make_uniq<DuckDBColumnSerializer>();
 
   ~CreateIndexGlobalState() {
     if (created && !finalized) {
@@ -312,7 +314,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  chunk.Flatten();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -326,6 +327,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   gstate.writer->Init(num_rows, chunk);
 
   // Iterate columns -- same pattern as INSERT, but only write to the index
+  DuckDBColumnSerializer::SstWriter noop{nullptr};
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {
       continue;
@@ -338,10 +340,12 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
-      auto slice = SerializeScalarValue(chunk.data[col.input_col_idx], row,
-                                        col.duckdb_type, gstate.value_buffer);
-      gstate.writer->Write({&slice, 1}, gstate.row_keys[row]);
     }
+
+    DuckDBSinkIndexWriter* writer_ptr = gstate.writer.get();
+    gstate.serializer->WriteColumn(noop, chunk.data[col.input_col_idx],
+                                   col.duckdb_type, num_rows, gstate.row_keys,
+                                   {&writer_ptr, 1});
   }
 
   gstate.writer->Finish();

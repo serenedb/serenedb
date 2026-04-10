@@ -33,6 +33,7 @@
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
+#include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 
@@ -131,7 +132,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SereneDBInsertGlobalState>();
 
-  chunk.Flatten();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
@@ -141,12 +141,23 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   conn_ctx.AddRocksDBWrite();
   auto* txn = &conn_ctx.EnsureRocksDBTransaction();
 
-  // 1. Build row keys with reserved ColumnId slot:
+  // 1. Build row keys with reserved ColumnId slot + row-level locking:
   // Layout: [ColumnId(reserved)][ObjectId][PK bytes]
   duckdb_primary_key::CreateBatchWithColumnSlot(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
+  // Acquire row-level locks (same as old _data_writer.Lock)
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    auto status = txn->GetKeyLock(gstate.cf, gstate.row_keys[row], false, true);
+    if (!status.ok()) {
+      auto result = rocksutils::ConvertStatus(status);
+      SDB_THROW(result.errorNumber(), "Failed to acquire row lock for table ",
+                gstate.table_id.id(), " error: ", result.errorMessage());
+    }
+  }
+
   // 2. Conflict detection for explicit PKs
+  size_t rows_skipped = 0;
   if (!gstate.has_generated_pk) {
     rocksdb::ReadOptions ro;
     ro.snapshot = txn->GetSnapshot();
@@ -162,6 +173,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       if (s.ok()) {
         if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
           gstate.row_keys[row].clear();  // mark as skipped
+          ++rows_skipped;
           continue;
         }
         if (_on_conflict == duckdb::OnConflictAction::REPLACE) {
@@ -176,9 +188,14 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     }
   }
 
-  // 3. Init index writers for this batch
+  auto affected_rows = num_rows - rows_skipped;
+  if (affected_rows == 0) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+
+  // 3. Init index writers with affected rows count (not total)
   for (auto& writer : gstate.index_writers) {
-    writer->Init(num_rows, chunk);
+    writer->Init(affected_rows, chunk);
   }
 
   // 4. Write each column via DuckDBColumnSerializer
@@ -191,7 +208,9 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
+      auto& vec = chunk.data[col.input_col_idx];
+      bool may_have_nulls = !duckdb::FlatVector::Validity(vec).CannotHaveNull();
+      if (writer->SwitchColumn(col.duckdb_type, may_have_nulls, col.id)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -213,10 +232,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     writer->Finish();
   }
 
-  auto skipped =
-    std::count_if(gstate.row_keys.begin(), gstate.row_keys.end(),
-                  [](const auto& k) { return k.empty(); });
-  gstate.insert_count += num_rows - skipped;
+  gstate.insert_count += affected_rows;
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 

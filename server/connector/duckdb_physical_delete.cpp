@@ -205,7 +205,6 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<SereneDBDeleteGlobalState>();
 
-  chunk.Flatten();
   const auto num_rows = chunk.size();
   if (num_rows == 0) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;

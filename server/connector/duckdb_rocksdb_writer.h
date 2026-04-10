@@ -42,14 +42,6 @@ class SstFileWriter;
 }  // namespace rocksdb
 namespace sdb::connector {
 
-// Serialize a single scalar value from a DuckDB Vector at row `idx`.
-// Only handles primitive types. Complex types (LIST/MAP/STRUCT) must use
-// DuckDBColumnSerializer.
-rocksdb::Slice SerializeScalarValue(const duckdb::Vector& vec,
-                                    duckdb::idx_t idx,
-                                    const duckdb::LogicalType& type,
-                                    std::string& buffer);
-
 // Append a PK column value to a key buffer (big-endian sorted encoding).
 void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
                              duckdb::idx_t idx,
@@ -64,7 +56,7 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
 //     into _row_slices (zero-copy where possible).
 class DuckDBColumnSerializer {
  public:
-  // Data writer — wraps RocksDB Put. Concrete types passed as template param
+  // Data writer -- wraps RocksDB Put. Concrete types passed as template param
   // to WriteColumn (same as old DataWriterype template on RocksDBDataSinkBase).
   struct TxnWriter {
     rocksdb::Transaction* txn;
@@ -86,9 +78,10 @@ class DuckDBColumnSerializer {
   DuckDBColumnSerializer();
 
   // --- Layer 1: Per-column write (one RocksDB Put per row) ---
-  // Templated on Writer (TxnWriter or SstWriter) — inlined, no virtual dispatch.
+  // Templated on Writer (TxnWriter or SstWriter) -- inlined, no virtual
+  // dispatch.
 
-  // row_keys with empty string = skipped row (same as old SetupRowKey→nullptr)
+  // row_keys with empty string = skipped row (same as old SetupRowKey->nullptr)
   template<typename Writer>
   void WriteColumn(Writer& writer, const duckdb::Vector& vec,
                    const duckdb::LogicalType& type, duckdb::idx_t num_rows,
@@ -130,6 +123,8 @@ class DuckDBColumnSerializer {
                                 duckdb::idx_t count,
                                 const duckdb::LogicalType& type);
 
+  // IMPORTANT: value must be in stable memory (vector buffer, ConstantVector
+  // data, or arena). NOT a stack temporary.
   template<typename T>
   void WritePrimitive(const T& value);
 
@@ -141,12 +136,28 @@ class DuckDBColumnSerializer {
   bool WriteNullBitmap(const duckdb::ValidityMask& validity,
                        duckdb::idx_t offset, duckdb::idx_t count);
 
-  // Layer 1 helpers — templated on Writer
+  // Layer 1 helpers -- templated on Writer
   template<typename Writer, typename T>
   void WriteFlatColumn(Writer& writer, const duckdb::Vector& vec,
                        duckdb::idx_t num_rows,
                        std::vector<std::string>& row_keys,
                        std::span<DuckDBSinkIndexWriter*> index_writers);
+
+  template<typename Writer>
+  void WriteConstantColumn(Writer& writer, const duckdb::Vector& vec,
+                           const duckdb::LogicalType& type,
+                           duckdb::idx_t num_rows,
+                           std::vector<std::string>& row_keys,
+                           std::span<DuckDBSinkIndexWriter*> index_writers);
+
+  template<typename Writer>
+  void WriteUnifiedColumn(Writer& writer,
+                          const duckdb::UnifiedVectorFormat& vdata,
+                          const duckdb::Vector& vec,
+                          const duckdb::LogicalType& type,
+                          duckdb::idx_t num_rows,
+                          std::vector<std::string>& row_keys,
+                          std::span<DuckDBSinkIndexWriter*> index_writers);
 
   template<typename Writer>
   void WriteComplexColumn(Writer& writer, const duckdb::Vector& vec,

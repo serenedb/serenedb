@@ -16,12 +16,9 @@ on:
 jobs:
   coverage:
     if: github.event.schedule == '0 5 * * *'
-    uses: ./.github/workflows/build-reusable.yml
+    uses: ./.github/workflows/build-coverage.yml
     with:
       LOCATION: linux-amd64
-      KIND: both
-      DEV: true
-      INSTRUMENTATION: coverage
 
 
   release-check:

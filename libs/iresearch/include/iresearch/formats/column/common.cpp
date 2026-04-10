@@ -408,6 +408,12 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
     }
   }
 
+  void RangeSearch(HNSWRangeSearchContext& context) const final {
+    if (_hnsw_index) {
+      _hnsw_index->RangeSearch(context);
+    }
+  }
+
   virtual void MakeBuffered(IndexInput&,
                             std::span<memory::managed_ptr<ColumnReader>>) {}
 

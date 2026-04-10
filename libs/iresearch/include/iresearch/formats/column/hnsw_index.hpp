@@ -44,6 +44,8 @@ uint64_t PackSegmentWithDoc(uint32_t segment, doc_id_t doc);
 std::pair<uint32_t, doc_id_t> UnpackSegmentWithDoc(uint64_t id);
 
 using HNSWResultHandler = faiss::HeapBlockResultHandler<faiss::HNSW::C>;
+using HNSWRangeResultHandler =
+  faiss::RangeSearchBlockResultHandler<faiss::HNSW::C>;
 
 class HNSWSegmentResultHandler : public faiss::ResultHandler<faiss::HNSW::C> {
  public:
@@ -62,6 +64,27 @@ class HNSWSegmentResultHandler : public faiss::ResultHandler<faiss::HNSW::C> {
 
  private:
   HNSWResultHandler::SingleResultHandler _impl;
+  uint32_t _segment_id;
+};
+
+class HNSWRangeSegmentResultHandler
+  : public faiss::ResultHandler<faiss::HNSW::C> {
+ public:
+  explicit HNSWRangeSegmentResultHandler(uint32_t segment_id,
+                                         HNSWRangeResultHandler& handler)
+    : _impl{handler}, _segment_id{segment_id} {}
+
+  void Begin(size_t i) { _impl.begin(i); }
+
+  bool add_result(float dis, int64_t idx) final {
+    return _impl.add_result(
+      dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
+  }
+
+  void End() {}
+
+ private:
+  HNSWRangeResultHandler::SingleResultHandler _impl;
   uint32_t _segment_id;
 };
 
@@ -128,6 +151,19 @@ struct HNSWSearchContext {
   HNSWResultHandler& handler;
 };
 
+struct HNSWRangeSearchInfo {
+  const byte_type* query;
+  float radius;
+  faiss::SearchParametersHNSW params;
+};
+
+struct HNSWRangeSearchContext {
+  HNSWRangeSearchInfo info;
+  uint32_t segment_id;
+  faiss::VisitedTable vt;
+  HNSWRangeResultHandler& handler;
+};
+
 class HNSWIndexWriter {
  public:
   explicit HNSWIndexWriter(
@@ -159,6 +195,7 @@ class HNSWIndexReader {
                            HNSWInfo info);
 
   void Search(HNSWSearchContext& context) const;
+  void RangeSearch(HNSWRangeSearchContext& context) const;
 
  private:
   friend class HNSWIterator;

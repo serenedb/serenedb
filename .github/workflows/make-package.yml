@@ -1,6 +1,33 @@
 name: task | serenedb make & test package
 
 on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      RTA:
+        description: "RTA mode: off, test (ignore failures), required (block on failure)"
+        type: string
+        required: false
+        default: "off"
+      UPLOAD_ARTIFACTS:
+        description: "Upload tarball + deb for release"
+        type: boolean
+        required: false
+        default: false
+      SERENEDB_VERSION_PATCH:
+        description: "Version patch number"
+        type: string
+        required: false
+        default: ""
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:

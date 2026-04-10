@@ -103,7 +103,7 @@ struct IndexReader {
               int64_t* ids) const;
 
   void RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
-                   faiss::RangeSearchResult& result) const;
+                   std::vector<float>& dis, std::vector<int64_t>& ids) const;
 
   // returns number of sub-segments in current reader
   virtual size_t size() const = 0;

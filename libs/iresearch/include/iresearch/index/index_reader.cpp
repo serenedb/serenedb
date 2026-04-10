@@ -83,18 +83,15 @@ void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
 }
 
 void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
-                              faiss::RangeSearchResult& result) const {
-  SDB_ASSERT(result.nq == 1);
-
-  std::vector<std::pair<float, int64_t>> all_results;
-
+                              std::vector<float>& dis,
+                              std::vector<int64_t>& ids) const {
   for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
     const auto& segment = (*this)[segment_id];
     const auto* column = segment.column(field);
     if (!column) {
       continue;
     }
-    faiss::RangeSearchResult seg_result(1);
+    faiss::RangeSearchResult seg_result{1};
     HNSWRangeResultHandler handler{&seg_result, info.radius};
     HNSWRangeSearchContext context{
       info,
@@ -103,18 +100,13 @@ void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
       handler,
     };
     column->RangeSearch(context);
+    size_t sz = seg_result.lims[1] - seg_result.lims[0];
+    dis.reserve(dis.size() + sz);
+    ids.reserve(ids.size() + sz);
     for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
-      all_results.emplace_back(seg_result.distances[i], seg_result.labels[i]);
+      dis.emplace_back(seg_result.distances[i]);
+      ids.emplace_back(seg_result.labels[i]);
     }
-  }
-
-  std::sort(all_results.begin(), all_results.end());
-
-  result.lims[0] = all_results.size();
-  result.do_allocation();
-  for (size_t i = 0; i < all_results.size(); ++i) {
-    result.distances[i] = all_results[i].first;
-    result.labels[i] = all_results[i].second;
   }
 }
 

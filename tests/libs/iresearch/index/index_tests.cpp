@@ -14807,27 +14807,23 @@ TEST_P(IndexTestCase14, hnsw_range_search_basic) {
         radius,
         params,
       };
-      faiss::RangeSearchResult range_result(1);
-      reader.RangeSearch(kColumnName, info, range_result);
+      std::vector<float> dis;
+      std::vector<int64_t> ids;
+      reader.RangeSearch(kColumnName, info, dis, ids);
 
-      std::vector<std::pair<float, uint64_t>> found;
-      for (size_t i = range_result.lims[0]; i < range_result.lims[1]; ++i) {
-        found.emplace_back(range_result.distances[i],
-                           static_cast<uint64_t>(range_result.labels[i]));
-      }
-
-      for (const auto& [dist, packed_id] : found) {
-        EXPECT_LT(dist, radius);
+      for (auto d : dis) {
+        EXPECT_LT(d, radius);
       }
 
       if (expected.empty()) {
         continue;
       }
       size_t correct = 0;
-      for (const auto& [dist, packed_id] : found) {
-        correct += std::find(expected.begin(), expected.end(), packed_id) !=
-                   expected.end();
+      for (auto id : ids) {
+        correct +=
+          std::find(expected.begin(), expected.end(), id) != expected.end();
       }
+
       float current_recall = static_cast<float>(correct) / expected.size();
       recall += current_recall;
     }

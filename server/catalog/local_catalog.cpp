@@ -890,7 +890,8 @@ class SnapshotImpl : public Snapshot {
   ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
   mutable std::mutex _cache_mutex;
-  mutable containers::NodeHashMap<ObjectId, std::unique_ptr<connector::DuckDBEntryCache>>
+  mutable containers::NodeHashMap<ObjectId,
+                                  std::unique_ptr<connector::DuckDBEntryCache>>
     _duckdb_caches;
 };
 

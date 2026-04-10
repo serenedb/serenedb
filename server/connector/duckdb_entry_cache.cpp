@@ -294,18 +294,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildViewEntry(
     return nullptr;
   }
 
-  // Get the SQL query string from the view
+  // Get the full CreateViewInfo from the stored view
   auto& sql_view = basics::downCast<const catalog::PgSqlView>(*relation);
-  auto query_sql = std::string{sql_view.GetQuery()};
-  if (query_sql.empty()) {
-    return nullptr;
-  }
-
-  auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
+  auto info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+      sql_view.GetInfo().Copy());
   info->schema = std::string{schema_name};
-  info->view_name = std::string{view_name};
-  info->sql = query_sql;
-  info->query = duckdb::CreateViewInfo::ParseSelect(query_sql);
   info->temporary = true;
   info->internal = false;
 
@@ -328,30 +322,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildFunctionEntry(
     return nullptr;
   }
 
-  // Get the stored SQL and parse it to build a DuckDB macro
-  auto sql = std::string{function->GetSQL()};
-  if (sql.empty()) {
-    return nullptr;
-  }
-
-  // Parse the SQL to get CreateMacroInfo
-  duckdb::Parser parser;
-  parser.ParseQuery(sql);
-  if (parser.statements.empty() ||
-      parser.statements[0]->type != duckdb::StatementType::CREATE_STATEMENT) {
-    return nullptr;
-  }
-  auto& create_stmt = parser.statements[0]->Cast<duckdb::CreateStatement>();
-  if (create_stmt.info->type != duckdb::CatalogType::MACRO_ENTRY &&
-      create_stmt.info->type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-    return nullptr;
-  }
-  auto& macro_info = create_stmt.info->Cast<duckdb::CreateMacroInfo>();
-  macro_info.schema = std::string{schema_name};
-  macro_info.name = std::string{func_name};
+  // Get the full CreateMacroInfo from the stored function
+  auto info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      function->GetInfo().Copy());
+  info->schema = std::string{schema_name};
+  info->name = std::string{func_name};
 
   // Resolve unbound parameter types (same as DefaultFunctionGenerator)
-  for (auto& macro : macro_info.macros) {
+  for (auto& macro : info->macros) {
     for (auto& type : macro->types) {
       if (type.IsUnbound()) {
         type = duckdb::UnboundType::TryDefaultBind(type);
@@ -361,9 +340,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildFunctionEntry(
 
   auto key = std::string{func_name};
   auto& cache = _entry_caches[std::string{schema_name}];
-  auto info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
-      std::move(create_stmt.info));
   auto entry =
     duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema, *info);
   auto* ptr = entry.get();

@@ -20,20 +20,19 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
 
 #include "catalog/object.h"
 
 namespace sdb::catalog {
 
 // A SQL function stored in the catalog.
-// The function body is stored as SQL text.
-// DuckDB parses it on demand to create macro entries.
+// Stores the full DuckDB CreateMacroInfo -- preserves all function metadata.
+// Serialized to/from RocksDB via DuckDB's BinarySerializer.
 class PgSqlFunction final : public SchemaObject {
  public:
   PgSqlFunction(ObjectId database_id, ObjectId id, std::string_view name,
-                std::string sql);
+                duckdb::unique_ptr<duckdb::CreateMacroInfo> info);
 
   static std::shared_ptr<PgSqlFunction> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
@@ -41,10 +40,10 @@ class PgSqlFunction final : public SchemaObject {
   void WriteInternal(vpack::Builder& build) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  std::string_view GetSQL() const noexcept { return _sql; }
+  const duckdb::CreateMacroInfo& GetInfo() const noexcept { return *_info; }
 
  private:
-  std::string _sql;  // Full CREATE FUNCTION SQL text
+  duckdb::unique_ptr<duckdb::CreateMacroInfo> _info;
 };
 
 }  // namespace sdb::catalog

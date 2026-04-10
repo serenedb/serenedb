@@ -62,14 +62,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   const duckdb::EntryLookupInfo& lookup_info) {
   auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto result = snapshot->GetDuckDBCache(GetDatabaseId()).GetOrCreateEntry(
-    lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
-    lookup_info.GetEntryName(), *snapshot);
-  fprintf(stderr, "[LOOKUP] entry=%s schema=%s db=%lu type=%d found=%d snap=%p\n",
-          std::string{lookup_info.GetEntryName()}.c_str(),
-          std::string{name}.c_str(), GetDatabaseId().id(),
-          (int)lookup_info.GetCatalogType(), result != nullptr,
-          (void*)snapshot.get());
+  auto result = snapshot->GetDuckDBCache(GetDatabaseId())
+                  .GetOrCreateEntry(lookup_info.GetCatalogType(), catalog,
+                                    *this, GetDatabaseId(), name,
+                                    lookup_info.GetEntryName(), *snapshot);
   return result;
 }
 
@@ -78,8 +74,9 @@ void SereneDBSchemaEntry::Scan(
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  snapshot->GetDuckDBCache(GetDatabaseId()).ScanEntries(type, catalog, *this, GetDatabaseId(),
-                                         name, callback, *snapshot);
+  snapshot->GetDuckDBCache(GetDatabaseId())
+    .ScanEntries(type, catalog, *this, GetDatabaseId(), name, callback,
+                 *snapshot);
 }
 
 void SereneDBSchemaEntry::Scan(
@@ -169,9 +166,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     SDB_THROW(std::move(r));
   }
 
-  auto new_snap = catalog_impl.GetCatalogSnapshot();
-  fprintf(stderr, "[SNAP] Created table %s, new global snapshot=%p\n",
-          table_info.table.c_str(), (void*)new_snap.get());
   return nullptr;
 }
 
@@ -291,12 +285,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       inverted_shard.FinishCreation();
     }
   }
-
-  // No cache to invalidate -- entries live on snapshot, new snapshot picks up
-  // index
-
-  std::cerr << "SereneDB: Created index " << info.index_name << " on "
-            << sdb_table->GetName() << " via DuckDB" << std::endl;
   return nullptr;
 }
 
@@ -307,9 +295,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
-  auto sql = info.ToString();
+  auto macro_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      info.Copy());
   auto function = std::make_shared<catalog::PgSqlFunction>(
-    database_id, ObjectId{}, info.name, std::move(sql));
+    database_id, ObjectId{}, info.name, std::move(macro_info));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
@@ -324,9 +314,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
-
-  std::cerr << "SereneDB: Created function " << info.name << " via DuckDB"
-            << std::endl;
   return nullptr;
 }
 
@@ -337,9 +324,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
-  auto sql = info.query->ToString();
+  auto view_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+      info.Copy());
   auto view = std::make_shared<catalog::PgSqlView>(
-    database_id, ObjectId{}, info.view_name, std::move(sql));
+    database_id, ObjectId{}, info.view_name, std::move(view_info));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
@@ -359,8 +348,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
     SDB_THROW(std::move(r));
   }
 
-  std::cerr << "SereneDB: Created view " << info.view_name << " via DuckDB"
-            << std::endl;
   return nullptr;
 }
 
@@ -427,12 +414,6 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }
-
-  // No cache to invalidate -- entries live on snapshot, new snapshot won't have
-  // this table
-
-  std::cerr << "SereneDB: Dropped table " << info.name << " via DuckDB"
-            << std::endl;
 }
 
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,

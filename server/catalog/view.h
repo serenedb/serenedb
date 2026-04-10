@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <string>
 
 #include "catalog/object.h"
@@ -27,12 +28,12 @@
 namespace sdb::catalog {
 
 // A SQL view stored in the catalog.
-// The view body is stored as SQL text (SELECT query).
-// DuckDB parses it on demand to create view entries.
+// Stores the full DuckDB CreateViewInfo -- preserves aliases, types, names,
+// etc. Serialized to/from RocksDB via DuckDB's BinarySerializer.
 class PgSqlView final : public SchemaObject {
  public:
   PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
-            std::string query);
+            duckdb::unique_ptr<duckdb::CreateViewInfo> info);
 
   static std::shared_ptr<PgSqlView> ReadInternal(vpack::Slice slice,
                                                  ReadContext ctx);
@@ -40,10 +41,10 @@ class PgSqlView final : public SchemaObject {
   void WriteInternal(vpack::Builder& b) const final;
   std::shared_ptr<Object> Clone() const final;
 
-  std::string_view GetQuery() const noexcept { return _query; }
+  const duckdb::CreateViewInfo& GetInfo() const noexcept { return *_info; }
 
  private:
-  std::string _query;  // SELECT query text
+  duckdb::unique_ptr<duckdb::CreateViewInfo> _info;
 };
 
 }  // namespace sdb::catalog

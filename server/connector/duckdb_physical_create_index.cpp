@@ -115,7 +115,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
                           .getFeature<catalog::CatalogFeature>()
                           .Global();
         std::ignore = catalog.DropIndex(database_id, "public", index_name);
-        std::cerr << "SereneDB: Rolled back index " << index_name << std::endl;
       } catch (...) {
       }
     }
@@ -298,9 +297,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     state->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
       *state->search_trx, std::move(analyzer_provider), index->GetColumnIds());
   }
-
-  std::cerr << "SereneDB: Created index " << _info->index_name
-            << " with tombstone, starting backfill" << std::endl;
   return state;
 }
 
@@ -389,11 +385,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     throw duckdb::InternalException("Failed to remove tombstone: %s",
                                     std::string{r.errorMessage()});
   }
-
   gstate.finalized = true;
 
-  std::cerr << "SereneDB: Index " << gstate.index_name << " backfill complete ("
-            << gstate.backfill_count << " rows)" << std::endl;
   return duckdb::SinkFinalizeType::READY;
 }
 

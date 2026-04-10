@@ -105,8 +105,6 @@ std::optional<std::string> Config::Get(std::string_view key) const {
 
 std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
-    fprintf(stderr, "[SNAP] EnsureCatalogSnapshot this=%p: reusing cached %p\n",
-            (void*)this, (void*)_snapshot.get());
     return _snapshot;
   }
   _snapshot = SerenedServer::Instance()
@@ -114,8 +112,6 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
                 .Global()
                 .GetCatalogSnapshot();
   SDB_ASSERT(_snapshot);
-  fprintf(stderr, "[SNAP] EnsureCatalogSnapshot this=%p: got fresh %p\n",
-          (void*)this, (void*)_snapshot.get());
   return _snapshot;
 }
 

@@ -22,38 +22,66 @@
 
 #include <vpack/vpack_helper.h>
 
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+
 #include "basics/static_strings.h"
 #include "catalog/identifiers/identifier.h"
 
 namespace sdb::catalog {
 
 PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
-                             std::string_view name, std::string sql)
+                             std::string_view name,
+                             duckdb::unique_ptr<duckdb::CreateMacroInfo> info)
   : SchemaObject{{}, database_id,       {},
                  id, std::string{name}, ObjectType::PgSqlFunction},
-    _sql{std::move(sql)} {}
+    _info{std::move(info)} {}
 
 std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
                                                            ReadContext ctx) {
   auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
   auto name =
     basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
-  auto sql = basics::VPackHelper::getString(slice, "sql", {});
+
+  auto info_slice = slice.get("info");
+  SDB_ASSERT(info_slice.isString());
+  auto str = info_slice.stringViewUnchecked();
+  duckdb::MemoryStream stream(
+    const_cast<duckdb::data_t*>(
+      reinterpret_cast<const duckdb::data_t*>(str.data())),
+    str.size());
+  duckdb::BinaryDeserializer deserializer(stream);
+  auto create_info = duckdb::CreateInfo::Deserialize(deserializer);
+  auto macro_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      std::move(create_info));
   return std::make_shared<PgSqlFunction>(ctx.database_id, id, name,
-                                         std::string{sql});
+                                         std::move(macro_info));
 }
 
 void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
   builder.openObject();
   builder.add("_key", Identifier{GetId().id()});
   builder.add(StaticStrings::kDataSourceName, GetName());
-  builder.add("sql", _sql);
+
+  // Serialize CreateMacroInfo via DuckDB BinarySerializer
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(*_info, stream);
+  auto data = stream.GetData();
+  auto size = stream.GetPosition();
+  builder.add("info",
+              std::string_view{reinterpret_cast<const char*>(data), size});
+
   builder.close();
 }
 
 std::shared_ptr<Object> PgSqlFunction::Clone() const {
+  auto cloned_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      _info->Copy());
   return std::make_shared<PgSqlFunction>(GetDatabaseId(), GetId(), GetName(),
-                                         _sql);
+                                         std::move(cloned_info));
 }
 
 }  // namespace sdb::catalog

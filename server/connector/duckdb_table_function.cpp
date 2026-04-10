@@ -157,11 +157,6 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
 
   // Determine which columns DuckDB actually wants (projection pushdown)
   const auto num_bind_columns = bind_data.column_ids.size();
-  std::cerr << "SereneDB scan init: requested columns [";
-  for (auto col_id : input.column_ids) {
-    std::cerr << col_id << " ";
-  }
-  std::cerr << "]" << std::endl;
   for (auto col_id : input.column_ids) {
     if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
       // Dummy sequential rowid
@@ -255,7 +250,6 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
     return SereneDBSearchScanFunction(context, data, output);
   }
   if (bind_data.IsSecondaryIndexScan()) {
-    std::cerr << "SereneDB: dispatching to secondary index scan" << std::endl;
     return SereneDBSecondaryIndexScanFunction(context, data, output);
   }
 
@@ -485,9 +479,6 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
 
     gstate.sk_iterator.reset(db->NewIterator(ro, cf));
     gstate.sk_iterator->Seek(scan_prefix);
-    std::cerr << "SK scan: shard_id=" << sk_scan.shard_id.id()
-              << " prefix_size=" << scan_prefix.size()
-              << " iterator_valid=" << gstate.sk_iterator->Valid() << std::endl;
   }
 
   const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
@@ -497,20 +488,9 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
   std::vector<std::string> pk_bytes;
   pk_bytes.reserve(batch_size);
 
-  std::cerr << "SK scan: iterator valid=" << it.Valid() << std::endl;
   while (pk_bytes.size() < batch_size && it.Valid()) {
     auto key = it.key();
     auto val = it.value();
-    // Debug: print key hex prefix (first 20 bytes)
-    std::cerr << "SK entry: key_size=" << key.size()
-              << " val_size=" << val.size()
-              << " val[0]=" << (int)(unsigned char)val[0] << " key_hex=";
-    for (size_t b = 0; b < key.size(); ++b) {
-      char buf[4];
-      snprintf(buf, sizeof(buf), "%02x", (unsigned char)key.data()[b]);
-      std::cerr << buf;
-    }
-    std::cerr << std::endl;
 
     SDB_ASSERT(val.size() >= 2);
     if (val[0] == secondary_key::kPKInValue) {
@@ -709,22 +689,13 @@ static void SereneDBPushdownComplexFilter(
       *phrase.mutable_field() = field_name;
       auto* phrase_opts = phrase.mutable_options();
 
-      std::cerr << "Search: col_name=" << col_name << " col_id=" << col_id
-                << " field_name_size=" << field_name.size() << " search_text='"
-                << search_text << "'"
-                << " has_analyzer=" << (analyzer.analyzer != nullptr)
-                << std::endl;
-
       auto& tokenizer = *analyzer.analyzer;
       tokenizer.reset(search_text);
-      int token_count = 0;
       while (tokenizer.next()) {
         auto& term_attr = *irs::get<irs::TermAttr>(tokenizer);
         phrase_opts->push_back<irs::ByTermOptions>().term.assign(
           term_attr.value.data(), term_attr.value.size());
-        ++token_count;
       }
-      std::cerr << "Search: phrase token_count=" << token_count << std::endl;
 
       consumed.push_back(i);
     } else if (func_expr.function.name == functions::kTermEq) {
@@ -766,8 +737,6 @@ static void SereneDBPushdownComplexFilter(
     basics::downCast<search::InvertedIndexShard>(*inverted_shard);
   auto irs_snapshot = irs_shard.GetInvertedIndexSnapshot();
   auto& reader = irs_snapshot->reader;
-  std::cerr << "Search: reader.size()=" << reader.size()
-            << " reader.docs_count()=" << reader.docs_count() << std::endl;
 
   SearchScan search;
   search.snapshot = irs_snapshot;

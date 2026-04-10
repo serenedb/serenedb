@@ -24,8 +24,10 @@
 
 #include <iresearch/index/index_writer.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
+#include "pg/functions/json.tpp"
 #include "primary_key.hpp"
 #include "search/inverted_index_shard.h"
 #include "search_remove_filter.hpp"
@@ -142,6 +144,21 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   template<velox::TypeKind Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
+  // Setup a column writer that traverses all JSON leaf fields.
+  void SetupJsonColumnWriter(catalog::Column::Id column_id, bool have_nulls);
+
+  // DFS traversal of a parsed simdjson value; emits index fields for each leaf.
+  void TraverseJsonDocument(simdjson::ondemand::document& doc, int depth);
+  void TraverseJsonValue(simdjson::ondemand::value val, int depth);
+
+  // Emit a single leaf field into the current document.
+  void EmitJsonStringField(std::string_view value);
+  void EmitJsonNumericField(double value);
+  void EmitJsonBoolField(bool value);
+  void EmitJsonNullField();
+
+  static constexpr int kMaxJsonDepth = 32;
+
   AnalyzerProvider _analyzer_provider;
   Field _field;
   Field _pk_field;
@@ -153,6 +170,18 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   Writer _current_writer;
   bool _emit_pk{true};
+
+  // JSON column traversal state (only used when current column is JSON type).
+  Field _json_str_field;   // string leaves -- uses the column's text analyzer
+  Field _json_num_field;   // numeric leaves
+  Field _json_bool_field;  // bool leaves
+  Field _json_null_field;  // null leaves
+  std::string _json_path_buffer;  // column_id prefix + current dot-path
+  std::string
+    _json_field_name_buffer;  // mangled leaf field name (stable view backing)
+  size_t _json_column_prefix_len{
+    0};  // byte length of the column_id prefix in _json_path_buffer
+  pg::functions::JsonParser _json_parser;
 };
 
 class SearchSinkDeleteBaseImpl {

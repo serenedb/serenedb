@@ -127,6 +127,110 @@ const SearchColumnInfo* FindColumnInfo(
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
   basics::StrResize(field_name, sizeof(column.info.Id()));
   absl::big_endian::Store(field_name.data(), column.info.Id());
+  if (!column.json_path.empty()) {
+    field_name += '.';
+    field_name += column.json_path;
+  }
+}
+
+// Recursively extract the base column name and dot-separated JSON path from
+// a chain of pg_json_extract_field / pg_json_extract_field_text calls.
+// E.g. content->'body'->>'team'
+//   = pg_json_extract_field_text(pg_json_extract_field(content, 'body'),
+//   'team')
+// yields column_name="content", json_path="body.team".
+// Returns true on success.
+bool TryExtractJsonPath(const velox::core::ITypedExpr& expr,
+                        std::string& column_name, std::string& json_path) {
+  if (expr.isFieldAccessKind()) {
+    const auto& fa =
+      static_cast<const velox::core::FieldAccessTypedExpr&>(expr);
+    column_name = fa.name();
+    json_path.clear();
+    return true;
+  }
+
+  if (!expr.isCallKind()) {
+    return false;
+  }
+
+  const auto& call = static_cast<const velox::core::CallTypedExpr&>(expr);
+  // These are the Velox function names for -> and ->> with a varchar key.
+  if (call.name() != "pg_json_extract_field" &&
+      call.name() != "pg_json_extract_field_text") {
+    return false;
+  }
+  if (call.inputs().size() != 2) {
+    return false;
+  }
+
+  // Second input must be a constant string key.
+  const auto* key_const =
+    dynamic_cast<const velox::core::ConstantTypedExpr*>(call.inputs()[1].get());
+  if (!key_const || key_const->type()->kind() != velox::TypeKind::VARCHAR) {
+    return false;
+  }
+  velox::Variant key_variant;
+  if (key_const->hasValueVector()) {
+    SDB_ASSERT(key_const->valueVector()->size() == 1);
+    key_variant = key_const->valueVector()->variantAt(0);
+  } else {
+    key_variant = key_const->value();
+  }
+  if (key_variant.isNull() || key_variant.kind() != velox::TypeKind::VARCHAR) {
+    return false;
+  }
+  std::string key{key_variant.value<velox::StringView>()};
+
+  // Recurse into first input.
+  std::string sub_column;
+  std::string sub_path;
+  if (!TryExtractJsonPath(*call.inputs()[0], sub_column, sub_path)) {
+    return false;
+  }
+
+  column_name = std::move(sub_column);
+  json_path = sub_path.empty() ? std::move(key) : sub_path + '.' + key;
+  return true;
+}
+
+// Like FindColumnInfo but also handles JSON path extraction via -> / ->>
+// chains. For TERM_EQ / TERM_LIKE the first argument may be a
+// pg_json_extract_field* call instead of a plain FieldAccessTypedExpr.
+const SearchColumnInfo* FindColumnInfoForExpr(
+  const VeloxFilterContext& ctx, const velox::core::ITypedExpr& expr) {
+  std::string column_name;
+  std::string json_path;
+
+  if (expr.isFieldAccessKind()) {
+    const auto& fa =
+      static_cast<const velox::core::FieldAccessTypedExpr&>(expr);
+    // Fast-path: use existing FindColumnInfo for plain column refs.
+    return FindColumnInfo(ctx, fa);
+  }
+
+  if (!TryExtractJsonPath(expr, column_name, json_path)) {
+    return nullptr;
+  }
+
+  // Cache key includes the full path so each (column, path) pair is cached
+  // independently.
+  std::string cache_key =
+    json_path.empty() ? column_name : column_name + '.' + json_path;
+
+  auto cache_it = ctx.column_cache.find(cache_key);
+  if (cache_it != ctx.column_cache.end()) {
+    return &cache_it->second;
+  }
+
+  auto column = ctx.column_getter(column_name);
+  if (!column) {
+    return nullptr;
+  }
+
+  column->json_path = std::move(json_path);
+  return &ctx.column_cache.emplace(cache_key, std::move(column.value()))
+            .first->second;
 }
 
 // Maps velox kinds to native types used in iresearch
@@ -314,12 +418,17 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
     return {ERROR_NOT_IMPLEMENTED, "Equality has ", call.inputs().size(),
             " inputs but 2 expected"};
   }
-  if (!call.inputs()[0]->isFieldAccessKind()) {
-    return {ERROR_BAD_PARAMETER, "Left input is not field access"};
+
+  // For the generic = operator, only field access is supported.
+  // For TERM_EQ (non-generic), also accept JSON path expressions like
+  // content->>'key' (pg_json_extract_field_text).
+  const velox::core::ITypedExpr& lhs = *call.inputs()[0];
+  if constexpr (GenericVersion) {
+    if (!lhs.isFieldAccessKind()) {
+      return {ERROR_BAD_PARAMETER, "Left input is not field access"};
+    }
   }
 
-  auto* left_field = static_cast<const velox::core::FieldAccessTypedExpr*>(
-    call.inputs()[0].get());
   auto value = EvaluateConstant(call.inputs()[1]);
 
   if (!value.has_value()) {
@@ -333,18 +442,31 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
     return {};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *left_field);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column '", left_field->name(),
-            "' was not found"};
-  }
+  const SearchColumnInfo* column_info;
   if constexpr (GenericVersion) {
+    auto* left_field =
+      static_cast<const velox::core::FieldAccessTypedExpr*>(&lhs);
+    column_info = FindColumnInfo(ctx, *left_field);
+    if (!column_info) {
+      return {ERROR_BAD_PARAMETER, "Column '", left_field->name(),
+              "' was not found"};
+    }
     if (column_info->info.type()->kind() == velox::TypeKind::VARCHAR &&
         column_info->analyzer.analyzer->type() !=
           irs::Type<irs::StringTokenizer>::id()) {
       return {ERROR_BAD_PARAMETER, "Field '", left_field->name(),
               "' is not indexed by identity analyzer. Use TERM_EQ "
               "function."};
+    }
+  } else {
+    column_info = FindColumnInfoForExpr(ctx, lhs);
+    if (!column_info) {
+      return {
+        ERROR_BAD_PARAMETER, "Column or JSON path '",
+        lhs.isFieldAccessKind()
+          ? static_cast<const velox::core::FieldAccessTypedExpr&>(lhs).name()
+          : std::string_view{"<json expression>"},
+        "' was not found"};
     }
   }
 
@@ -608,8 +730,14 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "LIKE has ", call.inputs().size(),
             " inputs but 2 OR 3 expected"};
   }
-  if (!call.inputs()[0]->isFieldAccessKind()) {
-    return {ERROR_BAD_PARAMETER, "Input is not field access"};
+
+  // For the generic LIKE, require a plain field access.
+  // For TERM_LIKE (non-generic), also accept JSON path expressions.
+  const velox::core::ITypedExpr& lhs = *call.inputs()[0];
+  if constexpr (GenericVersion) {
+    if (!lhs.isFieldAccessKind()) {
+      return {ERROR_BAD_PARAMETER, "Input is not field access"};
+    }
   }
 
   auto value = EvaluateConstant(call.inputs()[1]);
@@ -623,33 +751,39 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
 
   // We do not need to process custom escape - it is already done by analyzer
 
-  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
-    call.inputs()[0].get());
-
-  const auto* column_info = FindColumnInfo(ctx, *field_typed);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column '", field_typed->name(),
-            "' is not indexed"};
+  const SearchColumnInfo* column_info;
+  if constexpr (GenericVersion) {
+    auto* field_typed =
+      static_cast<const velox::core::FieldAccessTypedExpr*>(&lhs);
+    column_info = FindColumnInfo(ctx, *field_typed);
+    if (!column_info) {
+      return {ERROR_BAD_PARAMETER, "Column '", field_typed->name(),
+              "' is not indexed"};
+    }
+  } else {
+    column_info = FindColumnInfoForExpr(ctx, lhs);
+    if (!column_info) {
+      return {ERROR_BAD_PARAMETER, "Column or JSON path is not indexed"};
+    }
   }
+
   std::string field_name;
   MakeFieldName(*column_info, field_name);
 
   if constexpr (GenericVersion) {
     if (column_info->info.type()->kind() != velox::TypeKind::VARCHAR) {
-      return {ERROR_BAD_PARAMETER, "LIKE field '", field_typed->name(),
-              "' is not VARCHAR"};
+      return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
     }
 
     if (column_info->analyzer.analyzer->type() !=
         irs::Type<irs::StringTokenizer>::id()) {
-      return {ERROR_BAD_PARAMETER, "Field '", field_typed->name(),
-              "' is not indexed by identity analyzer. Use TERM_LIKE."};
+      return {ERROR_BAD_PARAMETER,
+              "Field is not indexed by identity analyzer. Use TERM_LIKE."};
     }
   } else {
-    // enforced by function prototype
+    // TERM_LIKE requires VARCHAR (or JSON which has VARCHAR kind)
     SDB_ASSERT(column_info->info.type()->kind() == velox::TypeKind::VARCHAR,
-               ERROR_BAD_PARAMETER, "TERM_LIKE field '", field_typed->name(),
-               "' is not VARCHAR");
+               ERROR_BAD_PARAMETER, "TERM_LIKE field is not VARCHAR");
   }
 
   search::mangling::MangleString(field_name);

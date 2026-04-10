@@ -111,7 +111,7 @@ class JsonParser {
     return ProcessOutput<Output>(value);
   }
 
- private:
+  //  private:
   template<OutputType Output>
   std::string_view ProcessOutput(simdjson::ondemand::value& value) {
     if constexpr (Output == OutputType::TEXT) {

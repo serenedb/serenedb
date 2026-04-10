@@ -41,6 +41,8 @@ void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
 struct SearchColumnInfo {
   const SereneDBColumn& info;
   catalog::ColumnAnalyzer analyzer;
+  std::string json_path;  // empty for regular columns; dot-separated path for
+                          // JSON leaf fields
 };
 
 using ColumnGetter =

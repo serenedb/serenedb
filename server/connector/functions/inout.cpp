@@ -268,7 +268,7 @@ static duckdb::BoundCastInfo PgVarcharToRegtypeBind(
 }
 
 void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
-  // PG reg* type casts — all handled via implicit casts, no scalar functions
+  // PG reg* type casts -- all handled via implicit casts, no scalar functions
   // needed
   auto& config = duckdb::DBConfig::GetConfig(db);
   auto& casts = config.GetCastFunctions();

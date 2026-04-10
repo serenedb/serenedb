@@ -244,7 +244,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
     return BuildViewEntry(catalog, schema, db_id, schema_name, name, snapshot);
   }
 
-  // Function/macro lookup — match by stored macro type
+  // Function/macro lookup -- match by stored macro type
   if (type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
       type == duckdb::CatalogType::MACRO_ENTRY ||
       type == duckdb::CatalogType::TABLE_MACRO_ENTRY ||

@@ -876,14 +876,14 @@ void FieldWriterImpl::prepare(const FlushState& state) {
       std::move(_index_out), *_index_out_cipher, blocks_in_buffer}};
   }
 
-  std::cout << "before WriteFeatures" << std::endl; 
+  std::cout << "before WriteFeatures" << std::endl;
   WriteFeatures(*_index_out, state.index_features);
-  std::cout << "after WriteFeatures" << std::endl; 
+  std::cout << "after WriteFeatures" << std::endl;
 
   // prepare postings writer
-  std::cout << "before _pw->Prepare(*_terms_out, state);" << std::endl; 
+  std::cout << "before _pw->Prepare(*_terms_out, state);" << std::endl;
   _pw->Prepare(*_terms_out, state);
-   std::cout << "after _pw->Prepare(*_terms_out, state);" << std::endl; 
+  std::cout << "after _pw->Prepare(*_terms_out, state);" << std::endl;
 
   _suffix.Reset();
   _stats.Reset();
@@ -903,7 +903,8 @@ void FieldWriterImpl::write(const BasicTermReader& reader) {
 
   auto terms = reader.iterator();
   SDB_ASSERT(terms != nullptr);
-  std::cout << "IEJFPOIJEOIJPOIJFPOIJSPOIFJPOSIEJPOIJPOIJEFPOIJEPOIJWPOIJFE" << std::endl;
+  std::cout << "IEJFPOIJEOIJPOIJFPOIJSPOIFJPOSIEJPOIJPOIJEFPOIJEPOIJWPOIJFE"
+            << std::endl;
   while (terms->next()) {
     auto postings = terms->postings(index_features);
     TermMetaImpl meta;
@@ -1742,7 +1743,8 @@ class TermIteratorBase : public SeekTermIterator {
       it->LoadData(field_meta, _term_meta.meta, *_postings);
     }
     return _postings->Iterator(field_meta.index_features, features,
-                               {.cookie = &_term_meta}, IteratorFieldOptions{_field->HasWand()});
+                               {.cookie = &_term_meta},
+                               IteratorFieldOptions{_field->HasWand()});
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -2184,7 +2186,8 @@ class SingleTermIterator : public SeekTermIterator {
 
   DocIterator::ptr postings(IndexFeatures features) const final {
     return _postings->Iterator(_field->meta().index_features, features,
-                               {.cookie = &_meta}, IteratorFieldOptions{_field->HasWand()});
+                               {.cookie = &_meta},
+                               IteratorFieldOptions{_field->HasWand()});
   }
 
   const TermMetaImpl& Meta() const noexcept { return _meta.meta; }
@@ -2827,11 +2830,8 @@ class FieldReaderImpl final : public FieldReader {
       SDB_ASSERT(1 <= min_match);
       SDB_ASSERT(min_match <= cookies.size());
 
-      const IteratorFieldOptions field_options{
-        options,
-        WandContext::kDisable,
-        HasWand()
-      };
+      const IteratorFieldOptions field_options{options, WandContext::kDisable,
+                                               HasWand()};
 
       return _owner->_pr->Iterator(meta().index_features, features, cookies,
                                    field_options, min_match, type);

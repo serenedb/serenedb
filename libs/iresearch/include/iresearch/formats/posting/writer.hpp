@@ -122,8 +122,7 @@ struct PayBuffer : SkipBuffer {
   uint32_t last{};           // last start offset
 };
 
-inline WandWriter::ptr PrepareWandWriter(ScorerPtr scorer,
-                                         size_t max_levels) {
+inline WandWriter::ptr PrepareWandWriter(ScorerPtr scorer, size_t max_levels) {
   WandWriter::ptr writer = nullptr;
   if (scorer) {
     writer = (*scorer).prepare_wand_writer(max_levels);
@@ -267,7 +266,7 @@ class PostingsWriterBase : public PostingsWriter {
   const ColumnProvider* _columns{};
   WandWriter::ptr _writer;    // Wand writers
   WandWriter* _valid_writer;  // Valid wand writer
-  Features _features;  // Features supported by current field
+  Features _features;         // Features supported by current field
   const PostingsFormat _postings_format_version;
   const TermsFormat _terms_format_version;
 };
@@ -281,7 +280,6 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
 
   // Enable/Disable frequency for WandWriter::Prepare
   _attrs.wand_freq = _features.HasFrequency() ? &_attrs.freq : nullptr;
-
 
   if (_writer && _writer->Prepare(*_columns, meta, _attrs)) {
     _valid_writer = _writer.get();

@@ -344,7 +344,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
     const uint64_t expected_has_wand{irs::IndexFeatures::None !=
-                                      (features & irs::IndexFeatures::Freq)};
+                                     (features & irs::IndexFeatures::Freq)};
     EXPECT_EQ(expected_has_wand, stats.has_wand);
     writer->Encode(*out, term_meta);
     writer->End();
@@ -765,8 +765,7 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader] =
-    WriteReadMeta(*dir, docs, scorer_ptr, field_features);
+  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, field_features);
   ASSERT_NE(nullptr, reader);
 
   {
@@ -810,8 +809,7 @@ void Format15TestCase::AssertWandPostings(DocsView docs, uint32_t threshold,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader] =
-    WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
+  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
   ASSERT_NE(nullptr, reader);
 
   {

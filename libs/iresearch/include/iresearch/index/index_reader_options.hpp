@@ -57,9 +57,9 @@ struct WandContext {
 
 struct IndexReaderOptions {
   ColumnWarmupCallback warmup_columns;
-  ScorerPtr scorer = nullptr;      // A list of wand scorers
-  bool index = true;        // Open inverted index
-  bool columnstore = true;  // Open columnstore
+  ScorerPtr scorer = nullptr;  // A list of wand scorers
+  bool index = true;           // Open inverted index
+  bool columnstore = true;     // Open columnstore
 };
 
 }  // namespace irs

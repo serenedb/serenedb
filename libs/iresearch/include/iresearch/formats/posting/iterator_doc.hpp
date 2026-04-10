@@ -573,12 +573,9 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
 template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
 std::pair<doc_id_t, bool>
-PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
-                    InputType>::FillBlock(const doc_id_t min,
-                                          const doc_id_t max,
-                                          uint64_t* IRS_RESTRICT const doc_mask,
-                                          FillBlockScoreContext score,
-                                          FillBlockMatchContext match) {
+PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand, InputType>::FillBlock(
+  const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT const doc_mask,
+  FillBlockScoreContext score, FillBlockMatchContext match) {
   SDB_ASSERT(min < max);
   SDB_ASSERT(this->value() >= min);
   // value() was consumed by advance/seek/previous FillBlock

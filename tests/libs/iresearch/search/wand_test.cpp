@@ -21,6 +21,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/search/scorer.hpp>
+
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -134,12 +135,10 @@ class WandTestCase : public tests::IndexTestBase {
   void AssertTermFilter(ScorersView scorers, const irs::Scorer& scorer,
                         irs::byte_type wand_index);
 
-  void AssertConjunctionFilter(ScorersView scorers,
-                               const irs::Scorer& scorer,
+  void AssertConjunctionFilter(ScorersView scorers, const irs::Scorer& scorer,
                                irs::byte_type wand_index);
 
-  void AssertDisjunctionFilter(ScorersView scorers,
-                               const irs::Scorer& scorer,
+  void AssertDisjunctionFilter(ScorersView scorers, const irs::Scorer& scorer,
                                irs::byte_type wand_index);
 
   bool CanUseWand(ScorersView scorers, const irs::Scorer& scorer,
@@ -234,8 +233,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 }
 
 void WandTestCase::AssertResults(const irs::DirectoryReader& index,
-                                 const irs::Filter& filter,
-                                 ScorersView scorers,
+                                 const irs::Filter& filter, ScorersView scorers,
                                  irs::byte_type scorer_idx, bool can_use_wand,
                                  size_t limit) {
   auto wand_result =
@@ -340,11 +338,13 @@ void WandTestCase::GenerateSegmentMinNorm(ScorersView scorers) {
 //     const auto* field = segment.field(kFieldName);
 //     ASSERT_NE(nullptr, field);
 
-//     const auto can_use_wand = CanUseWand(scorers, scorer, wand_index, *field);
+//     const auto can_use_wand = CanUseWand(scorers, scorer, wand_index,
+//     *field);
 //     // TODO(mbkkt) enable this!
 //     // ASSERT_EQ(can_use_wand, field->has_scorer(wand_index));
 
-//     for (auto terms = field->iterator(irs::SeekMode::NORMAL); terms->next();) {
+//     for (auto terms = field->iterator(irs::SeekMode::NORMAL); terms->next();)
+//     {
 //       filter.mutable_options()->term = terms->value();
 
 //       AssertResults(reader, filter, scorers, wand_index, can_use_wand, 10);
@@ -372,7 +372,8 @@ void WandTestCase::GenerateSegmentMinNorm(ScorersView scorers) {
 //     const auto* field = segment.field(kFieldName);
 //     ASSERT_NE(nullptr, field);
 
-//     const auto can_use_wand = CanUseWand(scorers, scorer, wand_index, *field);
+//     const auto can_use_wand = CanUseWand(scorers, scorer, wand_index,
+//     *field);
 //     // TODO(mbkkt) enable this!
 //     // ASSERT_EQ(can_use_wand, field->has_scorer(wand_index));
 
@@ -382,8 +383,9 @@ void WandTestCase::GenerateSegmentMinNorm(ScorersView scorers) {
 //     ASSERT_TRUE(terms->next());
 //     filter2.mutable_options()->term = terms->value();
 
-//     AssertResults(reader, conjunction, scorers, wand_index, can_use_wand, 10);
-//     AssertResults(reader, conjunction, scorers, wand_index, can_use_wand, 100);
+//     AssertResults(reader, conjunction, scorers, wand_index, can_use_wand,
+//     10); AssertResults(reader, conjunction, scorers, wand_index,
+//     can_use_wand, 100);
 //   }
 // }
 
@@ -408,7 +410,8 @@ void WandTestCase::GenerateSegmentMinNorm(ScorersView scorers) {
 //     const auto* field = segment.field(kFieldName);
 //     ASSERT_NE(nullptr, field);
 
-//     const auto can_use_wand = CanUseWand(scorers, scorer, wand_index, *field);
+//     const auto can_use_wand = CanUseWand(scorers, scorer, wand_index,
+//     *field);
 //     // TODO(mbkkt) enable this!
 //     // ASSERT_EQ(can_use_wand, field->has_scorer(wand_index));
 
@@ -420,8 +423,9 @@ void WandTestCase::GenerateSegmentMinNorm(ScorersView scorers) {
 //     ASSERT_TRUE(terms->next());
 //     filter3.mutable_options()->term = terms->value();
 
-//     AssertResults(reader, disjunction, scorers, wand_index, can_use_wand, 10);
-//     AssertResults(reader, disjunction, scorers, wand_index, can_use_wand, 100);
+//     AssertResults(reader, disjunction, scorers, wand_index, can_use_wand,
+//     10); AssertResults(reader, disjunction, scorers, wand_index,
+//     can_use_wand, 100);
 //   }
 // }
 

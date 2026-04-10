@@ -464,11 +464,13 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IteratorFieldOptions options, ScoreMergeType type) const {
   return ResolveWandType(
     field_features, options.has_wand, _doc_in->GetType(),
-    [&]<bool Pos, bool Offs, bool HasWand, typename InputType>() -> DocIterator::ptr {
+    [&]<bool Pos, bool Offs, bool HasWand, typename InputType>()
+      -> DocIterator::ptr {
       auto make_postings_iterator = [&]<bool Root>(
                                       const PostingCookie& cookie) {
-        auto it = memory::make_managed<
-          SingleWandIterator<FormatTraits, Root, Pos, Offs, HasWand, InputType>>();
+        auto it =
+          memory::make_managed<SingleWandIterator<FormatTraits, Root, Pos, Offs,
+                                                  HasWand, InputType>>();
         it->Prepare(cookie, _doc_in.get());
         return it;
       };

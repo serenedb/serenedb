@@ -27,6 +27,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <iostream>
 #include <shared_mutex>
 #include <type_traits>
 
@@ -48,8 +49,6 @@
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-#include <iostream>
 
 namespace irs {
 namespace {
@@ -874,7 +873,8 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
   SDB_ASSERT(next_segments.empty());
   size_t to_next_pending_segments = 0;
   uint64_t flushed_tick = committed_tick;
-  std::cout << "OFIJEPIFJPOEIJFPOIJEPFIJEF " << pending_segments.size() << std::endl;
+  std::cout << "OFIJEPIFJPOEIJFPOIJEPFIJEF " << pending_segments.size()
+            << std::endl;
   for (auto& entry : pending_segments) {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
@@ -1146,7 +1146,7 @@ IndexWriter::IndexWriter(
 
   _flush_context.store(_flush_contexts.data());
 
-    std::cout << "333333" << std::endl;
+  std::cout << "333333" << std::endl;
   // setup round-robin chain
   auto* ctx = _flush_contexts.data();
   for (auto* last = ctx + _flush_contexts.size() - 1; ctx != last; ++ctx) {
@@ -1272,7 +1272,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.features ? options.features : kDefaultFeatureInfo,
     options.meta_payload_provider, std::move(reader));
-std::cout << "OEIJFPOEIJF" << std::endl;
+  std::cout << "OEIJFPOEIJF" << std::endl;
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 

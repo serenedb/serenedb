@@ -31,7 +31,6 @@
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
-#include "pg/sql_collector.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
@@ -153,23 +152,6 @@ static duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
-// Helper: resolve relation name to OID via catalog snapshot.
-// Ported from pg/pg_types.cpp RegclassIn.
-static uint64_t ResolveRegclass(duckdb::ClientContext& context,
-                                std::string_view name) {
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto current_schema = conn_ctx.GetCurrentSchemaFromSnapshot(snapshot);
-  auto object_name = pg::ParseObjectName(name, current_schema);
-  auto relation = snapshot->GetRelation(
-    conn_ctx.GetDatabaseId(), object_name.schema, object_name.relation);
-  if (relation) {
-    return relation->GetId().id();
-  }
-  throw duckdb::CatalogException("relation \"%s\" does not exist",
-                                 std::string{name});
-}
-
 // Helper: get fork size for a relation OID.
 // Ported from server/pg/functions/size.cpp GetRelationForkSize.
 static int64_t GetRelationForkSize(const catalog::Snapshot& snapshot,
@@ -199,84 +181,6 @@ static int64_t GetRelationForkSize(const catalog::Snapshot& snapshot,
     default:
       return 0;
   }
-}
-
-// pg_relation_size(regclass) -> bigint
-// pg_relation_size(text) -> bigint (implicit regclass cast)
-static void PgRelationSizeFunction(duckdb::DataChunk& args,
-                                   duckdb::ExpressionState& state,
-                                   duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
-      auto oid = ResolveRegclass(context, {input.GetData(), input.GetSize()});
-      return GetRelationForkSize(*snapshot, oid, "main");
-    });
-}
-
-// pg_relation_size(regclass, fork) -> bigint
-static void PgRelationSizeForkFunction(duckdb::DataChunk& args,
-                                       duckdb::ExpressionState& state,
-                                       duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t, int64_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t input, duckdb::string_t fork) -> int64_t {
-      auto oid = ResolveRegclass(context, {input.GetData(), input.GetSize()});
-      std::string_view fork_name{fork.GetData(), fork.GetSize()};
-      if (fork_name != "main" && fork_name != "fsm" && fork_name != "vm" &&
-          fork_name != "init") {
-        throw duckdb::InvalidInputException("invalid fork name");
-      }
-      return GetRelationForkSize(*snapshot, oid, fork_name);
-    });
-}
-
-// pg_table_size(regclass) -> bigint
-static void PgTableSizeFunction(duckdb::DataChunk& args,
-                                duckdb::ExpressionState& state,
-                                duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
-      auto oid = ResolveRegclass(context, {input.GetData(), input.GetSize()});
-      return GetRelationForkSize(*snapshot, oid, "main", true);
-    });
-}
-
-// pg_total_relation_size(regclass) -> bigint
-// In RocksDB, identical to pg_relation_size (indexes embedded in LSM tree)
-static void PgTotalRelationSizeFunction(duckdb::DataChunk& args,
-                                        duckdb::ExpressionState& state,
-                                        duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
-      auto oid = ResolveRegclass(context, {input.GetData(), input.GetSize()});
-      return GetRelationForkSize(*snapshot, oid, "main");
-    });
-}
-
-// pg_indexes_size(regclass) -> bigint
-// Always returns 0 -- in RocksDB, indexes are embedded in LSM tree
-static void PgIndexesSizeFunction(duckdb::DataChunk& args,
-                                  duckdb::ExpressionState&,
-                                  duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(),
-    [](duckdb::string_t) -> int64_t { return 0; });
 }
 
 // pg_database_size(name) -> bigint
@@ -310,8 +214,15 @@ static void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
+      // Try our catalog by OID first
       auto database =
         snapshot->GetDatabase(ObjectId{static_cast<uint64_t>(oid)});
+      if (!database) {
+        // DuckDB's pg_database OIDs don't match ours -- fall back to
+        // current database (covers the common pg_database_size(d.oid)
+        // WHERE d.datname = current_database() pattern)
+        database = snapshot->GetDatabase(conn_ctx.GetDatabaseId());
+      }
       if (!database) {
         throw duckdb::CatalogException("database with OID %lld does not exist",
                                        oid);
@@ -377,20 +288,12 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   }
 
   // --- pg_*_size functions ---
-  // pg_relation_size(text), pg_relation_size(text, fork)
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_relation_size",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgRelationSizeFunction});
+  // --- pg_*_size functions: all take regclass (implicit cast from text) ---
+
+  // pg_relation_size(regclass)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_relation_size",
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BIGINT,
-    PgRelationSizeForkFunction});
-  // pg_relation_size(bigint/regclass), pg_relation_size(bigint, fork)
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "pg_relation_size",
-    {duckdb::LogicalType::BIGINT},
+    {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
@@ -401,9 +304,11 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
           return GetRelationForkSize(*snap, static_cast<uint64_t>(oid), "main");
         });
     }});
+
+  // pg_relation_size(regclass, text)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_relation_size",
-    {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
+    {pg::REGCLASS(), duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
@@ -417,14 +322,10 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
-  // pg_table_size(text), pg_table_size(bigint)
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_table_size",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgTableSizeFunction});
+  // pg_table_size(regclass)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_table_size",
-    {duckdb::LogicalType::BIGINT},
+    {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
@@ -437,14 +338,10 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
-  // pg_total_relation_size(text), pg_total_relation_size(bigint)
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_total_relation_size",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgTotalRelationSizeFunction});
+  // pg_total_relation_size(regclass)
   loader.RegisterFunction(duckdb::ScalarFunction{
     "pg_total_relation_size",
-    {duckdb::LogicalType::BIGINT},
+    {pg::REGCLASS()},
     duckdb::LogicalType::BIGINT,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
@@ -456,14 +353,10 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
         });
     }});
 
-  // pg_indexes_size(text), pg_indexes_size(bigint)
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_indexes_size",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 PgIndexesSizeFunction});
+  // pg_indexes_size(regclass)
   loader.RegisterFunction(
     duckdb::ScalarFunction{"pg_indexes_size",
-                           {duckdb::LogicalType::BIGINT},
+                           {pg::REGCLASS()},
                            duckdb::LogicalType::BIGINT,
                            [](duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {

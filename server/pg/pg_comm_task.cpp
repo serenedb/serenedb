@@ -1007,6 +1007,8 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
   -> DuckDBPortal {
   DuckDBPortal portal{.serialization_context{.buffer = &_send}};
   FillContext(*_connection_ctx, portal.serialization_context);
+  portal.serialization_context.snapshot =
+    _connection_ctx->EnsureCatalogSnapshot();
 
   portal.bind_info = std::move(bind_info);
   portal.stmt = &stmt;

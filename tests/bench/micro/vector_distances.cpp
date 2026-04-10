@@ -20,7 +20,6 @@
 
 #include <benchmark/benchmark.h>
 
-
 #ifdef NUMKONG_DISTANCES_BENCH
 #include <numkong/numkong.h>
 #endif
@@ -78,13 +77,15 @@ class DistanceFixture : public benchmark::Fixture {
 };
 
 #ifdef YDB_DISTANCES_BENCH
-// from:
-// Dot -
+// from
+// Dot:
 // https://github.com/ydb-platform/ydb/blob/main/library/cpp/dot_product/dot_product_avx2.cpp
-// L1 -
+// L1:
 // https://github.com/ydb-platform/ydb/blob/main/library/cpp/l1_distance/l1_distance.h
-// L2 -
+// L2:
 // https://github.com/ydb-platform/ydb/blob/main/library/cpp/l2_distance/l2_distance.cpp
+// Cosine:
+// https://github.com/ydb-platform/ydb/blob/main/library/cpp/dot_product/dot_product_avx2.cpp
 
 constexpr int64_t Bits(int n) {
   return int64_t(-1) ^ ((int64_t(1) << (64 - n)) - 1);

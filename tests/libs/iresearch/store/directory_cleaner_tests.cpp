@@ -302,7 +302,6 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
 
   // remember files used for first/single segment
   {
-    std::cout << "Rememder files" << std::endl;
     std::string segments_file;
 
     irs::IndexMeta index_meta;
@@ -323,7 +322,6 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
 
   // no active refs keeps files from latest segments
   {
-    std::cout << "No active ref" << std::endl;
     std::vector<std::string> files;
     auto list_files = [&files](std::string_view name) {
       files.emplace_back(std::move(name));

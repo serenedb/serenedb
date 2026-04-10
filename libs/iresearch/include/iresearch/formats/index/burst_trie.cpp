@@ -1046,9 +1046,6 @@ class TermReaderBase : public TermReader, private util::Noncopyable {
 
   bool HasWand() const noexcept { return _has_wand; }
 
- protected:
-  // uint8_t WandIndex(uint8_t i) const noexcept;
-
  private:
   FieldMeta _field;
   bstring _min_term;

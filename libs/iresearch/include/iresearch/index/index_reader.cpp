@@ -22,6 +22,8 @@
 
 #include "index_reader.hpp"
 
+#include <algorithm>
+
 #include "basics/resource_manager.hpp"
 
 namespace irs {
@@ -78,6 +80,42 @@ void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
     column->Search(context);
   }
   faiss::heap_reorder<faiss::HNSW::C>(info.top_k, dis, ids);
+}
+
+void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
+                              faiss::RangeSearchResult& result) const {
+  SDB_ASSERT(result.nq == 1);
+
+  std::vector<std::pair<float, int64_t>> all_results;
+
+  for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
+    const auto& segment = (*this)[segment_id];
+    const auto* column = segment.column(field);
+    if (!column) {
+      continue;
+    }
+    faiss::RangeSearchResult seg_result(1);
+    HNSWRangeResultHandler handler{&seg_result, info.radius};
+    HNSWRangeSearchContext context{
+      info,
+      static_cast<uint32_t>(segment_id),
+      faiss::VisitedTable{0},
+      handler,
+    };
+    column->RangeSearch(context);
+    for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
+      all_results.emplace_back(seg_result.distances[i], seg_result.labels[i]);
+    }
+  }
+
+  std::sort(all_results.begin(), all_results.end());
+
+  result.lims[0] = all_results.size();
+  result.do_allocation();
+  for (size_t i = 0; i < all_results.size(); ++i) {
+    result.distances[i] = all_results[i].first;
+    result.labels[i] = all_results[i].second;
+  }
 }
 
 const SubReader& SubReader::empty() noexcept { return kEmpty; }

@@ -14,14 +14,14 @@ on:
     - cron: '0 1 * * 4'
 
 jobs:
-   coverage:
-     if: github.event.schedule == '0 5 * * *'
-     uses: ./.github/workflows/build-reusable.yml
-     with:
-       LOCATION: linux-amd64
-       KIND: both
-       DEV: true
-       INSTRUMENTATION: coverage
+  coverage:
+    if: github.event.schedule == '0 5 * * *'
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: linux-amd64
+      KIND: both
+      DEV: true
+      INSTRUMENTATION: coverage
 
 
   release-check:

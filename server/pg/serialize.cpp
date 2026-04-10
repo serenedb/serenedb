@@ -20,6 +20,12 @@
 
 #include "pg/serialize.h"
 
+#define SDB_PG_LOGICAL_TYPES_NO_FACTORY
+#include "connector/pg_logical_types.h"
+
+#include "connector/pg_logical_types.h"
+#include "pg/pg_types.h"
+
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/ascii.h>
@@ -682,28 +688,23 @@ void SerializeRegtypeText(SerializationContext context,
                           duckdb::idx_t row) {
   const auto oid =
     vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
-  // TODO: implement RegtypeOut for DuckDB custom types
-  context.buffer->WriteUncommitted(std::to_string(oid));
+  context.buffer->WriteUncommitted(RegtypeOut(oid));
 }
 
-[[maybe_unused]]
 void SerializeRegclassText(SerializationContext context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   const auto oid =
     vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
-  // TODO: implement RegclassOut for DuckDB custom types
-  context.buffer->WriteUncommitted(std::to_string(oid));
+  context.buffer->WriteUncommitted(RegclassOut(*context.snapshot, oid));
 }
 
-[[maybe_unused]]
 void SerializeRegnamespaceText(
   SerializationContext context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
   const auto oid =
     vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
-  // TODO: implement RegnamespaceOut for DuckDB custom types
-  context.buffer->WriteUncommitted(std::to_string(oid));
+  context.buffer->WriteUncommitted(RegnamespaceOut(*context.snapshot, oid));
 }
 
 // Binary serialization for oid-like types:
@@ -1018,6 +1019,17 @@ DuckDBSerializationFunction GetDuckDBSerialization(
         SerializeDecimal<VarFormat::Binary, duckdb::hugeint_t>;
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
     }
+  }
+
+  // PG reg* types: BIGINT with alias — serialize as name / binary OID
+  if (IsRegtype(type)) {
+    RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
+  }
+  if (IsRegclass(type)) {
+    RETURN_SERIALIZATION(SerializeRegclassText, SerializeOidBinary);
+  }
+  if (IsRegnamespace(type)) {
+    RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
   }
 
   switch (type.id()) {

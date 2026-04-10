@@ -39,6 +39,37 @@
 #include "pg/system_functions.h"
 #include "pg/system_views.h"
 
+#include <duckdb/catalog/default/default_types.hpp>
+
+// PG types not built into DuckDB
+static constexpr duckdb::DefaultType kExternalTypes[] = {
+  // reg* types — OID-based catalog lookups
+  {"regclass", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regtype", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regproc", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regnamespace", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regoper", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regoperator", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regprocedure", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regrole", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regconfig", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regdictionary", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"regcollation", duckdb::LogicalTypeId::BIGINT, nullptr},
+  // System identifier types
+  {"tid", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"cid", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"xid", duckdb::LogicalTypeId::BIGINT, nullptr},
+  {"xid8", duckdb::LogicalTypeId::BIGINT, nullptr},
+  // PG name type (63-byte identifier)
+  {"name", duckdb::LogicalTypeId::VARCHAR, nullptr},
+};
+
+extern "C" const duckdb::DefaultType* duckdb_external_types(
+  duckdb::idx_t* count) {
+  *count = std::size(kExternalTypes);
+  return kExternalTypes;
+}
+
 extern "C" const duckdb::DefaultMacro* duckdb_external_macros(
   duckdb::idx_t* count) {
   *count = std::size(sdb::pg::kExternalMacros);

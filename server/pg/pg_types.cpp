@@ -30,13 +30,13 @@
 
 #include "catalog/catalog.h"
 #include "catalog/virtual_table.h"
+#include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/functions/interval.h"
 #include "pg/parse_array.h"
 #include "pg/serialize.h"
 #include "pg/sql_collector.h"
 #include "pg/system_catalog.h"
-#include "query/types.h"
 
 namespace sdb::pg {
 
@@ -48,8 +48,57 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? PgTypeOID::kInt2Array : PgTypeOID::kInt2;
     case duckdb::LogicalTypeId::INTEGER:
       return in_array ? PgTypeOID::kInt4Array : PgTypeOID::kInt4;
-    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::BIGINT: {
+      if (IsRegtype(type)) {
+        return PgTypeOID::kRegtype;
+      }
+      if (IsRegclass(type)) {
+        return PgTypeOID::kRegclass;
+      }
+      if (IsRegproc(type)) {
+        return PgTypeOID::kRegproc;
+      }
+      if (IsRegnamespace(type)) {
+        return PgTypeOID::kRegnamespace;
+      }
+      if (IsOid(type)) {
+        return PgTypeOID::kOid;
+      }
+      if (IsRegoper(type)) {
+        return PgTypeOID::kRegoper;
+      }
+      if (IsRegoperator(type)) {
+        return PgTypeOID::kRegoperator;
+      }
+      if (IsRegprocedure(type)) {
+        return PgTypeOID::kRegprocedure;
+      }
+      if (IsRegrole(type)) {
+        return PgTypeOID::kRegrole;
+      }
+      if (IsRegconfig(type)) {
+        return PgTypeOID::kRegconfig;
+      }
+      if (IsRegdictionary(type)) {
+        return PgTypeOID::kRegdictionary;
+      }
+      if (IsRegcollation(type)) {
+        return PgTypeOID::kRegcollation;
+      }
+      if (IsTid(type)) {
+        return PgTypeOID::kTid;
+      }
+      if (IsCid(type)) {
+        return PgTypeOID::kCid;
+      }
+      if (IsXid(type)) {
+        return PgTypeOID::kXid;
+      }
+      if (IsXid8(type)) {
+        return PgTypeOID::kXid8;
+      }
       return in_array ? PgTypeOID::kInt8Array : PgTypeOID::kInt8;
+    }
     case duckdb::LogicalTypeId::DATE:
       return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
     case duckdb::LogicalTypeId::TIMESTAMP:
@@ -61,6 +110,9 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
     case duckdb::LogicalTypeId::DOUBLE:
       return in_array ? PgTypeOID::kFloat8Array : PgTypeOID::kFloat8;
     case duckdb::LogicalTypeId::VARCHAR:
+      if (type.GetAlias() == "JSON") {
+        return in_array ? PgTypeOID::kJsonArray : PgTypeOID::kJson;
+      }
       return in_array ? PgTypeOID::kTextArray : PgTypeOID::kText;
     case duckdb::LogicalTypeId::BLOB:
       return in_array ? PgTypeOID::kByteaArray : PgTypeOID::kBytea;
@@ -72,6 +124,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? PgTypeOID::kNumericArray : PgTypeOID::kNumeric;
     case duckdb::LogicalTypeId::UUID:
       return in_array ? PgTypeOID::kUuidArray : PgTypeOID::kUuid;
+    case duckdb::LogicalTypeId::LIST:
     case duckdb::LogicalTypeId::ARRAY:
       return Type2Oid(duckdb::ListType::GetChildType(type), true);
     default:
@@ -90,26 +143,26 @@ duckdb::LogicalType Oid2Type(int32_t oid) {
     case PgTypeOID::kFloat4:              return duckdb::LogicalType::FLOAT;
     case PgTypeOID::kFloat8:              return duckdb::LogicalType::DOUBLE;
     case PgTypeOID::kText:                return duckdb::LogicalType::VARCHAR;
-    // case PgTypeOID::kName:                return PGNAME();
+    case PgTypeOID::kName:                return NAME();
     case PgTypeOID::kBytea:               return duckdb::LogicalType::BLOB;
     case PgTypeOID::kDate:                return duckdb::LogicalType::DATE;
     case PgTypeOID::kTimestamp:           return duckdb::LogicalType::TIMESTAMP;
-    // case PgTypeOID::kOid:                 return PGOID();
-    // case PgTypeOID::kXid:                 return PGXID();
-    // case PgTypeOID::kCid:                 return PGCID();
-    // case PgTypeOID::kTid:                 return PGTID();
-    // case PgTypeOID::kXid8:                return PGXID8();
-    // case PgTypeOID::kRegproc:             return REGPROC();
-    // case PgTypeOID::kRegtype:             return REGTYPE();
-    // case PgTypeOID::kRegclass:            return REGCLASS();
-    // case PgTypeOID::kRegnamespace:        return REGNAMESPACE();
-    // case PgTypeOID::kRegoper:             return REGOPER();
-    // case PgTypeOID::kRegoperator:         return REGOPERATOR();
-    // case PgTypeOID::kRegprocedure:        return REGPROCEDURE();
-    // case PgTypeOID::kRegrole:             return REGROLE();
-    // case PgTypeOID::kRegconfig:           return REGCONFIG();
-    // case PgTypeOID::kRegdictionary:       return REGDICTIONARY();
-    // case PgTypeOID::kRegcollation:        return REGCOLLATION();
+    case PgTypeOID::kOid:                 return OID();
+    case PgTypeOID::kXid:                 return XID();
+    case PgTypeOID::kCid:                 return CID();
+    case PgTypeOID::kTid:                 return TID();
+    case PgTypeOID::kXid8:                return XID8();
+    case PgTypeOID::kRegproc:             return REGPROC();
+    case PgTypeOID::kRegtype:             return REGTYPE();
+    case PgTypeOID::kRegclass:            return REGCLASS();
+    case PgTypeOID::kRegnamespace:        return REGNAMESPACE();
+    case PgTypeOID::kRegoper:             return REGOPER();
+    case PgTypeOID::kRegoperator:         return REGOPERATOR();
+    case PgTypeOID::kRegprocedure:        return REGPROCEDURE();
+    case PgTypeOID::kRegrole:             return REGROLE();
+    case PgTypeOID::kRegconfig:           return REGCONFIG();
+    case PgTypeOID::kRegdictionary:       return REGDICTIONARY();
+    case PgTypeOID::kRegcollation:        return REGCOLLATION();
     case PgTypeOID::kJson:                return duckdb::LogicalType::JSON();
     case PgTypeOID::kUuid:                return duckdb::LogicalType::UUID;
     case PgTypeOID::kTimestampTz:         return duckdb::LogicalType::TIMESTAMP_TZ;
@@ -123,31 +176,31 @@ duckdb::LogicalType Oid2Type(int32_t oid) {
     case PgTypeOID::kFloat4Array:         return duckdb::LogicalType::LIST(duckdb::LogicalType::FLOAT);
     case PgTypeOID::kFloat8Array:         return duckdb::LogicalType::LIST(duckdb::LogicalType::DOUBLE);
     case PgTypeOID::kTextArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
-    // case PgTypeOID::kNameArray:           return duckdb::LogicalType::LIST(PGNAME());
+    case PgTypeOID::kNameArray:           return duckdb::LogicalType::LIST(NAME());
     case PgTypeOID::kByteaArray:          return duckdb::LogicalType::LIST(duckdb::LogicalType::BLOB);
     case PgTypeOID::kDateArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::DATE);
     case PgTypeOID::kTimestampArray:      return duckdb::LogicalType::LIST(duckdb::LogicalType::TIMESTAMP);
-    // case PgTypeOID::kOidArray:            return duckdb::LogicalType::LIST(PGOID());
-    // case PgTypeOID::kXidArray:            return duckdb::LogicalType::LIST(PGXID());
-    // case PgTypeOID::kCidArray:            return duckdb::LogicalType::LIST(PGCID());
-    // case PgTypeOID::kTidArray:            return duckdb::LogicalType::LIST(PGTID());
-    // case PgTypeOID::kXid8Array:           return duckdb::LogicalType::LIST(PGXID8());
-    // case PgTypeOID::kRegprocArray:        return duckdb::LogicalType::LIST(REGPROC());
-    // case PgTypeOID::kRegtypeArray:        return duckdb::LogicalType::LIST(REGTYPE());
-    // case PgTypeOID::kRegclassArray:       return duckdb::LogicalType::LIST(REGCLASS());
-    // case PgTypeOID::kRegnamespaceArray:   return duckdb::LogicalType::LIST(REGNAMESPACE());
-    // case PgTypeOID::kRegoperArray:        return duckdb::LogicalType::LIST(REGOPER());
-    // case PgTypeOID::kRegoperatorArray:    return duckdb::LogicalType::LIST(REGOPERATOR());
-    // case PgTypeOID::kRegprocedureArray:   return duckdb::LogicalType::LIST(REGPROCEDURE());
-    // case PgTypeOID::kRegroleArray:        return duckdb::LogicalType::LIST(REGROLE());
-    // case PgTypeOID::kRegconfigArray:      return duckdb::LogicalType::LIST(REGCONFIG());
-    // case PgTypeOID::kRegdictionaryArray:  return duckdb::LogicalType::LIST(REGDICTIONARY());
-    // case PgTypeOID::kRegcollationArray:   return duckdb::LogicalType::LIST(REGCOLLATION());
+    case PgTypeOID::kOidArray:            return duckdb::LogicalType::LIST(OID());
+    case PgTypeOID::kXidArray:            return duckdb::LogicalType::LIST(XID());
+    case PgTypeOID::kCidArray:            return duckdb::LogicalType::LIST(CID());
+    case PgTypeOID::kTidArray:            return duckdb::LogicalType::LIST(TID());
+    case PgTypeOID::kXid8Array:           return duckdb::LogicalType::LIST(XID8());
+    case PgTypeOID::kRegprocArray:        return duckdb::LogicalType::LIST(REGPROC());
+    case PgTypeOID::kRegtypeArray:        return duckdb::LogicalType::LIST(REGTYPE());
+    case PgTypeOID::kRegclassArray:       return duckdb::LogicalType::LIST(REGCLASS());
+    case PgTypeOID::kRegnamespaceArray:   return duckdb::LogicalType::LIST(REGNAMESPACE());
+    case PgTypeOID::kRegoperArray:        return duckdb::LogicalType::LIST(REGOPER());
+    case PgTypeOID::kRegoperatorArray:    return duckdb::LogicalType::LIST(REGOPERATOR());
+    case PgTypeOID::kRegprocedureArray:   return duckdb::LogicalType::LIST(REGPROCEDURE());
+    case PgTypeOID::kRegroleArray:        return duckdb::LogicalType::LIST(REGROLE());
+    case PgTypeOID::kRegconfigArray:      return duckdb::LogicalType::LIST(REGCONFIG());
+    case PgTypeOID::kRegdictionaryArray:  return duckdb::LogicalType::LIST(REGDICTIONARY());
+    case PgTypeOID::kRegcollationArray:   return duckdb::LogicalType::LIST(REGCOLLATION());
     case PgTypeOID::kJsonArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::JSON());
     case PgTypeOID::kUuidArray:           return duckdb::LogicalType::LIST(duckdb::LogicalType::UUID);
     case PgTypeOID::kTimestampTzArray:    return duckdb::LogicalType::LIST(duckdb::LogicalType::TIMESTAMP_TZ);
     case PgTypeOID::kIntervalArray:       return duckdb::LogicalType::LIST(duckdb::LogicalType::INTERVAL);
-    default:                              return {};
+    default:                              SDB_ASSERT(false); return {};
       // clang-format on
   }
 }

@@ -73,7 +73,6 @@ class HNSWRangeSegmentResultHandler
   explicit HNSWRangeSegmentResultHandler(uint32_t segment_id,
                                          HNSWRangeResultHandler& handler)
     : _impl{handler}, _segment_id{segment_id} {
-    threshold = _impl.threshold;
   }
 
   void Begin(size_t i) { _impl.begin(i); }

@@ -14701,9 +14701,9 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
 }
 
 TEST_P(IndexTestCase14, hnsw_range_search_basic) {
-  constexpr size_t kDim = 16;
+  constexpr size_t kDim = 128;
   constexpr size_t kValuesPerSegment = 256;
-  constexpr size_t kSegments = 2;
+  constexpr size_t kSegments = 4;
   constexpr size_t kQueries = 64;
   constexpr std::string_view kColumnName = "vec"sv;
 

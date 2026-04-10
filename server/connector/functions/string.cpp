@@ -296,9 +296,10 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
     auto delim = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
       delim_fmt)[delim_idx];
     bool has_null_str = null_str_fmt.validity.RowIsValid(null_str_idx);
+    duckdb::string_t null_str;
     std::string_view ns;
     if (has_null_str) {
-      auto null_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+      null_str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
         null_str_fmt)[null_str_idx];
       ns = {null_str.GetData(), null_str.GetSize()};
     }

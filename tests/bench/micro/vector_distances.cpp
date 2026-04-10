@@ -20,6 +20,9 @@
 
 #include <benchmark/benchmark.h>
 
+#define NUMKONG_DISTANCES_BENCH
+#define YDB_DISTANCES_BENCH
+
 #ifdef NUMKONG_DISTANCES_BENCH
 #include <numkong/numkong.h>
 #endif
@@ -34,6 +37,8 @@
 #include <cmath>
 #include <memory>
 #include <vector>
+
+#include "basics/exceptions.h"
 
 // Benchmarks comparing:
 //   - sdb::pg distance functions (iresearch SIMD-backed)
@@ -145,6 +150,44 @@ float HsumFloat(__m256 v) {
   return HsumFloat(_mm256_add_ps(sum1, sum2));
 }
 
+template<typename T>
+inline T AbsDelta(T a, T b) {
+  if (a < b) {
+    return b - a;
+  }
+  return a - b;
+}
+
+template<typename Result, typename Number>
+inline Result L1DistanceImpl4(const Number* lhs, const Number* rhs,
+                              int length) {
+  Result s0 = 0;
+  Result s1 = 0;
+  Result s2 = 0;
+  Result s3 = 0;
+
+  while (length >= 4) {
+    s0 += AbsDelta(lhs[0], rhs[0]);
+    s1 += AbsDelta(lhs[1], rhs[1]);
+    s2 += AbsDelta(lhs[2], rhs[2]);
+    s3 += AbsDelta(lhs[3], rhs[3]);
+    lhs += 4;
+    rhs += 4;
+    length -= 4;
+  }
+
+  while (length--) {
+    s0 += AbsDelta(*lhs++, *rhs++);
+  }
+
+  return s0 + s1 + s2 + s3;
+}
+
+[[gnu::noinline]] float YdbNoSseL1Distance(const float* left,
+                                           const float* right, size_t sz) {
+  return L1DistanceImpl4<float, float>(left, right, sz);
+}
+
 [[gnu::noinline]] float YdbL1Distance(const float* lhs, const float* rhs,
                                       int length) {
   __m128 res = _mm_setzero_ps();
@@ -172,6 +215,41 @@ float HsumFloat(__m256 v) {
   }
 
   return sum;
+}
+
+template<typename Result, typename Number>
+inline Result SqrDelta(Number a, Number b) {
+  Result diff = a < b ? b - a : a - b;
+  return diff * diff;
+}
+
+template<typename Result, typename Number>
+inline Result L2SqrDistanceImpl4(const Number* a, const Number* b, int length) {
+  Result s0 = 0;
+  Result s1 = 0;
+  Result s2 = 0;
+  Result s3 = 0;
+
+  while (length >= 4) {
+    s0 += SqrDelta<Result, Number>(a[0], b[0]);
+    s1 += SqrDelta<Result, Number>(a[1], b[1]);
+    s2 += SqrDelta<Result, Number>(a[2], b[2]);
+    s3 += SqrDelta<Result, Number>(a[3], b[3]);
+    a += 4;
+    b += 4;
+    length -= 4;
+  }
+
+  while (length--) {
+    s0 += SqrDelta<Result, Number>(*a++, *b++);
+  }
+
+  return s0 + s1 + s2 + s3;
+}
+
+[[gnu::noinline]] float YdbNoSseL2Distance(const float* left,
+                                           const float* right, size_t sz) {
+  return L2SqrDistanceImpl4<float, float>(left, right, sz);
 }
 
 template<class T>
@@ -202,6 +280,110 @@ static constexpr T Sqr(const T t) noexcept {
 
   return res[0] + res[1] + res[2] + res[3];
 }
+
+template<typename T>
+struct TTriWayDotProduct {
+  T LL = 1;
+  T LR = 0;
+  T RR = 1;
+};
+
+template<bool computeRR>
+IRS_FORCE_INLINE static void TriWayDotProductIterationAvx2(
+  __m256& sumLL, __m256& sumLR, __m256& sumRR, const __m256 a, const __m256 b) {
+  sumLL = _mm256_fmadd_ps(a, a, sumLL);
+  sumLR = _mm256_fmadd_ps(a, b, sumLR);
+
+  if constexpr (computeRR) {
+    sumRR = _mm256_fmadd_ps(b, b, sumRR);
+  }
+}
+
+template<bool computeRR>
+TTriWayDotProduct<float> TriWayDotProductAvx2Impl(const float* lhs,
+                                                  const float* rhs,
+                                                  size_t length) noexcept {
+  __m256 sumLL1 = _mm256_setzero_ps();
+  __m256 sumLR1 = _mm256_setzero_ps();
+  __m256 sumRR1 = _mm256_setzero_ps();
+  __m256 sumLL2 = _mm256_setzero_ps();
+  __m256 sumLR2 = _mm256_setzero_ps();
+  __m256 sumRR2 = _mm256_setzero_ps();
+
+  while (length >= 16) {
+    TriWayDotProductIterationAvx2<computeRR>(sumLL1, sumLR1, sumRR1,
+                                             _mm256_loadu_ps(lhs + 0),
+                                             _mm256_loadu_ps(rhs + 0));
+    TriWayDotProductIterationAvx2<computeRR>(sumLL2, sumLR2, sumRR2,
+                                             _mm256_loadu_ps(lhs + 8),
+                                             _mm256_loadu_ps(rhs + 8));
+    length -= 16;
+    lhs += 16;
+    rhs += 16;
+  }
+
+  if (length >= 8) {
+    TriWayDotProductIterationAvx2<computeRR>(sumLL1, sumLR1, sumRR1,
+                                             _mm256_loadu_ps(lhs + 0),
+                                             _mm256_loadu_ps(rhs + 0));
+    length -= 8;
+    lhs += 8;
+    rhs += 8;
+  }
+
+  sumLL1 = _mm256_add_ps(sumLL1, sumLL2);
+  sumLR1 = _mm256_add_ps(sumLR1, sumLR2);
+
+  if (computeRR) {
+    sumRR1 = _mm256_add_ps(sumRR1, sumRR2);
+  }
+
+  if (length) {
+    static const int32_t maskTable[14] = {-1, -1, -1, -1, -1, -1, -1,
+                                          0,  0,  0,  0,  0,  0,  0};
+
+    const __m256i mask =
+      _mm256_loadu_si256((const __m256i*)(maskTable + 7 - length));
+
+    __m256 a = _mm256_maskload_ps(lhs, mask);
+    __m256 b = _mm256_maskload_ps(rhs, mask);
+
+    TriWayDotProductIterationAvx2<computeRR>(sumLL1, sumLR1, sumRR1, a, b);
+  }
+
+  __m128 sumLL128 = _mm_add_ps(_mm256_castps256_ps128(sumLL1),
+                               _mm256_extractf128_ps(sumLL1, 1));
+  __m128 sumLR128 = _mm_add_ps(_mm256_castps256_ps128(sumLR1),
+                               _mm256_extractf128_ps(sumLR1, 1));
+
+  __m128 t0 = sumLL128;
+  __m128 t1 = sumLR128;
+
+  __m128 t2;
+  if (computeRR) {
+    t2 = _mm_add_ps(_mm256_castps256_ps128(sumRR1),
+                    _mm256_extractf128_ps(sumRR1, 1));
+  } else {
+    t2 = _mm_setzero_ps();
+  }
+
+  __m128 t3 = _mm_setzero_ps();
+
+  _MM_TRANSPOSE4_PS(t0, t1, t2, t3);
+  t0 = _mm_add_ps(t0, t1);
+  t0 = _mm_add_ps(t0, t2);
+  t0 = _mm_add_ps(t0, t3);
+
+  alignas(16) float res[4];
+  _mm_store_ps(res, t0);
+  TTriWayDotProduct<float> result{res[0], res[1], res[2]};
+  if (!computeRR) {
+    static constexpr const TTriWayDotProduct<float> def;
+    result.RR = def.RR;
+  }
+  return result;
+}
+
 #endif
 
 [[gnu::noinline]] float SdbComputeL2(const float* left, const float* right,
@@ -244,15 +426,53 @@ static constexpr T Sqr(const T t) noexcept {
   return static_cast<float>(product / (norm_x * norm_y));
 }
 
+[[gnu::noinline]] float VeloxComputeL2(const float* left, const float* right,
+                                       size_t sz) {
+  float res = faiss::fvec_L2sqr(left, right, sz);
+  return res;
+}
+
+[[gnu::noinline]] float VeloxComputeL1(const float* left, const float* right,
+                                       size_t sz) {
+  float res = faiss::fvec_L1(left, right, sz);
+  return res;
+}
+
+[[gnu::noinline]] float VeloxComputeDot(const float* left, const float* right,
+                                        size_t sz) {
+  float res = faiss::fvec_inner_product(left, right, sz);
+  return res;
+}
+
 #ifdef NUMKONG_DISTANCES_BENCH
 [[gnu::noinline]] float NumKongComputeCosine(const float* left,
                                              const float* right, size_t sz) {
-  double dot;
-  nk_dot_f32(left, right, sz, &dot);
-  double norm_l, norm_r;
-  nk_dot_f32(left, left, sz, &norm_l);
-  nk_dot_f32(right, right, sz, &norm_r);
-  return static_cast<float>(dot / std::sqrt(norm_l) * std::sqrt(norm_r));
+  double res;
+  nk_angular_f32(left, right, sz, &res);
+  return static_cast<float>(res);
+}
+
+[[gnu::noinline]] float NumKongComputeL2(const float* left, const float* right,
+                                         size_t sz) {
+  double res;
+  nk_euclidean_f32(left, right, sz, &res);
+  return static_cast<float>(res);
+}
+
+[[gnu::noinline]] float NumKongComputeDot(const float* left, const float* right,
+                                          size_t sz) {
+  double res;
+  nk_dot_f32(left, right, sz, &res);
+  return static_cast<float>(res);
+}
+
+#endif
+
+#ifdef YDB_DISTANCES_BENCH
+[[gnu::noinline]] float YdbComputeCosine(const float* left, const float* right,
+                                         size_t sz) {
+  auto p = TriWayDotProductAvx2Impl<true>(left, right, sz);
+  return p.LR / (std::sqrt(p.LL) * std::sqrt(p.RR));
 }
 #endif
 
@@ -268,8 +488,7 @@ DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
 #ifdef NUMKONG_DISTANCES_BENCH
 BENCHMARK_DEFINE_F(DistanceFixture, NumKongL2Squared)(benchmark::State& state) {
   for (auto _ : state) {
-    double result;
-    nk_euclidean_f32(ldata.data(), rdata.data(), ldata.size(), &result);
+    float result = NumKongComputeL2(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
@@ -286,15 +505,22 @@ BENCHMARK_DEFINE_F(DistanceFixture, YdbL2Squared)(benchmark::State& state) {
 }
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbL2Squared);
 
+BENCHMARK_DEFINE_F(DistanceFixture,
+                   YdbNoSseL2Squared)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = YdbNoSseL2Distance(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbNoSseL2Squared);
+
 #endif
 
 #ifdef VELOX_ENABLE_FAISS
 
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = faiss::fvec_L2sqr(
-      reinterpret_cast<const float*>(ldata.data()),
-      reinterpret_cast<const float*>(rdata.data()), ldata.size());
+    float result = VeloxComputeL2(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
@@ -321,15 +547,22 @@ BENCHMARK_DEFINE_F(DistanceFixture, YdbL1Distance)(benchmark::State& state) {
 }
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbL1Distance);
 
+BENCHMARK_DEFINE_F(DistanceFixture,
+                   YdbNoSseL1Distance)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = YdbNoSseL1Distance(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbNoSseL1Distance);
+
 #endif
 
 #ifdef VELOX_ENABLE_FAISS
 
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = faiss::fvec_L1(reinterpret_cast<const float*>(ldata.data()),
-                                  reinterpret_cast<const float*>(rdata.data()),
-                                  ldata.size());
+    float result = VeloxComputeL1(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
@@ -352,8 +585,7 @@ DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
 BENCHMARK_DEFINE_F(DistanceFixture,
                    NumKongDotProduct)(benchmark::State& state) {
   for (auto _ : state) {
-    double result;
-    nk_dot_f32(ldata.data(), rdata.data(), ldata.size(), &result);
+    float result = NumKongComputeDot(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
@@ -376,9 +608,7 @@ DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbDotProduct);
 
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
   for (auto _ : state) {
-    float result = faiss::fvec_inner_product(
-      reinterpret_cast<const float*>(ldata.data()),
-      reinterpret_cast<const float*>(rdata.data()), ldata.size());
+    float result = VeloxComputeDot(ldata.data(), rdata.data(), ldata.size());
     benchmark::DoNotOptimize(result);
   }
 }
@@ -405,6 +635,17 @@ BENCHMARK_DEFINE_F(DistanceFixture, NumKongCosine)(benchmark::State& state) {
 }
 
 DISTANCES_BENCHMARK_REGISTER(DistanceFixture, NumKongCosine);
+#endif
+
+#ifdef YDB_DISTANCES_BENCH
+BENCHMARK_DEFINE_F(DistanceFixture, YdbCosine)(benchmark::State& state) {
+  for (auto _ : state) {
+    float result = YdbComputeCosine(ldata.data(), rdata.data(), ldata.size());
+    benchmark::DoNotOptimize(result);
+  }
+}
+
+DISTANCES_BENCHMARK_REGISTER(DistanceFixture, YdbCosine);
 #endif
 
 #ifdef VELOX_ENABLE_FAISS

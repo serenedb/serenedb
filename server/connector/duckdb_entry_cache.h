@@ -100,8 +100,7 @@ class DuckDBEntryCache {
       views;
     duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::CreateViewInfo>>
       view_infos;
-    duckdb::case_insensitive_map_t<
-      duckdb::unique_ptr<duckdb::ScalarMacroCatalogEntry>>
+    duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::CatalogEntry>>
       functions;
     duckdb::case_insensitive_map_t<duckdb::unique_ptr<duckdb::CreateMacroInfo>>
       function_infos;

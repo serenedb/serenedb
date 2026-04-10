@@ -21,6 +21,7 @@
 #include "connector/duckdb_entry_cache.h"
 
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -243,12 +244,34 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
     return BuildViewEntry(catalog, schema, db_id, schema_name, name, snapshot);
   }
 
-  // Function/macro lookup
-  if (type == duckdb::CatalogType::MACRO_ENTRY ||
+  // Function/macro lookup — match by stored macro type
+  if (type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
+      type == duckdb::CatalogType::MACRO_ENTRY ||
       type == duckdb::CatalogType::TABLE_MACRO_ENTRY ||
       type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) {
-    return BuildFunctionEntry(catalog, schema, db_id, schema_name, name,
-                              snapshot);
+    auto result =
+      BuildFunctionEntry(catalog, schema, db_id, schema_name, name, snapshot);
+    if (!result) {
+      return nullptr;
+    }
+    // TABLE_FUNCTION_ENTRY lookup: only return TABLE_FUNCTION or TABLE_MACRO
+    // entries
+    if (type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY) {
+      if (result->type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
+          result->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+        return result;
+      }
+      return nullptr;
+    }
+    // SCALAR_FUNCTION_ENTRY lookup: only return SCALAR_FUNCTION or MACRO
+    // entries
+    if (type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) {
+      if (result->type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
+          result->type == duckdb::CatalogType::MACRO_ENTRY) {
+        return result;
+      }
+      return nullptr;
+    }
   }
 
   return nullptr;
@@ -340,8 +363,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildFunctionEntry(
 
   auto key = std::string{func_name};
   auto& cache = _entry_caches[std::string{schema_name}];
-  auto entry =
-    duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema, *info);
+  duckdb::unique_ptr<duckdb::CatalogEntry> entry;
+  if (info->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+    entry = duckdb::unique_ptr_cast<duckdb::TableMacroCatalogEntry,
+                                    duckdb::CatalogEntry>(
+      duckdb::make_uniq<duckdb::TableMacroCatalogEntry>(catalog, schema,
+                                                        *info));
+  } else {
+    entry = duckdb::unique_ptr_cast<duckdb::ScalarMacroCatalogEntry,
+                                    duckdb::CatalogEntry>(
+      duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
+                                                         *info));
+  }
   auto* ptr = entry.get();
   cache.functions[key] = std::move(entry);
   cache.function_infos[key] = std::move(info);

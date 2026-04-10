@@ -249,7 +249,6 @@ TEST(directory_cleaner_tests, test_directory_cleaner) {
   ASSERT_TRUE(refs.refs().empty());
 }
 
-#include <iostream>
 TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
@@ -262,15 +261,11 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
 
   // writer commit tracks files that are in active segments
   {
-    std::cout << "WriterCommit" << std::endl;
     auto writer = irs::IndexWriter::Make(dir, codec_ptr, irs::kOmCreate);
 
-    std::cout << "After IndexWriter::Make" << std::endl;
     ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end(),
                        doc1->stored.begin(), doc1->stored.end()));
-    std::cout << "Before commit" << std::endl;
     writer->Commit();
-    std::cout << "After commit" << std::endl;
     tests::AssertSnapshotEquality(writer->GetSnapshot(),
                                   irs::DirectoryReader(dir, codec_ptr));
 
@@ -350,7 +345,6 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
 
   // remember files used for first/single segment
   {
-    std::cout << "EFJOEIJFPOIJEPOFIJ" << std::endl;
     std::string segments_file;
 
     irs::IndexMeta index_meta;

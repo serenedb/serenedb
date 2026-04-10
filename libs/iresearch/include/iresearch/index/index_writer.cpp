@@ -27,7 +27,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
-#include <iostream>
 #include <shared_mutex>
 #include <type_traits>
 
@@ -873,14 +872,11 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
   SDB_ASSERT(next_segments.empty());
   size_t to_next_pending_segments = 0;
   uint64_t flushed_tick = committed_tick;
-  std::cout << "OFIJEPIFJPOEIJFPOIJEPFIJEF " << pending_segments.size()
-            << std::endl;
   for (auto& entry : pending_segments) {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
     const auto first_tick = segment->first_tick;
     const auto last_tick = segment->last_tick;
-    std::cout << "EIFJPOEIJFEF" << std::endl;
     if (first_tick <= tick) {
       // This assert is really paranoid, it's not required just try to detect
       // situation when we commit on tick but forgot to call RegisterFlush().
@@ -888,9 +884,7 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
       // Commit will has greater first tick than committed tick.
       SDB_ASSERT(committed_tick < first_tick);
       flushed_tick = std::max(flushed_tick, last_tick);
-      std::cout << "before segment->Flush()" << std::endl;
       segment->Flush();
-      std::cout << "after segment->Flush()" << std::endl;
       if (tick < last_tick) {
         next_segments.push_back(segment);
       }
@@ -899,7 +893,6 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
       ++to_next_pending_segments;
     }
   }
-  std::cout << "HEEHEHHHEHEHEHRE" << std::endl;
 
   if (to_next_pending_segments != 0) {
     std::lock_guard lock{next->pending.Mutex()};
@@ -912,8 +905,6 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
       }
     }
   }
-
-  std::cout << "EOIJFPE" << std::endl;
 
 #ifdef SDB_DEV
   for (auto& entry : pending_segments) {
@@ -950,17 +941,13 @@ void IndexWriter::SegmentContext::Flush() {
   };
 
   DocsMask docs_mask{.set{flushed_docs.get_allocator()}};
-  std::cout << ":)" << std::endl;
   auto old2new = writer->flush(writer_meta, docs_mask);
-  std::cout << "writer->flush()" << std::endl;
   if (writer_meta.meta.live_docs_count == 0) {
     return;
   }
   const auto docs_context = writer->docs_context();
   SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
-
-  std::cout << "SPLIT" << std::endl;
 
   flushed.emplace_back(std::move(writer_meta), std::move(old2new),
                        std::move(docs_mask), flushed_docs.size());
@@ -1135,25 +1122,19 @@ IndexWriter::IndexWriter(
   SDB_ASSERT(feature_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
-  std::cout << "OIJPOI" << std::endl;
-
   _wand_scorer = _committed_reader->Options().scorer;
   if (_wand_scorer) {
     _wand_features |= _wand_scorer->GetIndexFeatures();
   }
 
-  std::cout << "222222" << std::endl;
-
   _flush_context.store(_flush_contexts.data());
 
-  std::cout << "333333" << std::endl;
   // setup round-robin chain
   auto* ctx = _flush_contexts.data();
   for (auto* last = ctx + _flush_contexts.size() - 1; ctx != last; ++ctx) {
     ctx->dir = std::make_unique<RefTrackingDirectory>(dir);
     ctx->next = ctx + 1;
   }
-  std::cout << "44444" << std::endl;
   ctx->dir = std::make_unique<RefTrackingDirectory>(dir);
   ctx->next = _flush_contexts.data();
 }
@@ -1246,7 +1227,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     }
   }
 
-  std::cout << "HERE!" << std::endl;
   auto reader = [](Directory& dir, Format::ptr codec, DirectoryMeta&& meta,
                    const IndexReaderOptions& opts) {
     const auto& segments = meta.index_meta.segments;
@@ -1264,7 +1244,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
       dir, std::move(codec), opts, std::move(meta), std::move(readers));
   }(dir, codec, std::move(meta), options.reader_options);
 
-  std::cout << "before writer" << std::endl;
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
@@ -1272,7 +1251,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.features ? options.features : kDefaultFeatureInfo,
     options.meta_payload_provider, std::move(reader));
-  std::cout << "OEIJFPOEIJF" << std::endl;
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1711,15 +1689,12 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // noexcept block: I'm not sure is it really necessary or not
   auto ctx = SwitchFlushContext();
-  std::cout << "EOFIJPOEIdddddddddJF" << std::endl;
   // ensure there are no active struct update operations
   ctx->pending.Wait();
-  std::cout << "Stage 0" << std::endl;
   // Stage 0
   // wait for any outstanding segments to settle to ensure that any rollbacks
   // are properly tracked in 'modification_queries_'
   const auto flushed_tick = ctx->FlushPending(_committed_tick, tick);
-  std::cout << "after FlushPending" << std::endl;
 
   std::unique_lock cleanup_lock{_consolidating.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
@@ -1739,8 +1714,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   std::vector<PartialSync> partial_sync;
   std::vector<SegmentReader> readers;
 
-  std::cout << "EJFOIJEPOFIJEOIJF" << std::endl;
-
   auto& dir = *ctx->dir;
   const auto& committed_reader = *_committed_reader;
   const auto& committed_meta = committed_reader.Meta();
@@ -1748,8 +1721,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // If there is no index we shall initialize it
   bool modified = IsInitialCommit(committed_meta);
-
-  std::cout << "oijoepfowijpoijeoijfpew" << std::endl;
 
   auto apply_queries = [&](SegmentContext& segment, const auto& func) {
     // TODO(mbkkt) binary search for begin?
@@ -1770,7 +1741,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
   };
 
-  std::cout << "Stage 2" << std::endl;
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
   auto& segment_mask = ctx->segment_mask;
@@ -1844,7 +1814,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // Stage 2
   // Add pending complete segments registered by import or consolidation
-  std::cout << "Stage 2" << std::endl;
 
   // Number of candidates that have been registered for pending consolidation
   size_t current_imports_index = 0;
@@ -2247,11 +2216,8 @@ bool IndexWriter::Start(const CommitInfo& info) {
     return false;
   }
 
-  std::cout << "before PrepareFlush" << std::endl;
-
   auto to_commit = PrepareFlush(info);
 
-  std::cout << "PEOJF{IEJPFOIJE}" << std::endl;
   if (to_commit.Empty()) {
     // Nothing to commit, no transaction started
     _committed_tick = LimitTick(info.tick, _committed_tick);

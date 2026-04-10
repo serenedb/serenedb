@@ -175,7 +175,7 @@ void BuildIndex(irs::IndexWriter& writer) {
 
   // Commit flushes segments to disk and makes documents visible to readers.
   writer.Commit();
-  std::cout << "Indexed 5 documents.\n\n";
+  std::cout << " 5 documents.\n\n";
 }
 
 // Print basic index statistics.

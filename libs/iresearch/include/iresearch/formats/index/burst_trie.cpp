@@ -859,12 +859,10 @@ void FieldWriterImpl::prepare(const FlushState& state) {
              (_terms_out_cipher && _terms_out_cipher->block_size()));
 
   // prepare term index
-  std::cout << "before format_utils::PrepareOutput" << std::endl;
   format_utils::PrepareOutput(filename, _index_out, state, kTermsIndexExt,
                               kFormatTermsIndex,
                               static_cast<int32_t>(_version));
 
-  std::cout << "after format_utils::PrepareOutput" << std::endl;
   // encrypt term index
   if (Encrypt(filename, *_index_out, enc, enc_header, _index_out_cipher)) {
     SDB_ASSERT(_index_out_cipher && _index_out_cipher->block_size());
@@ -876,14 +874,10 @@ void FieldWriterImpl::prepare(const FlushState& state) {
       std::move(_index_out), *_index_out_cipher, blocks_in_buffer}};
   }
 
-  std::cout << "before WriteFeatures" << std::endl;
   WriteFeatures(*_index_out, state.index_features);
-  std::cout << "after WriteFeatures" << std::endl;
 
   // prepare postings writer
-  std::cout << "before _pw->Prepare(*_terms_out, state);" << std::endl;
   _pw->Prepare(*_terms_out, state);
-  std::cout << "after _pw->Prepare(*_terms_out, state);" << std::endl;
 
   _suffix.Reset();
   _stats.Reset();
@@ -903,8 +897,6 @@ void FieldWriterImpl::write(const BasicTermReader& reader) {
 
   auto terms = reader.iterator();
   SDB_ASSERT(terms != nullptr);
-  std::cout << "IEJFPOIJEOIJPOIJFPOIJSPOIFJPOSIEJPOIJPOIJEFPOIJEPOIJWPOIJFE"
-            << std::endl;
   while (terms->next()) {
     auto postings = terms->postings(index_features);
     TermMetaImpl meta;

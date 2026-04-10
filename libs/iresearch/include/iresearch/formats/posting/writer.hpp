@@ -319,8 +319,6 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
 
-  std::cout << "PostingsWriterBase::Prepare" << std::endl;
-
   std::string name;
 
   // Prepare document stream

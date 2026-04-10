@@ -177,7 +177,11 @@ class Config : public facebook::velox::config::IConfig {
 
   void ResetAll();
 
-  void DropCatalogSnapshot() { _snapshot.reset(); }
+  void DropCatalogSnapshot() {
+    fprintf(stderr, "[SNAP] DropCatalogSnapshot this=%p was=%p\n",
+            (void*)this, (void*)_snapshot.get());
+    _snapshot.reset();
+  }
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
 

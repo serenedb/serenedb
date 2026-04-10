@@ -99,9 +99,10 @@ constexpr ObjectType GetObjectType() noexcept {
 struct Snapshot {
   virtual ~Snapshot() = default;
 
-  // Lazy cache of DuckDB CatalogEntry objects for this snapshot.
-  // Built on demand, destroyed with the snapshot.
-  virtual connector::DuckDBEntryCache& GetDuckDBCache() const = 0;
+  // Per-database lazy cache of DuckDB CatalogEntry objects for this snapshot.
+  // Built on demand, destroyed with the snapshot. One cache per database to
+  // avoid cross-database collisions (e.g. both databases have schema "public").
+  virtual connector::DuckDBEntryCache& GetDuckDBCache(ObjectId db_id) const = 0;
   virtual std::vector<std::shared_ptr<Role>> GetRoles() const = 0;
   virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
   virtual std::vector<std::shared_ptr<Schema>> GetSchemas(

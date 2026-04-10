@@ -297,6 +297,9 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     _connection_ctx = std::make_shared<ConnectionContext>(
       UserName(), DatabaseName(), database->GetId(), std::move(database),
       &_send, &_copy_queue);
+    fprintf(stderr, "[HELLO] conn=%p db=%.*s dbid=%lu\n",
+            (void*)this, (int)DatabaseName().size(), DatabaseName().data(),
+            _connection_ctx->GetDatabaseId().id());
     // TODO(codeworse): Move this to ctor and add more parameters there.
     _connection_ctx->SetSetting("session_authorization",
                                 std::string{UserName()}, false);
@@ -605,6 +608,10 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   if (IsCancelled()) {
     return;
   }
+  fprintf(stderr, "[SNAP] RunSimpleQuery db=%.*s: %.60s\n",
+          (int)DatabaseName().size(), DatabaseName().data(),
+          query_string.data());
+  _connection_ctx->DropCatalogSnapshot();
 
   // Strip trailing null bytes from PG wire protocol
   while (!query_string.empty() && query_string.back() == '\0') {
@@ -659,6 +666,8 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   if (!_success_packet) {
     return;  // error
   }
+
+  _connection_ctx->DropCatalogSnapshot();
 
   // Advance to next statement if any
   ++stmt.current_stmt_idx;

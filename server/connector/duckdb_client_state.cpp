@@ -29,6 +29,7 @@ namespace sdb::connector {
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  fprintf(stderr, "[TXN] Commit conn=%p\n", (void*)this);
   auto r = _connection_ctx->Commit();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB commit failed: %s",
@@ -38,6 +39,7 @@ void SereneDBClientState::TransactionCommit(
 
 void SereneDBClientState::TransactionRollback(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  fprintf(stderr, "[TXN] Rollback conn=%p\n", (void*)this);
   auto r = _connection_ctx->Rollback();
   if (!r.ok()) {
     throw duckdb::TransactionException("SereneDB rollback failed: %s",
@@ -46,6 +48,7 @@ void SereneDBClientState::TransactionRollback(
 }
 
 void SereneDBClientState::QueryEnd(duckdb::ClientContext& context) {
+  fprintf(stderr, "[SNAP] QueryEnd called\n");
   copy_queue = nullptr;
   send_buffer = nullptr;
   copy_stdin_buffer.reset();

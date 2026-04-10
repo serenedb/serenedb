@@ -88,7 +88,9 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
   // Get connection's snapshot and delegate to its cache
   auto snapshot =
     GetSereneDBContext(transaction.GetContext()).EnsureCatalogSnapshot();
-  return snapshot->GetDuckDBCache().GetOrCreateSchema(*this, GetDatabaseId(),
+  fprintf(stderr, "[SNAP] LookupSchema: schema=%s, snapshot=%p, db=%lu\n",
+          schema_name.c_str(), (void*)snapshot.get(), GetDatabaseId().id());
+  return snapshot->GetDuckDBCache(GetDatabaseId()).GetOrCreateSchema(*this, GetDatabaseId(),
                                                       schema_name, *snapshot);
 }
 
@@ -96,7 +98,7 @@ void SereneDBCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
   auto snapshot = GetSereneDBContext(context).EnsureCatalogSnapshot();
-  snapshot->GetDuckDBCache().ScanSchemas(*this, GetDatabaseId(), callback,
+  snapshot->GetDuckDBCache(GetDatabaseId()).ScanSchemas(*this, GetDatabaseId(), callback,
                                          *snapshot);
 }
 

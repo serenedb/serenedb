@@ -64,7 +64,7 @@ DuckDBEntryCache::GetOrCreateSchema(duckdb::Catalog& catalog, ObjectId db_id,
     return it->second.get();
   }
   auto info = duckdb::make_uniq<duckdb::CreateSchemaInfo>();
-  info->schema = key;
+  info->schema = std::string{schema_name};
   auto entry = duckdb::make_uniq<SereneDBSchemaEntry>(catalog, *info);
   auto* ptr = entry.get();
   _schemas[key] = std::move(entry);

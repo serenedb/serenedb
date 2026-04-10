@@ -62,9 +62,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   const duckdb::EntryLookupInfo& lookup_info) {
   auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  return snapshot->GetDuckDBCache().GetOrCreateEntry(
+  auto result = snapshot->GetDuckDBCache(GetDatabaseId()).GetOrCreateEntry(
     lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
     lookup_info.GetEntryName(), *snapshot);
+  fprintf(stderr, "[LOOKUP] entry=%s schema=%s db=%lu type=%d found=%d snap=%p\n",
+          std::string{lookup_info.GetEntryName()}.c_str(),
+          std::string{name}.c_str(), GetDatabaseId().id(),
+          (int)lookup_info.GetCatalogType(), result != nullptr,
+          (void*)snapshot.get());
+  return result;
 }
 
 void SereneDBSchemaEntry::Scan(
@@ -72,7 +78,7 @@ void SereneDBSchemaEntry::Scan(
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  snapshot->GetDuckDBCache().ScanEntries(type, catalog, *this, GetDatabaseId(),
+  snapshot->GetDuckDBCache(GetDatabaseId()).ScanEntries(type, catalog, *this, GetDatabaseId(),
                                          name, callback, *snapshot);
 }
 
@@ -163,8 +169,9 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     SDB_THROW(std::move(r));
   }
 
-  std::cerr << "SereneDB: Created table " << table_info.table << " via DuckDB"
-            << std::endl;
+  auto new_snap = catalog_impl.GetCatalogSnapshot();
+  fprintf(stderr, "[SNAP] Created table %s, new global snapshot=%p\n",
+          table_info.table.c_str(), (void*)new_snap.get());
   return nullptr;
 }
 

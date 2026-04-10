@@ -30,7 +30,9 @@
 namespace sdb::query {
 
 void Transaction::OnNewStatement() {
-  if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
+  auto level = GetIsolationLevel();
+  fprintf(stderr, "[SNAP] OnNewStatement: isolation=%d\n", (int)level);
+  if (level == IsolationLevel::ReadCommitted) {
     DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
   }

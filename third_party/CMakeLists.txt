@@ -14,7 +14,7 @@ sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_
 ################################################################################
 ## JEMALLOC
 ################################################################################
-if("${SDB_ALLOC}" MATCHES "JE")
+if(false AND "${SDB_ALLOC}" MATCHES "JE")
     # TODO(mbkkt) make it submodule
     add_subdirectory(jemalloc)
     file(MAKE_DIRECTORY "${JEMALLOC_HOME}/include")

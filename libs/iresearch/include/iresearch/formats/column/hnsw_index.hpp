@@ -72,8 +72,7 @@ class HNSWRangeSegmentResultHandler
  public:
   explicit HNSWRangeSegmentResultHandler(uint32_t segment_id,
                                          HNSWRangeResultHandler& handler)
-    : _impl{handler}, _segment_id{segment_id} {
-  }
+    : _impl{handler}, _segment_id{segment_id} {}
 
   void Begin(size_t i) { _impl.begin(i); }
 

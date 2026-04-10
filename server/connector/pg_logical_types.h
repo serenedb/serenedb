@@ -20,13 +20,12 @@
 
 #pragma once
 
-#include <string_view>
-
 #include <duckdb/common/types.hpp>
+#include <string_view>
 
 namespace sdb::pg {
 
-// PG logical types for DuckDB — base type + alias, following the same
+// PG logical types for DuckDB -- base type + alias, following the same
 // pattern as DuckDB's LogicalType::JSON() (VARCHAR + alias "JSON").
 //
 // DECLARE_PG_TYPE(REGTYPE, Regtype, "regtype", BIGINT) expands to:
@@ -35,27 +34,27 @@ namespace sdb::pg {
 //   inline bool IsRegtype(const LogicalType&) { ... }
 
 // Alias constant + Is* check (safe to include alongside Velox types)
-#define DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)                   \
-  inline constexpr std::string_view k##Name##Alias = alias_str;              \
-  inline bool Is##Name(const duckdb::LogicalType& type) {                    \
-    return type.id() == duckdb::LogicalTypeId::BaseTypeId &&                 \
-           type.HasAlias() && type.GetAlias() == alias_str;                  \
+#define DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)      \
+  inline constexpr std::string_view k##Name##Alias = alias_str; \
+  inline bool Is##Name(const duckdb::LogicalType& type) {       \
+    return type.id() == duckdb::LogicalTypeId::BaseTypeId &&    \
+           type.HasAlias() && type.GetAlias() == alias_str;     \
   }
 
 // Factory function (only safe where Velox types.h is NOT included)
-#define DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)                \
-  inline duckdb::LogicalType UPPER() {                                       \
-    auto type = duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId);      \
-    type.SetAlias(alias_str);                                                \
-    return type;                                                             \
+#define DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)           \
+  inline duckdb::LogicalType UPPER() {                                  \
+    auto type = duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId); \
+    type.SetAlias(alias_str);                                           \
+    return type;                                                        \
   }
 
 #ifdef SDB_PG_LOGICAL_TYPES_NO_FACTORY
-#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId)                  \
+#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId) \
   DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)
 #else
-#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId)                  \
-  DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)                         \
+#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId) \
+  DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)        \
   DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)
 #endif
 

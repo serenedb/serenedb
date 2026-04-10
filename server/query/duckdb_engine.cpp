@@ -21,6 +21,7 @@
 #include "query/duckdb_engine.h"
 
 #include <duckdb/catalog/default/default_functions.hpp>
+#include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
 #include <iostream>
 
@@ -39,11 +40,9 @@
 #include "pg/system_functions.h"
 #include "pg/system_views.h"
 
-#include <duckdb/catalog/default/default_types.hpp>
-
 // PG types not built into DuckDB
 static constexpr duckdb::DefaultType kExternalTypes[] = {
-  // reg* types — OID-based catalog lookups
+  // reg* types -- OID-based catalog lookups
   {"regclass", duckdb::LogicalTypeId::BIGINT, nullptr},
   {"regtype", duckdb::LogicalTypeId::BIGINT, nullptr},
   {"regproc", duckdb::LogicalTypeId::BIGINT, nullptr},

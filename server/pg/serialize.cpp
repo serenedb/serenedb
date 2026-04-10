@@ -21,11 +21,6 @@
 #include "pg/serialize.h"
 
 #define SDB_PG_LOGICAL_TYPES_NO_FACTORY
-#include "connector/pg_logical_types.h"
-
-#include "connector/pg_logical_types.h"
-#include "pg/pg_types.h"
-
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/ascii.h>
@@ -52,7 +47,9 @@
 #include "basics/dtoa.h"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
+#include "connector/pg_logical_types.h"
 #include "pg/functions/interval.h"
+#include "pg/pg_types.h"
 #include "query/config.h"
 
 namespace sdb::pg {
@@ -1021,7 +1018,7 @@ DuckDBSerializationFunction GetDuckDBSerialization(
     }
   }
 
-  // PG reg* types: BIGINT with alias — serialize as name / binary OID
+  // PG reg* types: BIGINT with alias -- serialize as name / binary OID
   if (IsRegtype(type)) {
     RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
   }

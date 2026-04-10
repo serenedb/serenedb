@@ -20,8 +20,6 @@
 
 #include <benchmark/benchmark.h>
 
-#define NUMKONG_DISTANCES_BENCH
-#define YDB_DISTANCES_BENCH
 
 #ifdef NUMKONG_DISTANCES_BENCH
 #include <numkong/numkong.h>

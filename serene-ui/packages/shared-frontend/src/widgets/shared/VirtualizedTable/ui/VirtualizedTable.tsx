@@ -1,208 +1,247 @@
-import {
-    createColumnHelper,
-    getCoreRowModel,
-    getSortedRowModel,
-    useReactTable,
-    type ColumnResizeMode,
-} from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useMemo, useRef, useEffect } from "react";
-import { VirtualizedTableHead } from "./VirtualizedTableHead";
-import { VirtualizedTableBody } from "./VirtualizedTableBody";
-import { useResizeObserver } from "@serene-ui/shared-frontend/shared";
-import { VirtualizedTableProvider, useVirtualizedTableContext } from "../model";
+import { DataEditor } from "@glideapps/glide-data-grid";
+import "@glideapps/glide-data-grid/dist/index.css";
+import { useCallback, useRef } from "react";
+
 import { useChangeTheme } from "@serene-ui/shared-frontend/features";
+import { useResizeObserver } from "@serene-ui/shared-frontend/shared";
 
-interface VirtualizedTableProps {
-    data: Record<string, any>[];
-}
+import {
+    SORT_BUTTON_SIZE,
+    TABLE_HEADER_HEIGHT,
+    TABLE_ROW_HEIGHT,
+    type SortDirection,
+    useVirtualizedTableCellRenderer,
+    useVirtualizedTableData,
+    useVirtualizedTableHeader,
+    useVirtualizedTableSelection,
+    type VirtualizedTableProps,
+} from "../model";
+import { VirtualizedTableContextMenu } from "./VirtualizedTableContextMenu";
 
-interface WrappedVirtualizedTableProps extends VirtualizedTableProps {
-    scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-}
-
-const WrappedVirtualizedTable: React.FC<WrappedVirtualizedTableProps> = ({
-    data,
-    scrollContainerRef,
-}) => {
-    const { theme } = useChangeTheme();
-    const { ref, size } = useResizeObserver();
-    const { clearSelection } = useVirtualizedTableContext();
-    const columnHelper = createColumnHelper<Record<string, any>>();
-
-    const columns = useMemo(() => {
-        if (data.length <= 0) return [];
-        const indexColumn = columnHelper.display({
-            id: "index",
-            header: "index",
-            cell: (info) => {
-                const rows = info.table.getRowModel().rows;
-                const rowIndex = rows.findIndex((r) => r.id === info.row.id);
-                return rowIndex + 1;
-            },
-        });
-        const dataColumns = Object.keys(data[0]).map((key) =>
-            columnHelper.accessor(key, {
-                header: key,
-                cell: (info) => {
-                    const value = info.getValue();
-
-                    if (value === null || value === undefined) {
-                        return (
-                            <span className="text-secondary-foreground italic">
-                                null
-                            </span>
-                        );
-                    }
-                    if (typeof value === "boolean") {
-                        return (
-                            <span
-                                className={
-                                    value
-                                        ? theme === "dark"
-                                            ? "text-green-400"
-                                            : "text-green-600"
-                                        : theme === "dark"
-                                          ? "text-red-400"
-                                          : "text-red-600"
-                                }>
-                                {value.toString()}
-                            </span>
-                        );
-                    }
-                    if (typeof value === "number") {
-                        return (
-                            <span
-                                className={
-                                    theme === "dark"
-                                        ? "text-blue-400"
-                                        : "text-blue-600"
-                                }>
-                                {value.toString()}
-                            </span>
-                        );
-                    }
-                    if (typeof value === "object") {
-                        return (
-                            <span
-                                className={
-                                    theme === "dark"
-                                        ? "text-purple-500"
-                                        : "text-purple-700"
-                                }>
-                                {JSON.stringify(value)}
-                            </span>
-                        );
-                    }
-                    return (
-                        <span
-                            className={
-                                theme === "dark"
-                                    ? "text-orange-300/60"
-                                    : "text-orange-600"
-                            }>
-                            {value}
-                        </span>
-                    );
-                },
-            }),
-        );
-        return [indexColumn, ...dataColumns];
-    }, [data, theme]);
-
-    const table = useReactTable({
-        data,
-        columns,
-        getCoreRowModel: getCoreRowModel(),
-        getSortedRowModel: getSortedRowModel(),
-        columnResizeMode: "onChange" as ColumnResizeMode,
-        enableColumnResizing: true,
-        enableRowSelection: true,
-    });
-
-    const visibleColumns = table.getVisibleLeafColumns();
-
-    const sortingStateStr = JSON.stringify(table.getState().sorting);
-    const prevSortingRef = useRef<string>("");
-
-    useEffect(() => {
-        if (
-            prevSortingRef.current &&
-            sortingStateStr !== prevSortingRef.current
-        ) {
-            clearSelection();
-        }
-        prevSortingRef.current = sortingStateStr;
-    }, [sortingStateStr, clearSelection]);
-
-    const columnVirtualizer = useVirtualizer<
-        HTMLDivElement,
-        HTMLTableCellElement
-    >({
-        count: visibleColumns.length,
-        estimateSize: (index) => visibleColumns[index].getSize(),
-        getScrollElement: () => scrollContainerRef.current,
-        horizontal: true,
-        overscan: 3,
-    });
-
-    const virtualColumns = columnVirtualizer.getVirtualItems();
-
-    let virtualPaddingLeft: number | undefined;
-    let virtualPaddingRight: number | undefined;
-
-    if (columnVirtualizer && virtualColumns?.length) {
-        virtualPaddingLeft = virtualColumns[0]?.start ?? 0;
-        virtualPaddingRight =
-            columnVirtualizer.getTotalSize() -
-            (virtualColumns[virtualColumns.length - 1]?.end ?? 0);
-    }
-
-    const handleContainerClick = (e: React.MouseEvent) => {
-        if (e.target === e.currentTarget) {
-            clearSelection();
-        }
-    };
-
-    return (
-        <div ref={ref} className="flex-1">
-            <div
-                ref={scrollContainerRef as React.RefObject<HTMLDivElement>}
-                onClick={handleContainerClick}
-                style={{
-                    height: size.height,
-                    width: size.width,
-                }}
-                className="overflow-auto relative">
-                <table className="grid">
-                    <VirtualizedTableHead
-                        columnVirtualizer={columnVirtualizer}
-                        table={table}
-                        virtualPaddingLeft={virtualPaddingLeft}
-                        virtualPaddingRight={virtualPaddingRight}
-                    />
-                    <VirtualizedTableBody
-                        columnVirtualizer={columnVirtualizer}
-                        table={table}
-                        tableContainerRef={scrollContainerRef}
-                        virtualPaddingLeft={virtualPaddingLeft}
-                        virtualPaddingRight={virtualPaddingRight}
-                    />
-                </table>
-            </div>
-        </div>
-    );
-};
-
-export const VirtualizedTable = ({ data }: VirtualizedTableProps) => {
-    const scrollContainerRef = useRef<HTMLDivElement>(null);
-
-    return (
-        <VirtualizedTableProvider scrollContainerRef={scrollContainerRef}>
-            <WrappedVirtualizedTable
-                data={data}
-                scrollContainerRef={scrollContainerRef}
+const SortButtonIcon = ({
+    color,
+    direction,
+}: {
+    color: string;
+    direction: SortDirection | null;
+}) =>
+    direction === null ? (
+        <svg
+            aria-hidden
+            width="10"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none">
+            <polyline
+                points="7 15 12 20 17 15"
+                stroke={color}
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
             />
-        </VirtualizedTableProvider>
+            <polyline
+                points="7 9 12 4 17 9"
+                stroke={color}
+                strokeWidth="1.35"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    ) : (
+        <svg
+            aria-hidden
+            width="9"
+            height="6"
+            viewBox="0 0 8 6"
+            fill="none"
+            style={{
+                transform:
+                    direction === "asc" ? "rotate(180deg)" : undefined,
+            }}>
+            <polyline
+                points="0.5 1.25 4 4.75 7.5 1.25"
+                stroke={color}
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+
+export const VirtualizedTable = ({
+    data,
+    colorfulTypes = true,
+}: VirtualizedTableProps) => {
+    const { theme } = useChangeTheme();
+    const { ref: resizeRef, size } = useResizeObserver<HTMLDivElement>();
+    const rootRef = useRef<HTMLDivElement | null>(null);
+
+    const setContainerRef = useCallback(
+        (node: HTMLDivElement | null) => {
+            rootRef.current = node;
+            resizeRef(node);
+        },
+        [resizeRef],
+    );
+
+    const tableData = useVirtualizedTableData({
+        data,
+        colorfulTypes,
+        theme,
+    });
+    const tableSelection = useVirtualizedTableSelection({
+        columnCount: tableData.columns.length,
+        columnKeys: tableData.columnKeys,
+        data,
+        rootRef,
+        sortedData: tableData.sortedData,
+        sortStateKey: tableData.sortStateKey,
+    });
+    const tableHeader = useVirtualizedTableHeader({
+        columnKeys: tableData.columnKeys,
+        columnOffsets: tableData.columnOffsets,
+        gridLineColor: tableData.gridLineColor,
+        indexColumnWidth: tableData.indexColumnWidth,
+        minimumColumnWidth: tableData.minimumColumnWidth,
+        onSortColumnMouseDown: tableSelection.closeContextMenu,
+        resolvedColumnWidths: tableData.resolvedColumnWidths,
+        rootRef,
+        sortState: tableData.sortState,
+        toggleSort: tableData.toggleSort,
+    });
+    const { drawCell } = useVirtualizedTableCellRenderer({
+        columnCount: tableData.columns.length,
+        gridLineColor: tableData.gridLineColor,
+        gridSelection: tableSelection.gridSelection,
+        rowCount: tableData.sortedData.length,
+    });
+
+    return (
+        <div ref={setContainerRef} className="relative flex-1 min-h-0 overflow-hidden">
+            {size.width > 0 && size.height > 0 ? (
+                <>
+                    <DataEditor
+                        width={size.width}
+                        height={size.height}
+                        theme={tableData.gridTheme}
+                        columns={tableData.columns}
+                        rows={tableData.sortedData.length}
+                        rowHeight={TABLE_ROW_HEIGHT}
+                        headerHeight={TABLE_HEADER_HEIGHT}
+                        drawHeader={tableHeader.drawHeader}
+                        drawCell={drawCell}
+                        getCellContent={tableData.getCellContent}
+                        getCellsForSelection={true}
+                        gridSelection={tableSelection.gridSelection}
+                        onGridSelectionChange={tableSelection.setGridSelection}
+                        onSelectionCleared={tableSelection.clearSelection}
+                        onCellClicked={tableSelection.handleCellClicked}
+                        onCellContextMenu={tableSelection.handleCellContextMenu}
+                        onVisibleRegionChanged={
+                            tableHeader.handleVisibleRegionChanged
+                        }
+                        onColumnResize={tableData.handleColumnResize}
+                        getRowThemeOverride={tableData.getRowThemeOverride}
+                        minColumnWidth={tableData.minimumColumnWidth}
+                        freezeColumns={1}
+                        smoothScrollX
+                        smoothScrollY
+                        rowSelect="multi"
+                        columnSelect="multi"
+                        rowSelectionBlending="exclusive"
+                        columnSelectionBlending="exclusive"
+                        rangeSelect="rect"
+                        rangeSelectionBlending="exclusive"
+                        rowSelectionMode="multi"
+                        fillHandle={false}
+                        drawFocusRing
+                        onPaste={false}
+                    />
+
+                    <div
+                        className="pointer-events-none absolute left-0 top-0 z-10 w-full"
+                        style={{ height: TABLE_HEADER_HEIGHT }}>
+                        {tableHeader.sortButtons.map((button) => {
+                            const isHovered =
+                                tableHeader.hoveredSortColumn ===
+                                button.columnIndex;
+                            const backgroundColor = isHovered
+                                ? (tableData.gridTheme.bgHeaderHovered ??
+                                  tableData.gridTheme.bgIconHeader ??
+                                  "transparent")
+                                : button.isSorted
+                                  ? (tableData.gridTheme.accentLight ??
+                                    "transparent")
+                                  : "transparent";
+                            const iconColor = button.isSorted
+                                ? (tableData.gridTheme.accentColor ??
+                                  tableData.gridTheme.fgIconHeader ??
+                                  tableData.gridTheme.textLight ??
+                                  "currentColor")
+                                : (tableData.gridTheme.fgIconHeader ??
+                                  tableData.gridTheme.textLight ??
+                                  "currentColor");
+
+                            return (
+                                <button
+                                    key={button.columnIndex}
+                                    type="button"
+                                    aria-label={`Sort by ${button.key}`}
+                                    aria-pressed={button.isSorted}
+                                    tabIndex={-1}
+                                    className="pointer-events-auto absolute flex items-center justify-center rounded"
+                                    style={{
+                                        backgroundColor,
+                                        height: SORT_BUTTON_SIZE,
+                                        left: button.left,
+                                        top: button.top,
+                                        width: SORT_BUTTON_SIZE,
+                                    }}
+                                    onMouseEnter={() =>
+                                        tableHeader.handleSortButtonMouseEnter(
+                                            button.columnIndex,
+                                        )
+                                    }
+                                    onMouseLeave={
+                                        tableHeader.handleSortButtonMouseLeave
+                                    }
+                                    onMouseDown={(event) =>
+                                        tableHeader.handleSortButtonMouseDown(
+                                            button.columnIndex,
+                                            event,
+                                        )
+                                    }
+                                    onMouseUp={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }
+                                    onClick={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }
+                                    onDoubleClick={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }
+                                    onContextMenu={
+                                        tableHeader.blockSortButtonMouseEvent
+                                    }>
+                                    <SortButtonIcon
+                                        color={iconColor}
+                                        direction={button.direction}
+                                    />
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    <VirtualizedTableContextMenu
+                        contextMenu={tableSelection.contextMenu}
+                        onOpenChange={
+                            tableSelection.handleContextMenuOpenChange
+                        }
+                        onCopyCSV={tableSelection.handleCopyCSV}
+                        onCopyJSON={tableSelection.handleCopyJSON}
+                    />
+                </>
+            ) : null}
+        </div>
     );
 };

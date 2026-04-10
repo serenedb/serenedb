@@ -23,10 +23,10 @@ export const DashboardChartCardBase: React.FC<DashboardChartCardBaseProps> = ({
             <div className="flex min-h-0 flex-1 flex-col">{children}</div>
             <div className="flex justify-between items-center border-t-1  p-3">
                 <div className="flex flex-col ">
-                    <p className="uppercase text-xs font-extrabold text-primary-foreground">
+                    <p className="uppercase text-xs font-extrabold dark:text-primary-foreground">
                         {name}
                     </p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-accent-foreground dark:text-muted-foreground">
                         {description}
                     </p>
                 </div>

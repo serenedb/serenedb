@@ -1,99 +1,76 @@
 import {
+    Button,
     Dialog,
     DialogContent,
-    DialogDescription,
+    DialogFooter,
+    DialogHeader,
     DialogTitle,
+    Input,
 } from "@serene-ui/shared-frontend/shared";
-import { useEffect, useState } from "react";
-import {
-    BindVariables,
-    QueryResults,
-} from "@serene-ui/shared-frontend/widgets";
+import { PGSQLEditor } from "@serene-ui/shared-frontend/widgets";
 import { useSavedQueriesModal } from "../model";
-import { SavedQueriesSidebar } from "./SavedQueriesSidebar";
-import { SavedQueryData } from "./SavedQueryData";
-import { BindVarSchema } from "@serene-ui/shared-core";
 
 export const SavedQueriesModal = () => {
     const {
         open,
         setOpen,
-        result,
+        modalMode,
         currentSavedQuery,
         setCurrentSavedQuery,
-        isQueryRunning,
+        handleSaveQuery,
     } = useSavedQueriesModal();
 
-    const handleChangeBindVars = (bind_vars: BindVarSchema[]) => {
-        setCurrentSavedQuery((prev) => ({
-            ...prev!,
-            bind_vars,
-        }));
-    };
-
-    const hasBindVars =
-        currentSavedQuery?.bind_vars && currentSavedQuery.bind_vars.length > 0;
-    const [selectedResultIndex, setSelectedResultIndex] = useState(0);
-    const queryResults =
-        result?.status === "success"
-            ? result.results.map((item) => ({
-                  rows: item.rows,
-                  status: "success" as const,
-                  message: item.message,
-              }))
-            : result
-              ? [
-                    {
-                        rows: [],
-                        status: isQueryRunning ? "running" : result.status,
-                        error: result.status === "failed" ? result.error : undefined,
-                    },
-                ]
-              : [];
-
-    useEffect(() => {
-        if (queryResults.length === 0) {
-            setSelectedResultIndex(0);
-            return;
-        }
-
-        setSelectedResultIndex((currentIndex) =>
-            Math.min(currentIndex, queryResults.length - 1),
-        );
-    }, [queryResults.length]);
+    const isEditMode = modalMode === "edit";
+    const name = currentSavedQuery?.name ?? "";
+    const canSave = name.trim().length > 0;
 
     return (
-        <Dialog open={open} onOpenChange={(value) => setOpen(value)}>
-            <DialogContent
-                showCloseButton={false}
-                className="bg-transparent border-0 items-center justify-center">
-                <DialogDescription />
-                <DialogTitle />
-                <div className="flex flex-col gap-2">
-                    <div className="flex gap-2">
-                        <div className="flex flex-1 min-h-120 min-w-250 bg-sidebar rounded-md border border-border">
-                            <SavedQueriesSidebar />
-                            <SavedQueryData />
-                        </div>
-                        {hasBindVars ? (
-                            <BindVariables
-                                bind_vars={currentSavedQuery?.bind_vars}
-                                setBindVars={handleChangeBindVars}
-                                className="h-120"
-                            />
-                        ) : null}
-                    </div>
+        <Dialog open={open} onOpenChange={setOpen}>
+            <DialogContent className={isEditMode ? "sm:max-w-3xl" : "sm:max-w-md"}>
+                <DialogHeader>
+                    <DialogTitle>
+                        {isEditMode ? "Edit saved query" : "Save query"}
+                    </DialogTitle>
+                </DialogHeader>
 
-                    <div className="flex-1 flex min-h-60 bg-background rounded-md border border-border">
-                        <QueryResults
-                            results={queryResults}
-                            selectedResultIndex={
-                                queryResults.length > 0 ? selectedResultIndex : -1
-                            }
-                            onSelectResult={setSelectedResultIndex}
+                <div className="flex flex-col gap-3">
+                    <label className="flex flex-col gap-1.5">
+                        <span className="text-sm text-muted-foreground">Name</span>
+                        <Input
+                            value={name}
+                            onChange={(event) => {
+                                const nextName = event.target.value;
+                                setCurrentSavedQuery((prev) =>
+                                    prev ? { ...prev, name: nextName } : prev,
+                                );
+                            }}
+                            placeholder="Query name"
+                            autoFocus
                         />
-                    </div>
+                    </label>
+
+                    {isEditMode ? (
+                        <div className="h-80 overflow-hidden rounded-md border border-border">
+                            <PGSQLEditor
+                                value={currentSavedQuery?.query ?? ""}
+                                onChange={(query) => {
+                                    setCurrentSavedQuery((prev) =>
+                                        prev ? { ...prev, query } : prev,
+                                    );
+                                }}
+                            />
+                        </div>
+                    ) : null}
                 </div>
+
+                <DialogFooter>
+                    <Button variant="secondary" onClick={() => setOpen(false)}>
+                        Cancel
+                    </Button>
+                    <Button disabled={!canSave} onClick={() => void handleSaveQuery()}>
+                        Save
+                    </Button>
+                </DialogFooter>
             </DialogContent>
         </Dialog>
     );

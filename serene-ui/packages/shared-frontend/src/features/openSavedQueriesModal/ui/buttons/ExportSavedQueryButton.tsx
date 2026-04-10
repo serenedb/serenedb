@@ -1,18 +1,32 @@
-import { Button, ExportIcon } from "@serene-ui/shared-frontend/shared";
+import { Button, cn, ExportIcon } from "@serene-ui/shared-frontend/shared";
 import { useSavedQueriesModal } from "../../model";
+import type { SavedQuerySchema } from "@serene-ui/shared-core";
 
-export const ExportSavedQueryButton = () => {
+interface ExportSavedQueryButtonProps {
+    className?: React.ComponentProps<typeof Button>["className"];
+    size?: React.ComponentProps<typeof Button>["size"];
+    variant?: React.ComponentProps<typeof Button>["variant"];
+    savedQuery?: Pick<SavedQuerySchema, "name" | "query">;
+}
+
+export const ExportSavedQueryButton: React.FC<ExportSavedQueryButtonProps> = ({
+    className,
+    size = "iconSmall",
+    variant = "secondary",
+    savedQuery,
+}) => {
     const { currentSavedQuery } = useSavedQueriesModal();
+    const targetSavedQuery = savedQuery ?? currentSavedQuery;
 
     const handleExport = () => {
-        if (!currentSavedQuery) return;
+        if (!targetSavedQuery) return;
 
-        const baseName = currentSavedQuery.name.trim() || "saved-query";
+        const baseName = targetSavedQuery.name.trim() || "saved-query";
         const sanitizedName = baseName
             .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
             .trim();
 
-        const blob = new Blob([currentSavedQuery.query ?? ""], {
+        const blob = new Blob([targetSavedQuery.query ?? ""], {
             type: "text/sql;charset=utf-8",
         });
         const url = URL.createObjectURL(blob);
@@ -31,11 +45,16 @@ export const ExportSavedQueryButton = () => {
 
     return (
         <Button
-            variant={"secondary"}
-            size="iconSmall"
+            variant={variant}
+            size={size}
             onClick={handleExport}
-            disabled={!currentSavedQuery || !currentSavedQuery.query}>
-            <ExportIcon />
+            title="Download query"
+            className={cn(
+                className,
+                "text-foreground/50 hover:text-foreground bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-none duration-0",
+            )}
+            disabled={!targetSavedQuery || !targetSavedQuery.query}>
+            <ExportIcon className="size-3" />
         </Button>
     );
 };

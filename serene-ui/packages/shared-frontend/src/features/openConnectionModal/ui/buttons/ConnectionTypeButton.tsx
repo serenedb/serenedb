@@ -5,34 +5,33 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@serene-ui/shared-frontend/shared";
-import { useConnectionsModal } from "../../model/ConnectionsModalContext";
-import { ConnectionSchema } from "@serene-ui/shared-core";
 
 interface ConnectionTypeButtonProps {
-    type: ConnectionSchema["type"];
+    type: "serenedb" | "postgres";
+    isActive: boolean;
+    onSelect: (type: "serenedb" | "postgres") => void;
     tooltipContent: React.ReactNode;
     icon: React.ReactNode;
 }
 
 export const ConnectionTypeButton = ({
     type,
+    isActive,
+    onSelect,
     tooltipContent,
     icon,
 }: ConnectionTypeButtonProps) => {
-    const { handleSelectChange, currentConnection } = useConnectionsModal();
-
     return (
         <Tooltip>
             <TooltipTrigger asChild>
                 <Button
                     className={cn(
                         "opacity-50 bg-primary/30 hover:bg-primary/30",
-                        currentConnection.type === type &&
-                            "opacity-100 border border-primary/50",
+                        isActive && "opacity-100 border border-primary/50",
                     )}
                     size="icon"
                     aria-label={`Select ${type} connection type`}
-                    onClick={() => handleSelectChange("type", type)}>
+                    onClick={() => onSelect(type)}>
                     {icon}
                 </Button>
             </TooltipTrigger>

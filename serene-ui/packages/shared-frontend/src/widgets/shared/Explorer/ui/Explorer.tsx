@@ -1,4 +1,4 @@
-import React, {
+import {
     useEffect,
     forwardRef,
     useCallback,
@@ -6,16 +6,32 @@ import React, {
     type ReactElement,
 } from "react";
 import { NodeApi, Tree } from "react-arborist";
-import type { ExplorerNodeData, ExplorerNodeProps } from "../model";
+import { createDragDropManager } from "dnd-core";
+import { HTML5Backend } from "react-dnd-html5-backend";
+import type {
+    ExplorerNodeData,
+    ExplorerNodeProps,
+    ExplorerPinningOptions,
+} from "../model";
 import { ExplorerNode } from "./ExplorerNode";
 import { ExplorerProvider, useExplorer } from "../model/ExplorerProvider";
 import { Skeleton, useResizeObserver } from "@serene-ui/shared-frontend/shared";
 
-interface ExplorerProps {
+interface ExplorerProps extends ExplorerPinningOptions {
     initialData: ExplorerNodeData[];
     searchTerm?: string;
     isDataFetched?: boolean;
 }
+
+const EXPLORER_DND_MANAGER_KEY = "__SERENE_EXPLORER_DND_MANAGER__";
+type GlobalWithExplorerDndManager = typeof globalThis & {
+    [EXPLORER_DND_MANAGER_KEY]?: ReturnType<typeof createDragDropManager>;
+};
+const globalWithExplorerDndManager = globalThis as GlobalWithExplorerDndManager;
+const explorerDndManager =
+    globalWithExplorerDndManager[EXPLORER_DND_MANAGER_KEY] ||
+    (globalWithExplorerDndManager[EXPLORER_DND_MANAGER_KEY] =
+        createDragDropManager(HTML5Backend));
 
 const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
     ({ initialData, searchTerm, isDataFetched }, ref) => {
@@ -68,11 +84,13 @@ const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
                     <Tree
                         className="scrollbar fade-in"
                         searchTerm={searchTerm}
+                        indent={8}
                         renderRow={Row}
                         width={size.width}
                         height={size.height}
                         rowHeight={28}
                         ref={treeRef}
+                        dndManager={explorerDndManager}
                         data={currentTree}>
                         {Node}
                     </Tree>
@@ -83,9 +101,22 @@ const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
 );
 
 export const Explorer = forwardRef<HTMLDivElement, ExplorerProps>(
-    ({ initialData, searchTerm, isDataFetched }, ref) => {
+    (
+        {
+            initialData,
+            searchTerm,
+            isDataFetched,
+            enablePinning,
+            isNodePinned,
+            onTogglePinned,
+        },
+        ref,
+    ) => {
         return (
-            <ExplorerProvider>
+            <ExplorerProvider
+                enablePinning={enablePinning}
+                isNodePinned={isNodePinned}
+                onTogglePinned={onTogglePinned}>
                 <WrappedExplorer
                     ref={ref}
                     initialData={initialData}
@@ -115,7 +146,7 @@ export const Row = ({
     return (
         <div
             {...attrs}
-            className="focus:outline-none focus:bg-secondary hover:bg-secondary/100"
+            className="focus:outline-none focus:bg-accent hover:bg-accent/100"
             tabIndex={0}
             ref={innerRef}
             onKeyDown={(e) => {

@@ -61,7 +61,6 @@ export const splitQueries = async (
         const parsed = (await parse(query)) as ParseResult;
         const parsedStatements = parsed.stmts || [];
 
-        console.log(parsed);
         if (!parsedStatements.length) {
             return buildSingleStatementFallback(query);
         }
@@ -71,12 +70,6 @@ export const splitQueries = async (
                 const startOffset = statement.stmt_location ?? 0;
                 const nextStatementStart =
                     parsedStatements[index + 1]?.stmt_location;
-                console.log(
-                    "startOffset: ",
-                    startOffset,
-                    "\n nextStatementStart: ",
-                    nextStatementStart,
-                );
                 const endOffset =
                     typeof statement.stmt_len === "number"
                         ? startOffset + statement.stmt_len

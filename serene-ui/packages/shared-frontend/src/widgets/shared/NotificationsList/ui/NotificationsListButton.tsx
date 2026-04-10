@@ -14,13 +14,13 @@ export const NotificationsListButton = () => {
         <ButtonCard>
             <ButtonCardButtonContent
                 asChild
-                size={"iconSmall"}
+                size={"icon"}
                 variant="ghost"
                 className="relative">
                 <div>
                     <NotificationsIcon />
                     {notifications.length > 0 && (
-                        <div className="absolute top-0 right-0 min-w-3.5 h-3.5 bg-red-500 rounded-full flex items-center justify-center">
+                        <div className="absolute top-0 right-0 min-w-3.5 h-3.5 bg-destructive rounded-full flex items-center justify-center">
                             <p className="text-white text-xs">
                                 {notifications.length}
                             </p>

@@ -18,7 +18,7 @@ export const CopyTextButton = ({ text }: CopyTextButtonProps) => {
         <Button
             variant="outline"
             size="icon"
-            className="size-9 bg-secondary"
+            className="size-9 bg-background"
             title={copied ? "Copied" : "Copy to clipboard"}
             onClick={handleCopy}>
             {copied ? <CheckIcon /> : <CopyIcon />}

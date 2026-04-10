@@ -1,33 +1,13 @@
-import {
-    Sidebar,
-    SidebarHeader,
-    SidebarContent,
-    SidebarFooter,
-    SidebarRail,
-} from "@serene-ui/shared-frontend/shared";
-import { NavMain } from "./parts/NavMain";
-import { NavSerene } from "./parts/NavSerene";
-import { NavTop } from "./parts/NavTop";
-import { NavFooter } from "./parts/NavFooter";
 import { NavBottom } from "./parts/NavBottom";
+import { NavMain } from "./parts/NavMain";
+import { NavTop } from "./parts/NavTop";
 
-export const AppSidebar = ({
-    ...props
-}: React.ComponentProps<typeof Sidebar>) => {
+export const AppSidebar = ({}) => {
     return (
-        <Sidebar className="page-fade" collapsible="icon" {...props}>
-            <SidebarHeader>
-                <NavTop />
-            </SidebarHeader>
-            <SidebarContent>
-                <NavMain />
-                <NavSerene />
-                <NavBottom />
-            </SidebarContent>
-            <SidebarFooter>
-                <NavFooter />
-            </SidebarFooter>
-            <SidebarRail />
-        </Sidebar>
+        <div className="flex flex-col h-dvh w-12 border-r-[0.5px]">
+            <NavTop />
+            <NavMain />
+            <NavBottom />
+        </div>
     );
 };

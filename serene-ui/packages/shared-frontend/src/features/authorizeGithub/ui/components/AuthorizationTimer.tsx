@@ -19,8 +19,8 @@ export const AuthorizationTimer = ({
     }
 
     return (
-        <div className="flex items-center justify-between px-3 py-2 bg-secondary rounded-md">
-            <span className="text-sm text-primary-foreground">
+        <div className="flex items-center justify-between px-3 py-2 bg-background border-[0.5px]  rounded-md">
+            <span className="text-sm dark:text-primary-foreground">
                 Code expires in:
             </span>
             <span className="text-sm font-mono font-semibold">

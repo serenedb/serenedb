@@ -1,20 +1,22 @@
 import { SavedQuerySchema } from "@serene-ui/shared-core";
-import { QueryResult } from "../../executeQuery";
 import { createContext, useContext } from "react";
+
+type OpenCreateSavedQueryPayload = {
+    query?: string;
+    bindVars?: SavedQuerySchema["bind_vars"];
+};
 
 interface SavedQueriesModalContextType {
     open: boolean;
     setOpen: React.Dispatch<React.SetStateAction<boolean>>;
+    modalMode: "create" | "edit";
     currentSavedQuery: SavedQuerySchema | undefined;
     setCurrentSavedQuery: React.Dispatch<
         React.SetStateAction<SavedQuerySchema | undefined>
     >;
-    setJobId: React.Dispatch<React.SetStateAction<number | undefined>>;
+    openCreateModal: (payload?: OpenCreateSavedQueryPayload) => void;
+    openEditModal: (savedQuery: SavedQuerySchema) => void;
     handleSaveQuery: () => void;
-    handleDeleteSavedQuery: () => void;
-    result: QueryResult | undefined;
-    isQueryRunning: boolean;
-    setIsQueryRunning: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export const SavedQueriesModalContext = createContext<

@@ -11,3 +11,4 @@ export * from "./PGSQLEditor";
 export * from "./QueryResults";
 export * from "./TimelineCard";
 export * from "./VirtualizedTable";
+export * from "./SwitchConnection";

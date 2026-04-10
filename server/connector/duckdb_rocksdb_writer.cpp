@@ -500,7 +500,7 @@ void DuckDBColumnSerializer::WriteColumn(
       return;
     case duckdb::VectorType::DICTIONARY_VECTOR: {
       duckdb::UnifiedVectorFormat vdata;
-      const_cast<duckdb::Vector&>(vec).ToUnifiedFormat(num_rows, vdata);
+      vec.ToUnifiedFormat(num_rows, vdata);
       WriteUnifiedColumn(writer, vdata, vec, type, num_rows, row_keys,
                          index_writers);
       return;
@@ -508,7 +508,7 @@ void DuckDBColumnSerializer::WriteColumn(
     default: {
       // SEQUENCE, FSST, SHREDDED -- use UnifiedVectorFormat
       duckdb::UnifiedVectorFormat vdata;
-      const_cast<duckdb::Vector&>(vec).ToUnifiedFormat(num_rows, vdata);
+      vec.ToUnifiedFormat(num_rows, vdata);
       WriteUnifiedColumn(writer, vdata, vec, type, num_rows, row_keys,
                          index_writers);
       return;
@@ -914,31 +914,31 @@ void DuckDBColumnSerializer::WriteListValue(const duckdb::Vector& vec,
   switch (vec.GetVectorType()) {
     case duckdb::VectorType::FLAT_VECTOR: {
       auto& entry = duckdb::FlatVector::GetData<duckdb::list_entry_t>(vec)[idx];
-      auto& child = duckdb::ListVector::GetEntry(vec);
-      WriteSubVector(child, entry.offset, entry.length, child_type);
-      break;
+      WriteSubVector(duckdb::ListVector::GetEntry(vec), entry.offset,
+                     entry.length, child_type);
+      return;
     }
     case duckdb::VectorType::CONSTANT_VECTOR: {
-      auto* data = reinterpret_cast<const duckdb::list_entry_t*>(
+      auto& entry = *reinterpret_cast<const duckdb::list_entry_t*>(
         duckdb::ConstantVector::GetData(vec));
-      auto& child = duckdb::ListVector::GetEntry(vec);
-      WriteSubVector(child, data->offset, data->length, child_type);
-      break;
+      WriteSubVector(duckdb::ListVector::GetEntry(vec), entry.offset,
+                     entry.length, child_type);
+      return;
     }
     case duckdb::VectorType::DICTIONARY_VECTOR: {
-      auto& child_vec = duckdb::DictionaryVector::Child(vec);
-      auto& sel = duckdb::DictionaryVector::SelVector(vec);
-      WriteListValue(child_vec, sel.get_index(idx), type);
-      break;
+      WriteListValue(duckdb::DictionaryVector::Child(vec),
+                     duckdb::DictionaryVector::SelVector(vec).get_index(idx),
+                     type);
+      return;
     }
     default: {
       duckdb::UnifiedVectorFormat vdata;
-      const_cast<duckdb::Vector&>(vec).ToUnifiedFormat(idx + 1, vdata);
-      auto mapped = vdata.sel->get_index(idx);
-      auto& entry = vdata.GetData<duckdb::list_entry_t>()[mapped];
-      auto& child = duckdb::ListVector::GetEntry(vec);
-      WriteSubVector(child, entry.offset, entry.length, child_type);
-      break;
+      vec.ToUnifiedFormat(idx + 1, vdata);
+      auto& entry =
+        vdata.GetData<duckdb::list_entry_t>()[vdata.sel->get_index(idx)];
+      WriteSubVector(duckdb::ListVector::GetEntry(vec), entry.offset,
+                     entry.length, child_type);
+      return;
     }
   }
 }
@@ -1271,7 +1271,7 @@ void DuckDBColumnSerializer::WriteDictionarySubVector(
   // We can't just pass child + resolved offset because indices may be
   // scattered. Fall back to UnifiedVectorFormat which handles this.
   duckdb::UnifiedVectorFormat vdata;
-  const_cast<duckdb::Vector&>(vec).ToUnifiedFormat(offset + count, vdata);
+  vec.ToUnifiedFormat(offset + count, vdata);
 
   // Build a temporary flat vector from the resolved data
   // TODO: optimize for contiguous dictionary selections

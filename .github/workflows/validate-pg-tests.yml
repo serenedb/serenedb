@@ -1,6 +1,18 @@
 name: task | validate pg tests
 
 on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      PR_SHA:
+        description: "Commit SHA to checkout (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:

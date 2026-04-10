@@ -22,6 +22,7 @@ db error: ERROR: typical_review() is a procedure
 HINT: To call a procedure, use CALL.
 
 
+skipif serenedb
 query error
 SELECT typical_review();
 ----
@@ -29,6 +30,7 @@ db error: ERROR: typical_review() is a procedure
 HINT: To call a procedure, use CALL.
 
 
+skipif serenedb
 query error
 SELECT WHERE typical_review() > 1
 ----
@@ -36,6 +38,7 @@ db error: ERROR: typical_review() is a procedure
 HINT: To call a procedure, use CALL.
 
 
+skipif serenedb
 statement ok
 CREATE PROCEDURE create_review()
 AS $$
@@ -44,10 +47,12 @@ AS $$
 $$ LANGUAGE sql;
 
 
+skipif serenedb
 statement ok
 CALL create_review();
 
 
+skipif serenedb
 statement ok
 CREATE PROCEDURE create_hft(
   title TEXT
@@ -58,6 +63,7 @@ AS $$
 $$ LANGUAGE sql;
 
 
+skipif serenedb
 query error
 CALL create_hft('vedernikoff');
 ----

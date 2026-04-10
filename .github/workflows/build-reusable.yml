@@ -9,19 +9,32 @@ on:
         required: false
         default: "linux"
       KIND:
-        description: "What to test (none, unit, functional, functional_fast, both)"
-        type: string
+        description: "What to test"
+        type: choice
         required: true
+        options:
+          - both
+          - unit
+          - functional
+          - functional_fast
+          - none
       DEV:
         description: "Enable assertions (SDB_DEV)"
         type: boolean
         required: false
         default: true
       INSTRUMENTATION:
-        description: "Sanitizer or coverage (none, asan, msan, tsan, ubsan, coverage)"
-        type: string
+        description: "Sanitizer or coverage"
+        type: choice
         required: false
         default: "none"
+        options:
+          - none
+          - coverage
+          - asan
+          - msan
+          - tsan
+          - ubsan
       EXTRA_CMAKE_FLAGS:
         description: "Additional cmake flags (rare overrides)"
         type: string

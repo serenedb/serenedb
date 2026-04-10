@@ -439,7 +439,6 @@ void SearchSinkInsertBaseImpl::TraverseJsonValue(simdjson::ondemand::value val,
 }
 
 void SearchSinkInsertBaseImpl::EmitJsonStringField(std::string_view value) {
-  SDB_PRINT("EmitJsonStringField path=", _json_path_buffer, " val=", value);
   _json_field_name_buffer = _json_path_buffer;
   search::mangling::MangleString(_json_field_name_buffer);
   _json_str_field.name = _json_field_name_buffer;

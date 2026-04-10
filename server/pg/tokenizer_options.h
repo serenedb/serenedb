@@ -269,12 +269,21 @@ inline constexpr OptionGroup kPipelineGroup{
   {},
   {},
 };
+// Verbatim tokenizer: indexes the entire value as a single token (no splitting,
+// no case folding, no stemming). Suitable for exact-match queries with TERM_EQ.
+// Uses irs::StringTokenizer ("identity") internally.
+inline constexpr OptionGroup kVerbatimGroup{
+  "verbatim",
+  {},
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,
   kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
   kClassificationGroup,   kCollationGroup, kDelimiterGroup,
   kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
-  kSegmentationGroup,     kPipelineGroup,  kCopyFromGroup};
+  kSegmentationGroup,     kPipelineGroup,  kCopyFromGroup,
+  kVerbatimGroup};
 
 }  // namespace sdb::pg::tokenizer_options

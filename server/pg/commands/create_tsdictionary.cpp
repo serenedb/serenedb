@@ -39,6 +39,7 @@
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <type_traits>
@@ -257,7 +258,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
       ParseTemplateType(type, prefix);
 
       _builder.close();  // close properties
-      _builder.add(kTypeField, type);
+      // "verbatim" is a user-facing alias for the identity (StringTokenizer)
+      // analyzer. Map it to "identity" so MakeAnalyzer can find it.
+      auto stored_type = (type == tokenizer_options::kVerbatimGroup.name)
+                           ? std::string_view{irs::StringTokenizer::type_name()}
+                           : type;
+      _builder.add(kTypeField, stored_type);
     }
     if constexpr (IsRoot) {
       ParseFeatures(type);

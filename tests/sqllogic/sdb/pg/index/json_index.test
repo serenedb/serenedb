@@ -1,0 +1,355 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(
+    template = 'verbatim'
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lower_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false
+);
+
+
+# ─── 1. Basic: index created BEFORE insert (live path) ──────────────────────
+
+statement ok
+CREATE TABLE logs (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX logs_idx ON logs USING inverted(id, content verbatim_dict);
+
+statement ok
+INSERT INTO logs VALUES
+    (1, '{"host":"server-01","status":"ok"}'::json),
+    (2, '{"host":"server-02","status":"error"}'::json),
+    (3, '{"host":"server-03","status":"ok"}'::json),
+    (4, '{"host":"server-14","status":"warning"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) logs;
+
+query
+SELECT id FROM logs_idx WHERE TERM_EQ(content->>'host', 'server-01') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM logs_idx WHERE TERM_LIKE(content->>'host', 'server-0_') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM logs_idx WHERE TERM_EQ(content->>'status', 'ok') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM logs_idx WHERE TERM_EQ(content->>'status', 'nonexistent') ORDER BY id;
+----
+id
+
+statement ok
+DROP INDEX logs_idx;
+
+statement ok
+DROP TABLE logs;
+
+
+# ─── 2. Backfill: index created AFTER insert ────────────────────────────────
+
+statement ok
+CREATE TABLE logs2 (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+INSERT INTO logs2 VALUES
+    (1, '{"host":"server-01","status":"ok"}'::json),
+    (2, '{"host":"server-02","status":"error"}'::json),
+    (3, '{"host":"server-03","status":"ok"}'::json);
+
+statement ok
+CREATE INDEX logs2_idx ON logs2 USING inverted(id, content verbatim_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) logs2;
+
+query
+SELECT id FROM logs2_idx WHERE TERM_EQ(content->>'host', 'server-01') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM logs2_idx WHERE TERM_EQ(content->>'status', 'ok') ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+DROP TABLE logs2;
+
+
+# ─── 3. Nested JSON ─────────────────────────────────────────────────────────
+
+statement ok
+CREATE TABLE nested (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX nested_idx ON nested USING inverted(id, data verbatim_dict);
+
+statement ok
+INSERT INTO nested VALUES
+    (1, '{"host":"server-01","body":{"team":"infra","message":"check passed"}}'::json),
+    (2, '{"host":"server-02","body":{"team":"backend","message":"deploy started"}}'::json),
+    (3, '{"host":"server-03","body":{"team":"infra","message":"disk warning"}}'::json),
+    (4, '{"host":"server-14","body":{"team":"analytics","message":"check failed"}}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) nested;
+
+query
+SELECT id FROM nested_idx WHERE TERM_EQ(data->'body'->>'team', 'infra') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM nested_idx WHERE TERM_LIKE(data->'body'->>'message', '%failed%') ORDER BY id;
+----
+id
+4
+
+query
+SELECT id FROM nested_idx
+    WHERE TERM_LIKE(data->>'host', 'server-0_')
+      AND TERM_EQ(data->'body'->>'team', 'infra')
+    ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+DROP INDEX nested_idx;
+
+statement ok
+DROP TABLE nested;
+
+
+# ─── 4. Deeply nested JSON ──────────────────────────────────────────────────
+
+statement ok
+CREATE TABLE deep (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX deep_idx ON deep USING inverted(id, data verbatim_dict);
+
+statement ok
+INSERT INTO deep VALUES
+    (1, '{"a":{"b":{"c":{"d":"leaf-value"}}}}'::json),
+    (2, '{"a":{"b":{"c":{"d":"other-value"}}}}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) deep;
+
+query
+SELECT id FROM deep_idx
+    WHERE TERM_EQ(data->'a'->'b'->'c'->>'d', 'leaf-value')
+    ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE deep;
+
+
+# ─── 5. JSON with array values (leaves indexed without position) ─────────────
+
+statement ok
+CREATE TABLE witharrays (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX witharrays_idx ON witharrays USING inverted(id, data verbatim_dict);
+
+statement ok
+INSERT INTO witharrays VALUES
+    (1, '{"tags":["alpha","beta","gamma"]}'::json),
+    (2, '{"tags":["beta","delta"]}'::json),
+    (3, '{"tags":["gamma","epsilon"]}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) witharrays;
+
+# TODO support arrays better
+# Array elements are indexed as leaves under the same path
+#query
+#SELECT id FROM witharrays_idx WHERE TERM_EQ(data->'tags'->>'0', 'alpha') ORDER BY id;
+#----
+#id
+#1
+
+statement ok
+DROP TABLE witharrays;
+
+
+# ─── 6. Case-lowering dictionary ────────────────────────────────────────────
+
+statement ok
+CREATE TABLE cased (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX cased_idx ON cased USING inverted(id, data lower_dict);
+
+statement ok
+INSERT INTO cased VALUES
+    (1, '{"name":"Alice"}'::json),
+    (2, '{"name":"BOB"}'::json),
+    (3, '{"name":"charlie"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) cased;
+
+# lower_dict folds to lowercase at index time; query value must also be lowercase
+query
+SELECT id FROM cased_idx WHERE TERM_EQ(data->>'name', 'alice') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM cased_idx WHERE TERM_EQ(data->>'name', 'bob') ORDER BY id;
+----
+id
+2
+
+statement ok
+DROP TABLE cased;
+
+
+# ─── 7. Mixed field types (string + numeric in same document) ────────────────
+
+statement ok
+CREATE TABLE mixed (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX mixed_idx ON mixed USING inverted(id, data verbatim_dict);
+
+statement ok
+INSERT INTO mixed VALUES
+    (1, '{"label":"foo","count":42}'::json),
+    (2, '{"label":"bar","count":7}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) mixed;
+
+query
+SELECT id FROM mixed_idx WHERE TERM_EQ(data->>'label', 'foo') ORDER BY id;
+----
+id
+1
+
+# TODO should be int, not test?
+query
+SELECT id FROM mixed_idx WHERE data->>'count' = '42' ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE mixed;
+
+
+# ─── 8. Null and boolean values don't break traversal ───────────────────────
+
+statement ok
+CREATE TABLE withnulls (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX withnulls_idx ON withnulls USING inverted(id, data verbatim_dict);
+
+statement ok
+INSERT INTO withnulls VALUES
+    (1, '{"active":true,"note":null,"host":"srv-01"}'::json),
+    (2, '{"active":false,"note":null,"host":"srv-02"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) withnulls;
+
+query
+SELECT id FROM withnulls_idx WHERE TERM_EQ(data->>'host', 'srv-01') ORDER BY id;
+----
+id
+1
+
+statement ok
+DROP TABLE withnulls;
+
+
+# TODO support deletes 
+# ─── 9. Deletes ──────────────────────────────────────────────────────────────
+#
+#statement ok
+#CREATE TABLE del_test (id INTEGER PRIMARY KEY, data JSON);
+#
+#statement ok
+#CREATE INDEX del_test_idx ON del_test USING inverted(id, data verbatim_dict);
+#
+#statement ok
+#INSERT INTO del_test VALUES
+#    (1, '{"host":"server-01","status":"ok"}'::json),
+#    (2, '{"host":"server-02","status":"ok"}'::json),
+#    (3, '{"host":"server-03","status":"error"}'::json);
+#
+#query
+#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
+#----
+#id
+#1
+#2
+#
+#statement ok
+#DELETE FROM del_test WHERE id = 1;
+#
+#query
+#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
+#----
+#id
+#2
+#
+#statement ok
+#DELETE FROM del_test WHERE id = 2;
+#
+#query
+#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
+#----
+#id
+#
+## Row 3 with 'error' status still present
+#query
+#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'error') ORDER BY id;
+#----
+#id
+#3
+#
+#statement ok
+#DROP TABLE del_test;
+#
+#
+# ─── 10. Cleanup dictionaries ────────────────────────────────────────────────
+
+statement ok
+DROP TEXT SEARCH DICTIONARY verbatim_dict;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY lower_dict;

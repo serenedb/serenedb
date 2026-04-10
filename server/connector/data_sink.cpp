@@ -329,11 +329,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
 
-  for (size_t i = 0; i < num_columns; ++i) {
-    SDB_PRINT("RocksDBInsertDataSink: input[", i,
-              "] = ", input->childAt(i)->toString());
-  }
-
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
 
@@ -587,7 +582,6 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
 template<typename DataWriterType>
 void RocksDBDataSinkBase<DataWriterType>::PrepareIndexWriters(
   const velox::Type& type, bool may_have_nulls, catalog::Column::Id column_id) {
-  SDB_PRINT("PrepareIndexWriters are called");
   _column_index_writers.clear();
   for (const auto& writer : _index_writers) {
     if (writer->SwitchColumn(type, may_have_nulls, column_id)) {
@@ -608,7 +602,6 @@ void RocksDBDataSinkBase<DataWriterType>::WriteInputColumn(
     child->loadedVector();
   }
 
-  SDB_PRINT("WriteInputColumn: child->toString()=", child->toString());
   PrepareIndexWriters(*child->type(), child->mayHaveNulls(), _column_id);
   WriteColumn(child, range, {});
 }

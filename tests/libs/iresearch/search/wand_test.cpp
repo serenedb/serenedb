@@ -410,6 +410,27 @@ TEST_P(WandTestCase, TermFilterBM11) {
   AssertFilters(scorer.get(), false);
 }
 
+TEST_P(WandTestCase, TermFilterBM01) {
+  auto scorer = std::make_unique<irs::BM25>(irs::BM25::K(), 0.1f);
+
+  GenerateSegment(scorer.get(), true);
+  AssertFilters(scorer.get(), false);
+}
+
+TEST_P(WandTestCase, TermFilterBM02) {
+  auto scorer = std::make_unique<irs::BM25>(irs::BM25::K(), 0.2f);
+
+  GenerateSegment(scorer.get(), true);
+  AssertFilters(scorer.get(), false);
+}
+
+TEST_P(WandTestCase, TermFilterBM04) {
+  auto scorer = std::make_unique<irs::BM25>(irs::BM25::K(), 0.4f);
+
+  GenerateSegment(scorer.get(), true);
+  AssertFilters(scorer.get(), false);
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 static const auto kTestValues =

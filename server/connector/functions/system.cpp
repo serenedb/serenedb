@@ -96,7 +96,7 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
   auto count = args.size();
-  auto result_data = duckdb::FlatVector::GetData<int32_t>(result);
+  auto* result_data = duckdb::FlatVector::GetDataMutable<int32_t>(result);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     int32_t non_nulls = 0;
@@ -117,7 +117,7 @@ void NumNonNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                       duckdb::Vector& result) {
   auto count = args.size();
-  auto result_data = duckdb::FlatVector::GetData<int32_t>(result);
+  auto* result_data = duckdb::FlatVector::GetDataMutable<int32_t>(result);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     int32_t nulls = 0;

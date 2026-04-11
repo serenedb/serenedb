@@ -67,7 +67,8 @@ bool PgArrayTextToList(duckdb::Vector& source, duckdb::Vector& result,
         if (is_null) {
           duckdb::FlatVector::Validity(entry).SetInvalid(total_elements);
         } else {
-          duckdb::FlatVector::GetData<duckdb::string_t>(entry)[total_elements] =
+          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
+            entry)[total_elements] =
             duckdb::StringVector::AddString(entry, token.data(), token.size());
         }
         total_elements++;

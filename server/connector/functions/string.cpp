@@ -278,7 +278,8 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
   null_str_data.ToUnifiedFormat(count, null_str_fmt);
 
   auto& list_validity = duckdb::FlatVector::Validity(result);
-  auto list_entries = duckdb::FlatVector::GetData<duckdb::list_entry_t>(result);
+  auto list_entries =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto str_idx = str_fmt.sel->get_index(i);
@@ -328,7 +329,8 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
     duckdb::ListVector::Reserve(result, current_size + parts.size());
     auto& child_validity = duckdb::FlatVector::Validity(child);
-    auto child_data = duckdb::FlatVector::GetData<duckdb::string_t>(child);
+    auto child_data =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
     for (size_t j = 0; j < parts.size(); j++) {
       if (has_null_str && parts[j] == ns) {
         child_validity.SetInvalid(current_size + j);
@@ -448,7 +450,8 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[c].ToUnifiedFormat(count, vdata[c]);
   }
 
-  auto result_data = duckdb::FlatVector::GetData<duckdb::string_t>(result);
+  auto result_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::Validity(result);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
@@ -661,7 +664,8 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   auto count = args.size();
   duckdb::UnifiedVectorFormat input_data;
   input.ToUnifiedFormat(count, input_data);
-  auto result_data = duckdb::FlatVector::GetData<duckdb::string_t>(result);
+  auto* result_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto idx = input_data.sel->get_index(i);
@@ -669,8 +673,9 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       result_data[i] = duckdb::StringVector::AddString(result, "NULL");
       continue;
     }
-    auto str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-      input_data)[idx].GetString();
+    auto str =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(input_data)[idx]
+        .GetString();
     bool has_backslash = str.find('\\') != std::string::npos;
     std::string quoted;
     quoted.reserve(str.size() + 3);

@@ -47,25 +47,25 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
   if constexpr (std::is_enum_v<Field>) {
     WriteField(vec, row, std::to_underlying(field));
   } else if constexpr (std::is_same_v<Field, Name>) {
-    duckdb::FlatVector::GetData<duckdb::string_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, field.v.data(), field.v.size());
   } else if constexpr (std::is_same_v<Field, std::string_view>) {
-    duckdb::FlatVector::GetData<duckdb::string_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, field.data(), field.size());
   } else if constexpr (std::is_same_v<Field, std::string>) {
-    duckdb::FlatVector::GetData<duckdb::string_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, field);
   } else if constexpr (std::is_same_v<Field, char>) {
-    duckdb::FlatVector::GetData<duckdb::string_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddString(vec, &field, 1);
   } else if constexpr (std::is_same_v<Field, bool>) {
-    duckdb::FlatVector::GetData<bool>(vec)[row] = field;
+    duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int8_t>) {
-    duckdb::FlatVector::GetData<int8_t>(vec)[row] = field;
+    duckdb::FlatVector::GetDataMutable<int8_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int16_t>) {
-    duckdb::FlatVector::GetData<int16_t>(vec)[row] = field;
+    duckdb::FlatVector::GetDataMutable<int16_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int32_t>) {
-    duckdb::FlatVector::GetData<int32_t>(vec)[row] = field;
+    duckdb::FlatVector::GetDataMutable<int32_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, Oid> ||
                        std::is_same_v<Field, Xid> ||
                        std::is_same_v<Field, Regproc> ||
@@ -75,18 +75,18 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
                        std::is_same_v<Field, Xid8> ||
                        std::is_same_v<Field, Tid>) {
     // PG catalog OID-like types stored as int32
-    duckdb::FlatVector::GetData<int32_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<int32_t>(vec)[row] =
       static_cast<int32_t>(static_cast<uint64_t>(field));
   } else if constexpr (std::is_same_v<Field, int64_t> ||
                        std::is_same_v<Field, uint64_t>) {
-    duckdb::FlatVector::GetData<int64_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
       static_cast<int64_t>(field);
   } else if constexpr (std::is_same_v<Field, float>) {
-    duckdb::FlatVector::GetData<float>(vec)[row] = field;
+    duckdb::FlatVector::GetDataMutable<float>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, double>) {
-    duckdb::FlatVector::GetData<double>(vec)[row] = field;
+    duckdb::FlatVector::GetDataMutable<double>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, Bytea>) {
-    duckdb::FlatVector::GetData<duckdb::string_t>(vec)[row] =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
       duckdb::StringVector::AddStringOrBlob(vec, field.data.data(),
                                             field.data.size());
   } else if constexpr (IsArray<Field>::value) {

@@ -47,24 +47,24 @@
 static const duckdb::DefaultType kExternalTypes[] = {
   // clang-format off
   // reg* types -- aliased BIGINT with input functions for catalog lookups
-  {"regclass",       sdb::pg::REGCLASS(),       nullptr, "regclassin"},
-  {"regtype",        sdb::pg::REGTYPE(),        nullptr, "regtypein"},
-  {"regnamespace",   sdb::pg::REGNAMESPACE(),   nullptr, "regnamespacein"},
-  {"regproc",        sdb::pg::REGPROC(),        nullptr, nullptr},
-  {"regoper",        sdb::pg::REGOPER(),        nullptr, nullptr},
-  {"regoperator",    sdb::pg::REGOPERATOR(),    nullptr, nullptr},
-  {"regprocedure",   sdb::pg::REGPROCEDURE(),   nullptr, nullptr},
-  {"regrole",        sdb::pg::REGROLE(),        nullptr, nullptr},
-  {"regconfig",      sdb::pg::REGCONFIG(),      nullptr, nullptr},
-  {"regdictionary",  sdb::pg::REGDICTIONARY(),  nullptr, nullptr},
-  {"regcollation",   sdb::pg::REGCOLLATION(),   nullptr, nullptr},
+  {"regclass",       sdb::pg::REGCLASS(),       nullptr},
+  {"regtype",        sdb::pg::REGTYPE(),        nullptr},
+  {"regnamespace",   sdb::pg::REGNAMESPACE(),   nullptr},
+  {"regproc",        sdb::pg::REGPROC(),        nullptr},
+  {"regoper",        sdb::pg::REGOPER(),        nullptr},
+  {"regoperator",    sdb::pg::REGOPERATOR(),    nullptr},
+  {"regprocedure",   sdb::pg::REGPROCEDURE(),   nullptr},
+  {"regrole",        sdb::pg::REGROLE(),        nullptr},
+  {"regconfig",      sdb::pg::REGCONFIG(),      nullptr},
+  {"regdictionary",  sdb::pg::REGDICTIONARY(),  nullptr},
+  {"regcollation",   sdb::pg::REGCOLLATION(),   nullptr},
   // System identifier types -- aliased BIGINT
-  {"tid",  sdb::pg::TID(),  nullptr, nullptr},
-  {"cid",  sdb::pg::CID(),  nullptr, nullptr},
-  {"xid",  sdb::pg::XID(),  nullptr, nullptr},
-  {"xid8", sdb::pg::XID8(), nullptr, nullptr},
+  {"tid",  sdb::pg::TID(),  nullptr},
+  {"cid",  sdb::pg::CID(),  nullptr},
+  {"xid",  sdb::pg::XID(),  nullptr},
+  {"xid8", sdb::pg::XID8(), nullptr},
   // PG name type -- aliased VARCHAR
-  {"name", duckdb::LogicalTypeId::VARCHAR, nullptr, nullptr},
+  {"name", duckdb::LogicalTypeId::VARCHAR, nullptr},
   // clang-format on
 };
 

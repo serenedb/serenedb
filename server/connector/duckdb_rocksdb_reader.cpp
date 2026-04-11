@@ -59,7 +59,7 @@ template<typename T>
 static duckdb::idx_t ReadScalarColumn(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       duckdb::idx_t max_rows) {
-  auto* data = duckdb::FlatVector::GetData<T>(output);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
   return IterateColumn(it, max_rows,
@@ -76,7 +76,7 @@ static duckdb::idx_t ReadScalarColumn(rocksdb::Iterator& it,
 static duckdb::idx_t ReadBoolColumn(rocksdb::Iterator& it,
                                     duckdb::Vector& output,
                                     duckdb::idx_t max_rows) {
-  auto* data = duckdb::FlatVector::GetData<bool>(output);
+  auto* data = duckdb::FlatVector::GetDataMutable<bool>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
   return IterateColumn(it, max_rows,
@@ -103,7 +103,7 @@ static duckdb::idx_t ReadVarcharColumn(rocksdb::Iterator& it,
       }
       // RocksDB strings: leading null byte distinguishes empty string from NULL
       const size_t offset = value[0] == 0 ? 1 : 0;
-      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data() + offset,
                                         value.size() - offset);
     });
@@ -120,7 +120,7 @@ static duckdb::idx_t ReadBlobColumn(rocksdb::Iterator& it,
         validity.SetInvalid(idx);
         return;
       }
-      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddStringOrBlob(output, value.data(),
                                               value.size());
     });
@@ -129,7 +129,7 @@ static duckdb::idx_t ReadBlobColumn(rocksdb::Iterator& it,
 static duckdb::idx_t ReadTimestampColumn(rocksdb::Iterator& it,
                                          duckdb::Vector& output,
                                          duckdb::idx_t max_rows) {
-  auto* data = duckdb::FlatVector::GetData<duckdb::timestamp_t>(output);
+  auto* data = duckdb::FlatVector::GetDataMutable<duckdb::timestamp_t>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
   return IterateColumn(it, max_rows,
@@ -148,7 +148,7 @@ static duckdb::idx_t ReadTimestampColumn(rocksdb::Iterator& it,
 static duckdb::idx_t ReadDateColumn(rocksdb::Iterator& it,
                                     duckdb::Vector& output,
                                     duckdb::idx_t max_rows) {
-  auto* data = duckdb::FlatVector::GetData<duckdb::date_t>(output);
+  auto* data = duckdb::FlatVector::GetDataMutable<duckdb::date_t>(output);
   auto& validity = duckdb::FlatVector::Validity(output);
 
   return IterateColumn(it, max_rows,
@@ -233,7 +233,7 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
     auto key = it.key().ToStringView();
     SDB_ASSERT(key.size() >= key_prefix_size);
     auto pk_bytes = key.substr(key_prefix_size);
-    duckdb::FlatVector::GetData<duckdb::string_t>(rowid_output)[count] =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(rowid_output)[count] =
       duckdb::StringVector::AddStringOrBlob(rowid_output, pk_bytes.data(),
                                             pk_bytes.size());
 
@@ -261,12 +261,13 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN: {
       SDB_ASSERT(value.size() == kTrueValue.size());
-      duckdb::FlatVector::GetData<bool>(output)[idx] = (value == kTrueValue);
+      duckdb::FlatVector::GetDataMutable<bool>(output)[idx] =
+        (value == kTrueValue);
       break;
     }
     case duckdb::LogicalTypeId::TINYINT: {
       SDB_ASSERT(value.size() == sizeof(int8_t));
-      duckdb::FlatVector::GetData<int8_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<int8_t>(output)[idx] =
         static_cast<int8_t>(value[0]);
       break;
     }
@@ -274,53 +275,53 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
       SDB_ASSERT(value.size() == sizeof(int16_t));
       int16_t v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<int16_t>(output)[idx] = v;
+      duckdb::FlatVector::GetDataMutable<int16_t>(output)[idx] = v;
       break;
     }
     case duckdb::LogicalTypeId::INTEGER: {
       SDB_ASSERT(value.size() == sizeof(int32_t));
       int32_t v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<int32_t>(output)[idx] = v;
+      duckdb::FlatVector::GetDataMutable<int32_t>(output)[idx] = v;
       break;
     }
     case duckdb::LogicalTypeId::BIGINT: {
       SDB_ASSERT(value.size() == sizeof(int64_t));
       int64_t v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<int64_t>(output)[idx] = v;
+      duckdb::FlatVector::GetDataMutable<int64_t>(output)[idx] = v;
       break;
     }
     case duckdb::LogicalTypeId::FLOAT: {
       SDB_ASSERT(value.size() == sizeof(float));
       float v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<float>(output)[idx] = v;
+      duckdb::FlatVector::GetDataMutable<float>(output)[idx] = v;
       break;
     }
     case duckdb::LogicalTypeId::DOUBLE: {
       SDB_ASSERT(value.size() == sizeof(double));
       double v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<double>(output)[idx] = v;
+      duckdb::FlatVector::GetDataMutable<double>(output)[idx] = v;
       break;
     }
     case duckdb::LogicalTypeId::HUGEINT: {
       SDB_ASSERT(value.size() == sizeof(duckdb::hugeint_t));
       duckdb::hugeint_t v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<duckdb::hugeint_t>(output)[idx] = v;
+      duckdb::FlatVector::GetDataMutable<duckdb::hugeint_t>(output)[idx] = v;
       break;
     }
     case duckdb::LogicalTypeId::VARCHAR: {
       const size_t offset = value[0] == 0 ? 1 : 0;
-      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data() + offset,
                                         value.size() - offset);
       break;
     }
     case duckdb::LogicalTypeId::BLOB: {
-      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddStringOrBlob(output, value.data(),
                                               value.size());
       break;
@@ -329,7 +330,7 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
       SDB_ASSERT(value.size() == sizeof(int64_t));
       int64_t v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<duckdb::timestamp_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::timestamp_t>(output)[idx] =
         duckdb::timestamp_t(v);
       break;
     }
@@ -337,7 +338,7 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
       SDB_ASSERT(value.size() == sizeof(int32_t));
       int32_t v;
       std::memcpy(&v, value.data(), sizeof(v));
-      duckdb::FlatVector::GetData<duckdb::date_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::date_t>(output)[idx] =
         duckdb::date_t(v);
       break;
     }
@@ -346,7 +347,7 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
       break;
     }
     default:
-      duckdb::FlatVector::GetData<duckdb::string_t>(output)[idx] =
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data(), value.size());
       break;
   }
@@ -372,7 +373,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
 
   switch (child_type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN: {
-      auto* out = duckdb::FlatVector::GetData<bool>(child);
+      auto* out = duckdb::FlatVector::GetDataMutable<bool>(child);
       auto bool_bytes = (elem_count + 7) / 8;
       for (uint32_t i = 0; i < elem_count; i++) {
         if (elem_nulls && !(elem_nulls[i / 8] & (1 << (i % 8)))) {
@@ -395,7 +396,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           child_validity.SetInvalid(child_offset + i);
           ptr += len;
         } else {
-          duckdb::FlatVector::GetData<duckdb::string_t>(
+          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
             child)[child_offset + i] =
             duckdb::StringVector::AddString(
               child, reinterpret_cast<const char*>(ptr), len);
@@ -405,9 +406,9 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
       break;
     }
     default: {
-      // Fixed-width types -- dispatch by type to get correct GetData<T>
+      // Fixed-width types -- dispatch by type to get correct GetDataMutable<T>
       auto copy_fixed = [&]<typename T>(T*) {
-        auto* out = duckdb::FlatVector::GetData<T>(child);
+        auto* out = duckdb::FlatVector::GetDataMutable<T>(child);
         std::memcpy(&out[child_offset], ptr, elem_count * sizeof(T));
         ptr += elem_count * sizeof(T);
         if (elem_nulls) {

@@ -635,7 +635,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   SDB_ASSERT(stmt.current_stmt_idx < stmt.extracted.size());
 
   auto& sql_stmt = stmt.extracted[stmt.current_stmt_idx];
-  stmt.prepared = _duckdb_conn->Prepare(sql_stmt->query);
+  stmt.prepared = _duckdb_conn->Prepare(std::move(sql_stmt));
   if (stmt.prepared->HasError()) {
     SendError(stmt.prepared->GetErrorObject().RawMessage(),
               ERRCODE_INTERNAL_ERROR);

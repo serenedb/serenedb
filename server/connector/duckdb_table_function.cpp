@@ -321,7 +321,7 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
 
   // Fill dummy rowid column with sequential numbers if requested
   if (gstate.scan_rowid) {
-    auto* rowid_data = duckdb::FlatVector::GetData<int64_t>(
+    auto* rowid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[gstate.rowid_output_idx]);
     for (duckdb::idx_t i = 0; i < count; ++i) {
       rowid_data[i] = static_cast<int64_t>(i);
@@ -401,7 +401,7 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
     auto bind_col = gstate.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
       auto* rowid_data =
-        duckdb::FlatVector::GetData<int64_t>(output.data[proj]);
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
       for (duckdb::idx_t i = 0; i < num_rows; ++i) {
         rowid_data[i] = static_cast<int64_t>(i);
       }
@@ -527,9 +527,8 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     auto bind_col = gstate.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      // rowid
       auto* rowid_data =
-        duckdb::FlatVector::GetData<int64_t>(output.data[proj]);
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
       for (duckdb::idx_t i = 0; i < num_rows; ++i) {
         rowid_data[i] = static_cast<int64_t>(i);
       }

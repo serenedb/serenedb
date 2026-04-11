@@ -72,7 +72,7 @@ void ArrayNdimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto& input = args.data[0];
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto result_data = duckdb::FlatVector::GetData<int32_t>(result);
+  auto* result_data = duckdb::FlatVector::GetDataMutable<int32_t>(result);
   auto& result_validity = duckdb::FlatVector::Validity(result);
 
   duckdb::UnifiedVectorFormat input_data;
@@ -125,7 +125,8 @@ void ArrayDimsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto count = args.size();
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto result_data = duckdb::FlatVector::GetData<duckdb::string_t>(result);
+  auto* result_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& result_validity = duckdb::FlatVector::Validity(result);
 
   // Build UnifiedVectorFormat for each nesting level.

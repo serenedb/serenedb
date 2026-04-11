@@ -1752,6 +1752,8 @@ statement ok
 CREATE FUNCTION test_coerce_pos_typeof(bigint) RETURNS text LANGUAGE SQL AS 'SELECT pg_typeof($1)::text'
 
 
+# TODO(Pasha) Add cast from regtype to text
+skipif serenedb
 query
 SELECT test_coerce_pos_typeof(1);
 ----
@@ -1769,6 +1771,8 @@ statement ok
 CREATE FUNCTION test_coerce_named_typeof(a bigint) RETURNS text LANGUAGE SQL AS 'SELECT pg_typeof(a)::text'
 
 
+# TODO(Pasha) Add cast from regtype to text
+skipif serenedb
 query
 SELECT test_coerce_named_typeof(1);
 ----

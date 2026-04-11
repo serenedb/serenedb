@@ -398,6 +398,9 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
     r = catalog_impl.DropTable(GetDatabaseId(), name, info.name);
   } else if (info.type == duckdb::CatalogType::VIEW_ENTRY) {
     r = catalog_impl.DropView(GetDatabaseId(), name, info.name);
+  } else if (info.type == duckdb::CatalogType::MACRO_ENTRY ||
+             info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+    r = catalog_impl.DropFunction(GetDatabaseId(), name, info.name);
   } else {
     throw duckdb::NotImplementedException(
       "DROP for type %s not supported", duckdb::CatalogTypeToString(info.type));

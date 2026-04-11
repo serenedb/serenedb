@@ -263,15 +263,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
       }
       return nullptr;
     }
-    // SCALAR_FUNCTION_ENTRY lookup: only return SCALAR_FUNCTION or MACRO
-    // entries
-    if (type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) {
+    // SCALAR_FUNCTION_ENTRY / MACRO_ENTRY lookup: only return scalar entries
+    if (type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
+        type == duckdb::CatalogType::MACRO_ENTRY) {
       if (result->type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
           result->type == duckdb::CatalogType::MACRO_ENTRY) {
         return result;
       }
       return nullptr;
     }
+    // TABLE_MACRO_ENTRY lookup: only return table entries
+    if (result->type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
+        result->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+      return result;
+    }
+    return nullptr;
   }
 
   return nullptr;

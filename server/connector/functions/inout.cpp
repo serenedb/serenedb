@@ -54,7 +54,7 @@ static duckdb::string_t PgByteaIn(std::string_view input,
         ++i;
         continue;
       }
-      const char h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
+      const auto h1 = absl::kHexValueStrict[static_cast<unsigned char>(c)];
       if (h1 == -1) {
         throw duckdb::InvalidInputException("invalid hexadecimal digit: \"%c\"",
                                             c);
@@ -63,7 +63,7 @@ static duckdb::string_t PgByteaIn(std::string_view input,
         throw duckdb::InvalidInputException(
           "invalid hexadecimal data: odd number of digits");
       }
-      const char h2 =
+      const auto h2 =
         absl::kHexValueStrict[static_cast<unsigned char>(payload[i + 1])];
       if (h2 == -1) {
         throw duckdb::InvalidInputException("invalid hexadecimal digit: \"%c\"",

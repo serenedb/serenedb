@@ -95,7 +95,8 @@ class SereneDBPhysicalSSTInsert : public duckdb::PhysicalOperator {
   bool IsSource() const override { return true; }
 
  protected:
-  // Sets up SST writers on state for the given table. Does NOT create index writers.
+  // Sets up SST writers on state for the given table. Does NOT create index
+  // writers.
   static void SetupSSTState(SSTInsertGlobalState& state,
                             const catalog::Table& table);
 

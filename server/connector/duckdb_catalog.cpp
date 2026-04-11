@@ -118,8 +118,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
   // CTAS always gets a generated PK (monotonic), no sort needed.
-  auto& ctas = planner.Make<SereneDBPhysicalCTAS>(
-    std::move(op.info), op.schema, op.estimated_cardinality);
+  auto& ctas = planner.Make<SereneDBPhysicalCTAS>(std::move(op.info), op.schema,
+                                                  op.estimated_cardinality);
   ctas.children.push_back(plan);
   return ctas;
 }

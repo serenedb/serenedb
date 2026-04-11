@@ -31,6 +31,27 @@
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
+namespace {
+
+struct CTASGlobalState : public SSTInsertGlobalState {
+  ObjectId database_id;
+  std::string schema_name;
+  std::string table_name;
+
+  ~CTASGlobalState() override {
+    if (!finalized && !table_name.empty()) {
+      try {
+        auto& catalog = SerenedServer::Instance()
+                          .getFeature<catalog::CatalogFeature>()
+                          .Global();
+        std::ignore = catalog.DropTable(database_id, schema_name, table_name);
+      } catch (...) {
+      }
+    }
+  }
+};
+
+}  // namespace
 
 SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
   duckdb::PhysicalPlan& plan,
@@ -44,8 +65,7 @@ SereneDBPhysicalCTAS::SereneDBPhysicalCTAS(
 // --- GetGlobalSinkState: create table, then delegate to parent ---
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
-SereneDBPhysicalCTAS::GetGlobalSinkState(
-  duckdb::ClientContext& context) const {
+SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& schema_entry = _schema.Cast<SereneDBSchemaEntry>();
   auto database_id = schema_entry.GetDatabaseId();
 
@@ -65,7 +85,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(
     request.columns.push_back(std::move(sdb_col));
   }
 
-  // CTAS syntax doesn't support PK/UNIQUE constraints — pkColumns stays empty,
+  // CTAS syntax doesn't support PK/UNIQUE constraints -- pkColumns stays empty,
   // so MakeTableOptions will assign a generated PK.
 
   auto& catalog_feature =
@@ -102,14 +122,17 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(
   }
 
   // Get the newly created table and set up SST writers.
-  // Don't call parent's GetGlobalSinkState — it creates index writers which
+  // Don't call parent's GetGlobalSinkState -- it creates index writers which
   // crash on a tombstoned table not yet visible in the connection snapshot.
   snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(database_id, _schema.name,
                                           std::string{table_info.table});
   SDB_ASSERT(catalog_table);
 
-  auto state = duckdb::make_uniq<SSTInsertGlobalState>();
+  auto state = duckdb::make_uniq<CTASGlobalState>();
+  state->database_id = database_id;
+  state->schema_name = _schema.name;
+  state->table_name = table_info.table;
   SetupSSTState(*state, *catalog_table);
 
   auto& conn_ctx = GetSereneDBContext(context);
@@ -124,8 +147,8 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
-  auto result = SereneDBPhysicalSSTInsert::Finalize(pipeline, event, context,
-                                                    input);
+  auto result =
+    SereneDBPhysicalSSTInsert::Finalize(pipeline, event, context, input);
 
   // Remove tombstone if table was created (sink_state is non-null)
   if (sink_state) {

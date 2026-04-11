@@ -28,13 +28,9 @@
 #include "catalog/identifiers/revision_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/duckdb_primary_key.h"
-#include "connector/duckdb_rocksdb_writer.h"
-#include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/options.h"
-#include "rocksdb/sst_file_writer.h"
 #include "rocksdb/table.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -46,53 +42,80 @@ namespace {
 
 inline constexpr std::string_view kBulkInsertDir = "bulk_insert";
 
-}  // namespace
-
-struct SSTInsertColumnMeta {
-  catalog::Column::Id id;
-  duckdb::LogicalType duckdb_type;
-  size_t input_col_idx;
-};
-
-struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
-  duckdb::idx_t insert_count = 0;
-
-  // SST writers -- one per data column
-  std::vector<std::unique_ptr<rocksdb::SstFileWriter>> writers;
-  std::vector<SSTInsertColumnMeta> columns;
-  std::vector<duckdb_primary_key::PKColumn> pk_columns;
-
-  std::string sst_directory;
-  ObjectId table_id;
-  std::string table_key;  // [ObjectId] prefix
-
-  rocksdb::DB* db = nullptr;
-  rocksdb::ColumnFamilyHandle* cf = nullptr;
-
-  // Index writers -- created once, reused per Sink() call
-  std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
-
-  // Reusable buffers -- allocated once, reused across Sink() calls
-  std::vector<std::string> row_keys;  // [ColumnId(reserved)][ObjectId][PK]
-  std::string value_buffer;
-  std::vector<DuckDBSinkIndexWriter*> active_writers;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
-    duckdb::make_uniq<DuckDBColumnSerializer>();
-
-  bool has_data = false;
-  bool finalized = false;
-
-  ~SSTInsertGlobalState() override {
-    if (!finalized && !sst_directory.empty()) {
-      std::error_code ec;
-      std::filesystem::remove_all(sst_directory, ec);
-    }
-  }
-};
-
 struct SSTInsertSourceState : public duckdb::GlobalSourceState {
   bool finished = false;
 };
+
+}  // namespace
+
+SSTInsertGlobalState::~SSTInsertGlobalState() {
+  if (!finalized && !sst_directory.empty()) {
+    std::error_code ec;
+    std::filesystem::remove_all(sst_directory, ec);
+  }
+}
+
+// --- SetupSSTState: shared SST setup for both INSERT and CTAS ---
+
+void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
+                                              const catalog::Table& table) {
+  auto& engine = GetServerEngine();
+  state.db = engine.db();
+  state.cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  SDB_ASSERT(state.cf);
+
+  state.table_id = table.GetId();
+  state.table_key = key_utils::PrepareTableKey(state.table_id);
+  state.pk_columns = duckdb_primary_key::BuildPKColumns(table);
+
+  // Build column metadata -- skip generated PK column
+  const auto& columns = table.Columns();
+  size_t input_idx = 0;
+  for (const auto& col : columns) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
+      ++input_idx;
+      continue;
+    }
+    state.columns.push_back(SSTInsertColumnMeta{
+      .id = col.id,
+      .duckdb_type = col.type,
+      .input_col_idx = input_idx,
+    });
+    ++input_idx;
+  }
+
+  // Create SST directory
+  state.sst_directory = absl::StrCat(engine.path(), "/", kBulkInsertDir, "/",
+                                     RevisionId::create().id());
+  std::filesystem::create_directories(state.sst_directory);
+
+  // Configure SstFileWriter options
+  auto options = state.db->GetOptions(state.cf);
+  options.PrepareForBulkLoad();
+
+  rocksdb::BlockBasedTableOptions table_options;
+  table_options.filter_policy = nullptr;
+  options.table_factory.reset(
+    rocksdb::NewBlockBasedTableFactory(table_options));
+
+  options.compression = rocksdb::kNoCompression;
+  options.compression_per_level.clear();
+
+  rocksdb::EnvOptions env;
+  env.use_direct_writes = true;
+
+  // Open one SST file per column
+  state.writers.resize(state.columns.size());
+  for (size_t i = 0; i < state.columns.size(); ++i) {
+    state.writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
+    auto sst_path = absl::StrCat(state.sst_directory, "/column_", i, "_.sst");
+    auto status = state.writers[i]->Open(sst_path);
+    if (!status.ok()) {
+      SDB_THROW(rocksutils::ConvertStatus(status));
+    }
+  }
+}
 
 // --- Constructor ---
 
@@ -111,64 +134,9 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SSTInsertGlobalState>();
 
-  auto& engine = GetServerEngine();
-  state->db = engine.db();
-  state->cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  SDB_ASSERT(state->cf);
+  SetupSSTState(*state, *_table);
 
-  state->table_id = _table->GetId();
-  state->table_key = key_utils::PrepareTableKey(state->table_id);
-  state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
-
-  // Build column metadata -- skip generated PK column
-  const auto& columns = _table->Columns();
-  size_t input_idx = 0;
-  for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
-      ++input_idx;
-      continue;
-    }
-    state->columns.push_back(SSTInsertColumnMeta{
-      .id = col.id,
-      .duckdb_type = col.type,
-      .input_col_idx = input_idx,
-    });
-    ++input_idx;
-  }
-
-  // Create SST directory
-  state->sst_directory = absl::StrCat(engine.path(), "/", kBulkInsertDir, "/",
-                                      RevisionId::create().id());
-  std::filesystem::create_directories(state->sst_directory);
-
-  // Configure SstFileWriter options (from sst_sink_writer.cpp)
-  auto options = state->db->GetOptions(state->cf);
-  options.PrepareForBulkLoad();
-
-  rocksdb::BlockBasedTableOptions table_options;
-  table_options.filter_policy = nullptr;
-  options.table_factory.reset(
-    rocksdb::NewBlockBasedTableFactory(table_options));
-
-  options.compression = rocksdb::kNoCompression;
-  options.compression_per_level.clear();
-
-  rocksdb::EnvOptions env;
-  env.use_direct_writes = true;
-
-  // Open one SST file per column
-  state->writers.resize(state->columns.size());
-  for (size_t i = 0; i < state->columns.size(); ++i) {
-    state->writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
-    auto sst_path = absl::StrCat(state->sst_directory, "/column_", i, "_.sst");
-    auto status = state->writers[i]->Open(sst_path);
-    if (!status.ok()) {
-      SDB_THROW(rocksutils::ConvertStatus(status));
-    }
-  }
-
-  // Create index writers once
+  // Create index writers
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
@@ -191,13 +159,11 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
 
   gstate.has_data = true;
 
-  // Build row keys with reserved ColumnId slot:
-  // Layout: [ColumnId(reserved)][ObjectId][PK bytes]
-  // Reuses gstate.row_keys capacity across Sink() calls.
+  // Build row keys: [ColumnId(reserved)][ObjectId][PK bytes]
   duckdb_primary_key::CreateBatchWithColumnSlot(
     chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
 
-  // Write each column to its SST file via WriteColumn + SstWriter
+  // Write each column to its SST file
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
     const auto& meta = gstate.columns[col];
 
@@ -211,7 +177,7 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
                                    {});
   }
 
-  // Update indexes via transaction path (different key ordering than SST)
+  // Update indexes via transaction path
   if (!gstate.index_writers.empty()) {
     for (auto& writer : gstate.index_writers) {
       writer->Init(num_rows, chunk);
@@ -234,7 +200,6 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
         key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
       }
 
-      // Use a noop writer for data -- index writers handle themselves
       DuckDBColumnSerializer::SstWriter noop{nullptr};
       gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
                                      meta.duckdb_type, num_rows,

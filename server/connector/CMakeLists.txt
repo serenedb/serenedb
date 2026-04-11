@@ -31,6 +31,7 @@ add_library(
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_sst_insert.cpp
+    duckdb_physical_ctas.cpp
     duckdb_tokenizer_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp

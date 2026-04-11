@@ -24,10 +24,50 @@
 #include <duckdb/execution/physical_operator.hpp>
 
 #include "catalog/table.h"
+#include "connector/duckdb_primary_key.h"
+#include "connector/duckdb_rocksdb_writer.h"
+#include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector {
 
-class SereneDBPhysicalSSTInsert final : public duckdb::PhysicalOperator {
+struct SSTInsertColumnMeta {
+  catalog::Column::Id id;
+  duckdb::LogicalType duckdb_type;
+  size_t input_col_idx;
+};
+
+struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
+  duckdb::idx_t insert_count = 0;
+
+  // SST writers -- one per data column
+  std::vector<std::unique_ptr<rocksdb::SstFileWriter>> writers;
+  std::vector<SSTInsertColumnMeta> columns;
+  std::vector<duckdb_primary_key::PKColumn> pk_columns;
+
+  std::string sst_directory;
+  ObjectId table_id;
+  std::string table_key;
+
+  rocksdb::DB* db = nullptr;
+  rocksdb::ColumnFamilyHandle* cf = nullptr;
+
+  // Index writers -- created once, reused per Sink() call
+  std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
+
+  // Reusable buffers
+  std::vector<std::string> row_keys;
+  std::string value_buffer;
+  std::vector<DuckDBSinkIndexWriter*> active_writers;
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
+    duckdb::make_uniq<DuckDBColumnSerializer>();
+
+  bool has_data = false;
+  bool finalized = false;
+
+  ~SSTInsertGlobalState() override;
+};
+
+class SereneDBPhysicalSSTInsert : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalSSTInsert(duckdb::PhysicalPlan& plan,
                             std::shared_ptr<catalog::Table> table,
@@ -54,7 +94,11 @@ class SereneDBPhysicalSSTInsert final : public duckdb::PhysicalOperator {
     duckdb::OperatorSourceInput& input) const override;
   bool IsSource() const override { return true; }
 
- private:
+ protected:
+  // Sets up SST writers on state for the given table. Does NOT create index writers.
+  static void SetupSSTState(SSTInsertGlobalState& state,
+                            const catalog::Table& table);
+
   std::shared_ptr<catalog::Table> _table;
 };
 

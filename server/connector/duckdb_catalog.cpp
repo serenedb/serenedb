@@ -31,6 +31,7 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
+#include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
@@ -41,6 +42,7 @@
 #include "catalog/schema.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
+#include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
@@ -115,7 +117,11 @@ void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) {
-  throw duckdb::NotImplementedException("CREATE TABLE AS through DuckDB");
+  // CTAS always gets a generated PK (monotonic), no sort needed.
+  auto& ctas = planner.Make<SereneDBPhysicalCTAS>(
+    std::move(op.info), op.schema, op.estimated_cardinality);
+  ctas.children.push_back(plan);
+  return ctas;
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(

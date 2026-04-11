@@ -79,6 +79,7 @@ extern "C" const duckdb::DefaultMacro* duckdb_external_macros(
   *count = std::size(sdb::pg::kExternalMacros);
   return sdb::pg::kExternalMacros;
 }
+
 extern "C" const duckdb::DefaultView* duckdb_external_views(
   duckdb::idx_t* count) {
   *count = std::size(sdb::pg::kExternalViews);

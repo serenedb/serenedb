@@ -625,6 +625,74 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
+// PG quote_literal: wraps in single quotes, doubles embedded quotes.
+// Uses E'...' prefix when backslashes are present (PG escape string syntax).
+void QuoteLiteralFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                          duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
+    args.data[0], result, args.size(), [&](duckdb::string_t input) {
+      auto str = input.GetString();
+      bool has_backslash = str.find('\\') != std::string::npos;
+      std::string quoted;
+      quoted.reserve(str.size() + 3);
+      if (has_backslash) {
+        quoted += "E'";
+      } else {
+        quoted += '\'';
+      }
+      for (char c : str) {
+        if (c == '\'') {
+          quoted += "''";
+        } else if (c == '\\') {
+          quoted += "\\\\";
+        } else {
+          quoted += c;
+        }
+      }
+      quoted += '\'';
+      return duckdb::StringVector::AddString(result, quoted);
+    });
+}
+
+// PG quote_nullable: like quote_literal but returns 'NULL' for NULL input
+void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                           duckdb::Vector& result) {
+  auto& input = args.data[0];
+  auto count = args.size();
+  duckdb::UnifiedVectorFormat input_data;
+  input.ToUnifiedFormat(count, input_data);
+  auto result_data = duckdb::FlatVector::GetData<duckdb::string_t>(result);
+
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto idx = input_data.sel->get_index(i);
+    if (!input_data.validity.RowIsValid(idx)) {
+      result_data[i] = duckdb::StringVector::AddString(result, "NULL");
+      continue;
+    }
+    auto str = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+      input_data)[idx].GetString();
+    bool has_backslash = str.find('\\') != std::string::npos;
+    std::string quoted;
+    quoted.reserve(str.size() + 3);
+    if (has_backslash) {
+      quoted += "E'";
+    } else {
+      quoted += '\'';
+    }
+    for (char c : str) {
+      if (c == '\'') {
+        quoted += "''";
+      } else if (c == '\\') {
+        quoted += "\\\\";
+      } else {
+        quoted += c;
+      }
+    }
+    quoted += '\'';
+    result_data[i] = duckdb::StringVector::AddString(result, quoted);
+  }
+}
+
 }  // namespace
 
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
@@ -758,6 +826,22 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::VARCHAR},
                                                  duckdb::LogicalType::VARCHAR,
                                                  QuoteIdentFunction});
+
+  // quote_literal(text) -> text
+  loader.RegisterFunction(duckdb::ScalarFunction{"quote_literal",
+                                                 {duckdb::LogicalType::VARCHAR},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 QuoteLiteralFunction});
+
+  // quote_nullable(text) -> text (returns 'NULL' for NULL input)
+  {
+    duckdb::ScalarFunction func{"quote_nullable",
+                                {duckdb::LogicalType::VARCHAR},
+                                duckdb::LogicalType::VARCHAR,
+                                QuoteNullableFunction};
+    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    loader.RegisterFunction(func);
+  }
 }
 
 }  // namespace sdb::connector

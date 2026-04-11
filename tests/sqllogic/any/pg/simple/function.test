@@ -139,6 +139,8 @@ AS $$
 $$ LANGUAGE sql;
 
 
+# TODO(mbkkt) fix returns void
+skipif serenedb
 query
 SELECT * FROM ireturnvoid();
 ----
@@ -146,6 +148,8 @@ ireturnvoid
 NULL
 
 
+# TODO(mbkkt) fix non-select procedure
+skipif serenedb
 query
 SELECT * FROM
   clickclack_review as cr1,

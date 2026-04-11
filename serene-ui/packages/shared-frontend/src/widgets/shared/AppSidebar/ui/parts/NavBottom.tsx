@@ -54,6 +54,8 @@ export const NavBottom = () => {
                             variant="ghost"
                             key={index}
                             size={"icon"}
+                            title={item.title.toLowerCase()}
+                            aria-label={item.title.toLowerCase()}
                             onClick={getAction(item)}>
                             {item.icon}
                         </Button>

@@ -44,7 +44,7 @@
         "echarts": "^6.0.0",
         "echarts-for-react": "^3.0.6",
         "lodash": "^4.17.23",
-        "marked": "^17.0.5",
+        "marked": "^4.0.10",
         "react-grid-layout": "^2.2.2",
         "react-responsive-carousel": "^3.2.23",
         "recharts": "^3.8.0"

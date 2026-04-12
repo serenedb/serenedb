@@ -379,7 +379,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
  public:
   PostingIteratorImpl()
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, HasWand} {}
+    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize} {}
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
@@ -397,7 +397,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
   class ReadSkip {
    public:
-    explicit ReadSkip(bool has_wand) : _skip_levels(1), _has_wand(has_wand) {
+    explicit ReadSkip() : _skip_levels(1) {
       Disable();  // Prevent using skip-list by default
     }
 
@@ -469,13 +469,12 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     }
 
     IRS_FORCE_INLINE void SkipWandData(InputType& in) {
-      CommonSkipWandData(_has_wand, in);
+      CommonSkipWandData(HasWand, in);
     }
 
    private:
     std::vector<SkipState> _skip_levels;
     SkipState* _prev{};  // Pointer to skip context used by skip reader
-    bool _has_wand = false;
   };
 
   IRS_FORCE_INLINE void ReadTail(doc_id_t prev_doc);

@@ -29,7 +29,6 @@ namespace sdb::catalog {
 
 Result CreateDatabase(const ExecContext& exec,
                       catalog::DatabaseOptions options);
-Result DropDatabase(const ExecContext& exec, std::string_view db_name,
-                    duckdb::DatabaseManager& db_manager);
+Result DropDatabase(const ExecContext& exec, std::string_view db_name);
 
 }  // namespace sdb::catalog

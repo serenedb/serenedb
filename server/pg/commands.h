@@ -22,11 +22,11 @@
 
 #include <memory>
 #include <string_view>
+#include <yaclib/async/future.hpp>
 
 #include "catalog/fwd.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
-#include "yaclib/async/future.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

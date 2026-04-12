@@ -28,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <yaclib/async/future.hpp>
+#include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -43,7 +44,6 @@
 #include "rest_server/serened_single.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"
-#include "yaclib/async/make.hpp"
 
 namespace sdb::catalog {
 
@@ -265,6 +265,18 @@ struct SchemaDrop final : public DropTask,
   std::vector<std::shared_ptr<TableDrop>> _tables;
 };
 
+// Waits for an Object's weak_ptr to expire (zero snapshot references).
+// Uses the same Schedule/backoff mechanism as other DropTasks.
+struct WaitForExpired final : public DropTask {
+  explicit WaitForExpired(const std::shared_ptr<Object>& object)
+    : DropTask{object, id::kInstance} {}
+
+  AsyncResult Execute() final { co_return Result{}; }
+  std::string_view GetName() const noexcept final { return "wait for expired"; }
+  std::string GetContext() const noexcept final { return "WaitForExpired"; }
+  bool AllowToDropDependencies() const noexcept final { return true; }
+};
+
 struct DatabaseDrop final : public DropTask,
                             std::enable_shared_from_this<DatabaseDrop> {
  public:
@@ -272,12 +284,8 @@ struct DatabaseDrop final : public DropTask,
     : DropTask{db_id, id::kInstance, true}, _schemas{std::move(schemas)} {}
 
   DatabaseDrop(const std::shared_ptr<Database>& db,
-               std::vector<std::shared_ptr<SchemaDrop>> schemas,
-               duckdb::DatabaseManager& db_manager)
-    : DropTask{db, id::kInstance, true},
-      _schemas{std::move(schemas)},
-      _db_name{db->GetName()},
-      _db_manager{&db_manager} {}
+               std::vector<std::shared_ptr<SchemaDrop>> schemas)
+    : DropTask{db, id::kInstance, true}, _schemas{std::move(schemas)} {}
 
   std::string GetContext() const noexcept final {
     return absl::Substitute("DatabaseDrop(database $0)", _id.id());
@@ -295,12 +303,8 @@ struct DatabaseDrop final : public DropTask,
     });
   }
 
-  std::string_view GetDbName() const noexcept { return _db_name; }
-
  private:
   std::vector<std::shared_ptr<SchemaDrop>> _schemas;
-  std::string _db_name;
-  duckdb::DatabaseManager* _db_manager{nullptr};
 };
 
 }  // namespace sdb::catalog

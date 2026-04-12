@@ -113,8 +113,7 @@ class LocalCatalog final : public LogicalCatalog,
                      ChangeCallback<Table> callback) final;
   Result ChangeRole(std::string_view name, ChangeCallback<Role> callback) final;
 
-  Result DropDatabase(std::string_view name,
-                      duckdb::DatabaseManager& db_manager) final;
+  Result DropDatabase(std::string_view name) final;
   Result DropRole(std::string_view role) final;
   Result DropSchema(ObjectId database_id, std::string_view name,
                     bool cascade) final;

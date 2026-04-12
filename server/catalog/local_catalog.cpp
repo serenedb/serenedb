@@ -40,6 +40,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <yaclib/async/future.hpp>
+#include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
 #include "auth/role_utils.h"
@@ -93,8 +95,6 @@
 #include "storage_engine/secondary_index_shard.h"
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
-#include "yaclib/async/future.hpp"
-#include "yaclib/async/when_all.hpp"
 
 namespace sdb::catalog {
 
@@ -144,7 +144,7 @@ class SnapshotImpl : public Snapshot {
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
-    const std::shared_ptr<Database>& db, duckdb::DatabaseManager& db_manager) {
+    const std::shared_ptr<Database>& db) {
     auto db_deps = GetDependency<DatabaseDependency>(db->GetId());
     auto schemas_drop = db_deps->schemas |
                         std::views::transform([&](ObjectId id) {
@@ -154,7 +154,7 @@ class SnapshotImpl : public Snapshot {
                         }) |
                         std::ranges::to<std::vector>();
     auto drop_task =
-      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop), db_manager);
+      std::make_shared<DatabaseDrop>(db, std::move(schemas_drop));
     return drop_task;
   }
 
@@ -1678,8 +1678,7 @@ Result LocalCatalog::DropRole(std::string_view role) {
   return {};
 }
 
-Result LocalCatalog::DropDatabase(std::string_view name,
-                                  duckdb::DatabaseManager& db_manager) {
+Result LocalCatalog::DropDatabase(std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     auto db = clone->GetDatabase(name);
@@ -1687,7 +1686,7 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       return Result{ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
                     "\" does not exist"};
     }
-    auto task = clone->CreateDatabaseDrop(db, db_manager);
+    auto task = clone->CreateDatabaseDrop(db);
 
     if (auto r = GetServerEngine().WriteTombstone(id::kInstance, db->GetId());
         !r.ok()) {

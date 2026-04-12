@@ -54,8 +54,8 @@
 namespace sdb::connector {
 
 SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db,
-                                 std::shared_ptr<catalog::Database> database)
-  : duckdb::Catalog{db}, _database{std::move(database)} {}
+                                 ObjectId database_id)
+  : duckdb::Catalog{db}, _database_id{database_id} {}
 
 void SereneDBCatalog::Initialize(bool load_builtin) {}
 

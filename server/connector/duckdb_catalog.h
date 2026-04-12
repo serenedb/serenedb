@@ -31,13 +31,9 @@ namespace sdb::connector {
 
 class SereneDBCatalog final : public duckdb::Catalog {
  public:
-  SereneDBCatalog(duckdb::AttachedDatabase& db,
-                  std::shared_ptr<catalog::Database> database);
+  SereneDBCatalog(duckdb::AttachedDatabase& db, ObjectId database_id);
 
-  ObjectId GetDatabaseId() const {
-    SDB_ASSERT(_database);
-    return _database->GetId();
-  }
+  ObjectId GetDatabaseId() const { return _database_id; }
 
   std::string GetCatalogType() override { return "serenedb"; }
   std::string GetDefaultSchema() const override { return "public"; }
@@ -88,7 +84,7 @@ class SereneDBCatalog final : public duckdb::Catalog {
   std::string GetDBPath() override { return ""; }
 
  private:
-  std::shared_ptr<catalog::Database> _database;
+  ObjectId _database_id;
 };
 
 }  // namespace sdb::connector

@@ -74,7 +74,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("database \"", name, "\" not found after creation"));
     }
-    return duckdb::make_uniq<SereneDBCatalog>(db, std::move(database));
+    return duckdb::make_uniq<SereneDBCatalog>(db, database->GetId());
   }
 
   // ATTACH with path = open existing database by ObjectId
@@ -89,7 +89,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("database \"", name, "\" not found"));
   }
-  return duckdb::make_uniq<SereneDBCatalog>(db, std::move(database));
+  return duckdb::make_uniq<SereneDBCatalog>(db, database->GetId());
 }
 
 duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
@@ -98,8 +98,7 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   return duckdb::make_uniq<SereneDBTransactionManager>(db);
 }
 
-void DropSereneDB(duckdb::DatabaseManager& db_manager,
-                  duckdb::ClientContext& context, const duckdb::string& name,
+void DropSereneDB(duckdb::ClientContext& context, const duckdb::string& name,
                   duckdb::OnEntryNotFound if_not_found) {
   auto state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
@@ -109,7 +108,12 @@ void DropSereneDB(duckdb::DatabaseManager& db_manager,
   }
   const auto& exec_ctx =
     state ? state->GetConnectionContext() : ExecContext::superuser();
-  auto r = catalog::DropDatabase(exec_ctx, name, db_manager);
+  // Release current connection's catalog snapshot so the Database object
+  // can become unreferenced, allowing synchronous detach by DuckDB.
+  if (state) {
+    state->GetConnectionContext().DropCatalogSnapshot();
+  }
+  auto r = catalog::DropDatabase(exec_ctx, name);
   if (r.is(ERROR_SERVER_DATABASE_NOT_FOUND)) {
     if (if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
       return;

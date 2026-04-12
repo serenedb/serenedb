@@ -39,7 +39,7 @@ struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+  const catalog::Snapshot* snapshot = nullptr;
 };
 
 // TODO: consider optimizing with type-switch + UnifiedVectorFormat per column

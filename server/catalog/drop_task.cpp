@@ -240,9 +240,6 @@ Result DatabaseDrop::Finalize() {
   if (!r.ok()) {
     return r;
   }
-  if (_db_manager && !_db_name.empty()) {
-    _db_manager->DetachInternal(_db_name);
-  }
   return server.DropDefinition(id::kInstance, catalog::ObjectType::Tombstone,
                                _id);
 }

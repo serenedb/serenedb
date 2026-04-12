@@ -27,14 +27,14 @@
 #include <concepts>
 #include <functional>
 #include <utility>
+#include <yaclib/async/contract.hpp>
+#include <yaclib/async/future.hpp>
+#include <yaclib/async/promise.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
-#include "yaclib/async/contract.hpp"
-#include "yaclib/async/future.hpp"
-#include "yaclib/async/promise.hpp"
 
 namespace sdb::search {
 

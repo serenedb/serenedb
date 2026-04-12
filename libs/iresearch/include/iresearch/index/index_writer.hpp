@@ -49,6 +49,7 @@
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
+#include "yaclib/algo/one_shot_event.hpp"
 
 namespace irs {
 
@@ -671,11 +672,13 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin) noexcept
+                            DocsMask&& docs_mask, size_t docs_begin,
+                            FileRefs&& refs) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
+        refs{std::move(refs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -694,6 +697,7 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
+    FileRefs refs;
     bool was_flush = false;
 
    private:
@@ -787,14 +791,20 @@ class IndexWriter : private util::Noncopyable {
 
     struct PendingFlush {
       SealedGeneration sealed;
-      FlushOutput output;
+      std::optional<FlushOutput> output;
+      std::exception_ptr error{nullptr};
+      // std::atomic_bool completed{false};
+      yaclib::OneShotEvent completed;
+
+      PendingFlush(SealedGeneration&& sealed) : sealed{std::move(sealed)} {}
     };
 
-    std::optional<PendingFlush> pending_flush;
+    std::shared_ptr<PendingFlush> pending_flush;
 
-    bool StartFlushSync();
+    bool StartFlush(yaclib::IExecutorPtr executor = nullptr);
     void HarvestPendingFlush();
 
+    void DiscardPendingFlush() noexcept;
     void DrainPendingFlush();
 
     // Flush current writer state into a materialized segment.
@@ -921,7 +931,8 @@ class IndexWriter : private util::Noncopyable {
     // but not to freelist. So this segment would be waited upon flushing
     void AddToPending(ActiveSegmentContext& active);
 
-    uint64_t FlushPending(uint64_t committed_tick, uint64_t tick);
+    uint64_t FlushPending(uint64_t committed_tick, uint64_t tick,
+                          yaclib::IExecutorPtr executor);
 
     void Reset() noexcept;
   };

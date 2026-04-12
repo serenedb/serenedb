@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
+#include <yaclib/exe/submit.hpp>
 
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
@@ -687,6 +688,7 @@ void IndexWriter::Document::Finish() noexcept {
 void IndexWriter::Transaction::Reset() noexcept {
   // TODO(mbkkt) rename Reset() to Rollback()
   if (auto* segment = _active.Segment(); segment != nullptr) {
+    segment->DiscardPendingFlush();
     segment->Rollback();
   }
 }
@@ -716,6 +718,7 @@ void IndexWriter::Transaction::Abort() noexcept {
   if (segment == nullptr) {
     return;  // nothing to do
   }
+  segment->DiscardPendingFlush();
   if (_active.Flush() == nullptr) {
     segment->Reset();  // reset before returning to pool
     _active = {};      // back to pool no needed Rollback
@@ -735,6 +738,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
 
   auto& segment = *_active.Segment();
   auto& writer = *segment.active.writer;
+  auto executor = _writer->_executor;
 
   if (writer.initialized()) [[likely]] {
     if (disable_flush || !_writer->FlushRequired(writer)) {
@@ -749,7 +753,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
 
     auto meta_name = segment.active.writer_meta.meta.name;
     try {
-      segment.Flush();
+      segment.StartFlush(executor);
     } catch (...) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
                 absl::StrCat("while flushing segment '", meta_name,
@@ -850,8 +854,8 @@ void IndexWriter::Cleanup(FlushContext& curr, FlushContext* next) noexcept {
   }
 }
 
-uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
-                                                 uint64_t tick) {
+uint64_t IndexWriter::FlushContext::FlushPending(
+  uint64_t committed_tick, uint64_t tick, yaclib::IExecutorPtr executor) {
   // if tick is not equal uint64_max, as result of bad_alloc it's possible here
   // that not all segments which should be committed by next FlushContext
   // (fully or partially) will be moved to it.
@@ -884,7 +888,8 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
       // Commit will has greater first tick than committed tick.
       SDB_ASSERT(committed_tick < first_tick);
       flushed_tick = std::max(flushed_tick, last_tick);
-      segment->Flush();
+      segment->StartFlush(executor);
+      // segment->Flush();
       if (tick < last_tick) {
         next_segments.push_back(segment);
       }
@@ -945,8 +950,10 @@ void IndexWriter::SegmentContext::HarvestFlushOutput(
              sealed.writer_meta.meta.docs_count);
   SDB_ASSERT(sealed.writer_meta.meta.docs_count == docs_context.size());
 
+  auto refs = sealed.dir->GetRefs();
   flushed.emplace_back(std::move(sealed.writer_meta), std::move(output.old2new),
-                       std::move(output.docs_mask), flushed_docs.size());
+                       std::move(output.docs_mask), flushed_docs.size(),
+                       std::move(refs));
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -958,47 +965,79 @@ void IndexWriter::SegmentContext::HarvestFlushOutput(
   committed_flushed_docs += sealed.committed_buffered_docs;
 }
 
-bool IndexWriter::SegmentContext::StartFlushSync() {
+bool IndexWriter::SegmentContext::StartFlush(yaclib::IExecutorPtr executor) {
+  if (pending_flush != nullptr) {
+    DrainPendingFlush();
+  }
+
   if (!active.writer->initialized() || active.writer->buffered_docs() == 0) {
     flushed_queries = queries.size();
     SDB_ASSERT(active.committed_buffered_docs == 0);
     return false;  // Skip flushing an empty writer
   }
   SDB_ASSERT(active.writer->buffered_docs() <= doc_limits::eof());
+  SDB_ASSERT(pending_flush == nullptr);
 
-  auto sealed = TakeActiveGeneration();
-  SDB_ASSERT(pending_flush.has_value() == false);
+  auto pending = std::make_shared<PendingFlush>(TakeActiveGeneration());
 
-  try {
-    auto flush_output = RunPhysicalFlush(sealed);
-    pending_flush.emplace(std::move(sealed), std::move(flush_output));
-    return true;
-  } catch (...) {
-    sealed.writer->reset();
-    throw;
+  pending_flush = pending;
+  auto run_flush = [this, pend = pending]() mutable {
+    Finally set_completed = [&] noexcept { pend->completed.Set(); };
+    try {
+      pend->output = RunPhysicalFlush(pend->sealed);
+    } catch (...) {
+      pend->error = std::current_exception();
+    }
+  };
+
+  if (executor != nullptr && pending->sealed.committed_buffered_docs == 0) {
+    try {
+      yaclib::Submit(*executor, std::move(run_flush));
+    } catch (...) {
+      run_flush();
+    }
+  } else {
+    run_flush();
   }
+  return true;
 }
 
 void IndexWriter::SegmentContext::HarvestPendingFlush() {
-  SDB_ASSERT(pending_flush.has_value());
-  auto pending = std::move(*pending_flush);
-  pending_flush.reset();
+  SDB_ASSERT(pending_flush != nullptr);
+  auto pending = std::exchange(pending_flush, nullptr);
 
-  Finally reset_writer = [&]() noexcept { pending.sealed.writer->reset(); };
+  Finally reset_writer = [&]() noexcept { pending->sealed.writer->reset(); };
 
-  const auto docs_context = pending.sealed.writer->docs_context();
-  HarvestFlushOutput(std::move(pending.sealed), std::move(pending.output),
+  pending->completed.Wait();
+  if (pending->error) {
+    pending->sealed.dir->clear_refs();
+    std::rethrow_exception(pending->error);
+  }
+
+  const auto docs_context = pending->sealed.writer->docs_context();
+  HarvestFlushOutput(std::move(pending->sealed), std::move(*pending->output),
                      docs_context);
 }
 
+void IndexWriter::SegmentContext::DiscardPendingFlush() noexcept {
+  if (pending_flush == nullptr) {
+    return;
+  }
+  try {
+    HarvestPendingFlush();
+  } catch (...) {
+    // Best effort in noexcept path: ignore flush errors and continue rollback.
+  }
+}
+
 void IndexWriter::SegmentContext::DrainPendingFlush() {
-  if (pending_flush.has_value()) {
+  if (pending_flush != nullptr) {
     HarvestPendingFlush();
   }
 }
 
 void IndexWriter::SegmentContext::Flush() {
-  if (StartFlushSync()) {
+  if (StartFlush()) {
     HarvestPendingFlush();
   }
 }
@@ -1011,7 +1050,6 @@ IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
 }
 
 void IndexWriter::SegmentContext::Prepare() {
-  DrainPendingFlush();
   SDB_ASSERT(!active.writer->initialized());
 
   active.writer_meta.filename.clear();
@@ -1020,7 +1058,7 @@ void IndexWriter::SegmentContext::Prepare() {
 }
 
 void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
-  SDB_ASSERT(!pending_flush.has_value());
+  SDB_ASSERT(pending_flush == nullptr);
 
   buffered_docs.store(0, std::memory_order_relaxed);
 
@@ -1055,7 +1093,7 @@ void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
 }
 
 void IndexWriter::SegmentContext::Rollback() noexcept {
-  SDB_ASSERT(!pending_flush.has_value());
+  SDB_ASSERT(pending_flush == nullptr);
 
   // rollback modification queries
   SDB_ASSERT(committed_queries <= queries.size());
@@ -1748,7 +1786,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // Stage 0
   // wait for any outstanding segments to settle to ensure that any rollbacks
   // are properly tracked in 'modification_queries_'
-  const auto flushed_tick = ctx->FlushPending(_committed_tick, tick);
+  const auto flushed_tick = ctx->FlushPending(_committed_tick, tick, _executor);
 
   std::unique_lock cleanup_lock{_consolidating.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
@@ -2042,6 +2080,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
     curr_cached.clear();
     next_cached.clear();
+  }
+
+  for (const auto& segment : ctx->segments) {
+    SDB_ASSERT(segment != nullptr);
+    segment->DrainPendingFlush();
   }
 
   // Stage 3

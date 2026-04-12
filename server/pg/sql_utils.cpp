@@ -23,7 +23,6 @@
 #include <absl/functional/overload.h>
 #include <absl/numeric/bits.h>
 #include <absl/strings/str_cat.h>
-#include <velox/type/Type.h>
 
 #include <iresearch/utils/utf8_utils.hpp>
 

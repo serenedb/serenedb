@@ -20,60 +20,20 @@
 
 #include "connector/duckdb_search_sink_writer.h"
 
-#include <velox/type/Type.h>
-
 #include "basics/assert.h"
 
 namespace sdb::connector {
 
-// DuckDB LogicalType -> velox::TypeKind, then delegate to the existing
-// SearchSinkInsertBaseImpl::SwitchColumnImpl which uses velox::Type.
-// This avoids duplicating the complex SetupColumnWriter logic.
-static velox::TypePtr DuckDBLogicalTypeToVeloxType(
-  const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    case duckdb::LogicalTypeId::BOOLEAN:
-      return velox::BOOLEAN();
-    case duckdb::LogicalTypeId::TINYINT:
-      return velox::TINYINT();
-    case duckdb::LogicalTypeId::SMALLINT:
-      return velox::SMALLINT();
-    case duckdb::LogicalTypeId::INTEGER:
-      return velox::INTEGER();
-    case duckdb::LogicalTypeId::BIGINT:
-      return velox::BIGINT();
-    case duckdb::LogicalTypeId::FLOAT:
-      return velox::REAL();
-    case duckdb::LogicalTypeId::DOUBLE:
-      return velox::DOUBLE();
-    case duckdb::LogicalTypeId::VARCHAR:
-      return velox::VARCHAR();
-    case duckdb::LogicalTypeId::BLOB:
-      return velox::VARBINARY();
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      return velox::TIMESTAMP();
-    case duckdb::LogicalTypeId::DATE:
-      return velox::DATE();
-    case duckdb::LogicalTypeId::HUGEINT:
-      return velox::HUGEINT();
-    default:
-      return velox::VARCHAR();
-  }
-}
-
 bool DuckDBSearchSinkInsertWriter::SwitchColumn(const duckdb::LogicalType& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
-  auto velox_type = DuckDBLogicalTypeToVeloxType(type);
-  return SwitchColumnImpl(*velox_type, have_nulls, column_id);
+  return SwitchColumnImpl(type, have_nulls, column_id);
 }
 
 bool DuckDBSearchSinkUpdateWriter::SwitchColumn(const duckdb::LogicalType& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
-  auto velox_type = DuckDBLogicalTypeToVeloxType(type);
-  return SwitchColumnImpl(*velox_type, have_nulls, column_id);
+  return SwitchColumnImpl(type, have_nulls, column_id);
 }
 
 }  // namespace sdb::connector

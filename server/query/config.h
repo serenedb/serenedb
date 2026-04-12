@@ -23,8 +23,6 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
-#include <velox/common/config/IConfig.h>
-#include <velox/type/Type.h>
 
 #include <string>
 #include <string_view>
@@ -83,7 +81,7 @@ std::optional<VariableDescription> GetDefaultDescription(std::string_view name);
 
 std::string_view GetOriginalName(std::string_view name);
 
-class Config : public facebook::velox::config::IConfig {
+class Config {
  public:
   enum class VariableContext : uint8_t {
     Session = 0,
@@ -181,7 +179,7 @@ class Config : public facebook::velox::config::IConfig {
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
 
-  std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
+  std::unordered_map<std::string, std::string> rawConfigsCopy() const;
 
   // Visit all the settings and call function f(setting_name, value,
   // description) value is std::string, because it could be non-default
@@ -217,7 +215,7 @@ class Config : public facebook::velox::config::IConfig {
   std::optional<std::string> Get(std::string_view key) const;
 
  private:
-  std::optional<std::string> access(const std::string& key) const final;
+  std::optional<std::string> access(const std::string& key) const;
 
   std::string_view GetNonDefault(std::string_view key) const;
 

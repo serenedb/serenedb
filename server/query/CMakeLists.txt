@@ -6,5 +6,4 @@ target_sources(
         utils.cpp
         config_variables.cpp
         transaction.cpp
-        types.cpp
 )

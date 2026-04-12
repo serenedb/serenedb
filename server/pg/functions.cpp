@@ -23,14 +23,6 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
-#include <velox/expression/DecodedArgs.h>
-#include <velox/expression/FunctionMetadata.h>
-#include <velox/expression/VectorFunction.h>
-#include <velox/functions/Macros.h>
-#include <velox/functions/Registerer.h>
-#include <velox/functions/prestosql/DateTimeImpl.h>
-#include <velox/type/SimpleFunctionApi.h>
-#include <velox/vector/ComplexVector.h>
 
 #include "functions/search.h"
 #include "functions/vector.h"

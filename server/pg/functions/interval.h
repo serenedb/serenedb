@@ -47,7 +47,7 @@ struct UnpackedInterval {
   }
 };
 
-velox::int128_t PackInterval(const UnpackedInterval& interval);
+duckdb::int128_t PackInterval(const UnpackedInterval& interval);
 
 UnpackedInterval UnpackInterval(velox::int128_t packed);
 

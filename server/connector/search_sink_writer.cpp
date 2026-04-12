@@ -20,10 +20,6 @@
 
 #include "search_sink_writer.hpp"
 
-#include <velox/functions/prestosql/types/JsonType.h>
-#include <velox/type/Type.h>
-#include <velox/vector/FlatVector.h>
-
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/assert.h"
@@ -65,7 +61,7 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
   if (!IsIndexed(column_id)) {
@@ -76,14 +72,22 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
   }
   // For now we do not support types that are not default comparable as our
   // ranges depend on that.
-  SDB_ASSERT(!type.providesCustomComparison());
-  if (type.kind() == facebook::velox::TypeKind::UNKNOWN) {
+  // SDB_ASSERT(!type.providesCustomComparison());
+  if (type.id() == duckdb::LogicalTypeId::SQLNULL) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
     // handling
-    SetupColumnWriter<velox::TypeKind::UNKNOWN>(column_id, false);
   } else {
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, type.kind(),
-                                       column_id, have_nulls);
+    switch (type.id()) {
+      case duckdb::LogicalTypeId::SQLNULL:
+        SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
+        break;
+      case duckdb::LogicalTypeId::VARCHAR:
+        SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id,
+                                                          have_nulls);
+        break;
+      default:
+        break;
+    }
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -100,14 +104,13 @@ void SearchSinkInsertBaseImpl::WriteImpl(
 
 void SearchSinkInsertBaseImpl::FinishImpl() { _document.reset(); }
 
-template<velox::TypeKind Kind>
+template<duckdb::LogicalTypeId Kind>
 void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                                                  bool have_nulls) {
   basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
-  using T = typename velox::TypeTraits<Kind>::NativeType;
 
-  if (have_nulls || Kind == velox::TypeKind::UNKNOWN) {
+  if (have_nulls || Kind == duckdb::LogicalTypeId::SQLNULL) {
     basics::StrResize(_null_name_buffer, sizeof(column_id));
     SetNameToBuffer(_null_name_buffer, column_id);
     search::mangling::MangleNull(_null_name_buffer);
@@ -132,7 +135,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         };
     };
 
-  if constexpr (Kind == velox::TypeKind::UNKNOWN) {
+  if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
     _current_writer = MakeIndexWriter(
       [&](std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
@@ -141,8 +144,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         _null_field.SetNullValue();
         return _null_field;
       });
-  } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
-                       Kind == velox::TypeKind::VARBINARY) {
+  } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
+                       Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_analyzer_provider(column_id));
     if (have_nulls) {
@@ -151,7 +154,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     } else {
       _current_writer = MakeIndexWriter(&WriteStringValue);
     }
-  } else if constexpr (std::is_same_v<T, bool>) {
+  } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
     search::mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
     if (have_nulls) {
@@ -160,18 +163,18 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     } else {
       _current_writer = MakeIndexWriter(&WriteBooleanValue);
     }
-  } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
-    search::mangling::MangleNumeric(_name_buffer);
-    _field.PrepareForNumericValue();
-    if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
-    } else {
-      _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
-    }
+    // } else if constexpr (std::is_integral_v<T> ||
+    // std::is_floating_point_v<T>) {
+    //   search::mangling::MangleNumeric(_name_buffer);
+    //   _field.PrepareForNumericValue();
+    //   if (have_nulls) {
+    //     _current_writer =
+    //       MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
+    //   } else {
+    //     _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
+    //   }
   } else {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
-              velox::TypeKindName::toName(Kind),
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ", Kind,
               " is not supported in search index");
   }
   _field.name = _name_buffer;
@@ -188,10 +191,13 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
       // We need indexed PK for removes
-      VELOX_CHECK(
+      const bool r =
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
-          _pk_field),
-        "Failed to insert PK field into IResearch document");
+          _pk_field);
+      if (!r) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert PK field into IResearch document");
+      }
       data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
@@ -204,9 +210,12 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
   return
     [&, func = std::forward<WriteFunc>(write_func)](
       std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
-      VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(
-                    &func(full_key, cell_slices, _field)),
+      const bool r = _document->template Insert<irs::Action::INDEX>(
+        &func(full_key, cell_slices, _field));
+      if (!r) {
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert field into IResearch document");
+      }
     };
 }
 
@@ -295,24 +304,27 @@ void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
   analyzer = gNumberStreamPool.emplace(search::AnalyzerImpl::NumberStreamTag{});
 }
 
-template<typename T>
-void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
-  auto& nstream = basics::downCast<irs::NumericTokenizer>(*analyzer);
-  if constexpr (std::is_same_v<
-                  T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
-    // TODO(Dronplane): Native int128 support
-    SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
-  } else if constexpr (
-    std::is_same_v<T,
-                   velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType> ||
-    std::is_same_v<T,
-                   velox::TypeTraits<velox::TypeKind::SMALLINT>::NativeType>) {
-    // TODO(Dronplane): Native int 16/8 support
-    nstream.reset(static_cast<int32_t>(value));
-  } else {
-    nstream.reset(value);
-  }
-}
+// template<typename T>
+// void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
+//   auto& nstream = basics::downCast<irs::NumericTokenizer>(*analyzer);
+//   if constexpr (std::is_same_v<
+//                   T,
+//                   velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
+//     // TODO(Dronplane): Native int128 support
+//     SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
+//   } else if constexpr (
+//     std::is_same_v<T,
+//                    velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType>
+//                    ||
+//     std::is_same_v<T,
+//                    velox::TypeTraits<velox::TypeKind::SMALLINT>::NativeType>)
+//                    {
+//     // TODO(Dronplane): Native int 16/8 support
+//     nstream.reset(static_cast<int32_t>(value));
+//   } else {
+//     nstream.reset(value);
+//   }
+// }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue() {
   string_analyzer.reset();

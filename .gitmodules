@@ -6,10 +6,6 @@
 	path = third_party/boost
 	url = https://github.com/serenedb/boost.git
 	shallow = true
-[submodule "third_party/velox"]
-	path = third_party/velox
-	url = https://github.com/serenedb/velox.git
-	shallow = true
 [submodule "third_party/openssl"]
 	path = third_party/openssl
 	url = https://github.com/serenedb/openssl.git
@@ -78,10 +74,6 @@
 	path = third_party/tests/rapidjson
 	url = https://github.com/serenedb/rapidjson.git
 	shallow = true
-[submodule "third_party/xsimd"]
-	path = third_party/xsimd
-	url = https://github.com/serenedb/xsimd.git
-	shallow = true
 [submodule "third_party/minizip-ng"]
 	path = third_party/minizip-ng
 	url = https://github.com/serenedb/minizip-ng.git
@@ -97,10 +89,6 @@
 [submodule "third_party/re2"]
 	path = third_party/re2
 	url = https://github.com/serenedb/re2.git
-	shallow = true
-[submodule "third_party/nuraft"]
-	path = third_party/nuraft
-	url = https://github.com/serenedb/nuraft.git
 	shallow = true
 [submodule "third_party/benchmark"]
 	path = third_party/benchmark
@@ -118,77 +106,9 @@
 	path = third_party/zstd
 	url = https://github.com/serenedb/zstd.git
 	shallow = true
-[submodule "third_party/protobuf"]
-	path = third_party/protobuf
-	url = https://github.com/serenedb/protobuf.git
-	shallow = true
-[submodule "third_party/arrow"]
-	path = third_party/arrow
-	url = https://github.com/serenedb/arrow.git
-	shallow = true
-[submodule "third_party/thrift"]
-	path = third_party/thrift
-	url = https://github.com/serenedb/thrift.git
-	shallow = true
-[submodule "third_party/flatbuffers"]
-	path = third_party/flatbuffers
-	url = https://github.com/serenedb/flatbuffers.git
-	shallow = true
 [submodule "third_party/streamvbyte"]
 	path = third_party/streamvbyte
 	url = https://github.com/serenedb/streamvbyte.git
-	shallow = true
-[submodule "third_party/aws-c-auth"]
-	path = third_party/aws-c-auth
-	url = https://github.com/serenedb/aws-c-auth.git
-	shallow = true
-[submodule "third_party/aws-c-cal"]
-	path = third_party/aws-c-cal
-	url = https://github.com/serenedb/aws-c-cal.git
-	shallow = true
-[submodule "third_party/aws-c-common"]
-	path = third_party/aws-c-common
-	url = https://github.com/serenedb/aws-c-common.git
-	shallow = true
-[submodule "third_party/aws-c-compression"]
-	path = third_party/aws-c-compression
-	url = https://github.com/serenedb/aws-c-compression.git
-	shallow = true
-[submodule "third_party/aws-c-event-stream"]
-	path = third_party/aws-c-event-stream
-	url = https://github.com/serenedb/aws-c-event-stream.git
-	shallow = true
-[submodule "third_party/aws-c-http"]
-	path = third_party/aws-c-http
-	url = https://github.com/serenedb/aws-c-http.git
-	shallow = true
-[submodule "third_party/aws-c-io"]
-	path = third_party/aws-c-io
-	url = https://github.com/serenedb/aws-c-io.git
-	shallow = true
-[submodule "third_party/aws-c-mqtt"]
-	path = third_party/aws-c-mqtt
-	url = https://github.com/serenedb/aws-c-mqtt.git
-	shallow = true
-[submodule "third_party/aws-c-s3"]
-	path = third_party/aws-c-s3
-	url = https://github.com/serenedb/aws-c-s3.git
-	shallow = true
-[submodule "third_party/aws-c-sdkutils"]
-	path = third_party/aws-c-sdkutils
-	url = https://github.com/serenedb/aws-c-sdkutils.git
-	shallow = true
-[submodule "third_party/aws-checksums"]
-	path = third_party/aws-checksums
-	url = https://github.com/serenedb/aws-checksums.git
-	shallow = true
-[submodule "third_party/aws-crt-cpp"]
-	path = third_party/aws-crt-cpp
-	url = https://github.com/serenedb/aws-crt-cpp.git
-	shallow = true
-[submodule "third_party/aws-sdk-cpp"]
-	path = third_party/aws-sdk-cpp
-	url = https://github.com/serenedb/aws-sdk-cpp.git
 	shallow = true
 [submodule "third_party/faiss"]
 	path = third_party/faiss

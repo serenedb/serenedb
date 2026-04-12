@@ -31,7 +31,6 @@
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "general_server/state.h"
 
 namespace sdb {
@@ -44,7 +43,6 @@ namespace sdb::catalog {
 
 struct NewOptions {
   std::string_view name;
-  std::shared_ptr<ValidatorBase> schema;
   uint32_t number_of_shards = 1;
   uint32_t replication_factor = 1;
   uint32_t write_concern = 1;
@@ -67,7 +65,6 @@ class Table : public SchemaObject {
   const auto& PKColumns() const noexcept { return _pk_columns; }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
   auto GetTableType() const noexcept { return _type; }
-  auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
   bool waitForSync() const noexcept { return _wait_for_sync; }
   auto& keyGenerator() const noexcept {
@@ -159,7 +156,6 @@ class Table : public SchemaObject {
   ObjectId _to;
   std::shared_ptr<KeyGenerator> _key_generator;
   std::shared_ptr<ShardingStrategy> _sharding_strategy;
-  std::shared_ptr<ValidatorBase> _schema;
   // name of other table this table's shards should be distributed like
   std::shared_ptr<ShardMap> _shard_ids = std::make_shared<ShardMap>();
   uint32_t _number_of_shards = 1;

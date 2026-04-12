@@ -48,7 +48,6 @@
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "connector/pg_logical_types.h"
-#include "pg/functions/interval.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
 

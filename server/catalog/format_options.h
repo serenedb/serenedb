@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <velox/dwio/common/Options.h>
-#include <velox/type/Type.h>
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
@@ -41,33 +39,20 @@ class CopyProgressReporter;
 }  // namespace pg
 namespace connector {
 
-struct DwioWriterOptions {
-  std::shared_ptr<velox::dwio::common::WriterOptions> writer;
-};
+struct DwioWriterOptions {};
 
-struct DwioReaderOptions {
-  std::shared_ptr<velox::dwio::common::ReaderOptions> reader;
-  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader;
-};
+struct DwioReaderOptions {};
 
 struct WriterOptions {
   DwioWriterOptions dwio;
   std::shared_ptr<StorageOptions> storage_options;
   pg::CopyProgressReporter* progress = nullptr;
-
-  const auto& Writer() const { return dwio.writer; }
-  auto& Writer() { return dwio.writer; }
 };
 
 struct ReaderOptions {
   DwioReaderOptions dwio;
   pg::CopyProgressReporter* progress = nullptr;
   std::shared_ptr<StorageOptions> storage_options;
-
-  const auto& Reader() const { return dwio.reader; }
-  auto& Reader() { return dwio.reader; }
-  const auto& RowReader() const { return dwio.row_reader; }
-  auto& RowReader() { return dwio.row_reader; }
 };
 
 }  // namespace connector
@@ -75,10 +60,7 @@ struct ReaderOptions {
 class FormatOptions {
  public:
   virtual ~FormatOptions() = default;
-  virtual connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const = 0;
-  virtual connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const = 0;
+
   virtual void toVPack(vpack::Builder&) const = 0;
 
   FileFormat format() const noexcept { return _format; }
@@ -100,10 +82,6 @@ class TextFormatOptions : public FormatOptions {
       _null_string{std::move(null_string)},
       _header{header} {}
 
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 
  private:
@@ -117,10 +95,6 @@ class ParquetFormatOptions : public FormatOptions {
  public:
   ParquetFormatOptions() : FormatOptions{FileFormat::Parquet} {}
 
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 };
 
@@ -128,10 +102,6 @@ class DwrfFormatOptions : public FormatOptions {
  public:
   DwrfFormatOptions() : FormatOptions{FileFormat::Dwrf} {}
 
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 };
 
@@ -139,10 +109,6 @@ class OrcFormatOptions : public FormatOptions {
  public:
   OrcFormatOptions() : FormatOptions{FileFormat::Orc} {}
 
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
   void toVPack(vpack::Builder& b) const final;
 };
 

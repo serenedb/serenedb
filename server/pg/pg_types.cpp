@@ -23,16 +23,11 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
-#include <velox/functions/prestosql/types/JsonType.h>
-#include <velox/functions/prestosql/types/TimestampWithTimeZoneType.h>
-#include <velox/functions/prestosql/types/UuidType.h>
-#include <velox/type/Timestamp.h>
 
 #include "catalog/catalog.h"
 #include "catalog/virtual_table.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/functions/interval.h"
 #include "pg/parse_array.h"
 #include "pg/serialize.h"
 #include "pg/sql_collector.h"

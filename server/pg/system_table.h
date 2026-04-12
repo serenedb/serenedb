@@ -34,7 +34,6 @@
 #include "catalog/virtual_table.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
-#include "query/types.h"
 
 namespace sdb::pg {
 

@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <velox/common/file/File.h>
-#include <velox/type/Type.h>
-
 #include "basics/fwd.h"
 #include "basics/message_buffer.h"
 #include "pg/copy_messages_queue.h"

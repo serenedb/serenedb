@@ -20,11 +20,6 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
-#include <velox/vector/BaseVector.h>
-#include <velox/vector/ComplexVector.h>
-#include <velox/vector/FlatVector.h>
-
 #include <duckdb/common/types.hpp>
 
 #include "basics/fwd.h"

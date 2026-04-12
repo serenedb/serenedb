@@ -20,11 +20,6 @@
 
 #pragma once
 
-#include <velox/common/memory/MemoryPool.h>
-#include <velox/type/Type.h>
-#include <velox/type/Variant.h>
-#include <velox/vector/ComplexVector.h>
-
 #include <span>
 #include <string>
 #include <type_traits>
@@ -34,32 +29,6 @@
 #include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector::primary_key {
-
-// TODO(Dronplane)
-// PK can be quite large, do we need std::string?
-// If not, maybe we can use string_view/const char* that allocated in arena
-using Keys = std::vector<std::string, velox::memory::StlAllocator<std::string>>;
-
-void Create(const velox::RowVector& data,
-            std::span<const facebook::velox::column_index_t> key_childs,
-            velox::vector_size_t idx, std::string& key);
-
-void Create(const velox::RowVector& data,
-            std::span<const velox::column_index_t> key_childs, Keys& buffer);
-
-void Create(const velox::RowVector& data, velox::vector_size_t idx,
-            std::string& key);
-
-// Creates a key from a fully resolved point (one variant per PK column,
-// ordered by pk_type).
-void Create(std::span<const velox::variant> point,
-            const velox::RowType& pk_type, std::string& key);
-
-void AppendKeyValue(std::string& key, const velox::BaseVector& column,
-                    velox::vector_size_t idx);
-
-void AppendVariantValue(std::string& key, const velox::variant& value,
-                        const velox::TypePtr& type);
 
 template<typename T>
 void AppendSigned(std::string& key, T value) {

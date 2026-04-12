@@ -20,8 +20,6 @@
 
 #include "connector/duckdb_table_entry.h"
 
-#include <velox/type/Type.h>
-
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>

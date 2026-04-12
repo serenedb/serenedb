@@ -46,7 +46,6 @@
 #include "catalog/key_generator.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
 #include "query/utils.h"
@@ -232,7 +231,6 @@ struct TableOptions {
   std::vector<CheckConstraint> checkConstraints;
   std::string shardingStrategy = std::string{kDefaultSharding};
   std::string name;
-  std::shared_ptr<ValidatorBase> schema;
   std::shared_ptr<KeyGenerator> keyOptions;
   std::shared_ptr<ShardMap> shards = std::make_shared<ShardMap>();
   Identifier id;

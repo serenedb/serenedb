@@ -1,18 +1,18 @@
 target_sources(
     sereneserver
     PRIVATE
-        array_extra.cpp
-        datetime_extra.cpp
-        extract.cpp
-        inout.cpp
-        interval.cpp
-        json.cpp
-        math_extra.cpp
-        regexp.cpp
-        size.cpp
-        generate.cpp
-        string_extra.cpp
-        system.cpp
-        stub.cpp
-        util.cpp
+    # array_extra.cpp
+    # datetime_extra.cpp
+    # extract.cpp
+    # inout.cpp
+    # interval.cpp
+    # json.cpp
+    # math_extra.cpp
+    # regexp.cpp
+    # size.cpp
+    # generate.cpp
+    # string_extra.cpp
+    # system.cpp
+    # stub.cpp
+    # util.cpp
 )

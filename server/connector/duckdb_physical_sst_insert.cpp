@@ -40,8 +40,6 @@
 namespace sdb::connector {
 namespace {
 
-inline constexpr std::string_view kBulkInsertDir = "bulk_insert";
-
 struct SSTInsertSourceState : public duckdb::GlobalSourceState {
   bool finished = false;
 };

@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
-
 #include <duckdb/common/types/value.hpp>
 #include <expected>
 #include <magic_enum/magic_enum.hpp>

@@ -24,7 +24,6 @@
 #include <string_view>
 
 #include "catalog/fwd.h"
-#include "pg/command_executor.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
 #include "yaclib/async/future.hpp"

@@ -41,7 +41,6 @@
 #include "catalog/sharding_strategy.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 
@@ -331,11 +330,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     return {ERROR_BAD_PARAMETER, "numberOfShards cannot be 0"};
   }
 
-  if (auto r = ValidatorJsonSchema::buildInstance(request.schema); r) {
-    options.schema = std::move(*r);
-  } else {
-    return std::move(r).error();
-  }
   if (auto r = basics::SafeCall([&] {
         options.keyOptions = KeyGeneratorHelper::createKeyGenerator(
           *request.numberOfShards, request.keyOptions);

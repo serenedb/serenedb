@@ -47,7 +47,6 @@
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 #include "storage_engine/engine_feature.h"
@@ -71,7 +70,6 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _to{other.to()},
     _key_generator{other._key_generator},
     _sharding_strategy{other._sharding_strategy},
-    _schema{std::move(options.schema)},
     _shard_ids{other._shard_ids},
     _number_of_shards{options.number_of_shards},
     _replication_factor{options.replication_factor},
@@ -104,7 +102,6 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _from{options.from},
     _to{options.to},
     _key_generator{std::move(options.keyOptions)},
-    _schema{std::move(options.schema)},
     _shard_ids{std::move(options.shards)},
     _number_of_shards{options.numberOfShards},
     _replication_factor{options.replicationFactor},
@@ -130,7 +127,6 @@ struct Table::TableOutput {
   std::span<const CheckConstraint> checkConstraints;
   std::string_view shardingStrategy;
   // TODO make them just pointers if catalog::Table became immutable
-  vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
   const KeyGenerator* keyOptions;
   std::shared_ptr<ShardMap> shards;
   Identifier id;
@@ -155,7 +151,6 @@ Table::TableOutput Table::MakeTableOptions() const {
     .pkColumns = _pk_columns,
     .checkConstraints = _check_constraints,
     .shardingStrategy = _sharding_strategy->name(),
-    .schema = _schema,
     .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},
@@ -196,7 +191,6 @@ void catalog::Table::WriteInternal(vpack::Builder& b) const {
 NewOptions Table::MakeNewOptions() const {
   return {
     .name = GetName(),
-    .schema = _schema,
     .number_of_shards = _number_of_shards,
     .replication_factor = _replication_factor,
     .write_concern = _write_concern,

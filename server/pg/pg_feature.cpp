@@ -20,15 +20,11 @@
 
 #include "pg_feature.h"
 
-#include <velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h>
-
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
 #include "pg/system_catalog.h"
-#include "pg_functions_registration.hpp"
 #include "query/duckdb_engine.h"
-#include "query/types.h"
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -97,7 +93,6 @@ void PostgresFeature::start() {
 
 void PostgresFeature::unprepare() {
   query::DuckDBEngine::Instance().Shutdown();
-  velox::filesystems::finalizeS3FileSystem();
 }
 
 }  // namespace sdb::pg

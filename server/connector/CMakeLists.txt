@@ -1,24 +1,9 @@
 add_library(
     serene_connector
     STATIC
-    common.cpp
-    data_sink.cpp
-    primary_key.cpp
-    data_source.cpp
     key_utils.cpp
-    rocksdb_sink_writer.cpp
     search_sink_writer.cpp
     search_remove_filter.cpp
-    rocksdb_column_decoder.cpp
-    rocksdb_materializer.cpp
-    parquet_materializer.cpp
-    text_materializer.cpp
-    search_count_data_source.cpp
-    search_scan_data_source.cpp
-    search_filter_builder.cpp
-    search_filter_printer.cpp
-    sst_sink_writer.cpp
-    rocksdb_filter.cpp
     duckdb_storage_extension.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
@@ -48,9 +33,9 @@ target_link_libraries(
     serene_base
     iresearch-static
     rocksdb
-    velox
     pg_query
     duckdb_static
+    Folly::folly
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?

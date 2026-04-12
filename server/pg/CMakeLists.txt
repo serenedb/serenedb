@@ -18,11 +18,9 @@ target_sources(
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
         information_schema/sql_sizing.cpp
-        command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
         connection_context.cpp
-        copy_file.cpp
         pg_types.cpp
         serialize.cpp
         system_catalog.cpp

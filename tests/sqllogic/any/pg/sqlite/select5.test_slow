@@ -2,11 +2,6 @@ show-column-names false
 flat-values true
 hash-threshold 8
 
-# TODO(mbkkt) Improve join order algorithm
-onlyif serenedb
-statement ok
-SET join_order_algorithm TO greedy;
-
 statement ok
 CREATE TABLE t1(
   a1 INTEGER PRIMARY KEY,

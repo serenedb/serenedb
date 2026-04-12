@@ -1,3 +1,4 @@
+skipif serenedb
 statement error
 CREATE TABLE koshareff(a BOOLEAN DEFAULT 228);
 ----

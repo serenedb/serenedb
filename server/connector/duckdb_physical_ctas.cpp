@@ -77,11 +77,18 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   request.name = table_info.table;
 
   catalog::Column::Id next_col_id = 0;
-  for (auto& col : table_info.columns.Physical()) {
+  for (auto& col : table_info.columns.Logical()) {
     catalog::Column sdb_col;
     sdb_col.id = next_col_id++;
     sdb_col.name = col.Name();
     sdb_col.type = col.Type();
+    if (col.Generated()) {
+      sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
+      sdb_col.expr =
+        std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
+    } else if (col.HasDefaultValue()) {
+      sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
+    }
     request.columns.push_back(std::move(sdb_col));
   }
 

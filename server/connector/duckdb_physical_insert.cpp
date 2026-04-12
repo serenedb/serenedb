@@ -102,7 +102,8 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   // Build column metadata
   const auto& columns = _table->Columns();
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].id == catalog::Column::kGeneratedPKId) {
+    if (columns[i].id == catalog::Column::kGeneratedPKId ||
+        columns[i].IsGenerated()) {
       continue;
     }
     state->columns.push_back(InsertColumnMeta{

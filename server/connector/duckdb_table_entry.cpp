@@ -54,8 +54,8 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   auto data = duckdb::make_uniq<SereneDBScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
-      continue;  // Skip generated PK -- not a real column
+    if (col.id == catalog::Column::kGeneratedPKId || col.IsGenerated()) {
+      continue;  // Skip generated PK and virtual generated columns
     }
     data->column_ids.push_back(col.id);
     data->column_types.push_back(col.type);

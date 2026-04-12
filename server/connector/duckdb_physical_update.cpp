@@ -112,7 +112,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   const auto& pk_col_ids = _table->PKColumns();
 
   for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId) {
+    if (col.id == catalog::Column::kGeneratedPKId || col.IsGenerated()) {
       continue;
     }
     state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{

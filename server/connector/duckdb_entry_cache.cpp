@@ -134,7 +134,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
   info->table = table_name;
   info->schema = schema.name;
   for (const auto& col : table->Columns()) {
-    info->columns.AddColumn(duckdb::ColumnDefinition(col.name, col.type));
+    auto cd = duckdb::ColumnDefinition(col.name, col.type);
+    if (col.IsGenerated() && col.expr && col.expr->HasExpr()) {
+      cd.SetGeneratedExpression(col.expr->GetExpr().Copy());
+    } else if (col.expr && col.expr->HasExpr()) {
+      cd.SetDefaultValue(col.expr->GetExpr().Copy());
+    }
+    info->columns.AddColumn(std::move(cd));
   }
 
   // PK constraint

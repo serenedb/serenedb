@@ -299,7 +299,7 @@ jobs:
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
         run: |
           if [[ "$RUN_UNIT_TESTS" == 'true' && "$RUN_INTEGRATION_TESTS" == 'true' ]]; then
-            BUILD_DIRS_STR="build_gtest,build_tests"
+            BUILD_DIRS_STR="build_gtest build_tests"
           elif [[ "$RUN_UNIT_TESTS" == 'true' ]]; then
             BUILD_DIRS_STR="build_gtest"
           else

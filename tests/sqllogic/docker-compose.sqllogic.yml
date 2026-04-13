@@ -11,6 +11,7 @@ services:
       - "${WORKSPACE}/docker.env"
     environment:
       - BUILD_DIR
+      - LLVM_PROFILE_FILE
       - HOME=/serenedb
     networks:
       - test-network

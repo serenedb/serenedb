@@ -50,9 +50,3 @@ if [[ "$SANITIZERS" =~ "Thread" ]]; then
 	fi
 	echo "TSAN_OPTIONS=${TSAN_OPTIONS}" >>san_options.env
 fi
-
-# Code Coverage
-if [[ "$USE_COVERAGE" == "SourceBased" || "$USE_COVERAGE" == "SourceBasedMCDC" ]]; then
-	LLVM_PROFILE_FILE="/serenedb/build/coverage/profiles/sdb.%m.%p.profraw"
-	echo "LLVM_PROFILE_FILE=${LLVM_PROFILE_FILE}" >>san_options.env
-fi

@@ -313,9 +313,14 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  // Build row keys: [ColumnId slot][ObjectId][PK bytes]
-  duckdb_primary_key::CreateBatchWithColumnSlot(
-    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
+  // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes]
+  gstate.row_keys.clear();
+  gstate.row_keys.reserve(num_rows);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    duckdb_primary_key::MakeColumnKey(
+      chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
+      gstate.row_keys.emplace_back());
+  }
 
   // Init writer for this batch
   gstate.writer->Init(num_rows, chunk);

@@ -156,9 +156,14 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
 
   gstate.has_data = true;
 
-  // Build row keys: [ColumnId(reserved)][ObjectId][PK bytes]
-  duckdb_primary_key::CreateBatchWithColumnSlot(
-    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
+  // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes]
+  gstate.row_keys.clear();
+  gstate.row_keys.reserve(num_rows);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    duckdb_primary_key::MakeColumnKey(
+      chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
+      gstate.row_keys.emplace_back());
+  }
 
   // Write each column to its SST file
   for (size_t col = 0; col < gstate.columns.size(); ++col) {
@@ -175,37 +180,35 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   }
 
   // Update indexes via transaction path
-  if (!gstate.index_writers.empty()) {
+  for (auto& writer : gstate.index_writers) {
+    writer->Init(num_rows, chunk);
+  }
+
+  for (const auto& meta : gstate.columns) {
+    gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      writer->Init(num_rows, chunk);
+      if (writer->SwitchColumn(meta.duckdb_type, /*have_nulls=*/true,
+                               meta.id)) {
+        gstate.active_writers.push_back(writer.get());
+      }
     }
 
-    for (const auto& meta : gstate.columns) {
-      gstate.active_writers.clear();
-      for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(meta.duckdb_type, /*have_nulls=*/true,
-                                 meta.id)) {
-          gstate.active_writers.push_back(writer.get());
-        }
-      }
-
-      if (gstate.active_writers.empty()) {
-        continue;
-      }
-
-      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-        key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
-      }
-
-      DuckDBColumnSerializer::SstWriter noop{nullptr};
-      gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
-                                     meta.duckdb_type, num_rows,
-                                     gstate.row_keys, gstate.active_writers);
+    if (gstate.active_writers.empty()) {
+      continue;
     }
 
-    for (auto& writer : gstate.index_writers) {
-      writer->Finish();
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      key_utils::SetupColumnForKey(gstate.row_keys[row], meta.id);
     }
+
+    DuckDBColumnSerializer::SstWriter noop{nullptr};
+    gstate.serializer->WriteColumn(noop, chunk.data[meta.input_col_idx],
+                                   meta.duckdb_type, num_rows, gstate.row_keys,
+                                   gstate.active_writers);
+  }
+
+  for (auto& writer : gstate.index_writers) {
+    writer->Finish();
   }
 
   gstate.insert_count += num_rows;

@@ -58,6 +58,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
 
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
+  rocksdb::Transaction* txn = nullptr;
 
   // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -117,9 +118,10 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
   state->has_generated_pk = _table->PKColumns().empty();
 
-  // Create index writers once (needs transaction context)
+  // Set up transaction and index writers once
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
+  state->txn = &conn_ctx.EnsureRocksDBTransaction();
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
@@ -138,23 +140,27 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  auto& conn_ctx = GetSereneDBContext(context.client);
-  conn_ctx.AddRocksDBWrite();
-  auto* txn = &conn_ctx.EnsureRocksDBTransaction();
+  auto* txn = gstate.txn;
 
-  // 1. Build row keys with reserved ColumnId slot + row-level locking:
-  // Layout: [ColumnId(reserved)][ObjectId][PK bytes]
-  duckdb_primary_key::CreateBatchWithColumnSlot(
-    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
+  // 1. Build row keys and acquire row-level locks per row:
+  gstate.row_keys.clear();
+  gstate.row_keys.reserve(num_rows);
 
-  // Acquire row-level locks (same as old _data_writer.Lock)
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    auto status = txn->GetKeyLock(gstate.cf, gstate.row_keys[row], false, true);
-    if (!status.ok()) {
-      auto result = rocksutils::ConvertStatus(status);
-      SDB_THROW(result.errorNumber(), "Failed to acquire row lock for table ",
-                gstate.table_id.id(), " error: ", result.errorMessage());
-    }
+    auto& key_buffer = gstate.row_keys.emplace_back();
+    duckdb_primary_key::MakeColumnKey(
+      chunk, gstate.pk_columns, row, gstate.table_key,
+      [&](std::string_view row_key) {
+        auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
+        if (!status.ok()) {
+          auto result = rocksutils::ConvertStatus(status);
+          SDB_THROW(result.errorNumber(),
+                    "Failed to acquire row lock for table ",
+                    gstate.table_id.id(), " error: ", result.errorMessage());
+        }
+      },
+      key_buffer);
+    key_utils::SetupColumnForKey(key_buffer, gstate.columns.front().id);
   }
 
   // 2. Conflict detection for explicit PKs
@@ -164,11 +170,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     ro.snapshot = txn->GetSnapshot();
     rocksdb::PinnableSlice check_value;
 
-    auto first_col_id = gstate.columns.front().id;
-
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(gstate.row_keys[row], first_col_id);
-
       check_value.Reset();
       auto s = txn->Get(ro, gstate.cf, gstate.row_keys[row], &check_value);
       if (s.ok()) {

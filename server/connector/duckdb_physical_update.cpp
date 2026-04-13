@@ -50,19 +50,11 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   ObjectId table_id;
   std::string table_key;
 
-  // All non-generated columns (for index insert dispatch)
-  struct ColumnMeta {
-    catalog::Column::Id id;
-    duckdb::LogicalType duckdb_type;
-  };
-  std::vector<ColumnMeta> all_columns;
-
-  // Updated columns
   std::vector<UpdateColumnMeta> update_columns;
-
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
+  rocksdb::Transaction* txn = nullptr;
 
   // Separate writers for delete (old entries) and insert (new entries)
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> delete_index_writers;
@@ -71,9 +63,7 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   // Reusable buffers
   std::vector<std::string> row_keys;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
-  std::string value_buffer;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
-    duckdb::make_uniq<DuckDBColumnSerializer>();
+  DuckDBColumnSerializer serializer;
 };
 
 struct SereneDBUpdateSourceState : public duckdb::GlobalSourceState {
@@ -111,16 +101,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
 
-  for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId || col.IsGenerated()) {
-      continue;
-    }
-    state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{
-      .id = col.id,
-      .duckdb_type = col.type,
-    });
-  }
-
   for (size_t i = 0; i < _update_columns.size(); ++i) {
     auto table_col_idx = _update_columns[i].index;
     const auto& col = columns[table_col_idx];
@@ -150,6 +130,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
+  state->txn = &conn_ctx.EnsureRocksDBTransaction();
 
   // Build column-ID-to-chunk-position mapping.
   // UPDATE chunk layout: [SET_vals..., pk_virtuals..., idx_virtuals..., rowid]
@@ -237,120 +218,64 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  auto& conn_ctx = GetSereneDBContext(context.client);
-  conn_ctx.AddRocksDBWrite();
-  auto* txn = &conn_ctx.EnsureRocksDBTransaction();
+  auto* txn = gstate.txn;
 
-  // 1. Build row keys with reserved ColumnId slot
-  duckdb_primary_key::CreateBatchWithColumnSlot(
-    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
+  // 1. Build row keys, lock rows, delete old index entries
+  for (auto& writer : gstate.delete_index_writers) {
+    writer->Init(num_rows, chunk);
+  }
 
-  // 2. Delete old index entries -- old values are in the input chunk
-  if (!gstate.delete_index_writers.empty()) {
-    for (auto& writer : gstate.delete_index_writers) {
-      writer->Init(num_rows, chunk);
-    }
+  gstate.row_keys.clear();
+  gstate.row_keys.reserve(num_rows);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    auto& key_buffer = gstate.row_keys.emplace_back();
+    duckdb_primary_key::MakeColumnKey(
+      chunk, gstate.pk_columns, row, gstate.table_key,
+      [&](std::string_view row_key) {
+        auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
+        if (!status.ok()) {
+          auto result = rocksutils::ConvertStatus(status);
+          SDB_THROW(result.errorNumber(),
+                    "Failed to acquire row lock for table ",
+                    gstate.table_id.id(), " error: ", result.errorMessage());
+        }
+        auto pk_bytes = row_key.substr(sizeof(ObjectId));
+        for (auto& writer : gstate.delete_index_writers) {
+          writer->DeleteRow(pk_bytes);
+        }
+      },
+      key_buffer);
+  }
 
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      auto pk_bytes =
-        std::string_view{gstate.row_keys[row].data() +
-                           sizeof(catalog::Column::Id) + sizeof(ObjectId),
-                         gstate.row_keys[row].size() -
-                           sizeof(catalog::Column::Id) - sizeof(ObjectId)};
-      for (auto& writer : gstate.delete_index_writers) {
-        writer->DeleteRow(pk_bytes);
+  for (auto& writer : gstate.delete_index_writers) {
+    writer->Finish();
+  }
+
+  // 2. Write updated columns + insert new index entries
+  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+
+  for (auto& writer : gstate.insert_index_writers) {
+    writer->Init(num_rows, chunk);
+  }
+
+  for (const auto& col : gstate.update_columns) {
+    gstate.active_writers.clear();
+    for (auto& writer : gstate.insert_index_writers) {
+      if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
+        gstate.active_writers.push_back(writer.get());
       }
     }
 
-    for (auto& writer : gstate.delete_index_writers) {
-      writer->Finish();
-    }
-  }
-
-  // 3. Write updated columns via serializer
-  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
-
-  for (const auto& col : gstate.update_columns) {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
     }
-    gstate.serializer->WriteColumn(txn_writer, chunk.data[col.input_col_idx],
-                                   col.duckdb_type, num_rows, gstate.row_keys,
-                                   {});
+    gstate.serializer.WriteColumn(txn_writer, chunk.data[col.input_col_idx],
+                                  col.duckdb_type, num_rows, gstate.row_keys,
+                                  gstate.active_writers);
   }
 
-  // 4. Insert new index entries
-  //    For updated columns: use new values from input chunk
-  //    For non-updated indexed columns: use old values from scan (already in
-  //    chunk)
-  if (!gstate.insert_index_writers.empty()) {
-    for (auto& writer : gstate.insert_index_writers) {
-      writer->Init(num_rows, chunk);
-    }
-
-    // Build a mapping: for each table column, where is its (new) value?
-    // Updated columns -> use update input position
-    // Non-updated columns -> use indexed column position from scan (if
-    // available)
-    containers::FlatHashMap<catalog::Column::Id, duckdb::idx_t> col_to_input;
-
-    // Indexed columns from scan (old values, but current for non-updated)
-    for (size_t i = 0; i < _indexed_col_indices.size(); ++i) {
-      // _indexed_col_indices[i] is position in input chunk
-      // We need to map this back to which table column it is.
-      // The indexed columns in GetRowIdColumns are in the order from
-      // _indexed_col_indices on the table entry. We need the table column
-      // metadata to know the column ID.
-      // For now, we pass the chunk as-is and let the writer figure it out
-      // via SwitchColumn. The writers were initialized with the chunk.
-    }
-
-    // For updated columns, override with new values position
-    for (const auto& upd : gstate.update_columns) {
-      col_to_input[upd.id] = upd.input_col_idx;
-    }
-
-    for (const auto& col_meta : gstate.all_columns) {
-      gstate.active_writers.clear();
-      for (auto& writer : gstate.insert_index_writers) {
-        if (writer->SwitchColumn(col_meta.duckdb_type, /*have_nulls=*/true,
-                                 col_meta.id)) {
-          gstate.active_writers.push_back(writer.get());
-        }
-      }
-
-      if (gstate.active_writers.empty()) {
-        continue;
-      }
-
-      // Find where this column's new value is in the input chunk
-      auto it = col_to_input.find(col_meta.id);
-      duckdb::idx_t src_col = duckdb::DConstants::INVALID_INDEX;
-      if (it != col_to_input.end()) {
-        src_col = it->second;  // Updated column -- new value
-      }
-      // If not an updated column, the writer reads from _input (chunk)
-      // at the position set during Init. For non-updated indexed columns,
-      // the scan provides old values via virtual columns.
-      // TODO: map non-updated indexed columns properly
-
-      if (src_col == duckdb::DConstants::INVALID_INDEX) {
-        // Non-updated column -- skip index insert for now.
-        // Old value is still correct in RocksDB, index entry unchanged.
-        continue;
-      }
-
-      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-        key_utils::SetupColumnForKey(gstate.row_keys[row], col_meta.id);
-      }
-      gstate.serializer->WriteColumn(txn_writer, chunk.data[src_col],
-                                     col_meta.duckdb_type, num_rows,
-                                     gstate.row_keys, gstate.active_writers);
-    }
-
-    for (auto& writer : gstate.insert_index_writers) {
-      writer->Finish();
-    }
+  for (auto& writer : gstate.insert_index_writers) {
+    writer->Finish();
   }
 
   gstate.update_count += num_rows;

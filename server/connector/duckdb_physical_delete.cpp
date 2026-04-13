@@ -52,6 +52,7 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
+  rocksdb::Transaction* txn = nullptr;
 
   // Index writers
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -120,6 +121,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
+  state->txn = &conn_ctx.EnsureRocksDBTransaction();
 
   // Build column-ID-to-chunk-position mapping for index writers.
   // The scan output has: [..., pk_cols, indexed_cols, rowid].
@@ -210,47 +212,42 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  auto& conn_ctx = GetSereneDBContext(context.client);
-  conn_ctx.AddRocksDBWrite();
-  auto* txn = &conn_ctx.EnsureRocksDBTransaction();
+  auto* txn = gstate.txn;
 
-  // 1. Build row keys with reserved ColumnId slot
-  duckdb_primary_key::CreateBatchWithColumnSlot(
-    chunk, gstate.pk_columns, gstate.table_key, gstate.row_keys);
-
-  // 2. Delete index entries -- old values are in the input chunk
-  if (!gstate.index_writers.empty()) {
-    for (auto& writer : gstate.index_writers) {
-      writer->Init(num_rows, chunk);
-    }
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      // DeleteRow needs PK bytes (without ColumnId prefix)
-      auto pk_bytes =
-        std::string_view{gstate.row_keys[row].data() +
-                           sizeof(catalog::Column::Id) + sizeof(ObjectId),
-                         gstate.row_keys[row].size() -
-                           sizeof(catalog::Column::Id) - sizeof(ObjectId)};
-      for (auto& writer : gstate.index_writers) {
-        writer->DeleteRow(pk_bytes);
-      }
-    }
-
-    for (auto& writer : gstate.index_writers) {
-      writer->Finish();
-    }
+  for (auto& writer : gstate.index_writers) {
+    writer->Init(num_rows, chunk);
   }
 
-  // 3. Delete all column cells -- only overwrites ColumnId in-place
-  for (const auto& col : gstate.columns) {
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+  std::string key_buffer;
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    duckdb_primary_key::MakeColumnKey(
+      chunk, gstate.pk_columns, row, gstate.table_key,
+      [&](std::string_view row_key) {
+        auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
+        if (!status.ok()) {
+          auto result = rocksutils::ConvertStatus(status);
+          SDB_THROW(result.errorNumber(),
+                    "Failed to acquire row lock for table ",
+                    gstate.table_id.id(), " error: ", result.errorMessage());
+        }
+        auto pk_bytes = row_key.substr(sizeof(ObjectId));
+        for (auto& writer : gstate.index_writers) {
+          writer->DeleteRow(pk_bytes);
+        }
+      },
+      key_buffer);
 
-      auto status = txn->Delete(gstate.cf, gstate.row_keys[row]);
+    for (const auto& col : gstate.columns) {
+      key_utils::SetupColumnForKey(key_buffer, col.id);
+      auto status = txn->Delete(gstate.cf, key_buffer);
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ", status.ToString());
       }
     }
+  }
+
+  for (auto& writer : gstate.index_writers) {
+    writer->Finish();
   }
 
   gstate.delete_count += num_rows;

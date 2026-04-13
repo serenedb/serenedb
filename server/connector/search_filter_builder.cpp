@@ -52,6 +52,7 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
+#include "basics/result_or.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
 #include "velox/core/Expressions.h"
@@ -320,6 +321,11 @@ Result SetupGeoFilter(const irs::analysis::Analyzer& a,
   return {};
 }
 
+Result FromVeloxGeoDistanceBinaryEq(
+  irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
+  const velox::core::CallTypedExpr& geo_call,
+  const velox::core::TypedExprPtr& dist_input);
+
 template<bool GenericVersion>
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
                          const VeloxFilterContext& ctx,
@@ -330,6 +336,17 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
             " inputs but 2 expected"};
   }
   if (!call.inputs()[0]->isFieldAccessKind()) {
+    if (call.inputs()[0]->isCallKind()) {
+      const auto& inner_call =
+        basics::downCast<const velox::core::CallTypedExpr>(*call.inputs()[0]);
+      if (inner_call.name() == functions::kGeoDistance) {
+        VeloxFilterContext geo_ctx = ctx;
+        geo_ctx.negated = (ctx.negated != not_equal);
+        // Equality: point range [distance, distance] inclusive on both sides.
+        return FromVeloxGeoDistanceBinaryEq(filter, geo_ctx, inner_call,
+                                            call.inputs()[1]);
+      }
+    }
     return {ERROR_BAD_PARAMETER, "Left input is not field access"};
   }
 
@@ -373,6 +390,138 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
   return SetupTermFilter(term_filter, field_name, *column_info, value.value());
 }
 
+// Parses sdb_geo_distance(field, centroid) and dist_input, creates and wires
+// up a GeoDistanceFilter with field/origin/analyzer options fully set, but
+// range bounds left unset. Returns {filter*, distance} on success.
+ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
+  irs::BooleanFilter& parent, const VeloxFilterContext& ctx,
+  const velox::core::CallTypedExpr& geo_call,
+  const velox::core::TypedExprPtr& dist_input) {
+  if (geo_call.inputs().size() != 2) {
+    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
+                                   "geo_distance expects 2 arguments"};
+  }
+
+  size_t field_idx = 0;
+  size_t centroid_idx = 1;
+  if (!geo_call.inputs()[0]->isFieldAccessKind()) {
+    if (!geo_call.inputs()[1]->isFieldAccessKind()) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_BAD_PARAMETER,
+        "geo_distance: neither argument is a field"};
+    }
+    field_idx = 1;
+    centroid_idx = 0;
+  }
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    geo_call.inputs()[field_idx].get());
+
+  auto centroid_val = EvaluateConstant(geo_call.inputs()[centroid_idx]);
+  if (!centroid_val.has_value() ||
+      centroid_val->kind() != velox::TypeKind::VARCHAR) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "geo_distance: centroid must be a VARCHAR constant"};
+  }
+
+  auto dist_val = EvaluateConstant(dist_input);
+  if (!dist_val.has_value() || dist_val->kind() != velox::TypeKind::DOUBLE) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "geo_distance: distance must be a DOUBLE constant"};
+  }
+  double distance = dist_val->value<double>();
+
+  const auto* column_info = FindColumnInfo(ctx, *field_typed);
+  if (!column_info ||
+      column_info->info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
+                                   "geo_distance: field '", field_typed->name(),
+                                   "' is not VARCHAR"};
+  }
+
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+
+  auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
+                                 : AddFilter<irs::GeoDistanceFilter>(parent);
+  geo_filter.boost(ctx.boost);
+
+  auto* options = geo_filter.mutable_options();
+  auto r = SetupGeoFilter(*column_info->analyzer.analyzer.get(), *options);
+  if (!r.ok()) {
+    return std::unexpected{std::move(r)};
+  }
+
+  auto centroid_json = vpack::Parser::fromJson(
+    static_cast<std::string_view>(centroid_val->value<velox::StringView>()));
+  geo::ShapeContainer centroid_shape;
+  std::vector<S2LatLng> cache;
+  if (!ParseShape<geo::Parsing::GeoJson>(centroid_json->slice(), centroid_shape,
+                                         cache, options->coding, nullptr)) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "geo_distance: failed to parse centroid as GeoJSON"};
+  }
+  options->origin = centroid_shape.centroid();
+  *geo_filter.mutable_field() = std::move(field_name);
+
+  return std::pair{&geo_filter, distance};
+}
+
+// GEO_DISTANCE(field, centroid) OP distance  -- inequality comparison (<, <=, >,
+// >=)
+Result FromVeloxGeoDistanceComparison(
+  irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
+  const velox::core::CallTypedExpr& geo_call,
+  const velox::core::TypedExprPtr& dist_input, ComparisonOp op) {
+  auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_input);
+  if (!setup) {
+    return std::move(setup.error());
+  }
+  auto* options = setup->first->mutable_options();
+  switch (op) {
+    case ComparisonOp::Lt:
+      options->range.max = setup->second;
+      options->range.max_type = irs::BoundType::Exclusive;
+      break;
+    case ComparisonOp::Le:
+      options->range.max = setup->second;
+      options->range.max_type = irs::BoundType::Inclusive;
+      break;
+    case ComparisonOp::Gt:
+      options->range.min = setup->second;
+      options->range.min_type = irs::BoundType::Exclusive;
+      break;
+    case ComparisonOp::Ge:
+      options->range.min = setup->second;
+      options->range.min_type = irs::BoundType::Inclusive;
+      break;
+    default:
+      return {ERROR_BAD_PARAMETER, "geo_distance: unsupported comparison op"};
+  }
+  return {};
+}
+
+// GEO_DISTANCE(field, centroid) = distance  -- point range [d, d] inclusive
+Result FromVeloxGeoDistanceBinaryEq(
+  irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
+  const velox::core::CallTypedExpr& geo_call,
+  const velox::core::TypedExprPtr& dist_input) {
+  auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_input);
+  if (!setup) {
+    return std::move(setup.error());
+  }
+  auto* options = setup->first->mutable_options();
+  options->range.min = setup->second;
+  options->range.min_type = irs::BoundType::Inclusive;
+  options->range.max = setup->second;
+  options->range.max_type = irs::BoundType::Inclusive;
+  return {};
+}
+
 template<bool GenericVersion>
 Result FromVeloxComparison(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
@@ -396,6 +545,14 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
   // e.g. b:INTEGER  < 2.5:DOUBLE will be Cast(b, DOUBLE) < 2.5
   // current implementation will just fail below.
   if (!field_input->isFieldAccessKind()) {
+    if (field_input->isCallKind()) {
+      const auto& inner_call =
+        basics::downCast<const velox::core::CallTypedExpr>(*field_input);
+      if (inner_call.name() == functions::kGeoDistance) {
+        return FromVeloxGeoDistanceComparison(filter, ctx, inner_call,
+                                              value_input, op);
+      }
+    }
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
   }
 
@@ -1139,9 +1296,8 @@ Result fromSearchGeoInRange(irs::BooleanFilter& filter,
     static_cast<std::string_view>(centroid_val->value<velox::StringView>()));
   geo::ShapeContainer centroid_shape;
   std::vector<S2LatLng> cache;
-  auto res = ParseShape<geo::Parsing::GeoJson>(centroid_json->slice(),
-                                               centroid_shape, cache,
-                                               options->coding, nullptr);
+  auto res = ParseShape<geo::Parsing::GeoJson>(
+    centroid_json->slice(), centroid_shape, cache, options->coding, nullptr);
   if (!res) {
     return {ERROR_BAD_PARAMETER, "Failed to parse centroid as geo json"};
   }

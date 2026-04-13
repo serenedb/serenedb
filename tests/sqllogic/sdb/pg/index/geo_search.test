@@ -265,6 +265,70 @@ id
 6
 
 
+# --- GEO_DISTANCE comparison ---
+# GEO_DISTANCE(field, centroid) used in WHERE comparisons.
+# Same centroid [37.616, 55.705] and distance table as GEO_IN_RANGE above.
+
+# < 50m: only id=2 (~26m).
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') < 50
+ORDER BY id
+----
+id
+2
+
+
+# < 200m: all four close-cluster geometries.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') < 200
+ORDER BY id
+----
+id
+1
+2
+3
+6
+
+
+# > 100m: everything beyond the 100m mark.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') > 100
+ORDER BY id
+----
+id
+1
+4
+5
+6
+
+
+# Swapped arguments (geo_distance is commutative): same result as first query.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance('{"type":"Point","coordinates":[37.616,55.705]}', geo) < 50
+ORDER BY id
+----
+id
+2
+
+
+# Equality with a non-zero distance: no indexed geometry sits at exactly 50m.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') = 50
+ORDER BY id
+----
+id
+
+
 # --- Incremental index update ---
 
 statement ok
@@ -326,6 +390,51 @@ id
 3
 6
 7
+
+# New point [37.6148, 55.7045] at ~94m appears in < 200m but not in > 100m.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') < 200
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') > 100
+ORDER BY id
+----
+id
+1
+4
+5
+6
+
+
+# --- GEO_DISTANCE equality with a matching row ---
+# Insert a point at the centroid itself so its distance is exactly 0m,
+# then verify that equality = 0 finds it.
+
+statement ok
+INSERT INTO geo_data VALUES (8, '{"type":"Point","coordinates":[37.616,55.705]}')
+
+statement ok
+VACUUM (UPDATE_INDEXES) geo_data
+
+query
+SELECT id FROM geo_idx
+WHERE geo_distance(geo, '{"type":"Point","coordinates":[37.616,55.705]}') = 0
+ORDER BY id
+----
+id
+8
+
 
 # --- Error cases ---
 

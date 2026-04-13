@@ -36,7 +36,7 @@
         }
     },
     "dependencies": {
-        "@glideapps/glide-data-grid": "^6.0.3",
+        "@glideapps/glide-data-grid": "6.0.4-alpha24",
         "@orpc/tanstack-query": "^1.13.1",
         "@serene-ui/shared-core": "*",
         "dockview": "^5.1.0",
@@ -44,7 +44,7 @@
         "echarts": "^6.0.0",
         "echarts-for-react": "^3.0.6",
         "lodash": "^4.17.23",
-        "marked": "^4.0.10",
+        "marked": "^16.0.10",
         "react-grid-layout": "^2.2.2",
         "react-responsive-carousel": "^3.2.23",
         "recharts": "^3.8.0"

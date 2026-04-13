@@ -1,30 +1,24 @@
 import { useLocation } from "react-router-dom";
-import {
-    SidebarInset,
-    SidebarProvider,
-    Toaster,
-} from "@serene-ui/shared-frontend";
-import { AppSidebar } from "@serene-ui/shared-frontend";
+import { AppSidebar, Toaster } from "@serene-ui/shared-frontend";
 import { WithEntities, WithFeatures, WithPages } from "../providers";
 
 export const AppLayout = ({ children }: { children: React.ReactNode }) => {
     const location = useLocation();
+    const routeSectionKey = `/${location.pathname.split("/")[1] ?? ""}`;
 
     return (
         <WithEntities>
             <WithFeatures>
                 <WithPages>
-                    <SidebarProvider defaultOpen={false}>
-                        <Toaster richColors />
+                    <Toaster richColors />
+                    <div className="flex w-dvw">
                         <AppSidebar />
-                        <SidebarInset className="overflow-hidden">
-                            <div
-                                key={location.pathname}
-                                className="h-dvh page-fade flex">
-                                {children}
-                            </div>
-                        </SidebarInset>
-                    </SidebarProvider>
+                        <div
+                            key={routeSectionKey}
+                            className="h-dvh page-fade flex flex-1 min-h-0 min-w-0 overflow-hidden">
+                            {children}
+                        </div>
+                    </div>
                 </WithPages>
             </WithFeatures>
         </WithEntities>

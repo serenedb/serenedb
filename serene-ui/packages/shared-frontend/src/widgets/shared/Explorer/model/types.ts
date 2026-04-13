@@ -5,6 +5,7 @@ export type ExplorerNodeContext = {
     database?: string;
     dashboardId?: number;
     dashboardFavorite?: boolean;
+    savedQueryId?: number;
     schemaId?: number;
     catalogId?: number;
     tableId?: number;
@@ -26,3 +27,9 @@ export type ExplorerNodeData = {
 };
 
 export type ExplorerNodeProps = NodeRendererProps<ExplorerNodeData>;
+
+export type ExplorerPinningOptions = {
+    enablePinning?: boolean;
+    isNodePinned?: (node: ExplorerNodeData) => boolean;
+    onTogglePinned?: (node: ExplorerNodeData) => void;
+};

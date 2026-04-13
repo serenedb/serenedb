@@ -4,7 +4,7 @@ import { shouldShowCommandGroup } from "../../model/utils";
 import { CreateIssueCommand, ToggleThemeCommand } from "../commands";
 
 export const UtilitiesCommandGroup = () => {
-    const { currentSection, inputValue } = useCommandModal();
+    const { currentSection } = useCommandModal();
 
     if (!shouldShowCommandGroup(currentSection, CommandSection.Utilities)) {
         return null;

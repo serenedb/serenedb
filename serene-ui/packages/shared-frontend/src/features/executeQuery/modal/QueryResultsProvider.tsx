@@ -7,6 +7,7 @@ import {
     useSubscribeToQueryResult,
 } from "@serene-ui/shared-frontend/entities";
 import { toast } from "sonner";
+import { invalidateSchemaMetadata } from "@serene-ui/shared-frontend/shared";
 import {
     QueryResultsContext,
     type ExecuteQueryResult,
@@ -21,7 +22,11 @@ import {
     validateLimit,
     validateJobId,
 } from "./utils/validation";
-import { splitQueries, toStatementRange } from "./utils";
+import {
+    getSchemaMetadataInvalidationTargets,
+    splitQueries,
+    toStatementRange,
+} from "./utils";
 import { BindVarSchema, QueryExecutionJobSchema } from "@serene-ui/shared-core";
 
 export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
@@ -41,7 +46,6 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
     const { mutateAsync: executeQueryApi } = useExecuteQuery();
     const { subscribe: subscribeToQueryResult } = useSubscribeToQueryResult();
     const abortControllersRef = useRef<Map<number, AbortController>>(new Map());
-    const lastProcessedJobsRef = useRef<Set<number>>(new Set());
 
     const validateExecutionInput = (
         query: string,
@@ -276,19 +280,6 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
     };
 
     useEffect(() => {
-        const currentJobs = new Set(pendingJobs);
-        const lastJobs = lastProcessedJobsRef.current;
-
-        const hasChanges =
-            currentJobs.size !== lastJobs.size ||
-            Array.from(currentJobs).some((id) => !lastJobs.has(id)) ||
-            Array.from(lastJobs).some((id) => !currentJobs.has(id));
-
-        if (!hasChanges) {
-            return;
-        }
-
-        lastProcessedJobsRef.current = new Set(currentJobs);
         const controllers = abortControllersRef.current;
         const pendingJobIdSet = new Set(pendingJobs);
 
@@ -373,6 +364,38 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
 
                         setQueryResult(jobId, updatedResult);
 
+                        if (result.status === "success") {
+                            void getSchemaMetadataInvalidationTargets(
+                                currentQueryResult?.statementQuery ||
+                                    currentQueryResult?.query,
+                            ).then((invalidationTargets) => {
+                                if (
+                                    invalidationTargets?.connection &&
+                                    currentConnection.connectionId > 0
+                                ) {
+                                    invalidateSchemaMetadata({
+                                        level: "connection",
+                                        connectionId:
+                                            currentConnection.connectionId,
+                                    });
+                                }
+
+                                if (
+                                    invalidationTargets?.database &&
+                                    currentConnection.connectionId > 0 &&
+                                    currentConnection.database
+                                ) {
+                                    invalidateSchemaMetadata({
+                                        level: "database",
+                                        connectionId:
+                                            currentConnection.connectionId,
+                                        database:
+                                            currentConnection.database,
+                                    });
+                                }
+                            });
+                        }
+
                         if (
                             result.status === "success" ||
                             result.status === "failed"
@@ -394,12 +417,17 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                 });
             }
         });
-        return () => {
-            controllers.forEach((controller) => controller.abort());
-            controllers.clear();
-            lastProcessedJobsRef.current.clear();
-        };
     }, [pendingJobs]);
+
+    useEffect(
+        () => () => {
+            abortControllersRef.current.forEach((controller) =>
+                controller.abort(),
+            );
+            abortControllersRef.current.clear();
+        },
+        [],
+    );
 
     return (
         <QueryResultsContext.Provider

@@ -163,6 +163,17 @@ void HNSWIndexReader::Search(HNSWSearchContext& context) const {
   _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 
+void HNSWIndexReader::RangeSearch(HNSWRangeSearchContext& context) const {
+  ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
+  dis.set_query(reinterpret_cast<const float*>(context.info.query));
+
+  HNSWRangeSegmentResultHandler res{context.segment_id, context.handler};
+  context.vt.visited.resize(_hnsw.levels.size(), 0);
+  context.vt.advance();
+  res.Begin(0);
+  _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
+}
+
 void HNSWIndexWriter::Add(const float* data, doc_id_t doc) {
   if (doc >= _vt.visited.size()) {
     size_t prev_size = _vt.visited.size();

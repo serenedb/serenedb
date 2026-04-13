@@ -14,10 +14,14 @@ interface ExecuteQueryButtonProps {
     bind_vars?: any[];
     saveToHistory?: boolean;
     limit?: number;
-    handleJobId: (jobId: number) => void;
+    handleJobId?: (jobId: number) => void;
     onExecute?: (mode: "sequential" | "transaction") => Promise<void> | void;
     onBeforeExecute?: () => void;
-    onExecuteInNewTab?: () => void;
+    onExecuteInNewTab?: (
+        mode?: "sequential" | "transaction",
+    ) => Promise<void> | void;
+    executeSequentiallyByDefault?: boolean;
+    executeInNewTabByDefault?: boolean;
 }
 
 export const ExecuteQueryButton = ({
@@ -29,6 +33,8 @@ export const ExecuteQueryButton = ({
     onExecute,
     onBeforeExecute,
     onExecuteInNewTab,
+    executeSequentiallyByDefault = false,
+    executeInNewTabByDefault = false,
 }: ExecuteQueryButtonProps) => {
     const { executeQuery } = useQueryResults();
     const { currentConnection } = useConnection();
@@ -36,14 +42,23 @@ export const ExecuteQueryButton = ({
         !query ||
         !currentConnection.connectionId ||
         !currentConnection.database;
+    const defaultExecutionMode = executeSequentiallyByDefault
+        ? "sequential"
+        : "transaction";
+
     return (
         <div className="inline-flex">
             <Button
                 className="rounded-r-none"
                 onClick={async () => {
                     onBeforeExecute?.();
+                    if (executeInNewTabByDefault && onExecuteInNewTab) {
+                        await onExecuteInNewTab(defaultExecutionMode);
+                        return;
+                    }
+
                     if (onExecute) {
-                        await onExecute("transaction");
+                        await onExecute(defaultExecutionMode);
                         return;
                     }
                     const result = await executeQuery(
@@ -53,16 +68,15 @@ export const ExecuteQueryButton = ({
                         limit || 1000,
                     );
                     if (result.success) {
-                        handleJobId(result.jobId);
+                        handleJobId?.(result.jobId);
                     }
                 }}
                 disabled={disabled}>
-                Execute
+                Run
             </Button>
             <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                     <Button
-                        size="icon"
                         className="rounded-l-none border-l border-[#ffffff10] outline-none"
                         title="Execute options"
                         aria-label="Execute options"
@@ -86,7 +100,7 @@ export const ExecuteQueryButton = ({
                         onSelect={(event) => {
                             event.preventDefault();
                             if (!disabled && onExecuteInNewTab) {
-                                onExecuteInNewTab();
+                                onExecuteInNewTab("sequential");
                             }
                         }}>
                         Execute in new tab

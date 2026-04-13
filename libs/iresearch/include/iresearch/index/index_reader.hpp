@@ -102,6 +102,9 @@ struct IndexReader {
   void Search(std::string_view field, HNSWSearchInfo info, float* dis,
               int64_t* ids) const;
 
+  void RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
+                   std::vector<float>& dis, std::vector<int64_t>& ids) const;
+
   // returns number of sub-segments in current reader
   virtual size_t size() const = 0;
 

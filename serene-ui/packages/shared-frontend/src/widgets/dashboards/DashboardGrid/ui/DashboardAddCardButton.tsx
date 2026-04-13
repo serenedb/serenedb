@@ -195,7 +195,6 @@ export const DashboardAddCardButton: React.FC<DashboardAddCardButtonProps> = ({
             <PopoverContent
                 align="end"
                 side="top"
-                variant="secondary"
                 className="min-w-72 p-1 shadow-none">
                 <div className="flex flex-col gap-1">
                     {DASHBOARD_CARD_OPTIONS.map((option) => (

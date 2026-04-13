@@ -26,12 +26,18 @@ interface QueryResultsProps {
     }[];
     selectedResultIndex: number;
     onSelectResult?: (index: number) => void;
+    showJsonByDefault?: boolean;
+    colorfulTypes?: boolean;
+    sourcePanelId?: string;
 }
 
 export const QueryResults: React.FC<QueryResultsProps> = ({
     results,
     selectedResultIndex,
     onSelectResult,
+    showJsonByDefault = false,
+    colorfulTypes = true,
+    sourcePanelId,
 }) => {
     if (
         selectedResultIndex < 0 ||
@@ -50,7 +56,8 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     const started_at = selectedResult.execution_started_at;
     const finished_at = selectedResult.execution_finished_at;
     const received_at = selectedResult.received_at;
-    const hasRows = selectedResult.status === "success" && Boolean(rows?.length);
+    const hasRows =
+        selectedResult.status === "success" && Boolean(rows?.length);
 
     let content: React.ReactNode;
 
@@ -78,6 +85,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                     className="flex flex-1 w-full h-full min-h-0 overflow-auto"
                     value="viewer">
                     <QueryViewerResults
+                        colorfulTypes={colorfulTypes}
                         results={results}
                         selectedResultIndex={selectedResultIndex}
                     />
@@ -87,17 +95,23 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     }
 
     return (
-        <div className="flex flex-col flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-h-0 h-full">
             <QueryResultsFooter
                 results={results}
                 selectedResultIndex={selectedResultIndex}
                 onSelectResult={onSelectResult}
+                showJsonByDefault={showJsonByDefault}
                 rows={rows}
                 created_at={created_at}
                 execution_started_at={started_at}
                 execution_finished_at={finished_at}
-                received_at={received_at}>
-                {hasRows ? content : <div className="flex flex-1">{content}</div>}
+                received_at={received_at}
+                sourcePanelId={sourcePanelId}>
+                {hasRows ? (
+                    content
+                ) : (
+                    <div className="flex flex-1">{content}</div>
+                )}
             </QueryResultsFooter>
         </div>
     );

@@ -80,6 +80,35 @@ void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
   faiss::heap_reorder<faiss::HNSW::C>(info.top_k, dis, ids);
 }
 
+void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
+                              std::vector<float>& dis,
+                              std::vector<int64_t>& ids) const {
+  faiss::RangeSearchResult seg_result{1};
+  HNSWRangeResultHandler handler{&seg_result, info.radius};
+  HNSWRangeSearchContext context{
+    info,
+    0,
+    faiss::VisitedTable{0},
+    handler,
+  };
+  for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
+    context.segment_id = segment_id;
+    const auto& segment = (*this)[segment_id];
+    const auto* column = segment.column(field);
+    if (!column) {
+      continue;
+    }
+    column->RangeSearch(context);
+    size_t sz = seg_result.lims[1] - seg_result.lims[0];
+    dis.reserve(dis.size() + sz);
+    ids.reserve(ids.size() + sz);
+    for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
+      dis.emplace_back(seg_result.distances[i]);
+      ids.emplace_back(seg_result.labels[i]);
+    }
+  }
+}
+
 const SubReader& SubReader::empty() noexcept { return kEmpty; }
 
 #ifdef SDB_DEV

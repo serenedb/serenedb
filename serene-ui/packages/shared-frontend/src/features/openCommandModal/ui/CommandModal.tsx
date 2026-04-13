@@ -15,7 +15,6 @@ import {
     UtilitiesCommandGroup,
 } from "./command-groups";
 import { getSearchPlaceholder } from "../model/utils";
-import { ToggleThemeCommand } from "./commands";
 
 export const CommandModal: React.FC = () => {
     const {

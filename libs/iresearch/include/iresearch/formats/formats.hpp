@@ -352,6 +352,11 @@ struct ColumnReader : public memory::Managed {
     SDB_THROW(sdb::ERROR_INTERNAL,
               "Search not implemented for this column type");
   }
+
+  virtual void RangeSearch(HNSWRangeSearchContext& context) const {
+    SDB_THROW(sdb::ERROR_INTERNAL,
+              "RangeSearch not implemented for this column type");
+  }
 };
 
 struct ColumnstoreReader {

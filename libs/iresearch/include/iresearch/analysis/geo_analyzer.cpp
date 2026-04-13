@@ -26,6 +26,7 @@
 #include <s2/s2point_region.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
+#include <vpack/parser.h>
 #include <vpack/serializer.h>
 
 #include <magic_enum/magic_enum.hpp>
@@ -183,18 +184,18 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
     }
   }
 
-  bool reset(std::string_view value) final {
+  bool reset(vpack::Slice slice) final {
     if constexpr (kIsS2) {
       _data.encoder.clear();
-      if (!ResetImpl(value, _data.coding, &_data.encoder)) {
+      if (!ResetImpl(slice, _data.coding, &_data.encoder)) {
         return false;
       }
     } else {
-      if (!ResetImpl(value, geo::coding::Options::Invalid, nullptr)) {
+      if (!ResetImpl(slice, geo::coding::Options::Invalid, nullptr)) {
         return false;
       }
     }
-    StoreImpl(value);
+    StoreImpl(slice);
     return true;
   }
 
@@ -218,7 +219,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
     }
   }
 
-  void StoreImpl(std::string_view value) final;
+  void StoreImpl(vpack::Slice slice) final;
 
  protected:
   static constexpr bool kIsS2 = std::is_same_v<Data, S2AnalyzerData>;
@@ -246,6 +247,11 @@ void GeoAnalyzer::reset(std::vector<std::string>&& terms) noexcept {
   _end = _begin + _terms.size();
 }
 
+bool GeoAnalyzer::reset(std::string_view value) {
+  _json_parser.parse(value);
+  return reset(_json_parser.builder().slice());
+}
+
 bool GeoPointAnalyzer::normalize(std::string_view args, std::string& out) {
   return NormalizeImpl<GeoPointAnalyzer>(args, out);
 }
@@ -266,8 +272,8 @@ GeoPointAnalyzer::GeoPointAnalyzer(const Options& options)
   SDB_ASSERT(_latitude.empty() == _longitude.empty());
 }
 
-bool GeoPointAnalyzer::reset(std::string_view value) {
-  if (!ParsePoint(view_to_slice(value), _point)) {
+bool GeoPointAnalyzer::reset(vpack::Slice slice) {
+  if (!ParsePoint(slice, _point)) {
     return false;
   }
 
@@ -331,10 +337,8 @@ GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
   : GeoAnalyzer{S2Options(options.options, options.type != Type::Shape)},
     _type{options.type} {}
 
-bool GeoJsonAnalyzer::ResetImpl(std::string_view value,
-                                geo::coding::Options options,
+bool GeoJsonAnalyzer::ResetImpl(vpack::Slice data, geo::coding::Options options,
                                 Encoder* encoder) {
-  const auto data = view_to_slice(value);
   if (_type != Type::Point) {
     const auto type = geo::json::ParseType(data);
     const bool without_serialization =
@@ -371,8 +375,7 @@ bool GeoJsonAnalyzer::ResetImpl(std::string_view value,
 }
 
 template<>
-void GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl(std::string_view value) {
-  vpack::Slice slice = view_to_slice(value);
+void GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl(vpack::Slice slice) {
   if (_type == Type::Centroid) {
     SDB_ASSERT(!_shape.empty());
     const S2LatLng centroid{_shape.centroid()};
@@ -386,7 +389,7 @@ void GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl(std::string_view value) {
 }
 
 template<>
-void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(std::string_view) {
+void GeoJsonAnalyzerImpl<S2AnalyzerData>::StoreImpl(vpack::Slice) {
   if (_data.encoder.length() == 0) {
     SDB_ASSERT(_type == Type::Centroid);
     SDB_ASSERT(_data.coding != geo::coding::Options::Invalid);

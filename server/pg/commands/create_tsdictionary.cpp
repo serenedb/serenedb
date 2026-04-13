@@ -27,6 +27,7 @@
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -83,6 +84,11 @@ const absl::flat_hash_map<std::string_view, std::string_view> kNameMappings = {
   {tokenizer_options::kTopK.name, "top_k"},
   {tokenizer_options::kNumHashes.name, "numHashes"},
   {tokenizer_options::kNgramSize.name, "ngramSize"},
+  {tokenizer_options::kGeoMaxCells.name, "max_cells"},
+  {tokenizer_options::kGeoMinLevel.name, "min_level"},
+  {tokenizer_options::kGeoMaxLevel.name, "max_level"},
+  {tokenizer_options::kGeoLevelMod.name, "level_mod"},
+  {tokenizer_options::kGeoOptimizeForSpace.name, "optimize_for_space"},
 };
 
 template<const auto& Array>
@@ -304,6 +310,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if constexpr (Group.name == tokenizer_options::kWildcardGroup.name) {
       ParseWildcard(prefix);
       return;
+    } else if constexpr (Group.name == tokenizer_options::kGeoPointGroup.name) {
+      ParseGeoPoint(prefix);
+      return;
+    } else if constexpr (Group.name == tokenizer_options::kGeoJsonGroup.name) {
+      ParseGeoJson(prefix);
+      return;
     } else if constexpr (Group.name == tokenizer_options::kPipelineGroup.name) {
       ParsePipeline(prefix);
       return;
@@ -427,6 +439,117 @@ class CreateTSDictionaryOptions : public OptionsParser {
     }
     int hashes = EraseOptionOrDefault<tokenizer_options::kNumHashes>(prefix);
     _builder.add(GetVPackName(tokenizer_options::kNumHashes.name), hashes);
+  }
+
+  // Writes elements of a slash-separated path string as individual VPack array
+  // strings. The builder must have an open array.
+  void ParsePathString(std::string_view path) {
+    while (!path.empty()) {
+      auto pos = path.find('/');
+      auto part = path.substr(0, pos);
+      if (!part.empty()) {
+        _builder.add(part);
+      }
+      path = pos == std::string_view::npos ? "" : path.substr(pos + 1);
+    }
+  }
+
+  // Writes the nested "options" S2 sub-object, reading from copy-from if
+  // needed.
+  void ParseGeoS2Options(std::string_view prefix) {
+    bool pop_copy = false;
+    if (!_copy_from.empty()) {
+      auto [name_prefix, slice] = _copy_from.back();
+      auto opts_slice = GetFromPath("options", prefix, name_prefix, slice);
+      if (!opts_slice.isNone()) {
+        // Push the nested options slice so EraseOptionOrDefault finds fields
+        // directly inside it without further traversal.
+        _copy_from.emplace_back(prefix, opts_slice);
+        pop_copy = true;
+      }
+    }
+    _builder.add(GetVPackName(tokenizer_options::kGeoMaxCells.name),
+                 EraseOptionOrDefault<tokenizer_options::kGeoMaxCells>(prefix));
+    _builder.add(GetVPackName(tokenizer_options::kGeoMinLevel.name),
+                 EraseOptionOrDefault<tokenizer_options::kGeoMinLevel>(prefix));
+    _builder.add(GetVPackName(tokenizer_options::kGeoMaxLevel.name),
+                 EraseOptionOrDefault<tokenizer_options::kGeoMaxLevel>(prefix));
+    _builder.add(GetVPackName(tokenizer_options::kGeoLevelMod.name),
+                 EraseOptionOrDefault<tokenizer_options::kGeoLevelMod>(prefix));
+    _builder.add(
+      GetVPackName(tokenizer_options::kGeoOptimizeForSpace.name),
+      EraseOptionOrDefault<tokenizer_options::kGeoOptimizeForSpace>(prefix));
+    if (pop_copy) {
+      _copy_from.pop_back();
+    }
+  }
+
+  void ParseGeoPoint(std::string_view prefix) {
+    // latitude
+    if (!OptionsParser::HasOption(tokenizer_options::kGeoLatitude, prefix) &&
+        !_copy_from.empty()) {
+      auto [name_prefix, slice] = _copy_from.back();
+      auto lat_slice = GetFromPath("latitude", prefix, name_prefix, slice);
+      if (lat_slice.isNone()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("required parameter \"", tokenizer_options::kGeoLatitude.name,
+                  "\" was not found"));
+      }
+      _builder.add("latitude", lat_slice);
+    } else {
+      auto lat_path =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kGeoLatitude>(
+          prefix);
+      _builder.add("latitude", vpack::Value{vpack::ValueType::Array});
+      ParsePathString(lat_path);
+      _builder.close();
+    }
+
+    // longitude
+    if (!OptionsParser::HasOption(tokenizer_options::kGeoLongitude, prefix) &&
+        !_copy_from.empty()) {
+      auto [name_prefix, slice] = _copy_from.back();
+      auto lng_slice = GetFromPath("longitude", prefix, name_prefix, slice);
+      if (lng_slice.isNone()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("required parameter \"",
+                  tokenizer_options::kGeoLongitude.name, "\" was not found"));
+      }
+      _builder.add("longitude", lng_slice);
+    } else {
+      auto lng_path =
+        OptionsParser::EraseOptionOrDefault<tokenizer_options::kGeoLongitude>(
+          prefix);
+      _builder.add("longitude", vpack::Value{vpack::ValueType::Array});
+      ParsePathString(lng_path);
+      _builder.close();
+    }
+
+    // nested S2 options
+    _builder.add("options", vpack::Value{vpack::ValueType::Object});
+    ParseGeoS2Options(prefix);
+    _builder.close();
+  }
+
+  void ParseGeoJson(std::string_view prefix) {
+    auto type_str =
+      EraseOptionOrDefault<tokenizer_options::kGeoJsonType>(prefix);
+    if (!type_str.empty()) {
+      _builder.add("type", type_str);
+    }
+
+    auto coding_str =
+      EraseOptionOrDefault<tokenizer_options::kGeoJsonCoding>(prefix);
+    if (!coding_str.empty()) {
+      _builder.add("coding", coding_str);
+    }
+
+    // nested S2 options
+    _builder.add("options", vpack::Value{vpack::ValueType::Object});
+    ParseGeoS2Options(prefix);
+    _builder.close();
   }
 
   void ParseCopyFrom(std::string_view prefix) {

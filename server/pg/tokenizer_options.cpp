@@ -21,6 +21,7 @@
 #include "pg/tokenizer_options.h"
 
 #include <filesystem>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
@@ -78,6 +79,26 @@ void CheckNgramSize(int value) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ngramsize must be at least 2"),
                     ERR_HINT(kNgramSize.description));
+  }
+}
+
+void CheckGeoJsonType(std::string_view value) {
+  using Type = irs::analysis::GeoJsonAnalyzer::Type;
+  if (!magic_enum::enum_cast<Type>(value, magic_enum::case_insensitive)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value in \"", kGeoJsonType.name, "\" parameter"),
+      ERR_HINT(kGeoJsonType.description));
+  }
+}
+
+void CheckGeoJsonCoding(std::string_view value) {
+  using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
+  if (!magic_enum::enum_cast<Coding>(value, magic_enum::case_insensitive)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value in \"", kGeoJsonCoding.name, "\" parameter"),
+      ERR_HINT(kGeoJsonCoding.description));
   }
 }
 

@@ -46,7 +46,7 @@ if [ "${PROFILE_COUNT}" -eq 0 ]; then
     exit 1
 fi
 
-# Generate HTML report (Coverage.profdata will be written to ./coverage/profiles/)
+# Generate HTML report
 echo ":: Generating HTML coverage report..."
 ./scripts/prepare_coverage.py \
     --unified-report \

@@ -1,0 +1,362 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <yaclib/async/make.hpp>
+
+#include "basics/down_cast.h"
+#include "basics/logger/logger.h"
+#include "pg/commands.h"
+#include "pg/connection_context.h"
+#include "pg/isolation_level.h"
+#include "pg/pg_list_utils.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+#include "query/config.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
+
+namespace sdb::pg {
+namespace {
+
+constexpr std::string_view kSdbLogLevel = "sdb_log_level";
+
+std::string ProcessValue(const A_Const& value) {
+  switch (nodeTag(&value.val)) {
+    case T_Integer:
+      return absl::StrCat(intVal(&value.val));
+    case T_Float:
+      return absl::StrCat(floatVal(&value.val));
+    case T_Boolean:
+      return absl::StrCat(boolVal(&value.val));
+    case T_String:
+      return std::string{strVal(&value.val)};
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+bool NeedQuotes(std::string_view str) {
+  SDB_ASSERT(str.data() != nullptr);
+  if (str.empty()) {
+    return true;
+  }
+  if (str[0] == '_' || absl::ascii_isalpha(str[0])) {
+    return absl::c_any_of(str, [](char c) {
+      return absl::ascii_isupper(c) || (!absl::ascii_isalnum(c) && c != '_');
+    });
+  }
+
+  if (absl::ascii_isdigit(str[0])) {
+    return !absl::c_all_of(str, absl::ascii_isdigit);
+  }
+  return true;
+}
+
+void ProcessValues(const List* list, std::string_view name, VariableType type,
+                   Config& config, Config::VariableContext context) {
+  std::string values;
+  if (type == VariableType::PgSearchPath || type == VariableType::String) {
+    VisitNodes(list, [&](const A_Const& value) {
+      std::string value_str = ProcessValue(value);
+      bool need_quotes = NeedQuotes(value_str);
+      if (need_quotes) {
+        if (!values.empty()) {
+          absl::StrAppend(&values, ", \"", std::move(value_str), "\"");
+        } else {
+          absl::StrAppend(&values, "\"", std::move(value_str), "\"");
+        }
+      } else {
+        if (!values.empty()) {
+          absl::StrAppend(&values, ", ", std::move(value_str));
+        } else {
+          absl::StrAppend(&values, std::move(value_str));
+        }
+      }
+    });
+    config.Set(context, name, std::move(values));
+    return;
+  }
+
+  SDB_ASSERT(list_length(list) == 1);
+  if (list_length(list) != 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("SET ", name, " takes only one argument"));
+  }
+  values = ProcessValue(*list_nth_node(A_Const, list, 0));
+
+  if (!ValidateValue(type, values)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("parameter \"", name, "\" requires different value type"));
+  }
+  config.Set(context, name, std::move(values));
+}
+
+#ifdef SDB_FAULT_INJECTION
+
+void ProcessFailurePoint(std::string_view stmt_name,
+                         const VariableSetStmt& stmt) {
+  SDB_ASSERT(stmt_name.starts_with(kFailPointPrefix));
+  stmt_name.remove_prefix(kFailPointPrefix.size());
+  if (stmt_name == "s") {
+    if (stmt.kind != VAR_RESET) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("only RESET sdb_faults is valid"));
+    }
+    ClearFailurePointsDebugging();
+    return;
+  }
+  if (!stmt_name.starts_with('_')) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("failure point configuration parameter must start with '",
+              kFailPointPrefix, "_'"));
+  }
+  stmt_name.remove_prefix(1);
+  if (stmt.kind == VAR_RESET) {
+    if (!RemoveFailurePointDebugging(stmt_name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("failure point '", stmt_name, "' not set so cannot remove"));
+    }
+  } else if (stmt.kind == VAR_SET_DEFAULT) {
+    if (!AddFailurePointDebugging(stmt_name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("failure point '", stmt_name, "' already set so cannot add"));
+    }
+  } else {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(
+        "only SET ... TO DEFAULT and RESET are supported for fail points"));
+  }
+}
+
+#endif
+
+// SET TRANSACTION statement and "transaction_isolation" variable processing
+void ProcessTransactionIsolation(sdb::ConnectionContext& conn_ctx,
+                                 const VariableSetStmt& stmt) {
+  switch (stmt.kind) {
+    case VAR_SET_DEFAULT:
+      [[fallthrough]];
+    case VAR_RESET:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("parameter \"transaction_isolation\" cannot be reset"));
+      break;
+    case VAR_SET_VALUE:
+      [[fallthrough]];
+    case VAR_SET_MULTI: {
+      if (!conn_ctx.HasTransactionBegin()) {
+        if (stmt.kind == VAR_SET_MULTI) {
+          conn_ctx.AddNotice(SQL_ERROR_DATA(
+            ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
+            ERR_MSG("SET TRANSACTION can only be used in transaction blocks")));
+        }
+        return;
+      }
+      auto isolation_level = GetIsolationLevel(stmt);
+      SDB_ASSERT(!isolation_level.empty());
+      ValidateIsolationLevel(isolation_level, stmt.name);
+
+      if ((conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
+          isolation_level != IsolationLevelName(conn_ctx.GetIsolationLevel())) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+          ERR_MSG("SET TRANSACTION ISOLATION LEVEL must be called before "
+                  "any query"));
+      }
+
+      conn_ctx.Set(Config::VariableContext::Local, kTransactionIsolation,
+                   std::move(isolation_level));
+    } break;
+    default:
+      SDB_UNREACHABLE();
+      break;
+  }
+}
+
+// SET SESSION CHARACTERISTICS AS TRANSACTION statement and
+// "default_transaction_isolation" variable processing
+void ProcessDefaultTransactionIsolation(sdb::ConnectionContext& conn_ctx,
+                                        const VariableSetStmt& stmt) {
+  auto var_ctx = conn_ctx.HasTransactionBegin()
+                   ? Config::VariableContext::Transaction
+                   : Config::VariableContext::Session;
+
+  switch (stmt.kind) {
+    case VAR_SET_DEFAULT: {
+      auto description = GetDefaultDescription(kDefaultTransactionIsolation);
+      SDB_ASSERT(description);
+      auto default_value = description->default_value;
+      SDB_ASSERT(default_value.data());
+
+      conn_ctx.Set(var_ctx, kDefaultTransactionIsolation,
+                   std::string{default_value});
+    } break;
+    case VAR_RESET:
+      conn_ctx.Reset(kDefaultTransactionIsolation);
+      break;
+    case VAR_SET_VALUE:
+      [[fallthrough]];
+    case VAR_SET_MULTI: {
+      auto isolation_level = GetIsolationLevel(stmt);
+      SDB_ASSERT(!isolation_level.empty());
+      ValidateIsolationLevel(isolation_level, stmt.name);
+
+      if (var_ctx == Config::VariableContext::Session) {
+        conn_ctx.Set(Config::VariableContext::Session, kTransactionIsolation,
+                     isolation_level);
+      }
+      conn_ctx.Set(var_ctx, kDefaultTransactionIsolation,
+                   std::move(isolation_level));
+    } break;
+    default:
+      SDB_UNREACHABLE();
+      break;
+  }
+}
+
+void ProcessLogLevel(const VariableSetStmt& stmt,
+                     Config::VariableContext context) {
+  if (context != Config::VariableContext::Session) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("parameter \"", log::kLogLevelVariable,
+              "\" is global and cannot be set inside a transaction"));
+  }
+  switch (stmt.kind) {
+    case VAR_SET_VALUE: {
+      SDB_ASSERT(list_length(stmt.args) == 1);
+      if (list_length(stmt.args) != 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("SET ", log::kLogLevelVariable, " takes only one argument"));
+      }
+      log::SetLogLevel(ProcessValue(*list_nth_node(A_Const, stmt.args, 0)));
+    } break;
+    case VAR_SET_DEFAULT:
+      [[fallthrough]];
+    case VAR_RESET:
+      log::ResetLogLevels();
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+}  // namespace
+
+yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt) {
+  auto& conn_ctx = basics::downCast<ConnectionContext>(ctx);
+  auto context = Config::VariableContext::Session;
+  if (stmt.is_local) {
+    context = Config::VariableContext::Local;
+    if (!conn_ctx.HasTransactionBegin()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
+        ERR_MSG("SET LOCAL can only be used in transaction blocks"));
+    }
+  } else if (conn_ctx.HasTransactionBegin()) {
+    context = Config::VariableContext::Transaction;
+  }
+
+  if (stmt.kind == VAR_RESET_ALL) {
+    conn_ctx.ResetAll();
+    return {};
+  }
+  std::string_view stmt_name = stmt.name;
+
+  if (stmt.kind == VAR_SET_MULTI) {
+    if (stmt_name == "TRANSACTION") {
+      ProcessTransactionIsolation(conn_ctx, stmt);
+      return {};
+    }
+
+    SDB_ASSERT(stmt_name == "SESSION CHARACTERISTICS");
+    ProcessDefaultTransactionIsolation(conn_ctx, stmt);
+    return {};
+  }
+
+#ifdef SDB_FAULT_INJECTION
+  if (stmt_name.starts_with(kFailPointPrefix)) {
+    ProcessFailurePoint(stmt_name, stmt);
+    return {};
+  }
+#endif
+
+  auto value_name = GetOriginalName(stmt_name);
+  if (!value_name.data()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("unrecognized configuration parameter \"", stmt.name, "\""));
+  }
+
+  if (value_name == kTransactionIsolation) {
+    ProcessTransactionIsolation(conn_ctx, stmt);
+    return {};
+  }
+
+  if (value_name == kDefaultTransactionIsolation) {
+    ProcessDefaultTransactionIsolation(conn_ctx, stmt);
+    return {};
+  }
+
+  if (value_name == kSdbLogLevel) {
+    ProcessLogLevel(stmt, context);
+    return {};
+  }
+
+  auto description = GetDefaultDescription(value_name);
+  SDB_ASSERT(description);
+  switch (stmt.kind) {
+    case VAR_SET_DEFAULT: {
+      auto default_value = description->default_value;
+      if (default_value.data()) {
+        conn_ctx.Set(context, value_name, std::string{default_value});
+      } else {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("No default value for variable ", value_name));
+      }
+    } break;
+    case VAR_RESET:
+      conn_ctx.Reset(value_name);
+      break;
+    case VAR_SET_VALUE:
+      ProcessValues(stmt.args, value_name, description->type, conn_ctx,
+                    context);
+      break;
+    case VAR_SET_CURRENT:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("SET ... TO CURRENT is not implemented"));
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+  return {};
+}
+
+}  // namespace sdb::pg

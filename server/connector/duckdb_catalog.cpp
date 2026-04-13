@@ -50,8 +50,107 @@
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+
+void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+
+  Result r;
+  switch (info.type) {
+    using enum duckdb::CatalogType;
+    case TABLE_ENTRY:
+      r = catalog.DropTable(info.catalog, info.schema, info.name);
+      break;
+    case INDEX_ENTRY:
+      r = catalog.DropIndex(info.catalog, info.schema, info.name);
+      break;
+    case VIEW_ENTRY:
+      r = catalog.DropView(info.catalog, info.schema, info.name);
+      break;
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      r = catalog.DropFunction(info.catalog, info.schema, info.name);
+      break;
+    case SCHEMA_ENTRY:
+      if (info.name == StaticStrings::kPgCatalogSchema ||
+          info.name == StaticStrings::kInformationSchema) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+          ERR_MSG("cannot drop schema ", info.name,
+                  " because it is required by the database system"));
+      } else {
+        r = catalog.DropSchema(info.catalog, info.name, info.cascade);
+        // TODO(mbkkt) better error handling
+        if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+            ERR_MSG("cannot drop schema ", info.name,
+                    " because other objects depend on it"),
+            ERR_HINT(
+              "Use DROP ... CASCADE to drop the dependent objects too."));
+        }
+      }
+      break;
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("DROP for this object type is not implemented: ",
+                              duckdb::CatalogTypeToString(info.type)));
+  }
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    // The error message from catalog contains the actual object type name
+    auto actual_type = r.errorMessage();
+    auto actual_name = absl::AsciiStrToLower(actual_type);
+    auto object_name = pg::ToPgObjectTypeName(info.type);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", info.name, "\" is not ",
+              basics::string_utils::GetArticle(object_name), " ", object_name),
+      ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual_type), " to remove ",
+               basics::string_utils::GetArticle(actual_name), " ", actual_name,
+               "."));
+  }
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    const bool missing_ok =
+      info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+    auto& ctx = GetSereneDBContext(context);
+    if (info.type == duckdb::CatalogType::MACRO_ENTRY ||
+        info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+      if (!missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", info.name, "\""));
+      }
+      ctx.AddNotice(SQL_ERROR_DATA(
+        ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+        ERR_MSG("function ", info.name, "() does not exist, skipping")));
+    } else {
+      if (!missing_ok) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG(pg::ToPgObjectTypeName(info.type), " \"",
+                                info.name, "\" does not exist"));
+      }
+      ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                       ERR_MSG(pg::ToPgObjectTypeName(info.type), " \"",
+                               info.name, "\" does not exist, skipping")));
+    }
+    r = {};
+  }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+}
 
 SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db,
                                  ObjectId database_id)
@@ -104,14 +203,7 @@ void SereneDBCatalog::ScanSchemas(
 
 void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
                                  duckdb::DropInfo& info) {
-  auto& catalog_impl = catalog::GetCatalog();
-  bool cascade = info.cascade;
-  auto r = catalog_impl.DropSchema(GetDatabaseId(), info.name, cascade);
-  if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to drop schema: %s",
-                                        std::string{r.errorMessage()});
-  }
-  // No cache to invalidate -- schema entries live on snapshot
+  DropObject(context, info);
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(

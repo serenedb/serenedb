@@ -1,0 +1,19 @@
+target_sources(
+    sereneserver
+    PRIVATE
+        create_database.cpp
+        drop_database.cpp
+        create_function.cpp
+        create_table.cpp
+        create_schema.cpp
+        create_view.cpp
+        create_index.cpp
+        drop_object.cpp
+        transaction.cpp
+        variable_set.cpp
+        remove_tombstone.cpp
+        vacuum.cpp
+        create_tsdictionary.cpp
+        rename_object.cpp
+        alter_table.cpp
+)

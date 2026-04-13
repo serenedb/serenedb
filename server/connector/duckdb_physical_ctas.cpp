@@ -33,8 +33,9 @@
 namespace sdb::connector {
 namespace {
 
+// TODO(mbkkt) fix this, drop by object id! Otherwise rename can break this
 struct CTASGlobalState : public SSTInsertGlobalState {
-  ObjectId database_id;
+  std::string database_name;
   std::string schema_name;
   std::string table_name;
 
@@ -44,7 +45,7 @@ struct CTASGlobalState : public SSTInsertGlobalState {
         auto& catalog = SerenedServer::Instance()
                           .getFeature<catalog::CatalogFeature>()
                           .Global();
-        std::ignore = catalog.DropTable(database_id, schema_name, table_name);
+        std::ignore = catalog.DropTable(database_name, schema_name, table_name);
       } catch (...) {
       }
     }
@@ -137,7 +138,7 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(catalog_table);
 
   auto state = duckdb::make_uniq<CTASGlobalState>();
-  state->database_id = database_id;
+  state->database_name = database->GetName();
   state->schema_name = _schema.name;
   state->table_name = table_info.table;
   SetupSSTState(*state, *catalog_table);

@@ -80,9 +80,12 @@ std::vector<duckdb_secondary_key::SKColumn> BuildSKColumnsForBackfill(
 struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool created = false;
   bool finalized = false;
+  // TODO(mbkkt) fix this, drop by object id! Otherwise rename can break this
   ObjectId database_id;
-  std::string index_name;
+  std::string database_name;
+  std::string schema_name;
   std::string table_name;
+  std::string index_name;
   catalog::ObjectType index_type = catalog::ObjectType::SecondaryIndex;
 
   // Column metadata (for serialization in Sink)
@@ -98,8 +101,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
   // Keep shard alive during backfill
   std::shared_ptr<IndexShard> index_shard;
-  // Schema entry for cache invalidation in Finalize
-  SereneDBSchemaEntry* schema_entry = nullptr;
 
   // Reusable buffers
   std::vector<std::string> row_keys;
@@ -114,7 +115,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
         auto& catalog = SerenedServer::Instance()
                           .getFeature<catalog::CatalogFeature>()
                           .Global();
-        std::ignore = catalog.DropIndex(database_id, "public", index_name);
+        std::ignore = catalog.DropIndex(database_name, schema_name, index_name);
       } catch (...) {
       }
     }
@@ -148,18 +149,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
+  state->database_name = _schema_entry.catalog.GetName();
+  state->schema_name = _schema_entry.name;
+  state->table_name = _table->GetName();
   state->index_name = _info->index_name;
-  state->table_name = std::string{_table->GetName()};
 
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog_impl = catalog_feature.Global();
 
   // Determine index type
-  auto idx_type_str = _info->index_type;
-  std::transform(idx_type_str.begin(), idx_type_str.end(), idx_type_str.begin(),
-                 ::tolower);
-  if (idx_type_str == "inverted") {
+  if (absl::EqualsIgnoreCase(_info->index_type, "inverted")) {
     state->index_type = catalog::ObjectType::InvertedIndex;
   } else {
     state->index_type = catalog::ObjectType::SecondaryIndex;
@@ -215,13 +215,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      _database_id, "public", _table->GetName(), _info->index_name,
+      _database_id, _schema_entry.name, _table->GetName(), _info->index_name,
       std::move(idx_columns), shard_options, {.create_with_tombstone = true});
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      _database_id, "public", _table->GetName(), _info->index_name,
+      _database_id, _schema_entry.name, _table->GetName(), _info->index_name,
       std::move(idx_columns), unique, {.create_with_tombstone = true});
   }
 
@@ -231,7 +231,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
   if (!create_result.ok()) {
     throw duckdb::CatalogException("Failed to create index: %s",
-                                   std::string{create_result.errorMessage()});
+                                   create_result.errorMessage());
   }
 
   state->created = true;
@@ -266,9 +266,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     });
   }
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
-
-  // Store schema entry for cache invalidation in Finalize
-  state->schema_entry = &_schema_entry;
 
   // Create index writer for the new index
   auto& conn_ctx = GetSereneDBContext(context);
@@ -380,11 +377,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   // Remove tombstone -- index is now fully built
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto r =
-    catalog.RemoveTombstone(gstate.database_id, "public", gstate.index_name);
+  auto r = catalog.RemoveTombstone(_database_id, gstate.schema_name,
+                                   gstate.index_name);
   if (!r.ok()) {
     throw duckdb::InternalException("Failed to remove tombstone: %s",
-                                    std::string{r.errorMessage()});
+                                    r.errorMessage());
   }
   gstate.finalized = true;
 

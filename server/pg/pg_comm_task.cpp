@@ -637,8 +637,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   auto& sql_stmt = stmt.extracted[stmt.current_stmt_idx];
   stmt.prepared = _duckdb_conn->Prepare(std::move(sql_stmt));
   if (stmt.prepared->HasError()) {
-    SendError(stmt.prepared->GetErrorObject().RawMessage(),
-              ERRCODE_INTERNAL_ERROR);
+    SendError(stmt.prepared->GetErrorObject());
     return;
   }
   _current_query = stmt.prepared->query;
@@ -672,8 +671,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
     auto& next = stmt.extracted[stmt.current_stmt_idx];
     stmt.prepared = _duckdb_conn->Prepare(next->query);
     if (stmt.prepared->HasError()) {
-      SendError(stmt.prepared->GetErrorObject().RawMessage(),
-                ERRCODE_INTERNAL_ERROR);
+      SendError(stmt.prepared->GetErrorObject());
       return;
     }
     _current_query = stmt.prepared->query;
@@ -960,9 +958,9 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   stmt.Reset();
   stmt.prepared = _duckdb_conn->Prepare(std::string{_current_query});
   if (stmt.prepared->HasError()) {
-    auto error = stmt.prepared->GetError();
+    SendError(stmt.prepared->GetErrorObject());
     stmt.prepared.reset();
-    return SendError(error, ERRCODE_SYNTAX_ERROR);
+    return;
   }
   _current_query = stmt.prepared->query;
 
@@ -982,8 +980,7 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   auto& prepared = *portal.stmt->prepared;
   portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
   if (portal.pending->HasError()) {
-    SendError(portal.pending->GetErrorObject().RawMessage(),
-              ERRCODE_INTERNAL_ERROR);
+    SendError(portal.pending->GetErrorObject());
     portal.pending.reset();
     return;
   }
@@ -1112,8 +1109,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         portal.result = portal.pending->Execute();
         portal.pending.reset();
         if (portal.result->HasError()) {
-          SendError(portal.result->GetErrorObject().RawMessage(),
-                    ERRCODE_INTERNAL_ERROR);
+          SendError(portal.result->GetErrorObject());
           ReleaseResult(portal);
           _success_packet = false;
           return ProcessState::DonePacket;
@@ -1138,16 +1134,14 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         portal.result = portal.pending->Execute();
         portal.pending.reset();
         if (portal.result->HasError()) {
-          SendError(portal.result->GetErrorObject().RawMessage(),
-                    ERRCODE_INTERNAL_ERROR);
+          SendError(portal.result->GetErrorObject());
           ReleaseResult(portal);
           _success_packet = false;
           return ProcessState::DonePacket;
         }
         break;
       case duckdb::PendingExecutionResult::EXECUTION_ERROR:
-        SendError(portal.pending->GetErrorObject().RawMessage(),
-                  ERRCODE_INTERNAL_ERROR);
+        SendError(portal.pending->GetErrorObject());
         ReleaseResult(portal);
         _success_packet = false;
         return ProcessState::DonePacket;
@@ -1349,6 +1343,10 @@ void PgSQLCommTaskBase::SendNotice(char type, const pg::SqlErrorData& what) {
   pg::UnpackSqlState(sql_state, what.errcode);
   SendNotice(type, what.errmsg, {sql_state, pg::kSqlStateSize}, what.errdetail,
              what.errhint, what.context, _current_query, what.cursorpos);
+}
+
+void PgSQLCommTaskBase::SendError(const duckdb::ErrorData& error) {
+  SafeCall([&] { error.Throw(); });
 }
 
 void PgSQLCommTaskBase::SendError(std::string_view message, int errcode) {

@@ -29,6 +29,8 @@
 
 namespace sdb::connector {
 
+void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info);
+
 class SereneDBCatalog final : public duckdb::Catalog {
  public:
   SereneDBCatalog(duckdb::AttachedDatabase& db, ObjectId database_id);

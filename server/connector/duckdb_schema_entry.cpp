@@ -396,34 +396,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
 
 void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
                                     duckdb::DropInfo& info) {
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto& catalog_impl = catalog_feature.Global();
-
-  Result r;
-  if (info.type == duckdb::CatalogType::TABLE_ENTRY) {
-    r = catalog_impl.DropTable(GetDatabaseId(), name, info.name);
-  } else if (info.type == duckdb::CatalogType::VIEW_ENTRY) {
-    r = catalog_impl.DropView(GetDatabaseId(), name, info.name);
-  } else if (info.type == duckdb::CatalogType::MACRO_ENTRY ||
-             info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-    r = catalog_impl.DropFunction(GetDatabaseId(), name, info.name);
-  } else {
-    throw duckdb::NotImplementedException(
-      "DROP for type %s not supported", duckdb::CatalogTypeToString(info.type));
-  }
-  bool if_exists = info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    if (if_exists) {
-      return;
-    }
-    auto type_name = duckdb::CatalogTypeToString(info.type);
-    throw duckdb::CatalogException("%s \"%s\" does not exist", type_name,
-                                   info.name);
-  }
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  DropObject(context, info);
 }
 
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,

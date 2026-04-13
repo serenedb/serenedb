@@ -46,20 +46,20 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-std::string_view ToPgObjectTypeName(int pg_object_type) noexcept {
-  switch (pg_object_type) {
-    case OBJECT_TABLE:
+std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
+  switch (t) {
+    using enum duckdb::CatalogType;
+    case TABLE_ENTRY:
       return "table";
-    case OBJECT_INDEX:
-      return "index";
-    case OBJECT_VIEW:
-      return "view";
-    case OBJECT_FUNCTION:
-      return "function";
-    case OBJECT_SCHEMA:
+    case SCHEMA_ENTRY:
       return "schema";
-    case OBJECT_TSDICTIONARY:
-      return "text search dictionary";
+    case VIEW_ENTRY:
+      return "view";
+    case INDEX_ENTRY:
+      return "index";
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      return "function";
     default:
       return "object";
   }

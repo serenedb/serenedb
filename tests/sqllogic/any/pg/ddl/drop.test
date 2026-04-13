@@ -25,7 +25,6 @@ db error: ERROR: "deadinside" is not a table
 HINT: Use DROP INDEX to remove an index.
 
 
-
 statement error
 DROP TABLE IF EXISTS deadinside;
 ----

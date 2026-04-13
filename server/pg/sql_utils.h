@@ -21,6 +21,7 @@
 #pragma once
 
 #include <array>
+#include <duckdb/common/enums/catalog_type.hpp>
 #include <memory>
 
 #include "basics/assert.h"
@@ -71,7 +72,7 @@ namespace sdb {
 class QueryString;
 namespace pg {
 
-std::string_view ToPgObjectTypeName(int pg_object_type) noexcept;
+std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept;
 
 constexpr std::string_view ToPgObjectTypeName(catalog::ObjectType t) noexcept {
   switch (t) {

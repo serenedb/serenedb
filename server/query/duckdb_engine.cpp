@@ -99,6 +99,7 @@ void DuckDBEngine::Initialize() {
   config.SetOptionByName("threads", duckdb::Value::INTEGER(1));
   // PG folds unquoted identifiers to lowercase
   config.SetOptionByName("preserve_identifier_case", duckdb::Value(false));
+  config.SetOptionByName("disable_database_invalidation", duckdb::Value(true));
   // Register SereneDB storage extension before creating the DB
   connector::RegisterSereneDBStorage(config);
 

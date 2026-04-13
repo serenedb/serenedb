@@ -119,6 +119,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void SendParameterStatus(std::string_view name, std::string_view value);
 
   void SendNotices();
+  void SendError(const duckdb::ErrorData& error);
   void SendError(std::string_view message, int errcode);
   void SendNotice(char type, const pg::SqlErrorData& error);
   void SendNotice(char type, std::string_view message,

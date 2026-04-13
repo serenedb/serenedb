@@ -203,7 +203,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
   if (type == duckdb::CatalogType::TABLE_ENTRY) {
     {
       std::shared_lock lock{_lock};
-      auto schema_it = _entry_caches.find(std::string{schema_name});
+      auto schema_it = _entry_caches.find(schema_name);
       if (schema_it != _entry_caches.end()) {
         auto it = schema_it->second.tables.find(key);
         if (it != schema_it->second.tables.end()) {
@@ -212,7 +212,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
       }
     }
     std::unique_lock lock{_lock};
-    auto schema_it = _entry_caches.find(std::string{schema_name});
+    auto schema_it = _entry_caches.find(schema_name);
     if (schema_it != _entry_caches.end()) {
       auto it = schema_it->second.tables.find(key);
       if (it != schema_it->second.tables.end()) {
@@ -231,7 +231,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
   if (type == duckdb::CatalogType::VIEW_ENTRY) {
     {
       std::shared_lock lock{_lock};
-      auto schema_it = _entry_caches.find(std::string{schema_name});
+      auto schema_it = _entry_caches.find(schema_name);
       if (schema_it != _entry_caches.end()) {
         auto it = schema_it->second.views.find(key);
         if (it != schema_it->second.views.end()) {
@@ -240,7 +240,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
       }
     }
     std::unique_lock lock{_lock};
-    auto schema_it = _entry_caches.find(std::string{schema_name});
+    auto schema_it = _entry_caches.find(schema_name);
     if (schema_it != _entry_caches.end()) {
       auto it = schema_it->second.views.find(key);
       if (it != schema_it->second.views.end()) {

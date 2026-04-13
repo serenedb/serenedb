@@ -22,11 +22,12 @@
 
 #include <memory>
 #include <string_view>
-#include <yaclib/async/future.hpp>
 
 #include "catalog/fwd.h"
+#include "pg/command_executor.h"
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
+#include "yaclib/async/future.hpp"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -66,6 +67,9 @@ yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt);
 
 yaclib::Future<> CreateFunction(ExecContext& ctx,
                                 const CreateFunctionStmt& stmt);
+
+std::shared_ptr<catalog::PgSqlFunction> CreateSystemFunction(
+  const CreateFunctionStmt& stmt);
 
 yaclib::Future<> CreateTableCTAS(ExecContext& ctx, query::Query& query,
                                  const IntoClause& into, bool if_not_exists,

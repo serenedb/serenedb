@@ -4,12 +4,10 @@ import {
     useSupportModal,
 } from "@serene-ui/shared-frontend/features";
 import {
+    Button,
     DarkThemeIcon,
+    GithubIcon,
     LightThemeIcon,
-    SidebarGroup,
-    SidebarMenu,
-    SidebarMenuButton,
-    SidebarMenuItem,
     SupportIcon,
 } from "@serene-ui/shared-frontend/shared";
 import { SearchIcon } from "lucide-react";
@@ -48,20 +46,28 @@ export const NavBottom = () => {
     };
 
     return (
-        <SidebarGroup className="mt-auto">
-            <SidebarMenu>
-                {buttons.map((item, index) => (
-                    <SidebarMenuItem key={index}>
-                        <SidebarMenuButton
+        <div className="mt-auto flex flex-col gap-1">
+            <div className="p-2.5 flex flex-col gap-1.5">
+                {buttons.map((item, index) => {
+                    return (
+                        <Button
+                            variant="ghost"
+                            key={index}
+                            size={"icon"}
                             title={item.title.toLowerCase()}
-                            onClick={getAction(item)}
-                            tooltip={item.title}>
+                            aria-label={item.title.toLowerCase()}
+                            onClick={getAction(item)}>
                             {item.icon}
-                            <span>{item.title}</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                ))}
-            </SidebarMenu>
-        </SidebarGroup>
+                        </Button>
+                    );
+                })}
+                <Button
+                    size="icon"
+                    variant="secondary"
+                    title="Open GitHub repository">
+                    <GithubIcon />
+                </Button>
+            </div>
+        </div>
     );
 };

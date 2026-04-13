@@ -14676,7 +14676,6 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
       recall += current_recall;
     }
     recall /= kQueries;
-    std::cout << "Recall: " << recall << std::endl;
     ASSERT_GT(recall, .9f);
   };
 
@@ -14699,6 +14698,158 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
         irs::PackSegmentWithDoc(0, doc + kValuesPerSegment * seg), p.second);
     });
   check_recall(reader, all_vectors);
+}
+
+TEST_P(IndexTestCase14, hnsw_range_search_basic) {
+  constexpr size_t kDim = 128;
+  constexpr size_t kValuesPerSegment = 256;
+  constexpr size_t kSegments = 4;
+  constexpr size_t kQueries = 64;
+  constexpr std::string_view kColumnName = "vec"sv;
+
+  std::vector<std::pair<uint64_t, std::vector<float>>> all_vectors;
+  all_vectors.reserve(kSegments * kValuesPerSegment);
+
+  irs::IndexWriterOptions writer_options;
+  writer_options.column_info = [&kColumnName](std::string_view name) {
+    if (name == kColumnName) {
+      return irs::ColumnInfo{
+        .compression = irs::Type<irs::compression::None>::get(),
+        .options = {},
+        .track_prev_doc = false,
+        .value_type = irs::ValueType::VectorF32,
+        .hnsw_info =
+          irs::HNSWInfo{
+            .d = kDim,
+          },
+      };
+    }
+    return irs::ColumnInfo{
+      irs::Type<irs::compression::None>::get(),
+      {},
+      false,
+    };
+  };
+  absl::BitGen bitgen;
+  auto gen_vector = [&bitgen](float* vec, size_t size) {
+    for (size_t i = 0; i < size; ++i) {
+      vec[i] = absl::Uniform(bitgen, -100.0f, 100.0f);
+    }
+  };
+
+  auto writer = open_writer(irs::kOmCreate, writer_options);
+
+  struct VectorField {
+    std::string_view name;
+    std::vector<float> data;
+    std::string_view Name() const { return name; }
+    bool Write(irs::DataOutput& out) const {
+      SDB_ASSERT(data.size() == kDim);
+      out.WriteBytes(reinterpret_cast<const irs::byte_type*>(data.data()),
+                     data.size() * sizeof(float));
+      return true;
+    }
+  };
+
+  std::vector<irs::IndexWriter::Transaction> trxs;
+  trxs.reserve(kSegments);
+
+  for (size_t seg = 0; seg < kSegments; ++seg) {
+    auto trx = writer->GetBatch();
+    for (size_t i = 0; i < kValuesPerSegment; ++i) {
+      auto doc = trx.Insert();
+      std::vector<float> data(kDim);
+      gen_vector(data.data(), kDim);
+      all_vectors.emplace_back(
+        irs::PackSegmentWithDoc(static_cast<uint32_t>(seg),
+                                static_cast<irs::doc_id_t>(i + 1)),
+        data);
+      VectorField vf{kColumnName, std::move(data)};
+      ASSERT_TRUE(doc.Insert<irs::Action::STORE>(vf));
+    }
+    trxs.push_back(std::move(trx));
+  }
+  for (auto& trx : trxs) {
+    trx.Commit();
+  }
+
+  ASSERT_TRUE(writer->Begin());
+  writer->Commit();
+  AssertSnapshotEquality(*writer);
+
+  auto check_range_results = [&](irs::DirectoryReader& reader,
+                                 const auto& vectors) {
+    faiss::SearchParametersHNSW params;
+    params.efSearch = 32;
+    float recall = .0f;
+
+    for (size_t qi = 0; qi < kQueries; ++qi) {
+      std::vector<float> query(kDim);
+      gen_vector(query.data(), kDim);
+
+      std::vector<float> all_dists;
+      all_dists.reserve(vectors.size());
+      for (const auto& [packed_id, vec] : vectors) {
+        all_dists.push_back(faiss::fvec_L2sqr(query.data(), vec.data(), kDim));
+      }
+      std::sort(all_dists.begin(), all_dists.end());
+      const float radius = all_dists[all_dists.size() / 2];
+
+      std::vector<uint64_t> expected;
+      for (const auto& [packed_id, vec] : vectors) {
+        if (faiss::fvec_L2sqr(query.data(), vec.data(), kDim) < radius) {
+          expected.push_back(packed_id);
+        }
+      }
+
+      irs::HNSWRangeSearchInfo info{
+        reinterpret_cast<const irs::byte_type*>(query.data()),
+        radius,
+        params,
+      };
+      std::vector<float> dis;
+      std::vector<int64_t> ids;
+      reader.RangeSearch(kColumnName, info, dis, ids);
+
+      for (auto d : dis) {
+        EXPECT_LT(d, radius);
+      }
+
+      if (expected.empty()) {
+        continue;
+      }
+      size_t correct = 0;
+      for (auto id : ids) {
+        correct +=
+          std::find(expected.begin(), expected.end(), id) != expected.end();
+      }
+
+      float current_recall = static_cast<float>(correct) / expected.size();
+      recall += current_recall;
+    }
+
+    EXPECT_GT(recall, .9f);
+  };
+
+  irs::IndexReaderOptions reader_opts;
+  auto reader = irs::DirectoryReader{dir(), codec(), reader_opts};
+  ASSERT_EQ(kSegments, reader.size());
+  ASSERT_EQ(reader.docs_count(), kValuesPerSegment * kSegments);
+  check_range_results(reader, all_vectors);
+
+  ASSERT_TRUE(writer->Consolidate(
+    irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount())));
+  writer->Commit();
+  reader = irs::DirectoryReader{dir(), codec(), reader_opts};
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(reader.docs_count(), kValuesPerSegment * kSegments);
+  std::transform(
+    all_vectors.begin(), all_vectors.end(), all_vectors.begin(), [](auto& p) {
+      auto [seg, doc] = irs::UnpackSegmentWithDoc(p.first);
+      return std::make_pair(
+        irs::PackSegmentWithDoc(0, doc + kValuesPerSegment * seg), p.second);
+    });
+  check_range_results(reader, all_vectors);
 }
 
 static const auto kTestFormats =

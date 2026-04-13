@@ -6,7 +6,6 @@ import { cva, type VariantProps } from "class-variance-authority";
 
 import { useIsMobile } from "../hooks/use-mobile";
 import { cn } from "../lib/utils";
-import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Separator } from "../ui/separator";
 import {
@@ -261,7 +260,7 @@ function SidebarTrigger({
     className,
     onClick,
     ...props
-}: React.ComponentProps<typeof Button>) {
+}: React.ComponentProps<typeof SidebarMenuButton>) {
     const { toggleSidebar, open } = useSidebar();
 
     return (

@@ -98,12 +98,16 @@ export function useQuerySubscription(
                 current.set(jobId, unsubscribe);
             }
         });
+    }, [isSingleMode, normalizedJobIds, subscribe]);
 
-        return () => {
-            current.forEach((unsub) => unsub());
+    useEffect(
+        () => () => {
+            const current = unsubscribersRef.current;
+            current.forEach((unsubscribe) => unsubscribe());
             current.clear();
-        };
-    }, [normalizedJobIds, subscribe]);
+        },
+        [],
+    );
 
     if (isSingleMode) {
         return singleResult;

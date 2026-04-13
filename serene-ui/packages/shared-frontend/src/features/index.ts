@@ -1,5 +1,4 @@
 export * from "./authorizeGithub";
-export * from "./changeConsoleLayout";
 export * from "./copyText";
 export * from "./createDashboard";
 export * from "./downloadResults";
@@ -14,3 +13,4 @@ export * from "./testConnection";
 export * from "./refreshDatabases";
 export * from "./changeTheme";
 export * from "./deleteDashboard";
+export * from "./deleteSavedQuery";

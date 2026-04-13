@@ -75,7 +75,7 @@ export const useDashboardGrid = ({
         return () => {
             resizeObserver.disconnect();
         };
-    }, []);
+    }, [currentDashboard]);
 
     const positionStrategy = React.useMemo(
         () => ({

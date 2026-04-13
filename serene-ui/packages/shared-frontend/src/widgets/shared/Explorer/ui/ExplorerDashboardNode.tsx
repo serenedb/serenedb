@@ -46,7 +46,7 @@ export const ExplorerDashboardNode = ({
     };
 
     return (
-        <div style={style} className="group relative">
+        <div style={style} className="group relative h-full">
             <ExplorerNodeButton
                 className="pl-[27px] pr-7"
                 title={node.data.name}
@@ -59,7 +59,7 @@ export const ExplorerDashboardNode = ({
                 <div className="absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                     <Button
                         type="button"
-                        size="iconSmall"
+                        size="xsIcon"
                         variant="ghost"
                         title={
                             isFavorite

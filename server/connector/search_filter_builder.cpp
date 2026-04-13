@@ -471,7 +471,8 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   return std::pair{&geo_filter, distance};
 }
 
-// GEO_DISTANCE(field, centroid) OP distance  -- inequality comparison (<, <=, >,
+// GEO_DISTANCE(field, centroid) OP distance  -- inequality comparison (<, <=,
+// >,
 // >=)
 Result FromVeloxGeoDistanceComparison(
   irs::BooleanFilter& filter, const VeloxFilterContext& ctx,

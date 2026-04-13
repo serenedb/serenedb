@@ -327,6 +327,7 @@ jobs:
             tests/sqllogic/*.xml
             sanitizers/
             build*/coverage/
+            combined_coverage/
             logs/
           if-no-files-found: ignore
           retention-days: 30

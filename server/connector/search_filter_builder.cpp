@@ -1036,7 +1036,129 @@ Result fromSearchGeoContainsIntersect(irs::BooleanFilter& filter,
 Result fromSearchGeoInRange(irs::BooleanFilter& filter,
                             const VeloxFilterContext& ctx,
                             const velox::core::CallTypedExpr& call) {
-  return {ERROR_NOT_IMPLEMENTED, "GEO_IN_RANGE not implemented"};
+  const auto num_inputs = call.inputs().size();
+  // ensured by prototype registration: 4, 5, or 6 args
+  SDB_ASSERT(num_inputs >= 4 && num_inputs <= 6);
+
+  size_t field_idx = 0;
+  size_t centroid_idx = 1;
+
+  if (!call.inputs()[0]->isFieldAccessKind()) {
+    if (!call.inputs()[1]->isFieldAccessKind()) {
+      return {ERROR_BAD_PARAMETER, "Input is not field access"};
+    } else {
+      field_idx = 1;
+      centroid_idx = 0;
+    }
+  }
+
+  // centroid (GeoJSON string, arg[0] or arg[1])
+  auto centroid_val = EvaluateConstant(call.inputs()[centroid_idx]);
+  if (!centroid_val.has_value()) {
+    return {ERROR_BAD_PARAMETER,
+            "Failed to evaluate centroid value as constant"};
+  }
+  if (centroid_val->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate centroid as VARCHAR"};
+  }
+
+  // min_distance (double, arg[2])
+  auto min_dist_val = EvaluateConstant(call.inputs()[2]);
+  if (!min_dist_val.has_value()) {
+    return {ERROR_BAD_PARAMETER,
+            "Failed to evaluate min_distance value as constant"};
+  }
+  if (min_dist_val->kind() != velox::TypeKind::DOUBLE) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate min_distance as DOUBLE"};
+  }
+  double min_distance = min_dist_val->value<double>();
+
+  // max_distance (double, arg[3])
+  auto max_dist_val = EvaluateConstant(call.inputs()[3]);
+  if (!max_dist_val.has_value()) {
+    return {ERROR_BAD_PARAMETER,
+            "Failed to evaluate max_distance value as constant"};
+  }
+  if (max_dist_val->kind() != velox::TypeKind::DOUBLE) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate max_distance as DOUBLE"};
+  }
+  double max_distance = max_dist_val->value<double>();
+
+  // include_min (bool, arg[4], optional, default true)
+  bool include_min = true;
+  if (num_inputs > 4) {
+    auto include_min_val = EvaluateConstant(call.inputs()[4]);
+    if (!include_min_val.has_value()) {
+      return {ERROR_BAD_PARAMETER,
+              "Failed to evaluate include_min value as constant"};
+    }
+    if (include_min_val->kind() != velox::TypeKind::BOOLEAN) {
+      return {ERROR_BAD_PARAMETER, "Failed to evaluate include_min as BOOLEAN"};
+    }
+    include_min = include_min_val->value<bool>();
+  }
+
+  // include_max (bool, arg[5], optional, default true)
+  bool include_max = true;
+  if (num_inputs > 5) {
+    auto include_max_val = EvaluateConstant(call.inputs()[5]);
+    if (!include_max_val.has_value()) {
+      return {ERROR_BAD_PARAMETER,
+              "Failed to evaluate include_max value as constant"};
+    }
+    if (include_max_val->kind() != velox::TypeKind::BOOLEAN) {
+      return {ERROR_BAD_PARAMETER, "Failed to evaluate include_max as BOOLEAN"};
+    }
+    include_max = include_max_val->value<bool>();
+  }
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    call.inputs()[field_idx].get());
+
+  const auto* column_info = FindColumnInfo(ctx, *field_typed);
+  if (!column_info ||
+      column_info->info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Field '", field_typed->name(),
+            "' is not VARCHAR"};
+  }
+
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+  auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
+                                 : AddFilter<irs::GeoDistanceFilter>(filter);
+  geo_filter.boost(ctx.boost);
+
+  auto* options = geo_filter.mutable_options();
+  auto r = SetupGeoFilter(*column_info->analyzer.analyzer.get(), *options);
+  if (!r.ok()) {
+    return r;
+  }
+
+  auto centroid_json = vpack::Parser::fromJson(
+    static_cast<std::string_view>(centroid_val->value<velox::StringView>()));
+  geo::ShapeContainer centroid_shape;
+  std::vector<S2LatLng> cache;
+  auto res = ParseShape<geo::Parsing::GeoJson>(centroid_json->slice(),
+                                               centroid_shape, cache,
+                                               options->coding, nullptr);
+  if (!res) {
+    return {ERROR_BAD_PARAMETER, "Failed to parse centroid as geo json"};
+  }
+  options->origin = centroid_shape.centroid();
+
+  if (min_distance != 0.) {
+    options->range.min = min_distance;
+    options->range.min_type =
+      include_min ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+  }
+  options->range.max = max_distance;
+  options->range.max_type =
+    include_max ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+
+  *geo_filter.mutable_field() = std::move(field_name);
+
+  return {};
 }
 
 }  // namespace
@@ -1127,12 +1249,6 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   if (call.name() == functions::kBoost) {
     return FromSearchBoost(filter, ctx, call);
   }
-
-  if (call.name() == functions::kGeoInRange) {
-    return fromSearchGeoInRange(filter, ctx, call);
-  }
-
-  // inline constexpr std::string_view kGeoDistance = "sdb_geo_distance";
 
   if (call.name() == functions::kGeoInRange) {
     return fromSearchGeoInRange(filter, ctx, call);

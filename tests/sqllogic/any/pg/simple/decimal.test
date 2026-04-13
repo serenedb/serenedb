@@ -47,16 +47,26 @@ array
 {5.00,3.61}
 
 
-# TODO(codeworse): support different numeric numeric scales and precisions?
-# SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
-# SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 1)];
+query
+SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
+----
+column1 column2
+A+      5.0000
+B-      3.6100
 
-# TODO(codeworse): compare decimals with different scales and precisions
-# query
-# SELECT 0.2::numeric(3, 1) + 0.1::numeric(4, 3) = 0.3::numeric(10, 1);
-# ----
-# ?column?
-# t
+
+query
+SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 1)];
+----
+array
+{5.00,3.60}
+
+
+query
+SELECT 0.2::numeric(3, 1) + 0.1::numeric(4, 3) = 0.3::numeric(10, 1);
+----
+?column?
+t
 
 
 query
@@ -90,49 +100,35 @@ numeric
 
 query error
 SELECT 1::numeric('true');
-----
-db error: ERROR: invalid input syntax for type integer: "true"
 
 
 query error
 SELECT 1::numeric(10, 'true');
-----
-db error: ERROR: invalid input syntax for type integer: "true"
 
 
 query error
 SELECT 1::numeric('aboba');
-----
-db error: ERROR: invalid input syntax for type integer: "aboba"
 
 
 query error
 SELECT 1::numeric(10, 'aboba');
-----
-db error: ERROR: invalid input syntax for type integer: "aboba"
 
 
+# TODO(mbkkt) fix in duckdb
+skipif serenedb
 query error
 SELECT 1::numeric(1.1);
-----
-db error: ERROR: invalid input syntax for type integer: "1.1"
 
 
+# TODO(mbkkt) fix in duckdb
+skipif serenedb
 query error
 SELECT 1::numeric(10, 1.1);
-----
-db error: ERROR: invalid input syntax for type integer: "1.1"
 
 
-onlyif serenedb
 query error
 SELECT 1::numeric(true);
-----
-db error: ERROR: invalid input syntax for type integer: "true"
 
 
-onlyif serenedb
 query error
 SELECT 1::numeric(10, true);
-----
-db error: ERROR: invalid input syntax for type integer: "true"

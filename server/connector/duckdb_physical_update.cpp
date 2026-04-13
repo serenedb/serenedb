@@ -201,9 +201,17 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     CreateDuckDBIndexWriters<DuckDBWriteKind::Delete>(
       state->table_id, conn_ctx, *_table, del_col_mapping, updated_col_ids);
 
+  // Insert writers need new values for updated columns (from SET positions)
+  // and old values for non-updated index columns (from virtual positions).
+  ColumnChunkMapping ins_col_mapping =
+    del_col_mapping;  // PK + old indexed cols
+  for (const auto& upd : state->update_columns) {
+    ins_col_mapping[upd.id] = upd.input_col_idx;  // override with SET position
+  }
+
   state->insert_index_writers =
     CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
-      state->table_id, conn_ctx, *_table, {}, updated_col_ids);
+      state->table_id, conn_ctx, *_table, ins_col_mapping, updated_col_ids);
 
   return state;
 }

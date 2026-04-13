@@ -212,7 +212,9 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
       auto& vec = chunk.data[col.input_col_idx];
-      bool may_have_nulls = !duckdb::FlatVector::Validity(vec).CannotHaveNull();
+      bool may_have_nulls =
+        vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+        !duckdb::FlatVector::Validity(vec).CannotHaveNull();
       if (writer->SwitchColumn(col.duckdb_type, may_have_nulls, col.id)) {
         gstate.active_writers.push_back(writer.get());
       }

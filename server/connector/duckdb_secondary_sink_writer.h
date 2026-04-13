@@ -54,14 +54,13 @@ inline bool AppendSKValue(std::string& key, const duckdb::DataChunk& input,
                           duckdb::idx_t row_idx) {
   bool has_null = false;
   for (const auto& sk : sk_columns) {
-    auto& validity = duckdb::FlatVector::Validity(input.data[sk.input_col_idx]);
-    if (!validity.RowIsValid(row_idx)) {
+    auto& vec = input.data[sk.input_col_idx];
+    if (vec.GetValue(row_idx).IsNull()) {
       secondary_key::AppendNullMarker(key);
       has_null = true;
     } else {
       secondary_key::AppendNotNullMarker(key);
-      AppendPKValueFromDuckDB(key, input.data[sk.input_col_idx], row_idx,
-                              sk.type);
+      AppendPKValueFromDuckDB(key, vec, row_idx, sk.type);
     }
   }
   return has_null;

@@ -365,7 +365,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a.reset(json->slice()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -400,7 +400,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromArray) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json->slice())));
+    ASSERT_TRUE(a.reset(json->slice()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -445,7 +445,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->slice()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -482,7 +482,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObject) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->slice()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -527,7 +527,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->slice()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, false));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});
@@ -564,7 +564,7 @@ TEST(GeoPointAnalyzerTest, tokenizePointFromObjectComplexPath) {
     ASSERT_NE(nullptr, inc);
     auto* term = get<TermAttr>(a);
     ASSERT_NE(nullptr, term);
-    ASSERT_TRUE(a.reset(slice_to_view<char>(json_object->slice())));
+    ASSERT_TRUE(a.reset(json_object->slice()));
 
     S2RegionTermIndexer indexer(S2Options(opts.options, true));
     auto terms = indexer.GetIndexTerms(shape.centroid(), {});

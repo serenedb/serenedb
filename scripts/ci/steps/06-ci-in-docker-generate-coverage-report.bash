@@ -38,45 +38,27 @@ fi
 echo ":: Found ${#ALL_BINARIES[@]} binaries:"
 printf "   %s\n" "${ALL_BINARIES[@]}"
 
-# Merge all profile data into combined directory
-mkdir -p ./combined_coverage/profiles
-for dir in "${BUILD_DIRS[@]}"; do
-    if [ -d "${dir}/coverage/profiles" ]; then
-        echo ":: Copying profiles from ${dir}/coverage/profiles"
-        find "${dir}/coverage/profiles" -name "*.profraw" -exec cp {} ./combined_coverage/profiles/ \; 2>/dev/null || true
-    else
-        echo "WARNING: Profile directory ${dir}/coverage/profiles not found, skipping..."
-    fi
-done
-
-# Count collected profiles
-PROFILE_COUNT=$(find ./combined_coverage/profiles -name "*.profraw" 2>/dev/null | wc -l)
-echo ":: Collected ${PROFILE_COUNT} profile files"
+PROFILE_COUNT=$(find ./coverage/profiles -name "*.profraw" 2>/dev/null | wc -l)
+echo ":: Found ${PROFILE_COUNT} profile files in ./coverage/profiles"
 
 if [ "${PROFILE_COUNT}" -eq 0 ]; then
     echo "ERROR: No profile data found!"
     exit 1
 fi
 
-# Build object arguments for llvm-cov
-OBJECT_ARGS="${ALL_BINARIES[0]}"
-for ((i=1; i<${#ALL_BINARIES[@]}; i++)); do
-    OBJECT_ARGS="${OBJECT_ARGS} -object ${ALL_BINARIES[$i]}"
-done
-
-# Generate HTML report
+# Generate HTML report (Coverage.profdata will be written to ./coverage/profiles/)
 echo ":: Generating HTML coverage report..."
 ./scripts/prepare_coverage.py \
     --unified-report \
     --compilation-dir . \
     llvm-profdata-21 \
     llvm-cov-21 \
-    ./combined_coverage/profiles \
-    ./combined_coverage/llvm_html \
+    ./coverage/profiles \
+    ./coverage/llvm_html \
     "${ALL_BINARIES[@]}"
 
 echo ":: Coverage reports generated successfully!"
-echo "   HTML: ./combined_coverage/llvm_html"
+echo "   HTML: ./coverage/llvm_html"
 '
 
 echo "=========================================="

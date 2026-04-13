@@ -18,7 +18,6 @@ services:
       - "${WORKSPACE}/docker.env"
     environment:
       - BUILD_DIR
-      - LLVM_PROFILE_FILE
       - RESOURCES
       - WORKSPACE=/serenedb
       - HOME=/serenedb

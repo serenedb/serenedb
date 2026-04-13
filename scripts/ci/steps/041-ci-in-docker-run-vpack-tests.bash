@@ -10,7 +10,6 @@ if ! docker run --rm \
 	--security-opt seccomp=unconfined \
 	--env-file ./docker.env \
 	-e BUILD_DIR="${BUILD_DIR}" \
-	-e LLVM_PROFILE_FILE="/serenedb/${BUILD_DIR}/coverage/profiles/sdb.%m.%p.profraw" \
 	-v "${WORKSPACE}:/serenedb" \
 	"${BUILD_IMAGE}" \
 	bash -c '

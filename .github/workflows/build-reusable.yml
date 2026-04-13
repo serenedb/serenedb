@@ -326,7 +326,7 @@ jobs:
             serenedb-tests*.xml
             tests/sqllogic/*.xml
             sanitizers/
-            combined_coverage/
+            coverage/
             logs/
           if-no-files-found: ignore
           retention-days: 30

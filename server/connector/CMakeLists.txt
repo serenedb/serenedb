@@ -43,3 +43,4 @@ target_link_libraries(
 target_include_directories(serene_connector PUBLIC "${CMAKE_SOURCE_DIR}/server")
 
 add_subdirectory(functions)
+add_subdirectory(optimizer)

@@ -29,6 +29,8 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
+#include "connector/optimizer/ann_search_plan.h"
+#include "connector/optimizer/range_search_plan.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -137,6 +139,11 @@ SereneDBStorageExtension::SereneDBStorageExtension() {
 void RegisterSereneDBStorage(duckdb::DBConfig& config) {
   auto ext = duckdb::make_shared_ptr<SereneDBStorageExtension>();
   duckdb::StorageExtension::Register(config, "serenedb", std::move(ext));
+}
+
+void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
+  optimizer::RegisterANNSearchOptimizer(db);
+  optimizer::RegisterRangeSearchOptimizer(db);
 }
 
 }  // namespace sdb::connector

@@ -51,7 +51,29 @@ struct SecondaryIndexScan {
   bool is_unique = false;
 };
 
-using ScanSource = std::variant<FullTableScan, SearchScan, SecondaryIndexScan>;
+// ANN (top-k nearest-neighbour) scan using an HNSW index.
+// Populated by the ANNSearchPlanOptimizer when it detects the pattern:
+//   ORDER BY distance_func(col, const_vector) ASC LIMIT k
+struct ANNScan {
+  std::shared_ptr<search::InvertedIndexShard> shard;
+  // Field name: big-endian catalog::Column::Id bytes, no MangleString
+  std::string field_name;
+  std::vector<float> query_vector;
+  size_t top_k = 0;
+};
+
+// Range search scan using an HNSW index.
+// Populated by the RangeSearchPlanOptimizer when it detects the pattern:
+//   WHERE distance_func(col, const_vector) < radius
+struct RangeSearchScan {
+  std::shared_ptr<search::InvertedIndexShard> shard;
+  std::string field_name;
+  std::vector<float> query_vector;
+  float radius = 0.0f;
+};
+
+using ScanSource = std::variant<FullTableScan, SearchScan, SecondaryIndexScan,
+                                ANNScan, RangeSearchScan>;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
   std::shared_ptr<catalog::Table> table;
@@ -67,6 +89,12 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   }
   bool IsSecondaryIndexScan() const {
     return std::holds_alternative<SecondaryIndexScan>(scan_source);
+  }
+  bool IsANNScan() const {
+    return std::holds_alternative<ANNScan>(scan_source);
+  }
+  bool IsRangeSearchScan() const {
+    return std::holds_alternative<RangeSearchScan>(scan_source);
   }
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;

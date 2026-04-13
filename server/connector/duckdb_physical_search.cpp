@@ -31,7 +31,6 @@
 #include "connector/search_remove_filter.hpp"
 
 namespace sdb::connector {
-
 namespace {
 
 struct SearchGlobalSourceState : public duckdb::GlobalSourceState {
@@ -111,7 +110,7 @@ duckdb::SourceResultType SereneDBPhysicalVectorSearchBase::GetDataInternal(
   const size_t batch_size =
     std::min<size_t>(STANDARD_VECTOR_SIZE, n_results - state.current_idx);
 
-  // Column 0: BLOB — raw PK bytes
+  // Column 0: BLOB -- raw PK bytes
   auto& pk_vec = chunk.data[0];
   auto* pk_data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(pk_vec);
   for (size_t i = 0; i < batch_size; ++i) {
@@ -120,7 +119,7 @@ duckdb::SourceResultType SereneDBPhysicalVectorSearchBase::GetDataInternal(
       duckdb::StringVector::AddStringOrBlob(pk_vec, pk.data(), pk.size());
   }
 
-  // Column 1 (optional): FLOAT — distance
+  // Column 1 (optional): FLOAT -- distance
   if (chunk.ColumnCount() >= 2) {
     auto* dist_data = duckdb::FlatVector::GetDataMutable<float>(chunk.data[1]);
     for (size_t i = 0; i < batch_size; ++i) {

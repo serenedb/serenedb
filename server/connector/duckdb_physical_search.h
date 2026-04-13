@@ -23,7 +23,6 @@
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
-
 #include <iresearch/index/index_reader.hpp>
 
 #include "catalog/index.h"
@@ -45,10 +44,8 @@ class SereneDBPhysicalVectorSearchBase : public duckdb::PhysicalOperator {
  public:
   SereneDBPhysicalVectorSearchBase(
     duckdb::PhysicalPlan& plan,
-    std::shared_ptr<search::InvertedIndexShard> index,
-    std::string field_name,
-    std::vector<float> query_vector,
-    duckdb::vector<duckdb::LogicalType> types,
+    std::shared_ptr<search::InvertedIndexShard> index, std::string field_name,
+    std::vector<float> query_vector, duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality,
     duckdb::OnConflictAction on_conflict = duckdb::OnConflictAction::THROW);
 
@@ -74,14 +71,13 @@ class SereneDBPhysicalVectorSearchBase : public duckdb::PhysicalOperator {
 };
 
 // ANN (top-k nearest neighbour) search operator.
-class SereneDBPhysicalANNSearch final : public SereneDBPhysicalVectorSearchBase {
+class SereneDBPhysicalANNSearch final
+  : public SereneDBPhysicalVectorSearchBase {
  public:
   SereneDBPhysicalANNSearch(
     duckdb::PhysicalPlan& plan,
-    std::shared_ptr<search::InvertedIndexShard> index,
-    std::string field_name,
-    std::vector<float> query_vector,
-    size_t top_k,
+    std::shared_ptr<search::InvertedIndexShard> index, std::string field_name,
+    std::vector<float> query_vector, size_t top_k,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality,
     duckdb::OnConflictAction on_conflict = duckdb::OnConflictAction::THROW);
@@ -94,16 +90,15 @@ class SereneDBPhysicalANNSearch final : public SereneDBPhysicalVectorSearchBase 
   size_t _top_k;
 };
 
-// Range search operator — returns all vectors within squared-L2 distance
+// Range search operator -- returns all vectors within squared-L2 distance
 // <= radius from the query vector.
-class SereneDBPhysicalRangeSearch final : public SereneDBPhysicalVectorSearchBase {
+class SereneDBPhysicalRangeSearch final
+  : public SereneDBPhysicalVectorSearchBase {
  public:
   SereneDBPhysicalRangeSearch(
     duckdb::PhysicalPlan& plan,
-    std::shared_ptr<search::InvertedIndexShard> index,
-    std::string field_name,
-    std::vector<float> query_vector,
-    float radius,
+    std::shared_ptr<search::InvertedIndexShard> index, std::string field_name,
+    std::vector<float> query_vector, float radius,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality,
     duckdb::OnConflictAction on_conflict = duckdb::OnConflictAction::THROW);

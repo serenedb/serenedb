@@ -28,6 +28,7 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
@@ -117,6 +118,13 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::string sk_upper_bound;
   rocksdb::Slice sk_upper_bound_slice;
 
+  // ANN and range search scan state (lazy: populated on first call).
+  // Shared between SereneDBANNScanFunction and SereneDBRangeSearchScanFunction;
+  // only one scan type is active per query.
+  std::vector<std::string> ann_pk_bytes;
+  size_t ann_current_idx = 0;
+  bool ann_search_done = false;
+
   ~SereneDBScanGlobalState() override {
     iterators.clear();  // Release iterators before snapshot
     if (snapshot) {
@@ -185,6 +193,12 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
     }
   }
 
+  // ANNScan and RangeSearchScan do random PK-based lookups; no sequential
+  // iterators needed.
+  if (bind_data.IsANNScan() || bind_data.IsRangeSearchScan()) {
+    return state;
+  }
+
   // If only rowid is requested, we still need one column iterator to drive scan
   if (scan_column_ids.empty() && !bind_data.column_ids.empty()) {
     scan_column_ids.push_back(bind_data.column_ids[0]);
@@ -242,6 +256,14 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
                                                duckdb::TableFunctionInput& data,
                                                duckdb::DataChunk& output);
 
+static void SereneDBANNScanFunction(duckdb::ClientContext& context,
+                                    duckdb::TableFunctionInput& data,
+                                    duckdb::DataChunk& output);
+
+static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& context,
+                                            duckdb::TableFunctionInput& data,
+                                            duckdb::DataChunk& output);
+
 static void SereneDBScanFunction(duckdb::ClientContext& context,
                                  duckdb::TableFunctionInput& data,
                                  duckdb::DataChunk& output) {
@@ -251,6 +273,12 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
   }
   if (bind_data.IsSecondaryIndexScan()) {
     return SereneDBSecondaryIndexScanFunction(context, data, output);
+  }
+  if (bind_data.IsANNScan()) {
+    return SereneDBANNScanFunction(context, data, output);
+  }
+  if (bind_data.IsRangeSearchScan()) {
+    return SereneDBRangeSearchScanFunction(context, data, output);
   }
 
   auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
@@ -557,6 +585,270 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
   }
 
   output.SetCardinality(num_rows);
+}
+
+// --- ANN scan: HNSW top-k -> PKs -> RocksDB materialization ---
+
+static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
+                                    duckdb::TableFunctionInput& data,
+                                    duckdb::DataChunk& output) {
+  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+
+  if (gstate.finished) {
+    output.SetCardinality(0);
+    return;
+  }
+
+  // Lazy init: run HNSW search on first call
+  if (!gstate.ann_search_done) {
+    gstate.ann_search_done = true;
+    auto& ann = std::get<ANNScan>(bind_data.scan_source);
+    auto snapshot = ann.shard->GetInvertedIndexSnapshot();
+
+    if (snapshot && snapshot->reader.size() > 0 && ann.top_k > 0) {
+      const size_t top_k = ann.top_k;
+      std::vector<float> dis(top_k, std::numeric_limits<float>::max());
+      std::vector<int64_t> ids(top_k, -1);
+
+      irs::HNSWSearchInfo info{
+        .query =
+          reinterpret_cast<const irs::byte_type*>(ann.query_vector.data()),
+        .top_k = top_k,
+      };
+      snapshot->reader.Search(ann.field_name, info, dis.data(), ids.data());
+
+      gstate.ann_pk_bytes.reserve(top_k);
+      auto& reader = snapshot->reader;
+      for (size_t i = 0; i < top_k; ++i) {
+        if (ids[i] == -1) {
+          continue;
+        }
+        auto [seg_id, doc_id] =
+          irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
+        if (seg_id >= reader.size()) {
+          continue;
+        }
+        const auto& segment = reader[seg_id];
+        const auto* pk_col = segment.column(kPkFieldName);
+        if (!pk_col) {
+          continue;
+        }
+        auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+        if (!pk_iter) {
+          continue;
+        }
+        const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
+        if (!pk_val) {
+          continue;
+        }
+        if (pk_iter->seek(doc_id) != doc_id) {
+          continue;
+        }
+        auto val = pk_val->value;
+        gstate.ann_pk_bytes.emplace_back(
+          reinterpret_cast<const char*>(val.data()), val.size());
+      }
+    }
+
+    if (gstate.ann_pk_bytes.empty()) {
+      gstate.finished = true;
+      output.SetCardinality(0);
+      return;
+    }
+  }
+
+  const size_t total = gstate.ann_pk_bytes.size();
+  const size_t batch_start = gstate.ann_current_idx;
+
+  if (batch_start >= total) {
+    gstate.finished = true;
+    output.SetCardinality(0);
+    return;
+  }
+
+  const size_t batch_size =
+    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
+
+  auto& engine = GetServerEngine();
+  auto* db = engine.db();
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
+  std::string key_buffer;
+  rocksdb::ReadOptions ro;
+  ro.snapshot = gstate.snapshot;
+  rocksdb::PinnableSlice value;
+
+  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
+    auto bind_col = gstate.projected_columns[proj];
+    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
+      auto* rowid_data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+        rowid_data[i] = static_cast<int64_t>(batch_start + i);
+      }
+      continue;
+    }
+
+    auto col_id = bind_data.column_ids[bind_col];
+    auto& type = gstate.projected_types[proj];
+
+    for (duckdb::idx_t row = 0; row < batch_size; ++row) {
+      const auto& pk = gstate.ann_pk_bytes[batch_start + row];
+      key_buffer = table_key;
+      basics::StrResize(key_buffer, kTablePrefixSize);
+      key_utils::AppendColumnKey(key_buffer, col_id);
+      key_buffer.append(pk);
+
+      value.Reset();
+      auto s = db->Get(ro, cf, key_buffer, &value);
+      if (s.IsNotFound()) {
+        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
+        continue;
+      }
+      SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
+      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
+                                 row);
+    }
+  }
+
+  gstate.ann_current_idx += batch_size;
+  output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
+
+  if (gstate.ann_current_idx >= total) {
+    gstate.finished = true;
+  }
+}
+
+// --- Range search scan: HNSW range -> PKs -> RocksDB materialization ---
+
+static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& /*context*/,
+                                            duckdb::TableFunctionInput& data,
+                                            duckdb::DataChunk& output) {
+  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+
+  if (gstate.finished) {
+    output.SetCardinality(0);
+    return;
+  }
+
+  // Lazy init: run HNSW range search on first call.
+  if (!gstate.ann_search_done) {
+    gstate.ann_search_done = true;
+    auto& rss = std::get<RangeSearchScan>(bind_data.scan_source);
+    auto snapshot = rss.shard->GetInvertedIndexSnapshot();
+
+    if (snapshot && snapshot->reader.size() > 0) {
+      std::vector<float> dis;
+      std::vector<int64_t> ids;
+
+      irs::HNSWRangeSearchInfo info{
+        .query =
+          reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
+        .radius = rss.radius,
+      };
+      snapshot->reader.RangeSearch(rss.field_name, info, dis, ids);
+
+      auto& reader = snapshot->reader;
+      gstate.ann_pk_bytes.reserve(ids.size());
+      for (size_t i = 0; i < ids.size(); ++i) {
+        auto [seg_id, doc_id] =
+          irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
+        if (seg_id >= reader.size()) {
+          continue;
+        }
+        const auto& segment = reader[seg_id];
+        const auto* pk_col = segment.column(kPkFieldName);
+        if (!pk_col) {
+          continue;
+        }
+        auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+        if (!pk_iter) {
+          continue;
+        }
+        const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
+        if (!pk_val) {
+          continue;
+        }
+        if (pk_iter->seek(doc_id) != doc_id) {
+          continue;
+        }
+        auto val = pk_val->value;
+        gstate.ann_pk_bytes.emplace_back(
+          reinterpret_cast<const char*>(val.data()), val.size());
+      }
+    }
+
+    if (gstate.ann_pk_bytes.empty()) {
+      gstate.finished = true;
+      output.SetCardinality(0);
+      return;
+    }
+  }
+
+  const size_t total = gstate.ann_pk_bytes.size();
+  const size_t batch_start = gstate.ann_current_idx;
+
+  if (batch_start >= total) {
+    gstate.finished = true;
+    output.SetCardinality(0);
+    return;
+  }
+
+  const size_t batch_size =
+    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
+
+  auto& engine = GetServerEngine();
+  auto* db = engine.db();
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
+  std::string key_buffer;
+  rocksdb::ReadOptions ro;
+  ro.snapshot = gstate.snapshot;
+  rocksdb::PinnableSlice value;
+
+  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
+    auto bind_col = gstate.projected_columns[proj];
+    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
+      auto* rowid_data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+        rowid_data[i] = static_cast<int64_t>(batch_start + i);
+      }
+      continue;
+    }
+
+    auto col_id = bind_data.column_ids[bind_col];
+    auto& type = gstate.projected_types[proj];
+
+    for (duckdb::idx_t row = 0; row < batch_size; ++row) {
+      const auto& pk = gstate.ann_pk_bytes[batch_start + row];
+      key_buffer = table_key;
+      basics::StrResize(key_buffer, kTablePrefixSize);
+      key_utils::AppendColumnKey(key_buffer, col_id);
+      key_buffer.append(pk);
+
+      value.Reset();
+      auto s = db->Get(ro, cf, key_buffer, &value);
+      if (s.IsNotFound()) {
+        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
+        continue;
+      }
+      SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
+      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
+                                 row);
+    }
+  }
+
+  gstate.ann_current_idx += batch_size;
+  output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
+
+  if (gstate.ann_current_idx >= total) {
+    gstate.finished = true;
+  }
 }
 
 // --- pushdown_complex_filter: intercept search predicates ---

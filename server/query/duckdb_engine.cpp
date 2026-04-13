@@ -158,6 +158,8 @@ void DuckDBEngine::Initialize() {
 
   connector::RegisterSearchFunctions(*_db->instance);
 
+  connector::RegisterSereneDBOptimizers(*_db->instance);
+
   // Register SereneDB index types.
   // These provide create_plan callbacks that bypass DuckDB's native
   // PhysicalCreateIndex (which requires DuckTableEntry).

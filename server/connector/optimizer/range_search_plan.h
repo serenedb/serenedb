@@ -20,20 +20,27 @@
 
 #pragma once
 
-#include <duckdb.hpp>
-#include <duckdb/storage/storage_extension.hpp>
+namespace duckdb {
 
-namespace sdb::connector {
+class DatabaseInstance;
+}
 
-class SereneDBStorageExtension : public duckdb::StorageExtension {
- public:
-  SereneDBStorageExtension();
-};
+namespace sdb::optimizer {
 
-// Register the storage extension with a DuckDB config (before DB creation).
-void RegisterSereneDBStorage(duckdb::DBConfig& config);
+// Registers the range search plan optimizer with DuckDB.
+// It detects the pattern:
+//   WHERE <distance_func>(col, const_vector) < radius
+// over a serenedb_scan, and rewrites it to use the HNSW index for
+// efficient range search retrieval.
+//
+// Index selection priority:
+//   1. Explicit: the index named in the query via "FROM i ON t" syntax
+//      (bind_data.table_entry->GetInvertedIndex() is non-null).
+//   2. Auto(TODO): the first InvertedIndex on the table that covers the
+//      distance column (fallback when no explicit index is given).
+//
+// Both < and <= operators are recognised.  The comparison may also be
+// written with the radius on the left (radius > distance).
+void RegisterRangeSearchOptimizer(duckdb::DatabaseInstance& db);
 
-// Register SereneDB optimizer extensions with a live DuckDB instance.
-void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db);
-
-}  // namespace sdb::connector
+}  // namespace sdb::optimizer

@@ -4,34 +4,29 @@ set -euo pipefail
 # Generate coverage reports inside Docker container
 # Outputs: HTML report + LCOV file
 
-# BUILD_DIRS_STR: space-separated list of build directories
-# Example: "build build2" or just "build"
+# BUILD_DIR: build directory to collect binaries and profiles from
 # Default to "build" if not set
-BUILD_DIRS_STR="${BUILD_DIRS_STR:-build}"
+BUILD_DIR="${BUILD_DIR:-build}"
 
 CONTAINER_SCRIPT='
 set -o pipefail
 cd /serenedb
 
-# Parse BUILD_DIRS_STR (space-separated) into array
-read -ra BUILD_DIRS <<< "${BUILD_DIRS_STR}"
-
-echo ":: Processing build directories: ${BUILD_DIRS[*]}"
+echo ":: Build directory: ${BUILD_DIR}"
 
 # Collect all binaries
 ALL_BINARIES=()
-for dir in "${BUILD_DIRS[@]}"; do
-    if [ -d "${dir}/bin" ]; then
-        while IFS= read -r -d "" bin; do
-            ALL_BINARIES+=("${bin}")
-        done < <(find "${dir}/bin" -type f -executable -print0 2>/dev/null)
-    else
-        echo "WARNING: Directory ${dir}/bin not found, skipping..."
-    fi
-done
+if [ -d "${BUILD_DIR}/bin" ]; then
+    while IFS= read -r -d "" bin; do
+        ALL_BINARIES+=("${bin}")
+    done < <(find "${BUILD_DIR}/bin" -type f -executable -print0 2>/dev/null)
+else
+    echo "ERROR: Directory ${BUILD_DIR}/bin not found!"
+    exit 1
+fi
 
 if [ ${#ALL_BINARIES[@]} -eq 0 ]; then
-    echo "ERROR: No binaries found in any build directory!"
+    echo "ERROR: No binaries found in ${BUILD_DIR}/bin!"
     exit 1
 fi
 
@@ -64,7 +59,7 @@ echo "   HTML: ./coverage/llvm_html"
 echo "=========================================="
 echo "Coverage Generation"
 echo "=========================================="
-echo "Build directories: ${BUILD_DIRS_STR}"
+echo "Build directory: ${BUILD_DIR}"
 echo "=========================================="
 
 if docker run --rm \
@@ -75,7 +70,7 @@ if docker run --rm \
 	--cap-add=SYS_PTRACE \
 	--security-opt seccomp=unconfined \
 	--env-file ./docker.env \
-	-e "BUILD_DIRS_STR=${BUILD_DIRS_STR}" \
+	-e "BUILD_DIR=${BUILD_DIR}" \
 	-v "${WORKSPACE}:/serenedb" \
 	"${BUILD_IMAGE}" \
 	bash -c "${CONTAINER_SCRIPT}"; then

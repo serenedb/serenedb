@@ -211,101 +211,45 @@ jobs:
           DOCKER_USER="$(id -u):$(id -g)"
           EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
 
-          # Build gtest targets
-          if [[ "$SDB_GTEST" == "On" ]]; then
-            docker run --rm \
-              --user "$DOCKER_USER" \
-              -e HOME=/serenedb \
-              -e CCACHE_DIR=/.ccache \
-              --cap-add=SYS_PTRACE \
-              --security-opt seccomp=unconfined \
-              --env-file ./docker.env \
-              -e SDB_GTEST=On \
-              -e BUILDMODE="$BUILDMODE" \
-              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
-              -e SDB_DEV="$SDB_DEV" \
-              -e SDB_FAULT_INJECTION=Off \
-              -e USE_IPO=Off \
-              -e USE_COVERAGE="$USE_COVERAGE" \
-              -e ENSURE_VTUNE_SYMBOLS=Off \
-              -e BUILD_DIR=build_gtest \
-              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
-              -v "${WORKSPACE}:/serenedb" \
-              -v /mnt/data/.ccache:/.ccache \
-              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests
-          fi
+          TARGETS=(serenedb tzdata)
+          [[ "$SDB_GTEST" == "On" ]] && TARGETS+=(vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests)
 
-          # Build serened for functional tests
-          if [[ "$SDB_FAULT_INJECTION" == "On" ]]; then
-            docker run --rm \
-              --user "$DOCKER_USER" \
-              -e HOME=/serenedb \
-              -e CCACHE_DIR=/.ccache \
-              --cap-add=SYS_PTRACE \
-              --security-opt seccomp=unconfined \
-              --env-file ./docker.env \
-              -e SDB_GTEST=Off \
-              -e BUILDMODE="$BUILDMODE" \
-              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
-              -e SDB_DEV="$SDB_DEV" \
-              -e SDB_FAULT_INJECTION=On \
-              -e USE_IPO=Off \
-              -e USE_COVERAGE="$USE_COVERAGE" \
-              -e ENSURE_VTUNE_SYMBOLS=Off \
-              -e BUILD_DIR=build_tests \
-              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
-              -v "${WORKSPACE}:/serenedb" \
-              -v /mnt/data/.ccache:/.ccache \
-              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
-          fi
-
-          # Build-only compile check (KIND=none)
-          if [[ "$SDB_GTEST" == "Off" && "$SDB_FAULT_INJECTION" == "Off" ]]; then
-            docker run --rm \
-              --user "$DOCKER_USER" \
-              -e HOME=/serenedb \
-              -e CCACHE_DIR=/.ccache \
-              --cap-add=SYS_PTRACE \
-              --security-opt seccomp=unconfined \
-              --env-file ./docker.env \
-              -e SDB_GTEST=Off \
-              -e BUILDMODE="$BUILDMODE" \
-              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
-              -e SDB_DEV="$SDB_DEV" \
-              -e SDB_FAULT_INJECTION=Off \
-              -e USE_IPO=Off \
-              -e USE_COVERAGE= \
-              -e ENSURE_VTUNE_SYMBOLS=Off \
-              -e BUILD_DIR=build \
-              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
-              -v "${WORKSPACE}:/serenedb" \
-              -v /mnt/data/.ccache:/.ccache \
-              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
-          fi
+          docker run --rm \
+            --user "$DOCKER_USER" \
+            -e HOME=/serenedb \
+            -e CCACHE_DIR=/.ccache \
+            --cap-add=SYS_PTRACE \
+            --security-opt seccomp=unconfined \
+            --env-file ./docker.env \
+            -e BUILD_DIR=build \
+            -e SDB_GTEST="$SDB_GTEST" \
+            -e BUILDMODE="$BUILDMODE" \
+            -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+            -e SDB_DEV="$SDB_DEV" \
+            -e SDB_FAULT_INJECTION="$SDB_FAULT_INJECTION" \
+            -e USE_IPO="$USE_IPO" \
+            -e USE_COVERAGE="$USE_COVERAGE" \
+            -e ENSURE_VTUNE_SYMBOLS="$ENSURE_VTUNE_SYMBOLS" \
+            ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+            -v "${WORKSPACE}:/serenedb" \
+            -v /mnt/data/.ccache:/.ccache \
+            "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash "${TARGETS[@]}"
 
           mkdir -p cores
 
       - name: Run gtest suites
         id: gtest
         if: steps.build.outcome == 'success' && env.RUN_UNIT_TESTS == 'true'
-        run: BUILD_DIR=build_gtest ./scripts/ci/steps/04a-ci-run-gtest-suites.bash
+        run: BUILD_DIR=build ./scripts/ci/steps/04a-ci-run-gtest-suites.bash
 
       - name: Run integration tests
         id: integration
         if: steps.build.outcome == 'success' && env.RUN_INTEGRATION_TESTS == 'true'
-        run: BUILD_DIR=build_tests ./scripts/ci/steps/04b-ci-run-integration-tests.bash
+        run: BUILD_DIR=build ./scripts/ci/steps/04b-ci-run-integration-tests.bash
 
       - name: Generate coverage report
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
-        run: |
-          if [[ "$RUN_UNIT_TESTS" == 'true' && "$RUN_INTEGRATION_TESTS" == 'true' ]]; then
-            BUILD_DIRS_STR="build_gtest build_tests"
-          elif [[ "$RUN_UNIT_TESTS" == 'true' ]]; then
-            BUILD_DIRS_STR="build_gtest"
-          else
-            BUILD_DIRS_STR="build_tests"
-          fi
-          BUILD_DIRS_STR="$BUILD_DIRS_STR" ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+        run: BUILD_DIR=build ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
       - name: Upload artifacts
         if: always()

@@ -20,7 +20,6 @@
 
 #include "pg/serialize.h"
 
-#define SDB_PG_LOGICAL_TYPES_NO_FACTORY
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/ascii.h>
@@ -36,12 +35,17 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/types/bit.hpp>
 #include <duckdb/common/types/hugeint.hpp>
+#include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <limits>
 #include <string_view>
 #include <type_traits>
+
+#define SDB_PG_LOGICAL_TYPES_NO_FACTORY
 
 #include "basics/assert.h"
 #include "basics/dtoa.h"
@@ -49,85 +53,55 @@
 #include "basics/misc.hpp"
 #include "connector/pg_logical_types.h"
 #include "pg/pg_types.h"
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 #include "query/config.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
-
-#define SERIALIZE_PRIMITIVE(kind)                  \
-  static constexpr auto kSerializeText =           \
-    SerializePrimitiveType<kind, VarFormat::Text>; \
-  static constexpr auto kSerializeBinary =         \
-    SerializePrimitiveType<kind, VarFormat::Binary>
-
-// Map DuckDB LogicalTypeId to PG OID (for array element types)
-constexpr int32_t Kind2Oid(duckdb::LogicalTypeId kind,
-                           bool /*is_array*/ = false) {
-  switch (kind) {
-    case duckdb::LogicalTypeId::BOOLEAN:
-      return 16;
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-      return 21;
-    case duckdb::LogicalTypeId::INTEGER:
-      return 23;
-    case duckdb::LogicalTypeId::BIGINT:
-      return 20;
-    case duckdb::LogicalTypeId::FLOAT:
-      return 700;
-    case duckdb::LogicalTypeId::DOUBLE:
-      return 701;
-    case duckdb::LogicalTypeId::VARCHAR:
-      return 25;
-    case duckdb::LogicalTypeId::BLOB:
-      return 17;
-    case duckdb::LogicalTypeId::TIMESTAMP:
-      return 1114;
-    case duckdb::LogicalTypeId::DATE:
-      return 1082;
-    case duckdb::LogicalTypeId::INTERVAL:
-      return 1186;
-    case duckdb::LogicalTypeId::UUID:
-      return 2950;
-    case duckdb::LogicalTypeId::DECIMAL:
-      return 1700;
-    default:
-      return 25;  // TEXT fallback
-  }
-}
 
 #define RETURN_SERIALIZATION(serialize_text, serialize_binary)         \
   return format == VarFormat::Text ? SerializeNullable<serialize_text> \
                                    : SerializeNullable<serialize_binary>
 
-#define CASE_SERIALIZATION(kind)                            \
-  case kind: {                                              \
-    SERIALIZE_PRIMITIVE(kind);                              \
-    RETURN_SERIALIZATION(kSerializeText, kSerializeBinary); \
+enum class ArrayKind {
+  ListSingleDimension,
+  ArraySingleDimension,
+  MultiDimensions,
+};
+
+#define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid)     \
+  switch (kind) {                                                             \
+    case ArrayKind::ListSingleDimension:                                      \
+      return format == VarFormat::Text                                        \
+               ? SerializeNullable<                                           \
+                   SerializeOneDimArray<serialize_text, oid, VarFormat::Text, \
+                                        ArrayKind::ListSingleDimension>>      \
+               : SerializeNullable<SerializeOneDimArray<                      \
+                   serialize_binary, oid, VarFormat::Binary,                  \
+                   ArrayKind::ListSingleDimension>>;                          \
+    case ArrayKind::ArraySingleDimension:                                     \
+      return format == VarFormat::Text                                        \
+               ? SerializeNullable<                                           \
+                   SerializeOneDimArray<serialize_text, oid, VarFormat::Text, \
+                                        ArrayKind::ArraySingleDimension>>     \
+               : SerializeNullable<SerializeOneDimArray<                      \
+                   serialize_binary, oid, VarFormat::Binary,                  \
+                   ArrayKind::ArraySingleDimension>>;                         \
+    case ArrayKind::MultiDimensions:                                          \
+      return format == VarFormat::Text                                        \
+               ? SerializeNullable<                                           \
+                   SerializeArray<serialize_text, oid, VarFormat::Text>>      \
+               : SerializeNullable<                                           \
+                   SerializeArray<serialize_binary, oid, VarFormat::Binary>>; \
   }
 
-#define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid)    \
-  if (dims == 1) {                                                           \
-    return format == VarFormat::Text                                         \
-             ? SerializeNullable<                                            \
-                 SerializeOneDimArray<serialize_text, oid, VarFormat::Text>> \
-             : SerializeNullable<SerializeOneDimArray<serialize_binary, oid, \
-                                                      VarFormat::Binary>>;   \
-  }                                                                          \
-  return format == VarFormat::Text                                           \
-           ? SerializeNullable<                                              \
-               SerializeArray<serialize_text, oid, VarFormat::Text>>         \
-           : SerializeNullable<                                              \
-               SerializeArray<serialize_binary, oid, VarFormat::Binary>>
-
-#define CASE_ARRAY_SERIALIZATION(kind)                                  \
-  case kind: {                                                          \
-    SERIALIZE_PRIMITIVE(kind);                                          \
-    static constexpr auto kOid = Kind2Oid(kind, true);                  \
-    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kOid); \
-  }
-
-template<DuckDBSerializationFunction ValueSerialization>
+template<SerializationFunction ValueSerialization>
 void SerializeNullable(SerializationContext context,
                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
@@ -142,7 +116,12 @@ void SerializeNullable(SerializationContext context,
   }
 }
 
-template<typename T, VarFormat Format, bool Precise = true>
+void SerializeNull(SerializationContext context,
+                   const duckdb::RecursiveUnifiedVectorFormat&, duckdb::idx_t) {
+  absl::big_endian::Store32(context.buffer->GetContiguousData(4), -1);
+}
+
+template<VarFormat Format, typename T, bool Precise = true>
 void SerializeFloat(SerializationContext context,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
@@ -189,13 +168,12 @@ void SerializeFloat(SerializationContext context,
   }
 }
 
-template<typename T, VarFormat Format>
+template<VarFormat Format, typename Read, typename Wire = Read>
 void SerializeInt(SerializationContext context,
                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
                   duckdb::idx_t row) {
   const auto value =
-    vdata.unified.GetData<T>()[vdata.unified.sel->get_index(row)];
-
+    vdata.unified.GetData<Read>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     context.buffer->WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
@@ -203,8 +181,8 @@ void SerializeInt(SerializationContext context,
       return static_cast<size_t>(ptr - buf);
     });
   } else {
-    absl::big_endian::Store(context.buffer->GetContiguousData(sizeof(T)),
-                            value);
+    absl::big_endian::Store(context.buffer->GetContiguousData(sizeof(Wire)),
+                            static_cast<Wire>(value));
   }
 }
 
@@ -219,13 +197,11 @@ void SerializeInt(SerializationContext context,
 // * backslashes
 // * space
 bool ArrayItemNeedQuotesAndEscape(std::string_view data) {
-  return data.empty() ||
-         absl::c_any_of(data,
-                        [](char c) {
-                          return c == '{' || c == '}' || c == ',' || c == '"' ||
-                                 c == '\\' || absl::ascii_isspace(c);
-                        }) ||
-         absl::EqualsIgnoreCase(data, "null");
+  return data.empty() || absl::EqualsIgnoreCase(data, "null") ||
+         absl::c_any_of(data, [](char c) {
+           return c == '{' || c == '}' || c == ',' || c == '"' || c == '\\' ||
+                  absl::ascii_isspace(c);
+         });
 }
 
 void WriteArrayItemQuotedAndEscaped(std::string_view item,
@@ -265,60 +241,71 @@ void SerializeVarchar(SerializationContext context,
   }
 }
 
-template<VarFormat Format>
-void SerializeHugeint(SerializationContext context,
-                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                      duckdb::idx_t row) {
-  // HUGEINT is equivalent to DECIMAL(38, 0) -- same physical storage
-  auto value =
-    vdata.unified
-      .GetData<duckdb::hugeint_t>()[vdata.unified.sel->get_index(row)];
-  if constexpr (Format == VarFormat::Text) {
-    auto str = duckdb::Hugeint::ToString(value);
-    context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
-      memcpy(data, str.data(), str.size());
-      return str.size();
-    });
-  } else {
-    // Reuse PG numeric binary layout (scale=0)
-    static constexpr size_t kBaseSystem = 10'000;
-    static constexpr int16_t kPositive = 0x0000;
-    static constexpr int16_t kNegative = 0x4000;
+// Encode a value into PG numeric binary format.
+// value is the unscaled integer (e.g. 12345 for 123.45 with scale=2).
+// Use scale=0 for integer types. Caller must convert duckdb::hugeint_t /
+// uhugeint_t to absl::int128 / absl::uint128 before calling.
+template<typename T>
+void WriteAsNumericBinary(SerializationContext context, T value,
+                          int32_t scale) {
+  static constexpr int32_t kBase = 10'000;
+  static constexpr int16_t kPositive = 0x0000;
+  static constexpr int16_t kNegative = 0x4000;
+  static constexpr int16_t kPowersOfTen[] = {1, 10, 100, 1000};
 
-    auto sign = (value < 0) ? kNegative : kPositive;
-    value = value < 0 ? -value : value;
+  int16_t extra_digits = static_cast<int16_t>((4 - (scale % 4)) % 4);
+  auto extra_base = kPowersOfTen[extra_digits];
 
-    int16_t ndigits = [](auto value) -> int16_t {
-      if (value == 0) {
-        return 0;
-      }
-      int16_t ndigits = 0;
-      for (; value != 0; value /= kBaseSystem) {
-        ++ndigits;
-      }
-      return ndigits;
-    }(value);
-
-    auto weight = static_cast<int16_t>(ndigits - 1);
-    auto* data = context.buffer->GetContiguousData(8 + ndigits * 2);
-    absl::big_endian::Store16(data, ndigits);
-    absl::big_endian::Store16(data + 2, weight);
-    absl::big_endian::Store16(data + 4, sign);
-    absl::big_endian::Store16(data + 6, 0);  // dscale = 0
-    data += 8 + ndigits * 2;
-
-    while (value != 0) {
-      data -= 2;
-      ndigits--;
-      absl::big_endian::Store16(
-        data, static_cast<int16_t>(static_cast<int64_t>(value % kBaseSystem)));
-      value /= kBaseSystem;
+  int16_t sign = kPositive;
+  if constexpr (std::numeric_limits<T>::is_signed) {
+    if (value < T{0}) {
+      sign = kNegative;
+      value = -value;
     }
-    SDB_ASSERT(ndigits == 0);
   }
+
+  int16_t ndigits = [extra_base](auto v) -> int16_t {
+    if (v == T{0}) {
+      return 0;
+    }
+    int16_t n = 0;
+    if (extra_base != 1) {
+      ++n;
+      v /= static_cast<T>(kBase / extra_base);
+    }
+    for (; v != T{0}; v /= static_cast<T>(kBase)) {
+      ++n;
+    }
+    return n;
+  }(value);
+
+  auto weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
+  auto* data = context.buffer->GetContiguousData(8 + ndigits * 2);
+  absl::big_endian::Store16(data, ndigits);
+  absl::big_endian::Store16(data + 2, weight);
+  absl::big_endian::Store16(data + 4, sign);
+  absl::big_endian::Store16(data + 6, static_cast<int16_t>(scale));
+  data += 8 + ndigits * 2;
+
+  if (extra_base != 1 && value != T{0}) {
+    data -= 2;
+    ndigits--;
+    auto digit =
+      (value % static_cast<T>(kBase / extra_base)) * static_cast<T>(extra_base);
+    absl::big_endian::Store16(data, static_cast<int16_t>(digit));
+    value /= static_cast<T>(kBase / extra_base);
+  }
+  while (value != T{0}) {
+    data -= 2;
+    ndigits--;
+    absl::big_endian::Store16(
+      data, static_cast<int16_t>(value % static_cast<T>(kBase)));
+    value /= static_cast<T>(kBase);
+  }
+  SDB_ASSERT(ndigits == 0);
 }
 
-template<VarFormat Format, typename UnscaledType>
+template<VarFormat Format, typename PhysicalType>
 void SerializeDecimal(SerializationContext context,
                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
@@ -326,90 +313,76 @@ void SerializeDecimal(SerializationContext context,
   auto precision = duckdb::DecimalType::GetWidth(type);
   auto scale = duckdb::DecimalType::GetScale(type);
   auto value =
-    vdata.unified.GetData<UnscaledType>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<PhysicalType>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
-    // Use DuckDB's Value::ToString for text decimal formatting.
-    // Must use the correct DECIMAL overload matching the physical storage type.
-    auto dec_value = duckdb::Value::DECIMAL(value, precision, scale);
-    auto str = dec_value.ToString();
-    context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
-      memcpy(data, str.data(), str.size());
-      return str.size();
+    auto str = duckdb::Value::DECIMAL(value, precision, scale).ToString();
+    context.buffer->WriteUncommitted(str);
+  } else {
+    if constexpr (std::is_same_v<PhysicalType, duckdb::hugeint_t>) {
+      WriteAsNumericBinary(context, absl::MakeInt128(value.upper, value.lower),
+                           scale);
+    } else {
+      WriteAsNumericBinary(context, value, scale);
+    }
+  }
+}
+
+template<VarFormat Format>
+void SerializeUbigint(SerializationContext context,
+                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                      duckdb::idx_t row) {
+  const auto value =
+    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    context.buffer->WriteContiguousData(basics::kIntStrMaxLen, [&](auto* data) {
+      char* buf = reinterpret_cast<char*>(data);
+      char* ptr = absl::numbers_internal::FastIntToBuffer(value, buf);
+      return static_cast<size_t>(ptr - buf);
     });
   } else {
-    // Well, here we go...
-    // Postgre numeric(decimal) type has special binary layout:
-    // int16_t ndigits;  number of digits
-    // int16_t weight;  weight of first digit(the exponent of the first digit)
-    // int16_t sign;  sign of the number
-    // int16_t dscale;  display scale
-    // int16_t digits[ndigits];  base 10000 digits
+    WriteAsNumericBinary(context, value, 0);
+  }
+}
 
-    // So, in velox value = real_value * 10^scale
-    // However, in Postgres each digit represents 4 decimal digits,
-    // i.e. base 10000. So we need to convert velox decimal representation
-    // to Postgres numeric representation.
+template<VarFormat Format>
+void SerializeHugeint(SerializationContext context,
+                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                      duckdb::idx_t row) {
+  auto value =
+    vdata.unified
+      .GetData<duckdb::hugeint_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    context.buffer->WriteContiguousData(
+      absl::numbers_internal::kFastToBuffer128Size, [&](auto* data) {
+        char* buf = reinterpret_cast<char*>(data);
+        char* ptr = absl::numbers_internal::FastIntToBuffer(
+          absl::MakeInt128(value.upper, value.lower), buf);
+        return static_cast<size_t>(ptr - buf);
+      });
+  } else {
+    WriteAsNumericBinary(context, absl::MakeInt128(value.upper, value.lower),
+                         0);
+  }
+}
 
-    // E.g. value = 12345 with scale = 2 means real_value = 123.45
-    // In Postgres representation it will be:
-    // ndigits = 2
-    // weight = 0
-    // sign = 0x0000
-    // dscale = 2
-    // digits[0] = 123
-    // digits[1] = 4500
-    static constexpr size_t kBaseSystem = 10'000;
-    static constexpr int16_t kPositive = 0x0000;
-    static constexpr int16_t kNegative = 0x4000;
-    int16_t extra_digits = (4 - (scale % 4)) % 4;
-    static constexpr int16_t kPowersOfTen[] = {1, 10, 100, 1000};
-    auto extra_base = kPowersOfTen[extra_digits];
-
-    auto sign = (value < 0) ? kNegative : kPositive;
-    value = value < 0 ? -value : value;
-
-    int16_t ndigits = [extra_base](auto value) -> int16_t {
-      if (value == 0) {
-        return 0;
-      }
-      int16_t ndigits = 0;
-      if (extra_base != 1) {
-        ndigits++;
-        value /= (kBaseSystem / extra_base);
-      }
-      for (; value != 0; value /= kBaseSystem) {
-        ++ndigits;
-      }
-      return ndigits;
-    }(value);
-
-    auto weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
-    auto dscale = static_cast<int16_t>(scale);
-    auto* data = context.buffer->GetContiguousData(8 + ndigits * 2);
-    absl::big_endian::Store16(data, ndigits);
-    absl::big_endian::Store16(data + 2, weight);
-    absl::big_endian::Store16(data + 4, sign);
-    absl::big_endian::Store16(data + 6, dscale);
-    data += 8 + ndigits * 2;
-
-    // Adjust dscale to be multiple of 4 for ndigits
-    if (extra_base != 1 && value != 0) {
-      data -= 2;
-      ndigits--;
-      int16_t extra_value = static_cast<int16_t>(static_cast<int64_t>(
-        (value % (kBaseSystem / extra_base)) * extra_base));
-      value /= (kBaseSystem / extra_base);
-      absl::big_endian::Store16(data, extra_value);
-    }
-
-    while (value != 0) {
-      data -= 2;
-      ndigits--;
-      absl::big_endian::Store16(
-        data, static_cast<int16_t>(static_cast<int64_t>(value % kBaseSystem)));
-      value /= kBaseSystem;
-    }
-    SDB_ASSERT(ndigits == 0);
+template<VarFormat Format>
+void SerializeUhugeint(SerializationContext context,
+                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                       duckdb::idx_t row) {
+  const auto value =
+    vdata.unified
+      .GetData<duckdb::uhugeint_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    context.buffer->WriteContiguousData(
+      absl::numbers_internal::kFastToBuffer128Size, [&](auto* data) {
+        char* buf = reinterpret_cast<char*>(data);
+        char* ptr = absl::numbers_internal::FastIntToBuffer(
+          absl::MakeUint128(value.upper, value.lower), buf);
+        return static_cast<size_t>(ptr - buf);
+      });
+  } else {
+    WriteAsNumericBinary(context, absl::MakeUint128(value.upper, value.lower),
+                         0);
   }
 }
 
@@ -454,66 +427,211 @@ void SerializeByteaBinary(SerializationContext context,
   context.buffer->WriteUncommitted(value);
 }
 
-// Postgres stores days from 2000-01-01
-constexpr auto kGapDays =
-  absl::CivilDay{2000, 1, 1} - absl::CivilDay{1970, 1, 1};
-
-template<duckdb::LogicalTypeId Kind, VarFormat Format>
-void SerializePrimitiveType(SerializationContext context,
-                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                            duckdb::idx_t row) {
-  if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
-    SDB_ASSERT(false);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {
-    SerializeInt<int8_t, Format>(context, vdata, row);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::SMALLINT) {
-    SerializeInt<int16_t, Format>(context, vdata, row);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::INTEGER) {
-    SerializeInt<int32_t, Format>(context, vdata, row);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::BIGINT) {
-    SerializeInt<int64_t, Format>(context, vdata, row);
-  } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
-    if constexpr (Format == VarFormat::Text) {
-      auto value =
-        vdata.unified.GetData<bool>()[vdata.unified.sel->get_index(row)];
-      context.buffer->WriteUncommitted(value ? "t" : "f");
-    } else {
-      auto* ptr = reinterpret_cast<bool*>(
-        context.buffer->GetContiguousData(sizeof(bool)));
-      *ptr = vdata.unified.GetData<bool>()[vdata.unified.sel->get_index(row)];
-    }
-  } else if constexpr (Kind == duckdb::LogicalTypeId::TIMESTAMP) {
-    const auto timestamp =
-      vdata.unified
-        .GetData<duckdb::timestamp_t>()[vdata.unified.sel->get_index(row)];
-    if constexpr (Format == VarFormat::Text) {
-      auto str = duckdb::Timestamp::ToString(timestamp);
-      context.buffer->WriteContiguousData(str.size(), [&](auto* data) {
-        memcpy(data, str.data(), str.size());
-        return str.size();
-      });
-    } else {
-      // PG binary: microseconds since 2000-01-01
-      static constexpr int64_t kGapUs =
-        static_cast<int64_t>(kGapDays) * 24 * 60 * 60 * 1000000LL;
-      // DuckDB timestamp is microseconds since epoch
-      int64_t pg_us = timestamp.value - kGapUs;
-      absl::big_endian::Store64(context.buffer->GetContiguousData(8), pg_us);
-    }
+template<VarFormat Format>
+void SerializeBool(SerializationContext context,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                   duckdb::idx_t row) {
+  auto value = vdata.unified.GetData<bool>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    context.buffer->WriteUncommitted(value ? "t" : "f");
+  } else {
+    auto* ptr =
+      reinterpret_cast<bool*>(context.buffer->GetContiguousData(sizeof(bool)));
+    *ptr = value;
   }
 }
 
-template<DuckDBSerializationFunction ElementSerialization, int32_t ElementOID,
-         VarFormat Format>
+template<VarFormat Format>
+void SerializeTimestampSec(SerializationContext context,
+                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                           duckdb::idx_t row) {
+  const auto timestamp =
+    vdata.unified
+      .GetData<duckdb::timestamp_sec_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Timestamp::ToString(
+      duckdb::Timestamp::FromEpochSeconds(timestamp.value));
+    context.buffer->WriteUncommitted(str);
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              (timestamp.value - kGapSec) * 1'000'000);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTimestampMs(SerializationContext context,
+                          const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                          duckdb::idx_t row) {
+  const auto timestamp =
+    vdata.unified
+      .GetData<duckdb::timestamp_ms_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Timestamp::ToString(
+      duckdb::Timestamp::FromEpochMicroSeconds(timestamp.value));
+    context.buffer->WriteUncommitted(str);
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              (timestamp.value - kGapMs) * 1000);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTimestamp(SerializationContext context,
+                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                        duckdb::idx_t row) {
+  const auto timestamp =
+    vdata.unified
+      .GetData<duckdb::timestamp_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Timestamp::ToString(timestamp);
+    context.buffer->WriteUncommitted(str);
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              timestamp.value - kGapUs);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTimestampNs(SerializationContext context,
+                          const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                          duckdb::idx_t row) {
+  const auto timestamp =
+    vdata.unified
+      .GetData<duckdb::timestamp_ns_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Timestamp::ToString(
+      duckdb::Timestamp::FromEpochNanoSeconds(timestamp.value));
+    context.buffer->WriteUncommitted(str);
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              (timestamp.value - kGapNs) / 1000);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTimestampTz(SerializationContext context,
+                          const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                          duckdb::idx_t row) {
+  const auto ts =
+    vdata.unified
+      .GetData<duckdb::timestamp_tz_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Timestamp::ToString(ts);
+    context.buffer->WriteUncommitted(str);
+    context.buffer->WriteUncommitted("+00");
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              ts.value - kGapUs);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTime(SerializationContext context,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                   duckdb::idx_t row) {
+  const auto time =
+    vdata.unified.GetData<duckdb::dtime_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Time::ToString(time);
+    context.buffer->WriteUncommitted(str);
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              time.micros);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTimeNs(SerializationContext context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+  const auto time =
+    vdata.unified
+      .GetData<duckdb::dtime_ns_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    auto str = duckdb::Time::ToString(time.time());
+    context.buffer->WriteUncommitted(str);
+  } else {
+    absl::big_endian::Store64(context.buffer->GetContiguousData(8),
+                              time.time().micros);
+  }
+}
+
+template<VarFormat Format>
+void SerializeTimeTz(SerializationContext context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+  const auto tz =
+    vdata.unified
+      .GetData<duckdb::dtime_tz_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    // Format: HH:MM:SS[.mmm][±HH:MM]
+    auto time_str = duckdb::Time::ToString(tz.time());
+    context.buffer->WriteUncommitted(time_str);
+    const auto offset_secs = tz.offset();
+    const bool negative = offset_secs < 0;
+    const auto abs_offset = negative ? -offset_secs : offset_secs;
+    const auto offset_h = abs_offset / 3600;
+    const auto offset_m = (abs_offset % 3600) / 60;
+    context.buffer->WriteContiguousData(6, [&](auto* data) {
+      char* buf = reinterpret_cast<char*>(data);
+      *buf++ = negative ? '-' : '+';
+      *buf++ = '0' + offset_h / 10;
+      *buf++ = '0' + offset_h % 10;
+      *buf++ = ':';
+      *buf++ = '0' + offset_m / 10;
+      *buf++ = '0' + offset_m % 10;
+      return size_t{6};
+    });
+  } else {
+    // PG binary: int64 time_micros + int32 zone (seconds WEST of UTC).
+    // DuckDB offset() is seconds EAST, so negate.
+    auto* data = context.buffer->GetContiguousData(12);
+    absl::big_endian::Store64(data, tz.time().micros);
+    absl::big_endian::Store32(data + 8, -tz.offset());
+  }
+}
+
+template<VarFormat Format>
+void SerializeBit(SerializationContext context,
+                  const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                  duckdb::idx_t row) {
+  const auto raw =
+    vdata.unified
+      .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
+  if constexpr (Format == VarFormat::Text) {
+    // DuckDB Bit::ToString gives "01001..." string
+    auto str = duckdb::Bit::ToString(raw);
+    context.buffer->WriteUncommitted(str);
+  } else {
+    // PG binary: int32 nBits + ceil(nBits/8) packed bytes MSB-first
+    // DuckDB internal: byte[0]=padding count, byte[1..N]=packed bits MSB-first
+    const auto n_bits = static_cast<int32_t>(duckdb::Bit::BitLength(raw));
+    const auto n_bytes = (n_bits + 7) / 8;
+    auto* data = context.buffer->GetContiguousData(4 + n_bytes);
+    absl::big_endian::Store32(data, n_bits);
+    // raw.GetData()[0] is padding, [1..n_bytes] are the bit data
+    memcpy(data + 4, raw.GetData() + 1, n_bytes);
+  }
+}
+
+template<SerializationFunction ElementSerialization, int32_t ElementOID,
+         VarFormat Format, ArrayKind Kind>
 void SerializeOneDimArray(SerializationContext context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
-  auto list_data =
-    vdata.unified
-      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  duckdb::idx_t array_size;
+  duckdb::idx_t array_offset;
+  if constexpr (Kind == ArrayKind::ArraySingleDimension) {
+    array_size = duckdb::ArrayType::GetSize(vdata.logical_type);
+    array_offset = row * array_size;
+  } else {
+    auto list_data =
+      vdata.unified
+        .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+    array_size = list_data.length;
+    array_offset = list_data.offset;
+  }
   auto& child_vdata = vdata.children[0];
-  auto array_size = list_data.length;
-  auto array_offset = list_data.offset;
   if constexpr (Format == VarFormat::Text) {
     context.buffer->WriteUncommitted("{");
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
@@ -530,6 +648,11 @@ void SerializeOneDimArray(SerializationContext context,
     }
     context.buffer->WriteUncommitted("}");
   } else {
+    // dimensions (4) - amount of array dims
+    // flags(4) - 0(no nulls), 1(have nulls)
+    // element_oid (4) - oid of an array element
+    // dim1 size (4) - size of first(and only) dim
+    // lower_bound (4) - begin offset(0 by default)
     auto* prefix_data = context.buffer->GetContiguousData(20);
     absl::big_endian::Store32(prefix_data, 1);
     absl::big_endian::Store32(prefix_data + 4, 1);
@@ -545,21 +668,30 @@ void SerializeOneDimArray(SerializationContext context,
 }
 
 // Multi-dim array serialization (text only for now, binary uses FlattenArray)
-template<DuckDBSerializationFunction ElementSerialization, VarFormat Format,
+template<SerializationFunction ElementSerialization, VarFormat Format,
          bool First = true>
 int32_t FlattenArray(SerializationContext context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
-  if (vdata.logical_type.id() != duckdb::LogicalTypeId::LIST) {
+  const auto lid = vdata.logical_type.id();
+  if (lid != duckdb::LogicalTypeId::LIST &&
+      lid != duckdb::LogicalTypeId::ARRAY) {
     SerializeNullable<ElementSerialization>(context, vdata, row);
     return 0;
   }
-  auto list_data =
-    vdata.unified
-      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  duckdb::idx_t array_size;
+  duckdb::idx_t array_offset;
+  if (lid == duckdb::LogicalTypeId::ARRAY) {
+    array_size = duckdb::ArrayType::GetSize(vdata.logical_type);
+    array_offset = row * array_size;
+  } else {
+    auto list_data =
+      vdata.unified
+        .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+    array_size = list_data.length;
+    array_offset = list_data.offset;
+  }
   auto& child_vdata = vdata.children[0];
-  auto array_size = list_data.length;
-  auto array_offset = list_data.offset;
   if constexpr (First) {
     auto* prefix_data = context.buffer->GetContiguousData(8);
     absl::big_endian::Store32(prefix_data + 4, 0);
@@ -587,13 +719,15 @@ int32_t FlattenArray(SerializationContext context,
   return dims;
 }
 
-template<DuckDBSerializationFunction ElementSerialization, int32_t ElementOID,
+template<SerializationFunction ElementSerialization, int32_t ElementOID,
          VarFormat Format>
 void SerializeArray(SerializationContext context,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   if constexpr (Format == VarFormat::Text) {
-    if (vdata.logical_type.id() != duckdb::LogicalTypeId::LIST) {
+    const auto lid = vdata.logical_type.id();
+    if (lid != duckdb::LogicalTypeId::LIST &&
+        lid != duckdb::LogicalTypeId::ARRAY) {
       if (!vdata.unified.validity.RowIsValid(
             vdata.unified.sel->get_index(row))) {
         context.buffer->WriteUncommitted("NULL");
@@ -602,12 +736,19 @@ void SerializeArray(SerializationContext context,
       }
       return;
     }
-    auto list_data =
-      vdata.unified
-        .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+    duckdb::idx_t array_size;
+    duckdb::idx_t array_offset;
+    if (lid == duckdb::LogicalTypeId::ARRAY) {
+      array_size = duckdb::ArrayType::GetSize(vdata.logical_type);
+      array_offset = row * array_size;
+    } else {
+      auto list_data =
+        vdata.unified
+          .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+      array_size = list_data.length;
+      array_offset = list_data.offset;
+    }
     auto& child_vdata = vdata.children[0];
-    auto array_size = list_data.length;
-    auto array_offset = list_data.offset;
     context.buffer->WriteUncommitted("{");
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
       if (i > 0) {
@@ -634,14 +775,14 @@ void SerializeDate(SerializationContext context,
                    duckdb::idx_t row) {
   // days from 1970-01-01
   auto days =
-    vdata.unified.GetData<int32_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<duckdb::date_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     // TODO(mkornaukhov) support BC date and add some validation for dates
     // Format is "%04d-%02d-%02d", max year is 5874897
     static constexpr size_t kMaxDateStrSize = 7 + 1 + 2 + 1 + 2;
 
     absl::CivilDay date{1970, 1, 1};
-    date += days;
+    date += days.days;
 
     context.buffer->WriteContiguousData(kMaxDateStrSize, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
@@ -672,8 +813,8 @@ void SerializeDate(SerializationContext context,
       return buf - reinterpret_cast<char*>(data);
     });
   } else {
-    days -= kGapDays;
-    absl::big_endian::Store32(context.buffer->GetContiguousData(4), days);
+    absl::big_endian::Store32(context.buffer->GetContiguousData(4),
+                              static_cast<int32_t>(days.days - kGapDays));
   }
 }
 
@@ -710,7 +851,7 @@ void SerializeOidBinary(SerializationContext context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
   if (oid != static_cast<int32_t>(oid)) {
     SDB_WARN("xxxxx", Logger::COMMUNICATION, "reg* OID ", oid,
              " truncated to 32-bit for binary wire protocol");
@@ -776,119 +917,274 @@ void SerializeJson(SerializationContext context,
   context.buffer->WriteUncommitted(value);
 }
 
-DuckDBSerializationFunction GetArraySerialization(
-  const duckdb::LogicalType& type, VarFormat format,
-  SerializationContext& context, size_t dims) {
-  // TODO: Add custom SereneDB types (OID, Reg*, etc.) when implemented as
-  // DuckDB custom logical types. For now, only standard DuckDB types.
-
-  if (type.id() == duckdb::LogicalTypeId::UUID) {
-    RETURN_ARRAY_SERIALIZATION(SerializeUuid<VarFormat::Text>,
-                               SerializeUuid<VarFormat::Binary>,
-                               2950);  // UUIDOID
-  }
-
-  if (type.id() == duckdb::LogicalTypeId::DATE) {
-    RETURN_ARRAY_SERIALIZATION(SerializeDate<VarFormat::Text>,
-                               SerializeDate<VarFormat::Binary>,
-                               1082);  // DATEOID
-  }
-
-  if (type.id() == duckdb::LogicalTypeId::DECIMAL) {
-    auto width = duckdb::DecimalType::GetWidth(type);
-    if (width <= 4) {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, int16_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, int16_t>;
-      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1700);
-    } else if (width <= 9) {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, int32_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, int32_t>;
-      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1700);
-    } else if (width <= 18) {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, int64_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, int64_t>;
-      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1700);
-    } else {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, duckdb::hugeint_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, duckdb::hugeint_t>;
-      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1700);
-    }
-  }
-
+SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
+                                            VarFormat format,
+                                            SerializationContext& context,
+                                            ArrayKind kind) {
   switch (type.id()) {
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::SQLNULL)
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::TINYINT)
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::SMALLINT)
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::INTEGER)
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::BIGINT)
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::BOOLEAN)
-    CASE_ARRAY_SERIALIZATION(duckdb::LogicalTypeId::TIMESTAMP)
-    case duckdb::LogicalTypeId::FLOAT: {
+    using enum duckdb::LogicalTypeId;
+    using enum PgTypeOID;
+    case BOOLEAN:
+      RETURN_ARRAY_SERIALIZATION(SerializeBool<VarFormat::Text>,
+                                 SerializeBool<VarFormat::Binary>, kBool);
+    case TINYINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int8_t, int16_t>;
       static constexpr auto kSerializeBinary =
-        SerializeFloat<float, VarFormat::Binary>;
-      static constexpr auto kOid =
-        Kind2Oid(duckdb::LogicalTypeId::FLOAT, false);
+        SerializeInt<VarFormat::Binary, int8_t, int16_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt2);
+    }
+    case UTINYINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, uint8_t, int16_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, uint8_t, int16_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt2);
+    }
+    case SMALLINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int16_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, int16_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt2);
+    }
+    case USMALLINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, uint16_t, int32_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, uint16_t, int32_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt4);
+    }
+    case INTEGER: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int32_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, int32_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt4);
+    }
+    case UINTEGER: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, uint32_t, int64_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, uint32_t, int64_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt8);
+    }
+    case BIGINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int64_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, int64_t>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt8);
+    }
+    case UBIGINT: {
+      if (IsRegtype(type)) {
+        RETURN_ARRAY_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary,
+                                   kRegtype);
+      }
+      if (IsRegclass(type)) {
+        RETURN_ARRAY_SERIALIZATION(SerializeRegclassText, SerializeOidBinary,
+                                   kRegclass);
+      }
+      if (IsRegnamespace(type)) {
+        RETURN_ARRAY_SERIALIZATION(SerializeRegnamespaceText,
+                                   SerializeOidBinary, kRegnamespace);
+      }
+      static constexpr auto kSerializeText = SerializeUbigint<VarFormat::Text>;
+      if (IsRegproc(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegproc);
+      }
+      if (IsRegprocedure(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegprocedure);
+      }
+      if (IsRegoper(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegoper);
+      }
+      if (IsRegoperator(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegoperator);
+      }
+      if (IsRegrole(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegrole);
+      }
+      if (IsRegconfig(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegconfig);
+      }
+      if (IsRegdictionary(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegdictionary);
+      }
+      if (IsRegcollation(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
+                                   kRegcollation);
+      }
+      if (IsOid(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kOid);
+      }
+      if (IsXid(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kXid);
+      }
+      if (IsCid(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kCid);
+      }
+      if (IsTid(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kTid);
+      }
+      // XID8 or UBIGINT
+      RETURN_ARRAY_SERIALIZATION(kSerializeText,
+                                 SerializeUbigint<VarFormat::Binary>, kNumeric);
+    }
+    case HUGEINT:
+      RETURN_ARRAY_SERIALIZATION(SerializeHugeint<VarFormat::Text>,
+                                 SerializeHugeint<VarFormat::Binary>, kNumeric);
+    case UHUGEINT:
+      RETURN_ARRAY_SERIALIZATION(SerializeUhugeint<VarFormat::Text>,
+                                 SerializeUhugeint<VarFormat::Binary>,
+                                 kNumeric);
+    case FLOAT: {
+      static constexpr auto kSerializeBinary =
+        SerializeFloat<VarFormat::Binary, float>;
       return irs::ResolveBool(
         context.extra_float_digits > 0, [&]<bool Precise> {
           static constexpr auto kSerializeText =
-            SerializeFloat<float, VarFormat::Text, Precise>;
-          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kOid);
+            SerializeFloat<VarFormat::Text, float, Precise>;
+          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kFloat4);
         });
     }
-    case duckdb::LogicalTypeId::DOUBLE: {
+    case DOUBLE: {
       static constexpr auto kSerializeBinary =
-        SerializeFloat<double, VarFormat::Binary>;
-      static constexpr auto kOid =
-        Kind2Oid(duckdb::LogicalTypeId::DOUBLE, false);
+        SerializeFloat<VarFormat::Binary, double>;
       return irs::ResolveBool(
         context.extra_float_digits > 0, [&]<bool Precise> {
           static constexpr auto kSerializeText =
-            SerializeFloat<double, VarFormat::Text, Precise>;
-          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kOid);
+            SerializeFloat<VarFormat::Text, double, Precise>;
+          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kFloat8);
         });
     }
-    case duckdb::LogicalTypeId::VARCHAR: {
-      static constexpr auto kOid =
-        Kind2Oid(duckdb::LogicalTypeId::VARCHAR, false);
+    case DECIMAL: {
+      switch (type.InternalType()) {
+        using enum duckdb::PhysicalType;
+        case INT16: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, int16_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, int16_t>;
+          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                                     kNumeric);
+        }
+        case INT32: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, int32_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, int32_t>;
+          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                                     kNumeric);
+        }
+        case INT64: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, int64_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, int64_t>;
+          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                                     kNumeric);
+        }
+        case INT128: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, duckdb::hugeint_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, duckdb::hugeint_t>;
+          RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary,
+                                     kNumeric);
+        }
+        default:
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("Unsupported decimal internal type in array"));
+      }
+    }
+    case CHAR:
+    case VARCHAR: {
+      if (type.IsJSONType()) {
+        static constexpr auto kSerializeText =
+          SerializeJson<VarFormat::Text, true>;
+        static constexpr auto kSerializeBinary =
+          SerializeJson<VarFormat::Binary, false>;
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kJson);
+      }
+      if (IsName(type)) {
+        static constexpr auto kSerializeText =
+          SerializeVarchar<VarFormat::Text, true>;
+        static constexpr auto kSerializeBinary =
+          SerializeVarchar<VarFormat::Binary, false>;
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kName);
+      }
       static constexpr auto kSerializeText =
         SerializeVarchar<VarFormat::Text, true>;
       static constexpr auto kSerializeBinary =
-        SerializeVarchar<VarFormat::Binary, true>;
-      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kOid);
+        SerializeVarchar<VarFormat::Binary, false>;
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kText);
     }
-    case duckdb::LogicalTypeId::BLOB: {
-      static constexpr auto kOid = Kind2Oid(duckdb::LogicalTypeId::BLOB, false);
+    case BLOB: {
       if (context.bytea_output == ByteaOutput::Hex) {
         static constexpr auto kSerializeText = SerializeByteaTextHex<true>;
-        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary, kOid);
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary,
+                                   kBytea);
       } else {
         SDB_ASSERT(context.bytea_output == ByteaOutput::Escape);
         static constexpr auto kSerializeText = SerializeByteaTextEscape<true>;
-        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary, kOid);
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary,
+                                   kBytea);
       }
     }
-    case duckdb::LogicalTypeId::LIST:
-      // This can happens for ARRAY<ROW/MAP<... , ARRAY<...>, ...>>
-      SDB_ASSERT(
-        false, "TODO(mkornaukhov): Other complex types are not supported yet");
-      return nullptr;
-    case duckdb::LogicalTypeId::MAP:
-      SDB_ASSERT(false, "TODO(mkornaukhov): Array of Map is not supported yet");
-      return nullptr;
-    case duckdb::LogicalTypeId::STRUCT:
-      SDB_ASSERT(false, "TODO(mkornaukhov): Array of Row is not supported yet");
-      return nullptr;
+    case DATE:
+      RETURN_ARRAY_SERIALIZATION(SerializeDate<VarFormat::Text>,
+                                 SerializeDate<VarFormat::Binary>, kDate);
+    case TIME:
+      RETURN_ARRAY_SERIALIZATION(SerializeTime<VarFormat::Text>,
+                                 SerializeTime<VarFormat::Binary>, kTime);
+    case TIME_NS:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimeNs<VarFormat::Text>,
+                                 SerializeTimeNs<VarFormat::Binary>, kTime);
+    case TIME_TZ:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimeTz<VarFormat::Text>,
+                                 SerializeTimeTz<VarFormat::Binary>, kTimeTz);
+    case TIMESTAMP_SEC:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimestampSec<VarFormat::Text>,
+                                 SerializeTimestampSec<VarFormat::Binary>,
+                                 kTimestamp);
+    case TIMESTAMP_MS:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimestampMs<VarFormat::Text>,
+                                 SerializeTimestampMs<VarFormat::Binary>,
+                                 kTimestamp);
+    case TIMESTAMP:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimestamp<VarFormat::Text>,
+                                 SerializeTimestamp<VarFormat::Binary>,
+                                 kTimestamp);
+    case TIMESTAMP_NS:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimestampNs<VarFormat::Text>,
+                                 SerializeTimestampNs<VarFormat::Binary>,
+                                 kTimestamp);
+    case TIMESTAMP_TZ:
+      RETURN_ARRAY_SERIALIZATION(SerializeTimestampTz<VarFormat::Text>,
+                                 SerializeTimestampTz<VarFormat::Binary>,
+                                 kTimestampTz);
+    case INTERVAL:
+      RETURN_ARRAY_SERIALIZATION(SerializeInterval<VarFormat::Text>,
+                                 SerializeInterval<VarFormat::Binary>,
+                                 kInterval);
+    case UUID:
+      RETURN_ARRAY_SERIALIZATION(SerializeUuid<VarFormat::Text>,
+                                 SerializeUuid<VarFormat::Binary>, kUuid);
+    case BIT:
+      RETURN_ARRAY_SERIALIZATION(SerializeBit<VarFormat::Text>,
+                                 SerializeBit<VarFormat::Binary>, kVarbit);
     default:
-      SDB_ASSERT(false);
-      return nullptr;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("Array element type not supported"));
   }
 }
 
@@ -980,131 +1276,245 @@ void FillContext(const Config& config, SerializationContext& context) {
     config.Get<VariableType::PgExtraFloatDigits>("extra_float_digits");
   context.bytea_output =
     config.Get<VariableType::PgByteaOutput>("bytea_output");
+  context.snapshot = config.EnsureCatalogSnapshot().get();
 }
 
-DuckDBSerializationFunction GetDuckDBSerialization(
-  const duckdb::LogicalType& type, VarFormat format) {
-  // Handle decimal first (needs width check)
-  if (type.id() == duckdb::LogicalTypeId::DECIMAL) {
-    auto width = duckdb::DecimalType::GetWidth(type);
-    // DuckDB stores decimals with different physical types based on width.
-    // Must match: width <= 4 -> int16_t, <= 9 -> int32_t, <= 18 -> int64_t,
-    // else hugeint_t
-    if (width <= 4) {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, int16_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, int16_t>;
-      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
-    } else if (width <= 9) {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, int32_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, int32_t>;
-      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
-    } else if (width <= 18) {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, int64_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, int64_t>;
-      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
-    } else {
-      static constexpr auto kSerializeText =
-        SerializeDecimal<VarFormat::Text, duckdb::hugeint_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeDecimal<VarFormat::Binary, duckdb::hugeint_t>;
-      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
-    }
-  }
-
-  // PG reg* types: BIGINT with alias -- serialize as name / binary OID
-  if (IsRegtype(type)) {
-    RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
-  }
-  if (IsRegclass(type)) {
-    RETURN_SERIALIZATION(SerializeRegclassText, SerializeOidBinary);
-  }
-  if (IsRegnamespace(type)) {
-    RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
-  }
-
+SerializationFunction GetSerialization(const duckdb::LogicalType& type,
+                                       VarFormat format,
+                                       SerializationContext& context) {
   switch (type.id()) {
-    CASE_SERIALIZATION(duckdb::LogicalTypeId::SQLNULL)
-    CASE_SERIALIZATION(duckdb::LogicalTypeId::TINYINT)
-    CASE_SERIALIZATION(duckdb::LogicalTypeId::SMALLINT)
-    CASE_SERIALIZATION(duckdb::LogicalTypeId::INTEGER)
-    CASE_SERIALIZATION(duckdb::LogicalTypeId::BIGINT)
-    case duckdb::LogicalTypeId::HUGEINT: {
-      RETURN_SERIALIZATION(SerializeHugeint<VarFormat::Text>,
-                           SerializeHugeint<VarFormat::Binary>);
-    }
-      CASE_SERIALIZATION(duckdb::LogicalTypeId::BOOLEAN)
-      CASE_SERIALIZATION(duckdb::LogicalTypeId::TIMESTAMP)
-    case duckdb::LogicalTypeId::FLOAT: {
-      // TODO: respect extra_float_digits from context
+    using enum duckdb::LogicalTypeId;
+    case SQLNULL:
+      return SerializeNull;
+    case BOOLEAN:
+      RETURN_SERIALIZATION(SerializeBool<VarFormat::Text>,
+                           SerializeBool<VarFormat::Binary>);
+    case TINYINT: {
       static constexpr auto kSerializeText =
-        SerializeFloat<float, VarFormat::Text, true>;
+        SerializeInt<VarFormat::Text, int8_t, int16_t>;
       static constexpr auto kSerializeBinary =
-        SerializeFloat<float, VarFormat::Binary>;
+        SerializeInt<VarFormat::Binary, int8_t, int16_t>;
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
     }
-    case duckdb::LogicalTypeId::DOUBLE: {
+    case SMALLINT: {
       static constexpr auto kSerializeText =
-        SerializeFloat<double, VarFormat::Text, true>;
+        SerializeInt<VarFormat::Text, int16_t>;
       static constexpr auto kSerializeBinary =
-        SerializeFloat<double, VarFormat::Binary>;
+        SerializeInt<VarFormat::Binary, int16_t>;
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
     }
-    case duckdb::LogicalTypeId::VARCHAR: {
+    case INTEGER: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int32_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, int32_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case BIGINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int64_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, int64_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case UTINYINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, uint8_t, int16_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, uint8_t, int16_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case USMALLINT: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, uint16_t, int32_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, uint16_t, int32_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case UINTEGER: {
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, uint32_t, int64_t>;
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, uint32_t, int64_t>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case UBIGINT: {
+      if (IsRegtype(type)) {
+        RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
+      }
+      if (IsRegclass(type)) {
+        RETURN_SERIALIZATION(SerializeRegclassText, SerializeOidBinary);
+      }
+      if (IsRegnamespace(type)) {
+        RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
+      }
+      static constexpr auto kSerializeText = SerializeUbigint<VarFormat::Text>;
+      if (IsRegproc(type) || IsRegprocedure(type) || IsRegoper(type) ||
+          IsRegoperator(type) || IsRegrole(type) || IsRegconfig(type) ||
+          IsRegdictionary(type) || IsRegcollation(type) || IsOid(type) ||
+          IsXid(type) || IsCid(type) || IsTid(type)) {
+        RETURN_SERIALIZATION(kSerializeText, SerializeOidBinary);
+      }
+      static constexpr auto kSerializeBinary =
+        SerializeUbigint<VarFormat::Binary>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case HUGEINT: {
+      static constexpr auto kSerializeText = SerializeHugeint<VarFormat::Text>;
+      static constexpr auto kSerializeBinary =
+        SerializeHugeint<VarFormat::Binary>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case UHUGEINT: {
+      static constexpr auto kSerializeText = SerializeUhugeint<VarFormat::Text>;
+      static constexpr auto kSerializeBinary =
+        SerializeUhugeint<VarFormat::Binary>;
+      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+    }
+    case FLOAT: {
+      static constexpr auto kSerializeBinary =
+        SerializeFloat<VarFormat::Binary, float>;
+      return irs::ResolveBool(
+        context.extra_float_digits > 0, [&]<bool Precise> {
+          static constexpr auto kSerializeText =
+            SerializeFloat<VarFormat::Text, float, Precise>;
+          RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        });
+    }
+    case DOUBLE: {
+      static constexpr auto kSerializeBinary =
+        SerializeFloat<VarFormat::Binary, double>;
+      return irs::ResolveBool(
+        context.extra_float_digits > 0, [&]<bool Precise> {
+          static constexpr auto kSerializeText =
+            SerializeFloat<VarFormat::Text, double, Precise>;
+          RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        });
+    }
+    case DECIMAL:
+      switch (type.InternalType()) {
+        using enum duckdb::PhysicalType;
+        case INT16: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, int16_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, int16_t>;
+          RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        }
+        case INT32: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, int32_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, int32_t>;
+          RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        }
+        case INT64: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, int64_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, int64_t>;
+          RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        }
+        case INT128: {
+          static constexpr auto kSerializeText =
+            SerializeDecimal<VarFormat::Text, duckdb::hugeint_t>;
+          static constexpr auto kSerializeBinary =
+            SerializeDecimal<VarFormat::Binary, duckdb::hugeint_t>;
+          RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        }
+        default:
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("Unsupported decimal internal type"));
+      }
+    case CHAR:
+    case VARCHAR: {
+      if (type.IsJSONType()) {
+        static constexpr auto kSerializeText =
+          SerializeJson<VarFormat::Text, false>;
+        static constexpr auto kSerializeBinary =
+          SerializeJson<VarFormat::Binary, false>;
+        RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+      }
       static constexpr auto kSerializeText =
         SerializeVarchar<VarFormat::Text, false>;
       static constexpr auto kSerializeBinary =
         SerializeVarchar<VarFormat::Binary, false>;
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
     }
-    case duckdb::LogicalTypeId::BLOB: {
-      // TODO: respect bytea_output from context
-      static constexpr auto kSerializeText = SerializeByteaTextHex<false>;
-      RETURN_SERIALIZATION(kSerializeText, SerializeByteaBinary);
+    case BLOB: {
+      if (context.bytea_output == ByteaOutput::Hex) {
+        static constexpr auto kSerializeText = SerializeByteaTextHex<false>;
+        RETURN_SERIALIZATION(kSerializeText, SerializeByteaBinary);
+      } else {
+        SDB_ASSERT(context.bytea_output == ByteaOutput::Escape);
+        static constexpr auto kSerializeText = SerializeByteaTextEscape<false>;
+        RETURN_SERIALIZATION(kSerializeText, SerializeByteaBinary);
+      }
     }
-    case duckdb::LogicalTypeId::DATE: {
+    case DATE:
       RETURN_SERIALIZATION(SerializeDate<VarFormat::Text>,
                            SerializeDate<VarFormat::Binary>);
-    }
-    case duckdb::LogicalTypeId::INTERVAL: {
+    case TIME:
+      RETURN_SERIALIZATION(SerializeTime<VarFormat::Text>,
+                           SerializeTime<VarFormat::Binary>);
+    case TIME_NS:
+      RETURN_SERIALIZATION(SerializeTimeNs<VarFormat::Text>,
+                           SerializeTimeNs<VarFormat::Binary>);
+    case TIME_TZ:
+      RETURN_SERIALIZATION(SerializeTimeTz<VarFormat::Text>,
+                           SerializeTimeTz<VarFormat::Binary>);
+    case TIMESTAMP_SEC:
+      RETURN_SERIALIZATION(SerializeTimestampSec<VarFormat::Text>,
+                           SerializeTimestampSec<VarFormat::Binary>);
+    case TIMESTAMP_MS:
+      RETURN_SERIALIZATION(SerializeTimestampMs<VarFormat::Text>,
+                           SerializeTimestampMs<VarFormat::Binary>);
+    case TIMESTAMP:
+      RETURN_SERIALIZATION(SerializeTimestamp<VarFormat::Text>,
+                           SerializeTimestamp<VarFormat::Binary>);
+    case TIMESTAMP_NS:
+      RETURN_SERIALIZATION(SerializeTimestampNs<VarFormat::Text>,
+                           SerializeTimestampNs<VarFormat::Binary>);
+    case TIMESTAMP_TZ:
+      RETURN_SERIALIZATION(SerializeTimestampTz<VarFormat::Text>,
+                           SerializeTimestampTz<VarFormat::Binary>);
+    case INTERVAL:
       RETURN_SERIALIZATION(SerializeInterval<VarFormat::Text>,
                            SerializeInterval<VarFormat::Binary>);
-    }
-    case duckdb::LogicalTypeId::UUID: {
+    case UUID:
       RETURN_SERIALIZATION(SerializeUuid<VarFormat::Text>,
                            SerializeUuid<VarFormat::Binary>);
-    }
-    case duckdb::LogicalTypeId::LIST: {
-      auto& child_type = duckdb::ListType::GetChildType(type);
-      size_t dims = 1;
-      auto* inner = &child_type;
-      while (inner->id() == duckdb::LogicalTypeId::LIST) {
-        inner = &duckdb::ListType::GetChildType(*inner);
-        dims++;
+    case BIT:
+      RETURN_SERIALIZATION(SerializeBit<VarFormat::Text>,
+                           SerializeBit<VarFormat::Binary>);
+    case LIST:
+    case ARRAY: {
+      const auto* element_type = &type;
+      size_t dims = 0;
+      while (true) {
+        if (element_type->id() == LIST) {
+          element_type = &duckdb::ListType::GetChildType(*element_type);
+        } else if (element_type->id() == ARRAY) {
+          element_type = &duckdb::ArrayType::GetChildType(*element_type);
+        } else {
+          break;
+        }
+        ++dims;
       }
-      // TODO: pass proper SerializationContext for
-      // extra_float_digits/bytea_output
-      SerializationContext dummy_ctx{};
-      return GetArraySerialization(*inner, format, dummy_ctx, dims);
+      const auto kind = [&] {
+        if (dims > 1) {
+          return ArrayKind::MultiDimensions;
+        } else if (type.id() == ARRAY) {
+          return ArrayKind::ArraySingleDimension;
+        } else {
+          return ArrayKind::ListSingleDimension;
+        }
+      }();
+      return GetArraySerialization(*element_type, format, context, kind);
     }
-    case duckdb::LogicalTypeId::MAP:
-      SDB_ASSERT(false, "TODO: Map serialization not yet supported");
-      return nullptr;
-    case duckdb::LogicalTypeId::STRUCT:
-      SDB_ASSERT(false, "TODO: Struct serialization not yet supported");
-      return nullptr;
     default:
-      // Fallback: serialize as text via ToString
-      static constexpr auto kSerializeText =
-        SerializeVarchar<VarFormat::Text, false>;
-      static constexpr auto kSerializeBinary =
-        SerializeVarchar<VarFormat::Binary, false>;
-      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("Such type is not supported"));
   }
 }
 

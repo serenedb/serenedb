@@ -35,12 +35,12 @@
 #include "pg/serialize.h"
 
 namespace sdb::connector {
+namespace {
 
 // PG-compatible byteain -- ported from server/pg/functions/inout.cpp
 // ByteaInFunction. Handles \x hex format (whitespace between pairs ignored)
 // and PG escape format (\\ and \NNN octal).
-static duckdb::string_t PgByteaIn(std::string_view input,
-                                  duckdb::Vector& result_vec) {
+duckdb::string_t PgByteaIn(std::string_view input, duckdb::Vector& result_vec) {
   if (input.starts_with("\\x")) {
     std::string_view payload{input.begin() + 2, input.end()};
     // Worst case: every 2 chars = 1 byte
@@ -119,8 +119,8 @@ static duckdb::string_t PgByteaIn(std::string_view input,
     result_vec, duckdb::string_t(target.GetDataWriteable(), new_size));
 }
 
-static bool PgVarcharToBlobCast(duckdb::Vector& source, duckdb::Vector& result,
-                                duckdb::idx_t count, duckdb::CastParameters&) {
+bool PgVarcharToBlobCast(duckdb::Vector& source, duckdb::Vector& result,
+                         duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
       return PgByteaIn({input.GetData(), input.GetSize()}, result);
@@ -138,9 +138,9 @@ struct ByteaOutCastData : public duckdb::BoundCastData {
 
 // PG-compatible byteaout -- ported from server/pg/functions/inout.cpp
 // ByteaOutFunction. Respects bytea_output setting (hex or escape).
-static bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                                duckdb::idx_t count,
-                                duckdb::CastParameters& parameters) {
+bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
+                         duckdb::idx_t count,
+                         duckdb::CastParameters& parameters) {
   bool use_escape = false;
   if (parameters.cast_data) {
     use_escape = parameters.cast_data->Cast<ByteaOutCastData>().use_escape;
@@ -166,9 +166,9 @@ static bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
-static duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
-                                                 const duckdb::LogicalType&,
-                                                 const duckdb::LogicalType&) {
+duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
+                                          const duckdb::LogicalType&,
+                                          const duckdb::LogicalType&) {
   bool use_escape = false;
   if (input.context) {
     duckdb::Value value;
@@ -192,15 +192,15 @@ struct RegclassCastData : public duckdb::BoundCastData {
   }
 };
 
-static bool PgVarcharToRegclassCast(duckdb::Vector& source,
-                                    duckdb::Vector& result, duckdb::idx_t count,
-                                    duckdb::CastParameters& params) {
+bool PgVarcharToRegclassCast(duckdb::Vector& source, duckdb::Vector& result,
+                             duckdb::idx_t count,
+                             duckdb::CastParameters& params) {
   auto& data = params.cast_data->Cast<RegclassCastData>();
   duckdb::UnifiedVectorFormat src_fmt;
   source.ToUnifiedFormat(count, src_fmt);
   auto* src_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
-  auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
+  auto* dst_data = duckdb::FlatVector::GetDataMutable<uint64_t>(result);
   auto& dst_validity = duckdb::FlatVector::Validity(result);
 
   auto& conn_ctx = GetSereneDBContext(*data.ctx);
@@ -217,14 +217,14 @@ static bool PgVarcharToRegclassCast(duckdb::Vector& source,
       throw duckdb::CatalogException("relation \"%s\" does not exist",
                                      std::string{name});
     }
-    dst_data[i] = static_cast<int64_t>(oid);
+    dst_data[i] = oid;
   }
   return true;
 }
 
-static duckdb::BoundCastInfo PgVarcharToRegclassBind(
-  duckdb::BindCastInput& input, const duckdb::LogicalType&,
-  const duckdb::LogicalType&) {
+duckdb::BoundCastInfo PgVarcharToRegclassBind(duckdb::BindCastInput& input,
+                                              const duckdb::LogicalType&,
+                                              const duckdb::LogicalType&) {
   return duckdb::BoundCastInfo(
     PgVarcharToRegclassCast,
     duckdb::make_uniq<RegclassCastData>(input.context.get()));
@@ -233,14 +233,13 @@ static duckdb::BoundCastInfo PgVarcharToRegclassBind(
 // --- Implicit cast: VARCHAR/STRING_LITERAL -> regtype ---
 // Resolves type name to OID via RegtypeIn.
 
-static bool PgVarcharToRegtypeCast(duckdb::Vector& source,
-                                   duckdb::Vector& result, duckdb::idx_t count,
-                                   duckdb::CastParameters&) {
+bool PgVarcharToRegtypeCast(duckdb::Vector& source, duckdb::Vector& result,
+                            duckdb::idx_t count, duckdb::CastParameters&) {
   duckdb::UnifiedVectorFormat src_fmt;
   source.ToUnifiedFormat(count, src_fmt);
   auto* src_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
-  auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
+  auto* dst_data = duckdb::FlatVector::GetDataMutable<uint64_t>(result);
   auto& dst_validity = duckdb::FlatVector::Validity(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
@@ -253,23 +252,24 @@ static bool PgVarcharToRegtypeCast(duckdb::Vector& source,
                           src_data[src_idx].GetSize()};
     auto oid = pg::RegtypeIn(name);
     if (oid == pg::kInvalidOid) {
-      throw duckdb::CatalogException("type \"%s\" does not exist",
-                                     std::string{name});
+      throw duckdb::CatalogException("type \"%s\" does not exist", name);
     }
-    dst_data[i] = static_cast<int64_t>(oid);
+    dst_data[i] = oid;
   }
   return true;
 }
 
-static duckdb::BoundCastInfo PgVarcharToRegtypeBind(
-  duckdb::BindCastInput&, const duckdb::LogicalType&,
-  const duckdb::LogicalType&) {
+duckdb::BoundCastInfo PgVarcharToRegtypeBind(duckdb::BindCastInput&,
+                                             const duckdb::LogicalType&,
+                                             const duckdb::LogicalType&) {
   return duckdb::BoundCastInfo(PgVarcharToRegtypeCast);
 }
 
+}  // namespace
+
 void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
-  // PG reg* type casts -- all handled via implicit casts, no scalar functions
-  // needed
+  // PG reg* type casts -- all handled via implicit casts,
+  // no scalar functions needed
   auto& config = duckdb::DBConfig::GetConfig(db);
   auto& casts = config.GetCastFunctions();
 

@@ -86,7 +86,12 @@ struct AgencyIsBuildingFlags {
 };
 
 struct Column {
-  enum GeneratedType : uint8_t { kNone = 0, kStored = 1, kVirtual = 2 };
+  enum GeneratedType : uint8_t {
+    kNone = 0,
+    // TODO(mbkkt) swap these, to make it more like duckdb values?
+    kStored = 1,
+    kVirtual = 2,
+  };
 
   bool IsGenerated() const noexcept {
     return generated_type != GeneratedType::kNone;

@@ -105,7 +105,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
     duckdb::unique_ptr<duckdb::QueryResult> result;
     DuckDBBindInfo bind_info;
     SerializationContext serialization_context;
-    std::vector<DuckDBSerializationFunction> columns_serializers;
+    std::vector<SerializationFunction> columns_serializers;
   };
 
   virtual void SetIOTimeoutImpl() = 0;

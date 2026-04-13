@@ -217,8 +217,8 @@ class ANNSearchPlanOptimizer : public duckdb::OptimizerExtension {
     //
     // Priority 1: explicit index from "FROM i ON t" -- the table entry was
     // created from an index name and already has the right index attached.
-    // Priority 2(TODO): auto-detect -- scan the catalog for any InvertedIndex on
-    // the table that covers the distance column (implicit index selection).
+    // Priority 2(TODO): auto-detect -- scan the catalog for any InvertedIndex
+    // on the table that covers the distance column (implicit index selection).
     const auto table_id = bind_data.table->GetId();
     auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
 

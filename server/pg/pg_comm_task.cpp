@@ -811,7 +811,7 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
                           : duckdb::LogicalType::VARCHAR;
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
-      auto param_value = DuckDBDeserializeParameter(param_type, format, param);
+      auto param_value = DeserializeParameter(param_type, format, param);
       if (!param_value) {
         switch (param_value.error()) {
           case DeserializeError::InvalidRepresentation:
@@ -1004,8 +1004,6 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
   -> DuckDBPortal {
   DuckDBPortal portal{.serialization_context{.buffer = &_send}};
   FillContext(*_connection_ctx, portal.serialization_context);
-  portal.serialization_context.snapshot =
-    _connection_ctx->EnsureCatalogSnapshot().get();
 
   portal.bind_info = std::move(bind_info);
   portal.stmt = &stmt;
@@ -1040,7 +1038,7 @@ void PgSQLCommTaskBase::BuildColumnSerializers(DuckDBPortal& portal) {
   for (uint16_t i = 0; i < columns_count; ++i) {
     const auto format = i < formats.size() ? formats[i] : default_format;
     portal.columns_serializers.push_back(
-      GetDuckDBSerialization(types[i], format));
+      GetSerialization(types[i], format, portal.serialization_context));
   }
 }
 

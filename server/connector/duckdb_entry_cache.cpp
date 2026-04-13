@@ -136,7 +136,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
   for (const auto& col : table->Columns()) {
     auto cd = duckdb::ColumnDefinition(col.name, col.type);
     if (col.IsGenerated() && col.expr && col.expr->HasExpr()) {
-      cd.SetGeneratedExpression(col.expr->GetExpr().Copy());
+      cd.SetGeneratedExpression(
+        col.expr->GetExpr().Copy(),
+        col.generated_type == catalog::Column::GeneratedType::kStored
+          ? duckdb::TableColumnType::GENERATED_STORED
+          : duckdb::TableColumnType::GENERATED_VIRTUAL);
     } else if (col.expr && col.expr->HasExpr()) {
       cd.SetDefaultValue(col.expr->GetExpr().Copy());
     }

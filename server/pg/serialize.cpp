@@ -818,13 +818,11 @@ void SerializeDate(SerializationContext context,
   }
 }
 
-// TODO: These will be used when custom OID types are registered in DuckDB
-[[maybe_unused]]
 void SerializeRegtypeText(SerializationContext context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
   context.buffer->WriteUncommitted(RegtypeOut(oid));
 }
 
@@ -832,7 +830,7 @@ void SerializeRegclassText(SerializationContext context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
   context.buffer->WriteUncommitted(RegclassOut(*context.snapshot, oid));
 }
 
@@ -840,13 +838,12 @@ void SerializeRegnamespaceText(
   SerializationContext context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
   context.buffer->WriteUncommitted(RegnamespaceOut(*context.snapshot, oid));
 }
 
 // Binary serialization for oid-like types:
 // truncate 64-bit OID to 32-bit for PG wire protocol compatibility.
-[[maybe_unused]]
 void SerializeOidBinary(SerializationContext context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {

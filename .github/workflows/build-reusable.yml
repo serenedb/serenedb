@@ -297,7 +297,15 @@ jobs:
 
       - name: Generate coverage report
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
-        run: ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+        run: |
+          if [[ "$RUN_UNIT_TESTS" == 'true' && "$RUN_INTEGRATION_TESTS" == 'true' ]]; then
+            BUILD_DIRS_STR="build_gtest,build_tests"
+          elif [[ "$RUN_UNIT_TESTS" == 'true' ]]; then
+            BUILD_DIRS_STR="build_gtest"
+          else
+            BUILD_DIRS_STR="build_tests"
+          fi
+          BUILD_DIRS_STR="$BUILD_DIRS_STR" ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
       - name: Upload artifacts
         if: always()

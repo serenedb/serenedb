@@ -114,6 +114,8 @@ void VPackRead(auto ctx, Features& features) {
 
 bool IsGeoAnalyzer(std::string_view type) noexcept;
 
+bool IsGeoAnalyzer(irs::TypeInfo::type_id type_id) noexcept;
+
 // TODO(mbkkt) rewrite this, I think we have such requirements:
 // 1. We should parse analyzer definition only once
 // 2. We don't need to cache allocations

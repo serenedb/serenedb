@@ -1,0 +1,281 @@
+hash-threshold 100
+
+# GEO_INTERSECTS and GEO_CONTAINS search functions over an inverted index
+# with a geojson text search dictionary.
+#
+# Test data: points and a polygon stored as VARCHAR
+# GeoJSON strings. GeoJSON coordinates are [longitude, latitude].
+#
+#   id=1: Point [37.615895, 55.703900]  — cluster near [37.616, 55.704]
+#   id=2: Point [37.616297, 55.704831]  — cluster near [37.616, 55.704]
+#   id=3: Point [37.617053, 55.704610]  — cluster near [37.616, 55.704]
+#   id=4: Point [37.559509, 55.715895]  — far from cluster
+#   id=5: Point [37.701645, 55.832144]  — very far
+#   id=6: Polygon [37.614323..37.615825, 55.705898..55.706520] — small square
+#
+# Query shapes used across tests:
+#   large_poly : [37.610..37.620, 55.700..55.710] — fully contains ids 1,2,3,6
+#   medium_poly: [37.614..37.618, 55.704..55.707] — intersects 2,3,6; id=1 is below lat 55.704
+#   point_in_6 : [37.615, 55.706]                 — inside polygon 6
+#   far_poly   : [0.0..1.0, 0.0..1.0]             — no data in this area
+
+
+# --- Schema setup ---
+
+statement ok
+CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo VARCHAR)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_shape(
+    template = 'geojson'
+)
+
+
+statement ok
+CREATE INDEX geo_idx ON geo_data USING inverted(id, geo geojson_shape)
+
+
+# --- Initial data ---
+
+statement ok
+INSERT INTO geo_data VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}')
+
+statement ok
+INSERT INTO geo_data VALUES (2, '{"type":"Point","coordinates":[37.616297,55.704831]}')
+
+statement ok
+INSERT INTO geo_data VALUES (3, '{"type":"Point","coordinates":[37.617053,55.704610]}')
+
+statement ok
+INSERT INTO geo_data VALUES (4, '{"type":"Point","coordinates":[37.559509,55.715895]}')
+
+statement ok
+INSERT INTO geo_data VALUES (5, '{"type":"Point","coordinates":[37.701645,55.832144]}')
+
+statement ok
+INSERT INTO geo_data VALUES (6, '{"type":"Polygon","coordinates":[[[37.614323,55.705898],[37.615825,55.705898],[37.615825,55.706520],[37.614323,55.706520],[37.614323,55.705898]]]}')
+
+statement ok
+VACUUM (UPDATE_INDEXES) geo_data
+
+
+# --- GEO_INTERSECTS ---
+
+# large_poly fully contains ids 1, 2, 3 and polygon 6; ids 4 and 5 are outside.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+1
+2
+3
+6
+
+
+# medium_poly [37.614..37.618, 55.704..55.707] intersects ids 2, 3 and polygon 6.
+# id=1 (lat 55.7039) lies below the south edge (55.704) of this polygon.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.614,55.704],[37.618,55.704],[37.618,55.707],[37.614,55.707],[37.614,55.704]]]}')
+ORDER BY id
+----
+id
+2
+3
+6
+
+
+# Point [37.615, 55.706] lies inside polygon 6 — only the polygon intersects.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+ORDER BY id
+----
+id
+6
+
+
+# far_poly is in the Gulf of Guinea — no indexed data there.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}')
+ORDER BY id
+----
+id
+
+
+# --- GEO_CONTAINS (shape contains indexed data) ---
+# geo_contains(query_shape, field): returns rows whose indexed geometry is
+# fully contained within query_shape.
+
+# large_poly fully contains all three close points and polygon 6.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+ORDER BY id
+----
+id
+1
+2
+3
+6
+
+
+# far_poly contains no indexed geometries.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_contains('{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}', geo)
+ORDER BY id
+----
+id
+
+
+# --- GEO_CONTAINS (indexed data contains shape) ---
+# geo_contains(field, query_shape): returns rows whose indexed geometry fully
+# contains query_shape.
+
+# Point [37.615, 55.706] lies inside polygon 6 — only polygon 6 contains it.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_contains(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+ORDER BY id
+----
+id
+6
+
+
+# large_poly is bigger than any indexed geometry — nothing contains it.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_contains(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+
+
+# --- geo_intersects with swapped arguments (commutative) ---
+# geo_intersects is commutative: swapping field and shape gives the same result.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+ORDER BY id
+----
+id
+1
+2
+3
+6
+
+
+# --- Combined filter ---
+# geo_intersects with medium_poly narrows to {2, 3, 6};
+# geo_contains(large_poly, field) is satisfied by all of them.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.614,55.704],[37.618,55.704],[37.618,55.707],[37.614,55.707],[37.614,55.704]]]}')
+  AND geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+ORDER BY id
+----
+id
+2
+3
+6
+
+
+# --- Incremental index update ---
+
+statement ok
+INSERT INTO geo_data VALUES (7, '{"type":"Point","coordinates":[37.614800,55.704500]}')
+
+statement ok
+VACUUM (UPDATE_INDEXES) geo_data
+
+
+# New point [37.6148, 55.7045] is inside both large_poly and medium_poly.
+
+query
+SELECT id FROM geo_idx
+WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+query
+SELECT id FROM geo_idx
+WHERE geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- Error cases ---
+
+# Valid JSON but unrecognized GeoJSON type — fails at shape parsing stage.
+
+statement error
+SELECT id FROM geo_idx WHERE geo_intersects(geo, '{"type":"Unknown","coordinates":[]}')
+----
+db error: ERROR: Inverted index function called outside inverted index context
+
+
+statement error
+SELECT id FROM geo_idx WHERE geo_contains(geo, '{"type":"Unknown","coordinates":[]}')
+----
+db error: ERROR: Inverted index function called outside inverted index context
+
+
+# geo_intersects / geo_contains on a column indexed with a non-geo (text) analyzer.
+
+statement ok
+CREATE TABLE geo_plain (id INTEGER PRIMARY KEY, geo VARCHAR)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY plain_text(
+    template = 'text',
+    locale = 'en_US.UTF-8'
+)
+
+statement ok
+CREATE INDEX geo_plain_idx ON geo_plain USING inverted(id, geo plain_text)
+
+statement ok
+INSERT INTO geo_plain VALUES (1, '{"type":"Point","coordinates":[0,0]}')
+
+statement ok
+VACUUM (UPDATE_INDEXES) geo_plain
+
+
+statement error
+SELECT id FROM geo_plain_idx WHERE geo_intersects(geo, '{"type":"Point","coordinates":[0,0]}')
+----
+db error: ERROR: Inverted index function called outside inverted index context
+
+
+statement error
+SELECT id FROM geo_plain_idx WHERE geo_contains(geo, '{"type":"Point","coordinates":[0,0]}')
+----
+db error: ERROR: Inverted index function called outside inverted index context

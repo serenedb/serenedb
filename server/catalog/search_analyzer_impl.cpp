@@ -100,6 +100,12 @@ constexpr containers::TrivialSet kGeoAnalyzers = [](auto selector) {
     .Case(irs::analysis::GeoPointAnalyzer::type_name());
 };
 
+constexpr containers::TrivialSet kGeoAnalyzerTypes = [](auto selector) {
+  return selector()
+    .Case(irs::Type<irs::analysis::GeoJsonAnalyzer>::id())
+    .Case(irs::Type<irs::analysis::GeoPointAnalyzer>::id());
+};
+
 }  // namespace
 
 void Features::Visit(std::function<void(std::string_view)> visitor) const {
@@ -206,6 +212,10 @@ Result Features::Validate(std::string_view type) const {
 
 bool IsGeoAnalyzer(std::string_view type) noexcept {
   return kGeoAnalyzers.Contains(type);
+}
+
+bool IsGeoAnalyzer(irs::TypeInfo::type_id type_id) noexcept {
+  return kGeoAnalyzerTypes.Contains(type_id);
 }
 
 AnalyzerImpl::Builder::ptr AnalyzerImpl::Builder::make(StringStreamTag) {

@@ -36,6 +36,10 @@ inline constexpr std::string_view kTermLike = "sdb_term_like";
 inline constexpr std::string_view kNgramMatch = "sdb_ngram_match";
 inline constexpr std::string_view kLevenshteinMatch = "sdb_levenshtein_match";
 inline constexpr std::string_view kBoost = "sdb_boost";
+inline constexpr std::string_view kGeoDistance = "sdb_geo_distance";
+inline constexpr std::string_view kGeoInRange = "sdb_geo_in_range";
+inline constexpr std::string_view kGeoIntersects = "sdb_geo_intersects";
+inline constexpr std::string_view kGeoContains = "sdb_geo_contains";
 
 // Pseudo-functions that are completely replaced by columns
 inline constexpr std::string_view kOffsets = "offsets";

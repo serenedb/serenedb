@@ -89,6 +89,38 @@ struct SearchStubFunction {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "Inverted index function called outside inverted index context");
   }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const double&, const double&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const double&, const double&,
+            const bool&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(bool& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&, const double&, const double&,
+            const bool&, const bool&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
+  void call(double& out, const arg_type<velox::Varchar>&,
+            const arg_type<velox::Varchar>&) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
 };
 
 }  // namespace
@@ -140,6 +172,28 @@ void RegisterSearchFunctions() {
   // BOOST(expr, boost_value)
   velox::registerFunction<SearchStubFunction, bool, bool, double>(
     {std::string{kBoost}});
+
+  // GEO_ functions. Varchar versions.
+  // GEO_DISTANCE(field, target). Returns double - would work only inside
+  // comparison/equality
+  velox::registerFunction<SearchStubFunction, double, velox::Varchar,
+                          velox::Varchar>({std::string{kGeoDistance}});
+  // GEO_IN_RANGE(field, target, low, high, includeLow, includeHigh)
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, double, double>(
+    {std::string{kGeoInRange}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, double, double, bool>(
+    {std::string{kGeoInRange}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar, double, double, bool, bool>(
+    {std::string{kGeoInRange}});
+  // GEO_INTERSECTS(field, target)
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kGeoIntersects}});
+  // GEO_CONTAINS(field, target)
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Varchar>({std::string{kGeoContains}});
 }
 
 }  // namespace sdb::functions

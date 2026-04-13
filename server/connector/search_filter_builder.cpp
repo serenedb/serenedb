@@ -28,9 +28,11 @@
 #include "serenedb_connector.hpp"
 // NOLINTEND
 
+#include <iresearch/search/geo_filter.h>
 #include <velox/expression/ExprConstants.h>
 #include <velox/type/Type.h>
 
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/all_filter.hpp>
@@ -306,6 +308,17 @@ Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
 }
 
 bool IsIn(std::string_view name) { return name == "in"; }
+
+Result SetupGeoFilter(const irs::analysis::Analyzer& a,
+                      irs::GeoFilterOptionsBase& options) {
+  if (!search::IsGeoAnalyzer(a.type())) {
+    return {ERROR_BAD_PARAMETER, "Analyzer for field is not a geo analyzer."};
+  }
+
+  const auto& impl = basics::downCast<irs::analysis::GeoAnalyzer>(a);
+  impl.prepare(options);
+  return {};
+}
 
 template<bool GenericVersion>
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
@@ -950,6 +963,82 @@ Result FromVeloxLevenshteinMatch(irs::BooleanFilter& filter,
   return {};
 }
 
+Result fromSearchGeoContainsIntersect(irs::BooleanFilter& filter,
+                                      const VeloxFilterContext& ctx,
+                                      const velox::core::CallTypedExpr& call) {
+  const auto num_inputs = call.inputs().size();
+  // ensured by prototype registartion
+  SDB_ASSERT(num_inputs == 2);
+
+  size_t field_idx = 0;
+  size_t target_idx = 1;
+
+  if (!call.inputs()[0]->isFieldAccessKind()) {
+    if (!call.inputs()[1]->isFieldAccessKind()) {
+      return {ERROR_BAD_PARAMETER, "Input is not field access"};
+    } else {
+      field_idx = 1;
+      target_idx = 0;
+    }
+  }
+
+  // target (string)
+  auto target = EvaluateConstant(call.inputs()[target_idx]);
+  if (!target.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate target value as constant"};
+  }
+  if (target->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate target as VARCHAR"};
+  }
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    call.inputs()[field_idx].get());
+
+  const auto* column_info = FindColumnInfo(ctx, *field_typed);
+  if (!column_info ||
+      column_info->info.type()->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Field '", field_typed->name(),
+            "' is not VARCHAR"};
+  }
+
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+  auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)
+                                 : AddFilter<irs::GeoFilter>(filter);
+  geo_filter.boost(ctx.boost);
+
+  auto* options = geo_filter.mutable_options();
+  auto r = SetupGeoFilter(*column_info->analyzer.analyzer.get(), *options);
+  if (!r.ok()) {
+    return r;
+  }
+  auto shape_value = vpack::Parser::fromJson(
+    static_cast<std::string_view>(target->value<velox::StringView>()));
+  geo::ShapeContainer shape;
+  std::vector<S2LatLng> cache;
+  auto res = ParseShape<geo::Parsing::GeoJson>(shape_value->slice(), shape,
+                                               cache, options->coding, nullptr);
+  if (!res) {
+    return {ERROR_BAD_PARAMETER, "Failed to parse target as geo json"};
+  }
+
+  options->shape = std::move(shape);
+  options->type = call.name() == functions::kGeoIntersects
+                    ? irs::GeoFilterType::Intersects
+                  : field_idx == 0 ? irs::GeoFilterType::IsContained
+                                   : irs::GeoFilterType::Contains;
+  *geo_filter.mutable_field() = std::move(field_name);
+
+  return {};
+}
+
+Result fromSearchGeoInRange(irs::BooleanFilter& filter,
+                            const VeloxFilterContext& ctx,
+                            const velox::core::CallTypedExpr& call) {
+  return {ERROR_NOT_IMPLEMENTED, "GEO_IN_RANGE not implemented"};
+}
+
 }  // namespace
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -1037,6 +1126,21 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 
   if (call.name() == functions::kBoost) {
     return FromSearchBoost(filter, ctx, call);
+  }
+
+  if (call.name() == functions::kGeoInRange) {
+    return fromSearchGeoInRange(filter, ctx, call);
+  }
+
+  // inline constexpr std::string_view kGeoDistance = "sdb_geo_distance";
+
+  if (call.name() == functions::kGeoInRange) {
+    return fromSearchGeoInRange(filter, ctx, call);
+  }
+
+  if (call.name() == functions::kGeoContains ||
+      call.name() == functions::kGeoIntersects) {
+    return fromSearchGeoContainsIntersect(filter, ctx, call);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};

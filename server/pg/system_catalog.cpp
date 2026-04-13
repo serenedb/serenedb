@@ -751,6 +751,10 @@ constexpr containers::TrivialBiMap kMapping = [](auto selector) {
     .Case("ngram_match", {functions::kNgramMatch, false})
     .Case("levenshtein_match", {functions::kLevenshteinMatch, false})
     .Case("boost", VeloxFunction{functions::kBoost, false})
+    .Case("geo_distance", VeloxFunction{functions::kGeoDistance, false})
+    .Case("geo_in_range", VeloxFunction{functions::kGeoInRange, false})
+    .Case("geo_intersects", VeloxFunction{functions::kGeoIntersects, false})
+    .Case("geo_contains", VeloxFunction{functions::kGeoContains, false})
     // Vector functions
     .Case("l2_distance", VeloxFunction{functions::kL2Distance, false})
     .Case("l1_distance", VeloxFunction{functions::kL1Distance, false})

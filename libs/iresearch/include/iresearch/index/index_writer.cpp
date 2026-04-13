@@ -738,7 +738,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
 
   auto& segment = *_active.Segment();
   auto& writer = *segment.active.writer;
-  auto executor = _writer->_executor;
+  auto& async_flush = _writer->_async_flush;
 
   if (writer.initialized()) [[likely]] {
     if (disable_flush || !_writer->FlushRequired(writer)) {
@@ -753,7 +753,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
 
     auto meta_name = segment.active.writer_meta.meta.name;
     try {
-      segment.StartFlush(executor);
+      segment.StartFlush(async_flush);
     } catch (...) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
                 absl::StrCat("while flushing segment '", meta_name,
@@ -854,8 +854,9 @@ void IndexWriter::Cleanup(FlushContext& curr, FlushContext* next) noexcept {
   }
 }
 
-uint64_t IndexWriter::FlushContext::FlushPending(
-  uint64_t committed_tick, uint64_t tick, yaclib::IExecutorPtr executor) {
+uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
+                                                 uint64_t tick,
+                                                 AsyncFlush& async_flush) {
   // if tick is not equal uint64_max, as result of bad_alloc it's possible here
   // that not all segments which should be committed by next FlushContext
   // (fully or partially) will be moved to it.
@@ -888,7 +889,7 @@ uint64_t IndexWriter::FlushContext::FlushPending(
       // Commit will has greater first tick than committed tick.
       SDB_ASSERT(committed_tick < first_tick);
       flushed_tick = std::max(flushed_tick, last_tick);
-      segment->StartFlush(executor);
+      segment->StartFlush(async_flush);
       // segment->Flush();
       if (tick < last_tick) {
         next_segments.push_back(segment);
@@ -965,7 +966,8 @@ void IndexWriter::SegmentContext::HarvestFlushOutput(
   committed_flushed_docs += sealed.committed_buffered_docs;
 }
 
-bool IndexWriter::SegmentContext::StartFlush(yaclib::IExecutorPtr executor) {
+bool IndexWriter::SegmentContext::StartFlush(
+  IndexWriter::AsyncFlush& async_flush) {
   if (pending_flush != nullptr) {
     DrainPendingFlush();
   }
@@ -981,23 +983,32 @@ bool IndexWriter::SegmentContext::StartFlush(yaclib::IExecutorPtr executor) {
   auto pending = std::make_shared<PendingFlush>(TakeActiveGeneration());
 
   pending_flush = pending;
-  auto run_flush = [this, pend = pending]() mutable {
+  auto run_flush = [this, pend = pending,
+                    &async_flush](bool in_executor) mutable {
     Finally set_completed = [&] noexcept { pend->completed.Set(); };
     try {
       pend->output = RunPhysicalFlush(pend->sealed);
     } catch (...) {
       pend->error = std::current_exception();
     }
+    if (in_executor) {
+      async_flush.flush_semaphore.release();
+    }
   };
 
-  if (executor != nullptr && pending->sealed.committed_buffered_docs == 0) {
+  if (async_flush.executor != nullptr &&
+      pending->sealed.committed_buffered_docs == 0 &&
+      async_flush.flush_semaphore.try_acquire()) {
     try {
-      yaclib::Submit(*executor, std::move(run_flush));
+      yaclib::Submit(
+        *async_flush.executor,
+        [run_flush = std::move(run_flush)] mutable { run_flush(true); });
     } catch (...) {
-      run_flush();
+      async_flush.flush_semaphore.release();
+      run_flush(false);
     }
   } else {
-    run_flush();
+    run_flush(false);
   }
   return true;
 }
@@ -1037,7 +1048,8 @@ void IndexWriter::SegmentContext::DrainPendingFlush() {
 }
 
 void IndexWriter::SegmentContext::Flush() {
-  if (StartFlush()) {
+  AsyncFlush tmp;
+  if (StartFlush(tmp)) {
     HarvestPendingFlush();
   }
 }
@@ -1187,18 +1199,18 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
 
 IndexWriter::IndexWriter(
   ConstructToken, IndexLock::ptr&& lock, IndexFileRefs::ref_t&& lock_file_ref,
-  Directory& dir, Format::ptr codec, yaclib::IExecutorPtr executor,
-  size_t segment_pool_size, const SegmentOptions& segment_limits,
-  const Comparer* comparator, const ColumnInfoProvider& column_info,
+  Directory& dir, Format::ptr codec, size_t segment_pool_size,
+  const SegmentOptions& segment_limits, const Comparer* comparator,
+  const ColumnInfoProvider& column_info,
   const FeatureInfoProvider& feature_info,
   const PayloadProvider& meta_payload_provider,
-  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
+  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+  yaclib::IExecutorPtr executor, size_t remaining_flushes_slots)
   : _feature_info{feature_info},
     _column_info{column_info},
     _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
-    _executor{std::move(executor)},
     _dir{dir},
     _committed_reader{std::move(committed_reader)},
     _segment_limits{segment_limits},
@@ -1207,7 +1219,10 @@ IndexWriter::IndexWriter(
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
-    _write_lock_file_ref{std::move(lock_file_ref)} {
+    _write_lock_file_ref{std::move(lock_file_ref)},
+    _async_flush{
+      .executor{std::move(executor)},
+      .flush_semaphore{static_cast<ptrdiff_t>(remaining_flushes_slots)}} {
   SDB_ASSERT(column_info);   // ensured by 'make'
   SDB_ASSERT(feature_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
@@ -1336,11 +1351,13 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
 
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
-    std::move(codec), options.executor, options.segment_pool_size,
-    SegmentOptions{options}, options.comparator,
+    std::move(codec), options.segment_pool_size, SegmentOptions{options},
+    options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.features ? options.features : kDefaultFeatureInfo,
-    options.meta_payload_provider, std::move(reader));
+    options.meta_payload_provider, std::move(reader), options.executor,
+    options.max_in_flight_flushes);
+
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1786,7 +1803,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // Stage 0
   // wait for any outstanding segments to settle to ensure that any rollbacks
   // are properly tracked in 'modification_queries_'
-  const auto flushed_tick = ctx->FlushPending(_committed_tick, tick, _executor);
+  const auto flushed_tick =
+    ctx->FlushPending(_committed_tick, tick, _async_flush);
 
   std::unique_lock cleanup_lock{_consolidating.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {

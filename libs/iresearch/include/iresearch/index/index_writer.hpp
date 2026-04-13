@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <semaphore>
 #include <string_view>
 #include <yaclib/exe/executor.hpp>
 
@@ -169,6 +170,7 @@ struct IndexWriterOptions : public SegmentOptions {
   bool lock_repository{true};
 
   yaclib::IExecutorPtr executor;
+  size_t max_in_flight_flushes{std::thread::hardware_concurrency()};
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -191,6 +193,8 @@ class IndexWriter : private util::Noncopyable {
 
   using FlushContextPtr =
     std::unique_ptr<FlushContext, void (*)(FlushContext*)>;
+
+  struct AsyncFlush;
 
   // Disallow using public constructor
   struct ConstructToken {
@@ -613,12 +617,13 @@ class IndexWriter : private util::Noncopyable {
   // public because we want to use std::make_shared
   IndexWriter(ConstructToken, IndexLock::ptr&& lock,
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
-              Format::ptr codec, yaclib::IExecutorPtr executor,
-              size_t segment_pool_size, const SegmentOptions& segment_limits,
-              const Comparer* comparator, const ColumnInfoProvider& column_info,
+              Format::ptr codec, size_t segment_pool_size,
+              const SegmentOptions& segment_limits, const Comparer* comparator,
+              const ColumnInfoProvider& column_info,
               const FeatureInfoProvider& feature_info,
               const PayloadProvider& meta_payload_provider,
-              std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
+              std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+              yaclib::IExecutorPtr executor, size_t remaining_flushes_slots);
 
  private:
   struct ConsolidationContext : util::Noncopyable {
@@ -729,14 +734,25 @@ class IndexWriter : private util::Noncopyable {
           writer{SegmentWriter::make(*this->dir, options)} {}
     };
 
-    [[nodiscard]] ActiveGeneration TakeActiveGeneration() {
-      ActiveGeneration result =
-        std::exchange(active, ActiveGeneration{**active.dir, options});
-      return result;
-    }
+    using SealedGeneration = ActiveGeneration;
+
+    struct FlushOutput {
+      DocMap old2new;
+      DocsMask docs_mask;
+    };
+
+    struct PendingFlush {
+      SealedGeneration sealed;
+      std::optional<FlushOutput> output;
+      std::exception_ptr error{nullptr};
+      yaclib::OneShotEvent completed;
+
+      PendingFlush(SealedGeneration&& sealed) : sealed{std::move(sealed)} {}
+    };
 
     ActiveGeneration active;
     SegmentWriterOptions options;
+    std::shared_ptr<PendingFlush> pending_flush;
 
     // for use with index_writer::buffered_docs(), asynchronous call
     std::atomic_size_t buffered_docs{0};
@@ -773,35 +789,22 @@ class IndexWriter : private util::Noncopyable {
     SegmentContext(Directory& dir, segment_meta_generator_t&& meta_generator,
                    const SegmentWriterOptions& options);
 
+    [[nodiscard]] ActiveGeneration TakeActiveGeneration() {
+      ActiveGeneration result =
+        std::exchange(active, ActiveGeneration{**active.dir, options});
+      return result;
+    }
+
     void Rollback() noexcept;
 
     void Commit(uint64_t queries, uint64_t last_tick);
-
-    using SealedGeneration = ActiveGeneration;
-
-    struct FlushOutput {
-      DocMap old2new;
-      DocsMask docs_mask;
-    };
 
     [[nodiscard]] FlushOutput RunPhysicalFlush(SealedGeneration& sealed);
     void HarvestFlushOutput(SealedGeneration&& sealed,
                             IndexWriter::SegmentContext::FlushOutput&& output,
                             std::span<SegmentWriter::DocContext> docs_context);
 
-    struct PendingFlush {
-      SealedGeneration sealed;
-      std::optional<FlushOutput> output;
-      std::exception_ptr error{nullptr};
-      // std::atomic_bool completed{false};
-      yaclib::OneShotEvent completed;
-
-      PendingFlush(SealedGeneration&& sealed) : sealed{std::move(sealed)} {}
-    };
-
-    std::shared_ptr<PendingFlush> pending_flush;
-
-    bool StartFlush(yaclib::IExecutorPtr executor = nullptr);
+    bool StartFlush(AsyncFlush& async_flush);
     void HarvestPendingFlush();
 
     void DiscardPendingFlush() noexcept;
@@ -932,7 +935,7 @@ class IndexWriter : private util::Noncopyable {
     void AddToPending(ActiveSegmentContext& active);
 
     uint64_t FlushPending(uint64_t committed_tick, uint64_t tick,
-                          yaclib::IExecutorPtr executor);
+                          AsyncFlush& async_flush);
 
     void Reset() noexcept;
   };
@@ -1022,7 +1025,6 @@ class IndexWriter : private util::Noncopyable {
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;
   Format::ptr _codec;
-  yaclib::IExecutorPtr _executor;
   // Prevent concurrent Begin/Commit/Rollback/Clear and multiple Consolidate
   absl::Mutex _commit_lock;
   struct {
@@ -1058,6 +1060,11 @@ class IndexWriter : private util::Noncopyable {
   // Flushed contexts, while one commiting another writing
   // TODO(mbkkt) Code maybe not ready to more than 2 FlushContext.
   std::array<FlushContext, 2> _flush_contexts;
+
+  struct AsyncFlush {
+    yaclib::IExecutorPtr executor;
+    std::counting_semaphore<> flush_semaphore{0};
+  } _async_flush;
 };
 
 }  // namespace irs

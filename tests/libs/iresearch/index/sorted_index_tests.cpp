@@ -2799,7 +2799,9 @@ MemoryDirectoryWithScheduler(const TestBase* ctx);
 std::pair<std::shared_ptr<irs::Directory>, std::string>
 MemoryDirectoryWithoutScheduler(const TestBase* ctx);
 
-struct SortedIndexStressTestCase : SortedIndexTestCase {
+struct SortedIndexStressTestCase : SortedIndexTestCase {};
+
+struct SortedIndexStressSchedulerTestCase : SortedIndexStressTestCase {
  protected:
   yaclib::IntrusivePtr<yaclib::FairThreadPool> GetScheduler() const {
     tests::dir_param_f factory{};
@@ -2811,8 +2813,6 @@ struct SortedIndexStressTestCase : SortedIndexTestCase {
     return nullptr;
   }
 };
-
-using SortedIndexStressSchedulerTestCase = SortedIndexStressTestCase;
 
 std::pair<std::shared_ptr<irs::Directory>, std::string>
 MemoryDirectoryWithScheduler(const TestBase* ctx) {

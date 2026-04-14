@@ -829,8 +829,8 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   if (column_info->analyzer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     auto& wildcard_filter = ctx.negated
-                              ? Negate<irs::WildcardFilter>(filter)
-                              : AddFilter<irs::WildcardFilter>(filter);
+                              ? Negate<irs::ByWildcardNgram>(filter)
+                              : AddFilter<irs::ByWildcardNgram>(filter);
     wildcard_filter.boost(ctx.boost);
     *wildcard_filter.mutable_field() = field_name;
     *wildcard_filter.mutable_options() = {

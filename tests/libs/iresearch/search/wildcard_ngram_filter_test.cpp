@@ -63,25 +63,26 @@ struct WildcardField final {
   std::string_view field_name{"text"};
 };
 
-// Build a WildcardFilter for the given field and SQL LIKE pattern.
-irs::WildcardFilter MakeFilter(std::string_view field, std::string_view pattern,
-                               irs::analysis::WildcardAnalyzer& analyzer,
-                               bool has_positions = true) {
-  irs::WildcardFilter filter;
+// Build a ByWildcardNgram for the given field and SQL LIKE pattern.
+irs::ByWildcardNgram MakeFilter(std::string_view field,
+                                std::string_view pattern,
+                                irs::analysis::WildcardAnalyzer& analyzer,
+                                bool has_positions = true) {
+  irs::ByWildcardNgram filter;
   *filter.mutable_field() = field;
   *filter.mutable_options() =
-    irs::WildcardFilterOptions{pattern, analyzer, has_positions};
+    irs::ByWildcardNgramOptions{pattern, analyzer, has_positions};
   return filter;
 }
 
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// WildcardFilterOptions unit tests
+// ByWildcardNgramOptions unit tests
 // ---------------------------------------------------------------------------
 
 TEST(WildcardNgramFilterOptionsTest, default_ctor) {
-  irs::WildcardFilterOptions opts;
+  irs::ByWildcardNgramOptions opts;
   EXPECT_TRUE(opts.parts.empty());
   EXPECT_TRUE(opts.token.empty());
   EXPECT_TRUE(opts.has_pos);
@@ -89,8 +90,8 @@ TEST(WildcardNgramFilterOptionsTest, default_ctor) {
 }
 
 TEST(WildcardNgramFilterOptionsTest, equality_empty) {
-  irs::WildcardFilterOptions a;
-  irs::WildcardFilterOptions b;
+  irs::ByWildcardNgramOptions a;
+  irs::ByWildcardNgramOptions b;
   EXPECT_TRUE(a == b);
 }
 
@@ -100,11 +101,11 @@ TEST(WildcardNgramFilterOptionsTest, equality_with_matcher) {
   irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
 
   // A middle "%" causes needs_matcher=true, so BuildLikeMatcher is called.
-  irs::WildcardFilterOptions a{"foo%bar", analyzer, true};
-  irs::WildcardFilterOptions b{"foo%bar", analyzer, true};
+  irs::ByWildcardNgramOptions a{"foo%bar", analyzer, true};
+  irs::ByWildcardNgramOptions b{"foo%bar", analyzer, true};
   EXPECT_TRUE(a == b);
 
-  irs::WildcardFilterOptions c{"foo%baz", analyzer, true};
+  irs::ByWildcardNgramOptions c{"foo%baz", analyzer, true};
   EXPECT_FALSE(a == c);
 }
 
@@ -113,8 +114,8 @@ TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
   ana_opts.ngram_size = 3;
   irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
 
-  irs::WildcardFilterOptions a{"foo_bar", analyzer, true};
-  irs::WildcardFilterOptions b{"foo_bar", analyzer, false};
+  irs::ByWildcardNgramOptions a{"foo_bar", analyzer, true};
+  irs::ByWildcardNgramOptions b{"foo_bar", analyzer, false};
   EXPECT_FALSE(a == b);
 }
 
@@ -125,8 +126,8 @@ TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
   ana_opts.ngram_size = 3;
   irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
 
-  irs::WildcardFilterOptions with_matcher{"a_c", analyzer, true};
-  irs::WildcardFilterOptions no_matcher{"abc%", analyzer, true};
+  irs::ByWildcardNgramOptions with_matcher{"a_c", analyzer, true};
+  irs::ByWildcardNgramOptions no_matcher{"abc%", analyzer, true};
 
   EXPECT_NE(with_matcher.matcher, nullptr);
   EXPECT_EQ(no_matcher.matcher, nullptr);
@@ -134,13 +135,13 @@ TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
 }
 
 // ---------------------------------------------------------------------------
-// WildcardFilter unit tests
+// ByWildcardNgram unit tests
 // ---------------------------------------------------------------------------
 
 TEST(WildcardNgramFilterTest, ctor) {
-  irs::WildcardFilter q;
-  EXPECT_EQ(irs::Type<irs::WildcardFilter>::id(), q.type());
-  EXPECT_EQ(irs::WildcardFilterOptions{}, q.options());
+  irs::ByWildcardNgram q;
+  EXPECT_EQ(irs::Type<irs::ByWildcardNgram>::id(), q.type());
+  EXPECT_EQ(irs::ByWildcardNgramOptions{}, q.options());
   EXPECT_TRUE(q.field().empty());
   EXPECT_EQ(irs::kNoBoost, q.Boost());
 }
@@ -213,7 +214,7 @@ TEST(WildcardNgramFilterTest, query) {
   MaxMemoryCounter counter;
 
   // Execute a filter and return matched doc_ids across all segments.
-  auto execute = [&](const irs::WildcardFilter& q) {
+  auto execute = [&](const irs::ByWildcardNgram& q) {
     auto prepared = q.prepare({.index = *reader, .memory = counter});
     EXPECT_NE(nullptr, prepared);
     counter.Reset();

@@ -176,9 +176,9 @@ constexpr size_t kDefaultScoredTermsLimit = 1024;
 
 }  // namespace
 
-Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
-                                           std::string_view field,
-                                           const WildcardFilterOptions& opts) {
+Filter::Query::ptr ByWildcardNgram::Prepare(
+  const PrepareContext& ctx, std::string_view field,
+  const ByWildcardNgramOptions& opts) {
   auto& parts = opts.parts;
   auto size = parts.size();
   Filter::Query::ptr p;
@@ -234,7 +234,7 @@ Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
     ctx.memory, opts.matcher, std::string_view{field}, std::move(conjunction));
 }
 
-WildcardFilterOptions::WildcardFilterOptions(
+ByWildcardNgramOptions::ByWildcardNgramOptions(
   std::string_view pattern, analysis::WildcardAnalyzer& analyzer,
   bool has_positions) {
   auto& ngram = analyzer.ngram();

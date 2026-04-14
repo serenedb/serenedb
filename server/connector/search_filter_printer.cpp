@@ -208,7 +208,7 @@ void StringifyWildcard(std::string* out, const ByWildcard& filter, FT&& ft) {
 
 template<typename FT>
 void StringifyWildcardNgramFilter(std::string* out,
-                                  const WildcardFilter& filter, FT&& ft) {
+                                  const ByWildcardNgram& filter, FT&& ft) {
   absl::StrAppend(out, "WILDCARD_NGRAM[", ft(filter.field()), ", '",
                   TermToString(filter.options().token),
                   "', has_pos=", filter.options().has_pos,
@@ -309,9 +309,9 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
                              static_cast<const ByColumnExistence&>(filter), ft);
   } else if (type == Type<ByWildcard>::id()) {
     StringifyWildcard(&out, static_cast<const ByWildcard&>(filter), ft);
-  } else if (type == Type<WildcardFilter>::id()) {
+  } else if (type == Type<ByWildcardNgram>::id()) {
     StringifyWildcardNgramFilter(
-      &out, static_cast<const WildcardFilter&>(filter), ft);
+      &out, static_cast<const ByWildcardNgram&>(filter), ft);
   } else if (type == Type<Empty>::id()) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {

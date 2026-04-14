@@ -142,6 +142,7 @@ ColumnSearchDistance::ColumnSearchDistance(ResettableDocIterator::ptr&& it,
 
 float ColumnSearchDistance::operator()(faiss::idx_t id) {
   const float* data = LoadData(id, _it);
+  SDB_ASSERT(_dist);
   const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
   const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
   const auto d = static_cast<uint16_t>(_dim);
@@ -157,6 +158,7 @@ ColumnIndexDistance::ColumnIndexDistance(ResettableDocIterator::ptr&& lit,
 
 float ColumnIndexDistance::operator()(faiss::idx_t id) {
   const float* data = LoadData(id, _lit);
+  SDB_ASSERT(_dist);
   const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
   const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
   const auto d = static_cast<uint16_t>(_dim);
@@ -166,6 +168,7 @@ float ColumnIndexDistance::operator()(faiss::idx_t id) {
 float ColumnIndexDistance::symmetric_dis(faiss::idx_t i, faiss::idx_t j) {
   const float* data_i = LoadData(i, _lit);
   const float* data_j = LoadData(j, _rit);
+  SDB_ASSERT(_dist);
   const auto* lhs = reinterpret_cast<const irs::byte_type*>(data_i);
   const auto* rhs = reinterpret_cast<const irs::byte_type*>(data_j);
   const auto d = static_cast<uint16_t>(_dim);

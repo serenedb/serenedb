@@ -176,8 +176,8 @@ db error: ERROR: invalid input syntax for type integer: "three"
 statement error
 CREATE TEXT SEARCH DICTIONARY t_err16(
     template = 'minhash',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = '|',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = '|',
     numhashes = 'two'
 )
 ----
@@ -747,8 +747,8 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY t12(
     template = 'minhash',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ',',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ',',
     numhashes = 2
 )
 
@@ -775,9 +775,9 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
     template = 'minhash',
     numhashes = 3,
-    analyzer_template = 'segmentation',
-    analyzer_break = 'alpha',
-    analyzer_case = 'lower'
+    tokenizer_template = 'segmentation',
+    tokenizer_break = 'alpha',
+    tokenizer_case = 'lower'
 )
 
 
@@ -794,10 +794,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_with_text(
     template = 'minhash',
     numhashes = 6,
-    analyzer_template = 'text',
-    analyzer_locale = 'en_US.UTF-8',
-    analyzer_case = 'lower',
-    analyzer_stemming = false
+    tokenizer_template = 'text',
+    tokenizer_locale = 'en_US.UTF-8',
+    tokenizer_case = 'lower',
+    tokenizer_stemming = false
 )
 
 
@@ -1336,7 +1336,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY copy_minhash(
     template = 'copy_from',
     from = 'minhash_with_text',
-    analyzer_stopwords = '"fox"'
+    tokenizer_stopwords = '"fox"'
 )
 
 
@@ -1353,7 +1353,7 @@ CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
     from = 'copy_pipe2',
     step4_template = 'copy_from',
     step4_from = 'copy_minhash',
-    step4_analyzer_stopwords = '"quick"'
+    step4_tokenizer_stopwords = '"quick"'
 )
 
 query
@@ -1401,8 +1401,8 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_copy5(
     template = 'minhash',
     numHashes = 5,
-    analyzer_template = 'copy_from',
-    analyzer_from = 'too_many_pipes'
+    tokenizer_template = 'copy_from',
+    tokenizer_from = 'too_many_pipes'
 )
 
 
@@ -1420,8 +1420,8 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY wildcard_default(
     template = 'wildcard',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 )
 
 
@@ -1431,8 +1431,8 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY wildcard_ngram2(
     template = 'wildcard',
     ngramsize = 2,
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 )
 
 
@@ -1442,8 +1442,8 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY wildcard_ngram5_seg(
     template = 'wildcard',
     ngramsize = 5,
-    analyzer_template = 'segmentation',
-    analyzer_case = 'lower'
+    tokenizer_template = 'segmentation',
+    tokenizer_case = 'lower'
 )
 
 
@@ -1453,10 +1453,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY wildcard_text_base(
     template = 'wildcard',
     ngramsize = 3,
-    analyzer_template = 'text',
-    analyzer_locale = 'en_US.UTF-8',
-    analyzer_stemming = false,
-    analyzer_case = 'lower'
+    tokenizer_template = 'text',
+    tokenizer_locale = 'en_US.UTF-8',
+    tokenizer_stemming = false,
+    tokenizer_case = 'lower'
 )
 
 
@@ -1466,8 +1466,8 @@ statement error
 CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram1(
     template = 'wildcard',
     ngramsize = 1,
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 )
 ----
 db error: ERROR: ngramsize must be at least 2
@@ -1480,8 +1480,8 @@ statement error
 CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram0(
     template = 'wildcard',
     ngramsize = 0,
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 )
 ----
 db error: ERROR: ngramsize must be at least 2
@@ -1494,8 +1494,8 @@ statement error
 CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram_str(
     template = 'wildcard',
     ngramsize = 'three',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 )
 ----
 db error: ERROR: invalid input syntax for type integer: "three"
@@ -1508,15 +1508,15 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_option(
     template = 'wildcard',
     ngramsize = 3,
     locale = 'en_US.UTF-8',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 )
 ----
 db error: ERROR: option "locale" is not applicable in this context
 HINT: Use WITH (HELP) to see available options
 
 
-# --- Invalid: missing required analyzer_template ---
+# --- Invalid: missing required tokenizer_template ---
 
 statement error
 CREATE TEXT SEARCH DICTIONARY wildcard_no_analyzer(
@@ -1533,7 +1533,7 @@ statement error
 CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner(
     template = 'wildcard',
     ngramsize = 3,
-    analyzer_template = 'delimiter'
+    tokenizer_template = 'delimiter'
 )
 ----
 db error: ERROR: required parameter "delimiter" was not found

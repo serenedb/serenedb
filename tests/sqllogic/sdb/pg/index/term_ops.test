@@ -106,8 +106,8 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY test_wildcard_dict(
     template = 'wildcard',
     ngramsize = 3,
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ' '
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
 );
 
 statement ok

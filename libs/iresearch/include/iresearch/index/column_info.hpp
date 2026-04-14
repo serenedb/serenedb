@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include <faiss/MetricType.h>
-
 #include <functional>
 
 #include "iresearch/utils/compression.hpp"
@@ -43,6 +41,13 @@ enum class ValueType : uint8_t {
   VectorF32,
 };
 
+enum class HNSWMetric : uint8_t {
+  L2 = 0,
+  InnerProduct,
+  Cosine,
+  L1,
+};
+
 struct HNSWInfo {
   doc_id_t max_doc = 0;
 
@@ -53,7 +58,7 @@ struct HNSWInfo {
   int m = 32;
 
   // HNSW metric
-  faiss::MetricType metric = faiss::METRIC_L2;
+  HNSWMetric metric = HNSWMetric::L2;
 
   // expansion factor at construction time
   int ef_construction = 40;

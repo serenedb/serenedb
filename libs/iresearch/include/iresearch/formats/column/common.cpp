@@ -94,7 +94,7 @@ void WriteHeader(IndexOutput& out, const ColumnHeader& hdr) {
     out.WriteU32(hdr.hnsw_info->max_doc);
     out.WriteU32(hdr.hnsw_info->d);
     out.WriteU32(hdr.hnsw_info->m);
-    out.WriteU32(std::to_underlying(hdr.hnsw_info->metric));
+    out.WriteByte(std::to_underlying(hdr.hnsw_info->metric));
   }
 }
 
@@ -114,7 +114,7 @@ ColumnHeader ReadHeader(IndexInput& in) {
     hnsw_info.max_doc = in.ReadI32();
     hnsw_info.d = in.ReadI32();
     hnsw_info.m = in.ReadI32();
-    hnsw_info.metric = static_cast<faiss::MetricType>(in.ReadI32());
+    hnsw_info.metric = static_cast<irs::HNSWMetric>(in.ReadByte());
     hdr.hnsw_info = std::move(hnsw_info);
   }
   return hdr;

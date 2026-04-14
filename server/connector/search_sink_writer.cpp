@@ -277,84 +277,6 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   }
 }
 
-void SearchSinkInsertBaseImpl::TraverseJsonDocument(
-  simdjson::ondemand::document& doc, int depth) {
-  if (depth > kMaxJsonDepth) {
-    return;
-  }
-  auto type_result = doc.type();
-  if (type_result.error()) {
-    return;
-  }
-  switch (type_result.value()) {
-    case simdjson::ondemand::json_type::object: {
-      simdjson::ondemand::object obj;
-      if (doc.get_object().get(obj)) {
-        return;
-      }
-      for (auto field_result : obj) {
-        if (field_result.error()) {
-          continue;
-        }
-        auto field = field_result.value_unsafe();
-        auto key_result = field.unescaped_key();
-        if (key_result.error()) {
-          continue;
-        }
-        std::string_view key = key_result.value_unsafe();
-        size_t prev_len = _json_path_buffer.size();
-        _json_path_buffer += '.';
-        _json_path_buffer += key;
-        TraverseJsonValue(field.value(), depth + 1);
-        _json_path_buffer.resize(prev_len);
-      }
-      break;
-    }
-    case simdjson::ondemand::json_type::array: {
-      simdjson::ondemand::array arr;
-      if (doc.get_array().get(arr)) {
-        return;
-      }
-      for (auto elem_result : arr) {
-        if (elem_result.error()) {
-          continue;
-        }
-        TraverseJsonValue(elem_result.value_unsafe(), depth + 1);
-      }
-      break;
-    }
-    case simdjson::ondemand::json_type::string: {
-      auto str_result = doc.get_string();
-      if (str_result.error()) {
-        return;
-      }
-      EmitJsonStringField(str_result.value_unsafe());
-      break;
-    }
-    case simdjson::ondemand::json_type::number: {
-      auto num_result = doc.get_double();
-      if (num_result.error()) {
-        return;
-      }
-      EmitJsonNumericField(num_result.value_unsafe());
-      break;
-    }
-    case simdjson::ondemand::json_type::boolean: {
-      auto bool_result = doc.get_bool();
-      if (bool_result.error()) {
-        return;
-      }
-      EmitJsonBoolField(bool_result.value_unsafe());
-      break;
-    }
-    case simdjson::ondemand::json_type::null:
-      EmitJsonNullField();
-      break;
-    default:
-      break;
-  }
-}
-
 void SearchSinkInsertBaseImpl::TraverseJsonValue(simdjson::ondemand::value val,
                                                  int depth) {
   if (depth > kMaxJsonDepth) {
@@ -397,12 +319,21 @@ void SearchSinkInsertBaseImpl::TraverseJsonValue(simdjson::ondemand::value val,
       if (val.get_array().get(arr)) {
         return;
       }
+      size_t index = 0;
+      size_t prev_len = _json_path_buffer.size();
       for (auto elem_result : arr) {
         if (elem_result.error()) {
+          ++index;
           continue;
         }
+        _json_path_buffer.resize(prev_len);
+        _json_path_buffer += '.';
+        _json_path_buffer +=
+          std::to_string(index);  // TODO(mkornaukhov) slow, fix later
         TraverseJsonValue(elem_result.value_unsafe(), depth + 1);
+        ++index;
       }
+      _json_path_buffer.resize(prev_len);
       break;
     }
     case simdjson::ondemand::json_type::string: {

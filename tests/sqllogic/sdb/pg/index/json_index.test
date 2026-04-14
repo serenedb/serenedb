@@ -191,13 +191,12 @@ INSERT INTO witharrays VALUES
 statement ok
 VACUUM (UPDATE_INDEXES) witharrays;
 
-# TODO support arrays better
-# Array elements are indexed as leaves under the same path
-#query
-#SELECT id FROM witharrays_idx WHERE TERM_EQ(data->'tags'->>'0', 'alpha') ORDER BY id;
-#----
-#id
-#1
+# Array elements are indexed positionally: tags[0] -> "tags.0", tags[1] -> "tags.1", etc.
+query
+SELECT id FROM witharrays_idx WHERE TERM_EQ(data->'tags'->>'0', 'alpha') ORDER BY id;
+----
+id
+1
 
 statement ok
 DROP TABLE witharrays;

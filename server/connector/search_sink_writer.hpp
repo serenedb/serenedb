@@ -148,7 +148,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void SetupJsonColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
   // DFS traversal of a parsed simdjson value; emits index fields for each leaf.
-  void TraverseJsonDocument(simdjson::ondemand::document& doc, int depth);
   void TraverseJsonValue(simdjson::ondemand::value val, int depth);
 
   // Emit a single leaf field into the current document.

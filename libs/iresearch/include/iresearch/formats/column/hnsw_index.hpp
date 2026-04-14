@@ -90,7 +90,7 @@ class HNSWRangeSegmentResultHandler
 
 class ColumnDistanceBase : public faiss::DistanceComputer {
  public:
-  explicit ColumnDistanceBase(HNSWInfo info) : _info{std::move(info)} {}
+  explicit ColumnDistanceBase(HNSWMetric metric, int32_t dim);
 
   void set_query(const float* x) final {
     SDB_ASSERT(x != nullptr);
@@ -101,7 +101,8 @@ class ColumnDistanceBase : public faiss::DistanceComputer {
   const float* LoadData(faiss::idx_t id, ResettableDocIterator::ptr& it);
 
   const float* _q = nullptr;
-  const HNSWInfo _info;
+  float (*const _dist)(const byte_type*, const byte_type*, uint16_t) = nullptr;
+  int32_t _dim;
 };
 
 class ColumnSearchDistance : public ColumnDistanceBase {

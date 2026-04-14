@@ -128,8 +128,9 @@ void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
   basics::StrResize(field_name, sizeof(column.info.Id()));
   absl::big_endian::Store(field_name.data(), column.info.Id());
   if (!column.json_path.empty()) {
-    field_name += '.';
-    field_name += column.json_path;
+    field_name.reserve(1 + column.json_path.size());
+    field_name.push_back('.');
+    field_name.append(column.json_path);
   }
 }
 
@@ -143,9 +144,10 @@ void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
 bool TryExtractJsonPath(const velox::core::ITypedExpr& expr,
                         std::string& column_name, std::string& json_path) {
   if (expr.isFieldAccessKind()) {
-    const auto& fa =
+    // Base case. Sink assumes it's only object for now
+    const auto& field_access =
       static_cast<const velox::core::FieldAccessTypedExpr&>(expr);
-    column_name = fa.name();
+    column_name = field_access.name();
     json_path.clear();
     return true;
   }
@@ -160,9 +162,7 @@ bool TryExtractJsonPath(const velox::core::ITypedExpr& expr,
       call.name() != "pg_json_extract_field_text") {
     return false;
   }
-  if (call.inputs().size() != 2) {
-    return false;
-  }
+  SDB_ASSERT(call.inputs().size() == 2);
 
   // Second input must be a constant string key.
   const auto* key_const =
@@ -170,16 +170,11 @@ bool TryExtractJsonPath(const velox::core::ITypedExpr& expr,
   if (!key_const || key_const->type()->kind() != velox::TypeKind::VARCHAR) {
     return false;
   }
-  velox::Variant key_variant;
-  if (key_const->hasValueVector()) {
-    SDB_ASSERT(key_const->valueVector()->size() == 1);
-    key_variant = key_const->valueVector()->variantAt(0);
-  } else {
-    key_variant = key_const->value();
-  }
+  auto key_variant = ToVariant(*key_const);
   if (key_variant.isNull() || key_variant.kind() != velox::TypeKind::VARCHAR) {
     return false;
   }
+
   std::string key{key_variant.value<velox::StringView>()};
 
   // Recurse into first input.
@@ -731,6 +726,7 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
             " inputs but 2 OR 3 expected"};
   }
 
+  // TODO generic should accept json also
   // For the generic LIKE, require a plain field access.
   // For TERM_LIKE (non-generic), also accept JSON path expressions.
   const velox::core::ITypedExpr& lhs = *call.inputs()[0];
@@ -781,9 +777,9 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
               "Field is not indexed by identity analyzer. Use TERM_LIKE."};
     }
   } else {
-    // TERM_LIKE requires VARCHAR (or JSON which has VARCHAR kind)
-    SDB_ASSERT(column_info->info.type()->kind() == velox::TypeKind::VARCHAR,
-               ERROR_BAD_PARAMETER, "TERM_LIKE field is not VARCHAR");
+    // TERM_LIKE requires VARCHAR
+    SDB_ASSERT(column_info->info.type()->isVarchar(), ERROR_BAD_PARAMETER,
+               "TERM_LIKE field is not VARCHAR");
   }
 
   search::mangling::MangleString(field_name);

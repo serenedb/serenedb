@@ -329,4 +329,6 @@ void SortAndDedupPoints(std::vector<ResolvedPoint>& points);
   return name == suffix.substr(1) || name.ends_with(suffix);
 }
 
+velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr);
+
 }  // namespace sdb::connector

@@ -33,12 +33,6 @@
 namespace sdb::connector {
 namespace {
 
-velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
-  if (!expr.hasValueVector()) {
-    return expr.value();
-  }
-  return expr.valueVector()->variantAt(0);
-}
 
 std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds>);
 
@@ -744,6 +738,13 @@ void MergeSourceExprs(KeyBounds::SourceExprsMap& dst,
 }
 
 }  // namespace
+
+velox::variant ToVariant(const velox::core::ConstantTypedExpr& expr) {
+  if (!expr.hasValueVector()) {
+    return expr.value();
+  }
+  return expr.valueVector()->variantAt(0);
+}
 
 std::string ColumnRange::toString() const {
   auto variant_str = [](const velox::variant& v) {

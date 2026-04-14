@@ -250,7 +250,7 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
       return;
     }
     // Restore path buffer to just the column prefix before traversal.
-    _json_path_buffer.resize(_json_column_prefix_len);
+    _json_path_buffer.resize(sizeof(column_id));
     TraverseJsonValue(root_val, 0);
   };
 

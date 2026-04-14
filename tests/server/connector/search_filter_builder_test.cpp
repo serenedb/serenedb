@@ -1701,6 +1701,138 @@ TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
                std::move(columns), true, SegmentationAnalyzerProvider);
 }
 
+TEST_F(SearchFilterBuilderTest, test_PhraseExactGap) {
+  // PHRASE(field, 'quick', 2, 'fox') -- exactly 2 words between 'quick' and
+  // 'fox', e.g. "quick brown lazy fox"
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<velox::StringView>(1);
+  // First term: offsets zeroed by insert() for the first element
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // Second term: gap=2 words -> offs_min=offs_max=3 (2+1, no implicit +1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE PHRASE(category, 'quick', 2, 'fox')",
+               std::move(columns), true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseRangeGap) {
+  // PHRASE(field, 'quick', ARRAY[1,2], 'fox') -- 1 to 2 words between 'quick'
+  // and 'fox'
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<velox::StringView>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // gap=[1,2] words -> offs_min=2, offs_max=3 (min+1, max+1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick', ARRAY[1,2], 'fox')",
+    std::move(columns), true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseMultipleGaps) {
+  // PHRASE(field, 'quick', 1, 'brown', 2, 'fox') -- multiple gaps
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<velox::StringView>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // gap=1 -> offs=2 (1+1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
+  // gap=2 -> offs=3 (2+1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick', 1, 'brown', 2, 'fox')",
+    std::move(columns), true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapBetweenMultiTokenPatterns) {
+  // PHRASE(field, 'quick brown', 2, 'lazy fox') -- multi-token patterns with a
+  // gap: 'quick' adj 'brown', then gap=2, then 'lazy' adj 'fox'
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<velox::StringView>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // 'brown' is adjacent to 'quick' (within same pattern)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
+  // 'lazy' is the first token of the next pattern -- gap=2 -> offs=3
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"lazy"});
+  // 'fox' is adjacent to 'lazy' (within same pattern)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick brown', 2, 'lazy fox')",
+    std::move(columns), true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapTrailingError) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE PHRASE(category, 'quick', 2)",
+               std::move(columns), false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapLeadingError) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE PHRASE(category, 2, 'fox')",
+               std::move(columns), false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseConsecutiveGapsError) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE PHRASE(category, 'quick', 1, 2, 'fox')",
+               std::move(columns), false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "category", velox::VARCHAR(), 1));
+  AssertFilter(
+    irs::And{},
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick', ARRAY[3,1], 'fox')",
+    std::move(columns), false, SegmentationAnalyzerProvider);
+}
+
 TEST_F(SearchFilterBuilderTest, test_TermEq_Segmentation) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;

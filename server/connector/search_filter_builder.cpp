@@ -665,21 +665,12 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
 Result FromSearchPhrase(irs::BooleanFilter& filter,
                         const VeloxFilterContext& ctx,
                         const velox::core::CallTypedExpr& call) {
-  if (call.inputs().size() != 2) {
-    return {ERROR_BAD_PARAMETER, "PHRASE has ", call.inputs().size(),
-            " inputs but 2 expected"};
+  if (call.inputs().size() < 2) {
+    return {ERROR_BAD_PARAMETER, "PHRASE requires at least 2 arguments"};
   }
   if (!call.inputs()[0]->isFieldAccessKind()) {
-    return {ERROR_BAD_PARAMETER, "Input is not field access"};
-  }
-
-  auto value = EvaluateConstant(call.inputs()[1]);
-  if (!value.has_value()) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
-  }
-
-  if (value->kind() != velox::TypeKind::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as VARCHAR"};
+    return {ERROR_BAD_PARAMETER,
+            "PHRASE first argument must be a field access"};
   }
 
   auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
@@ -694,10 +685,6 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
     return {ERROR_BAD_PARAMETER, "PHRASE field '", field_typed->name(),
             "' is not VARCHAR"};
   }
-
-  std::string field_name;
-  MakeFieldName(*column_info, field_name);
-
   if ((column_info->analyzer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
@@ -705,18 +692,138 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
             "' should have Positions and Frequency features enabled"};
   }
 
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
                              : AddFilter<irs::ByPhrase>(filter);
-  column_info->analyzer.analyzer->reset(
-    static_cast<std::string_view>(value.value().value<velox::StringView>()));
+  phrase.boost(ctx.boost);
+  *phrase.mutable_field() = field_name;
+  auto* opts = phrase.mutable_options();
   const irs::TermAttr* token =
     irs::get<irs::TermAttr>(*column_info->analyzer.analyzer);
-  search::mangling::MangleString(field_name);
-  *phrase.mutable_field() = field_name;
-  phrase.boost(ctx.boost);
-  while (column_info->analyzer.analyzer->next()) {
-    phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
-      token->value);
+
+  bool has_pending_gap = false;
+  size_t pending_gap_min = 0;
+  size_t pending_gap_max = 0;
+
+  auto extract_uint = [](const velox::Variant& v) -> std::optional<size_t> {
+    if (v.kind() == velox::TypeKind::BIGINT) {
+      return static_cast<size_t>(v.value<int64_t>());
+    }
+    if (v.kind() == velox::TypeKind::INTEGER) {
+      return static_cast<size_t>(v.value<int32_t>());
+    }
+    return std::nullopt;
+  };
+
+  for (size_t i = 1; i < call.inputs().size(); ++i) {
+    const auto& input = call.inputs()[i];
+    const auto kind = input->type()->kind();
+    switch (kind) {
+      case velox::TypeKind::VARCHAR: {
+        auto value = EvaluateConstant(input);
+        if (!value.has_value()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE text argument ", i,
+                  " must be a constant"};
+        }
+        column_info->analyzer.analyzer->reset(
+          static_cast<std::string_view>(value->value<velox::StringView>()));
+        while (column_info->analyzer.analyzer->next()) {
+          if (has_pending_gap) {
+            // First token of a new text pattern: apply pending gap.
+            // push_back(offs_min, offs_max) has no implicit +1 unlike
+            // push_back(offs), so add 1 to convert "N words between" to
+            // "N+1 position offset".
+            opts
+              ->push_back<irs::ByTermOptions>(pending_gap_min + 1,
+                                              pending_gap_max + 1)
+              .term.assign(token->value);
+          } else {
+            // No pending gap: first term or adjacent token within same pattern.
+            opts->push_back<irs::ByTermOptions>().term.assign(token->value);
+          }
+          has_pending_gap = false;
+        }
+        break;
+      }
+      case velox::TypeKind::BIGINT:
+      case velox::TypeKind::INTEGER: {
+        if (opts->empty()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap at argument ", i,
+                  " must be preceded by a text pattern"};
+        }
+        if (has_pending_gap) {
+          return {ERROR_BAD_PARAMETER,
+                  "PHRASE has consecutive gaps at argument ", i};
+        }
+        auto value = EvaluateConstant(input);
+        if (!value.has_value()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap argument ", i,
+                  " must be a constant"};
+        }
+        const auto gap = extract_uint(value.value()).value();
+        pending_gap_min = pending_gap_max = gap;
+        has_pending_gap = true;
+        break;
+      }
+      case velox::TypeKind::ARRAY: {
+        if (opts->empty()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap at argument ", i,
+                  " must be preceded by a text pattern"};
+        }
+        if (has_pending_gap) {
+          return {ERROR_BAD_PARAMETER,
+                  "PHRASE has consecutive gaps at argument ", i};
+        }
+        auto value = EvaluateConstant(input);
+        if (!value.has_value()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap argument ", i,
+                  " must be a constant"};
+        }
+        const auto& elements = value->array();
+        if (elements.size() != 2) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap array at argument ", i,
+                  " must have exactly 2 elements [min, max], got ",
+                  elements.size()};
+        }
+        const auto min_val = extract_uint(elements[0]);
+        const auto max_val = extract_uint(elements[1]);
+        if (!min_val || !max_val) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap array at argument ", i,
+                  " elements must be integers"};
+        }
+        if (*min_val > *max_val) {
+          return {ERROR_BAD_PARAMETER,
+                  "PHRASE gap array at argument ",
+                  i,
+                  " min (",
+                  *min_val,
+                  ") must not exceed max (",
+                  *max_val,
+                  ")"};
+        }
+        pending_gap_min = *min_val;
+        pending_gap_max = *max_val;
+        has_pending_gap = true;
+        break;
+      }
+      default: {
+        return {
+          ERROR_BAD_PARAMETER, "PHRASE argument ", i,
+          " has unsupported type; expected text, integer, or integer array"};
+      }
+    }
+  }
+
+  if (has_pending_gap) {
+    return {ERROR_BAD_PARAMETER,
+            "PHRASE ends with a gap; a text pattern must follow each gap"};
+  }
+  if (opts->empty()) {
+    return {ERROR_BAD_PARAMETER,
+            "PHRASE text arguments produced no searchable terms"};
   }
   return {};
 }

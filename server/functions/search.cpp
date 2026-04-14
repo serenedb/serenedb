@@ -50,6 +50,14 @@ struct SearchStubFunction {
               "Inverted index function called outside inverted index context");
   }
 
+  // PHRASE(field, text_or_gap, ...) variadic mixed-type overload
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<bool>& result, const arg_type<velox::Varchar>& field_arg,
+    const arg_type<velox::Variadic<velox::Any>>& args) {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "Inverted index function called outside inverted index context");
+  }
+
   // NGRAM_MATCH(path, target, threshold)
   void call(bool& out, const arg_type<velox::Varchar>&,
             const arg_type<velox::Varchar>&, const double&) {
@@ -100,6 +108,8 @@ struct SearchStubFunction {
 void RegisterSearchFunctions() {
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar>({std::string{kPhrase}});
+  velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
+                          velox::Variadic<velox::Any>>({std::string{kPhrase}});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,
                           velox::Varchar>({std::string{kTermEq}});
   velox::registerFunction<SearchStubFunction, bool, velox::Varchar,

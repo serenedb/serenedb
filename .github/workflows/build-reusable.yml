@@ -211,7 +211,8 @@ jobs:
           DOCKER_USER="$(id -u):$(id -g)"
           EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
 
-          TARGETS=(serenedb tzdata)
+          TARGETS=()
+          [[ "$SDB_GTEST" != "On" ]] && TARGETS+=(serenedb tzdata)
           [[ "$SDB_GTEST" == "On" ]] && TARGETS+=(vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests)
 
           docker run --rm \

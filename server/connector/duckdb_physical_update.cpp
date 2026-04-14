@@ -226,7 +226,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   ColumnChunkMapping ins_col_mapping =
     del_col_mapping;  // PK + old indexed cols
   for (const auto& upd : state->update_columns) {
-    ins_col_mapping[upd.id] = upd.input_col_idx;  // override with SET position
+    ins_col_mapping[upd.id] = upd.table_col_idx;  // override with SET position
   }
 
   state->insert_index_writers =

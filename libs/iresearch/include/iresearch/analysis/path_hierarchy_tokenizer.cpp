@@ -188,6 +188,10 @@ Attribute* PathHierarchyTokenizer::GetMutable(TypeInfo::type_id type) noexcept {
   return irs::GetMutable(_attrs, type);
 }
 
+// Template parameters:
+//   SingleChar: true if delimiter.size() == 1 (fast path)
+//   NoReplacement: true if delimiter == replacement (zero-copy path)
+template<bool SingleChar, bool NoReplacement>
 class ForwardPathHierarchyTokenizer final : public PathHierarchyTokenizer {
  public:
   explicit ForwardPathHierarchyTokenizer(Options&& options) noexcept
@@ -197,18 +201,38 @@ class ForwardPathHierarchyTokenizer final : public PathHierarchyTokenizer {
   bool next() final;
 
  private:
-  std::string_view _data;  // input
-  std::string _buffer;     // buffer for case delimiter != replacement
+  // delimiter search
+  size_t FindNextDelimiter(size_t from_position) const noexcept {
+    if constexpr (SingleChar) {
+      return _data.find(_options.delimiter[0], from_position);
+    } else {
+      return _data.find(_options.delimiter, from_position);
+    }
+  }
+
+  // check if substring at position matches delimiter
+  bool IsDelimiterAt(size_t position) const noexcept {
+    if constexpr (SingleChar) {
+      return position < _data.size() &&
+             _data[position] == _options.delimiter[0];
+    } else {
+      return position + _delimiter_size <= _data.size() &&
+             _data.substr(position, _delimiter_size) == _options.delimiter;
+    }
+  }
+
+  std::string _buffer;  // buffer for NoReplacement = false mode
   size_t _prefix_start_in_input =
     0;  // left edge of prefix; every token's offset.start
   size_t _prefix_end_in_input =
     0;  // input merged into _buffer ends before this index
   size_t _delimiter_search_from = 0;  // find(next delimiter) starts here
   size_t _delimiter_size = 0;         // delimiter length
-  bool _need_replacement = false;     // delimiter != replacement, using _buffer
 };
 
-bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
+template<bool SingleChar, bool NoReplacement>
+bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::reset(
+  std::string_view data) {
   _data = data;
   _term_eof = data.empty();
 
@@ -217,21 +241,21 @@ bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
   }
 
   _delimiter_size = _options.delimiter.size();
-  _need_replacement = _options.delimiter != _options.replacement;
   SDB_ASSERT(_delimiter_size > 0);
 
   _prefix_start_in_input = 0;
+
+  // skip: walk left-to-right, advancing prefix start to skip leading tokens
   if (_options.skip > 0) {
     size_t skip_step_idx = 0;
     size_t scan_from = 0;
     // leading delimiter counts as one skip step: (/a/b/c equal a/b/c)
     // without +1, skip would line up wrong on paths that start with a delimiter
     size_t delimiter_steps_to_skip =
-      _options.skip + (_data.find(_options.delimiter) == 0);
+      _options.skip + (FindNextDelimiter(0) == 0);
 
     while (skip_step_idx < delimiter_steps_to_skip) {
-      size_t next_delimiter_position =
-        _data.find(_options.delimiter, scan_from);
+      size_t next_delimiter_position = FindNextDelimiter(scan_from);
       if (next_delimiter_position == std::string_view::npos) {
         _term_eof = true;
         return true;
@@ -248,13 +272,12 @@ bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
 
   // for leading delimiter: /a/b/c
   // bump search cursor past it so the first segment token isn't empty
-  if (_delimiter_search_from + _delimiter_size <= _data.size() &&
-      _data.substr(_delimiter_search_from, _delimiter_size) ==
-        _options.delimiter) {
+  if (IsDelimiterAt(_delimiter_search_from)) {
     _delimiter_search_from += _delimiter_size;
   }
 
-  if (_need_replacement) {
+  if constexpr (!NoReplacement) {
+    // buffered path: delimiter != replacement
     _buffer.clear();
     _buffer.reserve(_options.buffer_size);
   }
@@ -262,7 +285,8 @@ bool ForwardPathHierarchyTokenizer::reset(std::string_view data) {
   return true;
 }
 
-bool ForwardPathHierarchyTokenizer::next() {
+template<bool SingleChar, bool NoReplacement>
+bool ForwardPathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
   if (_term_eof) {
     return false;
   }
@@ -271,9 +295,9 @@ bool ForwardPathHierarchyTokenizer::next() {
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
+  // find next delimiter from search position
   size_t token_end_position = _data.size();
-  size_t next_delimiter_position =
-    _data.find(_options.delimiter, _delimiter_search_from);
+  size_t next_delimiter_position = FindNextDelimiter(_delimiter_search_from);
 
   if (next_delimiter_position != std::string_view::npos) {
     token_end_position = next_delimiter_position;
@@ -285,7 +309,7 @@ bool ForwardPathHierarchyTokenizer::next() {
   SDB_ASSERT(_prefix_start_in_input <= token_end_position);
   SDB_ASSERT(token_end_position <= _data.size());
 
-  if (!_need_replacement) {
+  if constexpr (NoReplacement) {
     term_attr.value = ViewCast<byte_type>(_data.substr(
       _prefix_start_in_input, token_end_position - _prefix_start_in_input));
   } else {
@@ -293,8 +317,7 @@ bool ForwardPathHierarchyTokenizer::next() {
 
     // when first character isn't delimiter: a/b/c
     // if cursor is on delimiter, emit replacement then tail; else append input
-    if (_data.substr(_prefix_end_in_input, _delimiter_size) ==
-        _options.delimiter) {
+    if (IsDelimiterAt(_prefix_end_in_input)) {
       _buffer.append(_options.replacement);
 
       size_t segment_len = _prefix_end_in_input + _delimiter_size;
@@ -316,6 +339,10 @@ bool ForwardPathHierarchyTokenizer::next() {
   return true;
 }
 
+// Template parameters:
+//   SingleChar: true if delimiter.size() == 1 (fast path)
+//   NoReplacement: true if delimiter == replacement (zero-copy path)
+template<bool SingleChar, bool NoReplacement>
 class ReversePathHierarchyTokenizer final : public PathHierarchyTokenizer {
  public:
   explicit ReversePathHierarchyTokenizer(Options&& options) noexcept
@@ -325,18 +352,43 @@ class ReversePathHierarchyTokenizer final : public PathHierarchyTokenizer {
   bool next() final;
 
  private:
-  std::string_view _data;  // input
-  std::string _buffer;     // buffer for case delimiter != replacement
+  // delimiter search
+  size_t FindNextDelimiter(size_t from_position) const noexcept {
+    if constexpr (SingleChar) {
+      return _data.find(_options.delimiter[0], from_position);
+    } else {
+      return _data.find(_options.delimiter, from_position);
+    }
+  }
+
+  // find previous delimiter (right-to-left search)
+  size_t FindPreviousDelimiter(size_t search_end) const noexcept {
+    if (search_end <= _delimiter_size) {
+      return std::string_view::npos;
+    }
+
+    // search from one position before the end minus delimiter size to skip past
+    // the current delimiter boundary and find the previous one
+    size_t actual_search_end = search_end - _delimiter_size - 1;
+    if constexpr (SingleChar) {
+      return _data.rfind(_options.delimiter[0], actual_search_end);
+    } else {
+      return _data.rfind(_options.delimiter, actual_search_end);
+    }
+  }
+
+  std::string _buffer;                 // buffer for NoReplacement = false mode
   size_t _suffix_start_in_buffer = 0;  // current token's left edge in _buffer
   size_t _suffix_start_in_input =
     0;  // current token's left edge in input (for offset.start)
   size_t _suffix_window_end =
     0;  // path ends here after skip-from-right (past last byte)
-  size_t _delimiter_size = 0;      // delimiter length
-  bool _need_replacement = false;  // delimiter != replacement, using _buffer
+  size_t _delimiter_size = 0;  // delimiter length
 };
 
-bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
+template<bool SingleChar, bool NoReplacement>
+bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::reset(
+  std::string_view data) {
   _data = data;
   _term_eof = data.empty();
 
@@ -345,10 +397,9 @@ bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
   }
 
   _delimiter_size = _options.delimiter.size();
-  _need_replacement = _options.delimiter != _options.replacement;
   SDB_ASSERT(_delimiter_size > 0);
 
-  // walk right-to-left: each skip drops one trailing segment
+  // skip: walk right-to-left, dropping trailing segments
   size_t trimmed_window_end = data.size();
   for (size_t skip_idx = 0; skip_idx < _options.skip; ++skip_idx) {
     if (trimmed_window_end <= _delimiter_size) {
@@ -356,8 +407,7 @@ bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
       return true;
     }
 
-    size_t rfind_delimiter_position =
-      data.rfind(_options.delimiter, trimmed_window_end - _delimiter_size - 1);
+    size_t rfind_delimiter_position = FindPreviousDelimiter(trimmed_window_end);
     if (rfind_delimiter_position == std::string_view::npos) {
       _term_eof = true;
       return true;
@@ -365,25 +415,25 @@ bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
     trimmed_window_end = rfind_delimiter_position + _delimiter_size;
   }
   _suffix_window_end = trimmed_window_end;
-
   _suffix_start_in_input = 0;
-  _suffix_start_in_buffer = 0;
 
-  if (!_need_replacement) {
+  if constexpr (NoReplacement) {
     if (_suffix_window_end == 0) {
       _term_eof = true;
     }
     return true;
   }
 
+  // buffered path: delimiter != replacement
+  // pre-build full buffer with all delimiters replaced (left-to-right)
   _buffer.clear();
   _buffer.reserve(_options.buffer_size);
+  _suffix_start_in_buffer = 0;
 
-  // left-to-right: segments joined with replacement (offsets still use input
-  // indices)
+  // scan left-to-right through window, joining segments with replacement
   size_t scan_from = 0;
   while (scan_from < _suffix_window_end) {
-    size_t next_delimiter_position = data.find(_options.delimiter, scan_from);
+    size_t next_delimiter_position = FindNextDelimiter(scan_from);
     if (next_delimiter_position == std::string_view::npos) {
       SDB_ASSERT(scan_from <= _suffix_window_end);
       _buffer.append(data.data() + scan_from, _suffix_window_end - scan_from);
@@ -405,7 +455,8 @@ bool ReversePathHierarchyTokenizer::reset(std::string_view data) {
   return true;
 }
 
-bool ReversePathHierarchyTokenizer::next() {
+template<bool SingleChar, bool NoReplacement>
+bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
   if (_term_eof) {
     return false;
   }
@@ -417,7 +468,7 @@ bool ReversePathHierarchyTokenizer::next() {
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  if (!_need_replacement) {
+  if constexpr (NoReplacement) {
     term_attr.value = ViewCast<byte_type>(_data.substr(
       _suffix_start_in_input, _suffix_window_end - _suffix_start_in_input));
   } else {
@@ -430,8 +481,7 @@ bool ReversePathHierarchyTokenizer::next() {
   offset_attr.end = static_cast<uint32_t>(_suffix_window_end);
   inc_attr.value = 1;
 
-  size_t next_delimiter_position =
-    _data.find(_options.delimiter, _suffix_start_in_input);
+  size_t next_delimiter_position = FindNextDelimiter(_suffix_start_in_input);
 
   if (next_delimiter_position == std::string_view::npos ||
       next_delimiter_position >= _suffix_window_end) {
@@ -443,7 +493,7 @@ bool ReversePathHierarchyTokenizer::next() {
     size_t segment_len = next_delimiter_position - _suffix_start_in_input;
     _suffix_start_in_input = next_delimiter_position + _delimiter_size;
 
-    if (_need_replacement) {
+    if constexpr (!NoReplacement) {
       _suffix_start_in_buffer += segment_len + _options.replacement.size();
     }
 
@@ -456,10 +506,38 @@ bool ReversePathHierarchyTokenizer::next() {
 }
 
 Analyzer::ptr PathHierarchyTokenizer::make(Options&& options) {
+  const bool single_char = (options.delimiter.size() == 1);
+  const bool no_replacement = (options.delimiter == options.replacement);
+
   if (options.reverse) {
-    return std::make_unique<ReversePathHierarchyTokenizer>(std::move(options));
+    if (single_char && no_replacement) {
+      return std::make_unique<ReversePathHierarchyTokenizer<true, true>>(
+        std::move(options));
+    } else if (single_char && !no_replacement) {
+      return std::make_unique<ReversePathHierarchyTokenizer<true, false>>(
+        std::move(options));
+    } else if (!single_char && no_replacement) {
+      return std::make_unique<ReversePathHierarchyTokenizer<false, true>>(
+        std::move(options));
+    } else {
+      return std::make_unique<ReversePathHierarchyTokenizer<false, false>>(
+        std::move(options));
+    }
+  } else {
+    if (single_char && no_replacement) {
+      return std::make_unique<ForwardPathHierarchyTokenizer<true, true>>(
+        std::move(options));
+    } else if (single_char && !no_replacement) {
+      return std::make_unique<ForwardPathHierarchyTokenizer<true, false>>(
+        std::move(options));
+    } else if (!single_char && no_replacement) {
+      return std::make_unique<ForwardPathHierarchyTokenizer<false, true>>(
+        std::move(options));
+    } else {
+      return std::make_unique<ForwardPathHierarchyTokenizer<false, false>>(
+        std::move(options));
+    }
   }
-  return std::make_unique<ForwardPathHierarchyTokenizer>(std::move(options));
 }
 
 }  // namespace irs::analysis

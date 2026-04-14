@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <unicode/regex.h>
+#include <re2/re2.h>
 
 #include <cstddef>
 #include <string>
@@ -48,7 +48,7 @@ struct WildcardFilterOptions {
   std::vector<ByPhraseOptions> parts;
   bstring token;
   bool has_pos{true};
-  std::shared_ptr<icu::RegexMatcher> matcher;
+  std::shared_ptr<RE2> matcher;
 
   bool operator==(const WildcardFilterOptions& other) const noexcept {
     if (parts != other.parts || token != other.token ||
@@ -61,7 +61,7 @@ struct WildcardFilterOptions {
     if (!matcher || !other.matcher) {
       return false;
     }
-    return matcher->pattern().pattern() == other.matcher->pattern().pattern();
+    return matcher->pattern() == other.matcher->pattern();
   }
 
   WildcardFilterOptions() noexcept = default;

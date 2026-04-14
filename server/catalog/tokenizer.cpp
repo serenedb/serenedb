@@ -93,7 +93,7 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
   b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
-    b.add("analyzer", slice.get("analyzer"));
+    b.add(kTokenizerField, slice.get(kTokenizerField));
     b.add("features");
     _features.ToVPack(b);
   });

@@ -364,8 +364,8 @@ TEST_F(PathHierarchyTokenizerTests, test_delimiter_in_replacement) {
   ASSERT_NE(nullptr, stream);
 
   ASSERT_TRUE(stream->reset(data));
-  AssertTokenStreamContents(stream.get(), {"//a", "//a//b", "//a//b//c"}, {0, 0, 0},
-                            {2, 4, 6}, {1, 1, 1});
+  AssertTokenStreamContents(stream.get(), {"//a", "//a//b", "//a//b//c"},
+                            {0, 0, 0}, {2, 4, 6}, {1, 1, 1});
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {

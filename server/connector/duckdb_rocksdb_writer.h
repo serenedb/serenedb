@@ -128,6 +128,15 @@ class DuckDBColumnSerializer {
   template<typename T>
   void WritePrimitive(const T& value);
 
+  // Per-element write for WriteSingleValue (struct fields, map keys/values).
+  // For FLAT_VECTOR: zero-copy pointer into the vector's stable heap buffer.
+  // For non-flat (dict, constant): copies to arena, since GetVectorValue<T>
+  // returns a temporary that would otherwise dangle in _row_slices.
+  // Not used for BOOLEAN (WritePrimitive<bool> is safe with temporaries)
+  // or VARCHAR/BLOB (handled separately in WriteSingleValue).
+  template<typename T>
+  void WriteScalarField(const duckdb::Vector& vec, duckdb::idx_t idx);
+
   void ResetForNewRow() noexcept;
   rocksdb::Slice Finalize(std::string& output) const;
 
@@ -171,6 +180,13 @@ class DuckDBColumnSerializer {
                       std::span<DuckDBSinkIndexWriter*> index_writers);
   duckdb::ArenaAllocator _arena;
   std::vector<rocksdb::Slice> _row_slices;
+  // Temporary vectors whose buffers are referenced by slices in _row_slices.
+  // WriteDictionarySubVector builds a local flat vector, and
+  // WriteFlatSubVector<T> stores zero-copy slices into its StandardVectorBuffer
+  // (heap-allocated, stable address). Moving the vector here keeps the buffer
+  // alive until ResetForNewRow drops the last shared_ptr reference after
+  // WriteRowSlices.
+  std::vector<duckdb::Vector> _temp_vectors;
 };
 
 }  // namespace sdb::connector

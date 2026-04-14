@@ -198,6 +198,7 @@ DuckDBColumnSerializer::DuckDBColumnSerializer()
 void DuckDBColumnSerializer::ResetForNewRow() noexcept {
   _row_slices.clear();
   _arena.Reset();
+  _temp_vectors.clear();
 }
 
 char* DuckDBColumnSerializer::Allocate(size_t size) {
@@ -1057,6 +1058,27 @@ void DuckDBColumnSerializer::WriteMapValue(const duckdb::Vector& vec,
   irs::WriteVarint(keys_size, header);
 }
 
+// --- WriteScalarField ---
+
+template<typename T>
+void DuckDBColumnSerializer::WriteScalarField(const duckdb::Vector& vec,
+                                              duckdb::idx_t idx) {
+  if (vec.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
+    // FlatVector::GetData<T> returns const T* into the vector's heap-allocated
+    // StandardVectorBuffer -- stable for the lifetime of the vector.
+    WritePrimitive(duckdb::FlatVector::GetData<T>(vec)[idx]);
+  } else {
+    // GetVectorValue<T> returns T by value (temporary). Storing &temp in
+    // _row_slices would dangle once WriteSingleValue returns.
+    // Copy to arena instead -- one extra scalar copy, negligible for per-field
+    // use.
+    T val = GetVectorValue<T>(vec, idx);
+    auto* p = Allocate(sizeof(T));
+    std::memcpy(p, &val, sizeof(T));
+    _row_slices.emplace_back(p, sizeof(T));
+  }
+}
+
 // --- WriteSingleValue (one value without sub-vector header) ---
 // Port of WriteValue (data_sink.cpp:2000).
 // For struct children and map keys/values.
@@ -1079,25 +1101,27 @@ void DuckDBColumnSerializer::WriteSingleValue(const duckdb::Vector& vec,
   }
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN:
+      // WritePrimitive<bool> reads the value and stores a static literal --
+      // it never takes &value, so a temporary is safe here.
       WritePrimitive(GetVectorValue<bool>(vec, idx));
       break;
     case duckdb::LogicalTypeId::TINYINT:
-      WritePrimitive(GetVectorValue<int8_t>(vec, idx));
+      WriteScalarField<int8_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::SMALLINT:
-      WritePrimitive(GetVectorValue<int16_t>(vec, idx));
+      WriteScalarField<int16_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::INTEGER:
-      WritePrimitive(GetVectorValue<int32_t>(vec, idx));
+      WriteScalarField<int32_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::BIGINT:
-      WritePrimitive(GetVectorValue<int64_t>(vec, idx));
+      WriteScalarField<int64_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::FLOAT:
-      WritePrimitive(GetVectorValue<float>(vec, idx));
+      WriteScalarField<float>(vec, idx);
       break;
     case duckdb::LogicalTypeId::DOUBLE:
-      WritePrimitive(GetVectorValue<double>(vec, idx));
+      WriteScalarField<double>(vec, idx);
       break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
@@ -1122,13 +1146,13 @@ void DuckDBColumnSerializer::WriteSingleValue(const duckdb::Vector& vec,
     }
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      WritePrimitive(GetVectorValue<duckdb::timestamp_t>(vec, idx));
+      WriteScalarField<duckdb::timestamp_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::DATE:
-      WritePrimitive(GetVectorValue<duckdb::date_t>(vec, idx));
+      WriteScalarField<duckdb::date_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::HUGEINT:
-      WritePrimitive(GetVectorValue<duckdb::hugeint_t>(vec, idx));
+      WriteScalarField<duckdb::hugeint_t>(vec, idx);
       break;
     case duckdb::LogicalTypeId::LIST:
       WriteListValue(vec, idx, type);
@@ -1266,16 +1290,22 @@ void DuckDBColumnSerializer::WriteConstantSubVector(
 void DuckDBColumnSerializer::WriteDictionarySubVector(
   const duckdb::Vector& vec, duckdb::idx_t offset, duckdb::idx_t count,
   const duckdb::LogicalType& type) {
-  // Resolve dictionary indices and write as if flat
-  // For each element in [offset, offset+count), the actual index is sel[i]
+  // Resolve dictionary indices and write as if flat.
+  // For each element in [offset, offset+count), the actual index is sel[i].
   // We can't just pass child + resolved offset because indices may be
-  // scattered. Fall back to UnifiedVectorFormat which handles this.
+  // scattered.
   duckdb::UnifiedVectorFormat vdata;
   vec.ToUnifiedFormat(offset + count, vdata);
 
-  // Build a temporary flat vector from the resolved data
-  // TODO: optimize for contiguous dictionary selections
-  duckdb::Vector flat(type, count);
+  // Build a flat vector from the resolved data.
+  // IMPORTANT: WriteFlatSubVector<T> stores zero-copy rocksdb::Slices that
+  // point directly into the Vector's StandardVectorBuffer (heap memory whose
+  // address is stable across Vector moves). The slices are consumed by
+  // WriteRowSlices *after* this function returns, so the buffer must stay
+  // alive. We move `flat` into _temp_vectors which is cleared by
+  // ResetForNewRow() only after WriteRowSlices has finished.
+  _temp_vectors.emplace_back(type, count);
+  duckdb::Vector& flat = _temp_vectors.back();
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto src_idx = vdata.sel->get_index(offset + i);
     if (!vdata.validity.RowIsValid(src_idx)) {

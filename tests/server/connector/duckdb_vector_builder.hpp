@@ -26,7 +26,6 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
-
 #include <optional>
 #include <span>
 #include <string_view>
@@ -38,7 +37,8 @@ namespace sdb::connector::test {
 /// Type trait: C++ type -> DuckDB LogicalType
 ///
 /// Specialised for every scalar type that maps cleanly to a DuckDB column type.
-/// Not defined for string_t — use MakeFlatVarchar / MakeNullableVarchar instead.
+/// Not defined for string_t -- use MakeFlatVarchar / MakeNullableVarchar
+/// instead.
 ////////////////////////////////////////////////////////////////////////////////
 
 template<class T>
@@ -86,7 +86,7 @@ inline duckdb::LogicalType DuckDBLogicalType<duckdb::timestamp_t>() {
 template<class T>
 duckdb::Vector MakeFlat(std::span<const T> values) {
   duckdb::Vector result(DuckDBLogicalType<T>(), values.size());
-  auto *data = duckdb::FlatVector::GetDataMutable<T>(result);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
   for (duckdb::idx_t i = 0; i < values.size(); ++i) {
     data[i] = values[i];
   }
@@ -102,8 +102,8 @@ duckdb::Vector MakeFlat(std::initializer_list<T> values) {
 template<class T>
 duckdb::Vector MakeNullableFlat(std::span<const std::optional<T>> values) {
   duckdb::Vector result(DuckDBLogicalType<T>(), values.size());
-  auto *data = duckdb::FlatVector::GetDataMutable<T>(result);
-  auto &validity = duckdb::FlatVector::Validity(result);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
+  auto& validity = duckdb::FlatVector::Validity(result);
   for (duckdb::idx_t i = 0; i < values.size(); ++i) {
     if (values[i].has_value()) {
       data[i] = *values[i];
@@ -115,13 +115,15 @@ duckdb::Vector MakeNullableFlat(std::span<const std::optional<T>> values) {
 }
 
 template<class T>
-duckdb::Vector MakeNullableFlat(std::initializer_list<std::optional<T>> values) {
+duckdb::Vector MakeNullableFlat(
+  std::initializer_list<std::optional<T>> values) {
   return MakeNullableFlat<T>(
     std::span<const std::optional<T>>(values.begin(), values.size()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// VARCHAR flat vectors (declared here, implemented in .cpp — need StringVector)
+/// VARCHAR flat vectors (declared here, implemented in .cpp -- need
+/// StringVector)
 ////////////////////////////////////////////////////////////////////////////////
 
 duckdb::Vector MakeFlatVarchar(std::span<const std::string_view> values);
@@ -154,7 +156,7 @@ template<class T>
 duckdb::Vector MakeList(std::span<const std::vector<T>> rows) {
   const duckdb::idx_t row_count = rows.size();
   duckdb::idx_t total_elements = 0;
-  for (const auto &row : rows) {
+  for (const auto& row : rows) {
     total_elements += row.size();
   }
 
@@ -162,14 +164,15 @@ duckdb::Vector MakeList(std::span<const std::vector<T>> rows) {
                         row_count);
   duckdb::ListVector::Reserve(result, total_elements);
 
-  auto &child = duckdb::ListVector::GetEntry(result);
-  auto *child_data = duckdb::FlatVector::GetDataMutable<T>(child);
-  auto *entries = duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+  auto& child = duckdb::ListVector::GetEntry(result);
+  auto* child_data = duckdb::FlatVector::GetDataMutable<T>(child);
+  auto* entries =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
 
   duckdb::idx_t offset = 0;
   for (duckdb::idx_t i = 0; i < row_count; ++i) {
     entries[i] = {offset, rows[i].size()};
-    for (const auto &val : rows[i]) {
+    for (const auto& val : rows[i]) {
       child_data[offset++] = val;
     }
   }
@@ -183,14 +186,14 @@ duckdb::Vector MakeList(std::initializer_list<std::vector<T>> rows) {
   return MakeList<T>(std::span<const std::vector<T>>(r));
 }
 
-// Creates a nullable LIST vector. nullopt rows produce a null entry (zero-length
-// list with the validity bit cleared).
+// Creates a nullable LIST vector. nullopt rows produce a null entry
+// (zero-length list with the validity bit cleared).
 template<class T>
 duckdb::Vector MakeNullableList(
   std::span<const std::optional<std::vector<T>>> rows) {
   const duckdb::idx_t row_count = rows.size();
   duckdb::idx_t total_elements = 0;
-  for (const auto &row : rows) {
+  for (const auto& row : rows) {
     if (row.has_value()) {
       total_elements += row->size();
     }
@@ -200,16 +203,17 @@ duckdb::Vector MakeNullableList(
                         row_count);
   duckdb::ListVector::Reserve(result, total_elements);
 
-  auto &child = duckdb::ListVector::GetEntry(result);
-  auto *child_data = duckdb::FlatVector::GetDataMutable<T>(child);
-  auto *entries = duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto &validity = duckdb::FlatVector::Validity(result);
+  auto& child = duckdb::ListVector::GetEntry(result);
+  auto* child_data = duckdb::FlatVector::GetDataMutable<T>(child);
+  auto* entries =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+  auto& validity = duckdb::FlatVector::Validity(result);
 
   duckdb::idx_t offset = 0;
   for (duckdb::idx_t i = 0; i < row_count; ++i) {
     if (rows[i].has_value()) {
       entries[i] = {offset, rows[i]->size()};
-      for (const auto &val : *rows[i]) {
+      for (const auto& val : *rows[i]) {
         child_data[offset++] = val;
       }
     } else {
@@ -225,8 +229,7 @@ template<class T>
 duckdb::Vector MakeNullableList(
   std::initializer_list<std::optional<std::vector<T>>> rows) {
   std::vector<std::optional<std::vector<T>>> r(rows);
-  return MakeNullableList<T>(
-    std::span<const std::optional<std::vector<T>>>(r));
+  return MakeNullableList<T>(std::span<const std::optional<std::vector<T>>>(r));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -258,9 +261,9 @@ duckdb::Vector MakeNullableVarcharList(
 ////////////////////////////////////////////////////////////////////////////////
 
 duckdb::Vector MakeStruct(duckdb::LogicalType struct_type,
-                           std::vector<duckdb::Vector> children,
-                           duckdb::idx_t count,
-                           std::span<const bool> nulls = {});
+                          std::vector<duckdb::Vector> children,
+                          duckdb::idx_t count,
+                          std::span<const bool> nulls = {});
 
 ////////////////////////////////////////////////////////////////////////////////
 /// MAP vectors
@@ -274,11 +277,10 @@ duckdb::Vector MakeStruct(duckdb::LogicalType struct_type,
 /// them in.  To produce a null map row, set nulls[i]=false.
 ////////////////////////////////////////////////////////////////////////////////
 
-duckdb::Vector MakeMap(duckdb::LogicalType map_type,
-                        duckdb::Vector keys_flat,
-                        duckdb::Vector values_flat,
-                        std::span<const duckdb::list_entry_t> entries,
-                        std::span<const bool> nulls = {});
+duckdb::Vector MakeMap(duckdb::LogicalType map_type, duckdb::Vector keys_flat,
+                       duckdb::Vector values_flat,
+                       std::span<const duckdb::list_entry_t> entries,
+                       std::span<const bool> nulls = {});
 
 ////////////////////////////////////////////////////////////////////////////////
 /// DICTIONARY vectors
@@ -289,11 +291,12 @@ duckdb::Vector MakeMap(duckdb::LogicalType map_type,
 /// To produce null output rows, include null entries in child at specific
 /// positions (via FlatVector::SetNull) and point those output rows to them.
 /// This keeps nulls inside the dictionary rather than in the outer validity,
-/// which is consistent with DuckDB's typical encoding for dictionary-with-nulls.
+/// which is consistent with DuckDB's typical encoding for
+/// dictionary-with-nulls.
 ////////////////////////////////////////////////////////////////////////////////
 
 duckdb::Vector MakeDict(duckdb::Vector child,
-                         std::span<const duckdb::sel_t> indices);
+                        std::span<const duckdb::sel_t> indices);
 
 ////////////////////////////////////////////////////////////////////////////////
 /// DataChunk assembly
@@ -301,7 +304,7 @@ duckdb::Vector MakeDict(duckdb::Vector child,
 /// Fills `out` with the given LogicalTypes and pre-built Vectors.
 /// All vectors must carry exactly `count` logical rows.
 /// DataChunk has a deleted copy constructor and no move constructor, so it
-/// cannot be returned by value — callers must provide an existing chunk.
+/// cannot be returned by value -- callers must provide an existing chunk.
 ////////////////////////////////////////////////////////////////////////////////
 
 void MakeChunk(duckdb::DataChunk& out, std::vector<duckdb::LogicalType> types,
@@ -311,13 +314,13 @@ void MakeChunk(duckdb::DataChunk& out, std::vector<duckdb::LogicalType> types,
 /// Argument-list helper
 ///
 /// duckdb::Vector is move-only (copy constructor deleted), so brace-init of
-/// std::vector<duckdb::Vector> via std::initializer_list doesn't compile —
+/// std::vector<duckdb::Vector> via std::initializer_list doesn't compile --
 /// initializer_list elements are const and must be copied.
 /// Vecs(...) accepts any number of duckdb::Vector rvalues and moves them
 /// into a std::vector, letting callers write natural call syntax:
 ///
-///   MakeChunk(out, types, Vecs(MakeFlat<int32_t>(...), MakeFlatVarchar(...)), n);
-///   MakeStruct(type, Vecs(fieldA, fieldB, fieldC), count);
+///   MakeChunk(out, types, Vecs(MakeFlat<int32_t>(...), MakeFlatVarchar(...)),
+///   n); MakeStruct(type, Vecs(fieldA, fieldB, fieldC), count);
 ////////////////////////////////////////////////////////////////////////////////
 
 template<class... Vs>

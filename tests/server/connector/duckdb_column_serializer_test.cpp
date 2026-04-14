@@ -18,15 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <gtest/gtest.h>
+#include <rocksdb/utilities/transaction_db.h>
+
 #include <duckdb.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
-#include <gtest/gtest.h>
-#include <rocksdb/utilities/transaction_db.h>
-
 #include <filesystem>
 #include <numeric>
 #include <optional>
@@ -59,15 +59,14 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     std::vector<rocksdb::ColumnFamilyDescriptor> cf_desc{
       {rocksdb::kDefaultColumnFamilyName, opts}};
 
-    _path =
-      testing::TempDir() + "/" +
-      ::testing::UnitTest::GetInstance()->current_test_info()->name() +
-      "_XXXXXX";
+    _path = testing::TempDir() + "/" +
+            ::testing::UnitTest::GetInstance()->current_test_info()->name() +
+            "_XXXXXX";
     ASSERT_NE(mkdtemp(_path.data()), nullptr);
     opts.wal_dir = _path + "/journals";
 
-    ASSERT_TRUE(rocksdb::TransactionDB::Open(
-                  opts, txn_db_opts, _path, cf_desc, &_cf_handles, &_db)
+    ASSERT_TRUE(rocksdb::TransactionDB::Open(opts, txn_db_opts, _path, cf_desc,
+                                             &_cf_handles, &_db)
                   .ok());
     _table_key = key_utils::PrepareTableKey(kSerializerTableId);
   }
@@ -149,8 +148,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
   // Uses col_id=0. Each test uses a fresh DB (SetUp/TearDown), so col_ids
   // don't collide between tests.
   void CheckColumn(const duckdb::Vector& vec, const duckdb::LogicalType& type,
-                   duckdb::idx_t num_rows,
-                   catalog::Column::Id col_id = 0) {
+                   duckdb::idx_t num_rows, catalog::Column::Id col_id = 0) {
     auto& pk_chunk = MakePKChunk(num_rows);
     auto row_keys = BuildRowKeys(pk_chunk);
 
@@ -192,8 +190,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
 ////////////////////////////////////////////////////////////////////////////////
 
 TEST_F(DuckDBColumnSerializerTest, FlatInt) {
-  auto vec =
-    MakeFlat<int32_t>({1, 2, 3, 3, 2, 1, 5, 6, 7, 7, 6, 5, 9, 9, 9});
+  auto vec = MakeFlat<int32_t>({1, 2, 3, 3, 2, 1, 5, 6, 7, 7, 6, 5, 9, 9, 9});
   CheckColumn(vec, duckdb::LogicalType::INTEGER, 15);
 }
 
@@ -252,9 +249,9 @@ TEST_F(DuckDBColumnSerializerTest, FlatBoolNulls) {
 }
 
 TEST_F(DuckDBColumnSerializerTest, FlatVarchar) {
-  auto vec = MakeFlatVarchar(
-    {"ff", "long enough to not be inlined string yeaaaahhhh", "", "a",
-     "\0"sv, "\0\0"sv, "\0 123", "basr"});
+  auto vec =
+    MakeFlatVarchar({"ff", "long enough to not be inlined string yeaaaahhhh",
+                     "", "a", "\0"sv, "\0\0"sv, "\0 123", "basr"});
   CheckColumn(vec, duckdb::LogicalType::VARCHAR, 8);
 }
 
@@ -263,12 +260,10 @@ TEST_F(DuckDBColumnSerializerTest, FlatVarcharNulls) {
     {std::optional<std::string_view>{"ff"},
      std::optional<std::string_view>{
        "long enough to not be inlined string yeaaaahhhh"},
-     std::optional<std::string_view>{""},
-     std::optional<std::string_view>{"a"},
+     std::optional<std::string_view>{""}, std::optional<std::string_view>{"a"},
      std::optional<std::string_view>{"\0"sv},
      std::optional<std::string_view>{"\0\0"sv},
-     std::optional<std::string_view>{"\0 123"},
-     std::nullopt,
+     std::optional<std::string_view>{"\0 123"}, std::nullopt,
      std::optional<std::string_view>{"basr"}});
   CheckColumn(vec, duckdb::LogicalType::VARCHAR, 9);
 }
@@ -362,11 +357,12 @@ TEST_F(DuckDBColumnSerializerTest, DictionaryVarchar) {
 TEST_F(DuckDBColumnSerializerTest, DictionaryNullsVarcharNulls) {
   // Nulls are carried in the dictionary child (child[3]=null).
   // Output rows 0 and 7 both index child[3], so they produce null values.
-  auto child = MakeNullableVarchar(
-    {std::optional<std::string_view>{""},
-     std::optional<std::string_view>{"foo"},
-     std::optional<std::string_view>{"some long string that can not be inlined"},
-     std::nullopt});
+  auto child =
+    MakeNullableVarchar({std::optional<std::string_view>{""},
+                         std::optional<std::string_view>{"foo"},
+                         std::optional<std::string_view>{
+                           "some long string that can not be inlined"},
+                         std::nullopt});
   std::vector<duckdb::sel_t> indices{3, 2, 1, 0, 0, 1, 2, 3};
   auto vec = MakeDict(std::move(child), std::span(indices));
   CheckColumn(vec, duckdb::LogicalType::VARCHAR, 8);
@@ -385,7 +381,8 @@ TEST_F(DuckDBColumnSerializerTest, DictionaryNullsMany) {
 ////////////////////////////////////////////////////////////////////////////////
 
 TEST_F(DuckDBColumnSerializerTest, ListInt) {
-  auto vec = MakeList<int32_t>({{1, 2, 3}, {3, 2, 1}, {}, {7, 6, 5}, {9, 9, 9}});
+  auto vec =
+    MakeList<int32_t>({{1, 2, 3}, {3, 2, 1}, {}, {7, 6, 5}, {9, 9, 9}});
   auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
   CheckColumn(vec, type, 5);
 }
@@ -430,36 +427,35 @@ TEST_F(DuckDBColumnSerializerTest, ListIntNullElements) {
 TEST_F(DuckDBColumnSerializerTest, NullableListInt) {
   // Some list rows are null (null list, not null elements)
   auto vec = MakeNullableList<int32_t>(
-    {std::vector<int32_t>{1, 2, 3}, std::nullopt,
-     std::vector<int32_t>{7, 6, 5}, std::vector<int32_t>{},
-     std::nullopt});
+    {std::vector<int32_t>{1, 2, 3}, std::nullopt, std::vector<int32_t>{7, 6, 5},
+     std::vector<int32_t>{}, std::nullopt});
   auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
   CheckColumn(vec, type, 5);
 }
 
 TEST_F(DuckDBColumnSerializerTest, ListBool) {
   auto vec = MakeList<bool>({{true, false, true},
-                              {false, true, true},
-                              {false, false, false},
-                              {true, false}});
+                             {false, true, true},
+                             {false, false, false},
+                             {true, false}});
   auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::BOOLEAN);
   CheckColumn(vec, type, 4);
 }
 
 TEST_F(DuckDBColumnSerializerTest, NullableListBool) {
-  auto vec = MakeNullableList<bool>(
-    {std::vector<bool>{true, false, true}, std::nullopt,
-     std::vector<bool>{false, true, true}});
+  auto vec =
+    MakeNullableList<bool>({std::vector<bool>{true, false, true}, std::nullopt,
+                            std::vector<bool>{false, true, true}});
   auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::BOOLEAN);
   CheckColumn(vec, type, 3);
 }
 
 TEST_F(DuckDBColumnSerializerTest, ListVarchar) {
-  auto vec =
-    MakeVarcharList({{"foo", "bar", "very long string that does not fit inline"},
-                     {},
-                     {"hello"},
-                     {"a", "b", "c"}});
+  auto vec = MakeVarcharList(
+    {{"foo", "bar", "very long string that does not fit inline"},
+     {},
+     {"hello"},
+     {"a", "b", "c"}});
   auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
   CheckColumn(vec, type, 4);
 }
@@ -481,7 +477,7 @@ TEST_F(DuckDBColumnSerializerTest, NullableListVarchar) {
 
 TEST_F(DuckDBColumnSerializerTest, DictionaryEncodedListInt) {
   // Dict child: {1,2,3,4} with indices [3,2,1,0,0,1,2,3]
-  // List rows: entries at offsets [0,3,5] → 3 rows of sizes [3,2,3]
+  // List rows: entries at offsets [0,3,5] -> 3 rows of sizes [3,2,3]
   auto child_flat = MakeFlat<int32_t>({1, 2, 3, 4});
   std::vector<duckdb::sel_t> indices_v{3, 2, 1, 0, 0, 1, 2, 3};
   auto child_dict = MakeDict(std::move(child_flat), std::span(indices_v));
@@ -577,7 +573,8 @@ TEST_F(DuckDBColumnSerializerTest, ScalarStruct) {
     struct_type,
     Vecs(MakeFlat<int32_t>({1, 2, 3, 4}),
          MakeFlat<bool>({true, false, true, false}),
-         MakeFlatVarchar({"", "a", "\0"sv, "long lomng glgkfklgfklgf sdflkjsdlfk"}),
+         MakeFlatVarchar(
+           {"", "a", "\0"sv, "long lomng glgkfklgfklgf sdflkjsdlfk"}),
          MakeFlat<duckdb::timestamp_t>(
            {duckdb::timestamp_t{123000}, duckdb::timestamp_t{55555000},
             duckdb::timestamp_t{22222000}, duckdb::timestamp_t{99999999000}})),
@@ -602,13 +599,11 @@ TEST_F(DuckDBColumnSerializerTest, ScalarStructNulls) {
          MakeNullableFlat<bool>({true, std::nullopt, false, true, false, true}),
          MakeNullableVarchar(
            {std::optional<std::string_view>{""},
-            std::optional<std::string_view>{"a"},
-            std::nullopt,
+            std::optional<std::string_view>{"a"}, std::nullopt,
             std::optional<std::string_view>{"longer string value here"},
             std::optional<std::string_view>{"x"},
             std::optional<std::string_view>{""}})),
-    6,
-    std::span<const bool>(kNulls6));
+    6, std::span<const bool>(kNulls6));
 
   CheckColumn(vec, struct_type, 6);
 }
@@ -624,15 +619,15 @@ TEST_F(DuckDBColumnSerializerTest, ScalarStructNullsDictionary) {
   std::vector<duckdb::sel_t> int_idx{5, 4, 3, 2, 1, 0, 1, 2};
   auto int_dict = MakeDict(std::move(int_flat), std::span(int_idx));
 
-  auto bool_flat = MakeNullableFlat<bool>(
-    {true, std::nullopt, false, true, false, true});
+  auto bool_flat =
+    MakeNullableFlat<bool>({true, std::nullopt, false, true, false, true});
   std::vector<duckdb::sel_t> bool_idx{5, 4, 3, 2, 1, 0, 1, 2};
   auto bool_dict = MakeDict(std::move(bool_flat), std::span(bool_idx));
 
   constexpr bool kNulls8[] = {true, true, true, false, true, true, false, true};
-  auto vec = MakeStruct(struct_type,
-                        Vecs(std::move(int_dict), std::move(bool_dict)),
-                        8, std::span<const bool>(kNulls8));
+  auto vec =
+    MakeStruct(struct_type, Vecs(std::move(int_dict), std::move(bool_dict)), 8,
+               std::span<const bool>(kNulls8));
 
   CheckColumn(vec, struct_type, 8);
 }
@@ -656,24 +651,21 @@ TEST_F(DuckDBColumnSerializerTest, ArrayStruct) {
 TEST_F(DuckDBColumnSerializerTest, NestedStruct) {
   // STRUCT<outer_int INT, inner STRUCT<a INT, b VARCHAR>>
   duckdb::child_list_t<duckdb::LogicalType> inner_fields{
-    {"a", duckdb::LogicalType::INTEGER},
-    {"b", duckdb::LogicalType::VARCHAR}};
+    {"a", duckdb::LogicalType::INTEGER}, {"b", duckdb::LogicalType::VARCHAR}};
   auto inner_type = duckdb::LogicalType::STRUCT(inner_fields);
 
   duckdb::child_list_t<duckdb::LogicalType> outer_fields{
-    {"outer_int", duckdb::LogicalType::INTEGER},
-    {"inner", inner_type}};
+    {"outer_int", duckdb::LogicalType::INTEGER}, {"inner", inner_type}};
   auto outer_type = duckdb::LogicalType::STRUCT(outer_fields);
 
-  auto inner_vec = MakeStruct(
-    inner_type,
-    Vecs(MakeFlat<int32_t>({10, 20, 30, 40}),
-         MakeFlatVarchar({"alpha", "beta", "gamma", "delta"})),
-    4);
+  auto inner_vec =
+    MakeStruct(inner_type,
+               Vecs(MakeFlat<int32_t>({10, 20, 30, 40}),
+                    MakeFlatVarchar({"alpha", "beta", "gamma", "delta"})),
+               4);
 
-  auto vec = MakeStruct(outer_type,
-                        Vecs(MakeFlat<int32_t>({1, 2, 3, 4}), std::move(inner_vec)),
-                        4);
+  auto vec = MakeStruct(
+    outer_type, Vecs(MakeFlat<int32_t>({1, 2, 3, 4}), std::move(inner_vec)), 4);
 
   CheckColumn(vec, outer_type, 4);
 }
@@ -683,29 +675,28 @@ TEST_F(DuckDBColumnSerializerTest, NestedStructNulls) {
   // Some outer rows are null, some inner structs are null, some inner fields
   // are null.
   duckdb::child_list_t<duckdb::LogicalType> inner_fields{
-    {"a", duckdb::LogicalType::INTEGER},
-    {"b", duckdb::LogicalType::VARCHAR}};
+    {"a", duckdb::LogicalType::INTEGER}, {"b", duckdb::LogicalType::VARCHAR}};
   auto inner_type = duckdb::LogicalType::STRUCT(inner_fields);
 
   duckdb::child_list_t<duckdb::LogicalType> outer_fields{
-    {"outer_int", duckdb::LogicalType::INTEGER},
-    {"inner", inner_type}};
+    {"outer_int", duckdb::LogicalType::INTEGER}, {"inner", inner_type}};
   auto outer_type = duckdb::LogicalType::STRUCT(outer_fields);
 
   // 6 rows; inner struct is null for rows 1 and 4; row 5 is a null outer struct
   constexpr bool kInnerNulls[] = {true, false, true, true, false, true};
   auto inner_vec = MakeStruct(
     inner_type,
-    Vecs(MakeNullableFlat<int32_t>({10, 0, std::nullopt, 30, 0, 40}),
-         MakeNullableVarchar({"alpha", {}, "gamma", std::nullopt, {}, "delta"})),
+    Vecs(
+      MakeNullableFlat<int32_t>({10, 0, std::nullopt, 30, 0, 40}),
+      MakeNullableVarchar({"alpha", {}, "gamma", std::nullopt, {}, "delta"})),
     6, std::span<const bool>(kInnerNulls));
 
   constexpr bool kOuterNulls[] = {true, true, true, true, true, false};
-  auto vec = MakeStruct(
-    outer_type,
-    Vecs(MakeNullableFlat<int32_t>({1, 2, std::nullopt, 4, 5, 0}),
-         std::move(inner_vec)),
-    6, std::span<const bool>(kOuterNulls));
+  auto vec =
+    MakeStruct(outer_type,
+               Vecs(MakeNullableFlat<int32_t>({1, 2, std::nullopt, 4, 5, 0}),
+                    std::move(inner_vec)),
+               6, std::span<const bool>(kOuterNulls));
 
   CheckColumn(vec, outer_type, 6);
 }
@@ -731,9 +722,8 @@ TEST_F(DuckDBColumnSerializerTest, MapIntToInt) {
 
 TEST_F(DuckDBColumnSerializerTest, MapIntToIntNullable) {
   // Nullable values inside the map
-  auto map_type =
-    duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
-                              duckdb::LogicalType::INTEGER);
+  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
+                                           duckdb::LogicalType::INTEGER);
 
   auto keys = MakeFlat<int32_t>({1, 2, 3, 4});
   auto vals = MakeNullableFlat<int32_t>({10, std::nullopt, std::nullopt, 40});
@@ -745,9 +735,8 @@ TEST_F(DuckDBColumnSerializerTest, MapIntToIntNullable) {
 }
 
 TEST_F(DuckDBColumnSerializerTest, MapIntToBoolNullable) {
-  auto map_type =
-    duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
-                              duckdb::LogicalType::BOOLEAN);
+  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
+                                           duckdb::LogicalType::BOOLEAN);
 
   auto keys = MakeFlat<int32_t>({1, 2, 3, 4});
   auto vals = MakeNullableFlat<bool>({true, false, std::nullopt, false});
@@ -759,16 +748,14 @@ TEST_F(DuckDBColumnSerializerTest, MapIntToBoolNullable) {
 }
 
 TEST_F(DuckDBColumnSerializerTest, MapIntToVarcharNullable) {
-  auto map_type =
-    duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
-                              duckdb::LogicalType::VARCHAR);
+  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
+                                           duckdb::LogicalType::VARCHAR);
 
   auto keys = MakeFlat<int32_t>({1, 2, 3, 4});
-  auto vals = MakeNullableVarchar(
-    {std::optional<std::string_view>{"red"},
-     std::nullopt,
-     std::optional<std::string_view>{"green"},
-     std::optional<std::string_view>{"yellow"}});
+  auto vals =
+    MakeNullableVarchar({std::optional<std::string_view>{"red"}, std::nullopt,
+                         std::optional<std::string_view>{"green"},
+                         std::optional<std::string_view>{"yellow"}});
   std::vector<duckdb::list_entry_t> entries{{0, 2}, {2, 1}, {3, 1}, {4, 0}};
 
   auto vec =
@@ -780,7 +767,8 @@ TEST_F(DuckDBColumnSerializerTest, MapIntToListInt) {
   // MAP<INT, LIST<INT>>
   auto val_elem_type = duckdb::LogicalType::INTEGER;
   auto val_type = duckdb::LogicalType::LIST(val_elem_type);
-  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER, val_type);
+  auto map_type =
+    duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER, val_type);
 
   auto keys = MakeFlat<int32_t>({1, 2, 3, 4});
   auto vals = MakeList<int32_t>({{1, 2, 3}, {4, 5}, {}, {7, 8, 9}});
@@ -793,9 +781,8 @@ TEST_F(DuckDBColumnSerializerTest, MapIntToListInt) {
 
 TEST_F(DuckDBColumnSerializerTest, NullableMapRows) {
   // Some map rows are null (null map, not null entries)
-  auto map_type =
-    duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
-                              duckdb::LogicalType::INTEGER);
+  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
+                                           duckdb::LogicalType::INTEGER);
 
   auto keys = MakeFlat<int32_t>({1, 2, 3, 4});
   auto vals = MakeFlat<int32_t>({10, 20, 5, 40});
@@ -810,14 +797,14 @@ TEST_F(DuckDBColumnSerializerTest, NullableMapRows) {
 
 TEST_F(DuckDBColumnSerializerTest, MapDictionaryEncoded) {
   // MAP column where the entire map vector is dictionary-encoded
-  auto map_type =
-    duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
-                              duckdb::LogicalType::INTEGER);
+  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
+                                           duckdb::LogicalType::INTEGER);
 
   // Build base maps (4 distinct maps)
   auto keys_base = MakeFlat<int32_t>({1, 2, 3, 4, 5, 6});
   auto vals_base = MakeFlat<int32_t>({10, 20, 30, 40, 50, 60});
-  std::vector<duckdb::list_entry_t> base_entries{{0, 2}, {2, 2}, {4, 1}, {5, 1}};
+  std::vector<duckdb::list_entry_t> base_entries{
+    {0, 2}, {2, 2}, {4, 1}, {5, 1}};
   auto base_map = MakeMap(map_type, std::move(keys_base), std::move(vals_base),
                           std::span(base_entries));
 
@@ -844,11 +831,11 @@ TEST_F(DuckDBColumnSerializerTest, MulticolumnScalar) {
   std::iota(int_vals.begin(), int_vals.end(), 0);
   auto int_vec = MakeFlat<int32_t>(std::span(int_vals));
 
-  auto bool_vec = MakeFlat<bool>({true, false, true, false, true,
-                                   false, true, false, true, false});
+  auto bool_vec = MakeFlat<bool>(
+    {true, false, true, false, true, false, true, false, true, false});
 
-  auto varchar_vec =
-    MakeFlatVarchar({"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"});
+  auto varchar_vec = MakeFlatVarchar(
+    {"a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"});
 
   // Write all three in one transaction
   rocksdb::TransactionOptions txn_opts;

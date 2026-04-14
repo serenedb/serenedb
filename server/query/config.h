@@ -24,6 +24,8 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
 
+#include <duckdb/common/enums/set_scope.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <string>
 #include <string_view>
 
@@ -32,6 +34,13 @@
 #include "basics/exceptions.h"
 #include "basics/system-compiler.h"
 #include "catalog/types.h"
+
+namespace duckdb {
+
+class ClientContext;
+struct DBConfig;
+
+}  // namespace duckdb
 
 namespace sdb {
 namespace catalog {
@@ -49,7 +58,6 @@ enum class VariableType {
   U64,
   F64,
   String,
-  JoinOrderAlgorithm,
   PgSearchPath,
   PgExtraFloatDigits,
   PgByteaOutput,
@@ -67,17 +75,20 @@ enum class IsolationLevel : uint8_t {
   RepeatableRead,
 };
 
+using ValidateFn = bool (*)(const duckdb::Value&);
+using OnSetFn = void (*)(duckdb::ClientContext&, duckdb::SetScope,
+                         const std::string&, duckdb::Value&, bool is_reset);
 struct VariableDescription {
-  VariableType type;
+  duckdb::LogicalTypeId type;
   std::string_view description;
   std::string_view default_value;  // .data() == nullptr if None
+  ValidateFn validate = nullptr;
+  OnSetFn on_set = nullptr;
 };
 
-bool ValidateValue(VariableType type, std::string_view value);
-
-std::string_view GetDefaultVariable(std::string_view name);
-
 std::optional<VariableDescription> GetDefaultDescription(std::string_view name);
+
+bool HasDefault(std::string_view name);
 
 std::string_view GetOriginalName(std::string_view name);
 
@@ -90,14 +101,19 @@ class Config {
   };
 
   enum class TxnAction : uint8_t {
-    Apply = 0,
+    // SET inside txn: on commit keep new value, on rollback restore old
+    Keep = 0,
+    // SET LOCAL: on both commit and rollback restore old value
     Revert,
   };
 
   struct TxnVariable {
     TxnAction action;
-    std::string value;
+    duckdb::Value old_value;
   };
+
+  explicit Config(duckdb::ClientContext& client_ctx)
+    : _client_ctx{client_ctx} {}
 
   template<VariableType T>
   auto Get(std::string_view key) const {
@@ -169,8 +185,6 @@ class Config {
     }
   }
 
-  void Set(VariableContext context, std::string_view key, std::string value);
-
   void Reset(std::string_view key);
 
   void ResetAll();
@@ -178,8 +192,6 @@ class Config {
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
-
-  std::unordered_map<std::string, std::string> rawConfigsCopy() const;
 
   // Visit all the settings and call function f(setting_name, value,
   // description) value is std::string, because it could be non-default
@@ -193,40 +205,30 @@ class Config {
     return Get(key);
   }
 
-  // This is thread unsafe, but I don't want to make it thread safe.
-  // Instead we should implement thread unsafe functions.
-  void SetSetting(std::string_view key, std::string value,
-                  bool is_local) const {
-    // Resolve to canonical static name so the map key doesn't dangle.
-    auto canonical = GetOriginalName(key);
-    if (!canonical.data()) {
-      return;
-    }
-    auto context = is_local ? VariableContext::Local : VariableContext::Session;
-    const_cast<Config*>(this)->Set(context, canonical, std::move(value));
-  }
+  void OnSet(std::string_view name, bool is_local);
+  void SetSetting(std::string_view key, std::string value, bool is_local);
+  bool IsAutoCommit() const;
 
  protected:
-  // Used by TxnState(transaction state) to commit/rollback transaction
-  // variables
   void CommitVariables() noexcept;
-  void RollbackVariables() noexcept { _transaction.clear(); }
-
-  std::optional<std::string> Get(std::string_view key) const;
+  void RollbackVariables() noexcept;
 
  private:
-  std::optional<std::string> access(const std::string& key) const;
+  std::optional<std::string> Get(std::string_view key) const;
+  void Set(VariableContext context, std::string_view key, std::string value);
+  void SetInternal(std::string_view key, std::string value);
+  void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
+  void SaveForRollback(std::string_view key, VariableContext context);
 
-  std::string_view GetNonDefault(std::string_view key) const;
-
-  // Session variables
-  containers::FlatHashMap<std::string_view, std::string> _session;
-
-  // Catalog snapshot
-  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
-
-  // Transaction variable
+  // Transaction variables (commit-apply / revert semantics).
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
+  mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
+  duckdb::ClientContext& _client_ctx;
 };
 
-};  // namespace sdb
+namespace connector {
+
+void RegisterConfigVariables(duckdb::DBConfig& config);
+
+}  // namespace connector
+}  // namespace sdb

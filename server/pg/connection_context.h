@@ -31,8 +31,8 @@ namespace sdb {
 
 class ConnectionContext : public ExecContext, public query::Transaction {
  public:
-  ConnectionContext(std::string_view user, std::string_view dbname,
-                    ObjectId database_id,
+  ConnectionContext(duckdb::ClientContext& duckdb_ctx, std::string_view user,
+                    std::string_view dbname, ObjectId database_id,
                     std::shared_ptr<catalog::Database> database,
                     message::Buffer* send_buffer,
                     pg::CopyMessagesQueue* copy_queue);

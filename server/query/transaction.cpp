@@ -22,6 +22,8 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <duckdb/main/client_context.hpp>
+
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"

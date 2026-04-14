@@ -39,6 +39,8 @@ namespace sdb::query {
 
 class Transaction : public Config {
  public:
+  using Config::Config;
+
   enum class State : uint8_t {
     None = 0,
     HasRocksDBRead = 1 << 0,

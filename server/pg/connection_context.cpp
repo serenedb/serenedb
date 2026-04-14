@@ -29,10 +29,12 @@
 namespace sdb {
 
 ConnectionContext::ConnectionContext(
-  std::string_view user, std::string_view dbname, ObjectId database_id,
+  duckdb::ClientContext& duckdb_ctx, std::string_view user,
+  std::string_view dbname, ObjectId database_id,
   std::shared_ptr<catalog::Database> database, message::Buffer* send_buffer,
   pg::CopyMessagesQueue* copy_queue)
   : ExecContext{user, dbname, database_id},
+    Transaction{duckdb_ctx},
     _database{std::move(database)},
     _send_buffer{send_buffer},
     _copy_queue{copy_queue} {}

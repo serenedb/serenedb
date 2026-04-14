@@ -50,9 +50,10 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
         duckdb::idx_t idx) -> duckdb::string_t {
       std::string key{name.GetData(), name.GetSize()};
       duckdb::Value value;
-      if (context.TryGetCurrentSetting(key, value)) {
-        auto str = value.ToString();
-        return duckdb::StringVector::AddString(result, str);
+      // Gate internal settings we don't want to expose,
+      // so check the allowlist after resolving the value.
+      if (context.TryGetCurrentSetting(key, value) && HasDefault(key)) {
+        return duckdb::StringVector::AddString(result, value.ToString());
       }
       if (missing_ok) {
         mask.SetInvalid(idx);
@@ -68,25 +69,21 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auto& db_config = duckdb::DBConfig::GetConfig(*context.db);
 
   duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool,
                                    duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, duckdb::string_t value,
-        bool /*is_local*/) -> duckdb::string_t {
+        bool is_local) -> duckdb::string_t {
       std::string key{name.GetData(), name.GetSize()};
       std::string val{value.GetData(), value.GetSize()};
-      // Set via TryGetSettingIndex + SetUserSetting on client config
-      duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-      auto setting_index = db_config.TryGetSettingIndex(key, option);
-      if (setting_index.IsValid()) {
-        context.config.user_settings.SetUserSetting(setting_index.GetIndex(),
-                                                    duckdb::Value(val));
-      } else {
+      // Only allowlisted settings are accessible
+      if (!HasDefault(key)) {
         throw duckdb::InvalidInputException(
           "unrecognized configuration parameter \"%s\"", key);
       }
+      auto& conn_ctx = GetSereneDBContext(context);
+      conn_ctx.SetSetting(key, val, is_local);
       return duckdb::StringVector::AddString(result, val);
     });
 }

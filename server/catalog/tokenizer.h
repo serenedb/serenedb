@@ -39,8 +39,6 @@
 
 namespace sdb::catalog {
 
-inline constexpr std::string_view kTokenizerField = "tokenizer";
-
 class Tokenizer : public SchemaObject {
  public:
   struct Deleter {

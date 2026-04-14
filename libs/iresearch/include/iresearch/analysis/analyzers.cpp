@@ -84,11 +84,10 @@ class AnalyzerRegister final
 
 constexpr std::string_view kTypeParam = "type";
 constexpr std::string_view kPropertiesParam = "properties";
-constexpr std::string_view kAnalyzerParam = "analyzer";
 
 std::string_view GetType(vpack::Slice& input) {
   SDB_ASSERT(input.isObject());
-  input = input.get(kAnalyzerParam);
+  input = input.get(analyzers::kAnalyzerParam);
   if (input.isNone() || input.isNull()) {
     return StringTokenizer::type_name();
   }

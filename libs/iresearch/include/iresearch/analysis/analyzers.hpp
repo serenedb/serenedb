@@ -55,6 +55,8 @@ class AnalyzerRegistrar {
 
 namespace analyzers {
 
+inline constexpr std::string_view kAnalyzerParam = "analyzer";
+
 // Checks whether an analyzer with the specified name is registered.
 bool Exists(std::string_view name, const TypeInfo& args_format,
             bool load_library = true);

@@ -259,7 +259,7 @@ SELECT id FROM mixed_idx WHERE TERM_EQ(data->>'label', 'foo') ORDER BY id;
 id
 1
 
-# TODO should be int, not test?
+# TODO should be int, not string?
 query
 SELECT id FROM mixed_idx WHERE data->>'count' = '42' ORDER BY id;
 ----
@@ -296,56 +296,64 @@ statement ok
 DROP TABLE withnulls;
 
 
-# TODO support deletes 
 # ─── 9. Deletes ──────────────────────────────────────────────────────────────
-#
-#statement ok
-#CREATE TABLE del_test (id INTEGER PRIMARY KEY, data JSON);
-#
-#statement ok
-#CREATE INDEX del_test_idx ON del_test USING inverted(id, data verbatim_dict);
-#
-#statement ok
-#INSERT INTO del_test VALUES
-#    (1, '{"host":"server-01","status":"ok"}'::json),
-#    (2, '{"host":"server-02","status":"ok"}'::json),
-#    (3, '{"host":"server-03","status":"error"}'::json);
-#
-#query
-#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
-#----
-#id
-#1
-#2
-#
-#statement ok
-#DELETE FROM del_test WHERE id = 1;
-#
-#query
-#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
-#----
-#id
-#2
-#
-#statement ok
-#DELETE FROM del_test WHERE id = 2;
-#
-#query
-#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
-#----
-#id
-#
-## Row 3 with 'error' status still present
-#query
-#SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'error') ORDER BY id;
-#----
-#id
-#3
-#
-#statement ok
-#DROP TABLE del_test;
-#
-#
+
+statement ok
+CREATE TABLE del_test (id INTEGER PRIMARY KEY, data JSON);
+
+statement ok
+CREATE INDEX del_test_idx ON del_test USING inverted(id, data verbatim_dict);
+
+statement ok
+INSERT INTO del_test VALUES
+    (1, '{"host":"server-01","status":"ok"}'::json),
+    (2, '{"host":"server-02","status":"ok"}'::json),
+    (3, '{"host":"server-03","status":"error"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) del_test;
+
+query
+SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+DELETE FROM del_test WHERE id = 1;
+
+statement ok
+VACUUM (UPDATE_INDEXES) del_test;
+
+query
+SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
+----
+id
+2
+
+statement ok
+DELETE FROM del_test WHERE id = 2;
+
+statement ok
+VACUUM (UPDATE_INDEXES) del_test;
+
+query
+SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'ok') ORDER BY id;
+----
+id
+
+# Row 3 with 'error' status still present
+query
+SELECT id FROM del_test_idx WHERE TERM_EQ(data->>'status', 'error') ORDER BY id;
+----
+id
+3
+
+statement ok
+DROP TABLE del_test;
+
+
 # ─── 10. Cleanup dictionaries ────────────────────────────────────────────────
 
 statement ok

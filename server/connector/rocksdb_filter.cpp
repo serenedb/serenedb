@@ -33,7 +33,6 @@
 namespace sdb::connector {
 namespace {
 
-
 std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds>);
 
 void MergeSourceExprs(KeyBounds::SourceExprsMap& dst,

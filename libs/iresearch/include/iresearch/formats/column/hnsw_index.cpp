@@ -20,13 +20,14 @@
 
 #include "iresearch/formats/column/hnsw_index.hpp"
 
-#include <faiss/utils/distances.h>
+#include <cmath>
 
 #include "basics/system-compiler.h"
 #include "iresearch/formats/column/common.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {
@@ -49,6 +50,33 @@ void ReadVector(IndexInput& in, T& vec) {
   vec.resize(size);
   in.ReadBytes(reinterpret_cast<byte_type*>(vec.data()),
                sizeof(*vec.data()) * size);
+}
+
+float ComputeDotProduct(const byte_type* l, const byte_type* r, uint16_t d) {
+  return -irs::vector::DotProductImpl<float, float>::Compute(l, r, d);
+}
+
+float ComputeCosine(const byte_type* l, const byte_type* r, uint16_t d) {
+  const auto [ll, lr, rr] =
+    irs::vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
+  const float denom = std::sqrt(ll) * std::sqrt(rr);
+  return denom == 0.f ? 1.f : 1.f - lr / denom;
+}
+
+auto ResolveDistanceFunction(HNSWMetric metric) {
+  switch (metric) {
+    case HNSWMetric::L2:
+      return irs::vector::L2Space<float, float, float>::Dist;
+    case HNSWMetric::InnerProduct:
+      return ComputeDotProduct;
+    case HNSWMetric::L1:
+      return irs::vector::L1Space<float, float, float>::Dist;
+    case HNSWMetric::Cosine: {
+      return ComputeCosine;
+    }
+    default:
+      SDB_UNREACHABLE();
+  }
 }
 
 }  // namespace
@@ -90,6 +118,9 @@ std::pair<uint32_t, doc_id_t> UnpackSegmentWithDoc(uint64_t id) {
   return {segment, doc};
 }
 
+ColumnDistanceBase::ColumnDistanceBase(HNSWMetric metric, int32_t dim)
+  : _dist{ResolveDistanceFunction(metric)}, _dim{dim} {}
+
 const float* ColumnDistanceBase::LoadData(faiss::idx_t id,
                                           ResettableDocIterator::ptr& it) {
   it->reset();
@@ -101,50 +132,47 @@ const float* ColumnDistanceBase::LoadData(faiss::idx_t id,
   SDB_ASSERT(doc == next_doc);
   auto* payload = irs::get<PayAttr>(*it);
   SDB_ASSERT(payload);
-  SDB_ASSERT(payload->value.size() == _info.d * sizeof(float));
+  SDB_ASSERT(payload->value.size() == _dim * sizeof(float));
   return reinterpret_cast<const float*>(payload->value.data());
 }
 
 ColumnSearchDistance::ColumnSearchDistance(ResettableDocIterator::ptr&& it,
                                            HNSWInfo info)
-  : ColumnDistanceBase{std::move(info)}, _it{std::move(it)} {}
+  : ColumnDistanceBase{info.metric, info.d}, _it{std::move(it)} {}
 
 float ColumnSearchDistance::operator()(faiss::idx_t id) {
   const float* data = LoadData(id, _it);
-  switch (_info.metric) {
-    case faiss::MetricType::METRIC_L2:
-      return faiss::fvec_L2sqr(_q, data, _info.d);
-    default:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(_dist);
+  const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
+  const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
+  const auto d = static_cast<uint16_t>(_dim);
+  return _dist(lhs, rhs, d);
 }
 
 ColumnIndexDistance::ColumnIndexDistance(ResettableDocIterator::ptr&& lit,
                                          ResettableDocIterator::ptr&& rit,
                                          HNSWInfo info)
-  : ColumnDistanceBase{std::move(info)},
+  : ColumnDistanceBase{info.metric, info.d},
     _lit{std::move(lit)},
     _rit{std::move(rit)} {}
 
 float ColumnIndexDistance::operator()(faiss::idx_t id) {
   const float* data = LoadData(id, _lit);
-  switch (_info.metric) {
-    case faiss::MetricType::METRIC_L2:
-      return faiss::fvec_L2sqr(_q, data, _info.d);
-    default:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(_dist);
+  const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
+  const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
+  const auto d = static_cast<uint16_t>(_dim);
+  return _dist(lhs, rhs, d);
 }
 
 float ColumnIndexDistance::symmetric_dis(faiss::idx_t i, faiss::idx_t j) {
   const float* data_i = LoadData(i, _lit);
   const float* data_j = LoadData(j, _rit);
-  switch (_info.metric) {
-    case faiss::MetricType::METRIC_L2:
-      return faiss::fvec_L2sqr(data_i, data_j, _info.d);
-    default:
-      SDB_UNREACHABLE();
-  }
+  SDB_ASSERT(_dist);
+  const auto* lhs = reinterpret_cast<const irs::byte_type*>(data_i);
+  const auto* rhs = reinterpret_cast<const irs::byte_type*>(data_j);
+  const auto d = static_cast<uint16_t>(_dim);
+  return _dist(lhs, rhs, d);
 }
 
 HNSWIndexReader::HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,

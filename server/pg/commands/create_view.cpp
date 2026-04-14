@@ -96,7 +96,7 @@ yaclib::Future<> CreateView(const ExecContext& context, const ViewStmt& stmt) {
                     ERR_MSG("views must be based on SELECT statements"));
   }
   {
-    auto search_path = conn_ctx.Get<VariableType::PgSearchPath>("search_path");
+    auto search_path = conn_ctx.GetSearchPath();
     pg::Objects objects;
     pg::Disallowed disallowed;
     disallowed.relations.emplace(pg::Objects::ObjectName{{}, name});

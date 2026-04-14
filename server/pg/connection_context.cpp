@@ -43,7 +43,7 @@ std::string ConnectionContext::GetCurrentSchemaFromSnapshot(
   std::shared_ptr<const catalog::Snapshot> snapshot) const {
   SDB_ASSERT(snapshot);
   auto database_id = ExecContext::GetDatabaseId();
-  auto search_path = Config::Get<VariableType::PgSearchPath>("search_path");
+  auto search_path = GetSearchPath();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
     return snapshot->GetSchema(database_id, schema_name);
   });

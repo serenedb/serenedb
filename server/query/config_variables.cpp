@@ -23,6 +23,7 @@
 
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/config.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
@@ -62,8 +63,7 @@ constexpr std::pair<std::string_view, VariableDescription>
           } else {
             auto s = value.ToString();
             if (s.starts_with('-')) {
-              if (!RemoveFailurePointDebugging(
-                    std::string_view{s}.substr(1))) {
+              if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
                 throw duckdb::InvalidInputException(
                   "failure point '%s' not set", s);
               }
@@ -119,11 +119,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         "'emit_error' "
         "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
         "emit_error",
-        [](const duckdb::Value& v) {
-          auto s = v.ToString();
-          return absl::EqualsIgnoreCase("emit_error", s) ||
-                 absl::EqualsIgnoreCase("do_nothing", s) ||
-                 absl::EqualsIgnoreCase("replace", s);
+        [](const duckdb::Value& v) -> bool {
+          return magic_enum::enum_cast<WriteConflictPolicy>(
+                   v.ToString(), magic_enum::case_insensitive)
+            .has_value();
         },
       },
     },
@@ -163,13 +162,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the output format for bytea.",
         "hex",
-        [](const duckdb::Value& v) {
-          auto s = v.ToString();
-          return absl::EqualsIgnoreCase("hex", s) ||
-                 absl::EqualsIgnoreCase("escape", s);
+        [](const duckdb::Value& v) -> bool {
+          return magic_enum::enum_cast<ByteaOutput>(
+                   v.ToString(), magic_enum::case_insensitive)
+            .has_value();
         },
       },
     },
+    // TODO(gnusi): readonly
     {
       "client_encoding",
       {
@@ -234,6 +234,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         },
       },
     },
+    // TODO(gnusi): readonly
     {
       "default_transaction_read_only",
       {
@@ -242,6 +243,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "off",
       },
     },
+    // TODO(gnusi): readonly
     {
       "in_hot_standby",
       {
@@ -250,6 +252,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "off",
       },
     },
+    // TODO(gnusi): readonly
     {
       "integer_datetimes",
       {
@@ -258,6 +261,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "on",
       },
     },
+    // TODO(gnusi): readonly
     {
       "scram_iterations",
       {
@@ -266,6 +270,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "4096",
       },
     },
+    // TODO(gnusi): readonly
     {
       "server_encoding",
       {
@@ -274,6 +279,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "UTF8",
       },
     },
+    // TODO(gnusi): readonly
     {
       "server_version",
       {
@@ -282,6 +288,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "18.3",
       },
     },
+    // TODO(gnusi): readonly
     {
       "standard_conforming_strings",
       {
@@ -290,6 +297,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "on",
       },
     },
+    // TODO(gnusi): readonly
     {
       "client_min_messages",
       {
@@ -298,6 +306,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "notice",
       },
     },
+    // TODO(gnusi): readonly
     {
       "session_authorization",
       {
@@ -306,6 +315,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         StaticStrings::kDefaultUser,
       },
     },
+    // TODO(gnusi): readonly
     {
       "is_superuser",
       {
@@ -320,6 +330,7 @@ constexpr std::pair<std::string_view,
                     std::pair<std::string_view, VariableDescription>>
   kVariableDescriptionCanonical[] = {
     {
+      // TODO(gnusi): readonly
       "datestyle",
       {
         "DateStyle",
@@ -331,6 +342,7 @@ constexpr std::pair<std::string_view,
       },
     },
     {
+      // TODO(gnusi): readonly
       "intervalstyle",
       {
         "IntervalStyle",
@@ -342,6 +354,7 @@ constexpr std::pair<std::string_view,
       },
     },
     {
+      // TODO(gnusi): readonly
       "timezone",
       {
         "TimeZone",
@@ -495,7 +508,6 @@ void RegisterConfigVariables(duckdb::DBConfig& config) {
     const auto& [name, desc] = pair;
     TryRegister(config, name, desc);
   }
-
 }
 
 }  // namespace connector

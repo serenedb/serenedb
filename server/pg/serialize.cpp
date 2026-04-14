@@ -1267,10 +1267,8 @@ template void ByteaOutEscape<true>(char* buf, std::string_view value);
 template void ByteaOutEscape<false>(char* buf, std::string_view value);
 
 void FillContext(const Config& config, SerializationContext& context) {
-  context.extra_float_digits =
-    config.Get<VariableType::PgExtraFloatDigits>("extra_float_digits");
-  context.bytea_output =
-    config.Get<VariableType::PgByteaOutput>("bytea_output");
+  context.extra_float_digits = config.GetExtraFloatDigits();
+  context.bytea_output = config.GetByteaOutput();
   context.snapshot = config.EnsureCatalogSnapshot().get();
 }
 

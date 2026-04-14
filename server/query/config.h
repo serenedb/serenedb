@@ -20,19 +20,11 @@
 
 #pragma once
 
-#include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
-#include <absl/strings/str_split.h>
-
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <string>
 #include <string_view>
 
-#include "basics/assert.h"
-#include "basics/containers/flat_hash_map.h"
-#include "basics/exceptions.h"
-#include "basics/system-compiler.h"
 #include "catalog/types.h"
 
 namespace duckdb {
@@ -48,22 +40,6 @@ namespace catalog {
 struct Snapshot;
 
 }  // namespace catalog
-
-enum class VariableType {
-  Bool = 0,
-  I32,
-  I64,
-  U8,
-  U32,
-  U64,
-  F64,
-  String,
-  PgSearchPath,
-  PgExtraFloatDigits,
-  PgByteaOutput,
-  SdbWriteConflictPolicy,
-  SdbTransactionIsolation,
-};
 
 enum class ByteaOutput : uint8_t {
   Hex,
@@ -115,75 +91,11 @@ class Config {
   explicit Config(duckdb::ClientContext& client_ctx)
     : _client_ctx{client_ctx} {}
 
-  template<VariableType T>
-  auto Get(std::string_view key) const {
-    // TODO(codeworse): consider to use std::string_view as return type to avoid
-    // copy
-    auto value_str = Get(key);
-    // We use this only for system variables, so value must exist
-    SDB_ASSERT(value_str);
-    if constexpr (T == VariableType::PgSearchPath) {
-      SDB_ASSERT(key == "search_path");
-      auto value = value_str.and_then([](std::string_view str) {
-        auto arr = absl::StrSplit(str, ", ");
-        std::vector<std::string> result;
-        for (const auto& str : arr) {
-          auto value = absl::StripPrefix(absl::StripSuffix(str, "\""), "\"");
-          result.emplace_back(value);
-        }
-        return std::optional{result};
-      });
-      SDB_ASSERT(value);
-      return *value;
-    } else if constexpr (T == VariableType::PgExtraFloatDigits) {
-      SDB_ASSERT(key == "extra_float_digits");
-      int8_t r = 0;
-      const bool ok = absl::SimpleAtoi<int8_t>(*value_str, &r);
-      SDB_ASSERT(ok, "extra_float_digits is not validated");
-      return r;
-    } else if constexpr (T == VariableType::PgByteaOutput) {
-      SDB_ASSERT(key == "bytea_output");
-      if (absl::EqualsIgnoreCase("hex", *value_str)) {
-        return ByteaOutput::Hex;
-      } else {
-        SDB_ASSERT(absl::EqualsIgnoreCase("escape", *value_str),
-                   "bytea_output is not validated");
-        return ByteaOutput::Escape;
-      }
-    } else if constexpr (T == VariableType::SdbTransactionIsolation) {
-      SDB_ASSERT(key == "default_transaction_isolation" ||
-                 key == "transaction_isolation");
-      if (absl::EqualsIgnoreCase("repeatable read", *value_str)) {
-        return IsolationLevel::RepeatableRead;
-      }
-      SDB_ASSERT(absl::EqualsIgnoreCase("read committed", *value_str),
-                 "default_transaction_isolation is not validated");
-      return IsolationLevel::ReadCommitted;
-    } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
-      SDB_ASSERT(key == "sdb_write_conflict_policy");
-      if (absl::EqualsIgnoreCase("emit_error", *value_str)) {
-        return WriteConflictPolicy::EmitError;
-      }
-      if (absl::EqualsIgnoreCase("do_nothing", *value_str)) {
-        return WriteConflictPolicy::DoNothing;
-      }
-      SDB_ASSERT(absl::EqualsIgnoreCase("replace", *value_str),
-                 "sdb_write_conflict_policy is not validated");
-      return WriteConflictPolicy::Replace;
-    } else if constexpr (T == VariableType::U32) {
-      uint32_t r = 0;
-      const bool ok = absl::SimpleAtoi<uint32_t>(*value_str, &r);
-      SDB_ASSERT(ok, key, " is not validated");
-      return r;
-    } else if constexpr (T == VariableType::Bool) {
-      bool r = false;
-      const bool ok = absl::SimpleAtob(*value_str, &r);
-      SDB_ASSERT(ok, key, " is not validated");
-      return r;
-    } else {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED);
-    }
-  }
+  std::vector<std::string> GetSearchPath() const;
+  int8_t GetExtraFloatDigits() const;
+  ByteaOutput GetByteaOutput() const;
+  IsolationLevel GetIsolationLevel() const;
+  WriteConflictPolicy GetWriteConflictPolicy() const;
 
   void Reset(std::string_view key);
 
@@ -232,3 +144,31 @@ void RegisterConfigVariables(duckdb::DBConfig& config);
 
 }  // namespace connector
 }  // namespace sdb
+
+namespace magic_enum {
+
+template<>
+[[maybe_unused]] constexpr customize::customize_t
+customize::enum_name<sdb::IsolationLevel>(sdb::IsolationLevel value) noexcept {
+  switch (value) {
+    case sdb::IsolationLevel::ReadCommitted:
+      return "read committed";
+    case sdb::IsolationLevel::RepeatableRead:
+      return "repeatable read";
+  }
+  return default_tag;
+}
+
+template<>
+[[maybe_unused]] constexpr customize::customize_t
+customize::enum_name<sdb::ByteaOutput>(sdb::ByteaOutput value) noexcept {
+  switch (value) {
+    case sdb::ByteaOutput::Hex:
+      return "hex";
+    case sdb::ByteaOutput::Escape:
+      return "escape";
+  }
+  return default_tag;
+}
+
+}  // namespace magic_enum

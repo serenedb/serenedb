@@ -24,6 +24,7 @@
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <optional>
 
 #include "basics/assert.h"
@@ -33,6 +34,14 @@
 #include "pg/isolation_level.h"
 
 namespace sdb {
+namespace {
+template<typename T>
+T GetEnumValue(std::string_view value) noexcept {
+  const auto r = magic_enum::enum_cast<T>(value, magic_enum::case_insensitive);
+  SDB_ASSERT(r, "enum value is not validated");
+  return *r;
+}
+}  // namespace
 
 void Config::SetInternal(std::string_view key, std::string value) {
   auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
@@ -43,6 +52,41 @@ void Config::SetInternal(std::string_view key, std::string value) {
     _client_ctx.config.user_settings.SetUserSetting(
       setting_index.GetIndex(), duckdb::Value{std::move(value)});
   }
+}
+
+std::vector<std::string> Config::GetSearchPath() const {
+  auto value = Get("search_path");
+  SDB_ASSERT(value);
+  std::vector<std::string> result;
+  for (const auto& part : absl::StrSplit(*value, ", ")) {
+    result.emplace_back(absl::StripPrefix(absl::StripSuffix(part, "\""), "\""));
+  }
+  return result;
+}
+
+int8_t Config::GetExtraFloatDigits() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("extra_float_digits", value);
+  SDB_ASSERT(ok);
+  return static_cast<int8_t>(value.GetValue<int32_t>());
+}
+
+ByteaOutput Config::GetByteaOutput() const {
+  auto value = Get("bytea_output");
+  SDB_ASSERT(value);
+  return GetEnumValue<ByteaOutput>(*value);
+}
+
+IsolationLevel Config::GetIsolationLevel() const {
+  auto value = Get("transaction_isolation");
+  SDB_ASSERT(value);
+  return GetEnumValue<IsolationLevel>(*value);
+}
+
+WriteConflictPolicy Config::GetWriteConflictPolicy() const {
+  auto value = Get("sdb_write_conflict_policy");
+  SDB_ASSERT(value);
+  return GetEnumValue<WriteConflictPolicy>(*value);
 }
 
 std::optional<std::string> Config::Get(std::string_view key) const {

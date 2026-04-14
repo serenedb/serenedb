@@ -79,9 +79,7 @@ class Transaction : public Config {
   void AddTransactionBegin() noexcept;
   bool HasTransactionBegin() const noexcept;
 
-  IsolationLevel GetIsolationLevel() const noexcept {
-    return Get<VariableType::SdbTransactionIsolation>("transaction_isolation");
-  }
+
 
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);

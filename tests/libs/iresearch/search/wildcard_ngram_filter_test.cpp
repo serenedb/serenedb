@@ -120,7 +120,7 @@ TEST(WildcardNgramFilterOptionsTest, equality_different_has_pos) {
 
 TEST(WildcardNgramFilterOptionsTest, one_null_matcher) {
   // One options has a matcher (because of '_'), the other doesn't
-  // (pure prefix) — they must not be equal.
+  // (pure prefix) -- they must not be equal.
   irs::analysis::WildcardAnalyzer::Options ana_opts;
   ana_opts.ngram_size = 3;
   irs::analysis::WildcardAnalyzer analyzer{std::move(ana_opts)};
@@ -144,7 +144,6 @@ TEST(WildcardNgramFilterTest, ctor) {
   EXPECT_TRUE(q.field().empty());
   EXPECT_EQ(irs::kNoBoost, q.Boost());
 }
-
 
 TEST(WildcardNgramFilterTest, equal) {
   irs::analysis::WildcardAnalyzer::Options ana_opts;
@@ -185,7 +184,8 @@ TEST(WildcardNgramFilterTest, query) {
   irs::MemoryDirectory dir;
 
   // Index all documents with the WildcardField using both INDEX and STORE so
-  // that WildcardIterator can access the stored packed terms for post-filtering.
+  // that WildcardIterator can access the stored packed terms for
+  // post-filtering.
   {
     auto codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, codec);
@@ -200,8 +200,7 @@ TEST(WildcardNgramFilterTest, query) {
     for (auto v : kValues) {
       field.value = v;
       auto doc = ctx.Insert();
-      ASSERT_TRUE(
-        doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(field));
+      ASSERT_TRUE(doc.Insert<(irs::Action::INDEX | irs::Action::STORE)>(field));
     }
     ctx.Commit();
     writer->Commit();
@@ -237,25 +236,25 @@ TEST(WildcardNgramFilterTest, query) {
     return v;
   };
 
-  // "%" — matches every document (pure wildcard, no literals).
+  // "%" -- matches every document (pure wildcard, no literals).
   EXPECT_EQ(ids({0, 1, 2, 3, 4}), execute(MakeFilter(kField, "%", analyzer)));
 
-  // Pure prefix (% only at the end) — no RE2 matcher needed.
+  // Pure prefix (% only at the end) -- no RE2 matcher needed.
   EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer)));
   EXPECT_EQ(ids({2}), execute(MakeFilter(kField, "xyz%", analyzer)));
   EXPECT_EQ(ids({3}), execute(MakeFilter(kField, "hel%", analyzer)));
 
-  // Pure suffix (% only at position 0) — no RE2 matcher needed.
+  // Pure suffix (% only at position 0) -- no RE2 matcher needed.
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "%bar", analyzer)));
   EXPECT_EQ(ids({1}), execute(MakeFilter(kField, "%baz", analyzer)));
   EXPECT_EQ(ids({2}), execute(MakeFilter(kField, "%123", analyzer)));
 
-  // Exact match — no wildcards.
+  // Exact match -- no wildcards.
   EXPECT_EQ(ids({3}), execute(MakeFilter(kField, "hello", analyzer)));
   EXPECT_EQ(ids({4}), execute(MakeFilter(kField, "world", analyzer)));
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foobar", analyzer)));
 
-  // Single-char wildcard "_" — RE2 matcher is built.
+  // Single-char wildcard "_" -- RE2 matcher is built.
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer)));
   EXPECT_EQ(ids({1}), execute(MakeFilter(kField, "foo_az", analyzer)));
   EXPECT_EQ(ids({0, 1}),
@@ -263,7 +262,7 @@ TEST(WildcardNgramFilterTest, query) {
   EXPECT_EQ(ids({3}), execute(MakeFilter(kField, "_ello", analyzer)));
   EXPECT_EQ(ids({4}), execute(MakeFilter(kField, "wor__", analyzer)));
 
-  // Middle "%" — RE2 matcher is built.
+  // Middle "%" -- RE2 matcher is built.
   EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "f%r", analyzer)));
   EXPECT_EQ(ids({1}), execute(MakeFilter(kField, "f%z", analyzer)));
 
@@ -274,8 +273,8 @@ TEST(WildcardNgramFilterTest, query) {
 
   // With has_positions=false the RE2 matcher is always built, even for
   // patterns that would otherwise not need one (e.g. pure prefix).
-  EXPECT_EQ(ids({0, 1}),
-            execute(MakeFilter(kField, "foo%", analyzer, /*has_positions=*/false)));
-  EXPECT_EQ(ids({0}),
-            execute(MakeFilter(kField, "foo_ar", analyzer, /*has_positions=*/false)));
+  EXPECT_EQ(ids({0, 1}), execute(MakeFilter(kField, "foo%", analyzer,
+                                            /*has_positions=*/false)));
+  EXPECT_EQ(ids({0}), execute(MakeFilter(kField, "foo_ar", analyzer,
+                                         /*has_positions=*/false)));
 }

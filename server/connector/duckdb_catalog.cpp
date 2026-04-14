@@ -21,6 +21,7 @@
 #include "connector/duckdb_catalog.h"
 
 #include <duckdb/execution/operator/order/physical_order.hpp>
+#include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -29,7 +30,9 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
 #include <duckdb/planner/operator/logical_delete.hpp>
@@ -216,6 +219,70 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   return ctas;
 }
 
+namespace {
+
+// Defaults / generated-column projection for INSERT.
+//
+// Two passes so gen-col exprs can resolve their BoundRef(dep.storage_oid)
+// leaves against a storage-ordered chunk:
+//   Pass 1 (storage-oid order):
+//     gen col      -> NULL placeholder
+//     user-omitted -> bound_defaults[storage_idx]  (BoundRef-free)
+//     user-set     -> BoundRef(mapped_index) into the user input chunk
+//   Pass 2 (same layout):
+//     gen col      -> bound_defaults[storage_idx]  (refs resolve vs pass 1)
+//     other        -> BoundRef(storage_idx) passthrough
+duckdb::PhysicalOperator& ResolveDefaultsWithGenerated(
+  duckdb::PhysicalPlanGenerator& planner, duckdb::LogicalInsert& op,
+  duckdb::PhysicalOperator& child) {
+  SDB_ASSERT(!op.column_index_map.empty());
+
+  duckdb::vector<duckdb::LogicalType> types;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> pass1_exprs;
+  bool has_stored_generated = false;
+  for (auto& col : op.table.GetColumns().Physical()) {
+    types.push_back(col.Type());
+    if (col.Category() == duckdb::TableColumnType::GENERATED_STORED) {
+      has_stored_generated = true;
+      pass1_exprs.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value(col.Type())));
+      continue;
+    }
+    auto mapped_index = op.column_index_map[col.Physical()];
+    if (mapped_index == duckdb::DConstants::INVALID_INDEX) {
+      auto storage_idx = col.StorageOid();
+      pass1_exprs.push_back(std::move(op.bound_defaults[storage_idx]));
+    } else {
+      pass1_exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        col.Type(), mapped_index));
+    }
+  }
+  auto& pass1 = planner.Make<duckdb::PhysicalProjection>(
+    types, std::move(pass1_exprs), child.estimated_cardinality);
+  pass1.children.push_back(child);
+
+  if (!has_stored_generated) {
+    return pass1;
+  }
+
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> pass2_exprs;
+  for (auto& col : op.table.GetColumns().Physical()) {
+    auto storage_idx = col.StorageOid();
+    if (col.Category() == duckdb::TableColumnType::GENERATED_STORED) {
+      pass2_exprs.push_back(std::move(op.bound_defaults[storage_idx]));
+    } else {
+      pass2_exprs.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        col.Type(), storage_idx));
+    }
+  }
+  auto& pass2 = planner.Make<duckdb::PhysicalProjection>(
+    std::move(types), std::move(pass2_exprs), pass1.estimated_cardinality);
+  pass2.children.push_back(pass1);
+  return pass2;
+}
+
+}  // namespace
+
 duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalInsert& op,
@@ -223,15 +290,19 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& table_entry = op.table.Cast<SereneDBTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  // Handle default column projection if not all columns specified
+  // Two-pass projection: see ResolveDefaultsWithGenerated comment for why
+  // we don't reuse upstream's single-pass ResolveDefaultsProjection here.
   if (!op.column_index_map.empty()) {
-    plan = &planner.ResolveDefaultsProjection(op, *plan);
+    plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
   }
 
   // Use SST bulk insert for COPY FROM / INSERT...SELECT (has child plan).
-  // SST bypasses transactions -- no conflict detection.
-  bool use_sst = plan != nullptr && op.on_conflict_info.action_type ==
-                                      duckdb::OnConflictAction::THROW;
+  // SST bypasses transactions -- no conflict detection or constraint checks.
+  // Fall back to regular insert when there are constraints to enforce.
+  bool use_sst =
+    plan != nullptr &&
+    op.on_conflict_info.action_type == duckdb::OnConflictAction::THROW &&
+    op.bound_constraints.empty();
 
   if (use_sst) {
     auto* sorted_plan = plan.get();
@@ -281,7 +352,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 
   auto& insert = planner.Make<SereneDBPhysicalInsert>(
     std::move(sdb_table), std::move(op.types), op.estimated_cardinality,
-    op.on_conflict_info.action_type);
+    op.on_conflict_info.action_type, std::move(op.bound_constraints));
   if (plan) {
     insert.children.push_back(*plan);
   }
@@ -348,8 +419,9 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto& table_entry = op.table.Cast<SereneDBTableEntry>();
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  // Child output layout:
-  //   [SET_val_0, ..., SET_val_N, pk_0, ..., idx_col_0, ..., rowid]
+  // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
+  // passes through virtuals, so the update operator only sees:
+  //   [resolved SET vals, pk_virtuals, idx_virtuals, rowid]
   const auto& pk_col_ids = sdb_table->PKColumns();
   const auto& idx_col_indices = table_entry.GetIndexedColumnIndices();
   auto num_pk = pk_col_ids.size();
@@ -374,30 +446,87 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   auto num_virtual = num_pk + num_idx + 1;  // +1 for rowid
   auto child_cols = plan.types.size();
 
-  // SET values are at 0..op.columns.size()-1
-  std::vector<duckdb::idx_t> update_input_indices;
-  for (size_t i = 0; i < op.columns.size(); ++i) {
-    update_input_indices.push_back(i);
+  const auto num_updates = op.expressions.size();
+  duckdb::vector<duckdb::LogicalType> proj_types;
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> proj_exprs;
+  proj_types.reserve(num_updates + num_virtual);
+  proj_exprs.reserve(num_updates + num_virtual);
+
+  // phys -> expression that yields its post-update value. Built once, used
+  // by the gen-col branch below to rewrite BoundRef leaves in O(1).
+  // Gen-col sentinels (neither VALUE_DEFAULT nor BOUND_REF) aren't indexed
+  // here -- CheckBinder's transitive inlining guarantees gen-col bound
+  // expressions never have other gen cols as leaves.
+  duckdb::physical_index_map_t<const duckdb::Expression*> dep_source;
+  for (duckdb::idx_t j = 0; j < op.columns.size(); ++j) {
+    const auto t = op.expressions[j]->GetExpressionType();
+    if (t == duckdb::ExpressionType::VALUE_DEFAULT) {
+      dep_source[op.columns[j]] = op.bound_defaults[op.columns[j].index].get();
+    } else if (t == duckdb::ExpressionType::BOUND_REF) {
+      dep_source[op.columns[j]] = op.expressions[j].get();
+    }
   }
 
-  // PK columns at [child_cols - num_virtual .. child_cols - num_virtual +
-  // num_pk - 1]
+  for (duckdb::idx_t i = 0; i < num_updates; ++i) {
+    auto& expr = op.expressions[i];
+    const auto t = expr->GetExpressionType();
+    if (t == duckdb::ExpressionType::VALUE_DEFAULT) {
+      auto phys = op.columns[i].index;
+      SDB_ASSERT(phys < op.bound_defaults.size());
+      proj_types.push_back(op.bound_defaults[phys]->return_type);
+      proj_exprs.push_back(op.bound_defaults[phys]->Copy());
+    } else if (t == duckdb::ExpressionType::BOUND_REF) {
+      proj_types.push_back(expr->return_type);
+      proj_exprs.push_back(expr->Copy());
+    } else {
+      // STORED gen-col recompute: placeholder from BindUpdateConstraints;
+      // the real expression lives in bound_defaults. Rewrite each
+      // BoundRef(dep_phys) leaf to the dep's post-update source.
+      auto phys = op.columns[i].index;
+      SDB_ASSERT(phys < op.bound_defaults.size());
+      auto bound_copy = op.bound_defaults[phys]->Copy();
+      duckdb::ExpressionIterator::VisitExpressionClassMutable(
+        bound_copy, duckdb::ExpressionClass::BOUND_REF,
+        [&](duckdb::unique_ptr<duckdb::Expression>& e) {
+          auto dep = duckdb::PhysicalIndex(
+            e->Cast<duckdb::BoundReferenceExpression>().index);
+          auto it = dep_source.find(dep);
+          SDB_ASSERT(it != dep_source.end());
+          e = it->second->Copy();
+        });
+      proj_types.push_back(bound_copy->return_type);
+      proj_exprs.push_back(std::move(bound_copy));
+    }
+  }
+
+  // Passthrough virtual columns (PKs, indexed, rowid).
+  auto virt_start = child_cols - num_virtual;
+  for (duckdb::idx_t i = virt_start; i < child_cols; ++i) {
+    proj_types.push_back(plan.types[i]);
+    proj_exprs.push_back(
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(plan.types[i], i));
+  }
+
+  auto& proj = planner.Make<duckdb::PhysicalProjection>(
+    std::move(proj_types), std::move(proj_exprs), op.estimated_cardinality);
+  proj.children.push_back(plan);
+
   std::vector<duckdb::idx_t> pk_indices;
+  pk_indices.reserve(num_pk);
   for (size_t i = 0; i < num_pk; ++i) {
-    pk_indices.push_back(child_cols - num_virtual + i);
+    pk_indices.push_back(num_updates + i);
   }
-
-  // Indexed columns at [child_cols - num_virtual + num_pk .. child_cols - 2]
   std::vector<duckdb::idx_t> indexed_indices;
+  indexed_indices.reserve(num_idx);
   for (size_t i = 0; i < num_idx; ++i) {
-    indexed_indices.push_back(child_cols - num_virtual + num_pk + i);
+    indexed_indices.push_back(num_updates + num_pk + i);
   }
 
   auto& upd = planner.Make<SereneDBPhysicalUpdate>(
     std::move(sdb_table), std::move(pk_indices), std::move(op.columns),
-    std::move(update_input_indices), std::move(indexed_indices),
-    op.estimated_cardinality);
-  upd.children.push_back(plan);
+    std::move(indexed_indices), op.estimated_cardinality,
+    std::move(op.bound_constraints));
+  upd.children.push_back(proj);
   return upd;
 }
 

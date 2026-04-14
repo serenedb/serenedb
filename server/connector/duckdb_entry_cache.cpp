@@ -23,6 +23,8 @@
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parser.hpp>
@@ -161,6 +163,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
     }
     info->constraints.push_back(
       duckdb::make_uniq<duckdb::UniqueConstraint>(std::move(pk_names), true));
+  }
+
+  // CHECK and NOT NULL constraints.
+  for (const auto& check : table->CheckConstraints()) {
+    if (auto idx = check.IsNotNull(table->Columns())) {
+      info->constraints.push_back(duckdb::make_uniq<duckdb::NotNullConstraint>(
+        duckdb::LogicalIndex(*idx)));
+    } else if (check.expr && check.expr->HasExpr()) {
+      info->constraints.push_back(duckdb::make_uniq<duckdb::CheckConstraint>(
+        check.expr->GetExpr().Copy()));
+    }
   }
 
   // Indexed columns

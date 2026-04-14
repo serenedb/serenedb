@@ -20,6 +20,7 @@ add_library(
     duckdb_tokenizer_function.cpp
     duckdb_physical_create_index.cpp
     duckdb_index_utils.cpp
+    duckdb_constraint_verify.cpp
     duckdb_search_sink_writer.cpp
     duckdb_search_functions.cpp
     duckdb_vacuum_function.cpp

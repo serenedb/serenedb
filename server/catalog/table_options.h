@@ -29,6 +29,8 @@
 #include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <limits>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
@@ -184,9 +186,10 @@ struct CheckConstraint {
   std::string name;
   std::shared_ptr<ColumnExpr> expr;
 
-  // returns whether this is a NOT NULL constraint; if so, the second value is
-  // the column name
-  std::pair<bool, std::string_view> IsNotNull() const noexcept;
+  // If this constraint is just `NOT NULL` on a single column of `columns`,
+  // returns that column's index. Otherwise returns std::nullopt.
+  std::optional<size_t> IsNotNull(
+    std::span<const Column> columns) const noexcept;
 };
 
 struct FileInfo {

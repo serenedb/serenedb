@@ -106,12 +106,11 @@ void EmitColumnsForTable(const catalog::Table& table,
   auto& columns = table.Columns();
   auto& pk_columns = table.PKColumns();
 
-  // Collect NOT NULL column names from check constraints
-  containers::FlatHashSet<std::string_view> notnull_cols;
+  // Collect NOT NULL column indices from check constraints.
+  containers::FlatHashSet<size_t> notnull_cols;
   for (const auto& check : table.CheckConstraints()) {
-    auto [is_notnull, col_name] = check.IsNotNull();
-    if (is_notnull) {
-      notnull_cols.insert(col_name);
+    if (auto idx = check.IsNotNull(columns)) {
+      notnull_cols.insert(*idx);
     }
   }
 
@@ -147,7 +146,7 @@ void EmitColumnsForTable(const catalog::Table& table,
       .attalign = phys.attalign,
       .attstorage = phys.attstorage,
       .attcompression = PgAttribute::Attcompression::None,
-      .attnotnull = is_pk || notnull_cols.contains(col.name),
+      .attnotnull = is_pk || notnull_cols.contains(i),
       .atthasdef = col.expr != nullptr,
       .atthasmissing = false,
       .attidentity = PgAttribute::Attidentity::None,

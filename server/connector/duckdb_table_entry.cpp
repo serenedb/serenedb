@@ -21,12 +21,19 @@
 #include "connector/duckdb_table_entry.h"
 
 #include <duckdb/function/table_function.hpp>
+#include <duckdb/planner/constraints/bound_check_constraint.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_binder/check_binder.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 
+#include "basics/assert.h"
 #include "connector/duckdb_table_function.h"
 
 namespace sdb::connector {
@@ -52,8 +59,8 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   auto data = duckdb::make_uniq<SereneDBScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
-    if (col.id == catalog::Column::kGeneratedPKId || col.IsGenerated()) {
-      continue;  // Skip generated PK and virtual generated columns
+    if (col.id == catalog::Column::kGeneratedPKId) {
+      continue;  // Skip generated PK
     }
     data->column_ids.push_back(col.id);
     data->column_types.push_back(col.type);
@@ -79,10 +86,62 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
                                                duckdb::LogicalProjection& proj,
                                                duckdb::LogicalUpdate& update,
                                                duckdb::ClientContext& context) {
-  // PK columns are now added via GetRowIdColumns/BindRowIdColumns.
-  // Just call default logic for CHECK constraints etc.
-  duckdb::TableCatalogEntry::BindUpdateConstraints(binder, get, proj, update,
-                                                   context);
+  // We deliberately do NOT call
+  // duckdb::TableCatalogEntry::BindUpdateConstraints. The base class also flips
+  // update_is_del_and_insert + projects every physical column when any SET
+  // column is indexed (or is a LIST). For our storage that's pure overhead
+  // (RocksDB does partial per-column updates; SereneDBPhysicalUpdate already
+  // does delete-and-insert at the secondary index level for every UPDATE) AND
+  // it would silently overwrite the gen col recompute below with stale "i=i"
+  // passthroughs.
+  //
+  // TODO: handle update.return_chunk (RETURNING *) when we add support.
+
+  auto user_set = update.columns;
+
+  // CHECK passthroughs -- VerifyUpdateConstraints needs every CHECK input
+  // present in the chunk, otherwise CreateMockChunk skips the check.
+  for (auto& constraint : update.bound_constraints) {
+    if (constraint->type == duckdb::ConstraintType::CHECK) {
+      auto& check = constraint->Cast<duckdb::BoundCheckConstraint>();
+      duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update,
+                                              check.bound_columns);
+    }
+  }
+
+  // STORED gen-col recompute. The bound gen expression lives in
+  // update.bound_defaults[phys] (CheckBinder pre-inlined transitive gen->gen
+  // refs at CREATE TABLE time, so its leaves are non-gen physical cols).
+  // We append a BoundConstantExpression(NULL) sentinel here -- the logical
+  // optimizer rejects BoundReferenceExpression on the logical side, so we
+  // can't put the real expression in. PlanUpdate keys off the sentinel and
+  // substitutes the real expression at physical-plan time.
+  const auto& cols = GetColumns();
+  for (auto& gen_col : cols.Physical()) {
+    if (gen_col.Category() != duckdb::TableColumnType::GENERATED_STORED) {
+      continue;
+    }
+    SDB_ASSERT(gen_col.Physical().index < update.bound_defaults.size());
+    auto& bound_gen = *update.bound_defaults[gen_col.Physical().index];
+
+    duckdb::physical_index_set_t deps;
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundReferenceExpression>(
+      bound_gen, [&](const duckdb::BoundReferenceExpression& r) {
+        deps.insert(duckdb::PhysicalIndex(r.index));
+      });
+
+    const bool needs_recompute = absl::c_any_of(
+      deps, [&](auto d) { return absl::c_contains(user_set, d); });
+    if (!needs_recompute) {
+      continue;
+    }
+    duckdb::LogicalUpdate::BindExtraColumns(*this, get, proj, update, deps);
+    update.expressions.push_back(
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value(gen_col.Type())));
+    update.columns.push_back(gen_col.Physical());
+  }
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {

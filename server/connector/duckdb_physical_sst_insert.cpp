@@ -71,7 +71,7 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   const auto& columns = table.Columns();
   size_t input_idx = 0;
   for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId || col.IsGenerated()) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state.columns.push_back(SSTInsertColumnMeta{

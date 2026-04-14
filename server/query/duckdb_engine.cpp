@@ -41,35 +41,33 @@
 #include "pg/system_functions.h"
 #include "pg/system_views.h"
 
-// PG types not built into DuckDB.
-// Types with aliases preserve them through the binder for proper cast dispatch.
-// input_function: if set, used by registered casts for catalog lookups.
-static const duckdb::DefaultType kExternalTypes[] = {
-  // clang-format off
-  // reg* types -- aliased BIGINT with input functions for catalog lookups
-  {"regclass",       sdb::pg::REGCLASS(),       nullptr},
-  {"regtype",        sdb::pg::REGTYPE(),        nullptr},
-  {"regnamespace",   sdb::pg::REGNAMESPACE(),   nullptr},
-  {"regproc",        sdb::pg::REGPROC(),        nullptr},
-  {"regoper",        sdb::pg::REGOPER(),        nullptr},
-  {"regoperator",    sdb::pg::REGOPERATOR(),    nullptr},
-  {"regprocedure",   sdb::pg::REGPROCEDURE(),   nullptr},
-  {"regrole",        sdb::pg::REGROLE(),        nullptr},
-  {"regconfig",      sdb::pg::REGCONFIG(),      nullptr},
-  {"regdictionary",  sdb::pg::REGDICTIONARY(),  nullptr},
-  {"regcollation",   sdb::pg::REGCOLLATION(),   nullptr},
-  // System identifier types -- aliased BIGINT
-  {"tid",  sdb::pg::TID(),  nullptr},
-  {"cid",  sdb::pg::CID(),  nullptr},
-  {"xid",  sdb::pg::XID(),  nullptr},
-  {"xid8", sdb::pg::XID8(), nullptr},
-  // PG name type -- aliased VARCHAR
-  {"name", duckdb::LogicalTypeId::VARCHAR, nullptr},
-  // clang-format on
-};
-
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
+  // Lazy-initialized to avoid static initialization order issues
+  // (LogicalType has shared_ptr that needs heap allocation).
+  static const duckdb::DefaultType kExternalTypes[] = {
+    // clang-format off
+    // reg* types -- aliased BIGINT with input functions for catalog lookups
+    {"regclass",       sdb::pg::REGCLASS(),       nullptr,},
+    {"regtype",        sdb::pg::REGTYPE(),        nullptr,},
+    {"regnamespace",   sdb::pg::REGNAMESPACE(),   nullptr,},
+    {"regproc",        sdb::pg::REGPROC(),        nullptr,},
+    {"regoper",        sdb::pg::REGOPER(),        nullptr,},
+    {"regoperator",    sdb::pg::REGOPERATOR(),    nullptr,},
+    {"regprocedure",   sdb::pg::REGPROCEDURE(),   nullptr,},
+    {"regrole",        sdb::pg::REGROLE(),        nullptr,},
+    {"regconfig",      sdb::pg::REGCONFIG(),      nullptr,},
+    {"regdictionary",  sdb::pg::REGDICTIONARY(),  nullptr,},
+    {"regcollation",   sdb::pg::REGCOLLATION(),   nullptr,},
+    // System identifier types -- aliased BIGINT
+    {"tid",  sdb::pg::TID(),  nullptr,},
+    {"cid",  sdb::pg::CID(),  nullptr,},
+    {"xid",  sdb::pg::XID(),  nullptr,},
+    {"xid8", sdb::pg::XID8(), nullptr,},
+    // PG name type
+    {"name", duckdb::LogicalTypeId::VARCHAR, nullptr,},
+    // clang-format on
+  };
   *count = std::size(kExternalTypes);
   return kExternalTypes;
 }

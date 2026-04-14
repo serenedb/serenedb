@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
+#include <duckdb/planner/bound_constraint.hpp>
 
 #include "catalog/table.h"
 
@@ -34,7 +35,9 @@ class SereneDBPhysicalInsert final : public duckdb::PhysicalOperator {
     duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
     duckdb::vector<duckdb::LogicalType> types,
     duckdb::idx_t estimated_cardinality,
-    duckdb::OnConflictAction on_conflict = duckdb::OnConflictAction::THROW);
+    duckdb::OnConflictAction on_conflict = duckdb::OnConflictAction::THROW,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
+      bound_constraints = {});
 
   // Sink interface
   bool IsSink() const override { return true; }
@@ -59,6 +62,8 @@ class SereneDBPhysicalInsert final : public duckdb::PhysicalOperator {
  private:
   std::shared_ptr<catalog::Table> _table;
   duckdb::OnConflictAction _on_conflict;
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
+    _bound_constraints;
 };
 
 }  // namespace sdb::connector

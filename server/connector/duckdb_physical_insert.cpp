@@ -25,6 +25,7 @@
 
 #include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_constraint_verify.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
@@ -80,11 +81,13 @@ struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
 SereneDBPhysicalInsert::SereneDBPhysicalInsert(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
   duckdb::vector<duckdb::LogicalType> types,
-  duckdb::idx_t estimated_cardinality, duckdb::OnConflictAction on_conflict)
+  duckdb::idx_t estimated_cardinality, duckdb::OnConflictAction on_conflict,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> bound_constraints)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              std::move(types), estimated_cardinality),
     _table(std::move(table)),
-    _on_conflict(on_conflict) {}
+    _on_conflict(on_conflict),
+    _bound_constraints(std::move(bound_constraints)) {}
 
 // --- GetGlobalSinkState: set up once ---
 
@@ -102,15 +105,15 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
 
   // Build column metadata
   const auto& columns = _table->Columns();
+  size_t input_idx = 0;
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].id == catalog::Column::kGeneratedPKId ||
-        columns[i].IsGenerated()) {
+    if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->columns.push_back(InsertColumnMeta{
       .id = columns[i].id,
       .duckdb_type = columns[i].type,
-      .input_col_idx = i,
+      .input_col_idx = input_idx++,
     });
   }
 
@@ -141,6 +144,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
 
   auto* txn = gstate.txn;
+  // Verify constraints (CHECK, NOT NULL) before writing
+  VerifyAppendConstraints(context.client, *_table, _bound_constraints, chunk);
 
   // 1. Build row keys and acquire row-level locks per row:
   gstate.row_keys.clear();

@@ -21,9 +21,11 @@
 #include "connector/duckdb_physical_update.h"
 
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/execution/execution_context.hpp>
 
 #include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_constraint_verify.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
@@ -41,7 +43,6 @@ struct UpdateColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   duckdb::idx_t table_col_idx;
-  duckdb::idx_t input_col_idx;
 };
 
 struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
@@ -50,6 +51,15 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   ObjectId table_id;
   std::string table_key;
 
+  // All non-generated columns (for index insert dispatch)
+  struct ColumnMeta {
+    catalog::Column::Id id;
+    duckdb::LogicalType duckdb_type;
+  };
+  std::vector<ColumnMeta> all_columns;
+
+  // Parallel to _update_columns. Resolved SET values arrive in the first
+  // update_columns.size() slots of the Sink chunk.
   std::vector<UpdateColumnMeta> update_columns;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
@@ -64,6 +74,7 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
   DuckDBColumnSerializer serializer;
+  std::string value_buffer;
 };
 
 struct SereneDBUpdateSourceState : public duckdb::GlobalSourceState {
@@ -74,17 +85,17 @@ SereneDBPhysicalUpdate::SereneDBPhysicalUpdate(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
   std::vector<duckdb::idx_t> pk_col_indices,
   std::vector<duckdb::PhysicalIndex> update_columns,
-  std::vector<duckdb::idx_t> update_col_input_indices,
   std::vector<duckdb::idx_t> indexed_col_indices,
-  duckdb::idx_t estimated_cardinality)
+  duckdb::idx_t estimated_cardinality,
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>> bound_constraints)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
     _table(std::move(table)),
     _pk_col_indices(std::move(pk_col_indices)),
     _update_columns(std::move(update_columns)),
-    _update_col_input_indices(std::move(update_col_input_indices)),
-    _indexed_col_indices(std::move(indexed_col_indices)) {}
+    _indexed_col_indices(std::move(indexed_col_indices)),
+    _bound_constraints(std::move(bound_constraints)) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalUpdate::GetGlobalSinkState(
@@ -101,6 +112,16 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
 
+  for (const auto& col : columns) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{
+      .id = col.id,
+      .duckdb_type = col.type,
+    });
+  }
+
   for (size_t i = 0; i < _update_columns.size(); ++i) {
     auto table_col_idx = _update_columns[i].index;
     const auto& col = columns[table_col_idx];
@@ -108,7 +129,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
       .id = col.id,
       .duckdb_type = col.type,
       .table_col_idx = table_col_idx,
-      .input_col_idx = _update_col_input_indices[i],
     });
   }
 
@@ -228,6 +248,14 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
   auto* txn = gstate.txn;
 
+  chunk.Flatten();
+
+  // chunk layout: [resolved SET vals, pk_virtuals, idx_virtuals, rowid].
+  // _update_columns names the leading SET slots; _pk_col_indices tells the
+  // verifier where to find each PK for the "Failing row contains" detail.
+  VerifyUpdateConstraints(context.client, *_table, _bound_constraints, chunk,
+                          _update_columns, _pk_col_indices);
+
   // 1. Build row keys, lock rows, delete old index entries
   for (auto& writer : gstate.delete_index_writers) {
     writer->Init(num_rows, chunk);
@@ -266,7 +294,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     writer->Init(num_rows, chunk);
   }
 
-  for (const auto& col : gstate.update_columns) {
+  for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
+    const auto& col = gstate.update_columns[i];
     gstate.active_writers.clear();
     for (auto& writer : gstate.insert_index_writers) {
       if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
@@ -277,8 +306,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
     }
-    gstate.serializer.WriteColumn(txn_writer, chunk.data[col.input_col_idx],
-                                  col.duckdb_type, num_rows, gstate.row_keys,
+    gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
+                                  num_rows, gstate.row_keys,
                                   gstate.active_writers);
   }
 

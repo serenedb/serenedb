@@ -22,6 +22,7 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <duckdb/planner/bound_constraint.hpp>
 
 #include "catalog/table.h"
 
@@ -29,14 +30,16 @@ namespace sdb::connector {
 
 class SereneDBPhysicalUpdate final : public duckdb::PhysicalOperator {
  public:
-  SereneDBPhysicalUpdate(duckdb::PhysicalPlan& plan,
-                         std::shared_ptr<catalog::Table> table,
-                         std::vector<duckdb::idx_t> pk_col_indices,
-                         std::vector<duckdb::PhysicalIndex> update_columns,
-                         std::vector<duckdb::idx_t> update_col_input_indices,
-                         // Positions of indexed columns in the input chunk
-                         std::vector<duckdb::idx_t> indexed_col_indices,
-                         duckdb::idx_t estimated_cardinality);
+  // Input chunk layout (set up in SereneDBCatalog::PlanUpdate):
+  //   [resolved SET vals, pk_virtuals, idx_virtuals, rowid]
+  SereneDBPhysicalUpdate(
+    duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
+    std::vector<duckdb::idx_t> pk_col_indices,
+    std::vector<duckdb::PhysicalIndex> update_columns,
+    std::vector<duckdb::idx_t> indexed_col_indices,
+    duckdb::idx_t estimated_cardinality,
+    duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
+      bound_constraints);
 
   bool IsSink() const override { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
@@ -60,8 +63,9 @@ class SereneDBPhysicalUpdate final : public duckdb::PhysicalOperator {
   std::shared_ptr<catalog::Table> _table;
   std::vector<duckdb::idx_t> _pk_col_indices;
   std::vector<duckdb::PhysicalIndex> _update_columns;
-  std::vector<duckdb::idx_t> _update_col_input_indices;
   std::vector<duckdb::idx_t> _indexed_col_indices;
+  duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
+    _bound_constraints;
 };
 
 }  // namespace sdb::connector

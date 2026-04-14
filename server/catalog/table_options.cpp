@@ -26,6 +26,8 @@
 #include <vpack/collection.h>
 #include <vpack/slice.h>
 
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/operator_expression.hpp>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -108,13 +110,31 @@ std::string Column::GenerateScoreName(
   return GenerateUniqueName("sdb_inverted_index_score", column_names);
 }
 
-std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
+std::optional<size_t> CheckConstraint::IsNotNull(
+  std::span<const Column> columns) const noexcept {
   SDB_ASSERT(expr);
   if (!expr->HasExpr()) {
-    return {false, ""};
+    return std::nullopt;
   }
-  // TODO: inspect DuckDB ParsedExpression for NOT NULL check pattern
-  return {false, ""};
+  // NOT NULL stored as OPERATOR_IS_NOT_NULL(ColumnRefExpression(col_name)).
+  auto& parsed = expr->GetExpr();
+  if (parsed.GetExpressionType() !=
+      duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) {
+    return std::nullopt;
+  }
+  auto& op = parsed.Cast<duckdb::OperatorExpression>();
+  if (op.children.size() != 1 || op.children[0]->GetExpressionType() !=
+                                   duckdb::ExpressionType::COLUMN_REF) {
+    return std::nullopt;
+  }
+  auto name =
+    op.children[0]->Cast<duckdb::ColumnRefExpression>().GetColumnName();
+  for (size_t i = 0; i < columns.size(); ++i) {
+    if (columns[i].name == name) {
+      return i;
+    }
+  }
+  return std::nullopt;
 }
 
 Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,

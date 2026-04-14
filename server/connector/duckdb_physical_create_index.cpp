@@ -255,8 +255,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
   for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].id == catalog::Column::kGeneratedPKId ||
-        columns[i].IsGenerated()) {
+    if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->columns.push_back(InsertColumnMeta{

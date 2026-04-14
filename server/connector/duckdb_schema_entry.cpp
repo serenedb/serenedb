@@ -20,14 +20,18 @@
 
 #include "connector/duckdb_schema_entry.h"
 
+#include <duckdb/parser/constraints/check_constraint.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_data/create_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <iostream>
 
@@ -111,30 +115,142 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     request.columns.push_back(std::move(sdb_col));
   }
 
-  // Extract PK columns from constraints
-  for (auto& constraint : table_info.constraints) {
-    if (constraint->type == duckdb::ConstraintType::UNIQUE) {
-      auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
-      if (!unique.IsPrimaryKey()) {
-        continue;
+  // --- Constraint helpers (ported from old create_table.cpp) ---
+
+  // PG-style constraint name generator with dedup
+  auto choose_constraint_name = [&](std::string_view tbl,
+                                    std::string_view column,
+                                    std::string_view label) -> std::string {
+    std::string base_name;
+    if (column.empty()) {
+      base_name = absl::StrCat(tbl, "_", label);
+    } else {
+      base_name = absl::StrCat(tbl, "_", column, "_", label);
+    }
+    auto name_exists = [&](std::string_view candidate) {
+      return std::ranges::any_of(request.checkConstraints, [&](const auto& c) {
+        return c.name == candidate;
+      });
+    };
+    if (!name_exists(base_name)) {
+      return base_name;
+    }
+    for (size_t counter = 1;; ++counter) {
+      auto candidate = absl::StrCat(base_name, counter);
+      if (!name_exists(candidate)) {
+        return candidate;
       }
-      if (unique.HasIndex()) {
-        // Single-column PK by index
-        auto idx = unique.GetIndex().index;
-        if (idx < request.columns.size()) {
-          request.pkColumns.push_back(request.columns[idx].id);
+    }
+  };
+
+  // Find the column name for constraint naming (PG convention):
+  // returns the column name if all column refs point to the same column
+  // (column-level CHECK), empty otherwise (table-level CHECK).
+  auto find_constraint_column =
+    [](const duckdb::ParsedExpression& root) -> std::string {
+    std::string result;
+    bool multiple = false;
+    std::function<void(const duckdb::ParsedExpression&)> visit;
+    visit = [&](const duckdb::ParsedExpression& expr) {
+      if (multiple) {
+        return;
+      }
+      if (expr.GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
+        auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+        if (result.empty()) {
+          result = name;
+        } else if (result != name) {
+          multiple = true;
         }
-      } else {
-        // Multi-column PK by names
-        for (auto& pk_name : unique.GetColumnNames()) {
-          for (auto& col : request.columns) {
-            if (col.name == pk_name) {
-              request.pkColumns.push_back(col.id);
-              break;
+        return;
+      }
+      duckdb::ParsedExpressionIterator::EnumerateChildren(
+        expr, [&](const duckdb::ParsedExpression& child) { visit(child); });
+    };
+    visit(root);
+    return multiple ? std::string{} : result;
+  };
+
+  // Track which columns already have NOT NULL to avoid duplicates
+  std::vector<bool> has_not_null(request.columns.size(), false);
+
+  auto append_not_null = [&](duckdb::idx_t col_idx) {
+    if (col_idx >= request.columns.size() || has_not_null[col_idx]) {
+      return;
+    }
+    has_not_null[col_idx] = true;
+    auto& col_name = request.columns[col_idx].name;
+    auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(col_name);
+    auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
+      duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
+    request.checkConstraints.push_back(catalog::CheckConstraint{
+      .id = catalog::NextId(),
+      .name = choose_constraint_name(table_info.table, col_name, "not_null"),
+      .expr = std::make_shared<ColumnExpr>(std::move(is_not_null)),
+    });
+  };
+
+  auto append_pk = [&](catalog::Column::Id col_id) {
+    if (absl::c_linear_search(request.pkColumns, col_id)) {
+      throw duckdb::CatalogException(
+        "column \"%s\" appears twice in primary key constraint",
+        request.columns[col_id].name);
+    }
+    // PK implies NOT NULL
+    append_not_null(col_id);
+    request.pkColumns.push_back(col_id);
+  };
+
+  // --- Single pass over all constraints ---
+
+  for (auto& constraint : table_info.constraints) {
+    switch (constraint->type) {
+      case duckdb::ConstraintType::UNIQUE: {
+        auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        if (!unique.IsPrimaryKey()) {
+          break;
+        }
+        if (unique.HasIndex()) {
+          auto idx = unique.GetIndex().index;
+          SDB_ASSERT(idx < request.columns.size());
+          append_pk(request.columns[idx].id);
+        } else {
+          for (auto& pk_name : unique.GetColumnNames()) {
+            auto it = absl::c_find_if(request.columns, [&](const auto& col) {
+              return col.name == pk_name;
+            });
+            if (it == request.columns.end()) {
+              throw duckdb::CatalogException(
+                "column \"%s\" named in key does not exist", pk_name);
             }
+            append_pk(it->id);
           }
         }
+        break;
       }
+      case duckdb::ConstraintType::NOT_NULL: {
+        auto& nn = constraint->Cast<duckdb::NotNullConstraint>();
+        append_not_null(nn.index.index);
+        break;
+      }
+      case duckdb::ConstraintType::CHECK: {
+        auto& check = constraint->Cast<duckdb::CheckConstraint>();
+        std::string name;
+        if (!check.constraint_name.empty()) {
+          name = check.constraint_name;
+        } else {
+          auto col = find_constraint_column(*check.expression);
+          name = choose_constraint_name(table_info.table, col, "check");
+        }
+        request.checkConstraints.push_back(catalog::CheckConstraint{
+          .id = catalog::NextId(),
+          .name = std::move(name),
+          .expr = std::make_shared<ColumnExpr>(check.expression->Copy()),
+        });
+        break;
+      }
+      default:
+        break;
     }
   }
 

@@ -93,7 +93,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   const auto& pk_col_ids = _table->PKColumns();
 
   for (const auto& col : columns) {
-    if (col.id == catalog::Column::kGeneratedPKId || col.IsGenerated()) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
       continue;
     }
     state->columns.push_back(DeleteColumnMeta{

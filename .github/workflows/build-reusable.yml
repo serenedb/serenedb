@@ -212,8 +212,8 @@ jobs:
           EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
 
           TARGETS=()
-          [[ "$SDB_GTEST" != "On" ]] && TARGETS+=(serenedb tzdata)
           [[ "$SDB_GTEST" == "On" ]] && TARGETS+=(vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests)
+          [[ "$SDB_GTEST" != "On" || "$SDB_FAULT_INJECTION" == "On" ]] && TARGETS+=(serenedb tzdata)
 
           docker run --rm \
             --user "$DOCKER_USER" \

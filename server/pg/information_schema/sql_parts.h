@@ -39,6 +39,6 @@ struct SqlParts {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<SqlParts>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<SqlParts>::GetTableData();
 
 }  // namespace sdb::pg

@@ -20,14 +20,20 @@
 
 #include "pg/system_catalog.h"
 
+#include <absl/strings/str_cat.h>
 #include <vpack/serializer.h>
 
 #include <boost/pfr.hpp>
+#include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/parser.hpp>
+#include <duckdb/parser/statement/create_statement.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/trivial_map.h"
+#include "basics/static_strings.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/view.h"
@@ -128,11 +134,11 @@ struct HashEq {
   size_t operator()(std::string_view str) const { return absl::HashOf(str); }
 
   size_t operator()(const VirtualTable* table) const {
-    return (*this)(table->Name());
+    return (*this)(table->GetName());
   }
 
   bool operator()(const VirtualTable* table, std::string_view str) const {
-    return table->Name() == str;
+    return table->GetName() == str;
   }
 
   bool operator()(const VirtualTable* l, const VirtualTable* r) const {
@@ -241,9 +247,13 @@ const VirtualTable* GetTableFromSchema(std::string_view name,
 }
 
 containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
-  gPgCatalogFunctions;
+  gPgCatalogScalarFunctions;
 containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
-  gInfoSchemaFunctions;
+  gPgCatalogTableFunctions;
+containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
+  gInfoSchemaScalarFunctions;
+containers::FlatHashMap<std::string, std::shared_ptr<PgSqlFunction>>
+  gInfoSchemaTableFunctions;
 containers::FlatHashMap<std::string, std::shared_ptr<PgSqlView>>
   gPgCatalogViews;
 containers::FlatHashMap<std::string, std::shared_ptr<PgSqlView>>
@@ -296,25 +306,90 @@ void VisitSystemViews(
   }
 }
 
-std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
-  std::string_view name) {
-  auto it = gInfoSchemaFunctions.find(name);
-  if (it != gInfoSchemaFunctions.end()) {
-    return it->second;
+void VisitPgCatalogTables(
+  absl::FunctionRef<void(const VirtualTable&)> visitor) {
+  for (const auto* table : kPgCatalog) {
+    visitor(*table);
   }
-  return nullptr;
 }
 
-std::shared_ptr<catalog::PgSqlFunction> GetFunction(std::string_view name) {
+void VisitPgCatalogViews(
+  absl::FunctionRef<void(const catalog::PgSqlView&)> visitor) {
+  for (const auto& [_, view] : gPgCatalogViews) {
+    visitor(*view);
+  }
+}
+
+void VisitPgCatalogScalarFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
+  for (const auto& [_, f] : gPgCatalogScalarFunctions) {
+    visitor(*f);
+  }
+}
+
+void VisitPgCatalogTableFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
+  for (const auto& [_, f] : gPgCatalogTableFunctions) {
+    visitor(*f);
+  }
+}
+
+void VisitInfoSchemaTables(
+  absl::FunctionRef<void(const VirtualTable&)> visitor) {
+  for (const auto* table : kInformationSchema) {
+    visitor(*table);
+  }
+}
+
+void VisitInfoSchemaViews(
+  absl::FunctionRef<void(const catalog::PgSqlView&)> visitor) {
+  for (const auto& [_, view] : gInfoSchemaViews) {
+    visitor(*view);
+  }
+}
+
+void VisitInfoSchemaScalarFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
+  for (const auto& [_, f] : gInfoSchemaScalarFunctions) {
+    visitor(*f);
+  }
+}
+
+void VisitInfoSchemaTableFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor) {
+  for (const auto& [_, f] : gInfoSchemaTableFunctions) {
+    visitor(*f);
+  }
+}
+
+std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaScalarFunction(
+  std::string_view name) {
+  auto it = gInfoSchemaScalarFunctions.find(name);
+  return it != gInfoSchemaScalarFunctions.end() ? it->second : nullptr;
+}
+
+std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaTableFunction(
+  std::string_view name) {
+  auto it = gInfoSchemaTableFunctions.find(name);
+  return it != gInfoSchemaTableFunctions.end() ? it->second : nullptr;
+}
+
+std::shared_ptr<catalog::PgSqlFunction> GetScalarFunction(
+  std::string_view name) {
 #ifndef SDB_GTEST
-  // For query building tests we need to run this without feature
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 #endif
-  if (auto it = gPgCatalogFunctions.find(name);
-      it != gPgCatalogFunctions.end()) {
-    return it->second;
-  }
-  return nullptr;
+  auto it = gPgCatalogScalarFunctions.find(name);
+  return it != gPgCatalogScalarFunctions.end() ? it->second : nullptr;
+}
+
+std::shared_ptr<catalog::PgSqlFunction> GetTableFunction(
+  std::string_view name) {
+#ifndef SDB_GTEST
+  SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
+#endif
+  auto it = gPgCatalogTableFunctions.find(name);
+  return it != gPgCatalogTableFunctions.end() ? it->second : nullptr;
 }
 
 std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
@@ -327,11 +402,93 @@ std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
 
 std::shared_ptr<PgSqlView> GetView(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
+  fprintf(stderr, "[GetView] name=%.*s map_size=%zu\n",
+          static_cast<int>(name.size()), name.data(), gPgCatalogViews.size());
   auto it = gPgCatalogViews.find(name);
   if (it == gPgCatalogViews.end()) {
     return nullptr;
   }
   return it->second;
+}
+
+void InitSystemViews() {
+  for (const auto& view : kExternalViews) {
+    auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
+    info->schema = view.schema;
+    info->view_name = view.name;
+    info->sql = view.sql;
+    info->temporary = true;
+    info->internal = true;
+    info->query = duckdb::CreateViewInfo::ParseSelect(info->sql);
+
+    auto entry = std::make_shared<catalog::PgSqlView>(
+      ObjectId{}, ObjectId{}, view.name, std::move(info));
+
+    auto& map = (view.schema == StaticStrings::kInformationSchema)
+                  ? gInfoSchemaViews
+                  : gPgCatalogViews;
+    map[view.name] = std::move(entry);
+  }
+  fprintf(
+    stderr,
+    "[InitSystemViews] pg_catalog: %zu views, information_schema: %zu views\n",
+    gPgCatalogViews.size(), gInfoSchemaViews.size());
+}
+
+static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
+  const SystemMacro& macro) {
+  auto sql =
+    absl::StrCat("CREATE FUNCTION ", macro.name, macro.macro_definition);
+  duckdb::Parser parser;
+  parser.ParseQuery(sql);
+  SDB_ASSERT(parser.statements.size() == 1 &&
+             parser.statements[0]->type ==
+               duckdb::StatementType::CREATE_STATEMENT);
+  auto& create = parser.statements[0]->Cast<duckdb::CreateStatement>();
+  SDB_ASSERT(create.info->type == duckdb::CatalogType::MACRO_ENTRY ||
+             create.info->type == duckdb::CatalogType::TABLE_MACRO_ENTRY);
+  auto info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      std::move(create.info));
+  info->schema = macro.schema;
+  info->temporary = true;
+  info->internal = true;
+
+  for (auto& m : info->macros) {
+    for (auto& type : m->types) {
+      if (type.IsUnbound()) {
+        type = duckdb::UnboundType::TryDefaultBind(type);
+      }
+    }
+  }
+
+  return info;
+}
+
+void InitSystemFunctions() {
+  for (const auto& macro : kExternalMacros) {
+    auto info = ParseMacro(macro);
+    bool is_table = info->type == duckdb::CatalogType::TABLE_MACRO_ENTRY;
+
+    // DEFAULT_SCHEMA schema macros go into pg_catalog because in PG,
+    // pg_catalog is always implicitly searched -- functions like current_user,
+    // overlay, etc. should be findable without schema qualification.
+    auto& map =
+      (macro.schema == StaticStrings::kInformationSchema)
+        ? (is_table ? gInfoSchemaTableFunctions : gInfoSchemaScalarFunctions)
+        : (is_table ? gPgCatalogTableFunctions : gPgCatalogScalarFunctions);
+
+    auto it = map.find(macro.name);
+    if (it != map.end()) {
+      auto& existing = it->second->GetInfo();
+      for (auto& macro : info->macros) {
+        existing.macros.push_back(std::move(macro));
+      }
+    } else {
+      map[macro.name] = std::make_shared<catalog::PgSqlFunction>(
+        ObjectId{}, ObjectId{}, macro.name, std::move(info));
+    }
+  }
 }
 
 }  // namespace sdb::pg

@@ -20,6 +20,8 @@
 
 #include "connector/functions/string.h"
 
+#include <re2/re2.h>
+
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
@@ -847,6 +849,70 @@ void SimilarToEscapeFunction1(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+// regexp_match(text, pattern) -> text[]
+// Returns capture groups from the first match. If no capture groups,
+// returns the full match. Returns NULL if no match.
+// Ported from Velox PgRegexpMatch.
+void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                         duckdb::Vector& result) {
+  duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, duckdb::string_t,
+                                           duckdb::list_entry_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](duckdb::string_t text, duckdb::string_t pattern,
+        duckdb::ValidityMask& mask, duckdb::idx_t row) {
+      re2::RE2 re(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
+                  re2::RE2::Quiet);
+      if (!re.ok()) {
+        throw duckdb::InvalidInputException("invalid regular expression: %s",
+                                            re.error());
+      }
+
+      re2::StringPiece input(text.GetData(), text.GetSize());
+      int num_groups = re.NumberOfCapturingGroups();
+
+      auto& child = duckdb::ListVector::GetEntry(result);
+      auto current_size = duckdb::ListVector::GetListSize(result);
+
+      if (num_groups == 0) {
+        re2::StringPiece match;
+        if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED, &match,
+                      1)) {
+          mask.SetInvalid(row);
+          return duckdb::list_entry_t{current_size, 0};
+        }
+        duckdb::ListVector::Reserve(result, current_size + 1);
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
+          child)[current_size] =
+          duckdb::StringVector::AddString(child, match.data(), match.size());
+        duckdb::ListVector::SetListSize(result, current_size + 1);
+        return duckdb::list_entry_t{current_size, 1};
+      }
+
+      std::vector<re2::StringPiece> groups(num_groups + 1);
+      if (!re.Match(input, 0, text.GetSize(), re2::RE2::UNANCHORED,
+                    groups.data(), num_groups + 1)) {
+        mask.SetInvalid(row);
+        return duckdb::list_entry_t{current_size, 0};
+      }
+
+      duckdb::ListVector::Reserve(result, current_size + num_groups);
+      auto& child_validity = duckdb::FlatVector::Validity(child);
+      for (int i = 1; i <= num_groups; ++i) {
+        if (groups[i].data()) {
+          duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
+            child)[current_size + i - 1] =
+            duckdb::StringVector::AddString(child, groups[i].data(),
+                                            groups[i].size());
+        } else {
+          child_validity.SetInvalid(current_size + i - 1);
+        }
+      }
+      duckdb::ListVector::SetListSize(result, current_size + num_groups);
+      return duckdb::list_entry_t{current_size,
+                                  static_cast<duckdb::idx_t>(num_groups)};
+    });
+}
+
 }  // namespace
 
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
@@ -1003,6 +1069,17 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::VARCHAR,
     LikeEscapeFunction});
+
+  // regexp_match(text, pattern) -> text[]
+  {
+    duckdb::ScalarFunction func{
+      "regexp_match",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+      RegexpMatchFunction};
+    func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    loader.RegisterFunction(func);
+  }
 
   // similar_to_escape(pattern, escape) -> varchar
   loader.RegisterFunction(duckdb::ScalarFunction{

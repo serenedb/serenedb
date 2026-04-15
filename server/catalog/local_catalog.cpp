@@ -134,13 +134,8 @@ class SnapshotImpl : public Snapshot {
     return result;
   }
 
-  connector::DuckDBEntryCache& GetDuckDBCache(ObjectId db_id) const override {
-    std::lock_guard lock{_cache_mutex};
-    auto& cache = _duckdb_caches[db_id];
-    if (!cache) {
-      cache = std::make_unique<connector::DuckDBEntryCache>();
-    }
-    return *cache;
+  connector::DuckDBEntryCache& GetDuckDBEntryCache() const override {
+    return _duckdb_cache;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
@@ -889,10 +884,7 @@ class SnapshotImpl : public Snapshot {
   ResolutionTable _resolution_table;
   ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
-  mutable std::mutex _cache_mutex;
-  mutable containers::NodeHashMap<ObjectId,
-                                  std::unique_ptr<connector::DuckDBEntryCache>>
-    _duckdb_caches;
+  mutable connector::DuckDBEntryCache _duckdb_cache;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)

@@ -145,7 +145,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgClass>& values,
 }
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgClass>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
   std::vector<PgClass> values;
   auto catalog = _config.EnsureCatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, *catalog);
@@ -159,7 +159,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<PgClass>::GetTableData() {
                         : 0;
       PgClass row{
         .oid = table.Id().id(),
-        .relname = table.Name(),
+        .relname = table.GetName(),
         .relnamespace = schema_oid,
         .reltype = 0,
         .reloftype = 0,
@@ -239,7 +239,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<PgClass>::GetTableData() {
     WriteData(result, values[row], kNullMask, row);
   }
 
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

@@ -20,13 +20,19 @@
 
 #pragma once
 
-#include <duckdb/catalog/default/default_views.hpp>
+#include <string_view>
 
 namespace sdb::pg {
 
+struct SystemView {
+  std::string_view schema;
+  std::string_view name;
+  std::string_view sql;
+};
+
 // TODO(mkornaukhov) write queries in separate sql file
 // TODO revoke, grant, create rules and other stuff?
-inline constexpr duckdb::DefaultView kExternalViews[] = {
+inline constexpr SystemView kExternalViews[] = {
   // clang-format off
   // PostgreSQL System Views
   //
@@ -98,7 +104,6 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
           useconfig
       FROM pg_shadow)"},
 
-  // TODO(mbkkt) Use original text when implement implicit cast from unknown to bigint[]
   {"pg_catalog", "pg_policies",
    R"(SELECT
           N.nspname AS schemaname,
@@ -111,12 +116,12 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
                   'RESTRICTIVE'
           END AS permissive,
           CASE
-              WHEN pol.polroles = '{0}'::oid[] THEN
+              WHEN pol.polroles = '{0}' THEN
                   string_to_array('public', '')
               ELSE
                   ARRAY
                   (
-                      SELECT rolname::varchar
+                      SELECT rolname
                       FROM pg_catalog.pg_authid
                       WHERE oid = ANY (pol.polroles) ORDER BY 1
                   )
@@ -299,77 +304,131 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
 
   // R"(REVOKE ALL ON pg_statistic FROM public;)",
 
-  // TODO(mbkkt) Use original text when implement LATERAL JOIN
-  // TODO(mbkkt) attnames: needs correlated unnest(s.stxkeys) subquery
-  // TODO(mbkkt) most_common_*: needs LATERAL pg_mcv_list_items(sd.stxdmcv)
   {"pg_catalog", "pg_stats_ext",
    R"(SELECT cn.nspname AS schemaname,
              c.relname AS tablename,
              sn.nspname AS statistics_schemaname,
              s.stxname AS statistics_name,
              pg_get_userbyid(s.stxowner) AS statistics_owner,
-             NULL::text[] AS attnames,
+             ( SELECT array_agg(a.attname ORDER BY a.attnum)
+               FROM unnest(s.stxkeys) k
+                    JOIN pg_attribute a
+                         ON (a.attrelid = s.stxrelid AND a.attnum = k)
+             ) AS attnames,
              pg_get_statisticsobjdef_expressions(s.oid) as exprs,
              s.stxkind AS kinds,
              sd.stxdinherit AS inherited,
              sd.stxdndistinct AS n_distinct,
              sd.stxddependencies AS dependencies,
-             NULL::text[] AS most_common_vals,
-             NULL::boolean[] AS most_common_val_nulls,
-             NULL::double precision[] AS most_common_freqs,
-             NULL::double precision[] AS most_common_base_freqs
+             m.most_common_vals,
+             m.most_common_val_nulls,
+             m.most_common_freqs,
+             m.most_common_base_freqs
       FROM pg_statistic_ext s JOIN pg_class c ON (c.oid = s.stxrelid)
            JOIN pg_statistic_ext_data sd ON (s.oid = sd.stxoid)
            LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
            LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
+           LEFT JOIN LATERAL
+                     ( SELECT array_agg(values) AS most_common_vals,
+                              array_agg(nulls) AS most_common_val_nulls,
+                              array_agg(frequency) AS most_common_freqs,
+                              array_agg(base_frequency) AS most_common_base_freqs
+                       FROM pg_mcv_list_items(sd.stxdmcv)
+                     ) m ON sd.stxdmcv IS NOT NULL
       WHERE pg_has_role(c.relowner, 'USAGE')
       AND (c.relrowsecurity = false OR NOT row_security_active(c.oid)))"},
 
-  // TODO(mbkkt) Use original text when implement LATERAL JOIN + row type field access
-  // All stat columns come from LATERAL unnest + ::pg_statistic cast, which
-  // requires both LATERAL and composite type field access. The INNER JOIN
-  // on the LATERAL means no rows are produced without it, so this view
-  // correctly returns no rows until these features are implemented.
   {"pg_catalog", "pg_stats_ext_exprs",
    R"(SELECT cn.nspname AS schemaname,
              c.relname AS tablename,
              sn.nspname AS statistics_schemaname,
              s.stxname AS statistics_name,
              pg_get_userbyid(s.stxowner) AS statistics_owner,
-             NULL::text AS expr,
+             stat.expr,
              sd.stxdinherit AS inherited,
-             NULL::real AS null_frac,
-             NULL::int4 AS avg_width,
-             NULL::real AS n_distinct,
-             NULL::text AS most_common_vals,
-             NULL::real[] AS most_common_freqs,
-             NULL::text AS histogram_bounds,
-             NULL::real AS correlation,
-             NULL::text AS most_common_elems,
-             NULL::real[] AS most_common_elem_freqs,
-             NULL::real[] AS elem_count_histogram
+             (stat.a).stanullfrac AS null_frac,
+             (stat.a).stawidth AS avg_width,
+             (stat.a).stadistinct AS n_distinct,
+             (CASE
+                 WHEN (stat.a).stakind1 = 1 THEN (stat.a).stavalues1
+                 WHEN (stat.a).stakind2 = 1 THEN (stat.a).stavalues2
+                 WHEN (stat.a).stakind3 = 1 THEN (stat.a).stavalues3
+                 WHEN (stat.a).stakind4 = 1 THEN (stat.a).stavalues4
+                 WHEN (stat.a).stakind5 = 1 THEN (stat.a).stavalues5
+             END) AS most_common_vals,
+             (CASE
+                 WHEN (stat.a).stakind1 = 1 THEN (stat.a).stanumbers1
+                 WHEN (stat.a).stakind2 = 1 THEN (stat.a).stanumbers2
+                 WHEN (stat.a).stakind3 = 1 THEN (stat.a).stanumbers3
+                 WHEN (stat.a).stakind4 = 1 THEN (stat.a).stanumbers4
+                 WHEN (stat.a).stakind5 = 1 THEN (stat.a).stanumbers5
+             END) AS most_common_freqs,
+             (CASE
+                 WHEN (stat.a).stakind1 = 2 THEN (stat.a).stavalues1
+                 WHEN (stat.a).stakind2 = 2 THEN (stat.a).stavalues2
+                 WHEN (stat.a).stakind3 = 2 THEN (stat.a).stavalues3
+                 WHEN (stat.a).stakind4 = 2 THEN (stat.a).stavalues4
+                 WHEN (stat.a).stakind5 = 2 THEN (stat.a).stavalues5
+             END) AS histogram_bounds,
+             (CASE
+                 WHEN (stat.a).stakind1 = 3 THEN (stat.a).stanumbers1[1]
+                 WHEN (stat.a).stakind2 = 3 THEN (stat.a).stanumbers2[1]
+                 WHEN (stat.a).stakind3 = 3 THEN (stat.a).stanumbers3[1]
+                 WHEN (stat.a).stakind4 = 3 THEN (stat.a).stanumbers4[1]
+                 WHEN (stat.a).stakind5 = 3 THEN (stat.a).stanumbers5[1]
+             END) correlation,
+             (CASE
+                 WHEN (stat.a).stakind1 = 4 THEN (stat.a).stavalues1
+                 WHEN (stat.a).stakind2 = 4 THEN (stat.a).stavalues2
+                 WHEN (stat.a).stakind3 = 4 THEN (stat.a).stavalues3
+                 WHEN (stat.a).stakind4 = 4 THEN (stat.a).stavalues4
+                 WHEN (stat.a).stakind5 = 4 THEN (stat.a).stavalues5
+             END) AS most_common_elems,
+             (CASE
+                 WHEN (stat.a).stakind1 = 4 THEN (stat.a).stanumbers1
+                 WHEN (stat.a).stakind2 = 4 THEN (stat.a).stanumbers2
+                 WHEN (stat.a).stakind3 = 4 THEN (stat.a).stanumbers3
+                 WHEN (stat.a).stakind4 = 4 THEN (stat.a).stanumbers4
+                 WHEN (stat.a).stakind5 = 4 THEN (stat.a).stanumbers5
+             END) AS most_common_elem_freqs,
+             (CASE
+                 WHEN (stat.a).stakind1 = 5 THEN (stat.a).stanumbers1
+                 WHEN (stat.a).stakind2 = 5 THEN (stat.a).stanumbers2
+                 WHEN (stat.a).stakind3 = 5 THEN (stat.a).stanumbers3
+                 WHEN (stat.a).stakind4 = 5 THEN (stat.a).stanumbers4
+                 WHEN (stat.a).stakind5 = 5 THEN (stat.a).stanumbers5
+             END) AS elem_count_histogram
       FROM pg_statistic_ext s JOIN pg_class c ON (c.oid = s.stxrelid)
            LEFT JOIN pg_statistic_ext_data sd ON (s.oid = sd.stxoid)
            LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
            LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
-      WHERE false)"},
+           JOIN LATERAL (
+               SELECT unnest(pg_get_statisticsobjdef_expressions(s.oid)) AS expr,
+                      unnest(sd.stxdexpr)::pg_statistic AS a
+           ) stat ON (stat.expr IS NOT NULL)
+      WHERE pg_has_role(c.relowner, 'USAGE')
+      AND (c.relrowsecurity = false OR NOT row_security_active(c.oid)))"},
 
   // unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
+
   // R"(REVOKE ALL ON pg_statistic_ext_data FROM public;)",
 
-  // TODO(mbkkt) Use original text when implement LATERAL JOIN
-  // TODO(mbkkt) attnames depends on decorrelate any non-eq subquery
   {"pg_catalog", "pg_publication_tables",
    R"(SELECT
           P.pubname AS pubname,
           N.nspname AS schemaname,
           C.relname AS tablename,
-          NULL::text[] AS attnames,
-          pg_get_expr(PR.prqual, PR.prrelid) AS rowfilter
-      FROM pg_publication P
-           JOIN pg_publication_rel PR ON (PR.prpubid = P.oid)
-           JOIN pg_class C ON (C.oid = PR.prrelid)
-           JOIN pg_namespace N ON (N.oid = C.relnamespace))"},
+          ( SELECT array_agg(a.attname ORDER BY a.attnum)
+            FROM pg_attribute a
+            WHERE a.attrelid = GPT.relid AND
+                  -- TODO(mbkkt): restore ANY() once DuckDB supports correlated UNNEST
+                  list_has(GPT.attrs, a.attnum)
+          ) AS attnames,
+          pg_get_expr(GPT.qual, GPT.relid) AS rowfilter
+      FROM pg_publication P,
+           LATERAL pg_get_publication_tables(P.pubname) GPT,
+           pg_class C JOIN pg_namespace N ON (N.oid = C.relnamespace)
+      WHERE C.oid = GPT.relid)"},
 
   {"pg_catalog", "pg_locks",
    R"(SELECT * FROM pg_lock_status() AS L)"},
@@ -401,182 +460,182 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   {"pg_catalog", "pg_prepared_statements",
    R"(SELECT * FROM pg_prepared_statement() AS P)"},
 
-  // TODO(mbkkt) Restore tableoid join conditions when tableoid system column is supported
   {"pg_catalog", "pg_seclabels",
    R"(SELECT
-      l.objoid, l.classoid, l.objsubid,
-      CASE WHEN rel.relkind IN ('r', 'p') THEN 'table'::text
-           WHEN rel.relkind = 'v' THEN 'view'::text
-           WHEN rel.relkind = 'm' THEN 'materialized view'::text
-           WHEN rel.relkind = 'S' THEN 'sequence'::text
-           WHEN rel.relkind = 'f' THEN 'foreign table'::text END AS objtype,
-      rel.relnamespace AS objnamespace,
-      CASE WHEN pg_table_is_visible(rel.oid)
-           THEN quote_ident(rel.relname)
-           ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
-           END AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_class rel ON l.objoid = rel.oid
-      JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      'column'::text AS objtype,
-      rel.relnamespace AS objnamespace,
-      CASE WHEN pg_table_is_visible(rel.oid)
-           THEN quote_ident(rel.relname)
-           ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
-           END || '.' || att.attname AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_class rel ON l.objoid = rel.oid
-      JOIN pg_attribute att
-           ON rel.oid = att.attrelid AND l.objsubid = att.attnum
-      JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
-  WHERE
-      l.objsubid != 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      CASE pro.prokind
-              WHEN 'a' THEN 'aggregate'::text
-              WHEN 'f' THEN 'function'::text
-              WHEN 'p' THEN 'procedure'::text
-              WHEN 'w' THEN 'window'::text END AS objtype,
-      pro.pronamespace AS objnamespace,
-      CASE WHEN pg_function_is_visible(pro.oid)
-           THEN quote_ident(pro.proname)
-           ELSE quote_ident(nsp.nspname) || '.' || quote_ident(pro.proname)
-      END || '(' || pg_catalog.pg_get_function_arguments(pro.oid) || ')' AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_proc pro ON l.objoid = pro.oid
-      JOIN pg_namespace nsp ON pro.pronamespace = nsp.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      CASE WHEN typ.typtype = 'd' THEN 'domain'::text
-      ELSE 'type'::text END AS objtype,
-      typ.typnamespace AS objnamespace,
-      CASE WHEN pg_type_is_visible(typ.oid)
-      THEN quote_ident(typ.typname)
-      ELSE quote_ident(nsp.nspname) || '.' || quote_ident(typ.typname)
-      END AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_type typ ON l.objoid = typ.oid
-      JOIN pg_namespace nsp ON typ.typnamespace = nsp.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      'large object'::text AS objtype,
-      NULL::oid AS objnamespace,
-      l.objoid::text AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_largeobject_metadata lom ON l.objoid = lom.oid
-  WHERE
-      l.classoid = 'pg_catalog.pg_largeobject'::regclass AND l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      'language'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(lan.lanname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_language lan ON l.objoid = lan.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      'schema'::text AS objtype,
-      nsp.oid AS objnamespace,
-      quote_ident(nsp.nspname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_namespace nsp ON l.objoid = nsp.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      'event trigger'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(evt.evtname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_event_trigger evt ON l.objoid = evt.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, l.objsubid,
-      'publication'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(p.pubname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_seclabel l
-      JOIN pg_publication p ON l.objoid = p.oid
-  WHERE
-      l.objsubid = 0
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, 0::int4 AS objsubid,
-      'subscription'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(s.subname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_shseclabel l
-      JOIN pg_subscription s ON l.objoid = s.oid
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, 0::int4 AS objsubid,
-      'database'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(dat.datname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_shseclabel l
-      JOIN pg_database dat ON l.objoid = datt.oid
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, 0::int4 AS objsubid,
-      'tablespace'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(spc.spcname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_shseclabel l
-      JOIN pg_tablespace spc ON l.objoid = spc.oid
-  UNION ALL
-  SELECT
-      l.objoid, l.classoid, 0::int4 AS objsubid,
-      'role'::text AS objtype,
-      NULL::oid AS objnamespace,
-      quote_ident(rol.rolname) AS objname,
-      l.provider, l.label
-  FROM
-      pg_shseclabel l
-      JOIN pg_authid rol ON l.objoid = rol.oid)"},
+          l.objoid, l.classoid, l.objsubid,
+          CASE WHEN rel.relkind IN ('r', 'p') THEN 'table'::text
+               WHEN rel.relkind = 'v' THEN 'view'::text
+               WHEN rel.relkind = 'm' THEN 'materialized view'::text
+               WHEN rel.relkind = 'S' THEN 'sequence'::text
+               WHEN rel.relkind = 'f' THEN 'foreign table'::text END AS objtype,
+          rel.relnamespace AS objnamespace,
+          CASE WHEN pg_table_is_visible(rel.oid)
+               THEN quote_ident(rel.relname)
+               ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
+               END AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_class rel ON l.classoid = rel.tableoid AND l.objoid = rel.oid
+          JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          'column'::text AS objtype,
+          rel.relnamespace AS objnamespace,
+          CASE WHEN pg_table_is_visible(rel.oid)
+               THEN quote_ident(rel.relname)
+               ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
+               END || '.' || att.attname AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_class rel ON l.classoid = rel.tableoid AND l.objoid = rel.oid
+          JOIN pg_attribute att
+               ON rel.oid = att.attrelid AND l.objsubid = att.attnum
+          JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+      WHERE
+          l.objsubid != 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          CASE pro.prokind
+                  WHEN 'a' THEN 'aggregate'::text
+                  WHEN 'f' THEN 'function'::text
+                  WHEN 'p' THEN 'procedure'::text
+                  WHEN 'w' THEN 'window'::text END AS objtype,
+          pro.pronamespace AS objnamespace,
+          CASE WHEN pg_function_is_visible(pro.oid)
+               THEN quote_ident(pro.proname)
+               ELSE quote_ident(nsp.nspname) || '.' || quote_ident(pro.proname)
+          END || '(' || pg_catalog.pg_get_function_arguments(pro.oid) || ')' AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_proc pro ON l.classoid = pro.tableoid AND l.objoid = pro.oid
+          JOIN pg_namespace nsp ON pro.pronamespace = nsp.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          CASE WHEN typ.typtype = 'd' THEN 'domain'::text
+          ELSE 'type'::text END AS objtype,
+          typ.typnamespace AS objnamespace,
+          CASE WHEN pg_type_is_visible(typ.oid)
+          THEN quote_ident(typ.typname)
+          ELSE quote_ident(nsp.nspname) || '.' || quote_ident(typ.typname)
+          END AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_type typ ON l.classoid = typ.tableoid AND l.objoid = typ.oid
+          JOIN pg_namespace nsp ON typ.typnamespace = nsp.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          'large object'::text AS objtype,
+          NULL::oid AS objnamespace,
+          l.objoid::text AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_largeobject_metadata lom ON l.objoid = lom.oid
+      WHERE
+          l.classoid = 'pg_catalog.pg_largeobject'::regclass AND l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          'language'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(lan.lanname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_language lan ON l.classoid = lan.tableoid AND l.objoid = lan.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          'schema'::text AS objtype,
+          nsp.oid AS objnamespace,
+          quote_ident(nsp.nspname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_namespace nsp ON l.classoid = nsp.tableoid AND l.objoid = nsp.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          'event trigger'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(evt.evtname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_event_trigger evt ON l.classoid = evt.tableoid
+              AND l.objoid = evt.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, l.objsubid,
+          'publication'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(p.pubname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_seclabel l
+          JOIN pg_publication p ON l.classoid = p.tableoid AND l.objoid = p.oid
+      WHERE
+          l.objsubid = 0
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, 0::int4 AS objsubid,
+          'subscription'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(s.subname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_shseclabel l
+          JOIN pg_subscription s ON l.classoid = s.tableoid AND l.objoid = s.oid
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, 0::int4 AS objsubid,
+          'database'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(dat.datname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_shseclabel l
+          JOIN pg_database dat ON l.classoid = dat.tableoid AND l.objoid = dat.oid
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, 0::int4 AS objsubid,
+          'tablespace'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(spc.spcname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_shseclabel l
+          JOIN pg_tablespace spc ON l.classoid = spc.tableoid AND l.objoid = spc.oid
+      UNION ALL
+      SELECT
+          l.objoid, l.classoid, 0::int4 AS objsubid,
+          'role'::text AS objtype,
+          NULL::oid AS objnamespace,
+          quote_ident(rol.rolname) AS objname,
+          l.provider, l.label
+      FROM
+          pg_shseclabel l
+          JOIN pg_authid rol ON l.classoid = rol.tableoid AND l.objoid = rol.oid)"},
 
   {"pg_catalog", "pg_settings",
    R"(SELECT * FROM pg_show_all_settings() AS A)"},
@@ -596,18 +655,21 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
    R"(SELECT * FROM pg_show_all_file_settings() AS A)"},
 
   // R"(REVOKE ALL ON pg_file_settings FROM PUBLIC;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_show_all_file_settings() FROM PUBLIC;)",
 
   {"pg_catalog", "pg_hba_file_rules",
    R"(SELECT * FROM pg_hba_file_rules() AS A)"},
 
   // R"(REVOKE ALL ON pg_hba_file_rules FROM PUBLIC;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_hba_file_rules() FROM PUBLIC;)",
 
   {"pg_catalog", "pg_ident_file_mappings",
    R"(SELECT * FROM pg_ident_file_mappings() AS A)"},
 
   // R"(REVOKE ALL ON pg_ident_file_mappings FROM PUBLIC;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_ident_file_mappings() FROM PUBLIC;)",
 
   {"pg_catalog", "pg_timezone_abbrevs",
@@ -625,30 +687,40 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
    R"(SELECT * FROM pg_config())"},
 
   // R"(REVOKE ALL ON pg_config FROM PUBLIC;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_config() FROM PUBLIC;)",
 
   {"pg_catalog", "pg_shmem_allocations",
    R"(SELECT * FROM pg_get_shmem_allocations())"},
 
   // R"(REVOKE ALL ON pg_shmem_allocations FROM PUBLIC;)",
+
   // R"(GRANT SELECT ON pg_shmem_allocations TO pg_read_all_stats;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_shmem_allocations() FROM PUBLIC;)",
+
   // R"(GRANT EXECUTE ON FUNCTION pg_get_shmem_allocations() TO pg_read_all_stats;)",
 
   {"pg_catalog", "pg_shmem_allocations_numa",
    R"(SELECT * FROM pg_get_shmem_allocations_numa())"},
 
   // R"(REVOKE ALL ON pg_shmem_allocations_numa FROM PUBLIC;)",
+
   // R"(GRANT SELECT ON pg_shmem_allocations_numa TO pg_read_all_stats;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_shmem_allocations_numa() FROM PUBLIC;)",
+
   // R"(GRANT EXECUTE ON FUNCTION pg_get_shmem_allocations_numa() TO pg_read_all_stats;)",
 
   {"pg_catalog", "pg_backend_memory_contexts",
    R"(SELECT * FROM pg_get_backend_memory_contexts())"},
 
   // R"(REVOKE ALL ON pg_backend_memory_contexts FROM PUBLIC;)",
+
   // R"(GRANT SELECT ON pg_backend_memory_contexts TO pg_read_all_stats;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_backend_memory_contexts() FROM PUBLIC;)",
+
   // R"(GRANT EXECUTE ON FUNCTION pg_get_backend_memory_contexts() TO pg_read_all_stats;)",
 
   // Statistics views
@@ -733,7 +805,6 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND
             schemaname !~ '^pg_toast')"},
 
-  // TODO(mbkkt) Use original text when implement LATERAL JOIN
   {"pg_catalog", "pg_statio_all_tables",
    R"(SELECT
               C.oid AS relid,
@@ -742,22 +813,31 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               pg_stat_get_blocks_fetched(C.oid) -
                       pg_stat_get_blocks_hit(C.oid) AS heap_blks_read,
               pg_stat_get_blocks_hit(C.oid) AS heap_blks_hit,
-              sum(pg_stat_get_blocks_fetched(I.indexrelid) -
-                  pg_stat_get_blocks_hit(I.indexrelid))::bigint AS idx_blks_read,
-              sum(pg_stat_get_blocks_hit(I.indexrelid))::bigint AS idx_blks_hit,
+              I.idx_blks_read AS idx_blks_read,
+              I.idx_blks_hit AS idx_blks_hit,
               pg_stat_get_blocks_fetched(T.oid) -
                       pg_stat_get_blocks_hit(T.oid) AS toast_blks_read,
               pg_stat_get_blocks_hit(T.oid) AS toast_blks_hit,
-              sum(pg_stat_get_blocks_fetched(TI.indexrelid) -
-                  pg_stat_get_blocks_hit(TI.indexrelid))::bigint AS tidx_blks_read,
-              sum(pg_stat_get_blocks_hit(TI.indexrelid))::bigint AS tidx_blks_hit
-      FROM pg_class C
-              LEFT JOIN pg_class T ON C.reltoastrelid = T.oid
+              X.idx_blks_read AS tidx_blks_read,
+              X.idx_blks_hit AS tidx_blks_hit
+      FROM pg_class C LEFT JOIN
+              pg_class T ON C.reltoastrelid = T.oid
               LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
-              LEFT JOIN pg_index I ON (I.indrelid = C.oid)
-              LEFT JOIN pg_index TI ON (TI.indrelid = T.oid)
-      WHERE C.relkind IN ('r', 't', 'm')
-      GROUP BY C.oid, N.nspname, C.relname, T.oid)"},
+              LEFT JOIN LATERAL (
+                SELECT sum(pg_stat_get_blocks_fetched(indexrelid) -
+                           pg_stat_get_blocks_hit(indexrelid))::bigint
+                       AS idx_blks_read,
+                       sum(pg_stat_get_blocks_hit(indexrelid))::bigint
+                       AS idx_blks_hit
+                FROM pg_index WHERE indrelid = C.oid ) I ON true
+              LEFT JOIN LATERAL (
+                SELECT sum(pg_stat_get_blocks_fetched(indexrelid) -
+                           pg_stat_get_blocks_hit(indexrelid))::bigint
+                       AS idx_blks_read,
+                       sum(pg_stat_get_blocks_hit(indexrelid))::bigint
+                       AS idx_blks_hit
+                FROM pg_index WHERE indrelid = T.oid ) X ON true
+      WHERE C.relkind IN ('r', 't', 'm'))"},
 
   {"pg_catalog", "pg_statio_sys_tables",
    R"(SELECT * FROM pg_statio_all_tables
@@ -868,7 +948,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               S.query_id,
               S.query,
               S.backend_type
-      FROM pg_stat_get_activity(NULL::integer) AS S
+      FROM pg_stat_get_activity(NULL) AS S
           LEFT JOIN pg_database AS D ON (S.datid = D.oid)
           LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid))"},
 
@@ -894,7 +974,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               W.sync_priority,
               W.sync_state,
               W.reply_time
-      FROM pg_stat_get_activity(NULL::integer) AS S
+      FROM pg_stat_get_activity(NULL) AS S
           JOIN pg_stat_get_wal_senders() AS W ON (S.pid = W.pid)
           LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid))"},
 
@@ -959,7 +1039,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               st.latest_end_lsn,
               st.latest_end_time
       FROM pg_subscription su
-              LEFT JOIN pg_stat_get_subscription(NULL::oid) st
+              LEFT JOIN pg_stat_get_subscription(NULL) st
                         ON (st.subid = su.oid))"},
 
   {"pg_catalog", "pg_stat_ssl",
@@ -972,7 +1052,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               S.ssl_client_dn AS client_dn,
               S.ssl_client_serial AS client_serial,
               S.ssl_issuer_dn AS issuer_dn
-      FROM pg_stat_get_activity(NULL::integer) AS S
+      FROM pg_stat_get_activity(NULL) AS S
       WHERE S.client_port IS NOT NULL)"},
 
   {"pg_catalog", "pg_stat_gssapi",
@@ -982,7 +1062,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               S.gss_princ AS principal,
               S.gss_enc AS encrypted,
               S.gss_delegation AS credentials_delegated
-      FROM pg_stat_get_activity(NULL::integer) AS S
+      FROM pg_stat_get_activity(NULL) AS S
       WHERE S.client_port IS NOT NULL)"},
 
   {"pg_catalog", "pg_replication_slots",
@@ -1011,7 +1091,6 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
       FROM pg_get_replication_slots() AS L
               LEFT JOIN pg_database D ON (L.datoid = D.oid))"},
 
-  // TODO(mbkkt) Use original text when implement LATERAL JOIN
   {"pg_catalog", "pg_stat_replication_slots",
    R"(SELECT
               s.slot_name,
@@ -1025,11 +1104,9 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               s.total_bytes,
               s.stats_reset
       FROM pg_replication_slots as r,
-           pg_stat_get_replication_slot(NULL::TEXT) as s
-      WHERE r.slot_name = s.slot_name
-            AND r.datoid IS NOT NULL; -- excluding physical slots)"},
+          LATERAL pg_stat_get_replication_slot(slot_name) as s
+      WHERE r.datoid IS NOT NULL)"},
 
-  // TODO(mbkkt) Use original text when implement implicit casts for UNION
   {"pg_catalog", "pg_stat_database",
    R"(SELECT
               D.oid AS datid,
@@ -1067,7 +1144,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
               pg_stat_get_db_parallel_workers_launched(D.oid) as parallel_workers_launched,
               pg_stat_get_db_stat_reset_time(D.oid) AS stats_reset
       FROM (
-          SELECT 0::oid AS oid, NULL::name AS datname
+          SELECT 0 AS oid, NULL::name AS datname
           UNION ALL
           SELECT oid, datname FROM pg_database
       ) D)"},
@@ -1142,27 +1219,27 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
 
   {"pg_catalog", "pg_stat_io",
    R"(SELECT
-         b.backend_type,
-         b.object,
-         b.context,
-         b.reads,
-         b.read_bytes,
-         b.read_time,
-         b.writes,
-         b.write_bytes,
-         b.write_time,
-         b.writebacks,
-         b.writeback_time,
-         b.extends,
-         b.extend_bytes,
-         b.extend_time,
-         b.hits,
-         b.evictions,
-         b.reuses,
-         b.fsyncs,
-         b.fsync_time,
-         b.stats_reset
-  FROM pg_stat_get_io() b)"},
+             b.backend_type,
+             b.object,
+             b.context,
+             b.reads,
+             b.read_bytes,
+             b.read_time,
+             b.writes,
+             b.write_bytes,
+             b.write_time,
+             b.writebacks,
+             b.writeback_time,
+             b.extends,
+             b.extend_bytes,
+             b.extend_time,
+             b.hits,
+             b.evictions,
+             b.reuses,
+             b.fsyncs,
+             b.fsync_time,
+             b.stats_reset
+      FROM pg_stat_get_io() b)"},
 
   {"pg_catalog", "pg_stat_wal",
    R"(SELECT
@@ -1350,7 +1427,9 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // R"(REVOKE ALL ON pg_replication_origin_status FROM public;)",
 
   // All columns of pg_subscription except subconninfo are publicly readable.
+
   // R"(REVOKE ALL ON pg_subscription FROM public;)",
+
   // R"(GRANT SELECT (oid, subdbid, subskiplsn, subname, subowner, subenabled,
   //               subbinary, substream, subtwophasestate, subdisableonerr,
   // 			  subpasswordrequired, subrunasowner, subfailover,
@@ -1372,17 +1451,20 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
           ss.confl_multiple_unique_conflicts,
           ss.stats_reset
       FROM pg_subscription as s,
-           pg_stat_get_subscription_stats(NULL::oid) as ss
-      WHERE ss.subid = s.oid)"},
+           pg_stat_get_subscription_stats(s.oid) as ss)"},
 
   {"pg_catalog", "pg_wait_events",
    R"(SELECT * FROM pg_get_wait_events())"},
 
   {"pg_catalog", "pg_aios",
    R"(SELECT * FROM pg_get_aios())"},
+
   // R"(REVOKE ALL ON pg_aios FROM PUBLIC;)",
+
   // R"(GRANT SELECT ON pg_aios TO pg_read_all_stats;)",
+
   // R"(REVOKE EXECUTE ON FUNCTION pg_get_aios() FROM PUBLIC;)",
+
   // R"(GRANT EXECUTE ON FUNCTION pg_get_aios() TO pg_read_all_stats;)",
 
   // SQL Information Schema
@@ -1410,9 +1492,11 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.2
   // INFORMATION_SCHEMA schema
 
-  // R"(CREATE SCHEMA information_schema;
-  // GRANT USAGE ON SCHEMA information_schema TO PUBLIC;
-  // SET search_path TO information_schema;)",
+  // R"(CREATE SCHEMA information_schema;)",
+
+  // R"(GRANT USAGE ON SCHEMA information_schema TO PUBLIC;)",
+
+  // R"(SET search_path TO information_schema;)",
 
   // 6.3 INFORMATION_SCHEMA_CATALOG_NAME view appears later.
 
@@ -1622,7 +1706,6 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.15
   // CHECK_CONSTRAINTS view
 
-  // TODO(mbkkt) Use original text when implement proper types
   {"information_schema", "check_constraints",
    R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(rs.nspname AS sql_identifier) AS constraint_schema,
@@ -1637,15 +1720,16 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
 
       UNION ALL
       -- not-null constraints
+      -- sql_identifier and character_data is in system.main, not information_schema
       SELECT current_database()::sql_identifier AS constraint_catalog,
              rs.nspname::sql_identifier AS constraint_schema,
              con.conname::sql_identifier AS constraint_name,
-             (coalesce(att.attname, 'VALUE') || ' IS NOT NULL')::character_data AS check_clause
+             -- format is in system.main, not pg_catalog
+             format('%s IS NOT NULL', coalesce(att.attname, 'VALUE'))::character_data AS check_clause
        FROM pg_constraint con
               LEFT JOIN pg_namespace rs ON rs.oid = con.connamespace
               LEFT JOIN pg_class c ON c.oid = con.conrelid
               LEFT JOIN pg_type t ON t.oid = con.contypid
-              -- NB: "at" is a reserved word in DuckDB (time-travel), renamed to "att"
               LEFT JOIN pg_attribute att ON (con.conrelid = att.attrelid AND con.conkey[1] = att.attnum)
        WHERE pg_has_role(coalesce(c.relowner, t.typowner), 'USAGE'::text)
          AND con.contype = 'n')"},
@@ -1742,17 +1826,73 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.20
   // COLUMN_PRIVILEGES
 
-  // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
   {"information_schema", "column_privileges",
-   R"(SELECT CAST(null AS sql_identifier) AS grantor,
-             CAST(null AS sql_identifier) AS grantee,
+   R"(SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS table_catalog,
-             CAST(null AS sql_identifier) AS table_schema,
-             CAST(null AS sql_identifier) AS table_name,
-             CAST(null AS sql_identifier) AS column_name,
-             CAST(null AS character_data) AS privilege_type,
-             CAST(null AS yes_or_no) AS is_grantable
-      WHERE false)"},
+             CAST(nc.nspname AS sql_identifier) AS table_schema,
+             CAST(x.relname AS sql_identifier) AS table_name,
+             CAST(x.attname AS sql_identifier) AS column_name,
+             CAST(x.prtype AS character_data) AS privilege_type,
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(x.grantee, x.relowner, 'USAGE')
+                    OR x.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+             SELECT pr_c.grantor,
+                    pr_c.grantee,
+                    attname,
+                    relname,
+                    relnamespace,
+                    pr_c.prtype,
+                    pr_c.grantable,
+                    pr_c.relowner
+             -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+             FROM (SELECT oid, relname, relnamespace, relowner, acl.*
+                   FROM pg_class, aclexplode(coalesce(relacl, acldefault('r', relowner))) AS acl
+                   WHERE relkind IN ('r', 'v', 'f', 'p')
+                  ) pr_c (oid, relname, relnamespace, relowner, grantor, grantee, prtype, grantable),
+                  pg_attribute a
+             WHERE a.attrelid = pr_c.oid
+                   AND a.attnum > 0
+                   AND NOT a.attisdropped
+             UNION
+             SELECT pr_a.grantor,
+                    pr_a.grantee,
+                    attname,
+                    relname,
+                    relnamespace,
+                    pr_a.prtype,
+                    pr_a.grantable,
+                    c.relowner
+             -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+             FROM (SELECT attrelid, attname, acl.*
+                   FROM pg_attribute a JOIN pg_class cc ON (a.attrelid = cc.oid), aclexplode(coalesce(attacl, acldefault('c', relowner))) AS acl
+                   WHERE attnum > 0
+                         AND NOT attisdropped
+                  ) pr_a (attrelid, attname, grantor, grantee, prtype, grantable),
+                  pg_class c
+             WHERE pr_a.attrelid = c.oid
+                   AND relkind IN ('r', 'v', 'f', 'p')
+           ) x,
+           pg_namespace nc,
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE x.relnamespace = nc.oid
+            AND x.grantee = grantee.oid
+            AND x.grantor = u_grantor.oid
+            AND x.prtype IN ('INSERT', 'SELECT', 'UPDATE', 'REFERENCES')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC'))"},
 
   // R"(GRANT SELECT ON column_privileges TO PUBLIC;)",
 
@@ -2140,32 +2280,42 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // KEY_COLUMN_USAGE view
 
   {"information_schema", "key_column_usage",
+   // Rewritten: PG uses (ss.x).n / (ss.x).x to access composite columns
+   // from _pg_expandarray.  DuckDB table macros return columns directly,
+   // so we select x and n as separate columns (ea_x, ea_n).
    R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
-             CAST(nc.nspname AS sql_identifier) AS constraint_schema,
-             CAST(c.conname AS sql_identifier) AS constraint_name,
+             CAST(nc_nspname AS sql_identifier) AS constraint_schema,
+             CAST(conname AS sql_identifier) AS constraint_name,
              CAST(current_database() AS sql_identifier) AS table_catalog,
-             CAST(nr.nspname AS sql_identifier) AS table_schema,
-             CAST(r.relname AS sql_identifier) AS table_name,
+             CAST(nr_nspname AS sql_identifier) AS table_schema,
+             CAST(relname AS sql_identifier) AS table_name,
              CAST(a.attname AS sql_identifier) AS column_name,
-             CAST(array_position(c.conkey, a.attnum) AS cardinal_number) AS ordinal_position,
-             CAST(CASE WHEN c.contype = 'f' THEN
-                    array_position(i.indkey, c.confkey[array_position(c.conkey, a.attnum)])
-                  ELSE NULL
+             CAST(ss.ea_n AS cardinal_number) AS ordinal_position,
+             CAST(CASE WHEN contype = 'f' THEN
+                         information_schema._pg_index_position(ss.conindid, ss.confkey[ss.ea_n])
+                       ELSE NULL
                   END AS cardinal_number)
                AS position_in_unique_constraint
-      FROM pg_constraint c
-      INNER JOIN pg_class r ON r.oid = c.conrelid
-      INNER JOIN pg_namespace nr ON nr.oid = r.relnamespace
-      INNER JOIN pg_namespace nc ON nc.oid = c.connamespace
-      INNER JOIN pg_attribute a ON a.attrelid = r.oid
-                                   AND array_position(c.conkey, a.attnum) IS NOT NULL
-                                   AND NOT a.attisdropped
-      LEFT JOIN pg_index i ON i.indexrelid = c.conindid
-      WHERE c.contype IN ('p', 'u', 'f')
-            AND r.relkind IN ('r', 'p')
-            AND (NOT pg_is_other_temp_schema(nr.oid))
-            AND (pg_has_role(r.relowner, 'USAGE')
-                 OR has_column_privilege(r.oid, a.attnum,
+      FROM pg_attribute a,
+           (SELECT r.oid AS roid, r.relname, r.relowner,
+                   nc.nspname AS nc_nspname, nr.nspname AS nr_nspname,
+                   c.oid AS coid, c.conname, c.contype, c.conindid,
+                   c.confkey, c.confrelid,
+                   ea.x AS ea_x, ea.n AS ea_n
+            FROM pg_namespace nr, pg_class r, pg_namespace nc,
+                 pg_constraint c,
+                 information_schema._pg_expandarray(c.conkey) AS ea
+            WHERE nr.oid = r.relnamespace
+                  AND r.oid = c.conrelid
+                  AND nc.oid = c.connamespace
+                  AND c.contype IN ('p', 'u', 'f')
+                  AND r.relkind IN ('r', 'p')
+                  AND (NOT pg_is_other_temp_schema(nr.oid)) ) AS ss
+      WHERE ss.roid = a.attrelid
+            AND a.attnum = ss.ea_x
+            AND NOT a.attisdropped
+            AND (pg_has_role(relowner, 'USAGE')
+                 OR has_column_privilege(roid, a.attnum,
                                          'SELECT, INSERT, UPDATE, REFERENCES')))"},
 
   // R"(GRANT SELECT ON key_column_usage TO PUBLIC;)",
@@ -2173,17 +2323,28 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.38
   // PARAMETERS view
 
-  // TODO(mbkkt) Use original text when implement _pg_expandarray / row field access
+  // Rewritten: PG (ss.x).n / (ss.x).x -> DuckDB table macro columns (ea_x, ea_n)
   {"information_schema", "parameters",
    R"(SELECT CAST(current_database() AS sql_identifier) AS specific_catalog,
-             CAST(null AS sql_identifier) AS specific_schema,
-             CAST(null AS sql_identifier) AS specific_name,
-             CAST(null AS cardinal_number) AS ordinal_position,
-             CAST(null AS character_data) AS parameter_mode,
+             CAST(n_nspname AS sql_identifier) AS specific_schema,
+             CAST(nameconcatoid(proname, p_oid) AS sql_identifier) AS specific_name,
+             CAST(ss.ea_n AS cardinal_number) AS ordinal_position,
+             CAST(
+               CASE WHEN proargmodes IS NULL THEN 'IN'
+                  WHEN proargmodes[ss.ea_n] = 'i' THEN 'IN'
+                  WHEN proargmodes[ss.ea_n] = 'o' THEN 'OUT'
+                  WHEN proargmodes[ss.ea_n] = 'b' THEN 'INOUT'
+                  WHEN proargmodes[ss.ea_n] = 'v' THEN 'IN'
+                  WHEN proargmodes[ss.ea_n] = 't' THEN 'OUT'
+               END AS character_data) AS parameter_mode,
              CAST('NO' AS yes_or_no) AS is_result,
              CAST('NO' AS yes_or_no) AS as_locator,
-             CAST(null AS sql_identifier) AS parameter_name,
-             CAST(null AS character_data) AS data_type,
+             CAST(NULLIF(proargnames[ss.ea_n], '') AS sql_identifier) AS parameter_name,
+             CAST(
+               CASE WHEN t.typelem <> 0 AND t.typlen = -1 THEN 'ARRAY'
+                    WHEN nt.nspname = 'pg_catalog' THEN format_type(t.oid, null)
+                    ELSE 'USER-DEFINED' END AS character_data)
+               AS data_type,
              CAST(null AS cardinal_number) AS character_maximum_length,
              CAST(null AS cardinal_number) AS character_octet_length,
              CAST(null AS sql_identifier) AS character_set_catalog,
@@ -2199,15 +2360,29 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
              CAST(null AS character_data) AS interval_type,
              CAST(null AS cardinal_number) AS interval_precision,
              CAST(current_database() AS sql_identifier) AS udt_catalog,
-             CAST(null AS sql_identifier) AS udt_schema,
-             CAST(null AS sql_identifier) AS udt_name,
+             CAST(nt.nspname AS sql_identifier) AS udt_schema,
+             CAST(t.typname AS sql_identifier) AS udt_name,
              CAST(null AS sql_identifier) AS scope_catalog,
              CAST(null AS sql_identifier) AS scope_schema,
              CAST(null AS sql_identifier) AS scope_name,
              CAST(null AS cardinal_number) AS maximum_cardinality,
-             CAST(null AS sql_identifier) AS dtd_identifier,
-             CAST(null AS character_data) AS parameter_default
-      WHERE false)"},
+             CAST(ss.ea_n AS sql_identifier) AS dtd_identifier,
+             CAST(
+               CASE WHEN pg_has_role(proowner, 'USAGE')
+                    THEN pg_get_function_arg_default(p_oid, ss.ea_n)
+                    ELSE NULL END
+               AS character_data) AS parameter_default
+
+      FROM pg_type t, pg_namespace nt,
+           (SELECT n.nspname AS n_nspname, p.proname, p.oid AS p_oid, p.proowner,
+                   p.proargnames, p.proargmodes,
+                   ea.x AS ea_x, ea.n AS ea_n
+            FROM pg_namespace n, pg_proc p,
+                 information_schema._pg_expandarray(coalesce(p.proallargtypes, p.proargtypes::oid[])) AS ea
+            WHERE n.oid = p.pronamespace
+                  AND (pg_has_role(p.proowner, 'USAGE') OR
+                       has_function_privilege(p.oid, 'EXECUTE'))) AS ss
+      WHERE t.oid = ss.ea_x AND t.typnamespace = nt.oid)"},
 
   // R"(GRANT SELECT ON parameters TO PUBLIC;)",
 
@@ -2292,9 +2467,6 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
 
   // 6.45 ROLE_TABLE_GRANTS view is based on 6.64 TABLE_PRIVILEGES and is defined there instead.
 
-  // 6.46
-  // ROLE_TABLE_METHOD_GRANTS view
-
   // 6.47 ROLE_USAGE_GRANTS view is based on 6.76 USAGE_PRIVILEGES and is defined there instead.
 
   // 6.48 ROLE_UDT_GRANTS view is based on 6.75 UDT_PRIVILEGES and is defined there instead.
@@ -2334,19 +2506,42 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.51
   // ROUTINE_PRIVILEGES view
 
-  // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
   {"information_schema", "routine_privileges",
-   R"(SELECT CAST(null AS sql_identifier) AS grantor,
-             CAST(null AS sql_identifier) AS grantee,
+   R"(SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS specific_catalog,
-             CAST(null AS sql_identifier) AS specific_schema,
-             CAST(null AS sql_identifier) AS specific_name,
+             CAST(n.nspname AS sql_identifier) AS specific_schema,
+             CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier) AS specific_name,
              CAST(current_database() AS sql_identifier) AS routine_catalog,
-             CAST(null AS sql_identifier) AS routine_schema,
-             CAST(null AS sql_identifier) AS routine_name,
+             CAST(n.nspname AS sql_identifier) AS routine_schema,
+             CAST(p.proname AS sql_identifier) AS routine_name,
              CAST('EXECUTE' AS character_data) AS privilege_type,
-             CAST(null AS yes_or_no) AS is_grantable
-      WHERE false)"},
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, p.proowner, 'USAGE')
+                    OR p.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT oid, proname, proowner, pronamespace, acl.* FROM pg_proc, aclexplode(coalesce(proacl, acldefault('f', proowner))) AS acl
+           ) p (oid, proname, proowner, pronamespace, grantor, grantee, prtype, grantable),
+           pg_namespace n,
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE p.pronamespace = n.oid
+            AND grantee.oid = p.grantee
+            AND u_grantor.oid = p.grantor
+            AND p.prtype IN ('EXECUTE')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC'))"},
 
   // R"(GRANT SELECT ON routine_privileges TO PUBLIC;)",
 
@@ -2643,16 +2838,27 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // );)",
 
   // R"(INSERT INTO sql_implementation_info VALUES ('10003', 'CATALOG NAME', NULL, 'Y', NULL);)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('10004', 'COLLATING SEQUENCE', NULL, (SELECT default_collate_name FROM character_sets), NULL);)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('23',    'CURSOR COMMIT BEHAVIOR', 1, NULL, 'close cursors and retain prepared statements');)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('2',     'DATA SOURCE NAME', NULL, '', NULL);)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('17',    'DBMS NAME', NULL, (select trim(trailing ' ' from substring(version() from '^[^0-9]*'))), NULL);)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('18',    'DBMS VERSION', NULL, '???', NULL); -- filled by initdb)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('26',    'DEFAULT TRANSACTION ISOLATION', 2, NULL, 'READ COMMITTED; user-settable');)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('28',    'IDENTIFIER CASE', 3, NULL, 'stored in mixed case - case sensitive');)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('85',    'NULL COLLATION', 0, NULL, 'nulls higher than non-nulls');)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('13',    'SERVER NAME', NULL, '', NULL);)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('94',    'SPECIAL CHARACTERS', NULL, '', 'all non-ASCII characters allowed');)",
+
   // R"(INSERT INTO sql_implementation_info VALUES ('46',    'TRANSACTION CAPABLE', 2, NULL, 'both DML and DDL');)",
 
   // R"(GRANT SELECT ON sql_implementation_info TO PUBLIC;)",
@@ -2669,15 +2875,25 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // );)",
 
   // R"(INSERT INTO sql_parts VALUES ('1', 'Framework (SQL/Framework)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('2', 'Foundation (SQL/Foundation)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('3', 'Call-Level Interface (SQL/CLI)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('4', 'Persistent Stored Modules (SQL/PSM)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('9', 'Management of External Data (SQL/MED)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('10', 'Object Language Bindings (SQL/OLB)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('11', 'Information and Definition Schema (SQL/Schemata)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('13', 'Routines and Types Using the Java Programming Language (SQL/JRT)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('14', 'XML-Related Specifications (SQL/XML)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('15', 'Multi-Dimensional Arrays (SQL/MDA)', 'NO', NULL, '');)",
+
   // R"(INSERT INTO sql_parts VALUES ('16', 'Property Graph Queries (SQL/PGQ)', 'NO', NULL, '');)",
 
   // 6.61
@@ -2691,27 +2907,49 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // );)",
 
   // R"(INSERT INTO sql_sizing VALUES (34,    'MAXIMUM CATALOG NAME LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (30,    'MAXIMUM COLUMN NAME LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (97,    'MAXIMUM COLUMNS IN GROUP BY', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (99,    'MAXIMUM COLUMNS IN ORDER BY', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (100,   'MAXIMUM COLUMNS IN SELECT', 1664, NULL); -- match MaxTupleAttributeNumber)",
+
   // R"(INSERT INTO sql_sizing VALUES (101,   'MAXIMUM COLUMNS IN TABLE', 1600, NULL); -- match MaxHeapAttributeNumber)",
+
   // R"(INSERT INTO sql_sizing VALUES (1,     'MAXIMUM CONCURRENT ACTIVITIES', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (31,    'MAXIMUM CURSOR NAME LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (0,     'MAXIMUM DRIVER CONNECTIONS', NULL, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (10005, 'MAXIMUM IDENTIFIER LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (32,    'MAXIMUM SCHEMA NAME LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (20000, 'MAXIMUM STATEMENT OCTETS', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (20001, 'MAXIMUM STATEMENT OCTETS DATA', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (20002, 'MAXIMUM STATEMENT OCTETS SCHEMA', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (35,    'MAXIMUM TABLE NAME LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (106,   'MAXIMUM TABLES IN SELECT', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (107,   'MAXIMUM USER NAME LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (25000, 'MAXIMUM CURRENT DEFAULT TRANSFORM GROUP LENGTH', NULL, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (25001, 'MAXIMUM CURRENT TRANSFORM GROUP LENGTH', NULL, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (25002, 'MAXIMUM CURRENT PATH LENGTH', 0, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (25003, 'MAXIMUM CURRENT ROLE LENGTH', NULL, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (25004, 'MAXIMUM SESSION USER LENGTH', 63, NULL);)",
+
   // R"(INSERT INTO sql_sizing VALUES (25005, 'MAXIMUM SYSTEM USER LENGTH', 63, NULL);)",
 
   // R"(UPDATE sql_sizing
@@ -2768,17 +3006,41 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.64
   // TABLE_PRIVILEGES view
 
-  // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
   {"information_schema", "table_privileges",
-   R"(SELECT CAST(null AS sql_identifier) AS grantor,
-             CAST(null AS sql_identifier) AS grantee,
+   R"(SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS table_catalog,
-             CAST(null AS sql_identifier) AS table_schema,
-             CAST(null AS sql_identifier) AS table_name,
-             CAST(null AS character_data) AS privilege_type,
-             CAST(null AS yes_or_no) AS is_grantable,
-             CAST(null AS yes_or_no) AS with_hierarchy
-      WHERE false)"},
+             CAST(nc.nspname AS sql_identifier) AS table_schema,
+             CAST(c.relname AS sql_identifier) AS table_name,
+             CAST(c.prtype AS character_data) AS privilege_type,
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, c.relowner, 'USAGE')
+                    OR c.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable,
+             CAST(CASE WHEN c.prtype = 'SELECT' THEN 'YES' ELSE 'NO' END AS yes_or_no) AS with_hierarchy
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT oid, relname, relnamespace, relkind, relowner, acl.* FROM pg_class, aclexplode(coalesce(relacl, acldefault('r', relowner))) AS acl
+           ) AS c (oid, relname, relnamespace, relkind, relowner, grantor, grantee, prtype, grantable),
+           pg_namespace nc,
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE c.relnamespace = nc.oid
+            AND c.relkind IN ('r', 'v', 'f', 'p')
+            AND c.grantee = grantee.oid
+            AND c.grantor = u_grantor.oid
+            AND c.prtype IN ('INSERT', 'SELECT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC'))"},
 
   // R"(GRANT SELECT ON table_privileges TO PUBLIC;)",
 
@@ -2861,7 +3123,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
            JOIN pg_namespace nt ON t.typnamespace = nt.oid
            JOIN pg_namespace np ON p.pronamespace = np.oid
 
-    UNION
+      UNION
 
       SELECT CAST(current_database() AS sql_identifier) AS udt_catalog,
              CAST(nt.nspname AS sql_identifier) AS udt_schema,
@@ -2877,21 +3139,36 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
            JOIN pg_namespace nt ON t.typnamespace = nt.oid
            JOIN pg_namespace np ON p.pronamespace = np.oid
 
-    ORDER BY udt_catalog, udt_schema, udt_name, group_name, transform_type  -- some sensible grouping for interactive use)"},
+      ORDER BY udt_catalog, udt_schema, udt_name, group_name, transform_type  -- some sensible grouping for interactive use)"},
 
   // 6.68
   // TRIGGERED_UPDATE_COLUMNS view
 
-  // TODO(mbkkt) Use original text when implement _pg_expandarray / row field access
   {"information_schema", "triggered_update_columns",
    R"(SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
-             CAST(null AS sql_identifier) AS trigger_schema,
-             CAST(null AS sql_identifier) AS trigger_name,
+             CAST(n.nspname AS sql_identifier) AS trigger_schema,
+             CAST(t.tgname AS sql_identifier) AS trigger_name,
              CAST(current_database() AS sql_identifier) AS event_object_catalog,
-             CAST(null AS sql_identifier) AS event_object_schema,
-             CAST(null AS sql_identifier) AS event_object_table,
-             CAST(null AS sql_identifier) AS event_object_column
-      WHERE false)"},
+             CAST(n.nspname AS sql_identifier) AS event_object_schema,
+             CAST(c.relname AS sql_identifier) AS event_object_table,
+             CAST(a.attname AS sql_identifier) AS event_object_column
+
+      FROM pg_namespace n, pg_class c, pg_trigger t,
+           -- Rewritten: (ta0.tgat).x / .n -> ea.x / ea.n
+           (SELECT tgoid, ea.x AS tgattnum, ea.n AS tgattpos
+            FROM (SELECT oid AS tgoid, tgattr FROM pg_trigger) AS ta0,
+                 information_schema._pg_expandarray(ta0.tgattr) AS ea) AS ta,
+           pg_attribute a
+
+      WHERE n.oid = c.relnamespace
+            AND c.oid = t.tgrelid
+            AND t.oid = ta.tgoid
+            AND (a.attrelid, a.attnum) = (t.tgrelid, ta.tgattnum)
+            AND NOT t.tgisinternal
+            AND (NOT pg_is_other_temp_schema(n.oid))
+            AND (pg_has_role(c.relowner, 'USAGE')
+                 -- SELECT privilege omitted, per SQL standard
+                 OR has_column_privilege(c.oid, a.attnum, 'INSERT, UPDATE, REFERENCES') ))"},
 
   // R"(GRANT SELECT ON triggered_update_columns TO PUBLIC;)",
 
@@ -2910,7 +3187,7 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
                -- To determine action order, partition by schema, table,
                -- event_manipulation (INSERT/DELETE/UPDATE), ROW/STATEMENT (1),
                -- BEFORE/AFTER (66), then order by trigger name.  It's preferable
-               -- to partition by view output columns, so that query constraints
+               -- to partition by view output information_schema.columns, so that query constraints
                -- can be pushed down below the window function.
                rank() OVER (PARTITION BY CAST(n.nspname AS sql_identifier),
                                          CAST(c.relname AS sql_identifier),
@@ -2964,16 +3241,40 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.75
   // UDT_PRIVILEGES view
 
-  // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
   {"information_schema", "udt_privileges",
-   R"(SELECT CAST(null AS sql_identifier) AS grantor,
-             CAST(null AS sql_identifier) AS grantee,
+   R"(SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS udt_catalog,
-             CAST(null AS sql_identifier) AS udt_schema,
-             CAST(null AS sql_identifier) AS udt_name,
-             CAST('TYPE USAGE' AS character_data) AS privilege_type,
-             CAST(null AS yes_or_no) AS is_grantable
-      WHERE false)"},
+             CAST(n.nspname AS sql_identifier) AS udt_schema,
+             CAST(t.typname AS sql_identifier) AS udt_name,
+             CAST('TYPE USAGE' AS character_data) AS privilege_type, -- sic
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, t.typowner, 'USAGE')
+                    OR t.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT oid, typname, typnamespace, typtype, typowner, acl.* FROM pg_type, aclexplode(coalesce(typacl, acldefault('T', typowner))) AS acl
+           ) AS t (oid, typname, typnamespace, typtype, typowner, grantor, grantee, prtype, grantable),
+           pg_namespace n,
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE t.typnamespace = n.oid
+            AND t.typtype = 'c'
+            AND t.grantee = grantee.oid
+            AND t.grantor = u_grantor.oid
+            AND t.prtype IN ('USAGE')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC'))"},
 
   // R"(GRANT SELECT ON udt_privileges TO PUBLIC;)",
 
@@ -2997,17 +3298,171 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.76
   // USAGE_PRIVILEGES view
 
-  // TODO(mbkkt) Use original text when implement (aclexplode(...)).* row expansion
   {"information_schema", "usage_privileges",
-   R"(SELECT CAST(null AS sql_identifier) AS grantor,
-             CAST(null AS sql_identifier) AS grantee,
+   R"(/* information_schema.collations */
+      -- Collations have no real privileges, so we represent all information_schema.collations with implicit usage privilege here.
+      SELECT CAST(u.rolname AS sql_identifier) AS grantor,
+             CAST('PUBLIC' AS sql_identifier) AS grantee,
              CAST(current_database() AS sql_identifier) AS object_catalog,
-             CAST(null AS sql_identifier) AS object_schema,
-             CAST(null AS sql_identifier) AS object_name,
-             CAST(null AS character_data) AS object_type,
-             CAST(null AS character_data) AS privilege_type,
-             CAST(null AS yes_or_no) AS is_grantable
-      WHERE false)"},
+             CAST(n.nspname AS sql_identifier) AS object_schema,
+             CAST(c.collname AS sql_identifier) AS object_name,
+             CAST('COLLATION' AS character_data) AS object_type,
+             CAST('USAGE' AS character_data) AS privilege_type,
+             CAST('NO' AS yes_or_no) AS is_grantable
+
+      FROM pg_authid u,
+           pg_namespace n,
+           pg_collation c
+
+      WHERE u.oid = c.collowner
+            AND c.collnamespace = n.oid
+            AND collencoding IN (-1, (SELECT encoding FROM pg_database WHERE datname = current_database()))
+
+      UNION ALL
+
+      /* information_schema.domains */
+      SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
+             CAST(current_database() AS sql_identifier) AS object_catalog,
+             CAST(n.nspname AS sql_identifier) AS object_schema,
+             CAST(t.typname AS sql_identifier) AS object_name,
+             CAST('DOMAIN' AS character_data) AS object_type,
+             CAST('USAGE' AS character_data) AS privilege_type,
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, t.typowner, 'USAGE')
+                    OR t.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT oid, typname, typnamespace, typtype, typowner, acl.* FROM pg_type, aclexplode(coalesce(typacl, acldefault('T', typowner))) AS acl
+           ) AS t (oid, typname, typnamespace, typtype, typowner, grantor, grantee, prtype, grantable),
+           pg_namespace n,
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE t.typnamespace = n.oid
+            AND t.typtype = 'd'
+            AND t.grantee = grantee.oid
+            AND t.grantor = u_grantor.oid
+            AND t.prtype IN ('USAGE')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC')
+
+      UNION ALL
+
+      /* foreign-data wrappers */
+      SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
+             CAST(current_database() AS sql_identifier) AS object_catalog,
+             CAST('' AS sql_identifier) AS object_schema,
+             CAST(fdw.fdwname AS sql_identifier) AS object_name,
+             CAST('FOREIGN DATA WRAPPER' AS character_data) AS object_type,
+             CAST('USAGE' AS character_data) AS privilege_type,
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, fdw.fdwowner, 'USAGE')
+                    OR fdw.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT fdwname, fdwowner, acl.* FROM pg_foreign_data_wrapper, aclexplode(coalesce(fdwacl, acldefault('F', fdwowner))) AS acl
+           ) AS fdw (fdwname, fdwowner, grantor, grantee, prtype, grantable),
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE u_grantor.oid = fdw.grantor
+            AND grantee.oid = fdw.grantee
+            AND fdw.prtype IN ('USAGE')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC')
+
+      UNION ALL
+
+      /* foreign servers */
+      SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
+             CAST(current_database() AS sql_identifier) AS object_catalog,
+             CAST('' AS sql_identifier) AS object_schema,
+             CAST(srv.srvname AS sql_identifier) AS object_name,
+             CAST('FOREIGN SERVER' AS character_data) AS object_type,
+             CAST('USAGE' AS character_data) AS privilege_type,
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, srv.srvowner, 'USAGE')
+                    OR srv.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT srvname, srvowner, acl.* FROM pg_foreign_server, aclexplode(coalesce(srvacl, acldefault('S', srvowner))) AS acl
+           ) AS srv (srvname, srvowner, grantor, grantee, prtype, grantable),
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE u_grantor.oid = srv.grantor
+            AND grantee.oid = srv.grantee
+            AND srv.prtype IN ('USAGE')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC')
+
+      UNION ALL
+
+      /* information_schema.sequences */
+      SELECT CAST(u_grantor.rolname AS sql_identifier) AS grantor,
+             CAST(grantee.rolname AS sql_identifier) AS grantee,
+             CAST(current_database() AS sql_identifier) AS object_catalog,
+             CAST(n.nspname AS sql_identifier) AS object_schema,
+             CAST(c.relname AS sql_identifier) AS object_name,
+             CAST('SEQUENCE' AS character_data) AS object_type,
+             CAST('USAGE' AS character_data) AS privilege_type,
+             CAST(
+               CASE WHEN
+                    -- object owner always has grant options
+                    pg_has_role(grantee.oid, c.relowner, 'USAGE')
+                    OR c.grantable
+                    THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
+
+      FROM (
+              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
+              SELECT oid, relname, relnamespace, relkind, relowner, acl.* FROM pg_class, aclexplode(coalesce(relacl, acldefault('r', relowner))) AS acl
+           ) AS c (oid, relname, relnamespace, relkind, relowner, grantor, grantee, prtype, grantable),
+           pg_namespace n,
+           pg_authid u_grantor,
+           (
+             SELECT oid, rolname FROM pg_authid
+             UNION ALL
+             SELECT 0::oid, 'PUBLIC'
+           ) AS grantee (oid, rolname)
+
+      WHERE c.relnamespace = n.oid
+            AND c.relkind = 'S'
+            AND c.grantee = grantee.oid
+            AND c.grantor = u_grantor.oid
+            AND c.prtype IN ('USAGE')
+            AND (pg_has_role(u_grantor.oid, 'USAGE')
+                 OR pg_has_role(grantee.oid, 'USAGE')
+                 OR grantee.rolname = 'PUBLIC'))"},
 
   // R"(GRANT SELECT ON usage_privileges TO PUBLIC;)",
 
@@ -3264,7 +3719,6 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 6.31
   // ELEMENT_TYPES view
 
-  // TODO(mbkkt) Use original text when implement implicit cast for UNION.
   {"information_schema", "element_types",
    R"(SELECT CAST(current_database() AS sql_identifier) AS object_catalog,
              CAST(n.nspname AS sql_identifier) AS object_schema,
@@ -3301,10 +3755,9 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
              CAST(null AS cardinal_number) AS maximum_cardinality,
              CAST('a' || CAST(x.objdtdid AS text) AS sql_identifier) AS dtd_identifier
 
-      -- NB: "at" is a reserved word in DuckDB (time-travel), renamed to "att"
       FROM pg_namespace n, pg_type att, pg_namespace nbt, pg_type bt,
            (
-             /* columns, attributes */
+             /* information_schema.columns, information_schema.attributes */
              SELECT c.relnamespace, CAST(c.relname AS sql_identifier),
                     CASE WHEN c.relkind = 'c' THEN 'USER-DEFINED TYPE'::text ELSE 'TABLE'::text END,
                     a.attnum, a.atttypid, a.attcollation
@@ -3315,20 +3768,31 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
 
              UNION ALL
 
-             /* domains */
+             /* information_schema.domains */
              SELECT t.typnamespace, CAST(t.typname AS sql_identifier),
-                    'DOMAIN'::text, 1::smallint, t.typbasetype, t.typcollation
+                    'DOMAIN'::text, 1, t.typbasetype, t.typcollation
              FROM pg_type t
              WHERE t.typtype = 'd'
 
-             -- TODO(mbkkt) parameters branch removed: needs _pg_expandarray
+             UNION ALL
+
+             /* information_schema.parameters */
+             -- Rewritten: (ss.x).n / (ss.x).x -> ea_n / ea_x
+             SELECT pronamespace,
+                    CAST(nameconcatoid(proname, oid) AS sql_identifier),
+                    'ROUTINE'::text, ss.ea_n, ss.ea_x, 0
+             FROM (SELECT p.pronamespace, p.proname, p.oid,
+                          ea.x AS ea_x, ea.n AS ea_n
+                   FROM pg_proc p,
+                        information_schema._pg_expandarray(coalesce(p.proallargtypes, p.proargtypes::oid[])) AS ea
+                   ) AS ss
 
              UNION ALL
 
              /* result types */
              SELECT p.pronamespace,
                     CAST(nameconcatoid(p.proname, p.oid) AS sql_identifier),
-                    'ROUTINE'::text, 0::smallint, p.prorettype, 0::oid
+                    'ROUTINE'::text, 0, p.prorettype, 0
              FROM pg_proc p
 
            ) AS x (objschema, objname, objtype, objdtdid, objtypeid, objcollation)
@@ -3341,13 +3805,9 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
             AND att.typelem = bt.oid
             AND nbt.oid = bt.typnamespace
 
-            AND EXISTS (
-                SELECT 1 FROM information_schema.data_type_privileges dtp
-                WHERE dtp.object_schema = n.nspname
-                  AND dtp.object_name = x.objname
-                  AND dtp.object_type = x.objtype
-                  AND dtp.dtd_identifier = CAST(x.objdtdid AS sql_identifier)
-            ))"},
+            AND (n.nspname, x.objname, x.objtype, CAST(x.objdtdid AS sql_identifier)) IN
+                ( SELECT object_schema, object_name, object_type, dtd_identifier
+                      FROM information_schema.data_type_privileges ))"},
 
   // R"(GRANT SELECT ON element_types TO PUBLIC;)",
 
@@ -3374,15 +3834,16 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 24.3
   // COLUMN_OPTIONS view
 
-  // TODO(mbkkt) Use original text when implement (func(...)).field row field access
+  // Rewritten: (pg_options_to_table(...)).field -> comma-join with table function
   {"information_schema", "column_options",
    R"(SELECT CAST(current_database() AS sql_identifier) AS table_catalog,
-             CAST(null AS sql_identifier) AS table_schema,
-             CAST(null AS sql_identifier) AS table_name,
-             CAST(null AS sql_identifier) AS column_name,
-             CAST(null AS sql_identifier) AS option_name,
-             CAST(null AS character_data) AS option_value
-      WHERE false)"},
+             CAST(c.nspname AS sql_identifier) AS table_schema,
+             CAST(c.relname AS sql_identifier) AS table_name,
+             CAST(c.attname AS sql_identifier) AS column_name,
+             CAST(opts.option_name AS sql_identifier) AS option_name,
+             CAST(opts.option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_table_columns c,
+           pg_options_to_table(c.attfdwoptions) opts)"},
 
   // R"(GRANT SELECT ON column_options TO PUBLIC;)",
 
@@ -3404,13 +3865,13 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 24.5
   // FOREIGN_DATA_WRAPPER_OPTIONS view
 
-  // TODO(mbkkt) Use original text when implement (func(...)).field row field access
   {"information_schema", "foreign_data_wrapper_options",
-   R"(SELECT CAST(current_database() AS sql_identifier) AS foreign_data_wrapper_catalog,
-             CAST(null AS sql_identifier) AS foreign_data_wrapper_name,
-             CAST(null AS sql_identifier) AS option_name,
-             CAST(null AS character_data) AS option_value
-      WHERE false)"},
+   R"(SELECT foreign_data_wrapper_catalog,
+             foreign_data_wrapper_name,
+             CAST(opts.option_name AS sql_identifier) AS option_name,
+             CAST(opts.option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_data_wrappers w,
+           pg_options_to_table(w.fdwoptions) opts)"},
 
   // R"(GRANT SELECT ON foreign_data_wrapper_options TO PUBLIC;)",
 
@@ -3448,13 +3909,13 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 24.7
   // FOREIGN_SERVER_OPTIONS view
 
-  // TODO(mbkkt) Use original text when implement (func(...)).field row field access
   {"information_schema", "foreign_server_options",
-   R"(SELECT CAST(current_database() AS sql_identifier) AS foreign_server_catalog,
-             CAST(null AS sql_identifier) AS foreign_server_name,
-             CAST(null AS sql_identifier) AS option_name,
-             CAST(null AS character_data) AS option_value
-      WHERE false)"},
+   R"(SELECT foreign_server_catalog,
+             foreign_server_name,
+             CAST(opts.option_name AS sql_identifier) AS option_name,
+             CAST(opts.option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_servers s,
+           pg_options_to_table(s.srvoptions) opts)"},
 
   // R"(GRANT SELECT ON TABLE foreign_server_options TO PUBLIC;)",
 
@@ -3499,14 +3960,14 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 24.9
   // FOREIGN_TABLE_OPTIONS view
 
-  // TODO(mbkkt) Use original text when implement (func(...)).field row field access
   {"information_schema", "foreign_table_options",
-   R"(SELECT CAST(current_database() AS sql_identifier) AS foreign_table_catalog,
-             CAST(null AS sql_identifier) AS foreign_table_schema,
-             CAST(null AS sql_identifier) AS foreign_table_name,
-             CAST(null AS sql_identifier) AS option_name,
-             CAST(null AS character_data) AS option_value
-      WHERE false)"},
+   R"(SELECT foreign_table_catalog,
+             foreign_table_schema,
+             foreign_table_name,
+             CAST(opts.option_name AS sql_identifier) AS option_name,
+             CAST(opts.option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_tables t,
+           pg_options_to_table(t.ftoptions) opts)"},
 
   // R"(GRANT SELECT ON TABLE foreign_table_options TO PUBLIC;)",
 
@@ -3540,14 +4001,18 @@ inline constexpr duckdb::DefaultView kExternalViews[] = {
   // 24.13
   // USER_MAPPING_OPTIONS view
 
-  // TODO(mbkkt) Use original text when implement lateral set-returning function refs
   {"information_schema", "user_mapping_options",
-   R"(SELECT CAST(null AS sql_identifier) AS authorization_identifier,
-             CAST(current_database() AS sql_identifier) AS foreign_server_catalog,
-             CAST(null AS sql_identifier) AS foreign_server_name,
-             CAST(null AS sql_identifier) AS option_name,
-             CAST(null AS character_data) AS option_value
-      WHERE false)"},
+   R"(SELECT authorization_identifier,
+             foreign_server_catalog,
+             foreign_server_name,
+             CAST(opts.option_name AS sql_identifier) AS option_name,
+             CAST(CASE WHEN (umuser <> 0 AND authorization_identifier = current_user)
+                         OR (umuser = 0 AND pg_has_role(srvowner, 'USAGE'))
+                         OR (SELECT rolsuper FROM pg_authid WHERE rolname = current_user)
+                       THEN opts.option_value
+                       ELSE NULL END AS character_data) AS option_value
+      FROM information_schema._pg_user_mappings um,
+           pg_options_to_table(um.umoptions) opts)"},
 
   // R"(GRANT SELECT ON user_mapping_options TO PUBLIC;)",
 

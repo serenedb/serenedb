@@ -38,6 +38,6 @@ struct SdbLog {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<SdbLog>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<SdbLog>::GetTableData();
 
 }  // namespace sdb::pg

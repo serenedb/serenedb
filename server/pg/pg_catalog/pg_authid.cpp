@@ -37,7 +37,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgAuthid>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgAuthid> values;
@@ -61,7 +61,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<PgAuthid>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

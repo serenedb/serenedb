@@ -200,7 +200,7 @@ bool PgVarcharToRegnamespaceCast(duckdb::Vector& source, duckdb::Vector& result,
   source.ToUnifiedFormat(count, src_fmt);
   auto* src_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
-  auto* dst_data = duckdb::FlatVector::GetDataMutable<uint64_t>(result);
+  auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
   auto& dst_validity = duckdb::FlatVector::Validity(result);
 
   auto& conn_ctx = GetSereneDBContext(*data.ctx);
@@ -248,7 +248,7 @@ bool PgVarcharToRegclassCast(duckdb::Vector& source, duckdb::Vector& result,
   source.ToUnifiedFormat(count, src_fmt);
   auto* src_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
-  auto* dst_data = duckdb::FlatVector::GetDataMutable<uint64_t>(result);
+  auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
   auto& dst_validity = duckdb::FlatVector::Validity(result);
 
   auto& conn_ctx = GetSereneDBContext(*data.ctx);
@@ -286,7 +286,7 @@ bool PgVarcharToRegtypeCast(duckdb::Vector& source, duckdb::Vector& result,
   source.ToUnifiedFormat(count, src_fmt);
   auto* src_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
-  auto* dst_data = duckdb::FlatVector::GetDataMutable<uint64_t>(result);
+  auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
   auto& dst_validity = duckdb::FlatVector::Validity(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {

@@ -37,7 +37,7 @@ struct SdbSearchTasksStatus {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector>
+catalog::MaterializedData
 SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData();
 
 }  // namespace sdb::pg

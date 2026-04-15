@@ -53,10 +53,6 @@
 
 namespace sdb::connector {
 
-SereneDBSchemaEntry::SereneDBSchemaEntry(duckdb::Catalog& catalog,
-                                         duckdb::CreateSchemaInfo& info)
-  : duckdb::SchemaCatalogEntry(catalog, info) {}
-
 ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
   return catalog.Cast<SereneDBCatalog>().GetDatabaseId();
 }
@@ -66,10 +62,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   const duckdb::EntryLookupInfo& lookup_info) {
   auto& conn_ctx = GetSereneDBContext(transaction.GetContext());
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto result = snapshot->GetDuckDBCache(GetDatabaseId())
-                  .GetOrCreateEntry(lookup_info.GetCatalogType(), catalog,
-                                    *this, GetDatabaseId(), name,
-                                    lookup_info.GetEntryName(), *snapshot);
+  auto result = snapshot->GetDuckDBEntryCache().EnsureEntry(
+    lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
+    lookup_info.GetEntryName(), *snapshot);
+  fprintf(stderr, "[LookupEntry] schema=%s type=%d name=%.*s -> %s\n",
+          name.c_str(), static_cast<int>(lookup_info.GetCatalogType()),
+          static_cast<int>(lookup_info.GetEntryName().size()),
+          lookup_info.GetEntryName().data(), result ? "FOUND" : "nullptr");
   return result;
 }
 
@@ -78,9 +77,8 @@ void SereneDBSchemaEntry::Scan(
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  snapshot->GetDuckDBCache(GetDatabaseId())
-    .ScanEntries(type, catalog, *this, GetDatabaseId(), name, callback,
-                 *snapshot);
+  snapshot->GetDuckDBEntryCache().ScanEntries(
+    type, catalog, *this, GetDatabaseId(), name, callback, *snapshot);
 }
 
 void SereneDBSchemaEntry::Scan(

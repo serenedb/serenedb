@@ -26,12 +26,14 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <optional>
 #include <span>
 #include <type_traits>
 
 #include "basics/down_cast.h"
 #include "catalog/object.h"
 #include "catalog/virtual_table.h"
+#include "connector/pg_logical_types.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
 
@@ -74,12 +76,14 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
                        std::is_same_v<Field, Xid8> ||
                        std::is_same_v<Field, Tid>) {
     // PG catalog OID-like types stored as int32
-    duckdb::FlatVector::GetDataMutable<int32_t>(vec)[row] =
-      static_cast<int32_t>(static_cast<uint64_t>(field));
-  } else if constexpr (std::is_same_v<Field, int64_t> ||
-                       std::is_same_v<Field, uint64_t>) {
     duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
       static_cast<int64_t>(field);
+  } else if constexpr (std::is_same_v<Field, int64_t>) {
+    duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
+      static_cast<int64_t>(field);
+  } else if constexpr (std::is_same_v<Field, uint64_t>) {
+    duckdb::FlatVector::GetDataMutable<uint64_t>(vec)[row] =
+      static_cast<uint64_t>(field);
   } else if constexpr (std::is_same_v<Field, float>) {
     duckdb::FlatVector::GetDataMutable<float>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, double>) {
@@ -110,17 +114,17 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
 template<typename Field>
 duckdb::LogicalType GetFieldType() {
   if constexpr (std::is_same_v<Field, Oid>) {
-    return duckdb::LogicalType::INTEGER;
+    return OID();
   } else if constexpr (std::is_same_v<Field, Regproc>) {
-    return duckdb::LogicalType::INTEGER;
+    return REGPROC();
   } else if constexpr (std::is_same_v<Field, Regtype>) {
-    return duckdb::LogicalType::INTEGER;
+    return REGTYPE();
   } else if constexpr (std::is_same_v<Field, Regclass>) {
-    return duckdb::LogicalType::INTEGER;
+    return REGCLASS();
   } else if constexpr (std::is_same_v<Field, Xid>) {
-    return duckdb::LogicalType::INTEGER;
+    return XID();
   } else if constexpr (std::is_same_v<Field, Name>) {
-    return duckdb::LogicalType::VARCHAR;
+    return NAME();
   } else if constexpr (std::is_same_v<Field, Bytea>) {
     return duckdb::LogicalType::BLOB;
   } else if constexpr (std::is_same_v<Field, char>) {
@@ -131,9 +135,10 @@ duckdb::LogicalType GetFieldType() {
     return duckdb::LogicalType::SMALLINT;
   } else if constexpr (std::is_same_v<Field, int32_t>) {
     return duckdb::LogicalType::INTEGER;
-  } else if constexpr (std::is_same_v<Field, int64_t> ||
-                       std::is_same_v<Field, uint64_t>) {
+  } else if constexpr (std::is_same_v<Field, int64_t>) {
     return duckdb::LogicalType::BIGINT;
+  } else if constexpr (std::is_same_v<Field, uint64_t>) {
+    return duckdb::LogicalType::UBIGINT;
   } else if constexpr (std::is_same_v<Field, float>) {
     return duckdb::LogicalType::FLOAT;
   } else if constexpr (std::is_same_v<Field, double>) {
@@ -192,7 +197,7 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
                            database,
                            {},
                            table.Id(),
-                           std::string{table.Name()},
+                           std::string{table.GetName()},
                            catalog::ObjectType::Virtual},
       _config{config} {
     _table = &table;
@@ -202,20 +207,19 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
     return _table->RowType();
   }
 
-  std::vector<duckdb::Vector> GetData(std::vector<std::string> names) final {
-    if (_data) {
-      return std::move(*_data);
+  const catalog::MaterializedData& GetData(
+    std::vector<std::string> names) final {
+    if (!_data) {
+      _data = GetTableData();
     }
-    auto columns = GetTableData();
-    _data = std::make_shared<std::vector<duckdb::Vector>>(std::move(columns));
-    return std::move(*_data);
+    return *_data;
   }
 
-  std::vector<duckdb::Vector> GetTableData() { return CreateColumns<T>(0); }
+  catalog::MaterializedData GetTableData() { return {}; }
 
  private:
   const Config& _config;
-  std::shared_ptr<std::vector<duckdb::Vector>> _data;
+  std::optional<catalog::MaterializedData> _data;
 
   void WriteInternal(vpack::Builder& build) const final {}
 };

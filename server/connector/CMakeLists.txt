@@ -9,6 +9,7 @@ add_library(
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
     duckdb_schema_entry.cpp
+    duckdb_system_table_entry.cpp
     duckdb_table_entry.cpp
     duckdb_table_function.cpp
     duckdb_rocksdb_reader.cpp

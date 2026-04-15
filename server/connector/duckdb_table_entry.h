@@ -28,6 +28,12 @@
 
 namespace sdb::connector {
 
+// Virtual column ID for tableoid (PG system column). Always returns 0.
+// Placed in the special-identifier range alongside COLUMN_IDENTIFIER_ROW_*.
+// COLUMN_IDENTIFIER_ROW_NUMBER is 2^64-3, this is 2^64-4.
+inline constexpr duckdb::column_t kColumnIdentifierTableOid =
+  UINT64_C(18446744073709551612);
+
 class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
  public:
   // indexed_col_indices: table column indices that are part of any index

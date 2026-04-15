@@ -29,56 +29,53 @@ namespace sdb::connector {
 
 class SereneDBSchemaEntry final : public duckdb::SchemaCatalogEntry {
  public:
-  SereneDBSchemaEntry(duckdb::Catalog& catalog, duckdb::CreateSchemaInfo& info);
+  using SchemaCatalogEntry::SchemaCatalogEntry;
 
   ObjectId GetDatabaseId() const;
 
-  void Scan(
-    duckdb::ClientContext& context, duckdb::CatalogType type,
-    const std::function<void(duckdb::CatalogEntry&)>& callback) override;
-  void Scan(
-    duckdb::CatalogType type,
-    const std::function<void(duckdb::CatalogEntry&)>& callback) override;
+  void Scan(duckdb::ClientContext& context, duckdb::CatalogType type,
+            const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+
+  void Scan(duckdb::CatalogType type,
+            const std::function<void(duckdb::CatalogEntry&)>& callback) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateIndex(
     duckdb::CatalogTransaction transaction, duckdb::CreateIndexInfo& info,
-    duckdb::TableCatalogEntry& table) override;
+    duckdb::TableCatalogEntry& table) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateFunction(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateFunctionInfo& info) override;
+    duckdb::CreateFunctionInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTable(
     duckdb::CatalogTransaction transaction,
-    duckdb::BoundCreateTableInfo& info) override;
+    duckdb::BoundCreateTableInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateView(
-    duckdb::CatalogTransaction transaction,
-    duckdb::CreateViewInfo& info) override;
+    duckdb::CatalogTransaction transaction, duckdb::CreateViewInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSequence(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateSequenceInfo& info) override;
+    duckdb::CreateSequenceInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateTableFunction(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateTableFunctionInfo& info) override;
+    duckdb::CreateTableFunctionInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateCopyFunction(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateCopyFunctionInfo& info) override;
+    duckdb::CreateCopyFunctionInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreatePragmaFunction(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreatePragmaFunctionInfo& info) override;
+    duckdb::CreatePragmaFunctionInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateCollation(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateCollationInfo& info) override;
+    duckdb::CreateCollationInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateType(
-    duckdb::CatalogTransaction transaction,
-    duckdb::CreateTypeInfo& info) override;
+    duckdb::CatalogTransaction transaction, duckdb::CreateTypeInfo& info) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntry(
     duckdb::CatalogTransaction transaction,
-    const duckdb::EntryLookupInfo& lookup_info) override;
+    const duckdb::EntryLookupInfo& info) final;
 
-  void DropEntry(duckdb::ClientContext& context,
-                 duckdb::DropInfo& info) override;
+  void DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
+
   void Alter(duckdb::CatalogTransaction transaction,
-             duckdb::AlterInfo& info) override;
+             duckdb::AlterInfo& info) final;
 };
 
 }  // namespace sdb::connector

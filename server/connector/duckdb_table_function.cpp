@@ -106,6 +106,9 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   bool finished = false;
   bool scan_rowid = false;
   duckdb::idx_t rowid_output_idx = 0;
+  bool scan_tableoid = false;
+  duckdb::idx_t tableoid_output_idx = 0;
+  int64_t tableoid_value = 0;
 
   // Search scan state
   size_t search_segment_idx = 0;
@@ -170,6 +173,14 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
       // Dummy sequential rowid
       state->scan_rowid = true;
       state->rowid_output_idx = state->projected_columns.size();
+      state->projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state->projected_types.push_back(duckdb::LogicalType::BIGINT);
+    } else if (col_id == kColumnIdentifierTableOid) {
+      // PG tableoid system column -- table's OID from pg_class
+      state->scan_tableoid = true;
+      state->tableoid_output_idx = state->projected_columns.size();
+      state->tableoid_value =
+        static_cast<int64_t>(bind_data.table->GetId().id());
       state->projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state->projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
@@ -356,6 +367,12 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
     }
   }
 
+  // Fill tableoid as constant vector with table's OID
+  if (gstate.scan_tableoid) {
+    output.data[gstate.tableoid_output_idx].Reference(
+      duckdb::Value::BIGINT(gstate.tableoid_value));
+  }
+
   output.SetCardinality(count);
 }
 
@@ -428,10 +445,15 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     auto bind_col = gstate.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      auto* rowid_data =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-        rowid_data[i] = static_cast<int64_t>(i);
+      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+        output.data[proj].Reference(
+          duckdb::Value::BIGINT(gstate.tableoid_value));
+      } else {
+        auto* data =
+          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+          data[i] = static_cast<int64_t>(i);
+        }
       }
       continue;
     }
@@ -555,10 +577,15 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     auto bind_col = gstate.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      auto* rowid_data =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-        rowid_data[i] = static_cast<int64_t>(i);
+      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+        output.data[proj].Reference(
+          duckdb::Value::BIGINT(gstate.tableoid_value));
+      } else {
+        auto* data =
+          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+          data[i] = static_cast<int64_t>(i);
+        }
       }
       continue;
     }
@@ -683,10 +710,15 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     auto bind_col = gstate.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      auto* rowid_data =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-        rowid_data[i] = static_cast<int64_t>(batch_start + i);
+      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+        output.data[proj].Reference(
+          duckdb::Value::BIGINT(gstate.tableoid_value));
+      } else {
+        auto* data =
+          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+        for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+          data[i] = static_cast<int64_t>(batch_start + i);
+        }
       }
       continue;
     }
@@ -813,10 +845,15 @@ static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& /*context*/,
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     auto bind_col = gstate.projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      auto* rowid_data =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-        rowid_data[i] = static_cast<int64_t>(batch_start + i);
+      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+        output.data[proj].Reference(
+          duckdb::Value::BIGINT(gstate.tableoid_value));
+      } else {
+        auto* data =
+          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+        for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+          data[i] = static_cast<int64_t>(batch_start + i);
+        }
       }
       continue;
     }

@@ -40,9 +40,9 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<SdbLog>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<SdbLog>::GetTableData() {
   if (!SerenedServer::Instance().getFeature<LoggerFeature>().isAPIEnabled()) {
-    return CreateColumns<SdbLog>(0);
+    return {CreateColumns<SdbLog>(0), 0};
   }
 
   auto entries =
@@ -66,7 +66,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<SdbLog>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

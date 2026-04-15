@@ -38,6 +38,6 @@ struct PgNamespace {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgNamespace>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData();
 
 }  // namespace sdb::pg

@@ -223,6 +223,10 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
     }
   }
 
+  // tableoid -- always 0, emitted only when referenced
+  result.insert({kColumnIdentifierTableOid,
+                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+
   // Standard rowid
   result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
                  duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});

@@ -27,52 +27,138 @@
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
+#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 
 #include "basics/down_cast.h"
+#include "basics/static_strings.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
 #include "catalog/view.h"
+#include "connector/duckdb_system_table_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "pg/system_catalog.h"
 
 namespace sdb::connector {
+namespace {
 
-// --- Schema ---
+bool IsSystemSchema(std::string_view schema_name) {
+  return schema_name == StaticStrings::kPgCatalogSchema ||
+         schema_name == StaticStrings::kInformationSchema;
+}
 
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
-DuckDBEntryCache::GetOrCreateSchema(duckdb::Catalog& catalog, ObjectId db_id,
-                                    std::string_view schema_name,
-                                    const catalog::Snapshot& snapshot) {
-  // Verify schema exists in snapshot
-  auto schema = snapshot.GetSchema(db_id, schema_name);
-  if (!schema) {
-    return nullptr;
+const catalog::PgSqlView* FindView(bool system, bool info_schema,
+                                   ObjectId db_id, std::string_view schema_name,
+                                   std::string_view name,
+                                   const catalog::Snapshot& snapshot) {
+  if (system) {
+    auto view = info_schema ? pg::GetInfoSchemaView(name) : pg::GetView(name);
+    return view.get();
   }
+  auto relation = snapshot.GetRelation(db_id, schema_name, name);
+  if (relation && relation->GetType() == catalog::ObjectType::PgSqlView) {
+    return &basics::downCast<const catalog::PgSqlView>(*relation);
+  }
+  return nullptr;
+}
 
-  auto key = std::string{schema_name};
+duckdb::unique_ptr<duckdb::CatalogEntry> MakeViewEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  std::string_view schema_name, const catalog::PgSqlView& view) {
+  auto info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+      view.GetInfo().Copy());
+  info->schema = schema_name;
+  info->temporary = false;
+  info->internal = false;
+  return duckdb::make_uniq<duckdb::ViewCatalogEntry>(catalog, schema, *info);
+}
+
+std::shared_ptr<catalog::PgSqlFunction> FindScalarFunction(
+  ObjectId database, std::string_view schema, std::string_view name,
+  const catalog::Snapshot& snapshot) {
+  auto f = pg::GetScalarFunction(name);
+  if (f || schema == StaticStrings::kPgCatalogSchema) {
+    return f;
+  }
+  if (schema == StaticStrings::kInformationSchema) {
+    return pg::GetInfoSchemaScalarFunction(name);
+  }
+  f = snapshot.GetFunction(database, schema, name);
+  if (f && f->GetInfo().type == duckdb::CatalogType::MACRO_ENTRY) {
+    return f;
+  }
+  return nullptr;
+}
+
+std::shared_ptr<catalog::PgSqlFunction> FindTableFunction(
+  ObjectId database, std::string_view schema, std::string_view name,
+  const catalog::Snapshot& snapshot) {
+  auto f = pg::GetTableFunction(name);
+  if (f || schema == StaticStrings::kPgCatalogSchema) {
+    return f;
+  }
+  if (schema == StaticStrings::kInformationSchema) {
+    return pg::GetInfoSchemaTableFunction(name);
+  }
+  f = snapshot.GetFunction(database, schema, name);
+  if (f && f->GetInfo().type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+    return f;
+  }
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacroEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  std::string_view schema_name, std::string_view name, bool internal,
+  const catalog::PgSqlFunction& func) {
+  auto info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      func.GetInfo().Copy());
+  info->schema = schema_name;
+  info->name = name;
+  info->temporary = false;
+  info->internal = internal;
+  if (info->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+    return duckdb::make_uniq_base<duckdb::CatalogEntry,
+                                  duckdb::TableMacroCatalogEntry>(
+      catalog, schema, *info);
+  } else {
+    return duckdb::make_uniq_base<duckdb::CatalogEntry,
+                                  duckdb::ScalarMacroCatalogEntry>(
+      catalog, schema, *info);
+  }
+}
+
+}  // namespace
+
+duckdb::optional_ptr<duckdb::SchemaCatalogEntry> DuckDBEntryCache::EnsureSchema(
+  duckdb::Catalog& catalog, ObjectId db_id, std::string_view schema_name,
+  const catalog::Snapshot& snapshot) {
   {
     std::shared_lock lock{_lock};
-    auto it = _schemas.find(key);
-    if (it != _schemas.end()) {
-      return it->second.get();
+    auto db_it = _databases.find(db_id);
+    if (db_it != _databases.end()) {
+      auto schema_it = db_it->second.schemas.find(schema_name);
+      if (schema_it != db_it->second.schemas.end()) {
+        return &schema_it->second.entry;
+      }
+    }
+  }
+
+  if (!IsSystemSchema(schema_name)) {
+    if (!snapshot.GetSchema(db_id, schema_name)) {
+      return nullptr;
     }
   }
 
   std::unique_lock lock{_lock};
-  auto it = _schemas.find(key);
-  if (it != _schemas.end()) {
-    return it->second.get();
-  }
-  auto info = duckdb::make_uniq<duckdb::CreateSchemaInfo>();
-  info->schema = std::string{schema_name};
-  auto entry = duckdb::make_uniq<SereneDBSchemaEntry>(catalog, *info);
-  auto* ptr = entry.get();
-  _schemas[key] = std::move(entry);
-  _schema_infos[key] = std::move(info);
-  return ptr;
+  auto& schemas = _databases[db_id].schemas;
+  auto [it, _] = schemas.try_emplace(schema_name, catalog, schema_name);
+  return &it->second.entry;
 }
 
 void DuckDBEntryCache::ScanSchemas(
@@ -84,16 +170,14 @@ void DuckDBEntryCache::ScanSchemas(
   }
   auto schemas = snapshot.GetSchemas(db_id);
   for (auto& schema : schemas) {
-    auto entry = GetOrCreateSchema(catalog, db_id, schema->GetName(), snapshot);
+    auto entry = EnsureSchema(catalog, db_id, schema->GetName(), snapshot);
     if (entry) {
       callback(*entry);
     }
   }
 }
 
-// --- Table ---
-
-duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
+duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view table_name,
   const catalog::Snapshot& snapshot) {
@@ -196,218 +280,238 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildTableEntry(
     std::sort(indexed_col_indices.begin(), indexed_col_indices.end());
   }
 
-  auto key = std::string{table_name};
-  auto& cache = _entry_caches[std::string{schema_name}];
   auto entry = duckdb::make_uniq<SereneDBTableEntry>(
     catalog, schema, *info, std::move(table), std::move(indexed_col_indices),
     std::move(inverted_index));
   if (sk_shard_id != ObjectId{}) {
     entry->SetSecondaryIndex(sk_shard_id, sk_unique);
   }
-  auto* ptr = entry.get();
-  cache.tables[key] = std::move(entry);
-  cache.table_infos[key] = std::move(info);
-  return ptr;
+  return entry;
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::GetOrCreateEntry(
+static bool IsRelationType(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::TABLE_ENTRY:
+    case duckdb::CatalogType::VIEW_ENTRY:
+    case duckdb::CatalogType::INDEX_ENTRY:
+      return true;
+    default:
+      return false;
+  }
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::EnsureEntry(
   duckdb::CatalogType type, duckdb::Catalog& catalog,
   duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view name,
   const catalog::Snapshot& snapshot) {
-  auto key = std::string{name};
+  auto map_selector = [](SchemaCache& sc, duckdb::CatalogType t) -> auto& {
+    return IsRelationType(t) ? sc.relations : sc.functions;
+  };
 
-  if (type == duckdb::CatalogType::TABLE_ENTRY) {
-    {
-      std::shared_lock lock{_lock};
-      auto schema_it = _entry_caches.find(schema_name);
-      if (schema_it != _entry_caches.end()) {
-        auto it = schema_it->second.tables.find(key);
-        if (it != schema_it->second.tables.end()) {
+  {
+    std::shared_lock lock{_lock};
+    auto db_it = _databases.find(db_id);
+    if (db_it != _databases.end()) {
+      auto schema_it = db_it->second.schemas.find(schema_name);
+      if (schema_it != db_it->second.schemas.end()) {
+        auto& map = map_selector(schema_it->second, type);
+        auto it = map.find(name);
+        if (it != map.end()) {
           return it->second.get();
         }
       }
     }
-    std::unique_lock lock{_lock};
-    auto schema_it = _entry_caches.find(schema_name);
-    if (schema_it != _entry_caches.end()) {
-      auto it = schema_it->second.tables.find(key);
-      if (it != schema_it->second.tables.end()) {
-        return it->second.get();
-      }
-    }
-    auto result =
-      BuildTableEntry(catalog, schema, db_id, schema_name, name, snapshot);
-    if (result) {
-      return result;
-    }
-    // Table not found -- try views (DuckDB looks up views as TABLE_ENTRY)
-    return BuildViewEntry(catalog, schema, db_id, schema_name, name, snapshot);
   }
 
-  if (type == duckdb::CatalogType::VIEW_ENTRY) {
-    {
-      std::shared_lock lock{_lock};
-      auto schema_it = _entry_caches.find(schema_name);
-      if (schema_it != _entry_caches.end()) {
-        auto it = schema_it->second.views.find(key);
-        if (it != schema_it->second.views.end()) {
-          return it->second.get();
-        }
-      }
-    }
-    std::unique_lock lock{_lock};
-    auto schema_it = _entry_caches.find(schema_name);
-    if (schema_it != _entry_caches.end()) {
-      auto it = schema_it->second.views.find(key);
-      if (it != schema_it->second.views.end()) {
-        return it->second.get();
-      }
-    }
-    return BuildViewEntry(catalog, schema, db_id, schema_name, name, snapshot);
-  }
-
-  // Function/macro lookup -- match by stored macro type
-  if (type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
-      type == duckdb::CatalogType::MACRO_ENTRY ||
-      type == duckdb::CatalogType::TABLE_MACRO_ENTRY ||
-      type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY) {
-    auto result =
-      BuildFunctionEntry(catalog, schema, db_id, schema_name, name, snapshot);
-    if (!result) {
-      return nullptr;
-    }
-    // TABLE_FUNCTION_ENTRY lookup: only return TABLE_FUNCTION or TABLE_MACRO
-    // entries
-    if (type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY) {
-      if (result->type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
-          result->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-        return result;
-      }
-      return nullptr;
-    }
-    // SCALAR_FUNCTION_ENTRY / MACRO_ENTRY lookup: only return scalar entries
-    if (type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
-        type == duckdb::CatalogType::MACRO_ENTRY) {
-      if (result->type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY ||
-          result->type == duckdb::CatalogType::MACRO_ENTRY) {
-        return result;
-      }
-      return nullptr;
-    }
-    // TABLE_MACRO_ENTRY lookup: only return table entries
-    if (result->type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY ||
-        result->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-      return result;
-    }
+  auto entry =
+    BuildEntry(type, catalog, schema, db_id, schema_name, name, snapshot);
+  if (!entry) {
     return nullptr;
   }
 
-  return nullptr;
+  std::unique_lock lock{_lock};
+  auto& sc = _databases[db_id]
+               .schemas.try_emplace(schema_name, catalog, schema_name)
+               .first->second;
+  auto& map = map_selector(sc, type);
+  auto [it, inserted] = map.try_emplace(name, std::move(entry));
+  return it->second.get();
 }
 
 void DuckDBEntryCache::ScanEntries(
   duckdb::CatalogType type, duckdb::Catalog& catalog,
-  duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-  std::string_view schema_name,
+  duckdb::SchemaCatalogEntry& entry, ObjectId database, std::string_view schema,
   const std::function<void(duckdb::CatalogEntry&)>& callback,
   const catalog::Snapshot& snapshot) {
-  if (type != duckdb::CatalogType::TABLE_ENTRY) {
-    return;
-  }
-
-  auto tables = snapshot.GetTables(db_id, schema_name);
-  std::unique_lock lock{_lock};
-  auto& cache = _entry_caches[std::string{schema_name}];
-
-  for (auto& sdb_table : tables) {
-    auto table_name = std::string{sdb_table->GetName()};
-    auto it = cache.tables.find(table_name);
-    if (it != cache.tables.end()) {
-      callback(*it->second);
-      continue;
+  auto emit = [&](const auto& o) {
+    if (auto e = EnsureEntry(type, catalog, entry, database, schema,
+                             o.GetName(), snapshot)) {
+      callback(*e);
     }
-    // Build and cache
-    auto entry = BuildTableEntry(catalog, schema, db_id, schema_name,
-                                 table_name, snapshot);
-    if (entry) {
-      callback(*entry);
+  };
+
+  if (schema == StaticStrings::kPgCatalogSchema) {
+    switch (type) {
+      case duckdb::CatalogType::TABLE_ENTRY:
+        pg::VisitPgCatalogTables(emit);
+        pg::VisitPgCatalogViews(emit);
+        break;
+      case duckdb::CatalogType::VIEW_ENTRY:
+        pg::VisitPgCatalogViews(emit);
+        break;
+      case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+      case duckdb::CatalogType::MACRO_ENTRY:
+        pg::VisitPgCatalogScalarFunctions(emit);
+        break;
+      case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
+      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+        pg::VisitPgCatalogTableFunctions(emit);
+        break;
+      default:
+        break;
     }
-  }
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildViewEntry(
-  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-  std::string_view schema_name, std::string_view view_name,
-  const catalog::Snapshot& snapshot) {
-  // Look up the view in the snapshot -- it's a SchemaObject (View subclass)
-  auto relation = snapshot.GetRelation(db_id, schema_name, view_name);
-  if (!relation || relation->GetType() != catalog::ObjectType::PgSqlView) {
-    return nullptr;
-  }
-
-  // Get the full CreateViewInfo from the stored view
-  auto& sql_view = basics::downCast<const catalog::PgSqlView>(*relation);
-  auto info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
-      sql_view.GetInfo().Copy());
-  info->schema = std::string{schema_name};
-  info->temporary = true;
-  info->internal = false;
-
-  auto key = std::string{view_name};
-  auto& cache = _entry_caches[std::string{schema_name}];
-  auto entry =
-    duckdb::make_uniq<duckdb::ViewCatalogEntry>(catalog, schema, *info);
-  auto* ptr = entry.get();
-  cache.views[key] = std::move(entry);
-  cache.view_infos[key] = std::move(info);
-  return ptr;
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildFunctionEntry(
-  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
-  std::string_view schema_name, std::string_view func_name,
-  const catalog::Snapshot& snapshot) {
-  auto function = snapshot.GetFunction(db_id, schema_name, func_name);
-  if (!function) {
-    return nullptr;
-  }
-
-  // Get the full CreateMacroInfo from the stored function
-  auto info =
-    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
-      function->GetInfo().Copy());
-  info->schema = std::string{schema_name};
-  info->name = std::string{func_name};
-
-  // Resolve unbound parameter types (same as DefaultFunctionGenerator)
-  for (auto& macro : info->macros) {
-    for (auto& type : macro->types) {
-      if (type.IsUnbound()) {
-        type = duckdb::UnboundType::TryDefaultBind(type);
-      }
+  } else if (schema == StaticStrings::kInformationSchema) {
+    switch (type) {
+      case duckdb::CatalogType::TABLE_ENTRY:
+        pg::VisitInfoSchemaTables(emit);
+        pg::VisitInfoSchemaViews(emit);
+        break;
+      case duckdb::CatalogType::VIEW_ENTRY:
+        pg::VisitInfoSchemaViews(emit);
+        break;
+      case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+      case duckdb::CatalogType::MACRO_ENTRY:
+        pg::VisitInfoSchemaScalarFunctions(emit);
+        break;
+      case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
+      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+        pg::VisitInfoSchemaTableFunctions(emit);
+        break;
+      default:
+        break;
     }
-  }
-
-  auto key = std::string{func_name};
-  auto& cache = _entry_caches[std::string{schema_name}];
-  duckdb::unique_ptr<duckdb::CatalogEntry> entry;
-  if (info->type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-    entry = duckdb::unique_ptr_cast<duckdb::TableMacroCatalogEntry,
-                                    duckdb::CatalogEntry>(
-      duckdb::make_uniq<duckdb::TableMacroCatalogEntry>(catalog, schema,
-                                                        *info));
   } else {
-    entry = duckdb::unique_ptr_cast<duckdb::ScalarMacroCatalogEntry,
-                                    duckdb::CatalogEntry>(
-      duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
-                                                         *info));
+    switch (type) {
+      case duckdb::CatalogType::TABLE_ENTRY:
+        for (const auto& o : snapshot.GetRelations(database, schema)) {
+          emit(*o);
+        }
+        break;
+      case duckdb::CatalogType::VIEW_ENTRY:
+        for (const auto& o : snapshot.GetRelations(database, schema)) {
+          if (o->GetType() == catalog::ObjectType::PgSqlView) {
+            emit(*o);
+          }
+        }
+        break;
+      case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+      case duckdb::CatalogType::MACRO_ENTRY:
+      case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
+      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+        for (const auto& o : snapshot.GetFunctions(database, schema)) {
+          emit(*o);
+        }
+        break;
+      default:
+        break;
+    }
   }
-  auto* ptr = entry.get();
-  cache.functions[key] = std::move(entry);
-  cache.function_infos[key] = std::move(info);
-  return ptr;
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
+  duckdb::CatalogType type, duckdb::Catalog& catalog,
+  duckdb::SchemaCatalogEntry& entry, ObjectId database, std::string_view schema,
+  std::string_view name, const catalog::Snapshot& snapshot) {
+  bool system = IsSystemSchema(schema);
+  bool info_schema = schema == StaticStrings::kInformationSchema;
+
+  switch (type) {
+    case duckdb::CatalogType::TABLE_ENTRY:
+    case duckdb::CatalogType::VIEW_ENTRY:
+    case duckdb::CatalogType::INDEX_ENTRY: {
+      if (system) {
+        // System tables (pg_class, pg_type, etc.)
+        if (type == duckdb::CatalogType::TABLE_ENTRY) {
+          auto* vtable = pg::GetSystemTable(schema, name);
+          if (vtable) {
+            auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
+            info->table = name;
+            info->schema = schema;
+            for (auto& [col_name, col_type] :
+                 duckdb::StructType::GetChildTypes(vtable->RowType())) {
+              info->columns.AddColumn(
+                duckdb::ColumnDefinition(col_name, col_type));
+            }
+            return duckdb::make_uniq<SystemTableEntry>(catalog, entry, *info,
+                                                       *vtable);
+          }
+        }
+        // System views (pg_tables, pg_views, etc.)
+        if (type == duckdb::CatalogType::TABLE_ENTRY ||
+            type == duckdb::CatalogType::VIEW_ENTRY) {
+          auto* view =
+            FindView(system, info_schema, database, schema, name, snapshot);
+          if (view) {
+            return MakeViewEntry(catalog, entry, schema, *view);
+          }
+        }
+        return nullptr;
+      }
+      // Single snapshot lookup for tables, views, and indexes.
+      auto relation = snapshot.GetRelation(database, schema, name);
+      if (!relation) {
+        // GetRelation doesn't find regular tables -- use GetTable.
+        if (type == duckdb::CatalogType::TABLE_ENTRY) {
+          return BuildTableEntry(catalog, entry, database, schema, name,
+                                 snapshot);
+        }
+        return nullptr;
+      }
+      switch (relation->GetType()) {
+        case catalog::ObjectType::Table:
+          if (type == duckdb::CatalogType::TABLE_ENTRY) {
+            return BuildTableEntry(catalog, entry, database, schema, name,
+                                   snapshot);
+          }
+          return nullptr;
+        case catalog::ObjectType::PgSqlView:
+          if (type == duckdb::CatalogType::TABLE_ENTRY ||
+              type == duckdb::CatalogType::VIEW_ENTRY) {
+            return MakeViewEntry(
+              catalog, entry, schema,
+              basics::downCast<const catalog::PgSqlView>(*relation));
+          }
+          return nullptr;
+        case catalog::ObjectType::SecondaryIndex:
+        case catalog::ObjectType::InvertedIndex:
+          if (type == duckdb::CatalogType::TABLE_ENTRY) {
+            // Index-as-table (SELECT * FROM index_name)
+            return BuildTableEntry(catalog, entry, database, schema, name,
+                                   snapshot);
+          }
+          // TODO: INDEX_ENTRY for DROP INDEX
+          return nullptr;
+        default:
+          return nullptr;
+      }
+    } break;
+    case duckdb::CatalogType::MACRO_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY: {
+      if (auto f = FindScalarFunction(database, schema, name, snapshot)) {
+        return MakeMacroEntry(catalog, entry, schema, name, system, *f);
+      }
+    } break;
+    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+    case duckdb::CatalogType::TABLE_FUNCTION_ENTRY: {
+      if (auto f = FindTableFunction(database, schema, name, snapshot)) {
+        return MakeMacroEntry(catalog, entry, schema, name, system, *f);
+      }
+    } break;
+    default:
+      return nullptr;
+  }
+  return nullptr;
 }
 
 }  // namespace sdb::connector

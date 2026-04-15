@@ -60,7 +60,6 @@ struct SdbStatProgress {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector>
-SystemTableSnapshot<SdbStatProgress>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<SdbStatProgress>::GetTableData();
 
 }  // namespace sdb::pg

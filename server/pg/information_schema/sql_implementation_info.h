@@ -39,7 +39,7 @@ struct SqlImplementationInfo {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector>
+catalog::MaterializedData
 SystemTableSnapshot<SqlImplementationInfo>::GetTableData();
 
 }  // namespace sdb::pg

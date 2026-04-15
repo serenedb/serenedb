@@ -38,6 +38,6 @@ struct SqlSizing {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<SqlSizing>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData();
 
 }  // namespace sdb::pg

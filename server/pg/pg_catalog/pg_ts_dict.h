@@ -40,6 +40,6 @@ struct PgTsDict {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgTsDict>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData();
 
 }  // namespace sdb::pg

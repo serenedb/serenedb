@@ -202,7 +202,7 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgAttribute>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgAttribute> values;
@@ -225,7 +225,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<PgAttribute>::GetTableData() {
     WriteData(result, values[row], kNullMask, row);
   }
 
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

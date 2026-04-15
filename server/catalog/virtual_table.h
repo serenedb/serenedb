@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/vector.hpp>
 
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
@@ -31,14 +32,20 @@ namespace sdb::catalog {
 
 class VirtualTable;
 
+struct MaterializedData {
+  std::vector<duckdb::Vector> columns;
+  duckdb::idx_t row_count = 0;
+};
+
 class VirtualTableSnapshot : public SchemaObject {
  public:
   std::shared_ptr<Object> Clone() const final { return nullptr; }
   void WriteInternal(vpack::Builder&) const override {}
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 
-  virtual std::vector<duckdb::Vector> GetData(
-    std::vector<std::string> names) = 0;
+  // Returns a reference to lazily materialized data.
+  // The data is owned by the snapshot and lives as long as the snapshot does.
+  virtual const MaterializedData& GetData(std::vector<std::string> names) = 0;
 
   const VirtualTable& GetTable() const noexcept {
     SDB_ASSERT(_table);
@@ -61,7 +68,7 @@ class VirtualTable {
   virtual ~VirtualTable() = default;
 
   ObjectId Id() const noexcept { return _id; }
-  std::string_view Name() const noexcept { return _name; }
+  std::string_view GetName() const noexcept { return _name; }
 
   virtual duckdb::LogicalType RowType() const noexcept = 0;
 

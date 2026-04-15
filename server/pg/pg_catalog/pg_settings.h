@@ -40,7 +40,7 @@ struct SdbShowAllSettings {
 // NOLINTEND
 
 template<>
-inline std::vector<duckdb::Vector>
+inline catalog::MaterializedData
 SystemTableSnapshot<SdbShowAllSettings>::GetTableData() {
   std::vector<SdbShowAllSettings> values;
 
@@ -60,7 +60,7 @@ SystemTableSnapshot<SdbShowAllSettings>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

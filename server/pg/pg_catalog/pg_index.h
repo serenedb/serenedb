@@ -87,6 +87,6 @@ struct PgIndex {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgIndex>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData();
 
 }  // namespace sdb::pg

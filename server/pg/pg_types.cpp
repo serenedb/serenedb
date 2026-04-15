@@ -75,54 +75,8 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
     case INTEGER:
       return in_array ? kInt4Array : kInt4;
     case UINTEGER:
-    case BIGINT:
       return in_array ? kInt8Array : kInt8;
-    case HUGEINT:
-    case UHUGEINT:
-    case BIGNUM:
-    case DECIMAL:
-      return in_array ? kNumericArray : kNumeric;
-    case DATE:
-      return in_array ? kDateArray : kDate;
-    case TIME:
-    case TIME_NS:
-      return in_array ? kTimeArray : kTime;
-    case TIMESTAMP_SEC:
-    case TIMESTAMP_MS:
-    case TIMESTAMP:
-    case TIMESTAMP_NS:
-      return in_array ? kTimestampArray : kTimestamp;
-    case FLOAT:
-      return in_array ? kFloat4Array : kFloat4;
-    case DOUBLE:
-      return in_array ? kFloat8Array : kFloat8;
-    case CHAR:
-      return in_array ? kTextArray : kText;
-    case BLOB:
-      return in_array ? kByteaArray : kBytea;
-    case INTERVAL:
-      return in_array ? kIntervalArray : kInterval;
-    case TIMESTAMP_TZ:
-      return in_array ? kTimestampTzArray : kTimestampTz;
-    case TIME_TZ:
-      return in_array ? kTimeTzArray : kTimeTz;
-    case BIT:
-      return in_array ? kVarbitArray : kVarbit;
-    case UUID:
-      return in_array ? kUuidArray : kUuid;
-    case STRUCT:
-    case MAP:
-      return in_array ? kRecordArray : kRecord;
-    case VARCHAR: {
-      if (type.IsJSONType()) {
-        return in_array ? kJsonArray : kJson;
-      }
-      if (IsName(type)) {
-        return in_array ? kNameArray : kName;
-      }
-      return in_array ? kTextArray : kText;
-    }
-    case UBIGINT: {
+    case BIGINT:
       if (IsOid(type)) {
         return in_array ? kOidArray : kOid;
       }
@@ -171,8 +125,54 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       if (IsRegcollation(type)) {
         return in_array ? kRegcollationArray : kRegcollation;
       }
+      return in_array ? kInt8Array : kInt8;
+    case HUGEINT:
+    case UHUGEINT:
+    case BIGNUM:
+    case DECIMAL:
       return in_array ? kNumericArray : kNumeric;
+    case DATE:
+      return in_array ? kDateArray : kDate;
+    case TIME:
+    case TIME_NS:
+      return in_array ? kTimeArray : kTime;
+    case TIMESTAMP_SEC:
+    case TIMESTAMP_MS:
+    case TIMESTAMP:
+    case TIMESTAMP_NS:
+      return in_array ? kTimestampArray : kTimestamp;
+    case FLOAT:
+      return in_array ? kFloat4Array : kFloat4;
+    case DOUBLE:
+      return in_array ? kFloat8Array : kFloat8;
+    case CHAR:
+      return in_array ? kTextArray : kText;
+    case BLOB:
+      return in_array ? kByteaArray : kBytea;
+    case INTERVAL:
+      return in_array ? kIntervalArray : kInterval;
+    case TIMESTAMP_TZ:
+      return in_array ? kTimestampTzArray : kTimestampTz;
+    case TIME_TZ:
+      return in_array ? kTimeTzArray : kTimeTz;
+    case BIT:
+      return in_array ? kVarbitArray : kVarbit;
+    case UUID:
+      return in_array ? kUuidArray : kUuid;
+    case STRUCT:
+    case MAP:
+      return in_array ? kRecordArray : kRecord;
+    case VARCHAR: {
+      if (type.IsJSONType()) {
+        return in_array ? kJsonArray : kJson;
+      }
+      if (IsName(type)) {
+        return in_array ? kNameArray : kName;
+      }
+      return in_array ? kTextArray : kText;
     }
+    case UBIGINT:
+      return in_array ? kNumericArray : kNumeric;
     case LIST:
       return Type2Oid(duckdb::ListType::GetChildType(type), true);
     case ARRAY:
@@ -922,7 +922,7 @@ std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {
   std::string result;
   VisitSystemTables([&](const catalog::VirtualTable& table, Oid) {
     if (table.Id() == oid) {
-      result = table.Name();
+      result = table.GetName();
     }
   });
   if (!result.empty()) {

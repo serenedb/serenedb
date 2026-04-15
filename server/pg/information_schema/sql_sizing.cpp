@@ -70,13 +70,13 @@ constexpr Row kRows[] = {
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<SqlSizing>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData() {
   constexpr auto kNumRows = std::size(kRows);
   auto result = CreateColumns<SqlSizing>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {
     WriteData(result, kRows[row].data, kRows[row].nulls, row);
   }
-  return result;
+  return {std::move(result), kNumRows};
 }
 
 }  // namespace sdb::pg

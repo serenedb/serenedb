@@ -822,7 +822,7 @@ void SerializeRegtypeText(SerializationContext context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   context.buffer->WriteUncommitted(RegtypeOut(oid));
 }
 
@@ -830,7 +830,7 @@ void SerializeRegclassText(SerializationContext context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   context.buffer->WriteUncommitted(RegclassOut(*context.snapshot, oid));
 }
 
@@ -838,7 +838,7 @@ void SerializeRegnamespaceText(
   SerializationContext context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   context.buffer->WriteUncommitted(RegnamespaceOut(*context.snapshot, oid));
 }
 
@@ -848,7 +848,7 @@ void SerializeOidBinary(SerializationContext context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
   const auto oid =
-    vdata.unified.GetData<uint64_t>()[vdata.unified.sel->get_index(row)];
+    vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
   if (oid != static_cast<int32_t>(oid)) {
     SDB_WARN("xxxxx", Logger::COMMUNICATION, "reg* OID ", oid,
              " truncated to 32-bit for binary wire protocol");
@@ -967,13 +967,6 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt8);
     }
     case BIGINT: {
-      static constexpr auto kSerializeText =
-        SerializeInt<VarFormat::Text, int64_t>;
-      static constexpr auto kSerializeBinary =
-        SerializeInt<VarFormat::Binary, int64_t>;
-      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt8);
-    }
-    case UBIGINT: {
       if (IsRegtype(type)) {
         RETURN_ARRAY_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary,
                                    kRegtype);
@@ -986,7 +979,11 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         RETURN_ARRAY_SERIALIZATION(SerializeRegnamespaceText,
                                    SerializeOidBinary, kRegnamespace);
       }
-      static constexpr auto kSerializeText = SerializeUbigint<VarFormat::Text>;
+      static constexpr auto kSerializeText =
+        SerializeInt<VarFormat::Text, int64_t>;
+      if (IsOid(type)) {
+        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kOid);
+      }
       if (IsRegproc(type)) {
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
                                    kRegproc);
@@ -1019,9 +1016,6 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary,
                                    kRegcollation);
       }
-      if (IsOid(type)) {
-        RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kOid);
-      }
       if (IsXid(type)) {
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kXid);
       }
@@ -1031,10 +1025,14 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       if (IsTid(type)) {
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeOidBinary, kTid);
       }
-      // XID8 or UBIGINT
-      RETURN_ARRAY_SERIALIZATION(kSerializeText,
-                                 SerializeUbigint<VarFormat::Binary>, kNumeric);
+      static constexpr auto kSerializeBinary =
+        SerializeInt<VarFormat::Binary, int64_t>;
+      // XID8 or BIGINT
+      RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kInt8);
     }
+    case UBIGINT:
+      RETURN_ARRAY_SERIALIZATION(SerializeUbigint<VarFormat::Text>,
+                                 SerializeUbigint<VarFormat::Binary>, kNumeric);
     case HUGEINT:
       RETURN_ARRAY_SERIALIZATION(SerializeHugeint<VarFormat::Text>,
                                  SerializeHugeint<VarFormat::Binary>, kNumeric);
@@ -1308,8 +1306,23 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
     }
     case BIGINT: {
+      if (IsRegtype(type)) {
+        RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
+      }
+      if (IsRegclass(type)) {
+        RETURN_SERIALIZATION(SerializeRegclassText, SerializeOidBinary);
+      }
+      if (IsRegnamespace(type)) {
+        RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
+      }
       static constexpr auto kSerializeText =
         SerializeInt<VarFormat::Text, int64_t>;
+      if (IsOid(type) || IsRegproc(type) || IsRegprocedure(type) ||
+          IsRegoper(type) || IsRegoperator(type) || IsRegrole(type) ||
+          IsRegconfig(type) || IsRegdictionary(type) || IsRegcollation(type) ||
+          IsXid(type) || IsCid(type) || IsTid(type)) {
+        RETURN_SERIALIZATION(kSerializeText, SerializeOidBinary);
+      }
       static constexpr auto kSerializeBinary =
         SerializeInt<VarFormat::Binary, int64_t>;
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
@@ -1336,22 +1349,7 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
     }
     case UBIGINT: {
-      if (IsRegtype(type)) {
-        RETURN_SERIALIZATION(SerializeRegtypeText, SerializeOidBinary);
-      }
-      if (IsRegclass(type)) {
-        RETURN_SERIALIZATION(SerializeRegclassText, SerializeOidBinary);
-      }
-      if (IsRegnamespace(type)) {
-        RETURN_SERIALIZATION(SerializeRegnamespaceText, SerializeOidBinary);
-      }
       static constexpr auto kSerializeText = SerializeUbigint<VarFormat::Text>;
-      if (IsRegproc(type) || IsRegprocedure(type) || IsRegoper(type) ||
-          IsRegoperator(type) || IsRegrole(type) || IsRegconfig(type) ||
-          IsRegdictionary(type) || IsRegcollation(type) || IsOid(type) ||
-          IsXid(type) || IsCid(type) || IsTid(type)) {
-        RETURN_SERIALIZATION(kSerializeText, SerializeOidBinary);
-      }
       static constexpr auto kSerializeBinary =
         SerializeUbigint<VarFormat::Binary>;
       RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);

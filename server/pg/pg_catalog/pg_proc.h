@@ -88,6 +88,6 @@ struct PgProc {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgProc>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData();
 
 }  // namespace sdb::pg

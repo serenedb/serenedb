@@ -37,8 +37,7 @@ std::string_view CommandToString(ProgressCommand cmd) {
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector>
-SystemTableSnapshot<SdbStatProgress>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<SdbStatProgress>::GetTableData() {
   auto snapshots = ProgressTracker::Instance().GetSnapshots();
 
   std::vector<SdbStatProgress> values;
@@ -92,7 +91,7 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

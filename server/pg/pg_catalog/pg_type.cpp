@@ -702,12 +702,12 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgType>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
   auto result = CreateColumns<PgType>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
     WriteData(result, kSampleData[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), kSampleData.size()};
 }
 
 }  // namespace sdb::pg

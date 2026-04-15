@@ -43,6 +43,6 @@ struct PgLanguage {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgLanguage>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData();
 
 }  // namespace sdb::pg

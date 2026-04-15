@@ -40,12 +40,12 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }
 
 template<>
-std::vector<duckdb::Vector>
+catalog::MaterializedData
 SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
   if (!SerenedServer::Instance()
          .getFeature<search::SearchEngine>()
          .isEnabled()) {
-    return CreateColumns<SdbSearchTasksStatus>(0);
+    return {CreateColumns<SdbSearchTasksStatus>(0), 0};
   }
   constexpr auto kThreadGroups =
     magic_enum::enum_entries<search::ThreadGroup>();
@@ -68,7 +68,7 @@ SystemTableSnapshot<SdbSearchTasksStatus>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

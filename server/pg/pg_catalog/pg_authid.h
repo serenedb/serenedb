@@ -46,6 +46,6 @@ struct PgAuthid {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgAuthid>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgAuthid>::GetTableData();
 
 }  // namespace sdb::pg

@@ -60,7 +60,7 @@ void RetrieveObjects(ObjectId database_id, std::vector<PgNamespace>& values,
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgNamespace>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<PgNamespace>::GetTableData() {
   std::vector<PgNamespace> values;
   auto snapshot = _config.EnsureCatalogSnapshot();
   RetrieveObjects(GetDatabaseId(), values, *snapshot);
@@ -69,7 +69,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<PgNamespace>::GetTableData() {
   for (size_t row = 0; row < values.size(); ++row) {
     WriteData(result, values[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

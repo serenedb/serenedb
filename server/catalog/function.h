@@ -41,6 +41,7 @@ class PgSqlFunction final : public SchemaObject {
   std::shared_ptr<Object> Clone() const final;
 
   const duckdb::CreateMacroInfo& GetInfo() const noexcept { return *_info; }
+  duckdb::CreateMacroInfo& GetInfo() noexcept { return *_info; }
 
  private:
   duckdb::unique_ptr<duckdb::CreateMacroInfo> _info;

@@ -49,7 +49,7 @@ namespace {
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgProc>::GetTableData() {
+catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   // DuckDB provides pg_proc via its default views
   return {};
 #if 0
@@ -147,7 +147,7 @@ std::vector<duckdb::Vector> SystemTableSnapshot<PgProc>::GetTableData() {
     WriteData(result, values[row], kNullMask, row);
   }
 
-  return result;
+  return {std::move(result), values.size()};
 #endif
 }
 

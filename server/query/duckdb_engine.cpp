@@ -39,50 +39,137 @@
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
 #include "connector/pg_logical_types.h"
-#include "pg/system_functions.h"
-#include "pg/system_views.h"
+#include "pg/pg_catalog/pg_statistic.h"
+#include "pg/system_catalog.h"
+#include "pg/system_table.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
   // Lazy-initialized to avoid static initialization order issues
   // (LogicalType has shared_ptr that needs heap allocation).
   static const duckdb::DefaultType kExternalTypes[] = {
-    // clang-format off
     // reg* types -- aliased BIGINT with input functions for catalog lookups
-    {"regclass",       sdb::pg::REGCLASS(),       nullptr,},
-    {"regtype",        sdb::pg::REGTYPE(),        nullptr,},
-    {"regnamespace",   sdb::pg::REGNAMESPACE(),   nullptr,},
-    {"regproc",        sdb::pg::REGPROC(),        nullptr,},
-    {"regoper",        sdb::pg::REGOPER(),        nullptr,},
-    {"regoperator",    sdb::pg::REGOPERATOR(),    nullptr,},
-    {"regprocedure",   sdb::pg::REGPROCEDURE(),   nullptr,},
-    {"regrole",        sdb::pg::REGROLE(),        nullptr,},
-    {"regconfig",      sdb::pg::REGCONFIG(),      nullptr,},
-    {"regdictionary",  sdb::pg::REGDICTIONARY(),  nullptr,},
-    {"regcollation",   sdb::pg::REGCOLLATION(),   nullptr,},
+    {
+      "regclass",
+      sdb::pg::REGCLASS(),
+      nullptr,
+    },
+    {
+      "regtype",
+      sdb::pg::REGTYPE(),
+      nullptr,
+    },
+    {
+      "regnamespace",
+      sdb::pg::REGNAMESPACE(),
+      nullptr,
+    },
+    {
+      "regproc",
+      sdb::pg::REGPROC(),
+      nullptr,
+    },
+    {
+      "regoper",
+      sdb::pg::REGOPER(),
+      nullptr,
+    },
+    {
+      "regoperator",
+      sdb::pg::REGOPERATOR(),
+      nullptr,
+    },
+    {
+      "regprocedure",
+      sdb::pg::REGPROCEDURE(),
+      nullptr,
+    },
+    {
+      "regrole",
+      sdb::pg::REGROLE(),
+      nullptr,
+    },
+    {
+      "regconfig",
+      sdb::pg::REGCONFIG(),
+      nullptr,
+    },
+    {
+      "regdictionary",
+      sdb::pg::REGDICTIONARY(),
+      nullptr,
+    },
+    {
+      "regcollation",
+      sdb::pg::REGCOLLATION(),
+      nullptr,
+    },
     // System identifier types -- aliased BIGINT
-    {"tid",  sdb::pg::TID(),  nullptr,},
-    {"cid",  sdb::pg::CID(),  nullptr,},
-    {"xid",  sdb::pg::XID(),  nullptr,},
-    {"xid8", sdb::pg::XID8(), nullptr,},
+    {
+      "tid",
+      sdb::pg::TID(),
+      nullptr,
+    },
+    {
+      "cid",
+      sdb::pg::CID(),
+      nullptr,
+    },
+    {
+      "xid",
+      sdb::pg::XID(),
+      nullptr,
+    },
+    {
+      "xid8",
+      sdb::pg::XID8(),
+      nullptr,
+    },
     // PG name type
-    {"name", duckdb::LogicalTypeId::VARCHAR, nullptr,},
-    // clang-format on
+    {
+      "name",
+      sdb::pg::NAME(),
+      nullptr,
+    },
+    // PG composite type used as cast target in pg_stats_ext_exprs view.
+    {
+      "pg_statistic",
+      [] {
+        auto t = sdb::pg::SystemTable<sdb::pg::PgStatistic>{}.RowType();
+        t.SetAlias("pg_statistic");
+        return t;
+      }(),
+      nullptr,
+    },
+    // information_schema types, TODO(mbkkt) move this to namespace
+    {
+      "cardinal_number",
+      sdb::pg::CARDINALNUMBER(),
+      nullptr,
+    },
+    {
+      "character_data",
+      sdb::pg::CHARACTERDATA(),
+      nullptr,
+    },
+    {
+      "sql_identifier",
+      sdb::pg::SQLIDENTIFIER(),
+      nullptr,
+    },
+    {
+      "time_stamp",
+      sdb::pg::TIMESTAMP(),
+      nullptr,
+    },
+    {
+      "yes_or_no",
+      sdb::pg::YESORNO(),
+      nullptr,
+    },
   };
   *count = std::size(kExternalTypes);
   return kExternalTypes;
-}
-
-extern "C" const duckdb::DefaultMacro* duckdb_external_macros(
-  duckdb::idx_t* count) {
-  *count = std::size(sdb::pg::kExternalMacros);
-  return sdb::pg::kExternalMacros;
-}
-
-extern "C" const duckdb::DefaultView* duckdb_external_views(
-  duckdb::idx_t* count) {
-  *count = std::size(sdb::pg::kExternalViews);
-  return sdb::pg::kExternalViews;
 }
 
 namespace sdb::query {
@@ -189,11 +276,10 @@ void DuckDBEngine::Initialize() {
   auto& fs = duckdb::FileSystem::GetFileSystem(*_db->instance);
   fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
 
-  {
-    size_t _;
-    duckdb_external_macros(&_);
-    duckdb_external_views(&_);
-  }
+  // Parse and cache system functions/views
+  // for serving from our attached catalog.
+  pg::InitSystemFunctions();
+  pg::InitSystemViews();
 
   std::cerr << "DuckDB engine initialized with SereneDB storage" << std::endl;
 }

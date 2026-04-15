@@ -60,14 +60,14 @@ constexpr Row kRows[] = {
 }  // namespace
 
 template<>
-std::vector<duckdb::Vector>
+catalog::MaterializedData
 SystemTableSnapshot<SqlImplementationInfo>::GetTableData() {
   constexpr auto kNumRows = std::size(kRows);
   auto result = CreateColumns<SqlImplementationInfo>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {
     WriteData(result, kRows[row].data, kRows[row].nulls, row);
   }
-  return result;
+  return {std::move(result), kNumRows};
 }
 
 }  // namespace sdb::pg

@@ -109,6 +109,6 @@ struct PgType {
 // NOLINTEND
 
 template<>
-std::vector<duckdb::Vector> SystemTableSnapshot<PgType>::GetTableData();
+catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData();
 
 }  // namespace sdb::pg

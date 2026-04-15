@@ -37,53 +37,54 @@ class SereneDBCatalog final : public duckdb::Catalog {
 
   ObjectId GetDatabaseId() const { return _database_id; }
 
-  std::string GetCatalogType() override { return "serenedb"; }
-  std::string GetDefaultSchema() const override { return "public"; }
-  void Initialize(bool load_builtin) override;
+  std::string GetCatalogType() final { return "serenedb"; }
+  std::string GetDefaultSchema() const final { return "public"; }
+  void Initialize(bool load_builtin) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateSchemaInfo& info) override;
+    duckdb::CreateSchemaInfo& info) final;
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
     duckdb::CatalogTransaction transaction,
     const duckdb::EntryLookupInfo& schema_lookup,
-    duckdb::OnEntryNotFound if_not_found) override;
+    duckdb::OnEntryNotFound if_not_found) final;
 
   void ScanSchemas(
     duckdb::ClientContext& context,
-    std::function<void(duckdb::SchemaCatalogEntry&)> callback) override;
+    std::function<void(duckdb::SchemaCatalogEntry&)> callback) final;
 
-  void DropSchema(duckdb::ClientContext& context,
-                  duckdb::DropInfo& info) override;
+  void DropSchema(duckdb::ClientContext& context, duckdb::DropInfo& info) final;
 
   duckdb::PhysicalOperator& PlanCreateTableAs(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
-    duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) override;
+    duckdb::LogicalCreateTable& op, duckdb::PhysicalOperator& plan) final;
 
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,
-    duckdb::optional_ptr<duckdb::PhysicalOperator> plan) override;
+    duckdb::optional_ptr<duckdb::PhysicalOperator> plan) final;
 
   duckdb::PhysicalOperator& PlanDelete(duckdb::ClientContext& context,
                                        duckdb::PhysicalPlanGenerator& planner,
                                        duckdb::LogicalDelete& op,
-                                       duckdb::PhysicalOperator& plan) override;
+                                       duckdb::PhysicalOperator& plan) final;
 
   duckdb::PhysicalOperator& PlanUpdate(duckdb::ClientContext& context,
                                        duckdb::PhysicalPlanGenerator& planner,
                                        duckdb::LogicalUpdate& op,
-                                       duckdb::PhysicalOperator& plan) override;
+                                       duckdb::PhysicalOperator& plan) final;
 
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
     duckdb::TableCatalogEntry& table,
-    duckdb::unique_ptr<duckdb::LogicalOperator> plan) override;
+    duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
 
-  duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) override;
-  bool InMemory() override { return false; }
-  std::string GetDBPath() override { return ""; }
+  duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) final;
+
+  bool InMemory() final { return false; }
+
+  std::string GetDBPath() final { return ""; }
 
  private:
   ObjectId _database_id;

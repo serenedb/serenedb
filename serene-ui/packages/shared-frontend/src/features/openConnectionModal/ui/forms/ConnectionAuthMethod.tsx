@@ -23,9 +23,11 @@ export const ConnectionAuthMethod = () => {
                     onValueChange={(value) => {
                         handleSelectChange("authMethod", value);
                     }}>
-                    <SelectTrigger className="w-full" aria-label="Authentication method">
+                    <SelectTrigger
+                        className="w-full"
+                        aria-label="Authentication method">
                         <div className="flex gap-2.5 items-center">
-                            <KeyIcon />
+                            <KeyIcon className="text-muted-foreground/50 dark:text-foreground" />
                             <SelectValue placeholder="Select method" />
                         </div>
                     </SelectTrigger>

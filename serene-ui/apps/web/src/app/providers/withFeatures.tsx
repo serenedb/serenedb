@@ -1,5 +1,4 @@
 import {
-    ConsoleLayoutProvider,
     ConnectionsModalProvider,
     SavedQueriesModalProvider,
     CommandModalProvider,
@@ -21,11 +20,9 @@ export const WithFeatures = ({ children }: WithFeaturesProps) => {
                     <QueryResultsProvider>
                         <ConnectionsModalProvider>
                             <SavedQueriesModalProvider>
-                                <ConsoleLayoutProvider>
-                                    <CommandModalProvider>
-                                        {children}
-                                    </CommandModalProvider>
-                                </ConsoleLayoutProvider>
+                                <CommandModalProvider>
+                                    {children}
+                                </CommandModalProvider>
                             </SavedQueriesModalProvider>
                         </ConnectionsModalProvider>
                     </QueryResultsProvider>

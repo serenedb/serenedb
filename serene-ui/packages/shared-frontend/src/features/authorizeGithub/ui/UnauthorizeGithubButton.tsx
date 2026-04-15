@@ -5,7 +5,7 @@ export const UnauthorizeGithubButton = () => {
     const { unauthorizeGithub } = useAuthorizeGithub();
     return (
         <Button
-            className="opacity-50 hover:opacity-100"
+            className="opacity-50 hover:opacity-100 size-9"
             variant="destructive"
             size="icon"
             title="Disconnect GitHub"

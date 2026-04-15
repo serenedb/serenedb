@@ -1,6 +1,6 @@
 {
     "name": "serene-ui-web",
-    "version": "26.03.2",
+    "version": "26.04.1",
     "description": "React App for SereneUI web version",
     "type": "module",
     "scripts": {
@@ -42,6 +42,7 @@
         "input-otp": "^1.4.2",
         "libpg-query": "^17.7.3",
         "lucide-react": "^0.544.0",
+        "marked": "^4.0.10",
         "monaco-editor": "^0.53.0",
         "next-themes": "^0.4.6",
         "react": "^19.2.0",

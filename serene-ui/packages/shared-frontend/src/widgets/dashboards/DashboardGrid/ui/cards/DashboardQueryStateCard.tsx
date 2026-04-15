@@ -12,15 +12,9 @@ interface DashboardQueryStateCardProps {
     onEdit?: () => void;
 }
 
-export const DashboardQueryStateCard: React.FC<DashboardQueryStateCardProps> = ({
-    name,
-    description,
-    title,
-    details,
-    onDelete,
-    onDuplicate,
-    onEdit,
-}) => {
+export const DashboardQueryStateCard: React.FC<
+    DashboardQueryStateCardProps
+> = ({ name, description, title, details, onDelete, onDuplicate, onEdit }) => {
     return (
         <DashboardChartCardBase
             name={name}
@@ -30,9 +24,13 @@ export const DashboardQueryStateCard: React.FC<DashboardQueryStateCardProps> = (
             onEdit={onEdit}>
             <div className="flex min-h-0 flex-1 items-center justify-center p-4">
                 <div className="flex max-w-64 flex-col items-center gap-3 text-center">
-                    <p className="text-sm font-medium text-primary-foreground">{title}</p>
+                    <p className="text-sm font-medium dark:text-primary-foreground">
+                        {title}
+                    </p>
                     {details ? (
-                        <p className="text-xs text-muted-foreground">{details}</p>
+                        <p className="text-xs text-accent-foreground dark:text-muted-foreground">
+                            {details}
+                        </p>
                     ) : null}
                     {onEdit ? (
                         <Button

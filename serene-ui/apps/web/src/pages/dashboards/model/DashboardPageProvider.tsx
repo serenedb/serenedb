@@ -1,5 +1,5 @@
 import type { DashboardBlockSchema } from "@serene-ui/shared-core";
-import { useGetDashboards } from "@serene-ui/shared-frontend";
+import { useGetDashboard, useGetDashboards } from "@serene-ui/shared-frontend";
 import { navigationMap } from "@serene-ui/shared-frontend/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -43,6 +43,12 @@ export const DashboardPageProvider = ({
         isFetched: isDashboardsFetched,
         isLoading: isDashboardsLoading,
     } = useGetDashboards();
+    const { data: selectedDashboard } = useGetDashboard(
+        currentDashboardId ?? -1,
+        {
+            enabled: currentDashboardId !== null,
+        },
+    );
     const urlDashboardId = useMemo(() => {
         if (!location.pathname.startsWith(`${navigationMap.dashboards}/`)) {
             return null;
@@ -64,12 +70,16 @@ export const DashboardPageProvider = ({
             return null;
         }
 
+        if (selectedDashboard?.id === currentDashboardId) {
+            return selectedDashboard;
+        }
+
         return (
             dashboards?.find(
                 (dashboard) => dashboard.id === currentDashboardId,
             ) ?? null
         );
-    }, [currentDashboardId, dashboards]);
+    }, [currentDashboardId, dashboards, selectedDashboard]);
 
     useEffect(() => {
         if (urlDashboardId === null) {

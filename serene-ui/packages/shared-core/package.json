@@ -1,6 +1,6 @@
 {
     "name": "@serene-ui/shared-core",
-    "version": "26.03.2",
+    "version": "26.04.1",
     "type": "module",
     "description": "Shared core types and utilities for frontend and backend",
     "main": "dist/index.js",

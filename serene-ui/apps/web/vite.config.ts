@@ -8,6 +8,7 @@ import type { PluginContext } from "rollup";
 
 export default defineConfig(({ mode }) => {
     const appType = mode.includes("docker") ? "docker" : "electron";
+    const isProdElectron = mode.includes("prod-electron");
     const libpgQueryWasmPath = path.resolve(
         __dirname,
         "../../node_modules/libpg-query/wasm/libpg-query.wasm",
@@ -15,19 +16,23 @@ export default defineConfig(({ mode }) => {
     const libpgQueryWasmPlugin = (): Plugin => ({
         name: "libpg-query-wasm",
         configureServer(server: any) {
-            server.middlewares.use(
-                "/libpg-query.wasm",
-                (_req: any, res: any, next: any) => {
-                    try {
-                        const wasm = fs.readFileSync(libpgQueryWasmPath);
-                        res.setHeader("Content-Type", "application/wasm");
-                        res.statusCode = 200;
-                        res.end(wasm);
-                    } catch (error) {
-                        next();
-                    }
-                },
-            );
+            server.middlewares.use((req: any, res: any, next: any) => {
+                const requestPath = req.url?.split("?")[0] ?? "";
+
+                if (!requestPath.endsWith("/libpg-query.wasm")) {
+                    next();
+                    return;
+                }
+
+                try {
+                    const wasm = fs.readFileSync(libpgQueryWasmPath);
+                    res.setHeader("Content-Type", "application/wasm");
+                    res.statusCode = 200;
+                    res.end(wasm);
+                } catch (error) {
+                    next();
+                }
+            });
         },
         generateBundle(this: PluginContext) {
             const wasm = fs.readFileSync(libpgQueryWasmPath);
@@ -40,7 +45,9 @@ export default defineConfig(({ mode }) => {
     });
 
     const config = {
-        base: "./",
+        // Browser-based modes should use absolute asset URLs so route paths
+        // like /dashboards don't rewrite wasm requests to /dashboards/*.wasm.
+        base: isProdElectron ? "./" : "/",
         plugins: [libpgQueryWasmPlugin(), svgr(), react(), tailwindcss()],
         build: {
             outDir: `dist/${appType}`,

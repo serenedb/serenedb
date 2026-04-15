@@ -23,7 +23,7 @@ import type { ExplorerNodeData } from "./types";
 
 export const nodeTemplates = {
     connection: {
-        icon: <ConnectionIcon />,
+        icon: <ConnectionIcon className="size-3.5" />,
         getChildrenQuery: () => ({
             query: "SELECT datname as name FROM pg_database WHERE datistemplate = false ORDER BY datname",
             database: "",
@@ -61,16 +61,8 @@ export const nodeTemplates = {
                     type: "catalogs",
                 },
                 {
-                    name: "Publications",
-                    type: "publications",
-                },
-                {
                     name: "Schemas",
                     type: "schemas",
-                },
-                {
-                    name: "Subscriptions",
-                    type: "subscriptions",
                 },
             ].map((db, index) => ({
                 id: node.id + "/" + "d-" + index,
@@ -84,7 +76,7 @@ export const nodeTemplates = {
         },
     },
     schemas: {
-        icon: <TreeSchemaIcon />,
+        icon: <TreeSchemaIcon className="size-3.5" />,
         getChildrenQuery: (node: ExplorerNodeData) => ({
             query: `SELECT
     n.oid AS id,
@@ -117,7 +109,7 @@ WHERE s.schema_name NOT IN ('information_schema')
         getNodes: () => [],
     },
     schema: {
-        icon: <TreeSchemaIcon />,
+        icon: <TreeSchemaIcon className="size-3.5" />,
         getChildrenQuery: () => {},
         nodeType: "static",
         formatToNodes: () => [],
@@ -410,20 +402,15 @@ ORDER BY v.table_schema, v.table_name;
             return {
                 query: `
 SELECT
-    (SELECT relname FROM pg_class c WHERE c.oid = i.indexrelid) AS name,
-    gs.i AS index_order,
+    c.relname AS name,
     i.indexrelid AS id,
     i.indisunique,
     i.indisprimary,
-    COALESCE(a.attname, pg_get_indexdef(i.indexrelid, gs.i, false)) AS index_column,
-    i.indoption[gs.i - 1] = 0 AS ascending
+    pg_get_indexdef(i.indexrelid) AS index_def
 FROM pg_index i
-JOIN generate_series(1, array_length(i.indkey, 1)) AS gs(i)
-    ON true
-LEFT JOIN pg_attribute a
-    ON i.indrelid = a.attrelid AND a.attnum = i.indkey[gs.i]
-WHERE i.indrelid = ${node.context?.tableId}
-ORDER BY i.indexrelid, gs.i;
+JOIN pg_class c
+    ON c.oid = i.indexrelid
+WHERE i.indrelid = ${node.context?.tableId};
 `,
                 database: node.context?.database || "",
             };
@@ -453,7 +440,7 @@ ORDER BY i.indexrelid, gs.i;
         getNodes: () => [],
     },
     dashboard: {
-        icon: <DashboardsIcon className="size-4" />,
+        icon: <DashboardsIcon className="size-3" />,
         getChildrenQuery: () => {},
         nodeType: "static",
         formatToNodes: () => [],

@@ -1,5 +1,4 @@
 import {
-    ArrowDownIcon,
     Button,
     HoverCard,
     HoverCardContent,
@@ -7,6 +6,7 @@ import {
 } from "@serene-ui/shared-frontend/shared";
 import { useDownloadResults } from "../model/useDownloadResults";
 import { useCallback, useState } from "react";
+import { DownloadIcon } from "lucide-react";
 
 interface DownloadResultsButtonProps {
     rows?: Record<string, unknown>[];
@@ -53,12 +53,13 @@ export const DownloadResultsButton: React.FC<DownloadResultsButtonProps> = ({
         <HoverCard openDelay={0} open={isOpen} onOpenChange={setIsOpen}>
             <HoverCardTrigger asChild>
                 <Button
-                    variant="thirdly"
+                    variant="ghost"
+                    className="rounded-none h-full border-l-[0.5px]"
                     disabled={disabled || isLoading}
                     aria-label={`Download results (${rows?.length || 0} items)`}
                     aria-expanded={isOpen}
                     aria-haspopup="menu">
-                    Download <ArrowDownIcon />
+                    <DownloadIcon />
                 </Button>
             </HoverCardTrigger>
             <HoverCardContent

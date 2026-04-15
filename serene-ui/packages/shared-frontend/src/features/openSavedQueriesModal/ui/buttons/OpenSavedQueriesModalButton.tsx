@@ -11,27 +11,23 @@ interface OpenSavedQueriesModalButtonProps {
 export const OpenSavedQueriesModalButton: React.FC<
     OpenSavedQueriesModalButtonProps
 > = ({ className, query, bindVars, ...props }) => {
-    const { setOpen, setCurrentSavedQuery } = useSavedQueriesModal();
+    const { openCreateModal } = useSavedQueriesModal();
 
     const handleOpenModal = () => {
-        setCurrentSavedQuery({
-            id: -1,
-            name: "Untitled",
+        openCreateModal({
             query: query || "",
-            bind_vars: bindVars || [],
-            usage_count: 0,
+            bindVars: bindVars || [],
         });
-        setOpen(true);
     };
 
     return (
         <Button
             onClick={handleOpenModal}
             disabled={!query}
-            variant="thirdly"
+            variant="secondary"
             className={className}
             {...props}>
-            Save
+            Save query
         </Button>
     );
 };

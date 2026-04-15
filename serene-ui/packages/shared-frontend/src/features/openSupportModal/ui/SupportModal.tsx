@@ -35,13 +35,13 @@ export const SupportModal = () => {
                         <DialogTitle className="text-2xl font-bold">
                             Support
                         </DialogTitle>
-                        <DialogDescription className="text-sm text-primary-foreground">
+                        <DialogDescription className="text-sm dark:text-primary-foreground">
                             If you have any questions, need help, or want to
                             suggest a feature, feel free to open an issue on our
                             GitHub repository.
                         </DialogDescription>
                     </DialogHeader>
-                    <p className="text-sm text-primary-foreground">
+                    <p className="text-sm dark:text-primary-foreground">
                         {authorized
                             ? "You are already logged in with your GitHub account, so you can open an issue directly in the app."
                             : "You can also do this directly in the app by logging in with your GitHub account."}

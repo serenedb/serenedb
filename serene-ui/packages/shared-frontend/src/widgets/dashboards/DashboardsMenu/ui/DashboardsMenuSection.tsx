@@ -42,7 +42,7 @@ export const DashboardsMenuSection: React.FC<DashboardsMenuSectionProps> = ({
                     type="button"
                     onClick={() => toggleSection(sectionId)}
                     data-testid={`dashboardsMenuSection-toggle-${sectionId}`}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left">
+                    className="flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left">
                     <ArrowDownIcon
                         className={cn(
                             "size-4 transition-transform",

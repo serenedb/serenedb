@@ -1,306 +1,682 @@
-import React, { useCallback, useEffect, useRef } from "react";
-import { toast } from "sonner";
 import {
-    ExecuteQueryButton,
-    type ExecuteQueryBatchJob,
-    useConsoleLayout,
-    useQueryResults,
-} from "@serene-ui/shared-frontend/features";
-import { Button, cn } from "@serene-ui/shared-frontend/shared";
+    type FC,
+    type SVGProps,
+    useCallback,
+    useEffect,
+    useState,
+} from "react";
 import {
-    ConsoleEditorTabsSelector,
-    type ConsoleTab,
-    type ConsoleStatementRange,
-} from "../../ConsoleEditorTabsSelector";
+    DockviewDefaultTab,
+    DockviewReact,
+    type DockviewReadyEvent,
+    type IDockviewHeaderActionsProps,
+    type IDockviewPanelHeaderProps,
+    type SerializedDockview,
+} from "dockview";
+import {
+    Button,
+    cn,
+    MaximizeIcon,
+    MinimizeIcon,
+    PlusIcon,
+} from "@serene-ui/shared-frontend";
+import { useDockviewLayoutSync } from "../../../../shared/hooks";
+import {
+    CONSOLE_EDITOR_PANEL_COMPONENT,
+    CONSOLE_RESULTS_PANEL_COMPONENT,
+    INITIAL_CONSOLE_EDITOR_PANELS,
+    type ConsoleTabExecutionStatus,
+    type EditorPanelParams,
+    type ResultsPanelParams,
+    addEditorPanel,
+    createEditorPanelParams,
+    createPanelId,
+    createPanelTitle,
+    getNextEditorPanelTitle,
+} from "../model";
+import { useConsole } from "../../Console/model";
+import { EditorPanel } from "./EditorPanel";
+import { ConsoleEditorTopbar } from "./ConsoleEditorTopbar";
+import { ResultsPanel } from "./ResultsPanel";
 
-import { PGSQLEditor } from "../../../shared/PGSQLEditor";
-import { DropZone } from "../../../shared/DropZone";
-import { useConnectionAutocomplete } from "../../../shared/PGSQLEditor/model";
-import { OpenSavedQueriesModalButton } from "@serene-ui/shared-frontend/features";
+const CONSOLE_EDITOR_LAYOUT_STORAGE_KEY = "console:editor-dock-layout";
 
-interface ConsoleEditorProps {
-    selectedTabId: number;
-    tabs: ConsoleTab[];
-    updateTab: (
-        tabId: number,
-        tabUpdate:
-            | Partial<ConsoleTab>
-            | ((tab: ConsoleTab) => Partial<ConsoleTab>),
-    ) => void;
-    selectTab: (tabId: number) => void;
-    removeTab: (tabId: number) => void;
-    addTab: (tabType: ConsoleTab["type"]) => void;
-    addPendingResults: (
-        results: Array<{
-            jobId: number;
-            statementIndex: number;
-            statementQuery: string;
-            sourceQuery: string;
-            statementRange: ConsoleStatementRange;
-        }>,
-        tabId?: number,
-    ) => void;
-    limit: number;
-    setLimit: (limit: number) => void;
-    editorRef?: React.RefObject<HTMLElement | null>;
-    highlightRange?: ConsoleStatementRange;
-    highlightVariant?: "default" | "error";
-}
+const components = {
+    [CONSOLE_EDITOR_PANEL_COMPONENT]: EditorPanel,
+    [CONSOLE_RESULTS_PANEL_COMPONENT]: ResultsPanel,
+};
 
-export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
-    selectedTabId,
-    tabs,
-    updateTab,
-    selectTab,
-    removeTab,
-    addTab,
-    addPendingResults,
-    limit,
-    setLimit,
-    editorRef,
-    highlightRange,
-    highlightVariant,
-}) => {
-    const { isMaximized, toggleMaximizedResults } = useConsoleLayout();
-    const { executeQueryBatch, executeQuery } = useQueryResults();
-    const autocomplete = useConnectionAutocomplete();
+const RESULTS_PANEL_SUFFIX = "__results";
 
-    const storybookPrefillAppliedRef = useRef(false);
+const getSourceEditorPanelId = (panelId: string, sourcePanelId?: string) =>
+    panelId.endsWith(RESULTS_PANEL_SUFFIX)
+        ? (sourcePanelId ?? panelId.slice(0, -RESULTS_PANEL_SUFFIX.length))
+        : panelId;
+
+const getTabExecutionStatus = (
+    params?: EditorPanelParams,
+): ConsoleTabExecutionStatus => {
+    const status = params?.tabExecutionStatus;
+
+    if (status === "running" || status === "success" || status === "failed") {
+        return status;
+    }
+
+    return "";
+};
+
+const isResolvedExecutionStatus = (
+    status: ConsoleTabExecutionStatus,
+): status is "success" | "failed" =>
+    status === "success" || status === "failed";
+
+const TAB_EXECUTION_DOT_COLOR_CLASS: Record<
+    Exclude<ConsoleTabExecutionStatus, "">,
+    {
+        core: string;
+        pulse: string;
+    }
+> = {
+    running: {
+        core: "bg-yellow-400",
+        pulse: "bg-yellow-300/80",
+    },
+    success: {
+        core: "bg-emerald-500",
+        pulse: "bg-emerald-400/80",
+    },
+    failed: {
+        core: "bg-red-500",
+        pulse: "bg-red-400/80",
+    },
+};
+
+const isPanelPairVisible = (
+    containerApi: IDockviewPanelHeaderProps["containerApi"],
+    sourcePanelId: string,
+) => {
+    const sourcePanel = containerApi.getPanel(sourcePanelId);
+    const resultsPanel = containerApi.getPanel(
+        `${sourcePanelId}${RESULTS_PANEL_SUFFIX}`,
+    );
+
+    return Boolean(sourcePanel?.api.isVisible || resultsPanel?.api.isVisible);
+};
+
+const ExecutionStatusTab: FC<IDockviewPanelHeaderProps> = (props) => {
+    const sourcePanelId = getSourceEditorPanelId(
+        props.api.id,
+        (props.params as ResultsPanelParams | undefined)?.sourcePanelId,
+    );
+    const [status, setStatus] = useState<ConsoleTabExecutionStatus>(() => {
+        const sourcePanel = props.containerApi.getPanel(sourcePanelId);
+        return getTabExecutionStatus(
+            sourcePanel?.api.getParameters<EditorPanelParams>(),
+        );
+    });
+    const [isVisibleToUser, setIsVisibleToUser] = useState(() =>
+        isPanelPairVisible(props.containerApi, sourcePanelId),
+    );
 
     useEffect(() => {
-        if (storybookPrefillAppliedRef.current) return;
-
-        const key = "storybook:console:prefillQuery";
-        const maxWaitMs = 2000;
-        const intervalMs = 50;
-        const start = Date.now();
-
-        const intervalId = window.setInterval(() => {
-            if (Date.now() - start > maxWaitMs) {
-                window.clearInterval(intervalId);
-                return;
-            }
-
-            const prefillQuery = localStorage.getItem(key);
-            if (!prefillQuery) return;
-
-            storybookPrefillAppliedRef.current = true;
-            localStorage.removeItem(key);
-
-            if (typeof prefillQuery === "string") {
-                if (tabs[selectedTabId]?.value !== prefillQuery) {
-                    updateTab(selectedTabId, {
-                        value: prefillQuery,
-                    });
-                }
-            }
-
-            window.clearInterval(intervalId);
-        }, intervalMs);
-
-        return () => {
-            window.clearInterval(intervalId);
-        };
-    }, [selectedTabId, tabs, updateTab]);
-
-    const handleExecute = useCallback(
-        async (mode: "sequential" | "transaction") => {
-            let result;
-            if (mode === "sequential") {
-                result = await executeQueryBatch(
-                    tabs[selectedTabId].value,
-                    tabs[selectedTabId].bind_vars || [],
-                    true,
-                    limit,
-                    (job: ExecuteQueryBatchJob) => {
-                        addPendingResults([
-                            {
-                                jobId: job.jobId,
-                                statementIndex: job.statementIndex,
-                                statementQuery: job.statementQuery,
-                                sourceQuery: job.sourceQuery,
-                                statementRange: job.statementRange,
-                            },
-                        ]);
-                    },
-                );
-            }
-            if (mode === "transaction") {
-                result = await executeQuery(
-                    tabs[selectedTabId].value,
-                    tabs[selectedTabId].bind_vars || [],
-                    true,
-                    limit,
-                );
-                if (result.success) {
-                    addPendingResults([
-                        {
-                            jobId: result.jobId,
-                            statementIndex: 0,
-                            statementQuery: tabs[selectedTabId].value,
-                            sourceQuery: tabs[selectedTabId].value,
-                            statementRange: {
-                                startOffset: 0,
-                                endOffset: tabs[selectedTabId].value.length,
-                            },
-                        },
-                    ]);
-                }
-            }
-            if (!result?.success) {
-                return;
-            }
-        },
-        [
-            tabs,
-            selectedTabId,
-            executeQueryBatch,
-            executeQuery,
-            addPendingResults,
-            limit,
-        ],
-    );
-
-    const handleExecuteInNewTab = useCallback(async () => {
-        const currentQuery = tabs[selectedTabId].value;
-        const currentBindVars = tabs[selectedTabId].bind_vars || [];
-
-        const newTabIndex = tabs.length;
-        addTab("query");
-        updateTab(newTabIndex, {
-            value: currentQuery,
-            bind_vars: currentBindVars,
-        });
-        selectTab(newTabIndex);
-
-        const result = await executeQueryBatch(
-            currentQuery,
-            currentBindVars,
-            true,
-            limit,
-            (job: ExecuteQueryBatchJob) => {
-                addPendingResults(
-                    [
-                        {
-                            jobId: job.jobId,
-                            statementIndex: job.statementIndex,
-                            statementQuery: job.statementQuery,
-                            sourceQuery: job.sourceQuery,
-                            statementRange: job.statementRange,
-                        },
-                    ],
-                    newTabIndex,
-                );
-            },
-        );
-        if (!result.success) {
+        const sourcePanel = props.containerApi.getPanel(sourcePanelId);
+        if (!sourcePanel) {
+            setStatus("");
             return;
         }
-    }, [
-        tabs,
-        selectedTabId,
-        executeQueryBatch,
-        addPendingResults,
-        addTab,
-        updateTab,
-        selectTab,
-        limit,
-    ]);
 
-    const handleFilesDrop = useCallback(
-        async (files: File[]) => {
-            try {
-                const fileContents = await Promise.all(
-                    files.map(async (file) => ({
-                        value: await file.text(),
-                    })),
-                );
+        const syncStatus = () => {
+            setStatus(
+                getTabExecutionStatus(
+                    sourcePanel.api.getParameters<EditorPanelParams>(),
+                ),
+            );
+        };
 
-                const firstNewTabId = tabs.length;
+        syncStatus();
 
-                fileContents.forEach((fileContent, index) => {
-                    const nextTabId = firstNewTabId + index;
-                    addTab("query");
-                    updateTab(nextTabId, {
-                        value: fileContent.value,
-                    });
-                });
+        const subscription = sourcePanel.api.onDidParametersChange(syncStatus);
 
-                selectTab(firstNewTabId + fileContents.length - 1);
-            } catch (error) {
-                console.error(error);
-                toast.error("Failed to open SQL file", {
-                    description: "Please try dropping the file again.",
-                });
-            }
-        },
-        [addTab, selectTab, tabs.length, updateTab],
-    );
+        return () => subscription.dispose();
+    }, [props.containerApi, sourcePanelId]);
 
-    const handleRejectedFiles = useCallback((files: File[]) => {
-        if (!files.length) return;
+    useEffect(() => {
+        const syncPairVisibility = () => {
+            setIsVisibleToUser(
+                isPanelPairVisible(props.containerApi, sourcePanelId),
+            );
+        };
 
-        toast.error("Unsupported file type", {
-            description: "Only .sql files can be opened here.",
+        syncPairVisibility();
+
+        const sourcePanel = props.containerApi.getPanel(sourcePanelId);
+        const resultsPanel = props.containerApi.getPanel(
+            `${sourcePanelId}${RESULTS_PANEL_SUFFIX}`,
+        );
+        const sourceVisibilitySubscription =
+            sourcePanel?.api.onDidVisibilityChange(syncPairVisibility);
+        const resultsVisibilitySubscription =
+            resultsPanel?.api.onDidVisibilityChange(syncPairVisibility);
+        const onActivePanelChange =
+            props.containerApi.onDidActivePanelChange(syncPairVisibility);
+        const onAddPanel = props.containerApi.onDidAddPanel(syncPairVisibility);
+        const onRemovePanel =
+            props.containerApi.onDidRemovePanel(syncPairVisibility);
+        const onLayoutChange =
+            props.containerApi.onDidLayoutChange(syncPairVisibility);
+
+        return () => {
+            sourceVisibilitySubscription?.dispose();
+            resultsVisibilitySubscription?.dispose();
+            onActivePanelChange.dispose();
+            onAddPanel.dispose();
+            onRemovePanel.dispose();
+            onLayoutChange.dispose();
+        };
+    }, [props.containerApi, sourcePanelId]);
+
+    const dismissResolvedStatus = useCallback(() => {
+        if (!isResolvedExecutionStatus(status)) {
+            return;
+        }
+
+        const sourcePanel = props.containerApi.getPanel(sourcePanelId);
+        if (!sourcePanel) {
+            return;
+        }
+
+        const sourceParams = sourcePanel.api.getParameters<EditorPanelParams>();
+        const sourceStatus = getTabExecutionStatus(sourceParams);
+
+        if (!isResolvedExecutionStatus(sourceStatus)) {
+            return;
+        }
+
+        sourcePanel.api.updateParameters({
+            ...sourceParams,
+            tabExecutionStatus: "",
         });
-    }, []);
+    }, [props.containerApi, sourcePanelId, status]);
 
     return (
-        <DropZone
-            supportedExtensions={["sql"]}
-            onFilesDrop={handleFilesDrop}
-            onRejectedFiles={handleRejectedFiles}
-            className={cn("flex flex-col flex-1 h-full gap-1 relative pt-2")}>
-            <ConsoleEditorTabsSelector
-                tabs={tabs}
-                selectedTabId={selectedTabId}
-                selectTab={selectTab}
-                removeTab={removeTab}
-                addTab={addTab}
-                limit={limit}
-                setLimit={setLimit}
+        <div
+            className="relative h-full w-full"
+            onPointerDown={dismissResolvedStatus}>
+            {status ? (
+                <span className="pointer-events-none absolute left-0.5 top-1/2 z-[1] -translate-y-1/2">
+                    {!isVisibleToUser ? (
+                        <span
+                            className={cn(
+                                "absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full animate-ping",
+                                TAB_EXECUTION_DOT_COLOR_CLASS[status].pulse,
+                            )}
+                            style={{
+                                animationDuration: "700ms",
+                            }}
+                        />
+                    ) : null}
+                    <span
+                        className={cn(
+                            "relative block h-1.5 w-1.5 rounded-full",
+                            TAB_EXECUTION_DOT_COLOR_CLASS[status].core,
+                            !isVisibleToUser &&
+                                "shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_0_10px_rgba(255,255,255,0.2)]",
+                        )}
+                    />
+                </span>
+            ) : null}
+            <DockviewDefaultTab
+                {...props}
+                style={status ? { paddingLeft: "1rem" } : undefined}
             />
-            <div className="flex-1 h-full">
-                <PGSQLEditor
-                    ref={editorRef}
-                    key={selectedTabId}
-                    value={tabs[selectedTabId].value}
-                    autocomplete={autocomplete}
-                    highlightRange={highlightRange}
-                    highlightVariant={highlightVariant}
-                    onChange={(value) => {
-                        updateTab(selectedTabId, {
-                            value,
-                        });
-                    }}
-                    onExecute={handleExecute}
-                    onExecuteInNewTab={handleExecuteInNewTab}
+        </div>
+    );
+};
+
+const tabComponents = {
+    [CONSOLE_EDITOR_PANEL_COMPONENT]: ExecutionStatusTab,
+    [CONSOLE_RESULTS_PANEL_COMPONENT]: ExecutionStatusTab,
+};
+
+const HeaderActionButton: FC<{
+    title: string;
+    onClick: () => void;
+    icon: FC<SVGProps<SVGSVGElement>>;
+    className?: string;
+}> = ({ title, onClick, icon: Icon, className }) => (
+    <Button
+        size="icon"
+        variant="ghost"
+        title={title}
+        onClick={onClick}
+        className={cn(
+            "border-r-[0.5px] border-l-[0.5px] rounded-none size-9 text-foreground/50 hover:text-foreground",
+            className,
+        )}>
+        <Icon className="size-3" />
+    </Button>
+);
+
+const LeftHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => (
+    <div className="flex h-full items-center">
+        <HeaderActionButton
+            title="Add tab"
+            onClick={() => {
+                props.containerApi.addPanel({
+                    id: createPanelId(),
+                    component: CONSOLE_EDITOR_PANEL_COMPONENT,
+                    tabComponent: CONSOLE_EDITOR_PANEL_COMPONENT,
+                    title: getNextEditorPanelTitle(props.containerApi),
+                    params: createEditorPanelParams(),
+                    position: {
+                        referenceGroup: props.group,
+                    },
+                });
+            }}
+            icon={PlusIcon}
+        />
+    </div>
+);
+
+const RightHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => {
+    const [isMaximized, setIsMaximized] = useState<boolean>(
+        props.containerApi.hasMaximizedGroup(),
+    );
+
+    useEffect(() => {
+        const disposable = props.containerApi.onDidMaximizedGroupChange(() => {
+            setIsMaximized(props.containerApi.hasMaximizedGroup());
+        });
+
+        return () => disposable.dispose();
+    }, [props.containerApi]);
+
+    return (
+        <div className="flex h-full items-center">
+            <HeaderActionButton
+                title={isMaximized ? "Minimize view" : "Maximize view"}
+                className="border-r-0"
+                onClick={() => {
+                    if (props.containerApi.hasMaximizedGroup()) {
+                        props.containerApi.exitMaximizedGroup();
+                        return;
+                    }
+
+                    props.activePanel?.api.maximize();
+                }}
+                icon={isMaximized ? MinimizeIcon : MaximizeIcon}
+            />
+        </div>
+    );
+};
+
+const sanitizeResultEntry = (entry: unknown) => {
+    if (!entry || typeof entry !== "object") {
+        return null;
+    }
+
+    const result = entry as Record<string, unknown>;
+    const status = result.status;
+
+    if (status === "pending" || status === "running") {
+        return null;
+    }
+
+    return result;
+};
+
+const ensureAtLeastOneQueryTab = (containerApi: DockviewReadyEvent["api"]) => {
+    if (containerApi.panels.length > 0) {
+        return;
+    }
+
+    containerApi.addPanel({
+        id: createPanelId(),
+        component: CONSOLE_EDITOR_PANEL_COMPONENT,
+        tabComponent: CONSOLE_EDITOR_PANEL_COMPONENT,
+        title: createPanelTitle(1),
+        params: createEditorPanelParams(),
+    });
+};
+
+const getPanelGroupId = (panel: unknown) => {
+    if (!panel || typeof panel !== "object") {
+        return undefined;
+    }
+
+    const panelRecord = panel as Record<string, unknown>;
+    const directGroup = panelRecord.group;
+
+    if (directGroup && typeof directGroup === "object") {
+        const groupId = (directGroup as Record<string, unknown>).id;
+        return typeof groupId === "string" ? groupId : undefined;
+    }
+
+    const panelApi = panelRecord.api;
+    if (!panelApi || typeof panelApi !== "object") {
+        return undefined;
+    }
+
+    const apiGroup = (panelApi as Record<string, unknown>).group;
+    if (!apiGroup || typeof apiGroup !== "object") {
+        return undefined;
+    }
+
+    const groupId = (apiGroup as Record<string, unknown>).id;
+    return typeof groupId === "string" ? groupId : undefined;
+};
+
+const sanitizeLayout = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+        return value.map((entry) => sanitizeLayout(entry));
+    }
+
+    if (!value || typeof value !== "object") {
+        return value;
+    }
+
+    const record = value as Record<string, unknown>;
+    const sanitized: Record<string, unknown> = {};
+
+    const hasResults =
+        Object.prototype.hasOwnProperty.call(record, "results") &&
+        Array.isArray(record.results);
+    let sanitizedResults: unknown[] | null = null;
+
+    Object.entries(record).forEach(([key, entry]) => {
+        if (key === "results" && Array.isArray(entry)) {
+            sanitizedResults = entry
+                .map((result) => sanitizeResultEntry(result))
+                .filter((result) => result !== null);
+            sanitized[key] = sanitizedResults;
+            return;
+        }
+
+        if (key === "runOnMountMode" || key === "tabExecutionStatus") {
+            return;
+        }
+
+        sanitized[key] = sanitizeLayout(entry);
+    });
+
+    if (hasResults) {
+        const selectedResultIndex = Number(sanitized.selectedResultIndex);
+        const resultsLength =
+            (sanitizedResults as unknown[] | null)?.length ?? 0;
+
+        sanitized.selectedResultIndex =
+            resultsLength > 0
+                ? Number.isFinite(selectedResultIndex)
+                    ? Math.min(
+                          Math.max(0, selectedResultIndex),
+                          resultsLength - 1,
+                      )
+                    : 0
+                : 0;
+    }
+
+    return sanitized;
+};
+
+export const ConsoleEditor: FC = () => {
+    const { selectRelatedResultOnTabChange, setConsoleEditorApi } =
+        useConsole();
+    const [api, setApi] = useState<DockviewReadyEvent["api"]>();
+    const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
+
+    const onReady = (event: DockviewReadyEvent) => {
+        setApi(event.api);
+        setConsoleEditorApi(event.api);
+
+        let restored = false;
+        const rawLayout = localStorage.getItem(
+            CONSOLE_EDITOR_LAYOUT_STORAGE_KEY,
+        );
+        if (rawLayout) {
+            try {
+                const sanitizedLayout = sanitizeLayout(JSON.parse(rawLayout));
+                event.api.fromJSON(sanitizedLayout as SerializedDockview);
+                restored = true;
+            } catch (error) {
+                console.warn("Failed to restore console editor layout:", error);
+            }
+        }
+
+        if (restored) {
+            ensureAtLeastOneQueryTab(event.api);
+            return;
+        }
+
+        Array.from({ length: INITIAL_CONSOLE_EDITOR_PANELS }).forEach(() => {
+            addEditorPanel(event.api);
+        });
+    };
+
+    useEffect(() => {
+        return () => {
+            setConsoleEditorApi(undefined);
+        };
+    }, [setConsoleEditorApi]);
+
+    useEffect(() => {
+        if (!api) {
+            return;
+        }
+
+        const panelDisposables = new Map<string, { dispose: () => void }>();
+        let persistTimeout: number | undefined;
+
+        const persistLayout = () => {
+            try {
+                localStorage.setItem(
+                    CONSOLE_EDITOR_LAYOUT_STORAGE_KEY,
+                    JSON.stringify(sanitizeLayout(api.toJSON())),
+                );
+            } catch (error) {
+                console.warn("Failed to save console editor layout:", error);
+            }
+        };
+
+        const schedulePersistLayout = () => {
+            if (persistTimeout !== undefined) {
+                window.clearTimeout(persistTimeout);
+            }
+
+            persistTimeout = window.setTimeout(() => {
+                persistTimeout = undefined;
+                persistLayout();
+            }, 120);
+        };
+
+        const bindPanelSubscriptions = () => {
+            const panelIds = new Set(api.panels.map((panel) => panel.id));
+
+            panelDisposables.forEach((disposable, panelId) => {
+                if (panelIds.has(panelId)) {
+                    return;
+                }
+
+                disposable.dispose();
+                panelDisposables.delete(panelId);
+            });
+
+            api.panels.forEach((panel) => {
+                if (panelDisposables.has(panel.id)) {
+                    return;
+                }
+
+                const onParamsChange = panel.api.onDidParametersChange(() => {
+                    schedulePersistLayout();
+                });
+
+                panelDisposables.set(panel.id, {
+                    dispose: () => onParamsChange.dispose(),
+                });
+            });
+        };
+
+        const syncPersistence = () => {
+            bindPanelSubscriptions();
+            schedulePersistLayout();
+        };
+
+        const handleBeforeUnload = () => {
+            persistLayout();
+        };
+
+        syncPersistence();
+
+        window.addEventListener("beforeunload", handleBeforeUnload);
+
+        const onAdd = api.onDidAddPanel(syncPersistence);
+        const onRemove = api.onDidRemovePanel(syncPersistence);
+        const onLayoutChange = api.onDidLayoutChange(syncPersistence);
+
+        return () => {
+            window.removeEventListener("beforeunload", handleBeforeUnload);
+            if (persistTimeout !== undefined) {
+                window.clearTimeout(persistTimeout);
+            }
+
+            panelDisposables.forEach((disposable) => disposable.dispose());
+            onAdd.dispose();
+            onRemove.dispose();
+            onLayoutChange.dispose();
+        };
+    }, [api]);
+
+    useEffect(() => {
+        if (!api) {
+            return;
+        }
+
+        const ensureQueryTab = () => {
+            ensureAtLeastOneQueryTab(api);
+        };
+
+        ensureQueryTab();
+
+        const onAdd = api.onDidAddPanel(ensureQueryTab);
+        const onRemove = api.onDidRemovePanel(ensureQueryTab);
+        const onLayoutChange = api.onDidLayoutChange(ensureQueryTab);
+
+        return () => {
+            onAdd.dispose();
+            onRemove.dispose();
+            onLayoutChange.dispose();
+        };
+    }, [api]);
+
+    useEffect(() => {
+        if (!api) {
+            return;
+        }
+
+        const subscription = api.onDidActivePanelChange((activePanel) => {
+            if (!activePanel) {
+                return;
+            }
+
+            const sourcePanelId = getSourceEditorPanelId(
+                activePanel.id,
+                activePanel.id.endsWith(RESULTS_PANEL_SUFFIX)
+                    ? activePanel.api.getParameters<ResultsPanelParams>()
+                          ?.sourcePanelId
+                    : undefined,
+            );
+            const sourcePanel = api.getPanel(sourcePanelId);
+
+            if (!sourcePanel) {
+                return;
+            }
+
+            const sourceParams =
+                sourcePanel.api.getParameters<EditorPanelParams>();
+            const sourceStatus = getTabExecutionStatus(sourceParams);
+
+            if (!isResolvedExecutionStatus(sourceStatus)) {
+                return;
+            }
+
+            sourcePanel.api.updateParameters({
+                ...sourceParams,
+                tabExecutionStatus: "",
+            });
+        });
+
+        return () => subscription.dispose();
+    }, [api]);
+
+    useEffect(() => {
+        if (!api || !selectRelatedResultOnTabChange) {
+            return;
+        }
+
+        let syncing = false;
+        const subscription = api.onDidActivePanelChange((activePanel) => {
+            if (syncing || !activePanel) {
+                return;
+            }
+
+            const activePanelId = activePanel.id;
+            if (typeof activePanelId !== "string") {
+                return;
+            }
+
+            const isResultsPanel = activePanelId.endsWith(RESULTS_PANEL_SUFFIX);
+            const relatedPanelId = isResultsPanel
+                ? (activePanel.api.getParameters<ResultsPanelParams>()
+                      ?.sourcePanelId ??
+                  activePanelId.slice(0, -RESULTS_PANEL_SUFFIX.length))
+                : `${activePanelId}${RESULTS_PANEL_SUFFIX}`;
+
+            if (!relatedPanelId || relatedPanelId === activePanelId) {
+                return;
+            }
+
+            const relatedPanel = api.getPanel(relatedPanelId);
+
+            if (!relatedPanel) {
+                return;
+            }
+
+            const sourceGroupId = getPanelGroupId(activePanel);
+            const relatedGroupId = getPanelGroupId(relatedPanel);
+
+            if (
+                sourceGroupId &&
+                relatedGroupId &&
+                sourceGroupId === relatedGroupId
+            ) {
+                return;
+            }
+
+            syncing = true;
+
+            try {
+                relatedPanel.api.setActive();
+                activePanel.api.setActive();
+            } finally {
+                syncing = false;
+            }
+        });
+
+        return () => subscription.dispose();
+    }, [api, selectRelatedResultOnTabChange]);
+
+    return (
+        <div ref={containerRef} className="relative flex h-dvh w-full flex-col">
+            <ConsoleEditorTopbar />
+            <div className="flex-1 min-h-0">
+                <DockviewReact
+                    onReady={onReady}
+                    components={components}
+                    defaultTabComponent={ExecutionStatusTab}
+                    tabComponents={tabComponents}
+                    leftHeaderActionsComponent={LeftHeaderActions}
+                    rightHeaderActionsComponent={RightHeaderActions}
                 />
             </div>
-            <div className="absolute bottom-2 right-5.5 flex gap-1">
-                {isMaximized && (
-                    <Button
-                        variant="secondary"
-                        size="icon"
-                        onClick={() => {
-                            toggleMaximizedResults();
-                        }}>
-                        X
-                    </Button>
-                )}
-                <OpenSavedQueriesModalButton
-                    query={tabs[selectedTabId].value}
-                />
-                <ExecuteQueryButton
-                    handleJobId={() => undefined}
-                    onExecute={handleExecute}
-                    query={tabs[selectedTabId].value}
-                    bind_vars={tabs[selectedTabId].bind_vars}
-                    limit={limit}
-                    saveToHistory={true}
-                    onExecuteInNewTab={handleExecuteInNewTab}
-                />
-            </div>
-        </DropZone>
+        </div>
     );
 };

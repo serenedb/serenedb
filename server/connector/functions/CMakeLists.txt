@@ -4,9 +4,9 @@ target_sources(
         array.cpp
         cast.cpp
         inout.cpp
+        math.cpp
         string.cpp
         system.cpp
-        vector.cpp
         search.cpp
-        math.cpp
+        vector.cpp
 )

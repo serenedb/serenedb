@@ -39,10 +39,7 @@ using ColumnWarmupCallback =
                      const ColumnReader& column)>;
 
 // Scorers allowed to be used in conjunction with wanderator.
-// using ScorersView = std::span<const Scorer* const>;
 using ScorerPtr = const Scorer*;
-
-inline constexpr size_t kMaxScorers = 1;
 
 struct WandContext {
   static constexpr auto kDisable = std::numeric_limits<uint8_t>::max();

@@ -314,7 +314,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   // If this assertion breaks and you really need to test wanderators
   // with different number of buckets you should adjust GetWanderator
   // and set it proper count of scorers as it currently expect only one.
-  // EXPECT_EQ(scorers.size(), 1);
+  EXPECT_TRUE(scorer);
   auto codec = get_codec();
   EXPECT_NE(nullptr, codec);
   auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
@@ -343,8 +343,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     writer->Write(it, term_meta);
     const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
-    const uint64_t expected_has_wand{irs::IndexFeatures::None !=
-                                     (features & irs::IndexFeatures::Freq)};
+    const uint64_t expected_has_wand = irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_wand, stats.has_wand);
     writer->Encode(*out, term_meta);
     writer->End();

@@ -50,8 +50,6 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
-static_assert(kMaxScorers < WandContext::kDisable);
-
 template<uint8_t Value>
 struct Extent {
   IRS_FORCE_INLINE static constexpr uint8_t GetExtent() noexcept {

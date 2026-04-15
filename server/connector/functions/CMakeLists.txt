@@ -8,4 +8,5 @@ target_sources(
         system.cpp
         vector.cpp
         search.cpp
+        math.cpp
 )

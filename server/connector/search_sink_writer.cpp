@@ -263,10 +263,11 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     _field.PrepareForNumericValue();
     using T = NumericSliceType<Kind>;
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter<irs::Action::INDEX>(make_nullable_writer_func(&WriteNumericValue<T>));
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+        make_nullable_writer_func(&WriteNumericValue<T>));
     } else {
-      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteNumericValue<T>);
+      _current_writer =
+        MakeIndexWriter<irs::Action::INDEX>(&WriteNumericValue<T>);
     }
   } else {
     // Defensive: SwitchColumnImpl only calls this for Kinds handled above.

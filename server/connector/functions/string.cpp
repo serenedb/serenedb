@@ -143,9 +143,9 @@ void GetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [](duckdb::string_t data, int32_t offset) -> int32_t {
       if (offset < 0 || offset >= static_cast<int32_t>(data.GetSize())) {
-        throw duckdb::InvalidInputException(
-          "index %d out of valid range, 0..%d", offset,
-          static_cast<int32_t>(data.GetSize()) - 1);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("index ", offset, " out of valid range, 0..",
+                                static_cast<int32_t>(data.GetSize()) - 1));
       }
       return static_cast<uint8_t>(data.GetData()[offset]);
     });
@@ -160,14 +160,64 @@ void SetByteFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t data, int32_t offset,
         int32_t value) -> duckdb::string_t {
       if (offset < 0 || offset >= static_cast<int32_t>(data.GetSize())) {
-        throw duckdb::InvalidInputException(
-          "index %d out of valid range, 0..%d", offset,
-          static_cast<int32_t>(data.GetSize()) - 1);
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("index ", offset, " out of valid range, 0..",
+                                static_cast<int32_t>(data.GetSize()) - 1));
       }
       auto target = duckdb::StringVector::EmptyString(result, data.GetSize());
       auto out = target.GetDataWriteable();
       memcpy(out, data.GetData(), data.GetSize());
       out[offset] = static_cast<char>(value & 0xff);
+      target.Finalize();
+      return target;
+    });
+}
+
+// get_bit(bytea, offset) -> integer -- ported from PgGetBit
+void GetBitFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, int32_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [](duckdb::string_t data, int64_t bit_offset) -> int32_t {
+      if (bit_offset < 0 ||
+          bit_offset >= static_cast<int64_t>(data.GetSize()) * 8) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+          ERR_MSG("index ", bit_offset, " out of valid range, 0..",
+                  static_cast<int64_t>(data.GetSize()) * 8 - 1));
+      }
+      int64_t byte_idx = bit_offset / 8;
+      int bit_idx = static_cast<int>(bit_offset % 8);
+      return (static_cast<uint8_t>(data.GetData()[byte_idx]) >> bit_idx) & 1;
+    });
+}
+
+// set_bit(bytea, offset, value) -> bytea -- ported from PgSetBit
+void SetBitFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                    duckdb::Vector& result) {
+  duckdb::TernaryExecutor::Execute<duckdb::string_t, int64_t, int32_t,
+                                   duckdb::string_t>(
+    args.data[0], args.data[1], args.data[2], result, args.size(),
+    [&](duckdb::string_t data, int64_t bit_offset,
+        int32_t value) -> duckdb::string_t {
+      if (bit_offset < 0 ||
+          bit_offset >= static_cast<int64_t>(data.GetSize()) * 8) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+          ERR_MSG("index ", bit_offset, " out of valid range, 0..",
+                  static_cast<int64_t>(data.GetSize()) * 8 - 1));
+      }
+      int64_t byte_idx = bit_offset / 8;
+      int bit_idx = static_cast<int>(bit_offset % 8);
+      auto target = duckdb::StringVector::EmptyString(result, data.GetSize());
+      auto out = target.GetDataWriteable();
+      memcpy(out, data.GetData(), data.GetSize());
+      auto& byte = out[byte_idx];
+      if (value) {
+        byte |= (1 << bit_idx);
+      } else {
+        byte &= ~(1 << bit_idx);
+      }
       target.Finalize();
       return target;
     });
@@ -1020,6 +1070,21 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
      duckdb::LogicalType::INTEGER},
     duckdb::LogicalType::BLOB,
     SetByteFunction});
+
+  // get_bit(bytea, bigint) -> int
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "get_bit",
+    {duckdb::LogicalType::BLOB, duckdb::LogicalType::BIGINT},
+    duckdb::LogicalType::INTEGER,
+    GetBitFunction});
+
+  // set_bit(bytea, bigint, int) -> bytea
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "set_bit",
+    {duckdb::LogicalType::BLOB, duckdb::LogicalType::BIGINT,
+     duckdb::LogicalType::INTEGER},
+    duckdb::LogicalType::BLOB,
+    SetBitFunction});
 
   // convert_from(bytea, encoding) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{

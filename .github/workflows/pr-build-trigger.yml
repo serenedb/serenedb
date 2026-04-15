@@ -1,6 +1,8 @@
 name: auto | pr trigger
 
 on:
+  pull_request:
+    types: [opened, labeled]
   pull_request_target:
     types: [opened, labeled]
   issue_comment:
@@ -13,7 +15,10 @@ concurrency:
 jobs:
   post-checkboxes:
     if: >-
-      github.event_name == 'pull_request_target' && (
+      (
+        (github.event_name == 'pull_request'        && github.event.pull_request.head.repo.full_name == github.repository) ||
+        (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository)
+      ) && (
         github.event.action == 'opened' ||
         (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
       )
@@ -85,12 +90,14 @@ jobs:
             core.setOutput('branch', pr.head.ref);
             core.setOutput('sha', pr.head.sha);
             core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('is_fork', (pr.head.repo.full_name !== pr.base.repo.full_name).toString());
 
       - name: Parse options and trigger build
         env:
           PR_BRANCH: ${{ steps.pr-info.outputs.branch }}
           PR_SHA: ${{ steps.pr-info.outputs.sha }}
           BASE_REF: ${{ steps.pr-info.outputs.base_ref }}
+          IS_FORK: ${{ steps.pr-info.outputs.is_fork }}
         uses: actions/github-script@v8
         with:
           script: |
@@ -99,6 +106,8 @@ jobs:
             const branch = process.env.PR_BRANCH;
             const sha = process.env.PR_SHA;
             const baseRef = process.env.BASE_REF;
+            const isFork = process.env.IS_FORK === 'true';
+            const dispatchRef = isFork ? baseRef : branch;
 
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
@@ -117,9 +126,9 @@ jobs:
               context: statusContext,
             });
 
-            // Cancel in-progress runs on the base branch
+            // Cancel in-progress runs on the dispatch branch
             const { data: runs } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef,
+              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef,
               status: 'in_progress', per_page: 10,
             });
             for (const run of runs.workflow_runs) {
@@ -128,7 +137,7 @@ jobs:
             }
             // Also cancel queued/waiting runs
             const { data: queued } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef,
+              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef,
               status: 'queued', per_page: 10,
             });
             for (const run of queued.workflow_runs) {
@@ -138,14 +147,14 @@ jobs:
 
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch: baseRef, per_page: 1,
+              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef, per_page: 1,
             });
             const prevId = before.workflow_runs[0]?.id || 0;
 
             await github.rest.actions.createWorkflowDispatch({
               owner, repo,
               workflow_id: 'build-manual.yml',
-              ref: baseRef,
+              ref: dispatchRef,
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
                 ENABLE_ASAN: enableAsan.toString(),
@@ -156,17 +165,18 @@ jobs:
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
+                  PR_BRANCH: branch,
                   PR_STATUS_CONTEXT: statusContext,
                 }),
               },
             });
 
             // Wait for the new run to appear (up to 30s)
-            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(baseRef)}`;
+            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(dispatchRef)}`;
             for (let i = 0; i < 6; i++) {
               await new Promise(r => setTimeout(r, 5000));
               const { data: after } = await github.rest.actions.listWorkflowRuns({
-                owner, repo, workflow_id: 'build-manual.yml', branch: baseRef, per_page: 3,
+                owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef, per_page: 3,
               });
               const run = after.workflow_runs.find(r => r.id > prevId);
               if (run) {

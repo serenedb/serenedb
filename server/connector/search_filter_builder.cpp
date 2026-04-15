@@ -30,6 +30,7 @@
 
 #include <velox/expression/ExprConstants.h>
 #include <velox/type/Type.h>
+#include <velox/type/Variant.h>
 
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
@@ -47,6 +48,8 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
+#include <optional>
+#include <type_traits>
 
 #include "catalog/mangling.h"
 #include "functions/search.h"
@@ -69,6 +72,35 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
                            const velox::core::TypedExprPtr& expr);
 
 namespace {
+
+template<velox::TypeKind Kind>
+std::optional<size_t> ReadGapValueImpl(const velox::Variant& v) {
+  using T = velox::TypeTraits<Kind>::NativeType;
+  static_assert(std::is_integral_v<T>, "Gap argument should be integral");
+  const auto value = v.value<T>();
+  if (value < 0) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(value);
+}
+
+std::optional<size_t> ReadGapValue(const velox::Variant& v) {
+  if (v.isNull()) {
+    return std::nullopt;
+  }
+  switch (v.kind()) {
+    case velox::TypeKind::BIGINT:
+      return ReadGapValueImpl<velox::TypeKind::BIGINT>(v);
+    case velox::TypeKind::INTEGER:
+      return ReadGapValueImpl<velox::TypeKind::INTEGER>(v);
+    case velox::TypeKind::SMALLINT:
+      return ReadGapValueImpl<velox::TypeKind::SMALLINT>(v);
+    case velox::TypeKind::TINYINT:
+      return ReadGapValueImpl<velox::TypeKind::TINYINT>(v);
+    default:
+      return std::nullopt;
+  }
+}
 
 template<typename SearchType>
 void ResetNumericStream(irs::NumericTokenizer& stream,
@@ -708,16 +740,6 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
   size_t pending_gap_min = 0;
   size_t pending_gap_max = 0;
 
-  auto extract_uint = [](const velox::Variant& v) -> std::optional<size_t> {
-    if (v.kind() == velox::TypeKind::BIGINT) {
-      return static_cast<size_t>(v.value<int64_t>());
-    }
-    if (v.kind() == velox::TypeKind::INTEGER) {
-      return static_cast<size_t>(v.value<int32_t>());
-    }
-    return std::nullopt;
-  };
-
   for (size_t i = 1; i < call.inputs().size(); ++i) {
     const auto& input = call.inputs()[i];
     const auto kind = input->type()->kind();
@@ -748,26 +770,6 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
         }
         break;
       }
-      case velox::TypeKind::BIGINT:
-      case velox::TypeKind::INTEGER: {
-        if (opts->empty()) {
-          return {ERROR_BAD_PARAMETER, "PHRASE gap at argument ", i,
-                  " must be preceded by a text pattern"};
-        }
-        if (has_pending_gap) {
-          return {ERROR_BAD_PARAMETER,
-                  "PHRASE has consecutive gaps at argument ", i};
-        }
-        auto value = EvaluateConstant(input);
-        if (!value.has_value()) {
-          return {ERROR_BAD_PARAMETER, "PHRASE gap argument ", i,
-                  " must be a constant"};
-        }
-        const auto gap = extract_uint(value.value()).value();
-        pending_gap_min = pending_gap_max = gap;
-        has_pending_gap = true;
-        break;
-      }
       case velox::TypeKind::ARRAY: {
         if (opts->empty()) {
           return {ERROR_BAD_PARAMETER, "PHRASE gap at argument ", i,
@@ -788,11 +790,11 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
                   " must have exactly 2 elements [min, max], got ",
                   elements.size()};
         }
-        const auto min_val = extract_uint(elements[0]);
-        const auto max_val = extract_uint(elements[1]);
+        const auto min_val = ReadGapValue(elements[0]);
+        const auto max_val = ReadGapValue(elements[1]);
         if (!min_val || !max_val) {
           return {ERROR_BAD_PARAMETER, "PHRASE gap array at argument ", i,
-                  " elements must be integers"};
+                  " elements must be non-negative integers"};
         }
         if (*min_val > *max_val) {
           return {ERROR_BAD_PARAMETER,
@@ -810,9 +812,29 @@ Result FromSearchPhrase(irs::BooleanFilter& filter,
         break;
       }
       default: {
-        return {
-          ERROR_BAD_PARAMETER, "PHRASE argument ", i,
-          " has unsupported type; expected text, integer, or integer array"};
+        auto value = EvaluateConstant(input);
+        if (!value.has_value()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap argument ", i,
+                  " must be a constant"};
+        }
+        const auto gap = ReadGapValue(value.value());
+        if (!gap) {
+          return {ERROR_BAD_PARAMETER, "PHRASE argument ", i,
+                  " has unsupported type; expected text, non-negative integer, "
+                  "or non-negative integer array"};
+        }
+
+        if (opts->empty()) {
+          return {ERROR_BAD_PARAMETER, "PHRASE gap at argument ", i,
+                  " must be preceded by a text pattern"};
+        }
+        if (has_pending_gap) {
+          return {ERROR_BAD_PARAMETER,
+                  "PHRASE has consecutive gaps at argument ", i};
+        }
+        pending_gap_min = pending_gap_max = gap.value();
+        has_pending_gap = true;
+        break;
       }
     }
   }

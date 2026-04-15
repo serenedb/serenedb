@@ -21,6 +21,7 @@
 #include "connector/functions/system.h"
 
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
@@ -50,9 +51,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
         duckdb::idx_t idx) -> duckdb::string_t {
       std::string key{name.GetData(), name.GetSize()};
       duckdb::Value value;
-      // Gate internal settings we don't want to expose,
-      // so check the allowlist after resolving the value.
-      if (context.TryGetCurrentSetting(key, value) && HasDefault(key)) {
+      if (context.TryGetCurrentSetting(key, value)) {
         return duckdb::StringVector::AddString(result, value.ToString());
       }
       if (missing_ok) {
@@ -75,16 +74,16 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, duckdb::string_t value,
         bool is_local) -> duckdb::string_t {
-      std::string key{name.GetData(), name.GetSize()};
-      std::string val{value.GetData(), value.GetSize()};
-      // Only allowlisted settings are accessible
-      if (!HasDefault(key)) {
-        throw duckdb::InvalidInputException(
-          "unrecognized configuration parameter \"%s\"", key);
-      }
-      auto& conn_ctx = GetSereneDBContext(context);
-      conn_ctx.SetSetting(key, val, is_local);
-      return duckdb::StringVector::AddString(result, val);
+      duckdb::Value val{std::string{value.GetData(), value.GetSize()}};
+      duckdb::PhysicalSet::SetVariable(
+        context, duckdb::String::Reference(name.GetData(), name.GetSize()),
+        is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::AUTOMATIC, val);
+
+      // Return actual stored value (callbacks may have modified it).
+      duckdb::Value current;
+      const bool ok = context.TryGetCurrentSetting(name.GetString(), current);
+      SDB_ASSERT(ok);
+      return duckdb::StringVector::AddString(result, current.ToString());
     });
 }
 

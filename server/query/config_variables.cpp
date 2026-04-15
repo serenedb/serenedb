@@ -24,6 +24,7 @@
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/config.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <string>
 
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
@@ -34,10 +35,26 @@
 #include "pg/connection_context.h"
 #include "pg/isolation_level.h"
 #include "query/config.h"
+#include "vpack/serializer.h"
 
 namespace sdb {
 
 using duckdb::LogicalTypeId;
+
+namespace {
+
+template<vpack::detail::FixedString Name>
+void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
+  throw duckdb::InvalidInputException{"parameter \"%s\" cannot be changed",
+                                      std::string_view{Name}.data()};
+}
+
+void EnsureNotLocal(std::string_view name, duckdb::SetScope scope) {
+  if (scope == duckdb::SetScope::LOCAL) {
+    throw duckdb::InvalidInputException{
+      "parameter \"%s\" cannot be set locally", name};
+  }
+}
 
 constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
@@ -51,32 +68,34 @@ constexpr std::pair<std::string_view, VariableDescription>
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
         "clear all.",
         "",
-        nullptr,
-        [](duckdb::ClientContext&, duckdb::SetScope scope, const std::string&,
-           duckdb::Value& value, bool is_reset) {
-          if (scope == duckdb::SetScope::LOCAL) {
-            throw duckdb::InvalidInputException(
-              "sdb_faults cannot be set locally");
-          }
-          if (is_reset) {
-            ClearFailurePointsDebugging();
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& value) {
+          static constexpr std::string_view kName = "sdb_faults";
+          EnsureNotLocal(kName, scope);
+
+          auto s = value.ToString();
+          if (s.starts_with('-')) {
+            if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
+              throw duckdb::InvalidInputException("failure point '%s' not set",
+                                                  s);
+            }
           } else {
-            auto s = value.ToString();
-            if (s.starts_with('-')) {
-              if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
-                throw duckdb::InvalidInputException(
-                  "failure point '%s' not set", s);
-              }
-            } else {
-              if (!AddFailurePointDebugging(s)) {
-                throw duckdb::InvalidInputException(
-                  "failure point '%s' already set", s);
-              }
+            if (!AddFailurePointDebugging(s)) {
+              throw duckdb::InvalidInputException(
+                "failure point '%s' already set", s);
             }
           }
-          // Sync stored value to reflect current state
           auto points = GetFailurePointsDebugging();
           value = duckdb::Value(absl::StrJoin(points, ","));
+
+          connector::GetSereneDBContext(ctx).OnSet(kName, false);
+        },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+          static constexpr std::string_view kName = "sdb_faults";
+          EnsureNotLocal(kName, scope);
+
+          ClearFailurePointsDebugging();
+          connector::GetSereneDBContext(ctx).OnSet(kName, false);
         },
       },
     },
@@ -93,21 +112,21 @@ constexpr std::pair<std::string_view, VariableDescription>
         "iresearch, memory, replication, requests, rocksdb, search, ssl, "
         "startup, statistics, syscall, threads.",
         "info",
-        nullptr,
-        [](duckdb::ClientContext&, duckdb::SetScope scope, const std::string&,
-           duckdb::Value& value, bool is_reset) {
-          if (scope == duckdb::SetScope::LOCAL) {
-            throw duckdb::InvalidInputException(
-              "parameter \"%s\" is global and cannot be set locally",
-              std::string{log::kLogLevelVariable});
-          }
-          if (is_reset) {
-            log::ResetLogLevels();
-          } else {
-            log::SetLogLevel(value.ToString());
-          }
-          // Sync stored value to reflect current state
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& value) {
+          EnsureNotLocal(log::kLogLevelVariable, scope);
+          log::SetLogLevel(value.ToString());
           value = duckdb::Value(log::LogLevelString());
+
+          connector::GetSereneDBContext(ctx).OnSet(log::kLogLevelVariable,
+                                                   false);
+        },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+          EnsureNotLocal(log::kLogLevelVariable, scope);
+          log::ResetLogLevels();
+
+          connector::GetSereneDBContext(ctx).OnSet(log::kLogLevelVariable,
+                                                   false);
         },
       },
     },
@@ -116,13 +135,24 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the write conflict policy. Valid values are "
-        "'emit_error' "
-        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
+        "'emit_error' (the default), 'do_nothing' (skip conflicted rows) and "
+        "'replace'.",
         "emit_error",
-        [](const duckdb::Value& v) -> bool {
-          return magic_enum::enum_cast<WriteConflictPolicy>(
-                   v.ToString(), magic_enum::case_insensitive)
-            .has_value();
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& value) {
+          static constexpr std::string_view kName = "sdb_write_conflict_policy";
+
+          if (!magic_enum::enum_cast<WriteConflictPolicy>(
+                 value.ToString(), magic_enum::case_insensitive)
+                 .has_value()) {
+            throw duckdb::InvalidInputException(
+              "invalid value for parameter \"%s\": "
+              "\"%s\"",
+              kName.data(), value.ToString());
+          }
+
+          connector::GetSereneDBContext(ctx).OnSet(
+            kName, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
@@ -135,24 +165,25 @@ constexpr std::pair<std::string_view, VariableDescription>
         "true",
       },
     },
-    // pg specific variables
-    {
-      "search_path",
-      {
-        LogicalTypeId::VARCHAR,
-        "Sets the schema search order for names that are not schema-qualified.",
-        "\"$user\", public",
-      },
-    },
     {
       "extra_float_digits",
       {
         LogicalTypeId::INTEGER,
         "Sets the number of digits displayed for floating-point values.",
         "1",
-        [](const duckdb::Value& v) {
-          auto n = v.GetValue<int32_t>();
-          return -15 <= n && n <= 3;
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& value) {
+          static constexpr std::string_view kName = "extra_float_digits";
+
+          auto n = value.GetValue<int32_t>();
+          if (!(-15 <= n && n <= 3)) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"%s\": \"%s\"", kName.data(),
+              value.ToString()};
+          }
+
+          connector::GetSereneDBContext(ctx).OnSet(
+            kName, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
@@ -162,20 +193,30 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the output format for bytea.",
         "hex",
-        [](const duckdb::Value& v) -> bool {
-          return magic_enum::enum_cast<ByteaOutput>(
-                   v.ToString(), magic_enum::case_insensitive)
-            .has_value();
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& value) {
+          static constexpr std::string_view kName = "bytea_output";
+
+          if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
+                                                  magic_enum::case_insensitive)
+                 .has_value()) {
+            throw duckdb::InvalidInputException(
+              "invalid value for parameter \"%s\": \"%s\"", kName.data(),
+              value.ToString());
+          }
+
+          connector::GetSereneDBContext(ctx).OnSet(
+            kName, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
-    // TODO(gnusi): readonly
     {
       "client_encoding",
       {
         LogicalTypeId::VARCHAR,
         "Sets the client's character set encoding.",
         "UTF8",
+        Readonly<"client_encoding">,
       },
     },
     {
@@ -192,17 +233,24 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the transaction isolation level of each new transaction.",
         "repeatable read",
-        [](const duckdb::Value& v) {
-          return pg::IsSupportedIsolationLevel(v.ToString());
-        },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, const std::string&,
-           duckdb::Value& value, bool) {
-          // When set outside a transaction, also update transaction_isolation
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& value) {
+          if (!pg::IsSupportedIsolationLevel(value.ToString())) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"%s\": \"%s\"",
+              pg::kDefaultTransactionIsolation.data(), value.ToString()};
+          }
           auto& conn_ctx = connector::GetSereneDBContext(ctx);
           if (conn_ctx.IsAutoCommit()) {
             conn_ctx.SetSetting(pg::kTransactionIsolation, value.ToString(),
                                 false);
           }
+          conn_ctx.OnSet(pg::kDefaultTransactionIsolation,
+                         scope == duckdb::SetScope::LOCAL);
+        },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+          connector::GetSereneDBContext(ctx).OnSet(
+            pg::kDefaultTransactionIsolation, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
@@ -212,18 +260,15 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the current transaction's isolation level.",
         "repeatable read",
-        [](const duckdb::Value& v) {
-          return pg::IsSupportedIsolationLevel(v.ToString());
-        },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope, const std::string&,
-           duckdb::Value&, bool is_reset) {
-          if (is_reset) {
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& val) {
+          if (!pg::IsSupportedIsolationLevel(val.ToString())) {
             throw duckdb::InvalidInputException(
-              "parameter \"transaction_isolation\" cannot be reset");
+              "invalid value for parameter \"%s\": \"%s\"",
+              pg::kTransactionIsolation.data(), val.ToString());
           }
           auto& conn_ctx = connector::GetSereneDBContext(ctx);
           if (conn_ctx.IsAutoCommit()) {
-            // Silently ignore SET transaction_isolation outside a transaction
             return;
           }
           if (conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) {
@@ -231,97 +276,104 @@ constexpr std::pair<std::string_view, VariableDescription>
               "SET TRANSACTION ISOLATION LEVEL must be called before "
               "any query");
           }
+          conn_ctx.OnSet(pg::kTransactionIsolation,
+                         scope == duckdb::SetScope::LOCAL);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          throw duckdb::InvalidInputException{
+            "parameter \"%s\" cannot be reset",
+            pg::kTransactionIsolation.data()};
         },
       },
     },
-    // TODO(gnusi): readonly
     {
       "default_transaction_read_only",
       {
         LogicalTypeId::BOOLEAN,
         "Sets the default read-only status of new transactions.",
         "off",
+        Readonly<"default_transaction_read_only">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "in_hot_standby",
       {
         LogicalTypeId::BOOLEAN,
         "Shows whether hot standby is currently active.",
         "off",
+        Readonly<"in_hot_standby">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "integer_datetimes",
       {
         LogicalTypeId::BOOLEAN,
         "Shows whether datetimes are integer based.",
         "on",
+        Readonly<"integer_datetimes">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "scram_iterations",
       {
         LogicalTypeId::INTEGER,
         "Sets the iteration count for SCRAM secret generation.",
         "4096",
+        Readonly<"scram_iterations">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "server_encoding",
       {
         LogicalTypeId::VARCHAR,
         "Shows the server (database) character set encoding.",
         "UTF8",
+        Readonly<"server_encoding">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "server_version",
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
         "18.3",
+        Readonly<"server_version">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "standard_conforming_strings",
       {
         LogicalTypeId::BOOLEAN,
         "Causes '...' strings to treat backslashes literally.",
         "on",
+        Readonly<"standard_conforming_strings">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "client_min_messages",
       {
         LogicalTypeId::VARCHAR,
         "Sets the message levels that are sent to the client.",
         "notice",
+        Readonly<"client_min_messages">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "session_authorization",
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
         StaticStrings::kDefaultUser,
+        Readonly<"session_authorization">,
       },
     },
-    // TODO(gnusi): readonly
     {
       "is_superuser",
       {
         LogicalTypeId::BOOLEAN,
         "Shows whether the current session's user is a superuser.",
         "on",
+        Readonly<"is_superuser">,
       },
     },
 };
@@ -330,7 +382,6 @@ constexpr std::pair<std::string_view,
                     std::pair<std::string_view, VariableDescription>>
   kVariableDescriptionCanonical[] = {
     {
-      // TODO(gnusi): readonly
       "datestyle",
       {
         "DateStyle",
@@ -338,11 +389,11 @@ constexpr std::pair<std::string_view,
           LogicalTypeId::VARCHAR,
           "Sets the display format for date and time values.",
           "ISO, MDY",
+          Readonly<"DateStyle">,
         },
       },
     },
     {
-      // TODO(gnusi): readonly
       "intervalstyle",
       {
         "IntervalStyle",
@@ -350,11 +401,11 @@ constexpr std::pair<std::string_view,
           LogicalTypeId::VARCHAR,
           "Sets the display format for interval values.",
           "postgres",
+          Readonly<"IntervalStyle">,
         },
       },
     },
     {
-      // TODO(gnusi): readonly
       "timezone",
       {
         "TimeZone",
@@ -362,40 +413,8 @@ constexpr std::pair<std::string_view,
           LogicalTypeId::VARCHAR,
           "Sets the time zone for displaying and interpreting time stamps.",
           "Etc/UTC",
+          Readonly<"TimeZone">,
         },
-      },
-    },
-};
-
-// Curated allowlist of DuckDB native settings exposed through Config.
-// Only settings listed here are accessible via SET/SHOW/current_setting.
-// DuckDB manages the actual values; we just provide metadata and gating.
-// NOTE: default_value here is for documentation only -- the real default
-// comes from DuckDB's own setting definition.
-constexpr std::pair<std::string_view, VariableDescription>
-  kDuckDBVariableDescription[] = {
-    {
-      "threads",
-      {
-        LogicalTypeId::INTEGER,
-        "The number of threads used by the query executor.",
-        "1",
-      },
-    },
-    {
-      "memory_limit",
-      {
-        LogicalTypeId::VARCHAR,
-        "The maximum amount of memory the system can use.",
-        "",
-      },
-    },
-    {
-      "temp_directory",
-      {
-        LogicalTypeId::VARCHAR,
-        "The directory to which temporary files are written.",
-        "",
       },
     },
 };
@@ -404,8 +423,8 @@ constexpr auto kVarIndex =
   containers::MakeTrivialBiMapFirstToIndex<kVariableDescription>();
 constexpr auto kVarCanonicalIndex =
   containers::MakeTrivialBiMapFirstToIndex<kVariableDescriptionCanonical>();
-constexpr auto kDuckDBIndex =
-  containers::MakeTrivialBiMapFirstToIndex<kDuckDBVariableDescription>();
+
+}  // namespace
 
 std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
   std::string_view name) {
@@ -415,20 +434,7 @@ std::optional<std::pair<std::string_view, VariableDescription>> GetDefault(
   if (auto idx = kVarCanonicalIndex.TryFindICaseByFirst(name)) {
     return kVariableDescriptionCanonical[*idx].second;
   }
-  if (auto idx = kDuckDBIndex.TryFindICaseByFirst(name)) {
-    return kDuckDBVariableDescription[*idx];
-  }
   return std::nullopt;
-}
-
-std::optional<VariableDescription> GetDefaultDescription(
-  std::string_view name) {
-  return GetDefault(name).and_then(
-    [](auto info) { return std::optional{info.second}; });
-}
-
-bool HasDefault(std::string_view name) {
-  return static_cast<bool>(GetDefault(name));
 }
 
 std::string_view GetOriginalName(std::string_view name) {
@@ -455,30 +461,9 @@ void Config::VisitFullDescription(
     const auto& [name, description] = pair;
     visit(name, description);
   }
-
-  for (const auto& [name, description] : kDuckDBVariableDescription) {
-    visit(name, description);
-  }
 }
 
 namespace {
-
-void OnSetCallback(duckdb::ClientContext& context, duckdb::SetScope scope,
-                   const std::string& name, duckdb::Value& value,
-                   bool is_reset) {
-  auto desc = GetDefaultDescription(name);
-  if (desc) {
-    if (!is_reset && desc->validate && !desc->validate(value)) {
-      throw duckdb::InvalidInputException(
-        "invalid value for parameter \"%s\": \"%s\"", name, value.ToString());
-    }
-    if (desc->on_set) {
-      desc->on_set(context, scope, name, value, is_reset);
-    }
-  }
-  auto& conn_ctx = connector::GetSereneDBContext(context);
-  conn_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL);
-}
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
                  const VariableDescription& desc) {
@@ -494,7 +479,7 @@ void TryRegister(duckdb::DBConfig& config, std::string_view name,
                             desc.default_value.data()
                               ? duckdb::Value{std::string{desc.default_value}}
                               : duckdb::Value{},
-                            OnSetCallback);
+                            desc.set_callback, desc.reset_callback);
 }
 
 }  // namespace

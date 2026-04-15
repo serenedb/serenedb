@@ -22,6 +22,7 @@
 
 #include <duckdb/common/enums/set_scope.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/setting_info.hpp>
 #include <string>
 #include <string_view>
 
@@ -50,20 +51,13 @@ enum class IsolationLevel : uint8_t {
   RepeatableRead,
 };
 
-using ValidateFn = bool (*)(const duckdb::Value&);
-using OnSetFn = void (*)(duckdb::ClientContext&, duckdb::SetScope,
-                         const std::string&, duckdb::Value&, bool is_reset);
 struct VariableDescription {
   duckdb::LogicalTypeId type;
   std::string_view description;
   std::string_view default_value;  // .data() == nullptr if None
-  ValidateFn validate = nullptr;
-  OnSetFn on_set = nullptr;
+  duckdb::set_option_callback_t set_callback = nullptr;
+  duckdb::reset_option_callback_t reset_callback = nullptr;
 };
-
-std::optional<VariableDescription> GetDefaultDescription(std::string_view name);
-
-bool HasDefault(std::string_view name);
 
 std::string_view GetOriginalName(std::string_view name);
 

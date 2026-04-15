@@ -480,10 +480,13 @@ void DecodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// normalize(text) -> text: NFC normalization
+// normalize(text [, form]) -> text: Unicode normalization
 // TODO: call ICU nfc_normalize when available
 void NormalizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                        duckdb::Vector& result) {
+  // Both 1-arg and 2-arg forms just do NFC (the only form we support for now).
+  // The 2-arg form accepts the form name but currently ignores it since
+  // the implementation only does identity for ASCII / NFC passthrough.
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
@@ -1000,11 +1003,18 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
-  // normalize(text) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{"normalize",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 NormalizeFunction});
+  // normalize(text [, form]) -> text
+  {
+    duckdb::ScalarFunctionSet normalize_set("normalize");
+    normalize_set.AddFunction(duckdb::ScalarFunction{
+      "normalize", {duckdb::LogicalType::VARCHAR}, duckdb::LogicalType::VARCHAR,
+      NormalizeFunction});
+    normalize_set.AddFunction(duckdb::ScalarFunction{
+      "normalize",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::VARCHAR, NormalizeFunction});
+    loader.RegisterFunction(normalize_set);
+  }
 
   // encode(bytea, text) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{

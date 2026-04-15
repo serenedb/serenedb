@@ -7,7 +7,7 @@ interface NoConnectionsBlockProps {}
 export const NoConnectionsBlock: React.FC<NoConnectionsBlockProps> = () => {
     return (
         <div className="flex flex-col gap-1 ">
-            <div className="bg-secondary rounded-md px-8 py-4 w-max">
+            <div className="bg-background rounded-md px-8 py-4 w-max">
                 <p>No connections yet!</p>
                 <p className="text-sm font-light opacity-30">
                     Want to add some?

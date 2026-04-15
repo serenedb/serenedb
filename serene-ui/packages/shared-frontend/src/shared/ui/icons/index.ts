@@ -13,7 +13,9 @@ export {
     RefreshCwIcon as RefreshIcon,
     BellIcon as NotificationsIcon,
     PieChartIcon,
+    PinIcon,
     SearchIcon,
+    Eraser as ClearHistoryIcon,
     StarIcon,
     SettingsIcon,
     CheckCircle2 as SuccessIcon,
@@ -23,6 +25,8 @@ export {
     DownloadIcon as ExportIcon,
     EllipsisVerticalIcon as ThreeDotsIcon,
     Settings2Icon as DashboardSettingsIcon,
+    NewspaperIcon as NewsIcon,
+    SidebarIcon as SidebarIcon,
 } from "lucide-react";
 // styled icons
 export { ArrowDownIcon } from "./ArrowDownIcon";

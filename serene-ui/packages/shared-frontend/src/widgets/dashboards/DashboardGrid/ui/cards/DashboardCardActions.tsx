@@ -52,8 +52,7 @@ export const DashboardCardActions: React.FC<DashboardCardActionsProps> = ({
                 <PopoverContent
                     align="end"
                     side="top"
-                    variant="secondary"
-                    className="min-w-44 p-1 shadow-none">
+                    className="min-w-44 p-1 ">
                     <div className="flex flex-col gap-1">
                         <Button
                             type="button"

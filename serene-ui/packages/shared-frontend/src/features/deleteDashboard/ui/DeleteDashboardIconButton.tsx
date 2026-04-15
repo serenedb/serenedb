@@ -46,9 +46,10 @@ export const DeleteDashboardIconButton: React.FC<
             <DialogTrigger asChild>
                 <Button
                     type="button"
-                    size="iconSmall"
+                    size="xsIcon"
                     variant="ghost"
                     title="Delete dashboard"
+                    className="hover:bg-black/5 dark:hover:bg-white/5"
                     onPointerDown={stopPropagation}
                     onClick={stopPropagation}>
                     <TrashIcon className="size-3 text-foreground/50" />
@@ -61,8 +62,7 @@ export const DeleteDashboardIconButton: React.FC<
                 <DialogHeader>
                     <DialogTitle>Delete dashboard</DialogTitle>
                     <DialogDescription>
-                        Are you sure that you want to delete "
-                        {dashboardName}"?
+                        Are you sure that you want to delete "{dashboardName}"?
                     </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>

@@ -15,6 +15,7 @@ import {
 import { DashboardSelectChartParams } from "./DashboardSelectChartParams";
 import { Separator } from "@serene-ui/shared-frontend";
 import { PGSQLEditor } from "../../../shared/PGSQLEditor";
+import { useConnectionAutocomplete } from "../../../shared/PGSQLEditor/model";
 import { DashboardNumericOverrideControl } from "./components";
 import {
     isDashboardChartBlock,
@@ -27,10 +28,6 @@ const CARD_TYPE_OPTIONS: Array<{
     value: DashboardBlockSchema["type"];
     label: string;
 }> = [
-    { value: "text", label: "Text" },
-    { value: "spacer", label: "Spacer" },
-    { value: "table", label: "Table" },
-    { value: "single_string", label: "Single string" },
     { value: "bar_chart", label: "Bar chart" },
     { value: "line_chart", label: "Line chart" },
     { value: "area_chart", label: "Area chart" },
@@ -38,9 +35,24 @@ const CARD_TYPE_OPTIONS: Array<{
 ];
 
 const BAR_CHART_VARIANT_OPTIONS = [
-    { value: "interactive", variant: "interactive", isStacked: false, label: "Interactive" },
-    { value: "vertical", variant: "vertical", isStacked: false, label: "Vertical" },
-    { value: "horizontal", variant: "horizontal", isStacked: false, label: "Horizontal" },
+    {
+        value: "interactive",
+        variant: "interactive",
+        isStacked: false,
+        label: "Interactive",
+    },
+    {
+        value: "vertical",
+        variant: "vertical",
+        isStacked: false,
+        label: "Vertical",
+    },
+    {
+        value: "horizontal",
+        variant: "horizontal",
+        isStacked: false,
+        label: "Horizontal",
+    },
     {
         value: "vertical_stacked",
         variant: "vertical",
@@ -72,6 +84,7 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
     onClose,
     onEditedBlockChange,
 }) => {
+    const autocomplete = useConnectionAutocomplete();
     const { displayEditedBlock, handleClose, queryDraft, setQueryDraft } =
         useDashboardCardEditorState({
             editedBlock,
@@ -95,10 +108,10 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
 
     return (
         <div
-            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden h-full"
             data-testid="dashboardCardEditor-root">
             <div className="flex h-12 items-center justify-between border-b-1 bg-background pl-4 pr-2">
-                <p className="text-primary-foreground uppercase text-xs font-extrabold">
+                <p className="text-muted-foreground dark:text-primary-foreground uppercase text-xs font-extrabold">
                     {editedBlock ? "Edit card" : "Card editor"}
                 </p>
                 <Button
@@ -153,8 +166,7 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                                 const selectedOption =
                                     BAR_CHART_VARIANT_OPTIONS.find(
                                         (item) => item.value === value,
-                                    ) ??
-                                    BAR_CHART_VARIANT_OPTIONS[0];
+                                    ) ?? BAR_CHART_VARIANT_OPTIONS[0];
 
                                 onEditedBlockChange?.({
                                     ...displayEditedBlock,
@@ -261,6 +273,7 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                                 data-testid="dashboardCardEditor-queryInput">
                                 <PGSQLEditor
                                     value={queryDraft.value}
+                                    autocomplete={autocomplete}
                                     onChange={(value) => {
                                         setQueryDraft({
                                             blockId: displayEditedBlock.id,
@@ -306,13 +319,16 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                                 enabled={
                                     displayEditedBlock.custom_refresh_interval_enabled
                                 }
-                                value={displayEditedBlock.custom_refresh_interval}
+                                value={
+                                    displayEditedBlock.custom_refresh_interval
+                                }
                                 checkboxTestId="dashboardCardEditor-customRefreshCheckbox"
                                 inputTestId="dashboardCardEditor-refreshIntervalInput"
                                 onEnabledChange={(enabled) => {
                                     onEditedBlockChange?.({
                                         ...displayEditedBlock,
-                                        custom_refresh_interval_enabled: enabled,
+                                        custom_refresh_interval_enabled:
+                                            enabled,
                                     });
                                 }}
                                 onValueChange={(value) => {
@@ -328,7 +344,9 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                                 title="Custom row limit"
                                 description="Override the dashboard row limit for this card."
                                 valueLabel="Row limit"
-                                enabled={displayEditedBlock.custom_row_limit_enabled}
+                                enabled={
+                                    displayEditedBlock.custom_row_limit_enabled
+                                }
                                 value={displayEditedBlock.custom_row_limit}
                                 checkboxTestId="dashboardCardEditor-customRowLimitCheckbox"
                                 inputTestId="dashboardCardEditor-rowLimitInput"

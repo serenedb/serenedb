@@ -55,45 +55,41 @@
 :root {
     --radius: 0.625rem;
     --font-sans: "DMSans";
-    --background: #ffffff;
-    --foreground: #11121d;
-    --card: #f0f2f5;
-    --card-foreground: #506182;
-    --popover: #f0f2f5;
-    --popover-foreground: #506182;
-    --popover-secondary: #f0f2f5;
-    --popover-secondary-foreground: #506182;
-    --primary: #8555f7;
+    --background: #f5f5f5;
+    --foreground: #506182;
+    --card: #ffffff;
+    --card-foreground: #17192e;
+    --popover: #ffffff;
+    --popover-foreground: #17192e;
+    --primary: #895af8;
     --primary-foreground: #ffffff;
-    --secondary: #f2f2f2;
-    --secondary-foreground: #506182;
-    --thirdly: #f0f2f5;
-    --thirdly-foreground: #506182;
-    --muted: oklch(0.279 0.041 260.031);
-    --muted-foreground: oklch(0.704 0.04 256.788);
-    --accent: #dcdfe6;
-    --accent-foreground: oklch(0.984 0.003 247.858);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: #e7e7e7;
-    --input: ##e7e7e7;
-    --ring: oklch(0.645 0.246 16.439);
-    --chart-1: #8555f7;
-    --chart-2: #5aaeff;
-    --chart-3: #33c48d;
-    --chart-4: #ff6b6b;
-    --chart-5: #ff9f43;
-    --chart-6: #ffd166;
-    --chart-7: #b26bff;
+    --secondary: #4a7aad;
+    --secondary-foreground: #ffffff;
+    --muted: #ffffff;
+    --muted-foreground: #17192e;
+    --accent: #ededed;
+    --accent-foreground: #88888e;
+    --destructive: #a80b42;
+    --border: #c7c7c7;
+    --input: #c7c7c7;
+    --ring: #895af8;
+    --chart-1: #895af8;
+    --chart-2: #4a7aad;
+    --chart-3: #2e2e2e;
+    --chart-4: #987936;
+    --chart-5: #366025;
+    --chart-6: #8d4e78;
+    --chart-7: #813e3e;
     --chart-8: #2ec4d6;
     --chart-9: #ff5fa2;
     --chart-10: #5d7cff;
-    --sidebar: #ffffff;
-    --sidebar-foreground: #506182;
+    --sidebar: #2d2c2c;
+    --sidebar-foreground: #d9d9d94d;
     --sidebar-primary: oklch(0.488 0.243 264.376);
     --sidebar-primary-foreground: #d9d9d94d;
-    --sidebar-accent: #f2f2f2;
-    --sidebar-accent-foreground: #506182;
-    --sidebar-border: #e7e7e7;
+    --sidebar-accent: #d9d9d90d;
+    --sidebar-accent-foreground: #d9d9d9b2;
+    --sidebar-border: #e1e1e1;
     --sidebar-ring: oklch(0.551 0.027 264.364);
     --serene-blue: #47668b;
 }
@@ -101,35 +97,31 @@
 .dark {
     --radius: 0.625rem;
     --font-sans: "DMSans";
-    --background: #212121;
-    --foreground: #a8b2c8;
-    --card: #212027;
-    --card-foreground: oklch(0.984 0.003 247.858);
-    --popover: #212027;
-    --popover-foreground: #ffffff4d;
-    --popover-secondary: #1a1c25;
-    --popover-secondary-foreground: #ffffff4d;
-    --primary: #8555f7;
+    --background: #1c1c1c;
+    --foreground: #bbbbbb;
+    --card: #1c1c1c;
+    --card-foreground: #bbbbbb;
+    --popover: #1c1c1c;
+    --popover-foreground: #bbbbbb;
+    --primary: #895af8;
     --primary-foreground: #ffffff;
-    --secondary: rgba(85.098%, 85.098%, 85.098%, 0.05);
-    --secondary-foreground: #a8b2c8;
-    --thirdly: #d9d9d90d;
-    --thirdly-foreground: rgba(100%, 100%, 100%, 0.4);
-    --muted: oklch(0.279 0.041 260.031);
-    --muted-foreground: oklch(0.704 0.04 256.788);
-    --accent: #d9d9d91a;
-    --accent-foreground: oklch(0.984 0.003 247.858);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: rgba(217, 217, 217, 0.07);
-    --input: rgba(217, 217, 217, 0.07);
-    --ring: rgba(217, 217, 217, 0.07);
-    --chart-1: #8555f7;
-    --chart-2: #5aaeff;
-    --chart-3: #33c48d;
-    --chart-4: #ff6b6b;
-    --chart-5: #ff9f43;
-    --chart-6: #ffd166;
-    --chart-7: #b26bff;
+    --secondary: #4a7aad;
+    --secondary-foreground: #ffffff;
+    --muted: #212121;
+    --muted-foreground: #a8b2c8;
+    --accent: #2a2a2a;
+    --accent-foreground: #a8b2c8;
+    --destructive: #a80b42;
+    --border: #373737;
+    --input: #373737;
+    --ring: #895af8;
+    --chart-1: #895af8;
+    --chart-2: #4a7aad;
+    --chart-3: #2e2e2e;
+    --chart-4: #987936;
+    --chart-5: #366025;
+    --chart-6: #8d4e78;
+    --chart-7: #813e3e;
     --chart-8: #2ec4d6;
     --chart-9: #ff5fa2;
     --chart-10: #5d7cff;
@@ -145,7 +137,7 @@
 }
 
 .monaco-editor .view-overlays .current-line-exact {
-    background-color: var(--secondary);
+    background-color: var(--color-accent);
     border: none !important;
 }
 .monaco-editor-background {
@@ -164,6 +156,130 @@
 
 .monaco-editor-overlaymessage {
     display: none !important;
+}
+
+.dv-pane-container .dv-pane .dv-pane-header:focus:before,
+.dv-pane-container .dv-pane .dv-pane-header:focus-within:before {
+    outline: none !important;
+}
+
+.dv-pane-container .dv-pane .dv-pane-body:focus:before,
+.dv-pane-container .dv-pane .dv-pane-body:focus-within:before {
+    outline: none !important;
+}
+
+.dv-tabs-container > .dv-tab:focus-within::after,
+dv-tabs-container > .dv-tab:focus::after {
+    outline: none !important;
+}
+
+.dv-groupview,
+.dv-dockview {
+    background-color: var(--color-muted) !important;
+}
+
+.dv-groupview.dv-active-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-active-tab {
+    background-color: var(--color-background) !important;
+}
+
+.dv-groupview.dv-active-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-inactive-tab {
+    background-color: var(--color-muted) !important;
+}
+
+.dv-groupview.dv-inactive-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-active-tab {
+    background-color: var(--color-muted) !important;
+}
+
+.dv-groupview.dv-inactive-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-active-tab {
+    color: var(--color-muted-foreground) !important;
+    opacity: 0.5;
+}
+
+.dv-groupview.dv-inactive-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-inactive-tab {
+    color: var(--color-muted-foreground) !important;
+    opacity: 0.5;
+}
+
+.dv-groupview.dv-active-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-active-tab {
+    color: var(--color-foreground) !important;
+}
+
+.dv-groupview.dv-active-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-inactive-tab {
+    color: var(--color-muted-foreground) !important;
+    opacity: 0.5;
+}
+
+.dv-tab {
+    border-right: 0.5px solid var(--color-border);
+    padding-left: 16px !important;
+    padding-right: 12px !important;
+}
+
+.dv-tab:last-child {
+    border-right: 0;
+}
+
+.dv-tabs-and-actions-container {
+    height: 36.5px !important;
+    border-bottom: 0.5px solid var(--color-border);
+    background-color: var(--color-muted) !important;
+}
+
+.dv-split-view-container.dv-separator-border
+    .dv-view:not(:first-child)::before {
+    background-color: var(--color-border) !important;
+}
+
+.dv-split-view-container.dv-vertical
+    > .dv-view-container
+    > .dv-view:not(:first-child)::before {
+    height: 0.5px !important;
+}
+.dv-split-view-container.dv-horizontal
+    > .dv-view-container
+    > .dv-view:not(:first-child)::before {
+    width: 0.5px !important;
+}
+
+.dv-tab.dv-inactive-tab .dv-default-tab .dv-default-tab-action {
+    visibility: visible !important;
+}
+
+.dv-svg {
+    width: 8px !important;
+    height: 8px !important;
+}
+
+.dv-default-tab-content {
+    margin-right: 12px !important;
+}
+
+.dv-groupview.dv-inactive-group
+    > .dv-tabs-and-actions-container
+    .dv-tabs-container
+    > .dv-tab.dv-inactive-tab {
+    background-color: var(--color-muted) !important;
 }
 
 @font-face {

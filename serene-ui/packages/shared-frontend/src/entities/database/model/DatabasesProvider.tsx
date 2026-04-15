@@ -5,13 +5,107 @@ import {
     useExecuteQuery,
     useGetConnections,
 } from "@serene-ui/shared-frontend";
+import { useSchemaMetadataVersion } from "@serene-ui/shared-frontend/shared";
 import type { QueryExecutionResultSchema } from "@serene-ui/shared-core";
 
 type DatabaseRecord = { name: string };
 
+type CachedDatabasesEntry = {
+    data: string[];
+    loadedAt: number;
+    version: number;
+    promise?: Promise<string[]>;
+};
+
 const GET_DATABASES_QUERY = `
     SELECT datname AS name FROM pg_database WHERE datistemplate = false;
 `;
+
+const DATABASES_CACHE_TTL_MS = 30_000;
+const databasesCache = new Map<string, CachedDatabasesEntry>();
+
+const getDatabasesCacheKey = (connectionId: number) => `${connectionId}`;
+
+const isCacheFresh = (entry: CachedDatabasesEntry) =>
+    Date.now() - entry.loadedAt < DATABASES_CACHE_TTL_MS;
+
+const extractDatabases = (data: {
+    results?: QueryExecutionResultSchema[];
+}): string[] =>
+    (data.results?.[0]?.rows || []).map(
+        (database) => (database as DatabaseRecord).name,
+    );
+
+const loadDatabasesForConnection = async (
+    executeQuery: (
+        input: {
+            query: string;
+            connectionId: number;
+        },
+    ) => Promise<{
+        results?: QueryExecutionResultSchema[];
+    }>,
+    connectionId: number,
+) => {
+    const data = await executeQuery({
+        query: GET_DATABASES_QUERY,
+        connectionId,
+    });
+
+    return extractDatabases(data);
+};
+
+const getOrLoadDatabasesForConnection = (
+    executeQuery: (
+        input: {
+            query: string;
+            connectionId: number;
+        },
+    ) => Promise<{
+        results?: QueryExecutionResultSchema[];
+    }>,
+    connectionId: number,
+    version: number,
+) => {
+    const cacheKey = getDatabasesCacheKey(connectionId);
+    const cachedEntry = databasesCache.get(cacheKey);
+
+    if (
+        cachedEntry &&
+        cachedEntry.version === version &&
+        isCacheFresh(cachedEntry)
+    ) {
+        return Promise.resolve(cachedEntry.data);
+    }
+
+    if (cachedEntry?.promise && cachedEntry.version === version) {
+        return cachedEntry.promise;
+    }
+
+    const promise = loadDatabasesForConnection(executeQuery, connectionId)
+        .then((databases) => {
+            databasesCache.set(cacheKey, {
+                data: databases,
+                loadedAt: Date.now(),
+                version,
+            });
+
+            return databases;
+        })
+        .catch((error) => {
+            databasesCache.delete(cacheKey);
+            throw error;
+        });
+
+    databasesCache.set(cacheKey, {
+        data: cachedEntry?.data ?? [],
+        loadedAt: cachedEntry?.loadedAt ?? 0,
+        version,
+        promise,
+    });
+
+    return promise;
+};
 
 export const DatabasesProvider = ({
     children,
@@ -32,6 +126,10 @@ export const DatabasesProvider = ({
     const autoSelectedConnectionIdRef = useRef<number | null>(null);
 
     const connectionIdKey = currentConnection.connectionId;
+    const connectionMetadataVersion = useSchemaMetadataVersion({
+        level: "connection",
+        connectionId: connectionIdKey,
+    });
 
     const activeConnection = useMemo(() => {
         return connections?.find(
@@ -94,23 +192,15 @@ export const DatabasesProvider = ({
             setError(null);
 
             try {
-                const data = await executeQuery({
-                    query: GET_DATABASES_QUERY,
-                    connectionId: connectionIdKey,
-                });
+                const nextDatabases = await getOrLoadDatabasesForConnection(
+                    executeQuery,
+                    connectionIdKey,
+                    connectionMetadataVersion,
+                );
 
                 if (currentAbortController.signal.aborted) return;
 
-                if (!data) {
-                    setDatabases([]);
-                    return;
-                }
-
-                setDatabases(
-                    (data.results?.[0]?.rows || []).map(
-                        (database) => (database as DatabaseRecord).name,
-                    ),
-                );
+                setDatabases(nextDatabases);
             } catch (err) {
                 if (currentAbortController.signal.aborted) return;
                 console.error("Failed to fetch databases:", err);
@@ -126,7 +216,7 @@ export const DatabasesProvider = ({
         };
 
         loadDatabases();
-    }, [connectionIdKey]);
+    }, [connectionIdKey, connectionMetadataVersion, executeQuery]);
 
     const fetchDatabases = useMemo(() => {
         return async () => {
@@ -144,23 +234,22 @@ export const DatabasesProvider = ({
             setError(null);
 
             try {
-                const data = await executeQuery({
-                    query: GET_DATABASES_QUERY,
-                    connectionId: connectionIdKey,
-                });
+                const cacheKey = getDatabasesCacheKey(connectionIdKey);
+                databasesCache.delete(cacheKey);
+                const nextDatabases = await loadDatabasesForConnection(
+                    executeQuery,
+                    connectionIdKey,
+                );
 
                 if (currentAbortController.signal.aborted) return;
 
-                if (!data) {
-                    setDatabases([]);
-                    return;
-                }
+                databasesCache.set(cacheKey, {
+                    data: nextDatabases,
+                    loadedAt: Date.now(),
+                    version: connectionMetadataVersion,
+                });
 
-                setDatabases(
-                    (data.results?.[0]?.rows || []).map(
-                        (database) => (database as DatabaseRecord).name,
-                    ),
-                );
+                setDatabases(nextDatabases);
                 hasLoadedRef.current = true;
             } catch (err) {
                 if (currentAbortController.signal.aborted) return;
@@ -175,7 +264,7 @@ export const DatabasesProvider = ({
                 }
             }
         };
-    }, [connectionIdKey]);
+    }, [connectionIdKey, connectionMetadataVersion, executeQuery]);
 
     const contextValue = useMemo(
         () => ({

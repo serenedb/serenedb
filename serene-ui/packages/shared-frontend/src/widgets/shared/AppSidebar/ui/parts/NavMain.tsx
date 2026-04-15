@@ -1,14 +1,10 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import {
+    Button,
+    cn,
     ConsoleIcon,
     DashboardsIcon,
     navigationMap,
-    ReplicationIcon,
-    SidebarGroup,
-    SidebarGroupLabel,
-    SidebarMenu,
-    SidebarMenuButton,
-    SidebarMenuItem,
 } from "@serene-ui/shared-frontend/shared";
 import type { SidebarButton } from "../../model/types";
 
@@ -26,11 +22,6 @@ export const NavMain = () => {
             icon: <DashboardsIcon />,
             link: navigationMap.dashboards,
         },
-        {
-            title: "Replication",
-            icon: <ReplicationIcon />,
-            link: navigationMap.replication,
-        },
     ];
 
     const getAction = (item: SidebarButton) => {
@@ -40,28 +31,31 @@ export const NavMain = () => {
         };
     };
 
+    const isItemActive = (item: SidebarButton) => {
+        if (!item.link) return false;
+        return (
+            location.pathname === item.link ||
+            location.pathname.startsWith(`${item.link}/`)
+        );
+    };
+
     return (
-        <SidebarGroup>
-            <SidebarGroupLabel>Main</SidebarGroupLabel>
-            <SidebarMenu>
-                {buttons.map((item, index) => (
-                    <SidebarMenuItem key={index}>
-                        <SidebarMenuButton
-                            isActive={
-                                item.link === navigationMap.dashboards
-                                    ? location.pathname.startsWith(
-                                          `${navigationMap.dashboards}`,
-                                      )
-                                    : location.pathname === item.link
-                            }
-                            onClick={getAction(item)}
-                            tooltip={item.title}>
-                            {item.icon}
-                            <span>{item.title}</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                ))}
-            </SidebarMenu>
-        </SidebarGroup>
+        <div className="p-2.5 flex flex-col gap-1.5">
+            {buttons.map((item, index) => {
+                return (
+                    <Button
+                        variant="ghost"
+                        className={cn("", {
+                            "bg-accent text-accent-foreground":
+                                isItemActive(item),
+                        })}
+                        key={index}
+                        size={"icon"}
+                        onClick={getAction(item)}>
+                        {item.icon}
+                    </Button>
+                );
+            })}
+        </div>
     );
 };

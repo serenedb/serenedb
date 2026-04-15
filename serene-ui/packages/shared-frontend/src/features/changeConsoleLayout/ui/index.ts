@@ -1,1 +1,0 @@
-export { ChangeConsoleLayoutIcon } from "./ChangeConsoleLayoutIcon";

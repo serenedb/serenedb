@@ -41,7 +41,7 @@ export const ConnectionsSidebar = () => {
             </div>
             {!connections?.length ? (
                 <div className="flex flex-1 items-center justify-center">
-                    <div className="px-6 py-4 bg-secondary rounded-md w-max flex flex-col items-center">
+                    <div className="px-6 py-4 bg-background rounded-md w-max flex flex-col items-center">
                         <p>No connections yet!</p>
                         <p className="text-sm font-light opacity-30">
                             Want to add some?
@@ -54,7 +54,7 @@ export const ConnectionsSidebar = () => {
                         <Button
                             asChild
                             className={cn(
-                                "flex justify-start items-start h-auto w-full rounded-none pl-4 pr-2 cursor-pointer",
+                                "flex justify-start items-start h-auto w-full rounded-none pl-4 pr-2 cursor-pointer text-foreground hover:text-foreground",
                                 {
                                     "bg-accent":
                                         conn.id === currentConnection.id,
@@ -75,7 +75,7 @@ export const ConnectionsSidebar = () => {
                                         <p className="text-md font-medium truncate">
                                             {conn.name}
                                         </p>
-                                        <p className="text-xs text-secondary-foreground/50 truncate">
+                                        <p className="text-xs dark:text-secondary-foreground/50 truncate">
                                             {conn.type}
                                         </p>
                                     </div>
@@ -85,6 +85,7 @@ export const ConnectionsSidebar = () => {
                                         variant="ghost"
                                         size="iconSmall"
                                         aria-label="Delete connection"
+                                        className="hover:bg-black/5 dark:hover:bg-white/5"
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             if (

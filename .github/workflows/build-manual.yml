@@ -134,7 +134,7 @@ jobs:
           TG_THREAD_ID_MAIN: "51"
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ contains(inputs.BUILD_CONFIG, 'PR_BRANCH') && fromJSON(inputs.BUILD_CONFIG).PR_BRANCH || github.ref_name }}
           JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
           RUN_NAME: "serenedb | build & test [${{ inputs.LOCATION }}]"

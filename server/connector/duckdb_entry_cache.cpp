@@ -38,6 +38,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
 #include "catalog/view.h"
+#include "connector/duckdb_index_entry.h"
 #include "connector/duckdb_system_table_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "pg/system_catalog.h"
@@ -351,21 +352,22 @@ void DuckDBEntryCache::ScanEntries(
     }
   };
 
+  using enum duckdb::CatalogType;
   if (schema == StaticStrings::kPgCatalogSchema) {
     switch (type) {
-      case duckdb::CatalogType::TABLE_ENTRY:
+      case TABLE_ENTRY:
         pg::VisitPgCatalogTables(emit);
         pg::VisitPgCatalogViews(emit);
         break;
-      case duckdb::CatalogType::VIEW_ENTRY:
+      case VIEW_ENTRY:
         pg::VisitPgCatalogViews(emit);
         break;
-      case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
-      case duckdb::CatalogType::MACRO_ENTRY:
+      case SCALAR_FUNCTION_ENTRY:
+      case MACRO_ENTRY:
         pg::VisitPgCatalogScalarFunctions(emit);
         break;
-      case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
-      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      case TABLE_FUNCTION_ENTRY:
+      case TABLE_MACRO_ENTRY:
         pg::VisitPgCatalogTableFunctions(emit);
         break;
       default:
@@ -373,19 +375,19 @@ void DuckDBEntryCache::ScanEntries(
     }
   } else if (schema == StaticStrings::kInformationSchema) {
     switch (type) {
-      case duckdb::CatalogType::TABLE_ENTRY:
+      case TABLE_ENTRY:
         pg::VisitInfoSchemaTables(emit);
         pg::VisitInfoSchemaViews(emit);
         break;
-      case duckdb::CatalogType::VIEW_ENTRY:
+      case VIEW_ENTRY:
         pg::VisitInfoSchemaViews(emit);
         break;
-      case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
-      case duckdb::CatalogType::MACRO_ENTRY:
+      case SCALAR_FUNCTION_ENTRY:
+      case MACRO_ENTRY:
         pg::VisitInfoSchemaScalarFunctions(emit);
         break;
-      case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
-      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      case TABLE_FUNCTION_ENTRY:
+      case TABLE_MACRO_ENTRY:
         pg::VisitInfoSchemaTableFunctions(emit);
         break;
       default:
@@ -393,22 +395,27 @@ void DuckDBEntryCache::ScanEntries(
     }
   } else {
     switch (type) {
-      case duckdb::CatalogType::TABLE_ENTRY:
+      case TABLE_ENTRY:
         for (const auto& o : snapshot.GetRelations(database, schema)) {
           emit(*o);
         }
         break;
-      case duckdb::CatalogType::VIEW_ENTRY:
+      case VIEW_ENTRY:
         for (const auto& o : snapshot.GetRelations(database, schema)) {
           if (o->GetType() == catalog::ObjectType::PgSqlView) {
             emit(*o);
           }
         }
         break;
-      case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
-      case duckdb::CatalogType::MACRO_ENTRY:
-      case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
-      case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+      case INDEX_ENTRY:
+        for (const auto& o : snapshot.GetIndexes(database, schema)) {
+          emit(*o);
+        }
+        break;
+      case SCALAR_FUNCTION_ENTRY:
+      case MACRO_ENTRY:
+      case TABLE_FUNCTION_ENTRY:
+      case TABLE_MACRO_ENTRY:
         for (const auto& o : snapshot.GetFunctions(database, schema)) {
           emit(*o);
         }
@@ -427,12 +434,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
   bool info_schema = schema == StaticStrings::kInformationSchema;
 
   switch (type) {
-    case duckdb::CatalogType::TABLE_ENTRY:
-    case duckdb::CatalogType::VIEW_ENTRY:
-    case duckdb::CatalogType::INDEX_ENTRY: {
+    using enum duckdb::CatalogType;
+    case TABLE_ENTRY:
+    case VIEW_ENTRY:
+    case INDEX_ENTRY: {
       if (system) {
         // System tables (pg_class, pg_type, etc.)
-        if (type == duckdb::CatalogType::TABLE_ENTRY) {
+        if (type == TABLE_ENTRY) {
           auto* vtable = pg::GetSystemTable(schema, name);
           if (vtable) {
             auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
@@ -448,8 +456,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
           }
         }
         // System views (pg_tables, pg_views, etc.)
-        if (type == duckdb::CatalogType::TABLE_ENTRY ||
-            type == duckdb::CatalogType::VIEW_ENTRY) {
+        if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
           auto* view =
             FindView(system, info_schema, database, schema, name, snapshot);
           if (view) {
@@ -462,7 +469,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       auto relation = snapshot.GetRelation(database, schema, name);
       if (!relation) {
         // GetRelation doesn't find regular tables -- use GetTable.
-        if (type == duckdb::CatalogType::TABLE_ENTRY) {
+        if (type == TABLE_ENTRY) {
           return BuildTableEntry(catalog, entry, database, schema, name,
                                  snapshot);
         }
@@ -470,40 +477,63 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       }
       switch (relation->GetType()) {
         case catalog::ObjectType::Table:
-          if (type == duckdb::CatalogType::TABLE_ENTRY) {
+          if (type == TABLE_ENTRY) {
             return BuildTableEntry(catalog, entry, database, schema, name,
                                    snapshot);
           }
           return nullptr;
         case catalog::ObjectType::PgSqlView:
-          if (type == duckdb::CatalogType::TABLE_ENTRY ||
-              type == duckdb::CatalogType::VIEW_ENTRY) {
+          if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
             return MakeViewEntry(
               catalog, entry, schema,
               basics::downCast<const catalog::PgSqlView>(*relation));
           }
           return nullptr;
         case catalog::ObjectType::SecondaryIndex:
-        case catalog::ObjectType::InvertedIndex:
-          if (type == duckdb::CatalogType::TABLE_ENTRY) {
+        case catalog::ObjectType::InvertedIndex: {
+          if (type == TABLE_ENTRY) {
             // Index-as-table (SELECT * FROM index_name)
             return BuildTableEntry(catalog, entry, database, schema, name,
                                    snapshot);
           }
-          // TODO: INDEX_ENTRY for DROP INDEX
-          return nullptr;
+          if (type != INDEX_ENTRY) {
+            return nullptr;
+          }
+          // Index entry for DROP INDEX / duckdb_indexes() introspection.
+          // We only need enough metadata for DropObject to route by name;
+          // the actual storage cleanup happens in catalog.DropIndex.
+          auto& index = basics::downCast<const catalog::Index>(*relation);
+          auto table =
+            snapshot.GetObject<catalog::Table>(index.GetRelationId());
+          auto info = duckdb::make_uniq<duckdb::CreateIndexInfo>();
+          info->schema = schema;
+          info->table = table ? table->GetName() : std::string{};
+          info->index_name = name;
+          info->index_type =
+            relation->GetType() == catalog::ObjectType::InvertedIndex
+              ? "inverted"
+              : "secondary";
+          bool is_unique =
+            relation->GetType() == catalog::ObjectType::SecondaryIndex &&
+            basics::downCast<const catalog::SecondaryIndex>(index).IsUnique();
+          info->constraint_type = is_unique
+                                    ? duckdb::IndexConstraintType::UNIQUE
+                                    : duckdb::IndexConstraintType::NONE;
+          return duckdb::make_uniq<SereneDBIndexEntry>(catalog, entry, *info,
+                                                       info->table);
+        }
         default:
           return nullptr;
       }
     } break;
-    case duckdb::CatalogType::MACRO_ENTRY:
-    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY: {
+    case MACRO_ENTRY:
+    case SCALAR_FUNCTION_ENTRY: {
       if (auto f = FindScalarFunction(database, schema, name, snapshot)) {
         return MakeMacroEntry(catalog, entry, schema, name, system, *f);
       }
     } break;
-    case duckdb::CatalogType::TABLE_MACRO_ENTRY:
-    case duckdb::CatalogType::TABLE_FUNCTION_ENTRY: {
+    case TABLE_MACRO_ENTRY:
+    case TABLE_FUNCTION_ENTRY: {
       if (auto f = FindTableFunction(database, schema, name, snapshot)) {
         return MakeMacroEntry(catalog, entry, schema, name, system, *f);
       }

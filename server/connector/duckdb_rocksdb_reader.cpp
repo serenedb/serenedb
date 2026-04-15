@@ -321,101 +321,85 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
       SDB_ASSERT(value.size() == kTrueValue.size());
       duckdb::FlatVector::GetDataMutable<bool>(output)[idx] =
         (value == kTrueValue);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::TINYINT: {
       SDB_ASSERT(value.size() == sizeof(int8_t));
       duckdb::FlatVector::GetDataMutable<int8_t>(output)[idx] =
         static_cast<int8_t>(value[0]);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::SMALLINT: {
       SDB_ASSERT(value.size() == sizeof(int16_t));
       int16_t v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<int16_t>(output)[idx] = v;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::INTEGER: {
       SDB_ASSERT(value.size() == sizeof(int32_t));
       int32_t v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<int32_t>(output)[idx] = v;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::BIGINT: {
       SDB_ASSERT(value.size() == sizeof(int64_t));
       int64_t v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<int64_t>(output)[idx] = v;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::FLOAT: {
       SDB_ASSERT(value.size() == sizeof(float));
       float v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<float>(output)[idx] = v;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::DOUBLE: {
       SDB_ASSERT(value.size() == sizeof(double));
       double v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<double>(output)[idx] = v;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::HUGEINT: {
       SDB_ASSERT(value.size() == sizeof(duckdb::hugeint_t));
       duckdb::hugeint_t v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<duckdb::hugeint_t>(output)[idx] = v;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::VARCHAR: {
       const size_t offset = value[0] == 0 ? 1 : 0;
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data() + offset,
                                         value.size() - offset);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::BLOB: {
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddStringOrBlob(output, value.data(),
                                               value.size());
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP: {
       SDB_ASSERT(value.size() == sizeof(int64_t));
       int64_t v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<duckdb::timestamp_t>(output)[idx] =
         duckdb::timestamp_t(v);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::DATE: {
       SDB_ASSERT(value.size() == sizeof(int32_t));
       int32_t v;
       std::memcpy(&v, value.data(), sizeof(v));
       duckdb::FlatVector::GetDataMutable<duckdb::date_t>(output)[idx] =
         duckdb::date_t(v);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::LIST: {
       DeserializeListValue(value, output, type, idx);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::MAP: {
       DeserializeMapValue(value, output, type, idx);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::STRUCT: {
       DeserializeStructValue(value, output, type, idx);
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::ARRAY: {
       DeserializeArrayValue(value, output, type, idx);
-      break;
-    }
+    } break;
     default:
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
         duckdb::StringVector::AddString(output, value.data(), value.size());
@@ -453,8 +437,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
         }
       }
       ptr += bool_bytes;
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
       // Variable-length: read length array, then string data
@@ -473,8 +456,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           ptr += len;
         }
       }
-      break;
-    }
+    } break;
     default: {
       // Fixed-width types -- dispatch by type to get correct
       // GetDataMutable<T>
@@ -522,8 +504,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
         default:
           SDB_ASSERT(false, "Unsupported fixed-width element type in list");
       }
-      break;
-    }
+    } break;
     case duckdb::LogicalTypeId::LIST: {
       // Format written by WriteListSubVector (after optional null_bitmap):
       //   [offsets: elem_count * sizeof(list_entry_t::offset) bytes]
@@ -618,8 +599,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
 
       duckdb::ListVector::SetListSize(child,
                                       current_child_size + total_child_elems);
-      break;
-    }
+    } break;
   }
 }
 

@@ -11,6 +11,7 @@ add_library(
     duckdb_schema_entry.cpp
     duckdb_system_table_entry.cpp
     duckdb_table_entry.cpp
+    duckdb_index_entry.cpp
     duckdb_table_function.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp

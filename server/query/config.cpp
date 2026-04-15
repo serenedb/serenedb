@@ -22,6 +22,9 @@
 
 #include <absl/strings/match.h>
 
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <optional>
 
 #include "basics/assert.h"
@@ -31,76 +34,69 @@
 #include "pg/isolation_level.h"
 
 namespace sdb {
+namespace {
 
-template<std::integral T>
-bool CheckIntegral(std::string_view value) {
-  T var;
-  return absl::SimpleAtoi<T>(value, &var);
+template<typename T>
+T GetEnumValue(std::string_view value) noexcept {
+  const auto r = magic_enum::enum_cast<T>(value, magic_enum::case_insensitive);
+  SDB_ASSERT(r, "enum value is not validated");
+  return *r;
 }
 
-bool ValidateValue(VariableType type, std::string_view value) {
-  switch (type) {
-    case VariableType::Bool: {
-      bool var;
-      return absl::SimpleAtob(value, &var);
-    }
-    case VariableType::I32:
-      return CheckIntegral<int32_t>(value);
-    case VariableType::I64:
-      return CheckIntegral<int64_t>(value);
-    case VariableType::U8:
-      return CheckIntegral<uint8_t>(value);
-    case VariableType::U32:
-      return CheckIntegral<uint32_t>(value);
-    case VariableType::U64:
-      return CheckIntegral<uint64_t>(value);
-    case VariableType::F64: {
-      double var;
-      return absl::SimpleAtod(value, &var);
-    }
-    case VariableType::String:
-    case VariableType::PgSearchPath:
-      return true;
-    case VariableType::PgExtraFloatDigits: {
-      int8_t v{};
-      if (!absl::SimpleAtoi<int8_t>(value, &v)) {
-        return false;
-      }
-      return -15 <= v && v <= 3;
-    }
-    case VariableType::PgByteaOutput: {
-      return absl::EqualsIgnoreCase("hex", value) ||
-             absl::EqualsIgnoreCase("escape", value);
-    }
-    case VariableType::JoinOrderAlgorithm: {
-      return absl::EqualsIgnoreCase("cost", value) ||
-             absl::EqualsIgnoreCase("greedy", value) ||
-             absl::EqualsIgnoreCase("syntactic", value);
-    }
-    case VariableType::SdbWriteConflictPolicy: {
-      return absl::EqualsIgnoreCase("emit_error", value) ||
-             absl::EqualsIgnoreCase("do_nothing", value) ||
-             absl::EqualsIgnoreCase("replace", value);
-    }
-    case VariableType::SdbTransactionIsolation: {
-      return pg::IsSupportedIsolationLevel(value);
-    }
-    default:
-      SDB_UNREACHABLE();
+}  // namespace
+
+void Config::SetInternal(std::string_view key, std::string value) {
+  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  auto setting_index = db_config.TryGetSettingIndex(
+    duckdb::String::Reference(key.data(), key.size()), option);
+  if (setting_index.IsValid()) {
+    _client_ctx.config.user_settings.SetUserSetting(
+      setting_index.GetIndex(), duckdb::Value{std::move(value)});
   }
 }
 
-std::optional<std::string> Config::access(const std::string& key) const {
-  return Get(key);
+std::vector<std::string> Config::GetSearchPath() const {
+  auto value = Get("search_path");
+  SDB_ASSERT(value);
+  std::vector<std::string> result;
+  for (const auto& part : absl::StrSplit(*value, ", ")) {
+    result.emplace_back(absl::StripPrefix(absl::StripSuffix(part, "\""), "\""));
+  }
+  return result;
+}
+
+int8_t Config::GetExtraFloatDigits() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("extra_float_digits", value);
+  SDB_ASSERT(ok);
+  return static_cast<int8_t>(value.GetValue<int32_t>());
+}
+
+ByteaOutput Config::GetByteaOutput() const {
+  auto value = Get("bytea_output");
+  SDB_ASSERT(value);
+  return GetEnumValue<ByteaOutput>(*value);
+}
+
+IsolationLevel Config::GetIsolationLevel() const {
+  auto value = Get("transaction_isolation");
+  SDB_ASSERT(value);
+  return GetEnumValue<IsolationLevel>(*value);
+}
+
+WriteConflictPolicy Config::GetWriteConflictPolicy() const {
+  auto value = Get("sdb_write_conflict_policy");
+  SDB_ASSERT(value);
+  return GetEnumValue<WriteConflictPolicy>(*value);
 }
 
 std::optional<std::string> Config::Get(std::string_view key) const {
-  std::string_view value = GetNonDefault(key);
-  if (value.data() != nullptr) {
-    return std::string{value};
+  duckdb::Value value;
+  if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
+    return value.ToString();
   }
-  auto var = GetDefaultVariable(key);
-  return var.data() != nullptr ? std::optional<std::string>{var} : std::nullopt;
+  return std::nullopt;
 }
 
 std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
@@ -115,71 +111,115 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   return _snapshot;
 }
 
-std::string_view Config::GetNonDefault(std::string_view key) const {
-  {  // get from txn variables
-    auto it = _transaction.find(key);
-    if (it != _transaction.end()) {
-      return it->second.value;
-    }
+void Config::OnSet(std::string_view name, bool is_local) {
+  auto canonical = GetOriginalName(name);
+  if (!canonical.data()) {
+    return;
   }
+  auto context = VariableContext::Session;
+  if (is_local) {
+    context = VariableContext::Local;
+  } else if (!IsAutoCommit()) {
+    context = VariableContext::Transaction;
+  }
+  // transaction_isolation is always Local -- reverts at txn end
+  if (canonical == pg::kTransactionIsolation && !IsAutoCommit()) {
+    context = VariableContext::Local;
+  }
+  SaveForRollback(canonical, context);
+}
 
-  {  // get from session variables
-    auto it = _session.find(key);
-    if (it != _session.end()) {
-      return it->second;
-    }
-  }
-  return {};
+void Config::SetSetting(std::string_view key, std::string value,
+                        bool is_local) {
+  OnSet(key, is_local);
+  SetInternal(key, std::move(value));
 }
 
 void Config::Set(VariableContext context, std::string_view key,
                  std::string value) {
-  switch (context) {
-    case VariableContext::Session: {
-      _session[key] = std::move(value);
-    } break;
-    case VariableContext::Transaction: {
-      _transaction[key] = {
-        TxnAction::Apply,
-        std::move(value),
-      };
-    } break;
-    case VariableContext::Local: {
-      _transaction[key] = {
-        TxnAction::Revert,
-        std::move(value),
-      };
-    } break;
+  SaveForRollback(key, context);
+  SetInternal(key, std::move(value));
+}
+
+void Config::SaveForRollback(std::string_view key, VariableContext context) {
+  if (context != VariableContext::Transaction &&
+      context != VariableContext::Local) {
+    return;
+  }
+  if (auto it = _transaction.find(key); it != _transaction.end()) {
+    // Already tracking this key -- SET LOCAL overrides a prior SET
+    if (context == VariableContext::Local) {
+      it->second.action = TxnAction::Revert;
+    }
+  } else {
+    // First SET for this key in this txn -- save old value
+    duckdb::Value old_value;
+    _client_ctx.TryGetCurrentSetting(std::string{key}, old_value);
+    _transaction[key] = {
+      context == VariableContext::Local ? TxnAction::Revert : TxnAction::Keep,
+      std::move(old_value),
+    };
   }
 }
 
 void Config::ResetAll() {
-  _session.clear();
   _transaction.clear();
+
+  _client_ctx.config.user_settings = {};
+}
+
+bool Config::IsAutoCommit() const {
+  return _client_ctx.transaction.IsAutoCommit();
 }
 
 void Config::Reset(std::string_view key) {
   _transaction.erase(key);
-  _session.erase(key);
+
+  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  auto setting_index = db_config.TryGetSettingIndex(
+    duckdb::String::Reference(key.data(), key.size()), option);
+  if (setting_index.IsValid()) {
+    _client_ctx.config.user_settings.ClearSetting(setting_index.GetIndex());
+  }
+}
+
+void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
+  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  auto setting_index = db_config.TryGetSettingIndex(
+    duckdb::String::Reference(key.data(), key.size()), option);
+  if (setting_index.IsValid()) {
+    // TODO(gnusi): SetUserSetting can throw
+    _client_ctx.config.user_settings.SetUserSetting(setting_index.GetIndex(),
+                                                    std::move(value));
+  }
+}
+
+void Config::RollbackVariables() noexcept {
+  for (auto&& [key, var] : _transaction) {
+    RestoreValue(key, std::move(var.old_value));
+  }
+  _transaction.clear();
 }
 
 void Config::CommitVariables() noexcept {
+  // If default_transaction_isolation was changed in this txn (Keep = commit),
+  // also propagate to transaction_isolation for the next transaction.
+  // Litmus: SET default_transaction_isolation = A; BEGIN;
+  //   SET default_transaction_isolation = B; SHOW transaction_isolation == A;
+  // COMMIT; SHOW transaction_isolation == B;
   if (auto it = _transaction.find(pg::kDefaultTransactionIsolation);
-      it != _transaction.end()) {
-    // Such strange logics is required, look at litmus pseudo-queries:
-    // SET default_transaction_isolation = A
-    // BEGIN
-    //  SET default_transaction_isolation = B;
-    //  SHOW transaction_isolation == A;
-    //  COMMIT
-    // SHOW transaction_isolation == B;
-    SDB_ASSERT(it->second.action == TxnAction::Apply);
-    _session.insert_or_assign(pg::kTransactionIsolation, it->second.value);
+      it != _transaction.end() && it->second.action == TxnAction::Keep) {
+    duckdb::Value current;
+    _client_ctx.TryGetCurrentSetting(
+      std::string{pg::kDefaultTransactionIsolation}, current);
+    SetInternal(pg::kTransactionIsolation, current.ToString());
   }
 
-  for (auto&& [key, value] : _transaction) {
-    if (value.action == TxnAction::Apply) {
-      _session.insert_or_assign(key, std::move(value.value));
+  for (auto&& [key, var] : _transaction) {
+    if (var.action == TxnAction::Revert) {
+      RestoreValue(key, std::move(var.old_value));
     }
   }
   _transaction.clear();

@@ -39,6 +39,8 @@ namespace sdb::query {
 
 class Transaction : public Config {
  public:
+  using Config::Config;
+
   enum class State : uint8_t {
     None = 0,
     HasRocksDBRead = 1 << 0,
@@ -76,10 +78,6 @@ class Transaction : public Config {
 
   void AddTransactionBegin() noexcept;
   bool HasTransactionBegin() const noexcept;
-
-  IsolationLevel GetIsolationLevel() const noexcept {
-    return Get<VariableType::SdbTransactionIsolation>("transaction_isolation");
-  }
 
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);

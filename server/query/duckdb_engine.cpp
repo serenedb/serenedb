@@ -23,7 +23,6 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
-#include <iostream>
 
 #include "basics/assert.h"
 #include "connector/duckdb_copy_filesystem.h"
@@ -43,6 +42,7 @@
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
 #include "pg/system_table.h"
+#include "query/config.h"
 
 extern "C" const duckdb::DefaultType* duckdb_external_types(
   duckdb::idx_t* count) {
@@ -185,47 +185,12 @@ void DuckDBEngine::Initialize() {
   duckdb::DBConfig config;
   config.SetOptionByName("threads", duckdb::Value::INTEGER(1));
   // PG folds unquoted identifiers to lowercase
-  config.SetOptionByName("preserve_identifier_case", duckdb::Value(false));
-  config.SetOptionByName("disable_database_invalidation", duckdb::Value(true));
-  // Register SereneDB storage extension before creating the DB
+  config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
+  config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});
+
   connector::RegisterSereneDBStorage(config);
 
-  // Register PG-compatible settings that DuckDB doesn't have natively.
-  // DuckDB already has: search_path, timezone (via icu), threads, etc.
-  // We only add SereneDB/PG-specific ones that are missing.
-  config.AddExtensionOption("extra_float_digits",
-                            "Extra digits for float display",
-                            duckdb::LogicalType::INTEGER, duckdb::Value(1));
-  config.AddExtensionOption("bytea_output", "Output format for bytea",
-                            duckdb::LogicalType::VARCHAR, duckdb::Value("hex"));
-  config.AddExtensionOption(
-    "default_transaction_isolation", "Default transaction isolation level",
-    duckdb::LogicalType::VARCHAR, duckdb::Value("read committed"));
-  config.AddExtensionOption(
-    "transaction_isolation", "Current transaction isolation level",
-    duckdb::LogicalType::VARCHAR, duckdb::Value("read committed"));
-  config.AddExtensionOption("client_encoding", "Client encoding",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("UTF8"));
-  config.AddExtensionOption("server_encoding", "Server encoding",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("UTF8"));
-  config.AddExtensionOption("server_version", "Server version string",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("18.3"));
-  config.AddExtensionOption("standard_conforming_strings",
-                            "Standard conforming strings",
-                            duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
-  config.AddExtensionOption("DateStyle", "Date display style",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("ISO, MDY"));
-  config.AddExtensionOption("IntervalStyle", "Interval display style",
-                            duckdb::LogicalType::VARCHAR,
-                            duckdb::Value("postgres"));
-  config.AddExtensionOption("application_name", "Application name",
-                            duckdb::LogicalType::VARCHAR, duckdb::Value(""));
-  config.AddExtensionOption("integer_datetimes", "Integer datetimes",
-                            duckdb::LogicalType::VARCHAR, duckdb::Value("on"));
+  connector::RegisterConfigVariables(config);
 
   _db = std::make_unique<duckdb::DuckDB>(nullptr, &config);
 
@@ -255,23 +220,11 @@ void DuckDBEngine::Initialize() {
   // These provide create_plan callbacks that bypass DuckDB's native
   // PhysicalCreateIndex (which requires DuckTableEntry).
   auto& index_types = _db->instance->config.GetIndexTypes();
-  {
-    duckdb::IndexType secondary;
-    secondary.name = "secondary";
-    secondary.create_plan = &connector::SereneDBCreateIndexPlan;
-    index_types.RegisterIndexType(secondary);
-  }
-  {
-    duckdb::IndexType btree;
-    btree.name = "btree";
-    btree.create_plan = &connector::SereneDBCreateIndexPlan;
-    index_types.RegisterIndexType(btree);
-  }
-  {
-    duckdb::IndexType inverted;
-    inverted.name = "inverted";
-    inverted.create_plan = &connector::SereneDBCreateIndexPlan;
-    index_types.RegisterIndexType(inverted);
+  for (auto& name : {"secondary", "btree", "inverted"}) {
+    index_types.RegisterIndexType({
+      .name = name,
+      .create_plan = &connector::SereneDBCreateIndexPlan,
+    });
   }
 
   // Register filesystem for COPY FROM STDIN support.
@@ -283,8 +236,6 @@ void DuckDBEngine::Initialize() {
   // for serving from our attached catalog.
   pg::InitSystemFunctions();
   pg::InitSystemViews();
-
-  std::cerr << "DuckDB engine initialized with SereneDB storage" << std::endl;
 }
 
 void DuckDBEngine::Shutdown() { _db.reset(); }

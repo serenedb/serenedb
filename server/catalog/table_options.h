@@ -259,26 +259,6 @@ struct TableOptions {
 struct CreateTableOptions : TableOptions {
   std::vector<std::string> avoidServers;
 };
-
-struct TableMeta {
-  ObjectId database;
-  ObjectId schema;
-  ObjectId id;
-  ObjectId plan_id;
-  ObjectId plan_db;
-  ObjectId from;
-  ObjectId to;
-  std::string name;  // TODO(gnusi): remove
-
-  auto GetTarget(EdgeDirection dir) const noexcept {
-    SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
-    return dir == EdgeDirection::Out ? to : from;
-  }
-  auto GetSource(EdgeDirection dir) const noexcept {
-    SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
-    return dir == EdgeDirection::Out ? from : to;
-  }
-};
 // NOLINTEND
 
 Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,

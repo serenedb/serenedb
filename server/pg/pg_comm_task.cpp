@@ -294,14 +294,11 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         ERRCODE_INVALID_SCHEMA_NAME);
     }
 
+    _duckdb_conn = query::DuckDBEngine::Instance().CreateConnection();
+
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId(), std::move(database),
-      &_send, &_copy_queue);
-    // TODO(codeworse): Move this to ctor and add more parameters there.
-    _connection_ctx->SetSetting("session_authorization",
-                                std::string{UserName()}, false);
-    _connection_ctx->SetSetting(
-      "is_superuser", _connection_ctx->isSuperuser() ? "on" : "off", false);
+      *_duckdb_conn->context, UserName(), DatabaseName(), database->GetId(),
+      std::move(database), &_send, &_copy_queue);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{
@@ -347,6 +344,22 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
       _send.Write(ToBuffer(backend_key_data), false);
 
+      {
+        auto state = duckdb::make_shared_ptr<connector::SereneDBClientState>(
+          _connection_ctx);
+        _duckdb_conn->context->registered_state->Insert(
+          connector::kSereneDBClientStateKey, std::move(state));
+      }
+      // Set default catalog to the user's database
+      _duckdb_conn->context->client_data->catalog_search_path->Set(
+        duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
+        duckdb::CatalogSetPathType::SET_DIRECTLY);
+
+      _connection_ctx->SetSetting("session_authorization",
+                                  std::string{UserName()}, false);
+      _connection_ctx->SetSetting(
+        "is_superuser", _connection_ctx->isSuperuser() ? "on" : "off", false);
+
       // TODO:
       // ParameterStatus messages will be generated when vars from the list:
       // https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-ASYNC
@@ -373,19 +386,6 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         // TODO(codeworse): Avoid copy string in GetSetting
         SendParameterStatus(param, *_connection_ctx->GetSetting(param));
       }
-
-      // Create per-session DuckDB connection and register SereneDB state
-      _duckdb_conn = query::DuckDBEngine::Instance().CreateConnection();
-      {
-        auto state = duckdb::make_shared_ptr<connector::SereneDBClientState>(
-          _connection_ctx);
-        _duckdb_conn->context->registered_state->Insert(
-          connector::kSereneDBClientStateKey, std::move(state));
-      }
-      // Set default catalog to the user's database
-      _duckdb_conn->context->client_data->catalog_search_path->Set(
-        duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
-        duckdb::CatalogSetPathType::SET_DIRECTLY);
 
       _send.Write(ToBuffer(kReadyForQuery), true);
       std::move(cleanup).Cancel();

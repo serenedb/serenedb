@@ -179,10 +179,21 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
       SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(column_id,
                                                              have_nulls);
       break;
+    case duckdb::LogicalTypeId::ARRAY: {
+      // HNSW vector columns: only FLOAT element type is supported.
+      const auto& child_type = duckdb::ArrayType::GetChildType(type);
+      if (child_type.id() != duckdb::LogicalTypeId::FLOAT) {
+        _current_writer = nullptr;
+        return false;
+      }
+      SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
+      break;
+    }
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
-                duckdb::EnumUtil::ToString(type.id()),
-                " is not supported in search index");
+      // Unsupported type for inverted index (e.g. INTEGER without opclass).
+      // Skip this column rather than crashing in WriteImpl.
+      _current_writer = nullptr;
+      return false;
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -269,6 +280,18 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer =
         MakeIndexWriter<irs::Action::INDEX>(&WriteNumericValue<T>);
     }
+  } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
+    // HNSW vector field: stored as raw float32 bytes via Action::STORE.
+    // No name mangling: the field name is the raw big-endian column ID,
+    // matching the column_info key registered in InvertedIndexShard.
+    // Null vectors are skipped (not stored) so they never appear in HNSW.
+    _field.PrepareForVectorValue();
+    if (have_nulls) {
+      _current_writer = MakeIndexWriter<irs::Action::STORE>(
+        make_nullable_writer_func(&WriteVectorValue));
+    } else {
+      _current_writer = MakeIndexWriter<irs::Action::STORE>(&WriteVectorValue);
+    }
   } else {
     // Defensive: SwitchColumnImpl only calls this for Kinds handled above.
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
@@ -353,9 +376,15 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
   std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
   SearchSinkInsertBaseImpl::Field& field) {
+  // _row_slices layout from WriteFlatSubVector<float>:
+  //   [0] header  (varint(count) + ValueFlags)
+  //   [1] null bitmap  (only when have_nulls)
+  //   [last] raw float data  (count * sizeof(float) bytes)
+  // Always use the last slice to get the actual float bytes.
+  SDB_ASSERT(!cell_slices.empty());
   field.value = irs::bytes_view{
-    reinterpret_cast<const irs::byte_type*>(cell_slices[0].data()),
-    cell_slices[0].size()};
+    reinterpret_cast<const irs::byte_type*>(cell_slices.back().data()),
+    cell_slices.back().size()};
   return field;
 }
 
@@ -393,6 +422,15 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
   SDB_ASSERT(cell_slices[0].size() == 1);
   field.SetBooleanValue(cell_slices.front() == kTrueValue);
   return field;
+}
+
+void SearchSinkInsertBaseImpl::Field::PrepareForVectorValue() {
+  // HNSW vector fields are stored via Action::STORE only (no inverted index).
+  // No tokenizer is needed: Action::STORE does not call GetTokens().
+  string_analyzer.reset();
+  analyzer.reset();
+  index_features = irs::IndexFeatures::None;
+  value = {};
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {

@@ -43,9 +43,9 @@ class InvertedIndexShard;
 
 struct InvertedIndexShardOptions : public IndexShardOptions {
   struct Base {
-    size_t commit_interval_ms;
-    size_t consolidation_interval_ms;
-    size_t cleanup_interval_step;
+    size_t commit_interval_ms = 1000;
+    size_t consolidation_interval_ms = 1000;
+    size_t cleanup_interval_step = 1;
   };
 
   Base base;

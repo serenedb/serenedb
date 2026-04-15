@@ -21,6 +21,7 @@
 #include "connector/duckdb_catalog.h"
 
 #include <duckdb/execution/operator/order/physical_order.hpp>
+#include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -38,7 +39,6 @@
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
-#include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
@@ -578,7 +578,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
           result->op = &planner.Make<SereneDBPhysicalInsert>(
             std::move(table_copy), op.types, cardinality,
             duckdb::OnConflictAction::NOTHING, std::move(bound_constraints));
-          // Transform expressions map merge-join output → table columns.
+          // Transform expressions map merge-join output -> table columns.
           if (!action->column_index_map.empty()) {
             duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> new_exprs;
             for (auto& col : op.table.GetColumns().Physical()) {
@@ -587,8 +587,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
               if (mapped == duckdb::DConstants::INVALID_INDEX) {
                 new_exprs.push_back(op.bound_defaults[storage_idx]->Copy());
               } else {
-                new_exprs.push_back(
-                  std::move(action->expressions[mapped]));
+                new_exprs.push_back(std::move(action->expressions[mapped]));
               }
             }
             action->expressions = std::move(new_exprs);

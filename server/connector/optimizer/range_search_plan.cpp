@@ -294,7 +294,7 @@ class RangeSearchPlanOptimizer : public duckdb::OptimizerExtension {
 
     // Rewrite the bind data to RangeSearchScan mode.
     connector::RangeSearchScan rss;
-    rss.shard = std::move(inverted_index_shard);
+    rss.index_id = inverted_index->GetId();
     rss.field_name = std::move(field_name);
     rss.query_vector = std::move(query_vector);
     rss.radius = radius;

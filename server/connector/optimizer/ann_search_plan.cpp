@@ -262,7 +262,7 @@ class ANNSearchPlanOptimizer : public duckdb::OptimizerExtension {
 
     // Rewrite the bind data to ANNScan mode.
     connector::ANNScan ann;
-    ann.shard = std::move(inverted_index_shard);
+    ann.index_id = inverted_index->GetId();
     ann.field_name = std::move(field_name);
     ann.query_vector = std::move(query_vector);
     ann.top_k = static_cast<size_t>(top_n.limit);

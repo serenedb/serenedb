@@ -55,7 +55,7 @@ struct SecondaryIndexScan {
 // Populated by the ANNSearchPlanOptimizer when it detects the pattern:
 //   ORDER BY distance_func(col, const_vector) ASC LIMIT k
 struct ANNScan {
-  std::shared_ptr<search::InvertedIndexShard> shard;
+  ObjectId index_id;
   // Field name: big-endian catalog::Column::Id bytes, no MangleString
   std::string field_name;
   std::vector<float> query_vector;
@@ -66,7 +66,7 @@ struct ANNScan {
 // Populated by the RangeSearchPlanOptimizer when it detects the pattern:
 //   WHERE distance_func(col, const_vector) < radius
 struct RangeSearchScan {
-  std::shared_ptr<search::InvertedIndexShard> shard;
+  ObjectId index_id;
   std::string field_name;
   std::vector<float> query_vector;
   float radius = 0.0f;

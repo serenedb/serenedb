@@ -288,8 +288,7 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   for (size_t i = 0; i < num_scan; ++i) {
     ro.iterate_upper_bound = &state->upper_bound_slices[i];
     auto it = std::unique_ptr<rocksdb::Iterator>(
-      state->txn ? state->txn->GetIterator(ro, cf)
-                 : db->NewIterator(ro, cf));
+      state->txn ? state->txn->GetIterator(ro, cf) : db->NewIterator(ro, cf));
     it->Seek(state->column_keys[i]);
     state->iterators.push_back(std::move(it));
   }
@@ -675,7 +674,7 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
 
 // --- ANN scan: HNSW top-k -> PKs -> RocksDB materialization ---
 
-static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
+static void SereneDBANNScanFunction(duckdb::ClientContext& context,
                                     duckdb::TableFunctionInput& data,
                                     duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
@@ -690,9 +689,10 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
   if (!gstate.ann_search_done) {
     gstate.ann_search_done = true;
     auto& ann = std::get<ANNScan>(bind_data.scan_source);
-    auto snapshot = ann.shard->GetInvertedIndexSnapshot();
+    auto& snapshot =
+      GetSereneDBContext(context).EnsureSearchSnapshot(ann.index_id);
 
-    if (snapshot && snapshot->reader.size() > 0 && ann.top_k > 0) {
+    if (snapshot.reader.size() > 0 && ann.top_k > 0) {
       const size_t top_k = ann.top_k;
       std::vector<float> dis(top_k, std::numeric_limits<float>::max());
       std::vector<int64_t> ids(top_k, -1);
@@ -702,10 +702,10 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
           reinterpret_cast<const irs::byte_type*>(ann.query_vector.data()),
         .top_k = top_k,
       };
-      snapshot->reader.Search(ann.field_name, info, dis.data(), ids.data());
+      snapshot.reader.Search(ann.field_name, info, dis.data(), ids.data());
 
       gstate.ann_pk_bytes.reserve(top_k);
-      auto& reader = snapshot->reader;
+      auto& reader = snapshot.reader;
       for (size_t i = 0; i < top_k; ++i) {
         if (ids[i] == -1) {
           continue;
@@ -764,6 +764,9 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
   std::string key_buffer;
   rocksdb::ReadOptions ro;
   ro.snapshot = gstate.snapshot;
+  ro.async_io = false;
+  ro.adaptive_readahead = true;
+  ro.auto_prefix_mode = true;
   rocksdb::PinnableSlice value;
 
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
@@ -793,6 +796,8 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
       key_buffer.append(pk);
 
       value.Reset();
+      SDB_INFO("xxxxx", Logger::FIXME, "Key from ANN: ", key_buffer);
+      SDB_INFO("xxxxx", Logger::FIXME, "PK: ", pk);
       auto s = db->Get(ro, cf, key_buffer, &value);
       if (s.IsNotFound()) {
         duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
@@ -814,7 +819,7 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& /*context*/,
 
 // --- Range search scan: HNSW range -> PKs -> RocksDB materialization ---
 
-static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& /*context*/,
+static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& context,
                                             duckdb::TableFunctionInput& data,
                                             duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
@@ -829,9 +834,10 @@ static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& /*context*/,
   if (!gstate.ann_search_done) {
     gstate.ann_search_done = true;
     auto& rss = std::get<RangeSearchScan>(bind_data.scan_source);
-    auto snapshot = rss.shard->GetInvertedIndexSnapshot();
+    auto& snapshot =
+      GetSereneDBContext(context).EnsureSearchSnapshot(rss.index_id);
 
-    if (snapshot && snapshot->reader.size() > 0) {
+    if (snapshot.reader.size() > 0) {
       std::vector<float> dis;
       std::vector<int64_t> ids;
 
@@ -840,9 +846,9 @@ static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& /*context*/,
           reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
         .radius = rss.radius,
       };
-      snapshot->reader.RangeSearch(rss.field_name, info, dis, ids);
+      snapshot.reader.RangeSearch(rss.field_name, info, dis, ids);
 
-      auto& reader = snapshot->reader;
+      auto& reader = snapshot.reader;
       gstate.ann_pk_bytes.reserve(ids.size());
       for (size_t i = 0; i < ids.size(); ++i) {
         auto [seg_id, doc_id] =
@@ -1100,14 +1106,9 @@ static void SereneDBPushdownComplexFilter(
     return;
   }
 
-  // Get search snapshot via connection context.
-  // EnsureSearchSnapshot takes the INDEX ID (not shard ID) -- it finds the
-  // shard internally via GetIndexShard.
-  // BUT GetIndexShard actually takes a SHARD ID. The old Velox code passes
-  // shard.GetId(). Let's use the connection context's snapshot to find the
-  // shard. Get search reader directly from a fresh catalog snapshot. Don't use
-  // conn_ctx.EnsureSearchSnapshot -- it uses the connection's cached catalog
-  // snapshot which may be stale (from before CREATE INDEX).
+  // Get search reader from a fresh catalog snapshot (not the connection's
+  // cached snapshot) so that indexes created earlier in this session are
+  // visible.
   auto fresh_snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   std::shared_ptr<IndexShard> inverted_shard;
   for (auto& shard : fresh_snapshot->GetIndexShardsByTable(table_id)) {

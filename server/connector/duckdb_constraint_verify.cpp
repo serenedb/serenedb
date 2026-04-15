@@ -377,8 +377,7 @@ size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
         ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
         ERR_MSG("duplicate key value violates unique constraint \"",
                 _table_name, "_pkey\""),
-        ERR_DETAIL(
-          BuildPKViolationDetail(chunk, pk_columns, pk_col_names, i)));
+        ERR_DETAIL(BuildPKViolationDetail(chunk, pk_columns, pk_col_names, i)));
     }
 
     // Check against existing DB data

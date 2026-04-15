@@ -995,8 +995,8 @@ static void SereneDBPushdownComplexFilter(
     }
 
     auto& func_expr = expr.Cast<duckdb::BoundFunctionExpression>();
-    if (func_expr.function.name != functions::kPhrase &&
-        func_expr.function.name != functions::kTermEq) {
+    if (func_expr.function.name != connector::kPhrase &&
+        func_expr.function.name != connector::kTermEq) {
       continue;
     }
 
@@ -1058,7 +1058,7 @@ static void SereneDBPushdownComplexFilter(
     absl::big_endian::Store(field_name.data(), col_id);
     search::mangling::MangleString(field_name);
 
-    if (func_expr.function.name == functions::kPhrase) {
+    if (func_expr.function.name == connector::kPhrase) {
       auto analyzer = inverted_index->GetColumnAnalyzer(snapshot, col_id);
 
       auto& phrase = conjunct_root.add<irs::ByPhrase>();
@@ -1074,7 +1074,7 @@ static void SereneDBPushdownComplexFilter(
       }
 
       consumed.push_back(i);
-    } else if (func_expr.function.name == functions::kTermEq) {
+    } else if (func_expr.function.name == connector::kTermEq) {
       auto& term = conjunct_root.add<irs::ByTerm>();
       *term.mutable_field() = field_name;
       term.mutable_options()->term.assign(

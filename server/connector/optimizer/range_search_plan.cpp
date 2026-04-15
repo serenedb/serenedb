@@ -60,7 +60,7 @@
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
-#include "functions/vector.h"
+#include "connector/functions/vector.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
@@ -68,7 +68,7 @@ namespace sdb::optimizer {
 namespace {
 
 static bool IsDistanceFunction(std::string_view name) {
-  return name == functions::kL2Distance;
+  return name == connector::kL2Distance;
 }
 
 // Extract a float query vector from a constant ARRAY Value.

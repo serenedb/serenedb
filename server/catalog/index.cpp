@@ -111,32 +111,51 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   for (const auto& c : columns) {
     InvertedIndexColumnInfo index_col;
     if (!c.opclass.empty()) {
-      auto object_name = pg::ParseObjectName(c.opclass, schema_name);
-      if (object_name.schema != schema_name) {
-        // Technically nothing prevents us from allowing so.
-        // But that will make schema drop more complicated as we will need to
-        // check if any dictionaries are used in the indexes from other
-        // schemas and even fail schema drops on this case. For now if we
-        // drop text dictionary as a child entity we can be sure that
-        // indexes will also be dropped along with tables from same schema.
-        return std::unexpected<Result>{
-          std::in_place, ERROR_BAD_PARAMETER,
-          "Accessing text dictionary from different schema is not supported"};
+      // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
+      if (c.opclass == "hnsw") {
+        const auto& col_type = c.catalog_column->type;
+        if (col_type.id() != duckdb::LogicalTypeId::ARRAY) {
+          return std::unexpected<Result>{
+            std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
+            "' must be an ARRAY type to use the 'hnsw' opclass"};
+        }
+        const auto& child_type = duckdb::ArrayType::GetChildType(col_type);
+        if (child_type.id() != duckdb::LogicalTypeId::FLOAT) {
+          return std::unexpected<Result>{
+            std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
+            "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
+        }
+        index_col.hnsw_config = HNSWColumnConfig{
+          .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
+        };
+      } else {
+        auto object_name = pg::ParseObjectName(c.opclass, schema_name);
+        if (object_name.schema != schema_name) {
+          // Technically nothing prevents us from allowing so.
+          // But that will make schema drop more complicated as we will need to
+          // check if any dictionaries are used in the indexes from other
+          // schemas and even fail schema drops on this case. For now if we
+          // drop text dictionary as a child entity we can be sure that
+          // indexes will also be dropped along with tables from same schema.
+          return std::unexpected<Result>{
+            std::in_place, ERROR_BAD_PARAMETER,
+            "Accessing text dictionary from different schema is not supported"};
+        }
+        auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
+                                           object_name.relation);
+        if (!dict) {
+          return std::unexpected<Result>{std::in_place,
+                                         ERROR_BAD_PARAMETER,
+                                         "Text search dictionary '",
+                                         c.opclass,
+                                         "' does not exist.",
+                                         " Required by column '",
+                                         c.name,
+                                         "'"};
+        }
+        index_col.text_dictionary = dict->GetId();
+        index_col.features = dict->GetFeatures();
       }
-      auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
-                                         object_name.relation);
-      if (!dict) {
-        return std::unexpected<Result>{std::in_place,
-                                       ERROR_BAD_PARAMETER,
-                                       "Text search dictionary '",
-                                       c.opclass,
-                                       "' does not exist.",
-                                       " Required by column '",
-                                       c.name,
-                                       "'"};
-      }
-      index_col.text_dictionary = dict->GetId();
-      index_col.features = dict->GetFeatures();
     }
     inverted_columns.emplace(c.catalog_column->id, std::move(index_col));
   }

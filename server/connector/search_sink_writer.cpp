@@ -86,7 +86,10 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
                                                           have_nulls);
         break;
       default:
-        break;
+        // Unsupported type for inverted index (e.g. INTEGER without opclass).
+        // Skip this column rather than crashing in WriteImpl.
+        _current_writer = nullptr;
+        return false;
     }
   }
   SDB_ASSERT(_document.has_value());
@@ -136,7 +139,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     };
 
   if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
-    _current_writer = MakeIndexWriter(
+    _current_writer = MakeIndexWriter<irs::Action::INDEX>(
       [&](std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
         SDB_ASSERT(cell_slices.size() == 1);
@@ -149,19 +152,19 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_analyzer_provider(column_id));
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteStringValue));
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+        make_nullable_writer_func(&WriteStringValue));
     } else {
-      _current_writer = MakeIndexWriter(&WriteStringValue);
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteStringValue);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
     search::mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteBooleanValue));
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+        make_nullable_writer_func(&WriteBooleanValue));
     } else {
-      _current_writer = MakeIndexWriter(&WriteBooleanValue);
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteBooleanValue);
     }
     // } else if constexpr (std::is_integral_v<T> ||
     // std::is_floating_point_v<T>) {
@@ -204,19 +207,19 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
-template<typename WriteFunc>
+template<irs::Action Action, typename WriteFunc>
 SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
   WriteFunc&& write_func) {
-  return
-    [&, func = std::forward<WriteFunc>(write_func)](
-      std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
-      const bool r = _document->template Insert<irs::Action::INDEX>(
-        &func(full_key, cell_slices, _field));
-      if (!r) {
-        SDB_THROW(ERROR_INTERNAL,
-                  "Failed to insert field into IResearch document");
-      }
-    };
+  return [&, func = std::forward<WriteFunc>(write_func)](
+           std::string_view full_key,
+           std::span<const rocksdb::Slice> cell_slices) {
+    const bool r =
+      _document->template Insert<Action>(&func(full_key, cell_slices, _field));
+    if (!r) {
+      SDB_THROW(ERROR_INTERNAL,
+                "Failed to insert field into IResearch document");
+    }
+  };
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
@@ -249,6 +252,15 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
       field.SetStringValue({cell_slices[1].data(), cell_slices[1].size()});
     }
   }
+  return field;
+}
+
+SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
+  std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
+  SearchSinkInsertBaseImpl::Field& field) {
+  field.value = irs::bytes_view{
+    reinterpret_cast<const irs::byte_type*>(cell_slices[0].data()),
+    cell_slices[0].size()};
   return field;
 }
 

@@ -28,7 +28,6 @@
 #include "basics/assert.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_physical_create_index.h"
-#include "connector/duckdb_search_functions.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
@@ -36,8 +35,10 @@
 #include "connector/functions/cast.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/math.h"
+#include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
+#include "connector/functions/vector.h"
 #include "connector/pg_logical_types.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -245,6 +246,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterVacuumFunction(*_db->instance);
 
   connector::RegisterSearchFunctions(*_db->instance);
+
+  connector::RegisterVectorFunctions(*_db->instance);
 
   connector::RegisterSereneDBOptimizers(*_db->instance);
 

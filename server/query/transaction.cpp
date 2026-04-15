@@ -206,6 +206,21 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
   return *_rocksdb_transaction;
 }
 
+void Transaction::RegisterSearchFlushes() noexcept {
+  for (auto& [id, trx] : _search_transactions) {
+    trx->RegisterFlush();
+  }
+}
+
+void Transaction::CommitSearchTransactions(uint64_t post_ingest_seq) noexcept {
+  for (auto& [id, trx] : _search_transactions) {
+    const auto queries = trx->GetQueries();
+    if (!trx->Commit(post_ingest_seq + queries)) {
+      trx->Abort();
+    }
+  }
+}
+
 void Transaction::Destroy() noexcept {
   DropCatalogSnapshot();
   _state = State::None;

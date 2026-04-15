@@ -170,7 +170,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // _info->parsed_expressions has the actual index column refs.
   const auto& columns = _table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
-  for (auto& expr : _info->parsed_expressions) {
+  for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
+    auto& expr = _info->parsed_expressions[i];
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
@@ -188,6 +189,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       idx_columns.push_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->name,
+        .opclass = i < _info->column_opclasses.size()
+                     ? _info->column_opclasses[i]
+                     : std::string{},
       });
     } else {
       throw duckdb::CatalogException(

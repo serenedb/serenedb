@@ -90,6 +90,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
       return true;
     }
 
+    void PrepareForVectorValue();
+
     void PrepareForVerbatimStringValue();
     void PrepareForStringValue(catalog::ColumnAnalyzer&& column_analyzer);
     void SetStringValue(std::string_view value);
@@ -117,7 +119,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   // Write executors. For INDEX, INDEX and STORE, Sort etc.
   // Could be more than one when we have index meta and different indexing
   // options.
-  template<typename WriteFunc>
+  template<irs::Action Action, typename WriteFunc>
   Writer MakeIndexWriter(WriteFunc&& write_func);
 
   // Actual value processors. It is set to write executor (see MakeIndexWriter)
@@ -134,6 +136,10 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   static Field& WriteNumericValue(std::string_view full_key,
                                   std::span<const rocksdb::Slice> cell_slices,
                                   Field& field);
+
+  static Field& WriteVectorValue(std::string_view full_key,
+                                 std::span<const rocksdb::Slice> cell_slices,
+                                 Field& field);
 
   // Setup column writer according to type kind.
   // Builds actual executor to avoid switch/case on each row whenever possible.

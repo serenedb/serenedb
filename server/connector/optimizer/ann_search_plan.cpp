@@ -50,7 +50,7 @@
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
-#include "functions/vector.h"
+#include "connector/functions/vector.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
@@ -61,7 +61,7 @@ namespace {
 // array/list arguments.  Both built-ins are matched so the optimizer works
 // regardless of whether the column type is LIST(FLOAT) or FLOAT[N].
 static bool IsDistanceFunction(std::string_view name) {
-  return name == functions::kL2Distance;
+  return name == connector::kL2Distance;
 }
 
 // Extract a float query vector from a constant LIST or ARRAY Value.

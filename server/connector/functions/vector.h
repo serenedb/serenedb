@@ -20,15 +20,16 @@
 
 #pragma once
 
+#include <duckdb/main/database.hpp>
 #include <string>
 
-namespace sdb::functions {
+namespace sdb::connector {
 
 inline constexpr std::string_view kL2Distance = "sdb_l2_distance";
 inline constexpr std::string_view kL1Distance = "sdb_l1_distance";
 inline constexpr std::string_view kCosineDistance = "sdb_cosine_distance";
 inline constexpr std::string_view kInnerProduct = "sdb_inner_product_distance";
 
-void RegisterVectorFunctions();
+void RegisterVectorFunctions(duckdb::DatabaseInstance& db);
 
-}  // namespace sdb::functions
+}  // namespace sdb::connector

@@ -117,7 +117,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   }
 }
 
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbL2Squared);
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -130,7 +130,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL2Squared)(benchmark::State& state) {
   }
 }
 
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL2Squared);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL2Squared);
 
 #endif
 
@@ -154,7 +154,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxL1Distance)(benchmark::State& state) {
   }
 }
 
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL1Distance);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxL1Distance);
 
 #endif
 
@@ -166,7 +166,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbDotProduct)(benchmark::State& state) {
   }
 }
 
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbDotProduct);
 
 #ifdef VELOX_ENABLE_FAISS
 
@@ -179,7 +179,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxDotProduct)(benchmark::State& state) {
   }
 }
 
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxDotProduct);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxDotProduct);
 
 #endif
 
@@ -189,7 +189,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, SdbCosine)(benchmark::State& state) {
     benchmark::DoNotOptimize(result);
   }
 }
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, SdbCosine);
 
 #ifdef VELOX_ENABLE_FAISS
 BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
@@ -198,7 +198,7 @@ BENCHMARK_DEFINE_F(DistanceFixture, VeloxCosine)(benchmark::State& state) {
     benchmark::DoNotOptimize(result);
   }
 }
-DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxCosine);
+// DISTANCES_BENCHMARK_REGISTER(DistanceFixture, VeloxCosine);
 #endif
 
 }  // namespace

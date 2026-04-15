@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/arena_containers/arena_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -111,6 +112,8 @@ class DuckDBColumnSerializer {
                      const duckdb::LogicalType& type);
   void WriteStructValue(const duckdb::Vector& vec, duckdb::idx_t idx,
                         const duckdb::LogicalType& type);
+  void WriteArrayValue(const duckdb::Vector& vec, duckdb::idx_t idx,
+                       const duckdb::LogicalType& type);
 
   // Write a single value at idx without sub-vector header.
   // Port of WriteValue (data_sink.cpp:2000). Used by WriteStructValue.
@@ -167,6 +170,12 @@ class DuckDBColumnSerializer {
                           duckdb::idx_t num_rows,
                           std::vector<std::string>& row_keys,
                           std::span<DuckDBSinkIndexWriter*> index_writers);
+
+  template<typename Writer>
+  void WriteArrayColumn(Writer& writer, const duckdb::Vector& vec,
+                        const duckdb::LogicalType& type, duckdb::idx_t num_rows,
+                        std::vector<std::string>& row_keys,
+                        std::span<DuckDBSinkIndexWriter*> index_writers);
 
   template<typename Writer>
   void WriteComplexColumn(Writer& writer, const duckdb::Vector& vec,

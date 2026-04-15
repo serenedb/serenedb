@@ -24,8 +24,6 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
-#include "functions/search.h"
-#include "functions/vector.h"
 #include "pg/functions/array_extra.h"
 #include "pg/functions/datetime_extra.h"
 #include "pg/functions/extract.h"
@@ -56,12 +54,6 @@ void RegisterFunctions(const std::string& prefix) {
   RegisterSystemFunctions(prefix);
   RegisterGenerateFunctions(prefix);
   RegisterUtilFunctions(prefix);
-}
-
-void RegisterSdbFunctions() {
-  // always have sdb_ prefix
-  sdb::functions::RegisterVectorFunctions();
-  sdb::functions::RegisterSearchFunctions();
 }
 
 }  // namespace sdb::pg::functions

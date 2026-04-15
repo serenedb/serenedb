@@ -242,6 +242,12 @@ duckdb::SinkFinalizeType SereneDBPhysicalSSTInsert::Finalize(
     sst_files.push_back(file_info.file_path);
   }
 
+  // Register IResearch pending segments BEFORE the ingest so the background
+  // commit thread waits for us and cannot advance _committed_tick past the
+  // ingest seqno before we deliver our Commit(seq).
+  auto& conn_ctx = GetSereneDBContext(context);
+  conn_ctx.RegisterSearchFlushes();
+
   rocksdb::IngestExternalFileOptions ingest_options;
   ingest_options.move_files = true;
 
@@ -250,6 +256,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalSSTInsert::Finalize(
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));
   }
+
+  // Commit IResearch transactions with the post-ingest sequence number.
+  // first_tick = post_ingest_seq (> _committed_tick) regardless of batch size.
+  const uint64_t post_ingest_seq = gstate.db->GetLatestSequenceNumber();
+  conn_ctx.CommitSearchTransactions(post_ingest_seq);
 
   gstate.finalized = true;
   return duckdb::SinkFinalizeType::READY;

@@ -20,9 +20,10 @@
 
 #pragma once
 
+#include <duckdb/main/database.hpp>
 #include <string>
 
-namespace sdb::functions {
+namespace sdb::connector {
 
 // TODO(codeworse): add constexpr prefix + function name
 inline constexpr std::string_view kPhrase = "sdb_phrase";
@@ -40,6 +41,6 @@ inline constexpr std::string_view kBoost = "sdb_boost";
 // Pseudo-functions that are completely replaced by columns
 inline constexpr std::string_view kOffsets = "offsets";
 
-void RegisterSearchFunctions();
+void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 
-}  // namespace sdb::functions
+}  // namespace sdb::connector

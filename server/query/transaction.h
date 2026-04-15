@@ -96,6 +96,16 @@ class Transaction : public Config {
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
+  // Must be called BEFORE the SST ingest so the IResearch background commit
+  // thread knows to wait for us before advancing _committed_tick.
+  void RegisterSearchFlushes() noexcept;
+
+  // Commit all IResearch transactions after an SST ingest.
+  // Uses Commit(post_ingest_seq + queries) so first_tick = post_ingest_seq,
+  // which is guaranteed > _committed_tick when RegisterSearchFlushes() was
+  // called before the ingest.
+  void CommitSearchTransactions(uint64_t post_ingest_seq) noexcept;
+
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {

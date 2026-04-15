@@ -524,6 +524,11 @@ void DuckDBColumnSerializer::WriteColumn(
     return;
   }
 
+  if (type.id() == duckdb::LogicalTypeId::ARRAY) {
+    WriteArrayColumn(writer, vec, type, num_rows, row_keys, index_writers);
+    return;
+  }
+
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN:
       WriteFlatColumn<Writer, bool>(writer, vec, num_rows, row_keys,
@@ -644,6 +649,9 @@ void DuckDBColumnSerializer::WriteComplexColumn(
         break;
       case duckdb::LogicalTypeId::STRUCT:
         WriteStructValue(vec, row, type);
+        break;
+      case duckdb::LogicalTypeId::ARRAY:
+        WriteArrayValue(vec, row, type);
         break;
       default:
         SDB_ASSERT(false);
@@ -899,6 +907,9 @@ void DuckDBColumnSerializer::WriteSubVector(const duckdb::Vector& vec,
       break;
     case duckdb::LogicalTypeId::STRUCT:
       WriteStructValue(vec, offset, type);
+      break;
+    case duckdb::LogicalTypeId::ARRAY:
+      WriteArrayValue(vec, offset, type);
       break;
     default:
       SDB_ASSERT(false,
@@ -1163,6 +1174,9 @@ void DuckDBColumnSerializer::WriteSingleValue(const duckdb::Vector& vec,
     case duckdb::LogicalTypeId::STRUCT:
       WriteStructValue(vec, idx, type);
       break;
+    case duckdb::LogicalTypeId::ARRAY:
+      WriteArrayValue(vec, idx, type);
+      break;
     default:
       SDB_ASSERT(false, "Unsupported type in WriteSingleValue");
   }
@@ -1225,6 +1239,69 @@ void DuckDBColumnSerializer::WriteStructValue(const duckdb::Vector& vec,
   irs::WriteVarint(length_array_size, header);
   for (auto len : lengths) {
     irs::WriteVarint(len, header);
+  }
+}
+
+// --- WriteArrayValue (single ARRAY at idx) ---
+
+void DuckDBColumnSerializer::WriteArrayValue(const duckdb::Vector& vec,
+                                             duckdb::idx_t idx,
+                                             const duckdb::LogicalType& type) {
+  auto& child_type = duckdb::ArrayType::GetChildType(type);
+  auto array_size = duckdb::ArrayType::GetSize(type);
+  switch (vec.GetVectorType()) {
+    case duckdb::VectorType::FLAT_VECTOR: {
+      const auto& child_vec = duckdb::ArrayVector::GetEntry(vec);
+      WriteSubVector(child_vec, idx * array_size, array_size, child_type);
+      return;
+    }
+    case duckdb::VectorType::CONSTANT_VECTOR: {
+      // All rows are the same constant -- child data is at offset 0.
+      const auto& child_vec = duckdb::ArrayVector::GetEntry(vec);
+      WriteSubVector(child_vec, 0, array_size, child_type);
+      return;
+    }
+    case duckdb::VectorType::DICTIONARY_VECTOR: {
+      WriteArrayValue(duckdb::DictionaryVector::Child(vec),
+                      duckdb::DictionaryVector::SelVector(vec).get_index(idx),
+                      type);
+      return;
+    }
+    default: {
+      duckdb::UnifiedVectorFormat vdata;
+      vec.ToUnifiedFormat(idx + 1, vdata);
+      auto mapped_idx = vdata.sel->get_index(idx);
+      const auto& child_vec = duckdb::ArrayVector::GetEntry(vec);
+      WriteSubVector(child_vec, mapped_idx * array_size, array_size,
+                     child_type);
+      return;
+    }
+  }
+}
+
+// --- WriteArrayColumn (Layer 1, FLAT_VECTOR path for ARRAY columns) ---
+
+template<typename Writer>
+void DuckDBColumnSerializer::WriteArrayColumn(
+  Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
+  duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
+  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  auto& validity = duckdb::FlatVector::Validity(vec);
+
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    if (row_keys[row].empty()) {
+      continue;
+    }
+    if (!validity.RowIsValid(row)) {
+      writer.WriteNull(row_keys[row]);
+      for (auto* iw : index_writers) {
+        iw->Write({}, row_keys[row]);
+      }
+      continue;
+    }
+    ResetForNewRow();
+    WriteArrayValue(vec, row, type);
+    WriteRowSlices(writer, row_keys[row], index_writers);
   }
 }
 

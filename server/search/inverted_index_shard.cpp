@@ -21,12 +21,14 @@
 
 #include "search/inverted_index_shard.h"
 
+#include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 #include <vpack/serializer.h>
 
 #include <chrono>
 #include <filesystem>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -199,6 +201,35 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;
   }
+
+  // Configure column_info for HNSW vector columns.
+  // The field name is the big-endian encoded catalog Column::Id.
+  {
+    containers::FlatHashMap<std::string, irs::HNSWInfo> hnsw_columns;
+    for (auto col_id : index.GetColumnIds()) {
+      if (auto hnsw = index.GetColumnHNSWInfo(col_id)) {
+        std::string name(sizeof(col_id), '\0');
+        absl::big_endian::Store64(name.data(), col_id);
+        hnsw_columns.emplace(std::move(name), *hnsw);
+      }
+    }
+    if (!hnsw_columns.empty()) {
+      writer_options.column_info =
+        [hnsw_map = std::move(hnsw_columns)](std::string_view name) {
+          auto it = hnsw_map.find(std::string(name));
+          if (it != hnsw_map.end()) {
+            return irs::ColumnInfo{
+              .compression = irs::Type<irs::compression::None>::get(),
+              .value_type = irs::ValueType::VectorF32,
+              .hnsw_info = it->second,
+            };
+          }
+          return irs::ColumnInfo{.compression =
+                                   irs::Type<irs::compression::None>::get()};
+        };
+    }
+  }
+
   _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
 
   if (!path_exists) {

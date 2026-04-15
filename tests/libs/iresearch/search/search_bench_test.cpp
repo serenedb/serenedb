@@ -864,7 +864,7 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
     {
       static constexpr size_t kCount = 100;
       std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
-      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.index = 0},
+      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.wand_enabled = true},
                        std::span{hits});
 
       absl::c_sort(hits, cmp);

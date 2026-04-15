@@ -132,15 +132,13 @@ struct FieldWriter {
 struct IteratorFieldOptions : IteratorOptions {
   explicit IteratorFieldOptions(bool has_wand) : has_wand{has_wand} {}
 
-  IteratorFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
+  IteratorFieldOptions(const IteratorOptions& options, bool enabled,
                        bool has_wand)
-    : IteratorOptions{options},
-      mapped_index{mapped_index},
-      has_wand{has_wand} {}
+    : IteratorOptions{options}, enabled{enabled}, has_wand{has_wand} {}
 
-  bool Enabled() const noexcept { return mapped_index != kDisable; }
+  bool Enabled() const noexcept { return enabled; }
 
-  uint8_t mapped_index = kDisable;
+  bool enabled = false;
   bool has_wand;
 };
 

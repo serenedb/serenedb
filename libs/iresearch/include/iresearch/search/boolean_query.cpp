@@ -130,7 +130,7 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& old) const {
   ExecutionContext ctx{old};
   if (excl_begin != end) {
     // TODO(mbkkt) enable back?
-    ctx.wand.index = WandContext::kDisable;
+    ctx.wand.wand_enabled = false;
   }
 
   auto incl = execute(ctx, begin(), excl_begin);
@@ -322,7 +322,7 @@ void BoostQuery::Prepare(const PrepareContext& ctx, const BooleanFilter& req,
 DocIterator::ptr BoostQuery::execute(const ExecutionContext& old) const {
   ExecutionContext ctx{old};
   // TODO(mbkkt) enable back?
-  ctx.wand.index = WandContext::kDisable;
+  ctx.wand.wand_enabled = false;
   auto req = _req->execute(ctx);
   if (!ctx.scorer || doc_limits::eof(req->value())) {
     return req;

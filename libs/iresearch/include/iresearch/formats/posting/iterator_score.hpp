@@ -28,15 +28,16 @@ namespace irs {
 
 IRS_FORCE_INLINE score_t CommonReadWandData(const ScoreFunction& func,
                                             WandSource& ctx, DataInput& in) {
-    const auto size = in.ReadByte();
-    ctx.Read(in, size);
-    return func.Score();
+  const auto size = in.ReadByte();
+  ctx.Read(in, size);
+  return func.Score();
 }
 
 template<typename FormatTraits>
 using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
 
-template<typename FormatTraits, bool Root, bool Pos, bool Offs, typename InputType>
+template<typename FormatTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
 class SingleWandIterator : public DocIterator {
   using IteratorTraits = WandTraits<FormatTraits>;
   using FieldTraits = IteratorTraitsImpl<FormatTraits, true, Pos, Offs>;
@@ -372,12 +373,13 @@ class SingleWandIterator : public DocIterator {
 };
 
 // TODO(gnusi): Deduplicate ScoreBlock and Collect at least
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
 template<size_t N>
 const score_t*
-SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::ScoreBlock(std::span<const doc_id_t, N> docs,
-                                          const ScoreFunction& score,
-                                          ColumnArgsFetcher* fetcher) {
+SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::ScoreBlock(
+  std::span<const doc_id_t, N> docs, const ScoreFunction& score,
+  ColumnArgsFetcher* fetcher) {
   if constexpr (N == kPostingBlock) {
     SDB_ASSERT(std::data(_docs) == docs.data());
     if (fetcher) {
@@ -402,10 +404,11 @@ SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::ScoreBlock(std::
   }
 }
 
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
-void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::Collect(const ScoreFunction& scorer,
-                                            ColumnArgsFetcher& fetcher,
-                                            ScoreCollector& collector) {
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
+void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::Collect(
+  const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+  ScoreCollector& collector) {
   ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
     auto process_block = [&]<size_t N>(size_t left_in_leaf) IRS_FORCE_INLINE {
       std::span<const doc_id_t, N> docs{std::end(_docs) - left_in_leaf,
@@ -447,7 +450,8 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::Collect(con
   _doc = doc_limits::eof();
 }
 
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
 template<ScoreMergeType MergeType, bool FillMask, size_t N>
 bool SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::
   ProcessBatch(std::span<const doc_id_t, N> docs, const doc_id_t min,
@@ -469,9 +473,11 @@ bool SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::
   return false;
 }
 
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
 template<typename DocsContainer, typename ScoresContainer>
-void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::CollectRange(DocsContainer& out_docs,
+void SingleWandIterator<IteratorTraits, Root, Pos, Offs,
+                        InputType>::CollectRange(DocsContainer& out_docs,
                                                  ScoresContainer& out_scores,
                                                  const ScoreFunction& scorer,
                                                  ColumnArgsFetcher* fetcher,
@@ -593,9 +599,11 @@ collect_range_done:
   }
 }
 
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
 template<typename DocsBuffer, typename ScoresBuffer>
-void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::ScoreCandidates(DocsBuffer& cand_docs,
+void SingleWandIterator<IteratorTraits, Root, Pos, Offs,
+                        InputType>::ScoreCandidates(DocsBuffer& cand_docs,
                                                     ScoresBuffer& cand_scores,
                                                     const ScoreFunction& scorer,
                                                     ColumnArgsFetcher* fetcher,
@@ -784,12 +792,12 @@ score_cand_done:
   }
 }
 
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
 std::pair<doc_id_t, bool>
-SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::FillBlock(const doc_id_t min, const doc_id_t max,
-                                         uint64_t* IRS_RESTRICT const doc_mask,
-                                         FillBlockScoreContext score,
-                                         FillBlockMatchContext) {
+SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::FillBlock(
+  const doc_id_t min, const doc_id_t max, uint64_t* IRS_RESTRICT const doc_mask,
+  FillBlockScoreContext score, FillBlockMatchContext) {
   SDB_ASSERT(!IteratorTraits::Position());
   SDB_ASSERT(min < max);
   SDB_ASSERT(value() >= min);
@@ -887,8 +895,10 @@ SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::FillBlock(const 
   });
 }
 
-template<typename IteratorTraits, bool Root, bool Pos, bool Offs, typename InputType>
-doc_id_t SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::seek(doc_id_t target) {
+template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
+doc_id_t SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::seek(
+  doc_id_t target) {
   if (target <= _doc) [[unlikely]] {
     return _doc;
   }
@@ -935,9 +945,10 @@ doc_id_t SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::seek(do
   }
 }
 
-template<typename FormatTraits, bool Root, bool Pos, bool Offs, typename InputType>
-void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(const PostingCookie& meta,
-                                            const IndexInput* doc_in) {
+template<typename FormatTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
+  const PostingCookie& meta, const IndexInput* doc_in) {
   Init(meta);
 
   // Set default wand state with max score so no blocks are ever pruned
@@ -998,8 +1009,10 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(const
   }
 }
 
-template<typename FormatTraits, bool Root, bool Pos, bool Offs, typename InputType>
-void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(doc_id_t prev_doc) {
+template<typename FormatTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(
+  doc_id_t prev_doc) {
   if (const auto tail = _left_in_list; tail >= doc_limits::kBlockSize)
     [[likely]] {
     IteratorTraits::ReadBlockDelta(GetDocIn(), _enc_buf, _docs, prev_doc);
@@ -1016,8 +1029,10 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(doc
   }
 }
 
-template<typename FormatTraits, bool Root, bool Pos, bool Offs, typename InputType>
-void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::PrepareSkipReader(uint64_t skip_offs,
+template<typename FormatTraits, bool Root, bool Pos, bool Offs,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Root, Pos, Offs,
+                        InputType>::PrepareSkipReader(uint64_t skip_offs,
                                                       uint32_t docs_count) {
   SDB_ASSERT(docs_count > 0);
 

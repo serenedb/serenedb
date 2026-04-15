@@ -42,13 +42,11 @@ using ColumnWarmupCallback =
 using ScorerPtr = const Scorer*;
 
 struct WandContext {
-  static constexpr auto kDisable = std::numeric_limits<uint8_t>::max();
-
-  bool Enabled() const noexcept { return index != kDisable; }
+  bool Enabled() const noexcept { return wand_enabled; }
 
   // Index of the wand data in the IndexWriter to use for optimization.
   // Optimization is turned off by default.
-  uint8_t index = kDisable;
+  bool wand_enabled = false;
   bool strict = false;
 };
 

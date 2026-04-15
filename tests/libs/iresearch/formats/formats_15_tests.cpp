@@ -343,7 +343,8 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     writer->Write(it, term_meta);
     const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
-    const uint64_t expected_has_wand = irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
+    const uint64_t expected_has_wand =
+      irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
     EXPECT_EQ(expected_has_wand, stats.has_wand);
     writer->Encode(*out, term_meta);
     writer->End();
@@ -412,9 +413,9 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   EXPECT_EQ((field_features & features), features);
   irs::IteratorFieldOptions options(field_has_freq ? 1 : 0);
   if (iterator_has_freq) {
-    options.index = 0;
+    options.wand_enabled = true;
     options.strict = strict;
-    options.mapped_index = 0;
+    options.enabled = true;
   }
 
   irs::CookieImpl cookie{static_cast<const irs::TermMetaImpl&>(meta)};

@@ -2805,8 +2805,7 @@ class FieldReaderImpl final : public FieldReader {
       SDB_ASSERT(1 <= min_match);
       SDB_ASSERT(min_match <= cookies.size());
 
-      const IteratorFieldOptions field_options{options, WandContext::kDisable,
-                                               HasWand()};
+      const IteratorFieldOptions field_options{options, false, HasWand()};
 
       return _owner->_pr->Iterator(meta().index_features, features, cookies,
                                    field_options, min_match, type);

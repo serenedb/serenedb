@@ -383,7 +383,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
-               uint8_t wand_index = WandContext::kDisable);
+               bool wand_enabled = false);
 
   std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
                                       uint64_t* IRS_RESTRICT const doc_mask,
@@ -496,7 +496,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                                              const IndexInput* doc_in,
                                              const IndexInput* pos_in,
                                              const IndexInput* pay_in,
-                                             uint8_t wand_index) {
+                                             bool wand_enabled) {
   this->Init(meta);
 
   auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
@@ -562,8 +562,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
     _skip.Reader().Enable(term_state);
     _skip_offs = term_state.doc_start + term_state.e_skip_start;
   } else if (1 < term_state.docs_count &&
-             term_state.docs_count < doc_limits::kBlockSize &&
-             wand_index == WandContext::kDisable) {
+             term_state.docs_count < doc_limits::kBlockSize && !wand_enabled) {
     _skip.Reader().SkipWandData(GetDocIn());
   }
   _docs_count = term_state.docs_count;

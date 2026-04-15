@@ -135,7 +135,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
   auto query = filter.prepare({.index = index, .scorer = scorer});
   EXPECT_NE(nullptr, query);
 
-  const irs::WandContext mode{.index = 0};
+  const irs::WandContext mode{.wand_enabled = true};
 
   std::vector<ScoredDoc> sorted;
   sorted.reserve(limit);

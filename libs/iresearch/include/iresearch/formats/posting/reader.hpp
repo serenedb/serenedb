@@ -50,23 +50,23 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
-template<uint8_t Value>
-struct Extent {
-  IRS_FORCE_INLINE static constexpr uint8_t GetExtent() noexcept {
-    return Value;
-  }
-};
+// template<uint8_t Value>
+// struct Extent {
+//   IRS_FORCE_INLINE static constexpr uint8_t GetExtent() noexcept {
+//     return Value;
+//   }
+// };
 
-template<>
-struct Extent<WandContext::kDisable> {
-  Extent(uint8_t value) noexcept : value{value} {}
+// template<>
+// struct Extent<WandContext::kDisable> {
+//   Extent(uint8_t value) noexcept : value{value} {}
 
-  IRS_FORCE_INLINE constexpr uint8_t GetExtent() const noexcept {
-    return value;
-  }
+//   IRS_FORCE_INLINE constexpr uint8_t GetExtent() const noexcept {
+//     return value;
+//   }
 
-  uint8_t value;
-};
+//   uint8_t value;
+// };
 
 template<typename PostingImpl>
 struct WandPostingAdapter : PostingAdapter<PostingImpl> {
@@ -464,13 +464,13 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
     field_features, options.has_wand, _doc_in->GetType(),
     [&]<bool Pos, bool Offs, bool HasWand, typename InputType>()
       -> DocIterator::ptr {
-      auto make_postings_iterator = [&]<bool Root>(
-                                      const PostingCookie& cookie) {
-        auto it =
-          memory::make_managed<SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>>();
-        it->Prepare(cookie, _doc_in.get());
-        return it;
-      };
+      auto make_postings_iterator =
+        [&]<bool Root>(const PostingCookie& cookie) {
+          auto it = memory::make_managed<
+            SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>>();
+          it->Prepare(cookie, _doc_in.get());
+          return it;
+        };
 
       if (metas.size() == 1) {
         return make_postings_iterator.template operator()<true>(metas[0]);
@@ -518,21 +518,21 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-        return ResolveBool(options.has_wand, [&]<bool HasWand> -> DocIterator::ptr {
-          if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
-            auto it = memory::make_managed<PostingIteratorImpl<
-              IteratorTraits, FieldTraits, HasWand, BytesViewInput>>();
-            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
-            return it;
-          } else {
-            auto it = memory::make_managed<PostingIteratorImpl<
-              IteratorTraits, FieldTraits, HasWand, IndexInput>>();
-            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
-            return it;
-          }
-        });
-      }
-    );
+        return ResolveBool(
+          options.has_wand, [&]<bool HasWand> -> DocIterator::ptr {
+            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+              auto it = memory::make_managed<PostingIteratorImpl<
+                IteratorTraits, FieldTraits, HasWand, BytesViewInput>>();
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              return it;
+            } else {
+              auto it = memory::make_managed<PostingIteratorImpl<
+                IteratorTraits, FieldTraits, HasWand, IndexInput>>();
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              return it;
+            }
+          });
+      });
   };
 
   if (metas.size() == 1) {

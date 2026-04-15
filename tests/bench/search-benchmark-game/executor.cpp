@@ -47,9 +47,9 @@ size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
     _result_count = 0;
     return 0;
   }
-  auto count =
-    irs::ExecuteTopK(_reader, *filter, *_scorer, k,
-                     {.index = 0, .strict = true}, std::span{_results});
+  auto count = irs::ExecuteTopK(_reader, *filter, *_scorer, k,
+                                {.wand_enabled = true, .strict = true},
+                                std::span{_results});
   _result_count = std::min<size_t>(k, count);
   return count;
 }

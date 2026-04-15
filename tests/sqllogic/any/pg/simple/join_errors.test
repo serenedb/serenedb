@@ -1,3 +1,4 @@
+skipif serenedb
 query error
 SELECT *
 FROM

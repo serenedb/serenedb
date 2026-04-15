@@ -879,6 +879,36 @@ inline constexpr duckdb::DefaultMacro kExternalMacros[] = {
 
   // set_config: registered as C++ function in connector/functions/system.cpp
 
+  // PG math functions missing from DuckDB
+
+  {DEFAULT_SCHEMA, "div",
+   R"((y, x) AS trunc(y / x)::BIGINT)"},
+
+  // Degree-based trigonometric functions
+  {DEFAULT_SCHEMA, "sind",
+   R"((x) AS sin(radians(x)))"},
+
+  {DEFAULT_SCHEMA, "cosd",
+   R"((x) AS cos(radians(x)))"},
+
+  {DEFAULT_SCHEMA, "tand",
+   R"((x) AS tan(radians(x)))"},
+
+  {DEFAULT_SCHEMA, "cotd",
+   R"((x) AS cot(radians(x)))"},
+
+  {DEFAULT_SCHEMA, "asind",
+   R"((x) AS degrees(asin(x)))"},
+
+  {DEFAULT_SCHEMA, "acosd",
+   R"((x) AS degrees(acos(x)))"},
+
+  {DEFAULT_SCHEMA, "atand",
+   R"((x) AS degrees(atan(x)))"},
+
+  {DEFAULT_SCHEMA, "atan2d",
+   R"((y, x) AS degrees(atan2(y, x)))"},
+
   // clang-format on
 };
 

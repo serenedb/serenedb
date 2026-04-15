@@ -35,6 +35,7 @@
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
 #include "connector/functions/inout.h"
+#include "connector/functions/math.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
 #include "connector/pg_logical_types.h"
@@ -143,6 +144,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterTokenizerPragma(*_db->instance);
 
   connector::RegisterPgCasts(*_db->instance);
+
+  connector::RegisterPgMathFunctions(*_db->instance);
 
   connector::RegisterPgSystemFunctions(*_db->instance);
 

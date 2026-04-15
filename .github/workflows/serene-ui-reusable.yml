@@ -146,11 +146,8 @@ jobs:
               if: inputs.RUN_TESTS
               run: |
                   mkdir -p logs
+                  export DOCKER_USER="$(id -u):$(id -g)"
                   ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
-
-            - name: Update file ownership
-              if: always()
-              run: bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS

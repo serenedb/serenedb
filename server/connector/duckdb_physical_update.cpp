@@ -401,6 +401,12 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
           }
         },
         key_buffer);
+      // Align layout with new_row_keys so the "old == new" fast-path in
+      // HandleWriteConflicts<true> can detect a PK-preserving update by
+      // byte-equality. Without this, the column_id slot differs (new keys
+      // have the first column id; old keys have leftover object_id bytes),
+      // and a same-PK update is incorrectly flagged as a duplicate.
+      key_utils::SetupColumnForKey(key_buffer, gstate.all_columns.front().id);
     }
 
     // 3. Conflict detection: check new keys against existing DB data.

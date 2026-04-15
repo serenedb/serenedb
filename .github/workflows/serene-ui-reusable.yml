@@ -324,7 +324,7 @@ jobs:
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-        runs-on: macos
+        runs-on: macOS
         permissions:
             contents: read
         timeout-minutes: 240
@@ -398,7 +398,8 @@ jobs:
 
     release-and-notify:
         name: Release & Notify
-        needs: [build-docker, build-linux-app, build-windows-app, build-macos-app]
+        needs:
+            [build-docker, build-linux-app, build-windows-app, build-macos-app]
         if: always()
         runs-on: ubuntu-latest
         permissions:

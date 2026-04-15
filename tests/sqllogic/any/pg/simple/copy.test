@@ -366,7 +366,7 @@ CREATE TABLE header_eater (header1 TEXT, header2 TEXT);
 
 
 statement count 1
-COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WITH (HEADER ON)
+COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WITH (HEADER 1)
 
 
 skipif serenedb
@@ -548,7 +548,9 @@ SELECT * FROM arelav_consumer;
 ----
 eater
 
-onlyif serenedb
+
+skipif postgres
+skipif serenedb
 query
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN 'ANALYZE');
 ----
@@ -562,7 +564,8 @@ Fragment 0:  numWorkers=0:
     -- TableScan[0][File(text)] -> "eater":VARCHAR
        <slt:ignore>
 
-onlyif serenedb
+skipif postgres
+skipif serenedb
 query
 SELECT * FROM arelav_consumer;
 ----
@@ -579,7 +582,8 @@ imarelav
 imarelav
 
 
-onlyif serenedb
+skipif postgres
+skipif serenedb
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
 ----

@@ -267,7 +267,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     del_col_mapping[pk_col_ids[i]] = _pk_col_indices[i];
   }
 
-  // Non-PK columns (all of them — index writers pick the ones they need)
+  // Non-PK columns (all of them -- index writers pick the ones they need)
   {
     size_t non_pk_idx = 0;
     for (size_t i = 0; i < columns.size(); ++i) {
@@ -377,8 +377,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
           }
         },
         key_buffer);
-      key_utils::SetupColumnForKey(key_buffer,
-                                   gstate.all_columns.front().id);
+      key_utils::SetupColumnForKey(key_buffer, gstate.all_columns.front().id);
     }
 
     // 2. Build OLD keys, lock old rows, delete old index entries.
@@ -406,8 +405,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
     // 3. Conflict detection: check new keys against existing DB data.
     gstate.conflict_resolver.HandleWriteConflicts<true>(
-      gstate.new_row_keys, chunk, gstate.new_pk_columns,
-      gstate.pk_col_names, gstate.row_keys);
+      gstate.new_row_keys, chunk, gstate.new_pk_columns, gstate.pk_col_names,
+      gstate.row_keys);
 
     // 4. Read non-updated column values (must happen before delete).
     rocksdb::ReadOptions read_opts;
@@ -425,8 +424,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
         rewrite_value.Reset();
         col_vals[row].clear();
-        auto s = txn->Get(read_opts, gstate.cf, gstate.row_keys[row],
-                          &rewrite_value);
+        auto s =
+          txn->Get(read_opts, gstate.cf, gstate.row_keys[row], &rewrite_value);
         if (s.ok()) {
           col_vals[row].assign(rewrite_value.data(), rewrite_value.size());
         } else if (!s.IsNotFound()) {
@@ -471,11 +470,10 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (auto& [col_id, col_vals] : gstate.saved_columns) {
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         if (col_vals[row].empty()) {
-          continue;  // NULL — no entry
+          continue;  // NULL -- no entry
         }
         key_utils::SetupColumnForKey(gstate.new_row_keys[row], col_id);
-        auto s =
-          txn->Put(gstate.cf, gstate.new_row_keys[row], col_vals[row]);
+        auto s = txn->Put(gstate.cf, gstate.new_row_keys[row], col_vals[row]);
         if (!s.ok()) {
           SDB_THROW(ERROR_INTERNAL, "RocksDB Put error: ", s.ToString());
         }

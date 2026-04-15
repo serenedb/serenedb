@@ -396,8 +396,14 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   // PK columns at [child_cols - num_virtual .. child_cols - num_virtual +
   // num_pk - 1]
   std::vector<duckdb::idx_t> pk_indices;
-  for (size_t i = 0; i < num_pk; ++i) {
-    pk_indices.push_back(child_cols - num_virtual + i);
+  if (pk_col_ids.empty()) {
+    // No explicit PK -- the rowid (last column) carries the generated PK.
+    // Mirrors old serenedb_connector.hpp:1404 (pk_count=1, del_pk_indices=[0]).
+    pk_indices.push_back(child_cols - 1);
+  } else {
+    for (size_t i = 0; i < num_pk; ++i) {
+      pk_indices.push_back(child_cols - num_virtual + i);
+    }
   }
 
   // Indexed columns at [child_cols - num_virtual + num_pk .. child_cols - 2]
@@ -512,9 +518,15 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   proj.children.push_back(plan);
 
   std::vector<duckdb::idx_t> pk_indices;
-  pk_indices.reserve(num_pk);
-  for (size_t i = 0; i < num_pk; ++i) {
-    pk_indices.push_back(num_updates + i);
+  if (pk_col_ids.empty()) {
+    // No explicit PK -- the rowid (last column after projection) carries the
+    // generated PK. After projection: [SET_vals..., virtuals..., rowid].
+    pk_indices.push_back(num_updates + num_virtual - 1);
+  } else {
+    pk_indices.reserve(num_pk);
+    for (size_t i = 0; i < num_pk; ++i) {
+      pk_indices.push_back(num_updates + i);
+    }
   }
   std::vector<duckdb::idx_t> indexed_indices;
   indexed_indices.reserve(num_idx);

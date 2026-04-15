@@ -327,9 +327,10 @@ std::string BuildPKViolationDetail(
   return detail;
 }
 
-void DuckDBWriteConflictResolver::Init(
-  rocksdb::Transaction& txn, rocksdb::ColumnFamilyHandle& cf,
-  duckdb::OnConflictAction on_conflict, std::string_view table_name) {
+void DuckDBWriteConflictResolver::Init(rocksdb::Transaction& txn,
+                                       rocksdb::ColumnFamilyHandle& cf,
+                                       duckdb::OnConflictAction on_conflict,
+                                       std::string_view table_name) {
   _txn = &txn;
   _cf = &cf;
   _on_conflict = on_conflict;
@@ -381,8 +382,7 @@ size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
       ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
       ERR_MSG("duplicate key value violates unique constraint \"", _table_name,
               "_pkey\""),
-      ERR_DETAIL(
-        BuildPKViolationDetail(chunk, pk_columns, pk_col_names, i)));
+      ERR_DETAIL(BuildPKViolationDetail(chunk, pk_columns, pk_col_names, i)));
   }
 
   return skipped_count;
@@ -391,12 +391,12 @@ size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
 // Explicit instantiations
 template size_t DuckDBWriteConflictResolver::HandleWriteConflicts<false>(
   std::vector<std::string>&, const duckdb::DataChunk&,
-  std::span<const duckdb_primary_key::PKColumn>,
-  std::span<const std::string>, std::span<const std::string>);
+  std::span<const duckdb_primary_key::PKColumn>, std::span<const std::string>,
+  std::span<const std::string>);
 
 template size_t DuckDBWriteConflictResolver::HandleWriteConflicts<true>(
   std::vector<std::string>&, const duckdb::DataChunk&,
-  std::span<const duckdb_primary_key::PKColumn>,
-  std::span<const std::string>, std::span<const std::string>);
+  std::span<const duckdb_primary_key::PKColumn>, std::span<const std::string>,
+  std::span<const std::string>);
 
 }  // namespace sdb::connector

@@ -865,7 +865,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
    R"((arr, n) AS arr[:len(arr) - n])"},
 
   {DEFAULT_SCHEMA, "array_positions",
-   R"((arr, elem) AS list_filter(generate_series(1, len(arr)), i -> arr[i] IS NOT DISTINCT FROM elem))"},
+   R"((arr, elem) AS list_filter(list_transform(arr, (x, i) -> CASE WHEN x IS NOT DISTINCT FROM elem THEN i ELSE NULL END), x -> x IS NOT NULL))"},
 
   {DEFAULT_SCHEMA, "array_replace",
    R"((arr, old_elem, new_elem) AS list_transform(arr, x -> CASE WHEN x IS NOT DISTINCT FROM old_elem THEN new_elem ELSE x END))"},
@@ -886,7 +886,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {DEFAULT_SCHEMA, "overlay",
    R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
 
-   // PG math functions missing from DuckDB
+  // PG math functions missing from DuckDB
 
   {DEFAULT_SCHEMA, "div",
    R"((y, x) AS trunc(y / x)::BIGINT)"},

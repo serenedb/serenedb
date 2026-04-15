@@ -21,9 +21,8 @@
 #pragma once
 
 #include <duckdb.hpp>
-#include <duckdb/planner/bound_constraint.hpp>
-
 #include <duckdb/parser/statement/insert_statement.hpp>
+#include <duckdb/planner/bound_constraint.hpp>
 
 #include "catalog/table.h"
 #include "connector/duckdb_primary_key.h"
@@ -67,8 +66,7 @@ class DuckDBWriteConflictResolver {
   DuckDBWriteConflictResolver() = default;
 
   void Init(rocksdb::Transaction& txn, rocksdb::ColumnFamilyHandle& cf,
-            duckdb::OnConflictAction on_conflict,
-            std::string_view table_name);
+            duckdb::OnConflictAction on_conflict, std::string_view table_name);
 
   // Returns number of skipped rows.
   // CheckOldKeys=true (update_pk): skip rows where old_key == new_key.

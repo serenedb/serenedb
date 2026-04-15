@@ -106,6 +106,9 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   bool finished = false;
   bool scan_rowid = false;
   duckdb::idx_t rowid_output_idx = 0;
+  // When true, rowid carries the generated PK (extracted from RocksDB keys)
+  // instead of dummy sequential numbers.
+  bool has_generated_pk = false;
   bool scan_tableoid = false;
   duckdb::idx_t tableoid_output_idx = 0;
   int64_t tableoid_value = 0;
@@ -138,6 +141,25 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
 };
 
 struct SereneDBScanLocalState : public duckdb::LocalTableFunctionState {};
+
+// Read generated PK from iterator keys (mirrors old ReadColumnFromKey).
+// Iterates the given rocksdb iterator, extracting the PK int64 from each key.
+static duckdb::idx_t ReadGeneratedPKFromKeys(rocksdb::Iterator& it,
+                                             duckdb::Vector& output,
+                                             duckdb::idx_t max_rows) {
+  duckdb::idx_t count = 0;
+  auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(output);
+  while (it.Valid() && count < max_rows) {
+    auto key = it.key().ToStringView();
+    SDB_ASSERT(key.size() >= kKeyPrefixSize + sizeof(int64_t));
+    data[count] = primary_key::ReadSigned<int64_t>(
+      std::string_view{key.begin() + kKeyPrefixSize, key.end()});
+    ++count;
+    it.Next();
+  }
+  rocksutils::CheckIteratorStatus(it);
+  return count;
+}
 
 // --- Callbacks ---
 
@@ -196,6 +218,10 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
     }
   }
 
+  // For tables without explicit PK, rowid must carry the generated PK
+  // (extracted from RocksDB keys) so DELETE/UPDATE can reconstruct the key.
+  state->has_generated_pk = bind_data.table->PKColumns().empty();
+
   // Create iterators only for the real (non-rowid) projected columns
   std::vector<catalog::Column::Id> scan_column_ids;
   for (auto proj_idx : state->projected_columns) {
@@ -213,6 +239,14 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   // If only rowid is requested, we still need one column iterator to drive scan
   if (scan_column_ids.empty() && !bind_data.column_ids.empty()) {
     scan_column_ids.push_back(bind_data.column_ids[0]);
+  }
+
+  // For generated-PK tables needing rowid, prepend a dedicated iterator on the
+  // first real column for PK extraction from keys (mirrors old
+  // _effective_column_id iterator in data_source.cpp).
+  if (state->has_generated_pk && state->scan_rowid &&
+      !bind_data.column_ids.empty()) {
+    scan_column_ids.insert(scan_column_ids.begin(), bind_data.column_ids[0]);
   }
 
   const auto num_scan = scan_column_ids.size();
@@ -317,22 +351,28 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
     }
   }
 
+  // For generated-PK tables, iterator[0] is a dedicated PK-extraction iterator
+  // (mirrors old _effective_column_id approach). Real column iterators start at
+  // index 1 in that case.
+  const duckdb::idx_t real_iter_start =
+    (gstate.scan_rowid && gstate.has_generated_pk) ? 1 : 0;
+
   if (first_real_output != duckdb::DConstants::INVALID_INDEX) {
     // Read first real column to determine row count
     count = ReadColumnIntoDuckDB(
-      *gstate.iterators[0], output.data[first_real_output],
+      *gstate.iterators[real_iter_start], output.data[first_real_output],
       gstate.projected_types[first_real_output], batch_size);
-    iter_idx = 1;
+    iter_idx = real_iter_start + 1;
   } else if (!gstate.iterators.empty()) {
-    // Only rowid requested -- still need to iterate to count rows
-    // Use a dummy read that just counts
-    auto& it = *gstate.iterators[0];
+    // Only rowid/constant requested -- still need to iterate to count rows.
+    // Use real_iter_start to skip the dedicated PK iterator (if any).
+    auto& it = *gstate.iterators[real_iter_start];
     while (it.Valid() && count < batch_size) {
       ++count;
       it.Next();
     }
     rocksutils::CheckIteratorStatus(it);
-    iter_idx = 1;
+    iter_idx = real_iter_start + 1;
   }
 
   if (count == 0) {
@@ -348,7 +388,7 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
             : first_real_output + 1);
        out < gstate.projected_columns.size(); ++out) {
     if (gstate.projected_columns[out] == duckdb::DConstants::INVALID_INDEX) {
-      continue;  // rowid -- already handled
+      continue;  // rowid/tableoid -- filled separately
     }
     SDB_ASSERT(iter_idx < gstate.iterators.size());
     auto col_count =
@@ -358,12 +398,20 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
     ++iter_idx;
   }
 
-  // Fill dummy rowid column with sequential numbers if requested
+  // Fill rowid column
   if (gstate.scan_rowid) {
-    auto* rowid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
-      output.data[gstate.rowid_output_idx]);
-    for (duckdb::idx_t i = 0; i < count; ++i) {
-      rowid_data[i] = static_cast<int64_t>(i);
+    if (gstate.has_generated_pk && real_iter_start == 1) {
+      // Extract generated PK from the dedicated iterator[0]'s keys
+      auto pk_count = ReadGeneratedPKFromKeys(
+        *gstate.iterators[0], output.data[gstate.rowid_output_idx], count);
+      SDB_ASSERT(pk_count == count);
+    } else {
+      // Dummy sequential rowid for explicit-PK tables
+      auto* rowid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
+        output.data[gstate.rowid_output_idx]);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        rowid_data[i] = static_cast<int64_t>(i);
+      }
     }
   }
 

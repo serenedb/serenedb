@@ -60,7 +60,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
     if (col.id == catalog::Column::kGeneratedPKId) {
-      continue;  // Skip generated PK
+      continue;  // Skip generated PK -- not stored as a value
     }
     data->column_ids.push_back(col.id);
     data->column_types.push_back(col.type);

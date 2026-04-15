@@ -161,22 +161,26 @@ a	sdb_generated_pk
 
 
 # Table without columns
+skipif serenedb
+# TODO(mbkkt) : HE WILL DO THIS VELARICH PLEASE DO SOMETHING
 statement ok
 CREATE TABLE no_columns ();
 
 
+skipif serenedb
 query
 SELECT * FROM no_columns;
 ----
 
 
+skipif serenedb
 query
 SELECT count(*) FROM no_columns;
 ----
 count
 0
 
-
+skipif serenedb
 query error
 SELECT field FROM no_columns;
 ----

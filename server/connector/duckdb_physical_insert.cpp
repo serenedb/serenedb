@@ -53,8 +53,10 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // Table metadata (computed once)
   ObjectId table_id;
   std::string table_key;
+  std::string table_name;
   std::vector<InsertColumnMeta> columns;  // non-generated-PK columns
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
+  std::vector<std::string> pk_col_names;
   bool has_generated_pk = false;
 
   // RocksDB handles
@@ -70,6 +72,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::string value_buffer;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
     duckdb::make_uniq<DuckDBColumnSerializer>();
+  DuckDBWriteConflictResolver conflict_resolver;
 };
 
 struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
@@ -120,11 +123,22 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   // PK column mappings
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
   state->has_generated_pk = _table->PKColumns().empty();
+  state->table_name = _table->GetName();
+  for (auto pk_id : _table->PKColumns()) {
+    for (const auto& col : columns) {
+      if (col.id == pk_id) {
+        state->pk_col_names.push_back(col.name);
+        break;
+      }
+    }
+  }
 
   // Set up transaction and index writers once
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
   state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->conflict_resolver.Init(*state->txn, *state->cf, _on_conflict,
+                                state->table_name);
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
@@ -171,29 +185,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   // 2. Conflict detection for explicit PKs
   size_t rows_skipped = 0;
   if (!gstate.has_generated_pk) {
-    rocksdb::ReadOptions ro;
-    ro.snapshot = txn->GetSnapshot();
-    rocksdb::PinnableSlice check_value;
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      check_value.Reset();
-      auto s = txn->Get(ro, gstate.cf, gstate.row_keys[row], &check_value);
-      if (s.ok()) {
-        if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
-          gstate.row_keys[row].clear();  // mark as skipped
-          ++rows_skipped;
-          continue;
-        }
-        if (_on_conflict == duckdb::OnConflictAction::REPLACE) {
-          continue;
-        }
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "duplicate key value violates unique constraint");
-      }
-      if (!s.IsNotFound()) {
-        SDB_THROW(ERROR_INTERNAL, "RocksDB error: ", s.ToString());
-      }
-    }
+    rows_skipped = gstate.conflict_resolver.HandleWriteConflicts<false>(
+      gstate.row_keys, chunk, gstate.pk_columns, gstate.pk_col_names);
   }
 
   auto affected_rows = num_rows - rows_skipped;

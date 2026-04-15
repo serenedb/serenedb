@@ -82,7 +82,8 @@ template<bool Unique>
 std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
   DuckDBWriteKind kind, rocksdb::Transaction& trx, ObjectId shard_id,
   std::span<const catalog::Column::Id> columns,
-  std::vector<duckdb_secondary_key::SKColumn> sk_columns) {
+  std::vector<duckdb_secondary_key::SKColumn> sk_columns,
+  std::vector<duckdb_secondary_key::SKColumn> old_sk_columns) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSecondarySinkInsertWriter<Unique>>(
@@ -91,10 +92,9 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
       return std::make_unique<DuckDBSecondarySinkDeleteWriter<Unique>>(
         trx, shard_id, columns, std::move(sk_columns));
     case DuckDBWriteKind::Update:
-      // For update, old_sk_columns = sk_columns (same mapping for now)
-      auto old_sk = sk_columns;
       return std::make_unique<DuckDBSecondarySinkUpdateWriter<Unique>>(
-        trx, shard_id, columns, std::move(sk_columns), std::move(old_sk));
+        trx, shard_id, columns, std::move(sk_columns),
+        std::move(old_sk_columns));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;
@@ -124,7 +124,8 @@ template<DuckDBWriteKind Kind>
 std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids) {
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos) {
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> writers;
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
 
@@ -147,15 +148,21 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       }
 
       auto sk_columns = BuildSKColumns(index, table, col_id_to_chunk_pos);
+      // For Update writers: old_sk_columns use old mapping if provided,
+      // otherwise fall back to the (new) col_id_to_chunk_pos.
+      auto old_sk_columns =
+        (Kind == DuckDBWriteKind::Update && !old_col_id_to_chunk_pos.empty())
+          ? BuildSKColumns(index, table, old_col_id_to_chunk_pos)
+          : sk_columns;
 
       if (sec_index.IsUnique()) {
         writers.push_back(MakeDuckDBSecondaryWriter<true>(
           Kind, index_txn, shard_id, index.GetColumnIds(),
-          std::move(sk_columns)));
+          std::move(sk_columns), std::move(old_sk_columns)));
       } else {
         writers.push_back(MakeDuckDBSecondaryWriter<false>(
           Kind, index_txn, shard_id, index.GetColumnIds(),
-          std::move(sk_columns)));
+          std::move(sk_columns), std::move(old_sk_columns)));
       }
     } else {
       // Inverted/search index
@@ -194,18 +201,21 @@ template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids);
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Delete>(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids);
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids);
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 }  // namespace sdb::connector

@@ -26,7 +26,9 @@
 #include <duckdb/planner/constraints/bound_check_constraint.hpp>
 #include <duckdb/planner/constraints/bound_not_null_constraint.hpp>
 
+#include "connector/key_utils.hpp"
 #include "pg/sql_exception_macro.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -299,5 +301,102 @@ void VerifyUpdateConstraints(
     }
   }
 }
+
+std::string BuildPKViolationDetail(
+  const duckdb::DataChunk& chunk,
+  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::span<const std::string> pk_col_names, duckdb::idx_t row_idx) {
+  std::string detail;
+  detail.reserve(128);
+  detail += "Key (";
+  for (size_t i = 0; i < pk_col_names.size(); ++i) {
+    if (i > 0) {
+      detail += ", ";
+    }
+    detail += pk_col_names[i];
+  }
+  detail += ")=(";
+  for (size_t i = 0; i < pk_columns.size(); ++i) {
+    if (i > 0) {
+      detail += ", ";
+    }
+    auto val = chunk.data[pk_columns[i].input_col_idx].GetValue(row_idx);
+    detail += val.ToString();
+  }
+  detail += ") already exists.";
+  return detail;
+}
+
+void DuckDBWriteConflictResolver::Init(
+  rocksdb::Transaction& txn, rocksdb::ColumnFamilyHandle& cf,
+  duckdb::OnConflictAction on_conflict, std::string_view table_name) {
+  _txn = &txn;
+  _cf = &cf;
+  _on_conflict = on_conflict;
+  _table_name = table_name;
+  _read_options.snapshot = txn.GetSnapshot();
+  _read_options.async_io = IsIOUringEnabled();
+}
+
+template<bool CheckOldKeys>
+size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
+  std::vector<std::string>& keys, const duckdb::DataChunk& chunk,
+  std::span<const duckdb_primary_key::PKColumn> pk_columns,
+  std::span<const std::string> pk_col_names,
+  std::span<const std::string> old_keys) {
+  if constexpr (CheckOldKeys) {
+    SDB_ASSERT(keys.size() == old_keys.size());
+  }
+
+  if (_on_conflict == duckdb::OnConflictAction::REPLACE) {
+    return 0;
+  }
+
+  size_t skipped_count = 0;
+  for (size_t i = 0; i < keys.size(); ++i) {
+    auto& key = keys[i];
+
+    if constexpr (CheckOldKeys) {
+      if (old_keys[i] == key) {
+        continue;
+      }
+    }
+
+    const auto status = _txn->Get(_read_options, _cf, key, &_lookup_value);
+    _lookup_value.Reset();
+
+    if (status.IsNotFound()) {
+      continue;
+    }
+    if (!status.ok()) {
+      SDB_THROW(ERROR_INTERNAL, "RocksDB error: ", status.ToString());
+    }
+
+    if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
+      key.clear();
+      ++skipped_count;
+      continue;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+      ERR_MSG("duplicate key value violates unique constraint \"", _table_name,
+              "_pkey\""),
+      ERR_DETAIL(
+        BuildPKViolationDetail(chunk, pk_columns, pk_col_names, i)));
+  }
+
+  return skipped_count;
+}
+
+// Explicit instantiations
+template size_t DuckDBWriteConflictResolver::HandleWriteConflicts<false>(
+  std::vector<std::string>&, const duckdb::DataChunk&,
+  std::span<const duckdb_primary_key::PKColumn>,
+  std::span<const std::string>, std::span<const std::string>);
+
+template size_t DuckDBWriteConflictResolver::HandleWriteConflicts<true>(
+  std::vector<std::string>&, const duckdb::DataChunk&,
+  std::span<const duckdb_primary_key::PKColumn>,
+  std::span<const std::string>, std::span<const std::string>);
 
 }  // namespace sdb::connector

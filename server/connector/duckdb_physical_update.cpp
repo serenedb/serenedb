@@ -24,8 +24,17 @@
 #include <duckdb/execution/execution_context.hpp>
 
 #include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_constraint_verify.h"
+// THROW_SQL_ERROR + ERRCODE_UNIQUE_VIOLATION for intra-batch duplicate check
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
@@ -50,6 +59,7 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
 
   ObjectId table_id;
   std::string table_key;
+  std::string table_name;
 
   // All non-generated columns (for index insert dispatch)
   struct ColumnMeta {
@@ -66,15 +76,29 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
 
-  // Separate writers for delete (old entries) and insert (new entries)
-  std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> delete_index_writers;
-  std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> insert_index_writers;
+  // Single set of Update writers that handle both DeleteRow and Write.
+  std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
 
   // Reusable buffers
   std::vector<std::string> row_keys;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
   DuckDBColumnSerializer serializer;
-  std::string value_buffer;
+  // saved_columns[col_id][row] = serialized value for non-updated columns
+  containers::FlatHashMap<catalog::Column::Id, std::vector<std::string>>
+    saved_columns;
+
+  // update_pk support: when a PK column is in the SET clause
+  bool update_pk = false;
+  std::vector<duckdb_primary_key::PKColumn> new_pk_columns;
+  std::vector<std::string> new_row_keys;
+  containers::FlatHashSet<std::string> batch_keys;
+
+  // PK column names for error messages
+  std::vector<std::string> pk_col_names;
+  // Set of column IDs that are being updated, for fast lookup
+  containers::FlatHashSet<catalog::Column::Id> update_col_id_set;
+
+  DuckDBWriteConflictResolver conflict_resolver;
 };
 
 struct SereneDBUpdateSourceState : public duckdb::GlobalSourceState {
@@ -95,7 +119,55 @@ SereneDBPhysicalUpdate::SereneDBPhysicalUpdate(
     _pk_col_indices(std::move(pk_col_indices)),
     _update_columns(std::move(update_columns)),
     _indexed_col_indices(std::move(indexed_col_indices)),
-    _bound_constraints(std::move(bound_constraints)) {}
+    _bound_constraints(std::move(bound_constraints)) {
+  // Detect if any PK column is being updated.
+  const auto& pk_col_ids = _table->PKColumns();
+  const auto& columns = _table->Columns();
+
+  // Map PK column IDs to their table column indices.
+  std::vector<std::pair<catalog::Column::Id, size_t>> pk_id_to_table_idx;
+  for (auto pk_id : pk_col_ids) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].id == pk_id) {
+        pk_id_to_table_idx.emplace_back(pk_id, i);
+        break;
+      }
+    }
+  }
+
+  for (size_t pi = 0; pi < pk_id_to_table_idx.size(); ++pi) {
+    auto [pk_id, pk_table_idx] = pk_id_to_table_idx[pi];
+    for (size_t ui = 0; ui < _update_columns.size(); ++ui) {
+      if (_update_columns[ui].index == pk_table_idx) {
+        _update_pk = true;
+        break;
+      }
+    }
+    if (_update_pk) {
+      break;
+    }
+  }
+
+  if (_update_pk) {
+    // Build _new_pk_col_indices: for each PK column, point to the SET position
+    // if it's being updated, or the pk_virtual position if not.
+    _new_pk_col_indices.reserve(pk_id_to_table_idx.size());
+    for (size_t pi = 0; pi < pk_id_to_table_idx.size(); ++pi) {
+      auto [pk_id, pk_table_idx] = pk_id_to_table_idx[pi];
+      bool found = false;
+      for (size_t ui = 0; ui < _update_columns.size(); ++ui) {
+        if (_update_columns[ui].index == pk_table_idx) {
+          _new_pk_col_indices.push_back(ui);  // SET position in chunk
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        _new_pk_col_indices.push_back(_pk_col_indices[pi]);  // pk_virtual
+      }
+    }
+  }
+}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalUpdate::GetGlobalSinkState(
@@ -108,6 +180,8 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
 
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
+  state->table_name = _table->GetName();
+  state->update_pk = _update_pk;
 
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
@@ -130,6 +204,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
       .duckdb_type = col.type,
       .table_col_idx = table_col_idx,
     });
+    state->update_col_id_set.insert(col.id);
   }
 
   for (size_t i = 0; i < _pk_col_indices.size(); ++i) {
@@ -148,14 +223,43 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     });
   }
 
+  // Build new PK columns and PK column names for update_pk path.
+  if (_update_pk) {
+    for (size_t i = 0; i < _new_pk_col_indices.size(); ++i) {
+      duckdb::LogicalType pk_type = duckdb::LogicalType::BIGINT;
+      if (i < pk_col_ids.size()) {
+        for (const auto& col : columns) {
+          if (col.id == pk_col_ids[i]) {
+            pk_type = col.type;
+            break;
+          }
+        }
+      }
+      state->new_pk_columns.push_back(duckdb_primary_key::PKColumn{
+        .input_col_idx = _new_pk_col_indices[i],
+        .type = pk_type,
+      });
+    }
+    for (auto pk_id : pk_col_ids) {
+      for (const auto& col : columns) {
+        if (col.id == pk_id) {
+          state->pk_col_names.push_back(col.name);
+          break;
+        }
+      }
+    }
+  }
+
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
   state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->conflict_resolver.Init(*state->txn, *state->cf,
+                                duckdb::OnConflictAction::THROW,
+                                state->table_name);
 
   // Build column-ID-to-chunk-position mapping.
-  // UPDATE chunk layout: [SET_vals..., pk_virtuals..., idx_virtuals..., rowid]
-  // Delete writers need old indexed column positions (from scan virtual cols).
-  // Insert writers need new values (from SET positions for updated cols).
+  // Chunk layout: [SET_vals..., pk_virtuals..., non_pk_virtuals..., rowid]
+  // _indexed_col_indices maps 1:1 to non-PK non-gen columns in table order.
   ColumnChunkMapping del_col_mapping;
 
   // PK columns
@@ -163,75 +267,55 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     del_col_mapping[pk_col_ids[i]] = _pk_col_indices[i];
   }
 
-  // Indexed (non-PK) columns
+  // Non-PK columns (all of them — index writers pick the ones they need)
   {
-    containers::FlatHashSet<size_t> pk_table_indices;
-    for (auto pk_id : pk_col_ids) {
-      for (size_t i = 0; i < columns.size(); ++i) {
+    size_t non_pk_idx = 0;
+    for (size_t i = 0; i < columns.size(); ++i) {
+      if (columns[i].id == catalog::Column::kGeneratedPKId) {
+        continue;
+      }
+      bool is_pk = false;
+      for (auto pk_id : pk_col_ids) {
         if (columns[i].id == pk_id) {
-          pk_table_indices.insert(i);
+          is_pk = true;
           break;
         }
       }
-    }
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByTable(state->table_id);
-    std::vector<catalog::Column::Id> non_pk_idx_col_ids;
-    containers::FlatHashSet<size_t> seen;
-    for (auto& index : indexes) {
-      for (auto col_id : index->GetColumnIds()) {
-        for (size_t i = 0; i < columns.size(); ++i) {
-          if (columns[i].id == col_id && !pk_table_indices.contains(i) &&
-              !seen.contains(i)) {
-            seen.insert(i);
-            non_pk_idx_col_ids.push_back(col_id);
-            break;
-          }
-        }
+      if (!is_pk && non_pk_idx < _indexed_col_indices.size()) {
+        del_col_mapping[columns[i].id] = _indexed_col_indices[non_pk_idx++];
       }
     }
-    std::sort(non_pk_idx_col_ids.begin(), non_pk_idx_col_ids.end(),
-              [&](auto a, auto b) {
-                size_t pos_a = 0, pos_b = 0;
-                for (size_t i = 0; i < columns.size(); ++i) {
-                  if (columns[i].id == a) {
-                    pos_a = i;
-                  }
-                  if (columns[i].id == b) {
-                    pos_b = i;
-                  }
-                }
-                return pos_a < pos_b;
-              });
-    for (size_t i = 0;
-         i < _indexed_col_indices.size() && i < non_pk_idx_col_ids.size();
-         ++i) {
-      del_col_mapping[non_pk_idx_col_ids[i]] = _indexed_col_indices[i];
+  }
+
+  // When update_pk, ALL secondary indexes must be refreshed because PK bytes
+  // appear in every index entry's suffix. Pass empty updated_col_ids so
+  // CreateDuckDBIndexWriters creates writers for ALL indexes.
+  // Otherwise, only indexes whose columns overlap with the SET clause.
+  std::vector<catalog::Column::Id> updated_col_ids;
+  if (!_update_pk) {
+    for (const auto& upd : state->update_columns) {
+      updated_col_ids.push_back(upd.id);
     }
   }
 
-  // Only create index writers for indexes whose columns overlap with
-  // the updated columns -- indexes on non-updated columns are untouched
-  std::vector<catalog::Column::Id> updated_col_ids;
-  for (const auto& upd : state->update_columns) {
-    updated_col_ids.push_back(upd.id);
-  }
-
-  state->delete_index_writers =
-    CreateDuckDBIndexWriters<DuckDBWriteKind::Delete>(
-      state->table_id, conn_ctx, *_table, del_col_mapping, updated_col_ids);
-
-  // Insert writers need new values for updated columns (from SET positions)
-  // and old values for non-updated index columns (from virtual positions).
+  // Update writers: Write() uses ins_col_mapping (new values),
+  //                 DeleteRow() uses del_col_mapping (old values).
+  // Same as old path: single set of writers handles both delete + insert.
   ColumnChunkMapping ins_col_mapping =
     del_col_mapping;  // PK + old indexed cols
   for (size_t i = 0; i < state->update_columns.size(); ++i) {
     ins_col_mapping[state->update_columns[i].id] = i;
   }
+  if (_update_pk) {
+    for (size_t i = 0; i < pk_col_ids.size() && i < _new_pk_col_indices.size();
+         ++i) {
+      ins_col_mapping[pk_col_ids[i]] = _new_pk_col_indices[i];
+    }
+  }
 
-  state->insert_index_writers =
-    CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
-      state->table_id, conn_ctx, *_table, ins_col_mapping, updated_col_ids);
+  state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
+    state->table_id, conn_ctx, *_table, ins_col_mapping, updated_col_ids,
+    del_col_mapping);
 
   return state;
 }
@@ -256,62 +340,196 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   VerifyUpdateConstraints(context.client, *_table, _bound_constraints, chunk,
                           _update_columns, _pk_col_indices);
 
-  // 1. Build row keys, lock rows, delete old index entries
-  for (auto& writer : gstate.delete_index_writers) {
+  // Init index writers (single set handles both DeleteRow and Write).
+  for (auto& writer : gstate.index_writers) {
     writer->Init(num_rows, chunk);
   }
 
-  gstate.row_keys.clear();
-  gstate.row_keys.reserve(num_rows);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    auto& key_buffer = gstate.row_keys.emplace_back();
-    duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key,
-      [&](std::string_view row_key) {
-        auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
-        if (!status.ok()) {
-          auto result = rocksutils::ConvertStatus(status);
-          SDB_THROW(result.errorNumber(),
-                    "Failed to acquire row lock for table ",
-                    gstate.table_id.id(), " error: ", result.errorMessage());
+  if (gstate.update_pk) {
+    // --- UPDATE PK path: delete old rows, then write all columns at new keys.
+
+    // 1. Build NEW keys, check intra-batch duplicates, lock new rows.
+    gstate.new_row_keys.clear();
+    gstate.new_row_keys.reserve(num_rows);
+    gstate.batch_keys.clear();
+    gstate.batch_keys.reserve(num_rows);
+
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      auto& key_buffer = gstate.new_row_keys.emplace_back();
+      duckdb_primary_key::MakeColumnKey(
+        chunk, gstate.new_pk_columns, row, gstate.table_key,
+        [&](std::string_view row_key) {
+          auto pk_bytes = row_key.substr(sizeof(ObjectId));
+          if (!gstate.batch_keys.emplace(std::string(pk_bytes)).second) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+              ERR_MSG("duplicate key value violates unique constraint \"",
+                      gstate.table_name, "_pkey\""),
+              ERR_DETAIL(BuildPKViolationDetail(chunk, gstate.new_pk_columns,
+                                                gstate.pk_col_names, row)));
+          }
+          auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
+          if (!status.ok()) {
+            auto result = rocksutils::ConvertStatus(status);
+            SDB_THROW(result.errorNumber(),
+                      "Failed to acquire row lock for table ",
+                      gstate.table_id.id(), " error: ", result.errorMessage());
+          }
+        },
+        key_buffer);
+      key_utils::SetupColumnForKey(key_buffer,
+                                   gstate.all_columns.front().id);
+    }
+
+    // 2. Build OLD keys, lock old rows, delete old index entries.
+    gstate.row_keys.clear();
+    gstate.row_keys.reserve(num_rows);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      auto& key_buffer = gstate.row_keys.emplace_back();
+      duckdb_primary_key::MakeColumnKey(
+        chunk, gstate.pk_columns, row, gstate.table_key,
+        [&](std::string_view row_key) {
+          auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
+          if (!status.ok()) {
+            auto result = rocksutils::ConvertStatus(status);
+            SDB_THROW(result.errorNumber(),
+                      "Failed to acquire row lock for table ",
+                      gstate.table_id.id(), " error: ", result.errorMessage());
+          }
+          auto pk_bytes = row_key.substr(sizeof(ObjectId));
+          for (auto& writer : gstate.index_writers) {
+            writer->DeleteRow(pk_bytes);
+          }
+        },
+        key_buffer);
+    }
+
+    // 3. Conflict detection: check new keys against existing DB data.
+    gstate.conflict_resolver.HandleWriteConflicts<true>(
+      gstate.new_row_keys, chunk, gstate.new_pk_columns,
+      gstate.pk_col_names, gstate.row_keys);
+
+    // 4. Read non-updated column values (must happen before delete).
+    rocksdb::ReadOptions read_opts;
+    read_opts.snapshot = txn->GetSnapshot();
+    rocksdb::PinnableSlice rewrite_value;
+    gstate.saved_columns.clear();
+
+    for (const auto& col : gstate.all_columns) {
+      if (gstate.update_col_id_set.contains(col.id)) {
+        continue;
+      }
+      auto& col_vals = gstate.saved_columns[col.id];
+      col_vals.resize(num_rows);
+      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+        key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+        rewrite_value.Reset();
+        col_vals[row].clear();
+        auto s = txn->Get(read_opts, gstate.cf, gstate.row_keys[row],
+                          &rewrite_value);
+        if (s.ok()) {
+          col_vals[row].assign(rewrite_value.data(), rewrite_value.size());
+        } else if (!s.IsNotFound()) {
+          SDB_THROW(ERROR_INTERNAL, "RocksDB Get error: ", s.ToString());
         }
-        auto pk_bytes = row_key.substr(sizeof(ObjectId));
-        for (auto& writer : gstate.delete_index_writers) {
-          writer->DeleteRow(pk_bytes);
-        }
-      },
-      key_buffer);
-  }
-
-  for (auto& writer : gstate.delete_index_writers) {
-    writer->Finish();
-  }
-
-  // 2. Write updated columns + insert new index entries
-  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
-
-  for (auto& writer : gstate.insert_index_writers) {
-    writer->Init(num_rows, chunk);
-  }
-
-  for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
-    const auto& col = gstate.update_columns[i];
-    gstate.active_writers.clear();
-    for (auto& writer : gstate.insert_index_writers) {
-      if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true, col.id)) {
-        gstate.active_writers.push_back(writer.get());
       }
     }
 
+    // 5. Delete old rows (same as SereneDBPhysicalDelete::Sink).
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+      for (const auto& col : gstate.all_columns) {
+        key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+        auto s = txn->Delete(gstate.cf, gstate.row_keys[row]);
+        if (!s.ok()) {
+          SDB_THROW(ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
+        }
+      }
     }
-    gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
-                                  num_rows, gstate.row_keys,
-                                  gstate.active_writers);
+
+    // 6. Write ALL columns at new keys.
+    DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+
+    // Updated columns: from SET positions in the chunk.
+    for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
+      const auto& col = gstate.update_columns[i];
+      gstate.active_writers.clear();
+      for (auto& writer : gstate.index_writers) {
+        if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
+                                 col.id)) {
+          gstate.active_writers.push_back(writer.get());
+        }
+      }
+      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+        key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
+      }
+      gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
+                                    num_rows, gstate.new_row_keys,
+                                    gstate.active_writers);
+    }
+
+    // Non-updated columns: from saved values via Put.
+    for (auto& [col_id, col_vals] : gstate.saved_columns) {
+      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+        if (col_vals[row].empty()) {
+          continue;  // NULL — no entry
+        }
+        key_utils::SetupColumnForKey(gstate.new_row_keys[row], col_id);
+        auto s =
+          txn->Put(gstate.cf, gstate.new_row_keys[row], col_vals[row]);
+        if (!s.ok()) {
+          SDB_THROW(ERROR_INTERNAL, "RocksDB Put error: ", s.ToString());
+        }
+      }
+    }
+  } else {
+    // --- Normal (non-PK-update) path ---
+
+    // 1. Build row keys, lock rows, delete old index entries
+    gstate.row_keys.clear();
+    gstate.row_keys.reserve(num_rows);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      auto& key_buffer = gstate.row_keys.emplace_back();
+      duckdb_primary_key::MakeColumnKey(
+        chunk, gstate.pk_columns, row, gstate.table_key,
+        [&](std::string_view row_key) {
+          auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
+          if (!status.ok()) {
+            auto result = rocksutils::ConvertStatus(status);
+            SDB_THROW(result.errorNumber(),
+                      "Failed to acquire row lock for table ",
+                      gstate.table_id.id(), " error: ", result.errorMessage());
+          }
+          auto pk_bytes = row_key.substr(sizeof(ObjectId));
+          for (auto& writer : gstate.index_writers) {
+            writer->DeleteRow(pk_bytes);
+          }
+        },
+        key_buffer);
+    }
+
+    // 2. Write updated columns (index writers get new values via Write)
+    DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+
+    for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
+      const auto& col = gstate.update_columns[i];
+      gstate.active_writers.clear();
+      for (auto& writer : gstate.index_writers) {
+        if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
+                                 col.id)) {
+          gstate.active_writers.push_back(writer.get());
+        }
+      }
+
+      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+        key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+      }
+      gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
+                                    num_rows, gstate.row_keys,
+                                    gstate.active_writers);
+    }
   }
 
-  for (auto& writer : gstate.insert_index_writers) {
+  for (auto& writer : gstate.index_writers) {
     writer->Finish();
   }
 

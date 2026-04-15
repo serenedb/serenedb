@@ -66,6 +66,10 @@ class SereneDBPhysicalUpdate final : public duckdb::PhysicalOperator {
   std::vector<duckdb::idx_t> _indexed_col_indices;
   duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
     _bound_constraints;
+  bool _update_pk = false;
+  // Per-PK-column chunk index for building NEW PK keys.
+  // For updated PK cols: SET position; for non-updated: pk_virtual position.
+  std::vector<duckdb::idx_t> _new_pk_col_indices;
 };
 
 }  // namespace sdb::connector

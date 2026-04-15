@@ -61,25 +61,29 @@ template<DuckDBWriteKind Kind>
 std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos = {},
-  std::span<const catalog::Column::Id> updated_col_ids = {});
+  std::span<const catalog::Column::Id> updated_col_ids = {},
+  const ColumnChunkMapping& old_col_id_to_chunk_pos = {});
 
 // Explicit instantiation declarations
 extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids);
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Delete>(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids);
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 extern template std::vector<std::unique_ptr<DuckDBSinkIndexWriter>>
 CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   ObjectId table_id, ConnectionContext& conn_ctx, const catalog::Table& table,
   const ColumnChunkMapping& col_id_to_chunk_pos,
-  std::span<const catalog::Column::Id> updated_col_ids);
+  std::span<const catalog::Column::Id> updated_col_ids,
+  const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
 }  // namespace sdb::connector

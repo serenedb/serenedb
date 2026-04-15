@@ -35,12 +35,14 @@
 
 namespace sdb {
 namespace {
+
 template<typename T>
 T GetEnumValue(std::string_view value) noexcept {
   const auto r = magic_enum::enum_cast<T>(value, magic_enum::case_insensitive);
   SDB_ASSERT(r, "enum value is not validated");
   return *r;
 }
+
 }  // namespace
 
 void Config::SetInternal(std::string_view key, std::string value) {
@@ -120,7 +122,7 @@ void Config::OnSet(std::string_view name, bool is_local) {
   } else if (!IsAutoCommit()) {
     context = VariableContext::Transaction;
   }
-  // transaction_isolation is always Local — reverts at txn end
+  // transaction_isolation is always Local -- reverts at txn end
   if (canonical == pg::kTransactionIsolation && !IsAutoCommit()) {
     context = VariableContext::Local;
   }
@@ -145,12 +147,12 @@ void Config::SaveForRollback(std::string_view key, VariableContext context) {
     return;
   }
   if (auto it = _transaction.find(key); it != _transaction.end()) {
-    // Already tracking this key — SET LOCAL overrides a prior SET
+    // Already tracking this key -- SET LOCAL overrides a prior SET
     if (context == VariableContext::Local) {
       it->second.action = TxnAction::Revert;
     }
   } else {
-    // First SET for this key in this txn — save old value
+    // First SET for this key in this txn -- save old value
     duckdb::Value old_value;
     _client_ctx.TryGetCurrentSetting(std::string{key}, old_value);
     _transaction[key] = {

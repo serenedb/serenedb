@@ -60,7 +60,6 @@ struct PeerState {
 };
 
 }  // namespace sdb
-
 namespace magic_enum {
 
 template<>

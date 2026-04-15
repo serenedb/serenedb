@@ -33,7 +33,6 @@ class ClientContext;
 struct DBConfig;
 
 }  // namespace duckdb
-
 namespace sdb {
 namespace catalog {
 
@@ -144,7 +143,6 @@ void RegisterConfigVariables(duckdb::DBConfig& config);
 
 }  // namespace connector
 }  // namespace sdb
-
 namespace magic_enum {
 
 template<>

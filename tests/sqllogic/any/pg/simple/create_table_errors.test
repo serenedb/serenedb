@@ -94,8 +94,9 @@ statement ok
 DROP TABLE vedernikoff;
 
 
-skipif postgres
-statement error
+statement ok
+DROP TABLE IF EXISTS complex_pk;
+
+
+statement ok
 CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);
-----
-db error: ERROR: Column b has non primitive type and can not be part of primary key

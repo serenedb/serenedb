@@ -20,6 +20,7 @@
 
 #include "search_sink_writer.hpp"
 
+#include <duckdb/common/enum_util.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/assert.h"
@@ -49,6 +50,68 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
   absl::big_endian::Store(name_buffer.data(), column_id);
 }
 
+// TODO(Dronplane): most likely will need this in filter builder.
+//  Move to some shared place if it would be the case.
+
+// Underlying signed-int representation used to index numeric/temporal DuckDB
+// types in iresearch. DATE/TIMESTAMP/TIMESTAMP_TZ map to their underlying
+// int32/int64 (raw-int compare matches DuckDB's date_t::operator< /
+// timestamp_t::operator< exactly -- see date.hpp / timestamp.hpp).
+template<duckdb::LogicalTypeId Kind>
+struct NumericSliceTypeImpl;
+
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TINYINT> {
+  using Type = int8_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::SMALLINT> {
+  using Type = int16_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::INTEGER> {
+  using Type = int32_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::DATE> {
+  using Type = int32_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::BIGINT> {
+  using Type = int64_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TIMESTAMP> {
+  using Type = int64_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TIMESTAMP_TZ> {
+  using Type = int64_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::FLOAT> {
+  using Type = float;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::DOUBLE> {
+  using Type = double;
+};
+
+template<duckdb::LogicalTypeId Kind>
+using NumericSliceType = typename NumericSliceTypeImpl<Kind>::Type;
+
+template<duckdb::LogicalTypeId Kind>
+inline constexpr bool kIsNumericKind =
+  Kind == duckdb::LogicalTypeId::TINYINT ||
+  Kind == duckdb::LogicalTypeId::SMALLINT ||
+  Kind == duckdb::LogicalTypeId::INTEGER ||
+  Kind == duckdb::LogicalTypeId::BIGINT ||
+  Kind == duckdb::LogicalTypeId::FLOAT ||
+  Kind == duckdb::LogicalTypeId::DOUBLE ||
+  Kind == duckdb::LogicalTypeId::DATE ||
+  Kind == duckdb::LogicalTypeId::TIMESTAMP ||
+  Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
+
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
@@ -73,24 +136,53 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
   // For now we do not support types that are not default comparable as our
   // ranges depend on that.
   // SDB_ASSERT(!type.providesCustomComparison());
-  if (type.id() == duckdb::LogicalTypeId::SQLNULL) {
-    // for UNKNOWN type we always have nulls so no need of separate nulls
-    // handling
-  } else {
-    switch (type.id()) {
-      case duckdb::LogicalTypeId::SQLNULL:
-        SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
-        break;
-      case duckdb::LogicalTypeId::VARCHAR:
-        SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id,
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::SQLNULL:
+      SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
+      break;
+    case duckdb::LogicalTypeId::VARCHAR:
+      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BLOB:
+      SetupColumnWriter<duckdb::LogicalTypeId::BLOB>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BOOLEAN:
+      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TINYINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::SMALLINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::INTEGER:
+      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BIGINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::FLOAT:
+      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::DOUBLE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::DATE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DATE>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id,
                                                           have_nulls);
-        break;
-      default:
-        // Unsupported type for inverted index (e.g. INTEGER without opclass).
-        // Skip this column rather than crashing in WriteImpl.
-        _current_writer = nullptr;
-        return false;
-    }
+      break;
+    // TODO(Dronplane): other timestamp derived types could be handled same way
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(column_id,
+                                                             have_nulls);
+      break;
+    default:
+      SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
+                duckdb::EnumUtil::ToString(type.id()),
+                " is not supported in search index");
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -166,18 +258,20 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     } else {
       _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteBooleanValue);
     }
-    // } else if constexpr (std::is_integral_v<T> ||
-    // std::is_floating_point_v<T>) {
-    //   search::mangling::MangleNumeric(_name_buffer);
-    //   _field.PrepareForNumericValue();
-    //   if (have_nulls) {
-    //     _current_writer =
-    //       MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
-    //   } else {
-    //     _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
-    //   }
+  } else if constexpr (kIsNumericKind<Kind>) {
+    search::mangling::MangleNumeric(_name_buffer);
+    _field.PrepareForNumericValue();
+    using T = NumericSliceType<Kind>;
+    if (have_nulls) {
+      _current_writer =
+        MakeIndexWriter<irs::Action::INDEX>(make_nullable_writer_func(&WriteNumericValue<T>));
+    } else {
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteNumericValue<T>);
+    }
   } else {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ", Kind,
+    // Defensive: SwitchColumnImpl only calls this for Kinds handled above.
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
+              duckdb::EnumUtil::ToString(Kind),
               " is not supported in search index");
   }
   _field.name = _name_buffer;
@@ -272,7 +366,22 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteNumericValue(
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
   static_assert(basics::IsLittleEndian());
-  field.SetNumericValue(absl::little_endian::Load<T>(cell_slices[0].data()));
+  if constexpr (sizeof(T) == 1) {
+    static_assert(std::is_integral_v<T>);
+    // absl::little_endian has no Load<int8_t>; a single byte has no endianness.
+    // NumericTokenizer has no int8 overload, so widen to int32 via T to
+    // preserve sign.
+    field.SetNumericValue(
+      static_cast<int32_t>(static_cast<T>(cell_slices[0].data()[0])));
+  } else if constexpr (sizeof(T) == 2) {
+    static_assert(std::is_integral_v<T>);
+    // NumericTokenizer has no int16 overload, so widen to int32.
+    // Load16 returns uint16_t; cast through T to preserve sign.
+    field.SetNumericValue(static_cast<int32_t>(
+      static_cast<T>(absl::little_endian::Load16(cell_slices[0].data()))));
+  } else {
+    field.SetNumericValue(absl::little_endian::Load<T>(cell_slices[0].data()));
+  }
   return field;
 }
 
@@ -316,27 +425,24 @@ void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
   analyzer = gNumberStreamPool.emplace(search::AnalyzerImpl::NumberStreamTag{});
 }
 
-// template<typename T>
-// void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
-//   auto& nstream = basics::downCast<irs::NumericTokenizer>(*analyzer);
-//   if constexpr (std::is_same_v<
-//                   T,
-//                   velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
-//     // TODO(Dronplane): Native int128 support
-//     SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
-//   } else if constexpr (
-//     std::is_same_v<T,
-//                    velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType>
-//                    ||
-//     std::is_same_v<T,
-//                    velox::TypeTraits<velox::TypeKind::SMALLINT>::NativeType>)
-//                    {
-//     // TODO(Dronplane): Native int 16/8 support
-//     nstream.reset(static_cast<int32_t>(value));
-//   } else {
-//     nstream.reset(value);
-//   }
-// }
+template<typename T>
+void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
+  // Only the four types NumericTokenizer::reset() accepts natively reach here.
+  // TINYINT/SMALLINT slices are widened to int32_t inside WriteNumericValue;
+  // HUGEINT is rejected at SwitchColumnImpl.
+  auto& nstream = basics::downCast<irs::NumericTokenizer>(*analyzer);
+  if constexpr (std::is_same_v<T, float>) {
+#ifdef FLOAT_T_IS_DOUBLE_T
+    // On builds where float_t aliases double, NumericTokenizer has no
+    // reset(float) overload. Widen so indexed FLOAT columns still work.
+    nstream.reset(static_cast<double>(value));
+#else
+    nstream.reset(value);
+#endif
+  } else {
+    nstream.reset(value);
+  }
+}
 
 void SearchSinkInsertBaseImpl::Field::PrepareForBooleanValue() {
   string_analyzer.reset();

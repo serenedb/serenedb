@@ -14,7 +14,7 @@ CREATE INDEX deadinside ON pudge USING inverted(val);
 
 onlyif serenedb
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 onlyif serenedb
 statement error connection closed

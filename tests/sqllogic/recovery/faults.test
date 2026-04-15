@@ -13,19 +13,19 @@ sdb_faults
 
 
 statement ok
-SET sdb_fault_some1 TO DEFAULT;
+SET sdb_faults = 'some1';
 
 
 statement error
-SET sdb_fault_some1 TO DEFAULT;
+SET sdb_faults = 'some1';
 
 
 statement ok
-SET sdb_fault_some2 TO DEFAULT;
+SET sdb_faults = 'some2';
 
 
 statement ok
-SET sdb_fault_some3 TO DEFAULT;
+SET sdb_faults = 'some3';
 
 
 query
@@ -38,7 +38,7 @@ some3
 
 
 statement ok
-RESET sdb_fault_some1;
+SET sdb_faults = '-some1';
 
 
 query
@@ -49,22 +49,8 @@ some2
 some3
 
 
-query
-SHOW sdb_fault_some1
-----
-sdb_fault_some1
-off
-
-
-query
-SHOW sdb_fault_some2
-----
-sdb_fault_some2
-on
-
-
 statement error
-RESET sdb_fault_some1;
+SET sdb_faults = '-some1';
 
 
 statement ok

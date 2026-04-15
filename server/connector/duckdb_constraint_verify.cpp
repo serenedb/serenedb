@@ -353,6 +353,9 @@ size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
     return 0;
   }
 
+  _batch_keys.clear();
+  _batch_keys.reserve(keys.size());
+
   size_t skipped_count = 0;
   for (size_t i = 0; i < keys.size(); ++i) {
     auto& key = keys[i];
@@ -363,6 +366,22 @@ size_t DuckDBWriteConflictResolver::HandleWriteConflicts(
       }
     }
 
+    // Intra-batch duplicate check
+    if (!_batch_keys.emplace(key).second) {
+      if (_on_conflict == duckdb::OnConflictAction::NOTHING) {
+        key.clear();
+        ++skipped_count;
+        continue;
+      }
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+        ERR_MSG("duplicate key value violates unique constraint \"",
+                _table_name, "_pkey\""),
+        ERR_DETAIL(
+          BuildPKViolationDetail(chunk, pk_columns, pk_col_names, i)));
+    }
+
+    // Check against existing DB data
     const auto status = _txn->Get(_read_options, _cf, key, &_lookup_value);
     _lookup_value.Reset();
 

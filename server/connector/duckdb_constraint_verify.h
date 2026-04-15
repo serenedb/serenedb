@@ -24,6 +24,7 @@
 #include <duckdb/parser/statement/insert_statement.hpp>
 #include <duckdb/planner/bound_constraint.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/table.h"
 #include "connector/duckdb_primary_key.h"
 #include "rocksdb/utilities/transaction.h"
@@ -81,6 +82,7 @@ class DuckDBWriteConflictResolver {
  private:
   rocksdb::Transaction* _txn = nullptr;
   rocksdb::ColumnFamilyHandle* _cf = nullptr;
+  containers::FlatHashSet<std::string> _batch_keys;
   duckdb::OnConflictAction _on_conflict = duckdb::OnConflictAction::THROW;
   std::string_view _table_name;
   rocksdb::ReadOptions _read_options;

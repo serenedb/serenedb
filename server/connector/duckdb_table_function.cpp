@@ -94,6 +94,7 @@ bool SereneDBScanBindData::Equals(const duckdb::FunctionData& other) const {
 // --- Global/Local state ---
 
 struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
+  rocksdb::Transaction* txn = nullptr;
   // Only iterators for the projected (requested) columns
   std::vector<std::unique_ptr<rocksdb::Iterator>> iterators;
   // Maps output column index -> bind_data column index
@@ -183,7 +184,15 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
     RocksDBColumnFamilyManager::Family::Default);
   SDB_ASSERT(cf);
 
-  state->snapshot = db->GetSnapshot();
+  // When inside BEGIN/COMMIT, use the connection's transaction so the scan
+  // sees the transaction's own uncommitted writes (read-your-writes).
+  // Outside a transaction, use a DB snapshot for read-only scans.
+  auto& conn_ctx = GetSereneDBContext(context);
+  if (conn_ctx.HasTransactionBegin() || conn_ctx.HasRocksDBWrite()) {
+    state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  } else {
+    state->snapshot = db->GetSnapshot();
+  }
 
   auto table_id = bind_data.table->GetId();
   std::string table_key = key_utils::PrepareTableKey(table_id);
@@ -278,7 +287,9 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
 
   for (size_t i = 0; i < num_scan; ++i) {
     ro.iterate_upper_bound = &state->upper_bound_slices[i];
-    auto it = std::unique_ptr<rocksdb::Iterator>(db->NewIterator(ro, cf));
+    auto it = std::unique_ptr<rocksdb::Iterator>(
+      state->txn ? state->txn->GetIterator(ro, cf)
+                 : db->NewIterator(ro, cf));
     it->Seek(state->column_keys[i]);
     state->iterators.push_back(std::move(it));
   }

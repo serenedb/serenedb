@@ -75,6 +75,10 @@ class SereneDBCatalog final : public duckdb::Catalog {
                                        duckdb::LogicalUpdate& op,
                                        duckdb::PhysicalOperator& plan) final;
 
+  duckdb::PhysicalOperator& PlanMergeInto(
+    duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+    duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) final;
+
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
     duckdb::TableCatalogEntry& table,

@@ -38,6 +38,8 @@
 #include <duckdb/planner/operator/logical_delete.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
+#include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
+#include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
 
@@ -540,6 +542,76 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     std::move(op.bound_constraints));
   upd.children.push_back(proj);
   return upd;
+}
+
+duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
+  duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
+  duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
+  // DuckDB routes INSERT ON CONFLICT through MergeInto.
+  // Create a PhysicalMergeInto that wraps our SereneDB operators.
+  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto sdb_table = table_entry.GetSereneDBTable();
+  auto cardinality = op.EstimateCardinality(context);
+
+  std::map<duckdb::MergeActionCondition,
+           duckdb::vector<duckdb::unique_ptr<duckdb::MergeIntoOperator>>>
+    actions;
+
+  for (auto& [condition, action_list] : op.actions) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::MergeIntoOperator>>
+      planned_actions;
+    for (auto& action : action_list) {
+      auto result = duckdb::make_uniq<duckdb::MergeIntoOperator>();
+      result->action_type = action->action_type;
+      result->condition = std::move(action->condition);
+
+      switch (action->action_type) {
+        case duckdb::MergeActionType::MERGE_INSERT: {
+          duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
+            bound_constraints;
+          for (auto& c : op.bound_constraints) {
+            bound_constraints.push_back(c->Copy());
+          }
+          // Use NOTHING policy: MergeInto should filter matched rows, but our
+          // INSERT handles duplicates gracefully as a fallback.
+          auto table_copy = sdb_table;
+          result->op = &planner.Make<SereneDBPhysicalInsert>(
+            std::move(table_copy), op.types, cardinality,
+            duckdb::OnConflictAction::NOTHING, std::move(bound_constraints));
+          // Transform expressions map merge-join output → table columns.
+          if (!action->column_index_map.empty()) {
+            duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> new_exprs;
+            for (auto& col : op.table.GetColumns().Physical()) {
+              auto storage_idx = col.StorageOid();
+              auto mapped = action->column_index_map[col.Physical()];
+              if (mapped == duckdb::DConstants::INVALID_INDEX) {
+                new_exprs.push_back(op.bound_defaults[storage_idx]->Copy());
+              } else {
+                new_exprs.push_back(
+                  std::move(action->expressions[mapped]));
+              }
+            }
+            action->expressions = std::move(new_exprs);
+          }
+          result->expressions = std::move(action->expressions);
+          break;
+        }
+        case duckdb::MergeActionType::MERGE_DO_NOTHING:
+          break;
+        default:
+          SDB_THROW(ERROR_BAD_PARAMETER,
+                    "Unsupported MERGE INTO action type for SereneDB");
+      }
+      planned_actions.push_back(std::move(result));
+    }
+    actions.emplace(condition, std::move(planned_actions));
+  }
+
+  auto& merge = planner.Make<duckdb::PhysicalMergeInto>(
+    op.types, std::move(actions), op.row_id_start, op.source_marker,
+    /*parallel=*/false, op.return_chunk);
+  merge.children.push_back(plan);
+  return merge;
 }
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(

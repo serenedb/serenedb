@@ -25,6 +25,7 @@ const restoreLayout = (event: GridviewReadyEvent, storageKey: string) => {
         return true;
     } catch (error) {
         console.warn("Failed to restore console main area layout:", error);
+        localStorage.removeItem(storageKey);
         return false;
     }
 };
@@ -34,27 +35,39 @@ const ensureEditorPanel = (event: GridviewReadyEvent) => {
         return;
     }
 
-    event.api.addPanel({
-        id: CONSOLE_GRID_EDITOR_PANEL_ID,
-        component: "editor",
-    });
+    try {
+        event.api.addPanel({
+            id: CONSOLE_GRID_EDITOR_PANEL_ID,
+            component: "editor",
+        });
+    } catch (error) {
+        console.warn("Failed to add console editor panel:", error);
+        localStorage.removeItem(CONSOLE_MAIN_AREA_LAYOUT_STORAGE_KEY);
+    }
 };
 
-const ensureRightSidebarPanel = (event: GridviewReadyEvent) => {
+const ensureRightSidebarPanel = (event: GridviewReadyEvent, size: number) => {
     if (event.api.getPanel(CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID)) {
         return;
     }
 
-    event.api.addPanel({
-        id: CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
-        component: "rightSidebar",
-        size: CONSOLE_RIGHT_SIDEBAR_SIZE,
-        minimumWidth: CONSOLE_RIGHT_SIDEBAR_MIN_SIZE,
-        position: {
-            referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
-            direction: "right",
-        },
-    });
+    ensureEditorPanel(event);
+
+    try {
+        event.api.addPanel({
+            id: CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID,
+            component: "rightSidebar",
+            size,
+            minimumWidth: CONSOLE_RIGHT_SIDEBAR_MIN_SIZE,
+            position: {
+                referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
+                direction: "right",
+            },
+        });
+    } catch (error) {
+        console.warn("Failed to add console right sidebar panel:", error);
+        localStorage.removeItem(CONSOLE_MAIN_AREA_LAYOUT_STORAGE_KEY);
+    }
 };
 
 export const ConsoleMainArea: React.FC = () => {
@@ -90,13 +103,18 @@ export const ConsoleMainArea: React.FC = () => {
             restoreLayout(event, CONSOLE_MAIN_AREA_LAYOUT_STORAGE_KEY);
 
         ensureEditorPanel(event);
+        const rightPanel = event.api.getPanel(CONSOLE_GRID_RIGHT_SIDEBAR_PANEL_ID);
+        if (!isRightSidebarVisible && rightPanel) {
+            if (rightPanel.width > 1) {
+                rightSidebarWidthRef.current = rightPanel.width;
+            }
+            event.api.removePanel(rightPanel);
+        } else if (isRightSidebarVisible && !rightPanel) {
+            ensureRightSidebarPanel(event, rightSidebarWidthRef.current);
+        }
 
         if (restored) {
             return;
-        }
-
-        if (isRightSidebarVisible) {
-            ensureRightSidebarPanel(event);
         }
     };
 
@@ -140,7 +158,7 @@ export const ConsoleMainArea: React.FC = () => {
         }
 
         if (!rightPanel) {
-            ensureRightSidebarPanel(event);
+            ensureRightSidebarPanel(event, rightSidebarWidthRef.current);
         }
     }, [isRightSidebarVisible]);
 

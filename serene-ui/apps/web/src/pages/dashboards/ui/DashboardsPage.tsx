@@ -117,16 +117,22 @@ const ensureSidebarPanel = (event: GridviewReadyEvent, size: number) => {
         return;
     }
 
-    event.api.addPanel({
-        id: DASHBOARDS_GRID_SIDEBAR_PANEL_ID,
-        component: "sidebar",
-        minimumWidth: DASHBOARDS_SIDEBAR_MIN_SIZE,
-        size,
-        position: {
-            referencePanel: DASHBOARDS_GRID_MAIN_PANEL_ID,
-            direction: "left",
-        },
-    });
+    ensureMainPanel(event);
+
+    try {
+        event.api.addPanel({
+            id: DASHBOARDS_GRID_SIDEBAR_PANEL_ID,
+            component: "sidebar",
+            minimumWidth: DASHBOARDS_SIDEBAR_MIN_SIZE,
+            size,
+            position: {
+                referencePanel: DASHBOARDS_GRID_MAIN_PANEL_ID,
+                direction: "left",
+            },
+        });
+    } catch (error) {
+        console.warn("Failed to add dashboards sidebar panel:", error);
+    }
 };
 
 const ensureEditorPanel = (event: GridviewReadyEvent, size: number) => {
@@ -134,16 +140,22 @@ const ensureEditorPanel = (event: GridviewReadyEvent, size: number) => {
         return;
     }
 
-    event.api.addPanel({
-        id: DASHBOARDS_GRID_EDITOR_PANEL_ID,
-        component: "editor",
-        minimumWidth: DASHBOARDS_EDITOR_MIN_SIZE,
-        size,
-        position: {
-            referencePanel: DASHBOARDS_GRID_MAIN_PANEL_ID,
-            direction: "right",
-        },
-    });
+    ensureMainPanel(event);
+
+    try {
+        event.api.addPanel({
+            id: DASHBOARDS_GRID_EDITOR_PANEL_ID,
+            component: "editor",
+            minimumWidth: DASHBOARDS_EDITOR_MIN_SIZE,
+            size,
+            position: {
+                referencePanel: DASHBOARDS_GRID_MAIN_PANEL_ID,
+                direction: "right",
+            },
+        });
+    } catch (error) {
+        console.warn("Failed to add dashboards editor panel:", error);
+    }
 };
 
 export const DashboardsPage = () => {
@@ -173,7 +185,7 @@ export const DashboardsPage = () => {
         ensureMainPanel(event);
 
         if (restored) {
-            // Editor is never open on page load — remove it if it ended up in the saved layout
+            // Sync editor with current state.
             const editorPanel = event.api.getPanel(
                 DASHBOARDS_GRID_EDITOR_PANEL_ID,
             );
@@ -181,10 +193,15 @@ export const DashboardsPage = () => {
                 if (editorPanel.width > 1) {
                     editorWidthRef.current = editorPanel.width;
                 }
-                event.api.removePanel(editorPanel);
+
+                if (!isEditorOpened) {
+                    event.api.removePanel(editorPanel);
+                }
+            } else if (isEditorOpened) {
+                ensureEditorPanel(event, editorWidthRef.current);
             }
 
-            // Sync sidebar with current isExplorerOpened state
+            // Sync sidebar with current state.
             const sidebarPanel = event.api.getPanel(
                 DASHBOARDS_GRID_SIDEBAR_PANEL_ID,
             );
@@ -193,6 +210,8 @@ export const DashboardsPage = () => {
                     sidebarWidthRef.current = sidebarPanel.width;
                 }
                 event.api.removePanel(sidebarPanel);
+            } else if (isExplorerOpened && !sidebarPanel) {
+                ensureSidebarPanel(event, sidebarWidthRef.current);
             }
             return;
         }

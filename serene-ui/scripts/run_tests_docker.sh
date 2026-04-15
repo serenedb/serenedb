@@ -3,6 +3,7 @@ set -euo pipefail
 
 COMPOSE_FILE="docker-compose.test-docker.yaml"
 MAX_ATTEMPTS=30
+DOCKER_USER="${DOCKER_USER:-$(id -u):$(id -g)}"
 
 cleanup() {
 	echo "🧹 Tearing down..."
@@ -39,7 +40,7 @@ run_docker_test() {
 	log_file="$(mktemp)"
 
 	echo "🧪 Running $name..."
-	if docker compose -f "$COMPOSE_FILE" exec -T serene-ui sh -c "$cmd" >"$log_file" 2>&1; then
+	if docker compose -f "$COMPOSE_FILE" exec --user "$DOCKER_USER" -T serene-ui sh -c "$cmd" >"$log_file" 2>&1; then
 		echo "✅ $name passed"
 		rm -f "$log_file"
 		return 0

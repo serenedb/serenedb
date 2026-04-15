@@ -272,6 +272,7 @@ export const DashboardCardEditor: React.FC<DashboardCardEditorProps> = ({
                                 className="h-64 overflow-hidden rounded-md border"
                                 data-testid="dashboardCardEditor-queryInput">
                                 <PGSQLEditor
+                                    key={displayEditedBlock.id}
                                     value={queryDraft.value}
                                     autocomplete={autocomplete}
                                     onChange={(value) => {

@@ -132,6 +132,15 @@ export const DashboardPageProvider = ({
         );
     }, [isExplorerOpened]);
 
+    useEffect(() => {
+        if (location.pathname.startsWith(navigationMap.dashboards)) {
+            return;
+        }
+
+        setIsEditorOpened(false);
+        setEditedBlock(null);
+    }, [location.pathname]);
+
     const setCurrentDashboardId = useCallback(
         (dashboardId: number | null) => {
             setCurrentDashboardIdState(dashboardId);

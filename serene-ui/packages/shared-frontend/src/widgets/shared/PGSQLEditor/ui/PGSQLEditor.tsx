@@ -57,6 +57,7 @@ interface PGSQLEditorProps {
 let pgsqlCompletionProvider: Monaco.IDisposable | null = null;
 let pgsqlInlineCompletionProvider: Monaco.IDisposable | null = null;
 let pgsqlAutocompleteEnabled = true;
+const INLINE_AUTOCOMPLETE_ENABLED = false;
 
 const EMPTY_AUTOCOMPLETE: NonNullable<PGSQLEditorProps["autocomplete"]> = {
     tables: [],
@@ -214,6 +215,16 @@ const isSuggestWidgetVisible = (
     }
 
     return Boolean(domNode.querySelector(".suggest-widget.visible"));
+};
+
+const isEditorModelAlive = (editor: Monaco.editor.IStandaloneCodeEditor) => {
+    try {
+        const model = editor.getModel();
+
+        return Boolean(model && !model.isDisposed());
+    } catch {
+        return false;
+    }
 };
 
 type SqlEntityContext =
@@ -865,7 +876,7 @@ const ensurePgsqlAutocompleteProviders = (monaco: typeof Monaco) => {
             });
     }
 
-    if (!pgsqlInlineCompletionProvider) {
+    if (INLINE_AUTOCOMPLETE_ENABLED && !pgsqlInlineCompletionProvider) {
         pgsqlInlineCompletionProvider =
             monaco.languages.registerInlineCompletionsProvider("pgsql", {
                 provideInlineCompletions: (
@@ -1048,18 +1059,18 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             pgsqlAutocompleteEnabled = autocompleteEnabled;
             pgsqlAutocompleteData = autocomplete;
             updatePendingInlineAutocompleteRef.current();
-            editorRef.current?.trigger(
-                "serene-pgsql-autocomplete",
-                autocompleteEnabled
-                    ? "editor.action.inlineSuggest.trigger"
-                    : "editor.action.inlineSuggest.hide",
-                {},
-            );
         }, [autocomplete, autocompleteEnabled]);
 
         useEffect(() => {
             const editor = editorRef.current;
-            const model = editor?.getModel();
+            let model: Monaco.editor.ITextModel | null = null;
+            if (editor) {
+                try {
+                    model = editor.getModel();
+                } catch {
+                    model = null;
+                }
+            }
             const nextHighlightRanges =
                 highlightRanges && highlightRanges.length > 0
                     ? highlightRanges
@@ -1072,7 +1083,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                         ]
                       : [];
 
-            if (!editor || !model) {
+            if (!editor || !model || model.isDisposed()) {
                 return;
             }
 
@@ -1206,13 +1217,22 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
         }, [highlightRange, highlightRanges, highlightVariant, value]);
 
         useEffect(() => {
+            if (!INLINE_AUTOCOMPLETE_ENABLED) {
+                return;
+            }
+
             const editor = editorRef.current;
 
-            if (!editor) {
+            if (!editor || !isEditorModelAlive(editor)) {
                 return;
             }
 
             const updatePendingInlineAutocomplete = () => {
+                if (!isEditorModelAlive(editor)) {
+                    pendingInlineAutocompleteRef.current = null;
+                    return;
+                }
+
                 const model = editor.getModel();
                 const position = editor.getPosition();
 
@@ -1237,6 +1257,11 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             updatePendingInlineAutocomplete();
 
             const handleKeyDown = (event: KeyboardEvent) => {
+                if (!isEditorModelAlive(editor)) {
+                    pendingInlineAutocompleteRef.current = null;
+                    return;
+                }
+
                 if (
                     event.key !== "Tab" ||
                     event.shiftKey ||
@@ -1308,11 +1333,6 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                 editor.pushUndoStop();
 
                 pendingInlineAutocompleteRef.current = null;
-                editor.trigger(
-                    "serene-pgsql-autocomplete",
-                    "editor.action.inlineSuggest.hide",
-                    {},
-                );
             };
 
             const domNode = editor.getDomNode();
@@ -1336,6 +1356,14 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
             };
         }, []);
 
+        useEffect(() => {
+            return () => {
+                editorRef.current = null;
+                updatePendingInlineAutocompleteRef.current = () => undefined;
+                pendingInlineAutocompleteRef.current = null;
+            };
+        }, []);
+
         return (
             <MonacoEditor
                 ref={ref}
@@ -1343,16 +1371,28 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                 beforeMount={registerAutocompletion}
                 onMount={(editor) => {
                     editorRef.current = editor;
+                    editor.onDidDispose(() => {
+                        if (editorRef.current === editor) {
+                            editorRef.current = null;
+                        }
+                        updatePendingInlineAutocompleteRef.current =
+                            () => undefined;
+                        pendingInlineAutocompleteRef.current = null;
+                    });
                 }}
                 options={{
                     suggestOnTriggerCharacters: autocompleteEnabled,
                     quickSuggestions: autocompleteEnabled,
                     inlineSuggest: {
-                        enabled: autocompleteEnabled,
+                        enabled:
+                            INLINE_AUTOCOMPLETE_ENABLED && autocompleteEnabled,
                         mode: "prefix",
                         showToolbar: "onHover",
                     },
-                    tabCompletion: autocompleteEnabled ? "on" : "off",
+                    tabCompletion:
+                        INLINE_AUTOCOMPLETE_ENABLED && autocompleteEnabled
+                            ? "on"
+                            : "off",
                     wordBasedSuggestions: autocompleteEnabled
                         ? "allDocuments"
                         : "off",

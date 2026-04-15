@@ -76,13 +76,15 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
             null,
         );
         const isUpdatingFromPropRef = useRef(false);
+        const onChangeRef = useRef(onChange);
         const onExecuteRef = useRef(onExecute);
         const onExecuteInNewTabRef = useRef(onExecuteInNewTab);
 
         useEffect(() => {
+            onChangeRef.current = onChange;
             onExecuteRef.current = onExecute;
             onExecuteInNewTabRef.current = onExecuteInNewTab;
-        }, [onExecute, onExecuteInNewTab]);
+        }, [onChange, onExecute, onExecuteInNewTab]);
 
         useEffect(() => {
             if (!containerRef.current) return;
@@ -192,7 +194,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
 
             const sub = editor.onDidChangeModelContent(() => {
                 if (!isUpdatingFromPropRef.current) {
-                    onChange?.(editor.getValue());
+                    onChangeRef.current?.(editor.getValue());
                 }
             });
 
@@ -200,6 +202,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                 domNode?.removeEventListener("keydown", handleKeyDown, true);
                 sub.dispose();
                 editor.dispose();
+                editorRef.current = null;
             };
         }, []);
 

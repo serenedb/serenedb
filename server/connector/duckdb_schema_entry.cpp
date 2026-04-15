@@ -65,10 +65,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::LookupEntry(
   auto result = snapshot->GetDuckDBEntryCache().EnsureEntry(
     lookup_info.GetCatalogType(), catalog, *this, GetDatabaseId(), name,
     lookup_info.GetEntryName(), *snapshot);
-  fprintf(stderr, "[LookupEntry] schema=%s type=%d name=%.*s -> %s\n",
-          name.c_str(), static_cast<int>(lookup_info.GetCatalogType()),
-          static_cast<int>(lookup_info.GetEntryName().size()),
-          lookup_info.GetEntryName().data(), result ? "FOUND" : "nullptr");
   return result;
 }
 

@@ -136,13 +136,6 @@ SystemTableEntry::GetOrCreateSnapshot(duckdb::ClientContext& context) {
     snapshot =
       _virtual_table.CreateSnapshot(conn_ctx.GetDatabaseId(), conn_ctx);
     _cached_snapshot = snapshot;
-    fprintf(stderr, "[SystemTable] Created new snapshot for %.*s\n",
-            static_cast<int>(_virtual_table.GetName().size()),
-            _virtual_table.GetName().data());
-  } else {
-    fprintf(stderr, "[SystemTable] Reused snapshot for %.*s\n",
-            static_cast<int>(_virtual_table.GetName().size()),
-            _virtual_table.GetName().data());
   }
   return snapshot;
 }

@@ -402,8 +402,6 @@ std::shared_ptr<PgSqlView> GetInfoSchemaView(std::string_view name) {
 
 std::shared_ptr<PgSqlView> GetView(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
-  fprintf(stderr, "[GetView] name=%.*s map_size=%zu\n",
-          static_cast<int>(name.size()), name.data(), gPgCatalogViews.size());
   auto it = gPgCatalogViews.find(name);
   if (it == gPgCatalogViews.end()) {
     return nullptr;

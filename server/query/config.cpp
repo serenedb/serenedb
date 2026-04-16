@@ -22,7 +22,9 @@
 
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
@@ -57,11 +59,15 @@ void Config::SetInternal(std::string_view key, std::string value) {
 }
 
 std::vector<std::string> Config::GetSearchPath() const {
-  auto value = Get("search_path");
-  SDB_ASSERT(value);
+  // DuckDB stores search_path as (catalog, schema) entries and serializes
+  // them as "catalog.schema" when read as a string setting. Use the
+  // structured API so we return just the schema names.
+  const auto& entries =
+    duckdb::ClientData::Get(_client_ctx).catalog_search_path->Get();
   std::vector<std::string> result;
-  for (const auto& part : absl::StrSplit(*value, ", ")) {
-    result.emplace_back(absl::StripPrefix(absl::StripSuffix(part, "\""), "\""));
+  result.reserve(entries.size());
+  for (const auto& entry : entries) {
+    result.emplace_back(entry.schema);
   }
   return result;
 }

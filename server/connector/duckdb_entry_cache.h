@@ -71,6 +71,14 @@ class DuckDBEntryCache {
     ObjectId db_id, std::string_view schema_name, std::string_view table_name,
     const catalog::Snapshot& snapshot);
 
+  // Build a SereneDBIndexScanEntry for the "index name as table" pattern
+  // (SELECT * FROM idx_name). The CatalogType requested is TABLE_ENTRY but
+  // the resolved relation is an Index -- we wrap it as a scannable entry.
+  duckdb::unique_ptr<duckdb::CatalogEntry> BuildIndexScanEntry(
+    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+    ObjectId db_id, std::string_view schema_name, std::string_view name,
+    const catalog::Index& index, const catalog::Snapshot& snapshot);
+
   struct SchemaCache {
     SchemaCache(duckdb::Catalog& catalog, std::string_view schema_name)
       : info{[&] {

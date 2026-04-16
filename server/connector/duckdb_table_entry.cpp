@@ -41,12 +41,10 @@ namespace sdb::connector {
 SereneDBTableEntry::SereneDBTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
-  std::vector<size_t> indexed_col_indices,
-  std::shared_ptr<const catalog::InvertedIndex> inverted_index)
+  std::vector<size_t> indexed_col_indices)
   : duckdb::TableCatalogEntry(catalog, schema, info),
     _sdb_table(std::move(sdb_table)),
-    _indexed_col_indices(std::move(indexed_col_indices)),
-    _inverted_index(std::move(inverted_index)) {}
+    _indexed_col_indices(std::move(indexed_col_indices)) {}
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
   duckdb::ClientContext& context, duckdb::column_t column_id) {
@@ -68,14 +66,6 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
   data->has_rowid = true;
   data->table_entry = this;
-
-  // If this entry was created from a secondary index name, use SK scan
-  if (HasSecondaryIndex()) {
-    data->scan_source = SecondaryIndexScan{
-      .shard_id = _sk_shard_id,
-      .is_unique = _sk_unique,
-    };
-  }
 
   bind_data = std::move(data);
   return CreateSereneDBScanFunction();
@@ -144,10 +134,11 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
   }
 }
 
-duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
+duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
+  const catalog::Table& table, const std::vector<size_t>& indexed_col_indices) {
   duckdb::vector<duckdb::column_t> result;
-  const auto& pk_col_ids = _sdb_table->PKColumns();
-  const auto& columns = _sdb_table->Columns();
+  const auto& pk_col_ids = table.PKColumns();
+  const auto& columns = table.Columns();
 
   // Collect unique column indices: PK columns + indexed columns
   containers::FlatHashSet<size_t> needed;
@@ -159,7 +150,7 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
       }
     }
   }
-  for (auto idx : _indexed_col_indices) {
+  for (auto idx : indexed_col_indices) {
     needed.insert(idx);
   }
 
@@ -172,7 +163,7 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
       }
     }
   }
-  for (auto idx : _indexed_col_indices) {
+  for (auto idx : indexed_col_indices) {
     if (!needed.contains(idx)) {
       continue;  // already added as PK
     }
@@ -198,10 +189,11 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
   return result;
 }
 
-duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
+duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
+  const catalog::Table& table, const std::vector<size_t>& indexed_col_indices) {
   duckdb::virtual_column_map_t result;
-  const auto& pk_col_ids = _sdb_table->PKColumns();
-  const auto& columns = _sdb_table->Columns();
+  const auto& pk_col_ids = table.PKColumns();
+  const auto& columns = table.Columns();
 
   // PK columns
   for (auto pk_id : pk_col_ids) {
@@ -215,7 +207,7 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
   }
 
   // Indexed columns (skip if already added as PK)
-  for (auto idx : _indexed_col_indices) {
+  for (auto idx : indexed_col_indices) {
     auto virt_id = duckdb::VIRTUAL_COLUMN_START + idx;
     if (!result.contains(virt_id)) {
       result.insert(
@@ -233,28 +225,19 @@ duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
   return result;
 }
 
-duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
-  duckdb::column_t virtual_id) {
-  if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
-      virtual_id < duckdb::COLUMN_IDENTIFIER_ROW_ID) {
-    return virtual_id - duckdb::VIRTUAL_COLUMN_START;
-  }
-  return duckdb::DConstants::INVALID_INDEX;
-}
-
-duckdb::TableStorageInfo SereneDBTableEntry::GetStorageInfo(
-  duckdb::ClientContext& context) {
+duckdb::TableStorageInfo SereneDBTableEntry::BuildStorageInfo(
+  const catalog::Table& table) {
   duckdb::TableStorageInfo info;
 
   // Report PK as a unique index so DuckDB binder can use it for ON CONFLICT
-  const auto& pk_col_ids = _sdb_table->PKColumns();
+  const auto& pk_col_ids = table.PKColumns();
   if (!pk_col_ids.empty()) {
     duckdb::IndexInfo idx_info;
     idx_info.is_unique = true;
     idx_info.is_primary = true;
     idx_info.is_foreign = false;
     // Map PK column IDs to column indices in the table
-    const auto& columns = _sdb_table->Columns();
+    const auto& columns = table.Columns();
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
         if (columns[i].id == pk_id) {
@@ -267,6 +250,28 @@ duckdb::TableStorageInfo SereneDBTableEntry::GetStorageInfo(
   }
 
   return info;
+}
+
+duckdb::vector<duckdb::column_t> SereneDBTableEntry::GetRowIdColumns() const {
+  return BuildRowIdColumns(*_sdb_table, _indexed_col_indices);
+}
+
+duckdb::virtual_column_map_t SereneDBTableEntry::GetVirtualColumns() const {
+  return BuildVirtualColumns(*_sdb_table, _indexed_col_indices);
+}
+
+duckdb::column_t SereneDBTableEntry::VirtualToPKColumnIndex(
+  duckdb::column_t virtual_id) {
+  if (virtual_id >= duckdb::VIRTUAL_COLUMN_START &&
+      virtual_id < duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+    return virtual_id - duckdb::VIRTUAL_COLUMN_START;
+  }
+  return duckdb::DConstants::INVALID_INDEX;
+}
+
+duckdb::TableStorageInfo SereneDBTableEntry::GetStorageInfo(
+  duckdb::ClientContext& context) {
+  return BuildStorageInfo(*_sdb_table);
 }
 
 }  // namespace sdb::connector

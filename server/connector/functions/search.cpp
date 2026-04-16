@@ -109,6 +109,42 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     std::string{kBoost},
     {duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::DOUBLE},
     duckdb::LogicalType::BOOLEAN, SearchStubFn));
+
+  // bm25(tableoid) / bm25(tableoid, k1, b) -> DOUBLE -- emits the BM25
+  // score per row for the scan identified by tableoid. Parameters are
+  // extracted at compile time by the iresearch_plan rule; defaults
+  // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
+  {
+    duckdb::ScalarFunctionSet set{std::string{kBm25}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, SearchStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE,
+       duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, SearchStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // tfidf(tableoid) / tfidf(tableoid, with_norms) -> DOUBLE -- emits
+  // TF-IDF. `with_norms` toggles length normalisation (default false).
+  {
+    duckdb::ScalarFunctionSet set{std::string{kTfidf}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, SearchStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BOOLEAN},
+      duckdb::LogicalType::FLOAT, SearchStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // offsets(col) -> BIGINT[] -- emit position pairs (start, end) for
+  // matched terms in `col` per row. List elements alternate start/end
+  // (so length is 2*N for N positions). Claimed by the iresearch_plan
+  // rule, which identifies the scan via the column ref's
+  // binding.table_index.
+  loader.RegisterFunction(duckdb::ScalarFunction(
+    std::string{kOffsets}, {duckdb::LogicalType::VARCHAR},
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
 }
 
 }  // namespace sdb::connector

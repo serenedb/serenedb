@@ -1,4 +1,1 @@
-target_sources(
-    serene_connector
-    PRIVATE ann_search_plan.cpp range_search_plan.cpp
-)
+target_sources(serene_connector PRIVATE iresearch_plan.cpp rocksdb_plan.cpp)

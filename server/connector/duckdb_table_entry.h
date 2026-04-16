@@ -23,7 +23,6 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 
-#include "catalog/inverted_index.h"
 #include "catalog/table.h"
 
 namespace sdb::connector {
@@ -36,13 +35,14 @@ inline constexpr duckdb::column_t kColumnIdentifierTableOid =
 
 class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
  public:
-  // indexed_col_indices: table column indices that are part of any index
-  // inverted_index: set when entry was created from an index name (FROM idx)
-  SereneDBTableEntry(
-    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-    duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
-    std::vector<size_t> indexed_col_indices = {},
-    std::shared_ptr<const catalog::InvertedIndex> inverted_index = nullptr);
+  // indexed_col_indices: table column indices that are part of any index.
+  // The "FROM index_name" pattern is handled by SereneDBIndexScanEntry, NOT
+  // by passing index info here.
+  SereneDBTableEntry(duckdb::Catalog& catalog,
+                     duckdb::SchemaCatalogEntry& schema,
+                     duckdb::CreateTableInfo& info,
+                     std::shared_ptr<catalog::Table> sdb_table,
+                     std::vector<size_t> indexed_col_indices = {});
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext& context, duckdb::column_t column_id) override;
@@ -56,6 +56,18 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
   duckdb::virtual_column_map_t GetVirtualColumns() const override;
+
+  // Helpers shared with SereneDBIndexScanEntry. These compute virtual
+  // columns / rowid columns / storage info from the underlying SereneDB
+  // table only -- no entry-instance state is needed -- so they're static
+  // and reusable across catalog entry types that wrap the same table.
+  static duckdb::vector<duckdb::column_t> BuildRowIdColumns(
+    const catalog::Table& table,
+    const std::vector<size_t>& indexed_col_indices);
+  static duckdb::virtual_column_map_t BuildVirtualColumns(
+    const catalog::Table& table,
+    const std::vector<size_t>& indexed_col_indices);
+  static duckdb::TableStorageInfo BuildStorageInfo(const catalog::Table& table);
 
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
@@ -74,28 +86,9 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
     return _indexed_col_indices;
   }
 
-  const std::shared_ptr<const catalog::InvertedIndex>& GetInvertedIndex()
-    const {
-    return _inverted_index;
-  }
-
-  ObjectId GetSecondaryIndexShardId() const { return _sk_shard_id; }
-  bool IsSecondaryIndexUnique() const { return _sk_unique; }
-  bool HasSecondaryIndex() const { return _sk_shard_id != ObjectId{}; }
-
-  void SetSecondaryIndex(ObjectId shard_id, bool is_unique) {
-    _sk_shard_id = shard_id;
-    _sk_unique = is_unique;
-  }
-
  private:
   std::shared_ptr<catalog::Table> _sdb_table;
   std::vector<size_t> _indexed_col_indices;
-  // Set when entry was created from an index name (FROM idx_name).
-  std::shared_ptr<const catalog::InvertedIndex> _inverted_index;
-  // Set when entry was created from a secondary index name.
-  ObjectId _sk_shard_id;
-  bool _sk_unique = false;
 };
 
 }  // namespace sdb::connector

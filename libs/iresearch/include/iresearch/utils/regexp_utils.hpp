@@ -96,12 +96,12 @@ bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 bytes_view UnescapeRegexp(bytes_view in, bstring& out);
 
-automaton FromRegexpRe2(bytes_view pattern,
+automaton FromRegexp(bytes_view pattern,
                         int64_t max_dfa_states = kDefaultMaxDfaStates);
 
-inline automaton FromRegexpRe2(std::string_view pattern,
+inline automaton FromRegexp(std::string_view pattern,
                                int64_t max_dfa_states = kDefaultMaxDfaStates) {
-  return FromRegexpRe2(ViewCast<byte_type>(pattern), max_dfa_states);
+  return FromRegexp(ViewCast<byte_type>(pattern), max_dfa_states);
 }
 
 }  // namespace irs

@@ -50,7 +50,7 @@ RunResult Average(const RunResult* results, int count) {
 
 }  // namespace
 
-class RegexpRe2VsWildcardBenchTestCase : public tests::FilterTestCaseBase {
+class RegexpVsWildcardBenchTestCase : public tests::FilterTestCaseBase {
  protected:
   RunResult RunFilter(const irs::Filter& filter, const irs::IndexReader& rdr) {
     RunResult result;
@@ -107,7 +107,7 @@ class RegexpRe2VsWildcardBenchTestCase : public tests::FilterTestCaseBase {
     wq.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(wildcard_pattern);
 
-    irs::ByRegexpRe2 rq;
+    irs::ByRegexp rq;
     *rq.mutable_field() = field;
     rq.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(regexp_pattern);
@@ -116,7 +116,7 @@ class RegexpRe2VsWildcardBenchTestCase : public tests::FilterTestCaseBase {
     auto rt = RunAveraged(rq, rdr);
 
     ASSERT_EQ(wt.doc_count, rt.doc_count)
-      << "Doc count mismatch: wildcard vs regexp_re2 for \"" << label << "\"";
+      << "Doc count mismatch: wildcard vs regexp for \"" << label << "\"";
 
     auto us = [](std::chrono::nanoseconds ns) -> double {
       return std::chrono::duration<double, std::micro>(ns).count();
@@ -129,14 +129,14 @@ class RegexpRe2VsWildcardBenchTestCase : public tests::FilterTestCaseBase {
               << "  wildcard    \"" << wildcard_pattern << "\"\n"
               << "    prepare: " << us(wt.prepare) << " us\n"
               << "    execute: " << us(wt.execute) << " us\n"
-              << "  regexp_re2  \"" << regexp_pattern << "\"\n"
+              << "  regexp  \"" << regexp_pattern << "\"\n"
               << "    prepare: " << us(rt.prepare) << " us\n"
               << "    execute: " << us(rt.execute) << " us\n"
               << std::endl;
   }
 };
 
-TEST_P(RegexpRe2VsWildcardBenchTestCase, europarl_big) {
+TEST_P(RegexpVsWildcardBenchTestCase, europarl_big) {
   {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.big.txt"), doc);
@@ -172,8 +172,8 @@ TEST_P(RegexpRe2VsWildcardBenchTestCase, europarl_big) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-  regexp_re2_vs_wildcard_bench, RegexpRe2VsWildcardBenchTestCase,
+  regexp_vs_wildcard_bench, RegexpVsWildcardBenchTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MmapDirectory>),
     ::testing::Values(tests::FormatInfo{"1_5simd"})),
-  RegexpRe2VsWildcardBenchTestCase::to_string);
+  RegexpVsWildcardBenchTestCase::to_string);

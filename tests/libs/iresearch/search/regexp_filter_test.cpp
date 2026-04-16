@@ -31,11 +31,11 @@
 
 namespace {
 
-template<typename Filter = irs::ByRegexpRe2>
+template<typename Filter = irs::ByRegexp>
 Filter MakeFilter(std::string_view field, std::string_view value) {
   Filter q;
   *q.mutable_field() = field;
-  if constexpr (std::is_same_v<Filter, irs::ByRegexpRe2>) {
+  if constexpr (std::is_same_v<Filter, irs::ByRegexp>) {
     q.mutable_options()->pattern = irs::ViewCast<irs::byte_type>(value);
   } else {
     q.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
@@ -47,34 +47,34 @@ Filter MakeFilter(std::string_view field, std::string_view value) {
 
 // Unit tests (no index needed)
 
-TEST(by_regexp_re2_test, options) {
-  irs::ByRegexpRe2Options opts;
+TEST(by_regexp_test, options) {
+  irs::ByRegexpOptions opts;
   ASSERT_TRUE(opts.pattern.empty());
   ASSERT_EQ(1024, opts.scored_terms_limit);
 }
 
-TEST(by_regexp_re2_test, ctor) {
-  irs::ByRegexpRe2 q;
-  ASSERT_EQ(irs::Type<irs::ByRegexpRe2>::id(), q.type());
-  ASSERT_EQ(irs::ByRegexpRe2Options{}, q.options());
+TEST(by_regexp_test, ctor) {
+  irs::ByRegexp q;
+  ASSERT_EQ(irs::Type<irs::ByRegexp>::id(), q.type());
+  ASSERT_EQ(irs::ByRegexpOptions{}, q.options());
   ASSERT_TRUE(q.field().empty());
   ASSERT_EQ(irs::kNoBoost, q.Boost());
 }
 
-TEST(by_regexp_re2_test, equal) {
-  const irs::ByRegexpRe2 q = MakeFilter("field", "bar.*");
+TEST(by_regexp_test, equal) {
+  const irs::ByRegexp q = MakeFilter("field", "bar.*");
   ASSERT_EQ(q, MakeFilter("field", "bar.*"));
   ASSERT_NE(q, MakeFilter("field1", "bar.*"));
   ASSERT_NE(q, MakeFilter("field", "bar"));
-  irs::ByRegexpRe2 q1 = MakeFilter("field", "bar.*");
+  irs::ByRegexp q1 = MakeFilter("field", "bar.*");
   q1.mutable_options()->scored_terms_limit = 100;
   ASSERT_NE(q, q1);
 }
 
-TEST(by_regexp_re2_test, boost) {
+TEST(by_regexp_test, boost) {
   MaxMemoryCounter counter;
   {
-    irs::ByRegexpRe2 q = MakeFilter("field", "bar.*");
+    irs::ByRegexp q = MakeFilter("field", "bar.*");
     auto prepared =
       q.prepare({.index = irs::SubReader::empty(), .memory = counter});
     ASSERT_EQ(irs::kNoBoost, prepared->Boost());
@@ -84,7 +84,7 @@ TEST(by_regexp_re2_test, boost) {
   counter.Reset();
   {
     irs::score_t boost = 1.5f;
-    irs::ByRegexpRe2 q = MakeFilter("field", "bar.*");
+    irs::ByRegexp q = MakeFilter("field", "bar.*");
     q.boost(boost);
     auto prepared =
       q.prepare({.index = irs::SubReader::empty(), .memory = counter});
@@ -95,7 +95,7 @@ TEST(by_regexp_re2_test, boost) {
   counter.Reset();
 }
 
-TEST(by_regexp_re2_test, test_type_of_prepared_query) {
+TEST(by_regexp_test, test_type_of_prepared_query) {
   MaxMemoryCounter counter;
   {
     auto lhs =
@@ -134,11 +134,11 @@ TEST(by_regexp_re2_test, test_type_of_prepared_query) {
 }
 
 // Parametrized tests
-class RegexpRe2FilterTestCase : public tests::FilterTestCaseBase {};
+class RegexpFilterTestCase : public tests::FilterTestCaseBase {};
 
 //   Basic patterns
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_foo_dot_star_bar) {
+TEST_P(RegexpFilterTestCase, by_regexp_foo_dot_star_bar) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -149,7 +149,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_foo_dot_star_bar) {
              Docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 16, 20}, Costs{11}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_foo_star_bar) {
+TEST_P(RegexpFilterTestCase, by_regexp_foo_star_bar) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -159,7 +159,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_foo_star_bar) {
   CheckQuery(MakeFilter("term", "foo*bar"), Docs{1, 15, 16}, Costs{3}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_suffix) {
+TEST_P(RegexpFilterTestCase, by_regexp_suffix) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -171,7 +171,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_suffix) {
              Costs{15}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_prefix) {
+TEST_P(RegexpFilterTestCase, by_regexp_prefix) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -185,7 +185,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_prefix) {
 
 //   Optional ?
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_optional_colou_r) {
+TEST_P(RegexpFilterTestCase, by_regexp_optional_colou_r) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -195,7 +195,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_optional_colou_r) {
   CheckQuery(MakeFilter("opt", "colou?r"), Docs{1, 2}, Costs{2}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_optional_gra_y) {
+TEST_P(RegexpFilterTestCase, by_regexp_optional_gra_y) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -205,7 +205,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_optional_gra_y) {
   CheckQuery(MakeFilter("opt", "gra?y"), Docs{8, 12}, Costs{2}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_optional_multiple) {
+TEST_P(RegexpFilterTestCase, by_regexp_optional_multiple) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -217,7 +217,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_optional_multiple) {
 
 //   Plus +
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_plus_fo_bar) {
+TEST_P(RegexpFilterTestCase, by_regexp_plus_fo_bar) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -227,7 +227,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_plus_fo_bar) {
   CheckQuery(MakeFilter("plus", "fo+bar"), Docs{1, 2, 3, 8}, Costs{4}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_plus_f_bar) {
+TEST_P(RegexpFilterTestCase, by_regexp_plus_f_bar) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -239,7 +239,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_plus_f_bar) {
 
 //   Alternation |
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_alternation_two) {
+TEST_P(RegexpFilterTestCase, by_regexp_alternation_two) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -250,7 +250,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_alternation_two) {
              Docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20}, Costs{12}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_alternation_three) {
+TEST_P(RegexpFilterTestCase, by_regexp_alternation_three) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -262,7 +262,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_alternation_three) {
              Costs{16}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_alternation_single) {
+TEST_P(RegexpFilterTestCase, by_regexp_alternation_single) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -274,7 +274,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_alternation_single) {
 
 //   Char classes [...]
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_char_class_lower_digits) {
+TEST_P(RegexpFilterTestCase, by_regexp_char_class_lower_digits) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -285,7 +285,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_char_class_lower_digits) {
              Docs{1, 2, 4, 8, 10, 12, 14, 16, 18, 20}, Costs{10}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_char_class_upper_digits) {
+TEST_P(RegexpFilterTestCase, by_regexp_char_class_upper_digits) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -296,7 +296,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_char_class_upper_digits) {
              Docs{3, 7, 9, 11, 13, 15, 17, 19}, Costs{8}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_char_class_digits_letters) {
+TEST_P(RegexpFilterTestCase, by_regexp_char_class_digits_letters) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -306,7 +306,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_char_class_digits_letters) {
   CheckQuery(MakeFilter("class", "[0-9]+[a-z]+"), Docs{5, 6}, Costs{2}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_negation_char_class) {
+TEST_P(RegexpFilterTestCase, by_regexp_negation_char_class) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -319,7 +319,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_negation_char_class) {
 
 //   Dot
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_dot_single) {
+TEST_P(RegexpFilterTestCase, by_regexp_dot_single) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -329,7 +329,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_dot_single) {
   CheckQuery(MakeFilter("term", "foo.bar"), Docs{14, 20}, Costs{2}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_dot_multiple) {
+TEST_P(RegexpFilterTestCase, by_regexp_dot_multiple) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -342,7 +342,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_dot_multiple) {
 
 //   Combined
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_combined_group_quantifier) {
+TEST_P(RegexpFilterTestCase, by_regexp_combined_group_quantifier) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -353,7 +353,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_combined_group_quantifier) {
              Docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 20}, Costs{12}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_combined_optional_star) {
+TEST_P(RegexpFilterTestCase, by_regexp_combined_optional_star) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -366,17 +366,17 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_combined_optional_star) {
 
 //   Edge cases
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_empty_filter) {
+TEST_P(RegexpFilterTestCase, by_regexp_empty_filter) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
   auto rdr = open_reader();
-  CheckQuery(irs::ByRegexpRe2(), Docs{}, Costs{0}, rdr);
+  CheckQuery(irs::ByRegexp(), Docs{}, Costs{0}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_no_match) {
+TEST_P(RegexpFilterTestCase, by_regexp_no_match) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -388,7 +388,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_no_match) {
   CheckQuery(MakeFilter("nonexistent", ".*"), Docs{}, Costs{0}, rdr);
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_exact_match) {
+TEST_P(RegexpFilterTestCase, by_regexp_exact_match) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -401,7 +401,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_exact_match) {
 
 //   Scoring
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_custom_sort) {
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -438,7 +438,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_custom_sort) {
   }
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_frequency_sort) {
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_frequency_sort) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -459,9 +459,9 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_frequency_sort) {
   }
 }
 
-//   Scoring with Complex patterns (goes through FromRegexpRe2)
+//   Scoring with Complex patterns (goes through FromRegexp)
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_custom_sort) {
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -469,7 +469,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_custom_sort) {
   }
   auto rdr = open_reader();
   {
-    // ".*c.*" is Complex (not Prefix/Literal), so it goes through FromRegexpRe2
+    // ".*c.*" is Complex (not Prefix/Literal), so it goes through FromRegexp
     Docs docs{1, 4, 9, 21, 26, 31, 32};
     size_t collect_field_count = 0, collect_term_count = 0, finish_count = 0;
     std::array<irs::Scorer::ptr, 1> order{
@@ -500,7 +500,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_custom_sort) {
   }
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_frequency_sort) {
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_frequency_sort) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -517,7 +517,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_frequency_sort) {
   }
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_with_boost) {
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_with_boost) {
   MaxMemoryCounter counter;
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -537,7 +537,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scoring_complex_with_boost) {
   counter.Reset();
 }
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scored_terms_limit) {
+TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -546,7 +546,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scored_terms_limit) {
   auto rdr = open_reader();
   // scored_terms_limit = 1 → only 1 term gets scored
   {
-    irs::ByRegexpRe2 q;
+    irs::ByRegexp q;
     *q.mutable_field() = "prefix";
     q.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
@@ -557,7 +557,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scored_terms_limit) {
   }
   // scored_terms_limit = 0
   {
-    irs::ByRegexpRe2 q;
+    irs::ByRegexp q;
     *q.mutable_field() = "prefix";
     q.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
@@ -568,7 +568,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scored_terms_limit) {
   }
   // scored_terms_limit very large
   {
-    irs::ByRegexpRe2 q;
+    irs::ByRegexp q;
     *q.mutable_field() = "prefix";
     q.mutable_options()->pattern =
       irs::ViewCast<irs::byte_type>(std::string_view(".*c.*"));
@@ -581,7 +581,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_scored_terms_limit) {
 
 //   Match all / match nothing
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_match_all) {
+TEST_P(RegexpFilterTestCase, by_regexp_match_all) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -599,7 +599,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_match_all) {
   CheckQuery(MakeFilter("same", "x.*z"), all, all_costs, rdr);
   CheckQuery(MakeFilter("same", "."), Docs{}, Costs{0}, rdr);
   CheckQuery(MakeFilter("same", ".."), Docs{}, Costs{0}, rdr);
-  CheckQuery(irs::ByRegexpRe2(), Docs{}, Costs{0}, rdr);
+  CheckQuery(irs::ByRegexp(), Docs{}, Costs{0}, rdr);
   CheckQuery(MakeFilter("", "xyz.*"), Docs{}, Costs{0}, rdr);
   CheckQuery(MakeFilter("same1", "xyz.*"), Docs{}, Costs{0}, rdr);
   CheckQuery(MakeFilter("same", "xyz_invalid.*"), Docs{}, Costs{0}, rdr);
@@ -608,7 +608,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_match_all) {
 
 //   Wildcard-equivalent
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_wildcard_equivalent_patterns) {
+TEST_P(RegexpFilterTestCase, by_regexp_wildcard_equivalent_patterns) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -639,7 +639,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_wildcard_equivalent_patterns) {
 
 //   UTF-8
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_utf8_execution) {
+TEST_P(RegexpFilterTestCase, by_regexp_utf8_execution) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -662,7 +662,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_utf8_execution) {
 
 //   Cross-validation vs ByTerm/ByPrefix
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_cross_validation) {
+TEST_P(RegexpFilterTestCase, by_regexp_cross_validation) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -685,7 +685,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_cross_validation) {
 
 //   Invalid patterns
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_invalid_pattern_execution) {
+TEST_P(RegexpFilterTestCase, by_regexp_invalid_pattern_execution) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -698,7 +698,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_invalid_pattern_execution) {
 
 //   Filter reuse
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_filter_reuse) {
+TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
   MaxMemoryCounter counter;
   auto q = MakeFilter("same", ".*");
   {
@@ -724,7 +724,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_filter_reuse) {
 
 //   Anchoring
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_anchoring) {
+TEST_P(RegexpFilterTestCase, by_regexp_anchoring) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -751,7 +751,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_anchoring) {
 
 //   Case sensitivity
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_case_sensitivity) {
+TEST_P(RegexpFilterTestCase, by_regexp_case_sensitivity) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -766,7 +766,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_case_sensitivity) {
 
 //   Greedy quantifiers
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_greedy_quantifiers) {
+TEST_P(RegexpFilterTestCase, by_regexp_greedy_quantifiers) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -782,7 +782,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_greedy_quantifiers) {
 
 //   ReDoS resistance
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_redos_resistance) {
+TEST_P(RegexpFilterTestCase, by_regexp_redos_resistance) {
   {
     tests::JsonDocGenerator gen(resource("regexp_stress_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -817,7 +817,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_redos_resistance) {
 
 //   Metacharacters in data
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_metacharacters_in_data) {
+TEST_P(RegexpFilterTestCase, by_regexp_metacharacters_in_data) {
   {
     tests::JsonDocGenerator gen(resource("regexp_stress_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -839,7 +839,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_metacharacters_in_data) {
 
 //   Whitespace
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_whitespace_in_terms) {
+TEST_P(RegexpFilterTestCase, by_regexp_whitespace_in_terms) {
   {
     tests::JsonDocGenerator gen(resource("regexp_stress_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -856,7 +856,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_whitespace_in_terms) {
 
 //   Long terms
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_long_terms) {
+TEST_P(RegexpFilterTestCase, by_regexp_long_terms) {
   {
     tests::JsonDocGenerator gen(resource("regexp_stress_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -874,7 +874,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_long_terms) {
 
 //   Boolean queries
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_boolean_queries) {
+TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -884,13 +884,13 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_boolean_queries) {
   {
     irs::Or d;
     {
-      auto& s = d.add<irs::ByRegexpRe2>();
+      auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
       s.mutable_options()->pattern =
         irs::ViewCast<irs::byte_type>(std::string_view("cat"));
     }
     {
-      auto& s = d.add<irs::ByRegexpRe2>();
+      auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
       s.mutable_options()->pattern =
         irs::ViewCast<irs::byte_type>(std::string_view("dog"));
@@ -900,13 +900,13 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_boolean_queries) {
   {
     irs::And c;
     {
-      auto& s = c.add<irs::ByRegexpRe2>();
+      auto& s = c.add<irs::ByRegexp>();
       *s.mutable_field() = "term";
       s.mutable_options()->pattern =
         irs::ViewCast<irs::byte_type>(std::string_view("foo.*"));
     }
     {
-      auto& s = c.add<irs::ByRegexpRe2>();
+      auto& s = c.add<irs::ByRegexp>();
       *s.mutable_field() = "alt";
       s.mutable_options()->pattern =
         irs::ViewCast<irs::byte_type>(std::string_view("cat"));
@@ -916,7 +916,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_boolean_queries) {
   {
     irs::Or d;
     {
-      auto& s = d.add<irs::ByRegexpRe2>();
+      auto& s = d.add<irs::ByRegexp>();
       *s.mutable_field() = "term";
       s.mutable_options()->pattern =
         irs::ViewCast<irs::byte_type>(std::string_view("foobar"));
@@ -934,7 +934,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_boolean_queries) {
 //   Deleted documents
 // TODO: need to fix
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_deleted_documents) {
+TEST_P(RegexpFilterTestCase, by_regexp_deleted_documents) {
   auto writer = open_writer();
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
@@ -961,7 +961,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_deleted_documents) {
 
 //   Determinism
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_determinism) {
+TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -992,7 +992,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_determinism) {
 
 //   Two segments
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_two_segments) {
+TEST_P(RegexpFilterTestCase, by_regexp_two_segments) {
   auto writer = open_writer();
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -1017,7 +1017,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_two_segments) {
 
 //   Consolidation
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_consolidation) {
+TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
   auto writer = open_writer();
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -1057,7 +1057,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_consolidation) {
 
 //   Concurrent readers
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_concurrent_readers) {
+TEST_P(RegexpFilterTestCase, by_regexp_concurrent_readers) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1072,7 +1072,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_concurrent_readers) {
 
 //   Visitor API
 
-TEST_P(RegexpRe2FilterTestCase, visit_literal) {
+TEST_P(RegexpFilterTestCase, visit_literal) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1085,7 +1085,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_literal) {
   {
     auto term = irs::ViewCast<irs::byte_type>(std::string_view("abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexpRe2::visitor(term);
+    auto fv = irs::ByRegexp::visitor(term);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1093,7 +1093,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_literal) {
   }
 }
 
-TEST_P(RegexpRe2FilterTestCase, visit_prefix) {
+TEST_P(RegexpFilterTestCase, visit_prefix) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1105,14 +1105,14 @@ TEST_P(RegexpRe2FilterTestCase, visit_prefix) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexpRe2::visitor(p);
+    auto fv = irs::ByRegexp::visitor(p);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
     ASSERT_EQ(6, v.visit_calls_counter());
   }
 }
 
-TEST_P(RegexpRe2FilterTestCase, visit_wildcard_like) {
+TEST_P(RegexpFilterTestCase, visit_wildcard_like) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1124,7 +1124,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_wildcard_like) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexpRe2::visitor(p);
+    auto fv = irs::ByRegexp::visitor(p);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(1, v.prepare_calls_counter());
@@ -1132,7 +1132,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_wildcard_like) {
   }
 }
 
-TEST_P(RegexpRe2FilterTestCase, visit_invalid_pattern) {
+TEST_P(RegexpFilterTestCase, visit_invalid_pattern) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1144,7 +1144,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexpRe2::visitor(p);
+    auto fv = irs::ByRegexp::visitor(p);
     ASSERT_TRUE(fv);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
@@ -1152,7 +1152,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_invalid_pattern) {
   {
     auto p = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor v;
-    auto fv = irs::ByRegexpRe2::visitor(p);
+    auto fv = irs::ByRegexp::visitor(p);
     fv(segment, *reader, v);
     ASSERT_EQ(0, v.prepare_calls_counter());
   }
@@ -1160,7 +1160,7 @@ TEST_P(RegexpRe2FilterTestCase, visit_invalid_pattern) {
 
 // RE2-specific: counted quantifiers {n}, {n,}, {n,m}
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_counted_quantifiers) {
+TEST_P(RegexpFilterTestCase, by_regexp_counted_quantifiers) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1179,7 +1179,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_counted_quantifiers) {
 
 // RE2-specific: non-capturing groups (?:...)
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_non_capturing_group) {
+TEST_P(RegexpFilterTestCase, by_regexp_non_capturing_group) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1200,7 +1200,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_non_capturing_group) {
 
 // RE2-specific: Perl classes \d \w \s \D \W \S
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_perl_classes) {
+TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1243,7 +1243,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_perl_classes) {
 
 // RE2-specific: word boundary \b \B
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_word_boundary) {
+TEST_P(RegexpFilterTestCase, by_regexp_word_boundary) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1260,7 +1260,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_word_boundary) {
 
 // RE2-specific: case-insensitive (?i:...)
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_case_insensitive_flag) {
+TEST_P(RegexpFilterTestCase, by_regexp_case_insensitive_flag) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1281,7 +1281,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_case_insensitive_flag) {
 
 // RE2-specific: Unicode property \p{...} \P{...}
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_unicode_property_classes) {
+TEST_P(RegexpFilterTestCase, by_regexp_unicode_property_classes) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1302,7 +1302,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_unicode_property_classes) {
 
 // RE2-specific: literal quoting \Q...\E
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_literal_quoting) {
+TEST_P(RegexpFilterTestCase, by_regexp_literal_quoting) {
   {
     tests::JsonDocGenerator gen(resource("regexp_stress_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1316,7 +1316,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_literal_quoting) {
 
 // RE2-specific: named captures (?P<n>...)
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_named_captures) {
+TEST_P(RegexpFilterTestCase, by_regexp_named_captures) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1330,7 +1330,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_named_captures) {
 
 // RE2-specific: empty alternation branch
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_empty_alternation_branch) {
+TEST_P(RegexpFilterTestCase, by_regexp_empty_alternation_branch) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1347,7 +1347,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_empty_alternation_branch) {
 
 // Walker Copy() — shared subtrees (DAG after Simplify)
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_shared_subtrees) {
+TEST_P(RegexpFilterTestCase, by_regexp_shared_subtrees) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1368,7 +1368,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_shared_subtrees) {
 
 // Large NFA stress
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_large_nfa) {
+TEST_P(RegexpFilterTestCase, by_regexp_large_nfa) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1392,9 +1392,9 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_large_nfa) {
   }
 }
 
-// UTF-8 char classes (multi-byte ranges in BuildCharClassFromRe2)
+// UTF-8 char classes (multi-byte ranges in BuildCharClass)
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_utf8_char_class) {
+TEST_P(RegexpFilterTestCase, by_regexp_utf8_char_class) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1422,7 +1422,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_utf8_char_class) {
 
 // kRegexpAnyByte — \C
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_any_byte) {
+TEST_P(RegexpFilterTestCase, by_regexp_any_byte) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1443,7 +1443,7 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_any_byte) {
 
 // Very long pattern
 
-TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_very_long_pattern) {
+TEST_P(RegexpFilterTestCase, by_regexp_very_long_pattern) {
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1471,8 +1471,8 @@ TEST_P(RegexpRe2FilterTestCase, by_regexp_re2_very_long_pattern) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(regexp_filter_re2_test, RegexpRe2FilterTestCase,
+INSTANTIATE_TEST_SUITE_P(regexp_filter_test, RegexpFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
                                             ::testing::Values(tests::FormatInfo{
                                               "1_5simd"})),
-                         RegexpRe2FilterTestCase::to_string);
+                         RegexpFilterTestCase::to_string);

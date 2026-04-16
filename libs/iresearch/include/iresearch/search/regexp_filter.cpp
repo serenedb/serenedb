@@ -28,7 +28,7 @@
 
 namespace irs {
 
-field_visitor ByRegexpRe2::visitor(bytes_view pattern) {
+field_visitor ByRegexp::visitor(bytes_view pattern) {
   const auto type = ComputeRegexpType(pattern);
 
   switch (type) {
@@ -71,7 +71,7 @@ field_visitor ByRegexpRe2::visitor(bytes_view pattern) {
     }
 
     case RegexpType::Complex: {
-      auto acceptor = FromRegexpRe2(pattern);
+      auto acceptor = FromRegexp(pattern);
 
       if (!Validate(acceptor)) {
         // Invalid pattern or too complex — return visitor that matches nothing
@@ -101,7 +101,7 @@ field_visitor ByRegexpRe2::visitor(bytes_view pattern) {
   SDB_UNREACHABLE();
 }
 
-Filter::Query::ptr ByRegexpRe2::prepare(const PrepareContext& ctx,
+Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
                                         std::string_view field,
                                         bytes_view pattern,
                                         size_t scored_terms_limit) {
@@ -133,7 +133,7 @@ Filter::Query::ptr ByRegexpRe2::prepare(const PrepareContext& ctx,
       break;
   }
 
-  auto acceptor = FromRegexpRe2(pattern);
+  auto acceptor = FromRegexp(pattern);
 
   if (!Validate(acceptor)) {
     return Query::empty();

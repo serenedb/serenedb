@@ -23,30 +23,30 @@
 
 namespace irs {
 
-class ByRegexpRe2;
+class ByRegexp;
 struct FilterVisitor;
 
-struct ByRegexpRe2FilterOptions {
+struct ByRegexpFilterOptions {
   bstring pattern;
 
-  bool operator==(const ByRegexpRe2FilterOptions& rhs) const noexcept {
+  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept {
     return pattern == rhs.pattern;
   }
 };
 
-struct ByRegexpRe2Options : ByRegexpRe2FilterOptions {
-  using FilterType = ByRegexpRe2;
-  using filter_options = ByRegexpRe2FilterOptions;
+struct ByRegexpOptions : ByRegexpFilterOptions {
+  using FilterType = ByRegexp;
+  using filter_options = ByRegexpFilterOptions;
 
   size_t scored_terms_limit{1024};
 
-  bool operator==(const ByRegexpRe2Options& rhs) const noexcept {
+  bool operator==(const ByRegexpOptions& rhs) const noexcept {
     return filter_options::operator==(rhs) &&
            scored_terms_limit == rhs.scored_terms_limit;
   }
 };
 
-class ByRegexpRe2 final : public FilterWithField<ByRegexpRe2Options> {
+class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
   static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
                             bytes_view pattern, size_t scored_terms_limit);

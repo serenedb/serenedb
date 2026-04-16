@@ -268,7 +268,7 @@ automaton BuildUtf8RangeAutomaton(uint32_t lo, uint32_t hi) {
   return result;
 }
 
-automaton BuildCharClassFromRe2(re2::CharClass* cc) {
+automaton BuildCharClass(re2::CharClass* cc) {
   if (cc == nullptr || cc->empty()) {
     return {};
   }
@@ -335,9 +335,9 @@ automaton BuildCharClassFromRe2(re2::CharClass* cc) {
 //   never happen; indicates version mismatch or corruption.
 //   kRegexpNoMatch: returns empty automaton (no final states) - legitimate
 //   AST node, not an error.
-class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
+class RegexpToAutomatonWalker : public re2::Regexp::Walker<automaton> {
  public:
-  Re2ToAutomatonWalker() : _error{false} {}
+  RegexpToAutomatonWalker() : _error{false} {}
 
   bool has_error() const { return _error; }
 
@@ -445,7 +445,7 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
       }
 
       case re2::kRegexpCharClass:
-        return BuildCharClassFromRe2(re->cc());
+        return BuildCharClass(re->cc());
 
       case re2::kRegexpCapture:
         SDB_ASSERT(nchild_args == 1);
@@ -572,9 +572,9 @@ bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
 
 // RE2-based regexp -> automaton
 
-automaton FromRegexpRe2(bytes_view pattern, int64_t max_dfa_states) {
+automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
   // ComputeRegexpType routes empty patterns to ByTerm (Literal path),
-  // so FromRegexpRe2 should never be called with an empty pattern.
+  // so FromRegexp should never be called with an empty pattern.
   SDB_ASSERT(!pattern.empty());
   if (pattern.empty()) {
     return MakeEpsilon();
@@ -634,7 +634,7 @@ automaton FromRegexpRe2(bytes_view pattern, int64_t max_dfa_states) {
   }
 
   // Walk the simplified AST -> build FST automaton.
-  Re2ToAutomatonWalker walker;
+  RegexpToAutomatonWalker walker;
   auto nfa = walker.Walk(sre.get(), MakeEpsilon());
 
   SDB_ASSERT(!walker.stopped_early());

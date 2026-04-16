@@ -898,8 +898,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
 
   // PG math functions missing from DuckDB
 
-  {DEFAULT_SCHEMA, "div",
-   R"((y, x) AS trunc(y / x)::BIGINT)"},
+  // div: registered as C++ function in connector/functions/math.cpp
 
   // Degree-based trigonometric functions
   {DEFAULT_SCHEMA, "sind",

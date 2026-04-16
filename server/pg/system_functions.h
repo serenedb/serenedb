@@ -856,6 +856,16 @@ inline constexpr SystemMacro kExternalMacros[] = {
              NULL::BOOLEAN, NULL::BOOLEAN, NULL::BOOLEAN
       WHERE false;
   END;)"},
+  // PG regexp functions wrapping DuckDB builtins
+
+  {DEFAULT_SCHEMA, "regexp_count",
+   R"((text, pattern) AS len(regexp_extract_all(text, pattern)),
+      (text, pattern, start) AS len(regexp_extract_all(text[start:], pattern)))"},
+
+  {DEFAULT_SCHEMA, "regexp_substr",
+   R"((text, pattern) AS CASE WHEN regexp_matches(text, pattern) THEN regexp_extract(text, pattern) END,
+      (text, pattern, start) AS CASE WHEN regexp_matches(text[start:], pattern) THEN regexp_extract(text[start:], pattern) END)"},
+
   // PG array functions missing from DuckDB
 
   {DEFAULT_SCHEMA, "array_remove",

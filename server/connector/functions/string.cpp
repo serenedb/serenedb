@@ -24,9 +24,12 @@
 
 #include <duckdb/common/types/blob.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 
+#include "iresearch/utils/utf8_utils.hpp"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
@@ -902,6 +905,178 @@ void SimilarToEscapeFunction1(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+// ---------------------------------------------------------------------------
+// UTF-8 helpers for regexp_instr (same as server/pg/functions/regexp.cpp)
+// ---------------------------------------------------------------------------
+
+size_t Utf8CharCount(const char* begin, size_t byte_len) {
+  auto* it = reinterpret_cast<const irs::byte_type*>(begin);
+  auto* end = it + byte_len;
+  size_t count = 0;
+  while (it < end) {
+    it = irs::utf8_utils::Next(it, end);
+    ++count;
+  }
+  return count;
+}
+
+size_t Utf8NextCharPos(const char* begin, size_t byte_len, size_t pos) {
+  if (pos >= byte_len) {
+    return pos + 1;  // past end - just bump to terminate loop
+  }
+  auto* it = reinterpret_cast<const irs::byte_type*>(begin) + pos;
+  auto* end = reinterpret_cast<const irs::byte_type*>(begin) + byte_len;
+  it = irs::utf8_utils::Next(it, end);
+  return static_cast<size_t>(it -
+                             reinterpret_cast<const irs::byte_type*>(begin));
+}
+
+size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
+  auto* it = reinterpret_cast<const irs::byte_type*>(begin);
+  auto* end = it + byte_len;
+  for (size_t i = 0; i < n && it < end; ++i) {
+    it = irs::utf8_utils::Next(it, end);
+  }
+  return static_cast<size_t>(it -
+                             reinterpret_cast<const irs::byte_type*>(begin));
+}
+
+// ---------------------------------------------------------------------------
+// regexp_instr -- no DuckDB equivalent, needs C++
+// Ported from Velox PgRegexpInstr / PgRegexpInstr4.
+// ---------------------------------------------------------------------------
+
+// Bind data: caches the compiled RE2 when the pattern is a constant.
+struct RegexpInstrBindData : public duckdb::FunctionData {
+  std::unique_ptr<re2::RE2> compiled;  // non-null when pattern is constant
+
+  explicit RegexpInstrBindData(std::unique_ptr<re2::RE2> re)
+    : compiled(std::move(re)) {}
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+    if (compiled) {
+      return duckdb::make_uniq<RegexpInstrBindData>(
+        std::make_unique<re2::RE2>(compiled->pattern(), compiled->options()));
+    }
+    return duckdb::make_uniq<RegexpInstrBindData>(nullptr);
+  }
+
+  bool Equals(const duckdb::FunctionData& other_p) const override {
+    auto& other = other_p.Cast<RegexpInstrBindData>();
+    if (!compiled && !other.compiled) {
+      return true;
+    }
+    if (!compiled || !other.compiled) {
+      return false;
+    }
+    return compiled->pattern() == other.compiled->pattern();
+  }
+};
+
+duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
+  duckdb::ClientContext& context, duckdb::ScalarFunction& bound_function,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& arguments) {
+  // Check if pattern argument is a constant
+  if (arguments[1]->IsFoldable()) {
+    auto val =
+      duckdb::ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
+    if (!val.IsNull()) {
+      auto pattern_str = val.ToString();
+      auto re = std::make_unique<re2::RE2>(pattern_str, re2::RE2::Quiet);
+      if (!re->ok()) {
+        throw duckdb::InvalidInputException("invalid regular expression: %s",
+                                            re->error());
+      }
+      return duckdb::make_uniq<RegexpInstrBindData>(std::move(re));
+    }
+  }
+  return duckdb::make_uniq<RegexpInstrBindData>(nullptr);
+}
+
+void RegexpInstrFunction(duckdb::DataChunk& args,
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  bool has_start_n = args.ColumnCount() == 4;
+
+  auto& func_expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
+  auto& info = func_expr.bind_info->Cast<RegexpInstrBindData>();
+
+  std::vector<duckdb::UnifiedVectorFormat> vdata(args.ColumnCount());
+  for (duckdb::idx_t c = 0; c < args.ColumnCount(); c++) {
+    args.data[c].ToUnifiedFormat(args.size(), vdata[c]);
+  }
+
+  auto result_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
+
+  for (duckdb::idx_t row = 0; row < args.size(); row++) {
+    auto text_idx = vdata[0].sel->get_index(row);
+    auto pat_idx = vdata[1].sel->get_index(row);
+    if (!vdata[0].validity.RowIsValid(text_idx) ||
+        !vdata[1].validity.RowIsValid(pat_idx)) {
+      duckdb::FlatVector::Validity(result).SetInvalid(row);
+      continue;
+    }
+
+    auto text = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+      vdata[0])[text_idx];
+    auto pattern =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(vdata[1])[pat_idx];
+
+    int64_t start_char = 1;
+    int64_t n = 1;
+    if (has_start_n) {
+      auto s_idx = vdata[2].sel->get_index(row);
+      auto n_idx = vdata[3].sel->get_index(row);
+      if (!vdata[2].validity.RowIsValid(s_idx) ||
+          !vdata[3].validity.RowIsValid(n_idx)) {
+        duckdb::FlatVector::Validity(result).SetInvalid(row);
+        continue;
+      }
+      start_char =
+        duckdb::UnifiedVectorFormat::GetData<int64_t>(vdata[2])[s_idx];
+      n = duckdb::UnifiedVectorFormat::GetData<int64_t>(vdata[3])[n_idx];
+    }
+
+    // Use precompiled from bind data, or compile per-row
+    std::optional<re2::RE2> row_re;
+    re2::RE2* re = info.compiled.get();
+    if (!re) {
+      row_re.emplace(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
+                     re2::RE2::Quiet);
+      if (!row_re->ok()) {
+        throw duckdb::InvalidInputException("invalid regular expression: %s",
+                                            row_re->error());
+      }
+      re = &*row_re;
+    }
+
+    re2::StringPiece input(text.GetData(), text.GetSize());
+    re2::StringPiece match;
+    size_t pos = start_char > 1
+                   ? Utf8Advance(text.GetData(), text.GetSize(),
+                                 static_cast<size_t>(start_char - 1))
+                   : 0;
+    int64_t count = 0;
+
+    while (
+      re->Match(input, pos, text.GetSize(), re2::RE2::UNANCHORED, &match, 1)) {
+      ++count;
+      if (count == n) {
+        size_t byte_offset = match.data() - input.data();
+        result_data[row] =
+          static_cast<int64_t>(Utf8CharCount(text.GetData(), byte_offset)) + 1;
+        goto next_row;
+      }
+      pos = match.data() + match.size() - input.data();
+      if (match.size() == 0) {
+        pos = Utf8NextCharPos(text.GetData(), text.GetSize(), pos);
+      }
+    }
+    result_data[row] = 0;
+  next_row:;
+  }
+}
+
 // regexp_match(text, pattern) -> text[]
 // Returns capture groups from the first match. If no capture groups,
 // returns the full match. Returns NULL if no match.
@@ -1158,6 +1333,30 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);
   }
+
+  // regexp_count -- implemented as macro in default_functions.cpp
+
+  // regexp_instr(text, pattern) / regexp_instr(text, pattern, start, n)
+  {
+    duckdb::ScalarFunctionSet regexp_instr_set("regexp_instr");
+    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+      "regexp_instr",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::BIGINT,
+      RegexpInstrFunction,
+      RegexpInstrBind});
+    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
+      "regexp_instr",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
+       duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
+      duckdb::LogicalType::BIGINT,
+      RegexpInstrFunction,
+      RegexpInstrBind});
+    loader.RegisterFunction(regexp_instr_set);
+  }
+
+  // regexp_substr, regexp_count -- implemented as macros in
+  // default_functions.cpp
 
   // similar_to_escape(pattern, escape) -> varchar
   loader.RegisterFunction(duckdb::ScalarFunction{

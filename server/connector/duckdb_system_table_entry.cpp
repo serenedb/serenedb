@@ -130,14 +130,9 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
 
 std::shared_ptr<catalog::VirtualTableSnapshot>
 SystemTableEntry::GetOrCreateSnapshot(duckdb::ClientContext& context) {
-  auto snapshot = _cached_snapshot.lock();
-  if (!snapshot) {
-    auto& conn_ctx = GetSereneDBContext(context);
-    snapshot =
-      _virtual_table.CreateSnapshot(conn_ctx.GetDatabaseId(), conn_ctx);
-    _cached_snapshot = snapshot;
-  }
-  return snapshot;
+  auto& conn_ctx = GetSereneDBContext(context);
+  return conn_ctx.GetOrCreateSystemTableSnapshot(_virtual_table,
+                                                 conn_ctx.GetDatabaseId());
 }
 
 duckdb::TableFunction SystemTableEntry::GetScanFunction(

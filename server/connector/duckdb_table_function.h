@@ -174,10 +174,9 @@ struct SkRangeScan {
   std::vector<ResolvedRange> ranges;
 };
 
-using ScanSource =
-  std::variant<FullTableScan, SearchScan, SecondaryIndexScan, ANNScan,
-               RangeSearchScan, PkPointScan, PkRangeScan, SkPointScan,
-               SkRangeScan>;
+using ScanSource = std::variant<FullTableScan, SearchScan, SecondaryIndexScan,
+                                ANNScan, RangeSearchScan, PkPointScan,
+                                PkRangeScan, SkPointScan, SkRangeScan>;
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
   std::shared_ptr<catalog::Table> table;

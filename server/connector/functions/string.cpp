@@ -1006,13 +1006,16 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   // normalize(text [, form]) -> text
   {
     duckdb::ScalarFunctionSet normalize_set("normalize");
-    normalize_set.AddFunction(duckdb::ScalarFunction{
-      "normalize", {duckdb::LogicalType::VARCHAR}, duckdb::LogicalType::VARCHAR,
-      NormalizeFunction});
+    normalize_set.AddFunction(
+      duckdb::ScalarFunction{"normalize",
+                             {duckdb::LogicalType::VARCHAR},
+                             duckdb::LogicalType::VARCHAR,
+                             NormalizeFunction});
     normalize_set.AddFunction(duckdb::ScalarFunction{
       "normalize",
       {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR, NormalizeFunction});
+      duckdb::LogicalType::VARCHAR,
+      NormalizeFunction});
     loader.RegisterFunction(normalize_set);
   }
 

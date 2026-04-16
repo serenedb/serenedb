@@ -238,7 +238,7 @@ SELECT * FROM t1 WHERE pk BETWEEN 1 AND 2
 
 ```
 
-#### `WHERE pk != 2` — splits into two ranges
+#### `WHERE pk != 2` -- splits into two ranges
 ```sql
 SELECT * FROM t1 WHERE pk != 2
 ```
@@ -274,7 +274,7 @@ SELECT * FROM t1 WHERE pk != 2
 
 ```
 
-#### `WHERE pk = 2 OR pk = 3` — two points
+#### `WHERE pk = 2 OR pk = 3` -- two points
 ```sql
 SELECT * FROM t1 WHERE pk = 2 OR pk = 3
 ```
@@ -309,7 +309,7 @@ SELECT * FROM t1 WHERE pk = 2 OR pk = 3
 
 ```
 
-#### `WHERE pk IS NULL` — PK cannot be null → contradictory claim, empty scan, 0 rows
+#### `WHERE pk IS NULL` -- PK cannot be null -> contradictory claim, empty scan, 0 rows
 ```sql
 SELECT * FROM t1 WHERE pk IS NULL
 ```
@@ -344,7 +344,7 @@ SELECT * FROM t1 WHERE pk IS NULL
 --- result ---
 ```
 
-#### `WHERE pk IS NOT NULL` — unconstrained → full table, all 3 rows
+#### `WHERE pk IS NOT NULL` -- unconstrained -> full table, all 3 rows
 ```sql
 SELECT * FROM t1 WHERE pk IS NOT NULL ORDER BY pk
 ```
@@ -386,7 +386,7 @@ SELECT * FROM t1 WHERE pk IS NOT NULL ORDER BY pk
 3|30|300|3000
 ```
 
-#### `WHERE pk IS NULL OR pk = 2` — IS-NULL branch contradictory; OR collapses to single pk=2 point
+#### `WHERE pk IS NULL OR pk = 2` -- IS-NULL branch contradictory; OR collapses to single pk=2 point
 ```sql
 SELECT * FROM t1 WHERE pk IS NULL OR pk = 2
 ```
@@ -424,7 +424,7 @@ SELECT * FROM t1 WHERE pk IS NULL OR pk = 2
 
 ## rocksdb: primary key (composite)
 
-#### `WHERE a = 1 AND b = 2` — full equality → point
+#### `WHERE a = 1 AND b = 2` -- full equality -> point
 ```sql
 SELECT * FROM t2 WHERE a = 1 AND b = 2
 ```
@@ -457,7 +457,7 @@ SELECT * FROM t2 WHERE a = 1 AND b = 2
 
 ```
 
-#### `WHERE a = 1` — prefix only → range
+#### `WHERE a = 1` -- prefix only -> range
 ```sql
 SELECT * FROM t2 WHERE a = 1
 ```
@@ -490,7 +490,7 @@ SELECT * FROM t2 WHERE a = 1
 
 ```
 
-#### `WHERE a = 1 AND b < 2` — prefix + trailing range
+#### `WHERE a = 1 AND b < 2` -- prefix + trailing range
 ```sql
 SELECT * FROM t2 WHERE a = 1 AND b < 2
 ```
@@ -524,7 +524,7 @@ SELECT * FROM t2 WHERE a = 1 AND b < 2
 
 ```
 
-#### `WHERE a = 1 AND b IN (1, 2)` — prefix + IN → 2 points
+#### `WHERE a = 1 AND b IN (1, 2)` -- prefix + IN -> 2 points
 ```sql
 SELECT * FROM t2 WHERE a = 1 AND b IN (1, 2)
 ```
@@ -559,7 +559,7 @@ SELECT * FROM t2 WHERE a = 1 AND b IN (1, 2)
 
 ```
 
-#### `WHERE a IN (1, 2) AND b = 1` — cross product → 2 points
+#### `WHERE a IN (1, 2) AND b = 1` -- cross product -> 2 points
 ```sql
 SELECT * FROM t2 WHERE a IN (1, 2) AND b = 1
 ```
@@ -594,7 +594,7 @@ SELECT * FROM t2 WHERE a IN (1, 2) AND b = 1
 
 ```
 
-#### `WHERE b = 1` — only suffix → full table
+#### `WHERE b = 1` -- only suffix -> full table
 ```sql
 SELECT * FROM t2 WHERE b = 1
 ```
@@ -635,7 +635,7 @@ SELECT * FROM t2 WHERE b = 1
 
 ## rocksdb: secondary key
 
-#### `WHERE x = 10` — single-col SK equality → sk_x point
+#### `WHERE x = 10` -- single-col SK equality -> sk_x point
 ```sql
 SELECT * FROM t1 WHERE x = 10
 ```
@@ -679,7 +679,7 @@ SELECT * FROM t1 WHERE x = 10
 
 ```
 
-#### `WHERE x IN (10, 20)` — IN on SK
+#### `WHERE x IN (10, 20)` -- IN on SK
 ```sql
 SELECT * FROM t1 WHERE x IN (10, 20)
 ```
@@ -724,7 +724,7 @@ SELECT * FROM t1 WHERE x IN (10, 20)
 
 ```
 
-#### `WHERE x = 10 AND y = 100` — sk_xy beats sk_x (more cover)
+#### `WHERE x = 10 AND y = 100` -- sk_xy beats sk_x (more cover)
 ```sql
 SELECT * FROM t1 WHERE x = 10 AND y = 100
 ```
@@ -768,7 +768,7 @@ SELECT * FROM t1 WHERE x = 10 AND y = 100
 
 ```
 
-#### `WHERE x < 20` — SK range
+#### `WHERE x < 20` -- SK range
 ```sql
 SELECT * FROM t1 WHERE x < 20
 ```
@@ -813,7 +813,7 @@ SELECT * FROM t1 WHERE x < 20
 
 ```
 
-#### `WHERE x BETWEEN 10 AND 20` — SK range closed
+#### `WHERE x BETWEEN 10 AND 20` -- SK range closed
 ```sql
 SELECT * FROM t1 WHERE x BETWEEN 10 AND 20
 ```
@@ -857,7 +857,7 @@ SELECT * FROM t1 WHERE x BETWEEN 10 AND 20
 
 ```
 
-#### `WHERE y = 100` — sk_yz, prefix equality → range
+#### `WHERE y = 100` -- sk_yz, prefix equality -> range
 ```sql
 SELECT * FROM t1 WHERE y = 100
 ```
@@ -901,7 +901,7 @@ SELECT * FROM t1 WHERE y = 100
 
 ```
 
-#### `WHERE y = 100 AND z = 1000` — sk_yz full → point
+#### `WHERE y = 100 AND z = 1000` -- sk_yz full -> point
 ```sql
 SELECT * FROM t1 WHERE y = 100 AND z = 1000
 ```
@@ -946,7 +946,7 @@ SELECT * FROM t1 WHERE y = 100 AND z = 1000
 
 ```
 
-#### `WHERE z = 1000` — z leads no index → full table
+#### `WHERE z = 1000` -- z leads no index -> full table
 ```sql
 SELECT * FROM t1 WHERE z = 1000
 ```
@@ -987,7 +987,7 @@ SELECT * FROM t1 WHERE z = 1000
 
 ```
 
-#### `WHERE x IS NULL` — SK cannot be null → empty scan, 0 rows
+#### `WHERE x IS NULL` -- SK cannot be null -> empty scan, 0 rows
 ```sql
 SELECT * FROM t1 WHERE x IS NULL
 ```
@@ -1033,7 +1033,7 @@ SELECT * FROM t1 WHERE x IS NULL
 
 ## rocksdb: cost-based tiebreak
 
-#### `WHERE pk = 2 AND x = 10` — both possible, PK wins tiebreak
+#### `WHERE pk = 2 AND x = 10` -- both possible, PK wins tiebreak
 ```sql
 SELECT * FROM t1 WHERE pk = 2 AND x = 10
 ```
@@ -1067,7 +1067,7 @@ SELECT * FROM t1 WHERE pk = 2 AND x = 10
 
 ```
 
-#### `WHERE pk < 5 AND x = 10` — PK range vs SK point — points beat ranges
+#### `WHERE pk < 5 AND x = 10` -- PK range vs SK point -- points beat ranges
 ```sql
 SELECT * FROM t1 WHERE pk < 5 AND x = 10
 ```
@@ -1101,7 +1101,7 @@ SELECT * FROM t1 WHERE pk < 5 AND x = 10
 
 ```
 
-#### `WHERE x = 10 AND y = 100` — sk_xy (2-col cover) beats sk_x (1-col)
+#### `WHERE x = 10 AND y = 100` -- sk_xy (2-col cover) beats sk_x (1-col)
 ```sql
 SELECT * FROM t1 WHERE x = 10 AND y = 100
 ```
@@ -1145,7 +1145,7 @@ SELECT * FROM t1 WHERE x = 10 AND y = 100
 
 ```
 
-#### `WHERE x = 10 OR y = 100` — OR spans two SKs; no single index covers → full table
+#### `WHERE x = 10 OR y = 100` -- OR spans two SKs; no single index covers -> full table
 ```sql
 SELECT * FROM t1 WHERE x = 10 OR y = 100
 ```
@@ -1188,7 +1188,7 @@ SELECT * FROM t1 WHERE x = 10 OR y = 100
 
 ## rocksdb: FROM index_name
 
-#### `FROM sk_x` — bare full SK scan
+#### `FROM sk_x` -- bare full SK scan
 ```sql
 SELECT * FROM sk_x
 ```
@@ -1213,7 +1213,7 @@ SELECT * FROM sk_x
 
 ```
 
-#### `FROM sk_x WHERE x = 10` — FROM-index + covering predicate
+#### `FROM sk_x WHERE x = 10` -- FROM-index + covering predicate
 ```sql
 SELECT * FROM sk_x WHERE x = 10
 ```
@@ -1257,7 +1257,7 @@ SELECT * FROM sk_x WHERE x = 10
 
 ```
 
-#### `FROM sk_x WHERE pk = 1` — predicate not on the index → rule skips
+#### `FROM sk_x WHERE pk = 1` -- predicate not on the index -> rule skips
 ```sql
 SELECT * FROM sk_x WHERE pk = 1
 ```
@@ -1289,7 +1289,7 @@ SELECT * FROM sk_x WHERE pk = 1
 
 ```
 
-#### `FROM sk_xy WHERE x = 10 AND y = 100` — FROM composite, full cover
+#### `FROM sk_xy WHERE x = 10 AND y = 100` -- FROM composite, full cover
 ```sql
 SELECT * FROM sk_xy WHERE x = 10 AND y = 100
 ```
@@ -1333,7 +1333,7 @@ SELECT * FROM sk_xy WHERE x = 10 AND y = 100
 
 ```
 
-#### `FROM sk_xy WHERE x = 10` — FROM composite, prefix only → range
+#### `FROM sk_xy WHERE x = 10` -- FROM composite, prefix only -> range
 ```sql
 SELECT * FROM sk_xy WHERE x = 10
 ```
@@ -1377,7 +1377,7 @@ SELECT * FROM sk_xy WHERE x = 10
 
 ```
 
-#### `FROM iv` — bare full iresearch scan
+#### `FROM iv` -- bare full iresearch scan
 ```sql
 SELECT id, body FROM iv
 ```
@@ -1781,7 +1781,7 @@ SELECT id, title FROM docs WHERE sdb_term_eq(title, 'lane')
 
 ```
 
-#### `WHERE sdb_phrase AND id > 0` — partial claim
+#### `WHERE sdb_phrase AND id > 0` -- partial claim
 ```sql
 SELECT id FROM docs WHERE sdb_phrase(body, 'pudge') AND id > 0
 ```
@@ -1821,7 +1821,7 @@ SELECT id FROM docs WHERE sdb_phrase(body, 'pudge') AND id > 0
 
 ```
 
-#### `WHERE sdb_phrase OR sdb_phrase` — OR merged into iresearch tree
+#### `WHERE sdb_phrase OR sdb_phrase` -- OR merged into iresearch tree
 ```sql
 SELECT id FROM docs WHERE sdb_phrase(body,'pudge') OR sdb_phrase(body,'babsky')
 ```
@@ -1856,7 +1856,7 @@ SELECT id FROM docs WHERE sdb_phrase(body,'pudge') OR sdb_phrase(body,'babsky')
 
 ```
 
-#### `WHERE NOT sdb_phrase` — negation inside iresearch
+#### `WHERE NOT sdb_phrase` -- negation inside iresearch
 ```sql
 SELECT id FROM docs WHERE NOT sdb_phrase(body, 'pudge')
 ```
@@ -1889,7 +1889,7 @@ SELECT id FROM docs WHERE NOT sdb_phrase(body, 'pudge')
 
 ```
 
-#### `WHERE sdb_term_in(title, 'lane', 'off')` — term-level IN-list
+#### `WHERE sdb_term_in(title, 'lane', 'off')` -- term-level IN-list
 ```sql
 SELECT id FROM docs WHERE sdb_term_in(title, 'lane', 'off')
 ```
@@ -1923,9 +1923,9 @@ SELECT id FROM docs WHERE sdb_term_in(title, 'lane', 'off')
 
 ```
 
-## iresearch: scoring — bm25 / tfidf
+## iresearch: scoring -- bm25 / tfidf
 
-#### `bm25(tableoid)` — default (k1=1.2, b=0.75)
+#### `bm25(tableoid)` -- default (k1=1.2, b=0.75)
 ```sql
 SELECT id, bm25(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -1962,7 +1962,7 @@ SELECT id, bm25(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `bm25(tableoid, 1.5, 0.8)` — tuned params plumbed to bind-data
+#### `bm25(tableoid, 1.5, 0.8)` -- tuned params plumbed to bind-data
 ```sql
 SELECT id, bm25(tableoid, 1.5, 0.8) FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -1999,7 +1999,7 @@ SELECT id, bm25(tableoid, 1.5, 0.8) FROM docs WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `tfidf(tableoid)` — default (with_norms=false)
+#### `tfidf(tableoid)` -- default (with_norms=false)
 ```sql
 SELECT id, tfidf(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2036,7 +2036,7 @@ SELECT id, tfidf(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `tfidf(tableoid, true)` — with length norms
+#### `tfidf(tableoid, true)` -- with length norms
 ```sql
 SELECT id, tfidf(tableoid, true) FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2073,7 +2073,7 @@ SELECT id, tfidf(tableoid, true) FROM docs WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `bm25 + LIMIT 5` — topk pullup, LIMIT dropped
+#### `bm25 + LIMIT 5` -- topk pullup, LIMIT dropped
 ```sql
 SELECT id, bm25(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge') LIMIT 5
 ```
@@ -2112,7 +2112,7 @@ SELECT id, bm25(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge') LIMIT 5
 
 ```
 
-#### `bm25 + ORDER BY bm25 DESC LIMIT 5` — TopN descending → topk pullup
+#### `bm25 + ORDER BY bm25 DESC LIMIT 5` -- TopN descending -> topk pullup
 ```sql
 SELECT id, bm25(tableoid, 1.5, 0.8) AS s FROM docs WHERE sdb_phrase(body, 'pudge') ORDER BY s DESC LIMIT 5
 ```
@@ -2151,7 +2151,7 @@ SELECT id, bm25(tableoid, 1.5, 0.8) AS s FROM docs WHERE sdb_phrase(body, 'pudge
 
 ```
 
-#### `tfidf + LIMIT 2` — topk pullup for TF-IDF too
+#### `tfidf + LIMIT 2` -- topk pullup for TF-IDF too
 ```sql
 SELECT id, tfidf(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge') LIMIT 2
 ```
@@ -2190,7 +2190,7 @@ SELECT id, tfidf(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge') LIMIT 2
 
 ```
 
-#### `bm25 + ORDER BY another col LIMIT` — no pullup (LIMIT kept)
+#### `bm25 + ORDER BY another col LIMIT` -- no pullup (LIMIT kept)
 ```sql
 SELECT id, bm25(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge') ORDER BY id DESC LIMIT 5
 ```
@@ -2231,7 +2231,7 @@ SELECT id, bm25(tableoid) FROM docs WHERE sdb_phrase(body, 'pudge') ORDER BY id 
 
 ## iresearch: offsets
 
-#### `sdb_offsets(body)` — single column
+#### `sdb_offsets(body)` -- single column
 ```sql
 SELECT id, sdb_offsets(body) FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2268,7 +2268,7 @@ SELECT id, sdb_offsets(body) FROM docs WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `sdb_offsets(body), sdb_offsets(title)` — multi-column (dedup per column)
+#### `sdb_offsets(body), sdb_offsets(title)` -- multi-column (dedup per column)
 ```sql
 SELECT id, sdb_offsets(body), sdb_offsets(title) FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2307,7 +2307,7 @@ SELECT id, sdb_offsets(body), sdb_offsets(title) FROM docs WHERE sdb_phrase(body
 
 ```
 
-#### `sdb_offsets` with no search predicate — still attaches (rule always claims offsets when col is indexed)
+#### `sdb_offsets` with no search predicate -- still attaches (rule always claims offsets when col is indexed)
 ```sql
 SELECT id, sdb_offsets(body) FROM docs
 ```
@@ -2380,7 +2380,7 @@ SELECT id, bm25(tableoid), sdb_offsets(body) FROM docs WHERE sdb_phrase(body, 'p
 
 ```
 
-#### `bm25 + offsets + LIMIT 3` — topk + offsets (LIMIT dropped)
+#### `bm25 + offsets + LIMIT 3` -- topk + offsets (LIMIT dropped)
 ```sql
 SELECT id, bm25(tableoid, 1.5, 0.8), sdb_offsets(body) FROM docs WHERE sdb_phrase(body, 'pudge') LIMIT 3
 ```
@@ -2614,7 +2614,7 @@ SELECT id FROM iv WHERE sdb_l2_distance(emb, ARRAY[1.0, 1.0]::FLOAT[2]) < 2.0
 
 ```
 
-#### `ORDER BY sdb_l2_distance DESC LIMIT k` — DESC not supported → full iresearch scan
+#### `ORDER BY sdb_l2_distance DESC LIMIT k` -- DESC not supported -> full iresearch scan
 ```sql
 SELECT id FROM docs ORDER BY sdb_l2_distance(emb, ARRAY[1.0, 1.0]::FLOAT[2]) DESC LIMIT 1
 ```
@@ -2662,7 +2662,7 @@ SELECT id FROM docs ORDER BY sdb_l2_distance(emb, ARRAY[1.0, 1.0]::FLOAT[2]) DES
 
 ## iresearch: FROM iv (index scan entry)
 
-#### `SELECT * FROM iv` — bare iresearch_fullscan
+#### `SELECT * FROM iv` -- bare iresearch_fullscan
 ```sql
 SELECT id, body FROM iv
 ```
@@ -2684,7 +2684,7 @@ SELECT id, body FROM iv
 
 ```
 
-#### `FROM iv WHERE sdb_phrase` — lookup via index
+#### `FROM iv WHERE sdb_phrase` -- lookup via index
 ```sql
 SELECT id FROM iv WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2717,7 +2717,7 @@ SELECT id FROM iv WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `FROM iv + bm25 + LIMIT` — scoring + topk on index
+#### `FROM iv + bm25 + LIMIT` -- scoring + topk on index
 ```sql
 SELECT id, bm25(tableoid) FROM iv WHERE sdb_phrase(body, 'pudge') LIMIT 2
 ```
@@ -2756,7 +2756,7 @@ SELECT id, bm25(tableoid) FROM iv WHERE sdb_phrase(body, 'pudge') LIMIT 2
 
 ```
 
-#### `FROM iv + sdb_offsets` — offsets on index
+#### `FROM iv + sdb_offsets` -- offsets on index
 ```sql
 SELECT id, sdb_offsets(body) FROM iv WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2795,7 +2795,7 @@ SELECT id, sdb_offsets(body) FROM iv WHERE sdb_phrase(body, 'pudge')
 
 ## mutation guard (DELETE / UPDATE)
 
-#### `DELETE FROM docs WHERE sdb_phrase` — iresearch skipped, rocksdb full table
+#### `DELETE FROM docs WHERE sdb_phrase` -- iresearch skipped, rocksdb full table
 ```sql
 DELETE FROM docs WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2825,7 +2825,7 @@ DELETE FROM docs WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `UPDATE docs ... WHERE sdb_phrase` — same guard
+#### `UPDATE docs ... WHERE sdb_phrase` -- same guard
 ```sql
 UPDATE docs SET title = 'x' WHERE sdb_phrase(body, 'pudge')
 ```
@@ -2890,7 +2890,7 @@ UPDATE docs SET title = 'x' WHERE sdb_phrase(body, 'pudge')
 
 ```
 
-#### `DELETE ... WHERE pk = 2` — rocksdb rule fires (guard only affects iresearch)
+#### `DELETE ... WHERE pk = 2` -- rocksdb rule fires (guard only affects iresearch)
 ```sql
 DELETE FROM t1 WHERE pk = 2
 ```
@@ -2922,7 +2922,7 @@ DELETE FROM t1 WHERE pk = 2
 
 ```
 
-#### `UPDATE ... WHERE x = 10` — rocksdb SK fires under UPDATE
+#### `UPDATE ... WHERE x = 10` -- rocksdb SK fires under UPDATE
 ```sql
 UPDATE t1 SET y = 42 WHERE x = 10
 ```
@@ -2989,7 +2989,7 @@ UPDATE t1 SET y = 42 WHERE x = 10
 
 ```
 
-#### `DELETE FROM docs WHERE sdb_phrase AND id = 1` — full scan, nothing claimed
+#### `DELETE FROM docs WHERE sdb_phrase AND id = 1` -- full scan, nothing claimed
 ```sql
 DELETE FROM docs WHERE sdb_phrase(body, 'pudge') AND id = 1
 ```

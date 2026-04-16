@@ -116,14 +116,12 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
   {
     duckdb::ScalarFunctionSet set{std::string{kBm25}};
-    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::BIGINT},
-                                           duckdb::LogicalType::FLOAT,
-                                           SearchStubFn));
-    set.AddFunction(
-      duckdb::ScalarFunction({duckdb::LogicalType::BIGINT,
-                              duckdb::LogicalType::DOUBLE,
-                              duckdb::LogicalType::DOUBLE},
-                             duckdb::LogicalType::FLOAT, SearchStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, SearchStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE,
+       duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, SearchStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -131,9 +129,8 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // TF-IDF. `with_norms` toggles length normalisation (default false).
   {
     duckdb::ScalarFunctionSet set{std::string{kTfidf}};
-    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::BIGINT},
-                                           duckdb::LogicalType::FLOAT,
-                                           SearchStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, SearchStubFn));
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::FLOAT, SearchStubFn));

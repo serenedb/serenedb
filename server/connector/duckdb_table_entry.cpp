@@ -135,8 +135,7 @@ void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,
 }
 
 duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
-  const catalog::Table& table,
-  const std::vector<size_t>& indexed_col_indices) {
+  const catalog::Table& table, const std::vector<size_t>& indexed_col_indices) {
   duckdb::vector<duckdb::column_t> result;
   const auto& pk_col_ids = table.PKColumns();
   const auto& columns = table.Columns();
@@ -191,8 +190,7 @@ duckdb::vector<duckdb::column_t> SereneDBTableEntry::BuildRowIdColumns(
 }
 
 duckdb::virtual_column_map_t SereneDBTableEntry::BuildVirtualColumns(
-  const catalog::Table& table,
-  const std::vector<size_t>& indexed_col_indices) {
+  const catalog::Table& table, const std::vector<size_t>& indexed_col_indices) {
   duckdb::virtual_column_map_t result;
   const auto& pk_col_ids = table.PKColumns();
   const auto& columns = table.Columns();

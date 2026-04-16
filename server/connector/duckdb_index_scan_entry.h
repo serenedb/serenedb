@@ -90,14 +90,12 @@ class SereneDBIndexScanEntry final : public duckdb::TableCatalogEntry {
   bool IsSecondaryIndexUnique() const { return _sk_unique; }
 
  private:
-  SereneDBIndexScanEntry(duckdb::Catalog& catalog,
-                         duckdb::SchemaCatalogEntry& schema,
-                         duckdb::CreateTableInfo& info,
-                         std::shared_ptr<catalog::Table> sdb_table,
-                         std::vector<size_t> indexed_col_indices,
-                         std::shared_ptr<const catalog::InvertedIndex>
-                           inverted_index,
-                         ObjectId sk_shard_id, bool sk_unique);
+  SereneDBIndexScanEntry(
+    duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+    duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
+    std::vector<size_t> indexed_col_indices,
+    std::shared_ptr<const catalog::InvertedIndex> inverted_index,
+    ObjectId sk_shard_id, bool sk_unique);
 
   std::shared_ptr<catalog::Table> _sdb_table;
   std::vector<size_t> _indexed_col_indices;

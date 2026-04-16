@@ -67,8 +67,7 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
   static duckdb::virtual_column_map_t BuildVirtualColumns(
     const catalog::Table& table,
     const std::vector<size_t>& indexed_col_indices);
-  static duckdb::TableStorageInfo BuildStorageInfo(
-    const catalog::Table& table);
+  static duckdb::TableStorageInfo BuildStorageInfo(const catalog::Table& table);
 
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,

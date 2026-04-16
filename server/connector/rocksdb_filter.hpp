@@ -22,11 +22,11 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+
+#include <cassert>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-
-#include <cassert>
 #include <optional>
 #include <span>
 #include <string>
@@ -179,14 +179,14 @@ class KeyBounds {
   [[nodiscard]] const ColumnRange* FindColumnRange(
     catalog::Column::Id col_id) const;
 
-  [[nodiscard]] std::span<const catalog::Column::Id> PKColumns() const
-    noexcept {
+  [[nodiscard]] std::span<const catalog::Column::Id> PKColumns()
+    const noexcept {
     return _pk_ids;
   }
 
-  using SourceExprsMap = containers::FlatHashMap<
-    catalog::Column::Id,
-    containers::FlatHashSet<const duckdb::Expression*>>;
+  using SourceExprsMap =
+    containers::FlatHashMap<catalog::Column::Id,
+                            containers::FlatHashSet<const duckdb::Expression*>>;
 
   // Returns all source expressions grouped by the column they constrain.
   [[nodiscard]] const SourceExprsMap& GetSourceExprs() const noexcept {
@@ -317,8 +317,7 @@ struct ColumnResolver {
   std::span<const catalog::Column::Id> pk_ids);
 
 [[nodiscard]] std::vector<KeyBounds> ExtractFilterExpr(
-  const duckdb::Expression& expr,
-  std::span<const catalog::Column::Id> pk_ids,
+  const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
   const ColumnResolver& resolver, bool negated = false);
 
 enum class ConstraintKind {
@@ -339,8 +338,7 @@ struct ExtractAndRewriteResult {
 };
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
-  const duckdb::Expression& expr,
-  std::span<const catalog::Column::Id> pk_ids,
+  const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
   const ColumnResolver& resolver);
 
 // Sorts and deduplicates points in-place by key order. Column order matches

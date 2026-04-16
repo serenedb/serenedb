@@ -1,4 +1,4 @@
-## Optimizer / scan rework — next plans
+## Optimizer / scan rework -- next plans
 
 What's left after the optimisation-stage work in
 [OPTIMIZER_COVERAGE.md](OPTIMIZER_COVERAGE.md). Organised by phase.
@@ -32,8 +32,8 @@ Check nulls for rocksdb rule with secondary index on nullable columns (cannot be
 
 ## Runtime executors (blocker for correctness of specialised scans)
 
-The specialised scans pass the optimisation-stage contract —
-EXPLAIN shows the right strategy and claim info — but all of them
+The specialised scans pass the optimisation-stage contract --
+EXPLAIN shows the right strategy and claim info -- but all of them
 still dispatch to the full-table loop at runtime. Flipping them to
 their actual implementation is the biggest remaining chunk, and it's
 where the "rules never drop predicates" safety valve in
@@ -43,20 +43,20 @@ above the specialised scan).
 
 ### rocksdb-side
 
-- **`pk_point`** — RocksDB MultiGet over `ResolvedPoint` → PK bytes.
+- **`pk_point`** -- RocksDB MultiGet over `ResolvedPoint` -> PK bytes.
   Bind data already carries the resolved points; encode to keys at
   `init_global` and batch-MultiGet per chunk. Port the Velox-era
   `MultiGetContext` / `PointLookupPKColumnBuilder` /
-  `FillColumnFromMultiGet` from `data_source.cpp` — they just need
-  Velox `RowVector` → DuckDB `DataChunk` / `Vector` swap. Once live,
+  `FillColumnFromMultiGet` from `data_source.cpp` -- they just need
+  Velox `RowVector` -> DuckDB `DataChunk` / `Vector` swap. Once live,
   drop the matched equality expressions from the surrounding
   `LogicalFilter` in the rule.
-- **`pk_range`** — bounded prefix iterator. For each `ResolvedRange`,
+- **`pk_range`** -- bounded prefix iterator. For each `ResolvedRange`,
   compute `[begin_bytes, end_bytes)` from prefix values + the trailing
   `ColumnRange` bound. Multi-range case iterates per range. Same
   filter-drop cleanup as point.
-- **`sk_point` / `sk_range`** — SK probe → PK list → MultiGet.
-  Executor path splits into two passes (SK iterator → PK stream →
+- **`sk_point` / `sk_range`** -- SK probe -> PK list -> MultiGet.
+  Executor path splits into two passes (SK iterator -> PK stream ->
   MultiGet). `SkPointScan` / `SkRangeScan` carry `shard_id` +
   `is_unique` so the executor knows which shard to probe and whether
   early-terminate on a single hit.
@@ -71,20 +71,20 @@ above the specialised scan).
 
 ### iresearch-side
 
-- **`fulltext_score` / `fulltext_topk`** — construct a real
+- **`fulltext_score` / `fulltext_topk`** -- construct a real
   `irs::Scorer` (default BM25 with k1=1.2, b=0.75) at rule time so
   the runtime doesn't need the "sentinel pointer" bridge. Plumb
   `score_top_k` into `iresearch_search_query.execute(...).top_k(N)`
   at scan time. Rewrite the `sdb_score(tableoid)` projection
   expression to a `BoundReferenceExpression` reading the scan's
   score output column so the stub function never actually runs.
-- **`iresearch_search+offsets`** — emit one `LIST(BIGINT)` column per
+- **`iresearch_search+offsets`** -- emit one `LIST(BIGINT)` column per
   `OffsetsRequest`; alternate start/end values. Rewrite the
   `sdb_offsets(col)` projection expression to a `BoundReferenceExpression`
   onto that column. Reuse the Velox-era `OffsetsCollector`
   (`search_scan_data_source.cpp`) with a DuckDB `ListVector` sink
   instead of Velox.
-- **`ann_topk` / `ann_range`** — wire the HNSW scan at runtime using
+- **`ann_topk` / `ann_range`** -- wire the HNSW scan at runtime using
   `bind_data.ann.index_id` + `GetSereneDBContext.EnsureSearchSnapshot(id)`
   to resolve the shard lazily (cleaner than capturing the
   `shared_ptr<shard>` at plan time). Needs **real ARRAY indexing**
@@ -95,14 +95,14 @@ above the specialised scan).
 Right now `sdb_score(tableoid)` is parameterless and always resolves
 to default BM25. Follow-ups when the SQL surface lands:
 
-- `sdb_score(tableoid, 'bm25', k1, b)` → tuned BM25.
-- `sdb_score(tableoid, 'tfidf')` → TF-IDF.
+- `sdb_score(tableoid, 'bm25', k1, b)` -> tuned BM25.
+- `sdb_score(tableoid, 'tfidf')` -> TF-IDF.
 - The rule stores the chosen scorer directly in
   `SearchScan.scorer` (no sentinel) and derives
   `scorer_description` from it.
 
 The plan is to keep `sdb_score` as one polymorphic function with
-scorer kind as a string literal argument — opaque `irs::Scorer` on
+scorer kind as a string literal argument -- opaque `irs::Scorer` on
 the bind-data side; no per-scorer variant.
 
 ---
@@ -117,7 +117,7 @@ but the writer path
 accepts `LogicalTypeId::ARRAY` only when the child type is FLOAT.
 `SetupColumnWriter<ARRAY>` + `Field::PrepareForVectorValue` +
 `WriteVectorValue` wire the insert path into iresearch's HNSW
-directory format — this is in place on `main` already. What's
+directory format -- this is in place on `main` already. What's
 missing: runtime-side HNSW scan execution and validation that ANN
 topk / range queries return ordered results. End-to-end ANN tests
 can only ship once the runtime executor is wired.
@@ -125,14 +125,14 @@ can only ship once the runtime executor is wired.
 ### Vector-native writer path (drop Kind templates)
 
 Current writer dispatches through a `LogicalTypeId Kind` template
-(`SwitchColumnImpl` → `SetupColumnWriter<Kind>`). Pattern should
+(`SwitchColumnImpl` -> `SetupColumnWriter<Kind>`). Pattern should
 move to duckdb::Vector-native access with fast paths for flat /
 constant and `UnifiedVectorFormat` fallback, per
 `feedback_vector_fast_paths` (saved memory). Consolidates: the
 per-kind template tree collapses to direct physical-type reads
 off the `Vector`, and logical-type + op-class decide tokenizer
 choice (not a single enum). This is a big but self-contained
-rework — best done after the HNSW runtime lands so both pieces
+rework -- best done after the HNSW runtime lands so both pieces
 move together.
 
 ---
@@ -177,7 +177,7 @@ SkRangeScan>` can lose `SecondaryIndexScan` (replaced by
 `SkPointScan{shard_id, is_unique, ...}` or the empty-filter SK
 range), and the giant
 `SereneDBScanFunction` dispatcher inside `duckdb_table_function.cpp`
-shrinks to a table of function-name → executor pointers.
+shrinks to a table of function-name -> executor pointers.
 
 ### System-table scan function (Phase 7)
 
@@ -213,7 +213,7 @@ Today `rowid` is always `LogicalType::BLOB`. Follow-ups:
 - Decoding individual PK columns from rowid bytes so late-materialise
   paths don't have to re-read columns.
 
-All deferred until the specialised-scan executors land — they'll
+All deferred until the specialised-scan executors land -- they'll
 shape exactly how the rowid is produced per strategy.
 
 ### Parallel scan within a strategy
@@ -234,9 +234,9 @@ on ANN).
 
 `late_materialization = true` + a dedicated materialize-by-rowid
 operator would let DuckDB rewrite
-`scan(LHS: rowid) → semi-join → scan(RHS: full)` in two passes.
+`scan(LHS: rowid) -> semi-join -> scan(RHS: full)` in two passes.
 Deferred because the current RHS re-scan is a full RocksDB prefix
-iteration, which is wrong for us — we'd need a MultiGet-based
+iteration, which is wrong for us -- we'd need a MultiGet-based
 materialise operator first.
 
 ### Cost-model-based rule selection
@@ -244,7 +244,7 @@ materialise operator first.
 `rocksdb_plan.cpp::StrictlyBetter` is a static-preference tiebreak
 (points > ranges; fewer remaining filters; PK > SK). Once we have
 stats (SK histograms, iresearch term stats), promote to a real cost
-model. Not urgent — current preference catches the common cases.
+model. Not urgent -- current preference catches the common cases.
 
 ### `supports_pushdown_extract` for iresearch columnstore
 
@@ -263,14 +263,14 @@ Revisit once FK support lands in SereneDB. Low priority.
 
 - **OR handling in the rocksdb rule** is solid (sweep-based merge
   produces disjoint ranges / points for `pk IN / OR` with overlap
-  resolution and contiguous-coverage → full-scan detection).
-- **Cross-table iresearch claims** aren't attempted — the rule only
+  resolution and contiguous-coverage -> full-scan detection).
+- **Cross-table iresearch claims** aren't attempted -- the rule only
   fires on a single-table `LogicalGet`. Joined-table search (e.g.
   `SELECT ... FROM a JOIN b ON a.id = b.id WHERE sdb_phrase(b.text, ...)`)
   works only because iresearch claims inside `b`'s scan; nothing
   special needed.
 - **CREATE INDEX re-use** in rule: the iresearch rule auto-detects the
   first inverted index on the table when `FROM table_name` is used.
-  It doesn't choose among multiple inverted indexes — the first one
+  It doesn't choose among multiple inverted indexes -- the first one
   wins. Fine as long as tables have at most one inverted index
   (current assumption). Revisit if we support multiple.

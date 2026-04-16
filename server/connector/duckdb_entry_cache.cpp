@@ -305,7 +305,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   }
 
   // Secondary (rocksdb-backed) index: find the shard for scanning.
-  const auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(index);
+  const auto& sec_index =
+    basics::downCast<const catalog::SecondaryIndex>(index);
   ObjectId sk_shard_id;
   for (auto& shard : snapshot.GetIndexShardsByTable(table->GetId())) {
     if (shard->GetIndexId() == index.GetId()) {

@@ -20,12 +20,11 @@
 
 #pragma once
 
-#include <iresearch/search/boolean_filter.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
-
-#include <span>
+#include <iresearch/search/boolean_filter.hpp>
 #include <optional>
+#include <span>
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/fwd.h"
@@ -52,9 +51,8 @@ struct SearchColumnInfo {
 // the inverted-index-backed scan the caller is building a filter for, or
 // the column is not part of the index. Caller owns the concrete
 // implementation (typically captures bind data + InvertedIndex).
-using ColumnGetter =
-  absl::AnyInvocable<std::optional<SearchColumnInfo>(
-    const duckdb::BoundColumnRefExpression&) const>;
+using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
+  const duckdb::BoundColumnRefExpression&) const>;
 
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result

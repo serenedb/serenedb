@@ -59,7 +59,6 @@
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
-
 #include <limits>
 
 #include "basics/down_cast.h"
@@ -126,8 +125,8 @@ const duckdb::Expression* AsCombinedFilterExpr(
 
 // Resolve the shard ObjectId for a given secondary index on a table, via
 // the current catalog snapshot. Returns a null ObjectId if not found.
-ObjectId ResolveSkShardId(const catalog::Snapshot& snapshot,
-                          ObjectId table_id, ObjectId sk_index_id) {
+ObjectId ResolveSkShardId(const catalog::Snapshot& snapshot, ObjectId table_id,
+                          ObjectId sk_index_id) {
   for (auto& shard : snapshot.GetIndexShardsByTable(table_id)) {
     if (shard->GetIndexId() == sk_index_id) {
       return shard->GetId();
@@ -249,8 +248,8 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       return false;
     }
     auto& get = filter.children[0]->Cast<duckdb::LogicalGet>();
-    if (!get.bind_data || !dynamic_cast<connector::SereneDBScanBindData*>(
-                             &*get.bind_data)) {
+    if (!get.bind_data ||
+        !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
       return false;
     }
     auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
@@ -281,8 +280,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     // binding.column_index after DuckDB's projection pushdown may have
     // reordered get.column_ids. get.column_ids[k] gives the physical column
     // index into bind_data.column_ids, which yields the catalog::Column::Id.
-    constexpr auto kInvalidId =
-      std::numeric_limits<catalog::Column::Id>::max();
+    constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
     std::vector<catalog::Column::Id> projected_column_ids;
     projected_column_ids.reserve(get.GetColumnIds().size());
     for (const auto& ci : get.GetColumnIds()) {
@@ -291,9 +289,9 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         continue;
       }
       auto phys = ci.GetPrimaryIndex();
-      projected_column_ids.push_back(
-        phys < bind_data.column_ids.size() ? bind_data.column_ids[phys]
-                                           : kInvalidId);
+      projected_column_ids.push_back(phys < bind_data.column_ids.size()
+                                       ? bind_data.column_ids[phys]
+                                       : kInvalidId);
     }
     connector::ColumnResolver resolver{get.table_index, projected_column_ids};
 

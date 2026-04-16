@@ -39,8 +39,8 @@
 #include "catalog/inverted_index.h"
 #include "catalog/mangling.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_index_scan_entry.h"
+#include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_remove_filter.hpp"
@@ -327,9 +327,9 @@ static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& context,
 // Wraps a per-strategy scan call so we can accumulate produced_rows once
 // for the rows_scanned callback (avoids touching every per-strategy
 // SetCardinality site).
-static void RunStrategyAndAccount(
-  const std::function<void()>& run, SereneDBScanGlobalState& gstate,
-  duckdb::DataChunk& output) {
+static void RunStrategyAndAccount(const std::function<void()>& run,
+                                  SereneDBScanGlobalState& gstate,
+                                  duckdb::DataChunk& output) {
   run();
   if (output.size() > 0) {
     gstate.produced_rows.fetch_add(output.size(), std::memory_order_relaxed);
@@ -1247,8 +1247,7 @@ static std::string_view ScanSourceKindName(const ScanSource& s) {
         return off ? "iresearch_score_topk_scan_with_offsets"
                    : "iresearch_score_topk_scan";
       }
-      return off ? "iresearch_score_scan_with_offsets"
-                 : "iresearch_score_scan";
+      return off ? "iresearch_score_scan_with_offsets" : "iresearch_score_scan";
     }
     return off ? "iresearch_lookup_with_offsets" : "iresearch_lookup";
   }
@@ -1297,7 +1296,9 @@ static std::string FormatResolvedPoint(
   std::span<const catalog::Column::Id> column_ids) {
   std::string out = "(";
   for (size_t i = 0; i < point.size(); ++i) {
-    if (i) absl::StrAppend(&out, ", ");
+    if (i) {
+      absl::StrAppend(&out, ", ");
+    }
     absl::StrAppend(&out, ColumnNameFor(table, column_ids[i]), "=",
                     point[i].ToString());
   }
@@ -1312,7 +1313,9 @@ static std::string FormatResolvedRange(
   std::span<const catalog::Column::Id> column_ids) {
   std::string out = "{";
   for (size_t i = 0; i < range.prefix.size(); ++i) {
-    if (i) absl::StrAppend(&out, ", ");
+    if (i) {
+      absl::StrAppend(&out, ", ");
+    }
     absl::StrAppend(&out, ColumnNameFor(table, column_ids[i]), "=",
                     range.prefix[i].ToString());
   }
@@ -1337,7 +1340,9 @@ static std::string FormatClaimList(const PointsOrRanges& items,
   constexpr size_t kMaxShown = 8;
   std::string out;
   for (size_t i = 0; i < items.size() && i < kMaxShown; ++i) {
-    if (i) absl::StrAppend(&out, ", ");
+    if (i) {
+      absl::StrAppend(&out, ", ");
+    }
     absl::StrAppend(&out, format_one(items[i]));
   }
   if (items.size() > kMaxShown) {
@@ -1427,16 +1432,14 @@ static void AppendClaimSummary(
     // (no re-parse per row).
     switch (ss->scorer.kind) {
       case SearchScan::ScorerKind::Bm25:
-        result.insert(
-          "Score", absl::StrCat("bm25(k1=", ss->scorer.bm25_k1,
-                                ", b=", ss->scorer.bm25_b, ")"));
+        result.insert("Score", absl::StrCat("bm25(k1=", ss->scorer.bm25_k1,
+                                            ", b=", ss->scorer.bm25_b, ")"));
         break;
       case SearchScan::ScorerKind::Tfidf:
-        result.insert("Score",
-                      absl::StrCat("tfidf(with_norms=",
-                                   ss->scorer.tfidf_with_norms ? "true"
-                                                               : "false",
-                                   ")"));
+        result.insert(
+          "Score",
+          absl::StrCat("tfidf(with_norms=",
+                       ss->scorer.tfidf_with_norms ? "true" : "false", ")"));
         break;
       case SearchScan::ScorerKind::None:
         break;
@@ -1448,7 +1451,9 @@ static void AppendClaimSummary(
       // Render the columns we'll emit offsets for.
       std::string cols;
       for (size_t i = 0; i < ss->offsets.size(); ++i) {
-        if (i) absl::StrAppend(&cols, ", ");
+        if (i) {
+          absl::StrAppend(&cols, ", ");
+        }
         absl::StrAppend(&cols,
                         ColumnNameFor(*bind.table, ss->offsets[i].column_id));
       }

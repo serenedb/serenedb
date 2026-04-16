@@ -33,6 +33,7 @@
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
 #include "connector/functions/inout.h"
+#include "connector/functions/json.h"
 #include "connector/functions/math.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
@@ -207,6 +208,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterPgStringFunctions(*_db->instance);
 
   connector::RegisterPgArrayFunctions(*_db->instance);
+
+  connector::RegisterPgJsonFunctions(*_db->instance);
 
   connector::RegisterVacuumFunction(*_db->instance);
 

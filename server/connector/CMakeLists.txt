@@ -42,6 +42,7 @@ target_link_libraries(
     rocksdb
     pg_query
     duckdb_static
+    simdjson
     Folly::folly
 )
 

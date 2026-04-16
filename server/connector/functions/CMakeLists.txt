@@ -4,6 +4,7 @@ target_sources(
         array.cpp
         cast.cpp
         inout.cpp
+        json.cpp
         math.cpp
         string.cpp
         system.cpp

@@ -58,7 +58,7 @@ void RandomNormalFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// div(y, x) -> bigint — PG-compatible, ported from Velox PgDiv
+// div(y, x) -> bigint -- PG-compatible, ported from Velox PgDiv
 void DivIntFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<int64_t, int64_t, int64_t>(
@@ -83,8 +83,10 @@ void DivDoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         throw duckdb::InvalidInputException("division by zero");
       }
       double truncated = std::trunc(y / x);
-      if (truncated < static_cast<double>(std::numeric_limits<int64_t>::min()) ||
-          truncated > static_cast<double>(std::numeric_limits<int64_t>::max())) {
+      if (truncated <
+            static_cast<double>(std::numeric_limits<int64_t>::min()) ||
+          truncated >
+            static_cast<double>(std::numeric_limits<int64_t>::max())) {
         throw duckdb::InvalidInputException("bigint out of range");
       }
       return static_cast<int64_t>(truncated);
@@ -92,7 +94,7 @@ void DivDoubleFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 // date_bin(stride, source, origin) -> timestamp
-// Ported from Velox PgDateBin — same logic, DuckDB types.
+// Ported from Velox PgDateBin -- same logic, DuckDB types.
 void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
   duckdb::TernaryExecutor::Execute<duckdb::interval_t, duckdb::timestamp_t,
@@ -101,8 +103,7 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [](duckdb::interval_t stride, duckdb::timestamp_t source,
        duckdb::timestamp_t origin) -> duckdb::timestamp_t {
       if (stride.micros <= 0 && stride.days <= 0 && stride.months <= 0) {
-        throw duckdb::InvalidInputException(
-          "stride must be greater than zero");
+        throw duckdb::InvalidInputException("stride must be greater than zero");
       }
       if (stride.months != 0) {
         throw duckdb::InvalidInputException(
@@ -113,8 +114,7 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       int64_t stride_us =
         stride.micros + static_cast<int64_t>(stride.days) * 86400'000'000LL;
       if (stride_us <= 0) {
-        throw duckdb::InvalidInputException(
-          "stride must be greater than zero");
+        throw duckdb::InvalidInputException("stride must be greater than zero");
       }
 
       int64_t src_us = source.value;
@@ -149,11 +149,15 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunctionSet div_set("div");
     div_set.AddFunction(duckdb::ScalarFunction{
-      "div", {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
-      duckdb::LogicalType::BIGINT, DivIntFunction});
+      "div",
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
+      duckdb::LogicalType::BIGINT,
+      DivIntFunction});
     div_set.AddFunction(duckdb::ScalarFunction{
-      "div", {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::BIGINT, DivDoubleFunction});
+      "div",
+      {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::BIGINT,
+      DivDoubleFunction});
     loader.RegisterFunction(div_set);
   }
 
@@ -162,7 +166,8 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     "date_bin",
     {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::TIMESTAMP,
      duckdb::LogicalType::TIMESTAMP},
-    duckdb::LogicalType::TIMESTAMP, DateBinFunction});
+    duckdb::LogicalType::TIMESTAMP,
+    DateBinFunction});
 
   {
     duckdb::ScalarFunction func{

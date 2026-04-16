@@ -28,7 +28,12 @@
 #include <iresearch/index/index_reader.hpp>
 
 #include "basics/assert.h"
+#include "connector/duckdb_rocksdb_reader.h"
+#include "connector/key_utils.hpp"
 #include "connector/search_remove_filter.hpp"
+#include "rocksdb/db.h"
+#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -212,6 +217,124 @@ void SereneDBPhysicalRangeSearch::RunSearch(const irs::DirectoryReader& reader,
   for (size_t i = 0; i < ids.size(); ++i) {
     CollectHit(reader, static_cast<uint64_t>(ids[i]), dis[i], results);
   }
+}
+
+// ---------------------------------------------------------------------------
+// SereneDBPhysicalFTSearch
+// ---------------------------------------------------------------------------
+
+SereneDBPhysicalFTSearch::SereneDBPhysicalFTSearch(
+  duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
+  std::vector<ProjColumn> proj_columns,
+  search::InvertedIndexSnapshotPtr snapshot, irs::Filter::Query::ptr query,
+  duckdb::vector<duckdb::LogicalType> output_types,
+  duckdb::idx_t estimated_cardinality)
+  : duckdb::PhysicalOperator{plan, duckdb::PhysicalOperatorType::EXTENSION,
+                             std::move(output_types), estimated_cardinality},
+    _table{std::move(table)},
+    _proj_columns{std::move(proj_columns)},
+    _snapshot{std::move(snapshot)},
+    _query{std::move(query)} {}
+
+duckdb::unique_ptr<duckdb::GlobalSourceState>
+SereneDBPhysicalFTSearch::GetGlobalSourceState(
+  duckdb::ClientContext& /*context*/) const {
+  return duckdb::make_uniq<FTSearchGlobalSourceState>();
+}
+
+duckdb::SourceResultType SereneDBPhysicalFTSearch::GetDataInternal(
+  duckdb::ExecutionContext& /*context*/, duckdb::DataChunk& chunk,
+  duckdb::OperatorSourceInput& input) const {
+  auto& state = input.global_state.Cast<FTSearchGlobalSourceState>();
+  auto& reader = *_snapshot->reader;
+
+  // Collect up to STANDARD_VECTOR_SIZE PK byte strings from IResearch.
+  std::vector<std::string> pk_bytes;
+  pk_bytes.reserve(STANDARD_VECTOR_SIZE);
+
+  while (pk_bytes.size() < static_cast<size_t>(STANDARD_VECTOR_SIZE)) {
+    if (!state.doc) {
+      if (state.segment_idx >= reader.size()) {
+        break;  // All segments exhausted.
+      }
+      auto& segment = reader[state.segment_idx++];
+      state.doc = segment.mask(_query->execute({.segment = segment}));
+      const auto* pk_col = segment.column(kPkFieldName);
+      if (!pk_col) {
+        state.doc.reset();
+        continue;
+      }
+      state.pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+      if (!state.pk_iter) {
+        state.doc.reset();
+        continue;
+      }
+      state.pk_value = irs::get<irs::PayAttr>(*state.pk_iter);
+      if (!state.pk_value) {
+        state.doc.reset();
+        continue;
+      }
+    }
+
+    const auto doc_id = state.doc->advance();
+    if (irs::doc_limits::eof(doc_id)) {
+      state.doc.reset();
+      continue;
+    }
+    SDB_ASSERT(doc_id == state.pk_iter->seek(doc_id));
+    const auto pk_view = state.pk_value->value;
+    pk_bytes.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
+                          pk_view.size());
+  }
+
+  if (pk_bytes.empty()) {
+    chunk.SetCardinality(0);
+    return duckdb::SourceResultType::FINISHED;
+  }
+
+  const auto num_rows = static_cast<duckdb::idx_t>(pk_bytes.size());
+  auto& engine = GetServerEngine();
+  auto* db = engine.db();
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+
+  std::string key_buffer;
+  rocksdb::ReadOptions ro;
+  rocksdb::PinnableSlice value;
+
+  for (duckdb::idx_t proj = 0; proj < _proj_columns.size(); ++proj) {
+    const auto& col = _proj_columns[proj];
+    if (col.col_id == kInvalidColId) {
+      // Special column (rowid / tableoid) -- emit NULL for all rows.
+      duckdb::FlatVector::Validity(chunk.data[proj]).SetAllInvalid(num_rows);
+      continue;
+    }
+    // Precompute the [ObjectId][ColumnId] key prefix for this column.
+    const std::string col_prefix =
+      key_utils::PrepareColumnKey(_table->GetId(), col.col_id);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      key_buffer = col_prefix;
+      key_buffer.append(pk_bytes[row]);
+
+      value.Reset();
+      const auto s = db->Get(ro, cf, key_buffer, &value);
+      if (s.IsNotFound()) {
+        duckdb::FlatVector::Validity(chunk.data[proj]).SetInvalid(row);
+        continue;
+      }
+      SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
+      DeserializeValueIntoDuckDB(value.ToStringView(), chunk.data[proj],
+                                 col.type, row);
+    }
+  }
+
+  chunk.SetCardinality(num_rows);
+
+  // Return HAVE_MORE_OUTPUT unless we already exhausted all segments
+  // (in which case the next call will find pk_bytes empty and return FINISHED).
+  return state.doc || state.segment_idx < reader.size()
+           ? duckdb::SourceResultType::HAVE_MORE_OUTPUT
+           : duckdb::SourceResultType::FINISHED;
 }
 
 }  // namespace sdb::connector

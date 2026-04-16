@@ -180,12 +180,6 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
                                                              have_nulls);
       break;
     case duckdb::LogicalTypeId::ARRAY: {
-      // HNSW vector columns: only FLOAT element type is supported.
-      const auto& child_type = duckdb::ArrayType::GetChildType(type);
-      if (child_type.id() != duckdb::LogicalTypeId::FLOAT) {
-        _current_writer = nullptr;
-        return false;
-      }
       SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
       break;
     }

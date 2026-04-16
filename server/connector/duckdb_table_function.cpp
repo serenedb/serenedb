@@ -826,8 +826,6 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& context,
       key_buffer.append(pk);
 
       value.Reset();
-      SDB_INFO("xxxxx", Logger::FIXME, "Key from ANN: ", key_buffer);
-      SDB_INFO("xxxxx", Logger::FIXME, "PK: ", pk);
       auto s = db->Get(ro, cf, key_buffer, &value);
       if (s.IsNotFound()) {
         duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);

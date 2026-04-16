@@ -23,9 +23,13 @@
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/statement/insert_statement.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/filter.hpp>
 
 #include "catalog/index.h"
+#include "catalog/table.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
@@ -109,6 +113,58 @@ class SereneDBPhysicalRangeSearch final
 
  private:
   float _radius;
+};
+
+// Streaming state for the FTS physical operator.
+// One instance per query execution; holds the current scan position across
+// successive GetDataInternal() calls.
+struct FTSearchGlobalSourceState : public duckdb::GlobalSourceState {
+  size_t segment_idx = 0;
+  irs::DocIterator::ptr doc;
+  irs::DocIterator::ptr pk_iter;
+  const irs::PayAttr* pk_value = nullptr;
+};
+
+// Full-text search (IResearch boolean filter) physical operator.
+// Iterates IResearch segments to collect PKs, then materialises rows from
+// RocksDB for each projected column. Emits one batch per GetDataInternal()
+// call (up to STANDARD_VECTOR_SIZE rows).
+class SereneDBPhysicalFTSearch final : public duckdb::PhysicalOperator {
+ public:
+  // Sentinel value meaning "special column" (rowid / tableoid); filled with
+  // NULL in the output.
+  static constexpr catalog::Column::Id kInvalidColId =
+    std::numeric_limits<catalog::Column::Id>::max();
+
+  // One entry per projected output column.
+  struct ProjColumn {
+    catalog::Column::Id col_id = kInvalidColId;
+    duckdb::LogicalType type;
+  };
+
+  SereneDBPhysicalFTSearch(duckdb::PhysicalPlan& plan,
+                           std::shared_ptr<catalog::Table> table,
+                           std::vector<ProjColumn> proj_columns,
+                           search::InvertedIndexSnapshotPtr snapshot,
+                           irs::Filter::Query::ptr query,
+                           duckdb::vector<duckdb::LogicalType> output_types,
+                           duckdb::idx_t estimated_cardinality);
+
+  bool IsSink() const override { return false; }
+  bool IsSource() const override { return true; }
+
+  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
+    duckdb::ClientContext& context) const override;
+
+  duckdb::SourceResultType GetDataInternal(
+    duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
+    duckdb::OperatorSourceInput& input) const override;
+
+ private:
+  std::shared_ptr<catalog::Table> _table;
+  std::vector<ProjColumn> _proj_columns;
+  search::InvertedIndexSnapshotPtr _snapshot;
+  irs::Filter::Query::ptr _query;
 };
 
 }  // namespace sdb::connector

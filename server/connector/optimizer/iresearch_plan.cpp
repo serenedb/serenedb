@@ -304,11 +304,22 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   auto& filter = plan->Cast<duckdb::LogicalFilter>();
-  if (filter.children.size() != 1 ||
-      filter.children[0]->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+  if (filter.children.size() != 1) {
     return false;
   }
-  auto& get = filter.children[0]->Cast<duckdb::LogicalGet>();
+  // Descend through any intermediate LogicalFilters inserted by DuckDB's
+  // FilterPushdown optimiser before reaching the LogicalGet.
+  duckdb::LogicalOperator* get_op = filter.children[0].get();
+  while (get_op->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+    if (get_op->children.size() != 1) {
+      return false;
+    }
+    get_op = get_op->children[0].get();
+  }
+  if (get_op->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+    return false;
+  }
+  auto& get = get_op->Cast<duckdb::LogicalGet>();
   if (!get.bind_data ||
       !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
     return false;
@@ -472,11 +483,24 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   auto& filter = plan->Cast<duckdb::LogicalFilter>();
-  if (filter.children.size() != 1 ||
-      filter.children[0]->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+  if (filter.children.size() != 1) {
     return false;
   }
-  auto& get = filter.children[0]->Cast<duckdb::LogicalGet>();
+  // DuckDB's built-in optimisers (FilterPushdown, RemoveUnusedColumns, etc.)
+  // may insert LogicalFilter and LogicalProjection nodes between the outer
+  // LogicalFilter and the LogicalGet. Descend through all of them.
+  duckdb::LogicalOperator* get_op = filter.children[0].get();
+  while (get_op->type == duckdb::LogicalOperatorType::LOGICAL_FILTER ||
+         get_op->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
+    if (get_op->children.size() != 1) {
+      return false;
+    }
+    get_op = get_op->children[0].get();
+  }
+  if (get_op->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+    return false;
+  }
+  auto& get = get_op->Cast<duckdb::LogicalGet>();
   if (!get.bind_data ||
       !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
     return false;
@@ -500,23 +524,23 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   }
 
   // Build the column-resolution context for the filter builder.
-  SearchColumnContext ctx;
-  ctx.table_index = get.table_index;
-  // Translate get.column_ids[k] (post projection-pushdown reordering)
-  // -> bind_data.column_ids[phys] -> catalog Column::Id.
+  // ctx.projected_column_ids is a std::span that borrows from projected_ids --
+  // projected_ids must outlive ctx / getter.
+  constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
   std::vector<catalog::Column::Id> projected_ids;
   projected_ids.reserve(get.GetColumnIds().size());
-  constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
   for (const auto& ci : get.GetColumnIds()) {
     if (!ci.HasPrimaryIndex()) {
       projected_ids.push_back(kInvalidId);
       continue;
     }
-    auto phys = ci.GetPrimaryIndex();
+    const auto phys = ci.GetPrimaryIndex();
     projected_ids.push_back(phys < bind_data.column_ids.size()
                               ? bind_data.column_ids[phys]
                               : kInvalidId);
   }
+  SearchColumnContext ctx;
+  ctx.table_index = get.table_index;
   ctx.projected_column_ids = projected_ids;
 
   for (const auto& col : bind_data.table->Columns()) {
@@ -579,9 +603,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIresearchSearchScanFunction();
 
-  // Drop claimed expressions from the filter (highest-index first to
-  // keep remaining indices valid). If everything was claimed, drop the
-  // filter node entirely.
+  // Drop claimed expressions from the filter. If everything was claimed,
+  // lift the LogicalGet up to replace the LogicalFilter entirely.
   for (auto it = claimed_indices.rbegin(); it != claimed_indices.rend(); ++it) {
     filter.expressions.erase(filter.expressions.begin() +
                              static_cast<std::ptrdiff_t>(*it));

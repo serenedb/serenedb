@@ -25,6 +25,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -36,6 +37,15 @@
 #include <iostream>
 
 #include "app/app_server.h"
+#include "basics/string_utils.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 #include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
@@ -511,7 +521,57 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
 
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
-  throw duckdb::NotImplementedException("ALTER through DuckDB");
+  if (info.type != duckdb::AlterType::ALTER_TABLE) {
+    throw duckdb::NotImplementedException("ALTER through DuckDB");
+  }
+  auto& table_info = info.Cast<duckdb::AlterTableInfo>();
+  if (table_info.alter_table_type != duckdb::AlterTableType::DROP_CONSTRAINT) {
+    throw duckdb::NotImplementedException("ALTER TABLE through DuckDB");
+  }
+
+  auto& drop_info = table_info.Cast<duckdb::DropConstraintInfo>();
+  auto& catalog_impl =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto db = GetDatabaseId();
+  auto table_name = info.name;
+
+  Result r = catalog_impl.ChangeTable(
+    db, name, table_name,
+    [&](const catalog::Table& table, std::shared_ptr<catalog::Table>& updated) {
+      return table.DropConstraint(updated, drop_info.constraint_name);
+    });
+
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    auto actual_type =
+      basics::string_utils::GetPluralFormLowerCase(r.errorMessage());
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
+              "relation \"",
+              table_name, "\""),
+      ERR_DETAIL("This operation is not supported for ", actual_type, "."));
+  }
+
+  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+    // Table not found -- DuckDB's binder already handles IF EXISTS,
+    // so if we reach here the table should exist.
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", table_name, "\" does not exist"));
+  }
+
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (!drop_info.if_constraint_not_found) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("constraint \"", drop_info.constraint_name, "\" of relation \"",
+                table_name, "\" does not exist"));
+    }
+    return;
+  }
+
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
 }
 
 }  // namespace sdb::connector

@@ -43,7 +43,8 @@ ALTER TABLE IF EXISTS vedernikoff DROP CONSTRAINT foo;
 statement error
 ALTER TABLE vedernikoff DROP CONSTRAINT foo;
 ----
-db error: ERROR: relation "vedernikoff" does not exist
+db error: ERROR: Table with name vedernikoff does not exist!
+Did you mean "pg_extension"?
 
 
 statement ok

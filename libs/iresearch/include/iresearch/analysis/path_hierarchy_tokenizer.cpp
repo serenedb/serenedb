@@ -506,15 +506,13 @@ bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
 }
 
 Analyzer::ptr PathHierarchyTokenizer::make(Options&& options) {
-<<<<<<< feature/facet_and_pattern_to_sql_infra
   if (options.replacement.empty()) {
     options.replacement = options.delimiter;
   }
-=======
+
   const bool single_char = (options.delimiter.size() == 1);
   const bool no_replacement = (options.delimiter == options.replacement);
 
->>>>>>> main
   if (options.reverse) {
     if (single_char && no_replacement) {
       return std::make_unique<ReversePathHierarchyTokenizer<true, true>>(

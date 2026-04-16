@@ -267,23 +267,36 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     del_col_mapping[pk_col_ids[i]] = _pk_col_indices[i];
   }
 
-  // Non-PK columns (all of them -- index writers pick the ones they need)
+  // Indexed non-PK columns -- _indexed_col_indices maps 1:1 to them in table
+  // column order (matching PlanUpdate's non_pk_idx construction from sorted
+  // idx_col_indices minus PK positions). Other non-PK columns are NOT in the
+  // chunk and must not be added here.
   {
-    size_t non_pk_idx = 0;
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    auto indexes = snapshot->GetIndexesByTable(state->table_id);
+    containers::FlatHashSet<catalog::Column::Id> pk_id_set(pk_col_ids.begin(),
+                                                           pk_col_ids.end());
+    containers::FlatHashSet<catalog::Column::Id> indexed_col_ids;
+    for (auto& index : indexes) {
+      for (auto col_id : index->GetColumnIds()) {
+        if (!pk_id_set.contains(col_id)) {
+          indexed_col_ids.insert(col_id);
+        }
+      }
+    }
+    std::vector<catalog::Column::Id> non_pk_idx_col_ids;
+    non_pk_idx_col_ids.reserve(indexed_col_ids.size());
     for (size_t i = 0; i < columns.size(); ++i) {
       if (columns[i].id == catalog::Column::kGeneratedPKId) {
         continue;
       }
-      bool is_pk = false;
-      for (auto pk_id : pk_col_ids) {
-        if (columns[i].id == pk_id) {
-          is_pk = true;
-          break;
-        }
+      if (indexed_col_ids.contains(columns[i].id)) {
+        non_pk_idx_col_ids.push_back(columns[i].id);
       }
-      if (!is_pk && non_pk_idx < _indexed_col_indices.size()) {
-        del_col_mapping[columns[i].id] = _indexed_col_indices[non_pk_idx++];
-      }
+    }
+    SDB_ASSERT(non_pk_idx_col_ids.size() == _indexed_col_indices.size());
+    for (size_t i = 0; i < _indexed_col_indices.size(); ++i) {
+      del_col_mapping[non_pk_idx_col_ids[i]] = _indexed_col_indices[i];
     }
   }
 

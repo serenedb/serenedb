@@ -99,7 +99,7 @@ set(iresearch-tests_sources
     ./utils/block_pool_test.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
-    # ./utils/regexp_utils_test.cpp
+    ./utils/regexp_utils_test.cpp
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp

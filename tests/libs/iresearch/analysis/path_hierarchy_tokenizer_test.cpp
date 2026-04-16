@@ -353,6 +353,21 @@ TEST_F(PathHierarchyTokenizerTests, test_only_delimiters) {
   AssertTokenStreamContents(stream.get(), {"/", "//"}, {0, 0}, {1, 2}, {1, 1});
 }
 
+TEST_F(PathHierarchyTokenizerTests, test_delimiter_in_replacement) {
+  Options options;
+  options.delimiter = "/";
+  options.replacement = "//";
+  options.reverse = false;
+
+  std::string_view data = "/a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+
+  ASSERT_TRUE(stream->reset(data));
+  AssertTokenStreamContents(stream.get(), {"//a", "//a//b", "//a//b//c"},
+                            {0, 0, 0}, {2, 4, 6}, {1, 1, 1});
+}
+
 TEST_F(PathHierarchyTokenizerTests, test_forward_basic_skip) {
   Options options;
   options.delimiter = "/";
@@ -567,6 +582,21 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_only_delimiters) {
   ASSERT_TRUE(stream->reset(data));
 
   AssertTokenStreamContents(stream.get(), {"//", "/"}, {0, 1}, {2, 2}, {1, 1});
+}
+
+TEST_F(PathHierarchyTokenizerTests, test_reverse_delimiter_in_replacement) {
+  Options options;
+  options.delimiter = "/";
+  options.replacement = "//";
+  options.reverse = true;
+
+  std::string_view data = "/a/b/c";
+  auto stream = PathHierarchyTokenizer::make(std::move(options));
+  ASSERT_NE(nullptr, stream);
+  ASSERT_TRUE(stream->reset(data));
+
+  AssertTokenStreamContents(stream.get(), {"//a//b//c", "a//b//c", "b//c", "c"},
+                            {0, 1, 3, 5}, {6, 6, 6, 6}, {1, 1, 1, 1});
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_reverse_end_of_delimiter_skip) {

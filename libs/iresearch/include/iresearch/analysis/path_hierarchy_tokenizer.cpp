@@ -506,6 +506,10 @@ bool ReversePathHierarchyTokenizer<SingleChar, NoReplacement>::next() {
 }
 
 Analyzer::ptr PathHierarchyTokenizer::make(Options&& options) {
+  if (options.replacement.empty()) {
+    options.replacement = options.delimiter;
+  }
+
   const bool single_char = (options.delimiter.size() == 1);
   const bool no_replacement = (options.delimiter == options.replacement);
 

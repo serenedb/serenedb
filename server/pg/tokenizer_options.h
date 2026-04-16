@@ -28,6 +28,8 @@
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
+#include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
@@ -159,6 +161,33 @@ constexpr OptionInfo kTemplate{"template",
                                OptionInfo::RequiredTag<std::string_view>{},
                                "Tokenizer template type", CheckTemplate};
 
+// Pattern
+
+inline constexpr OptionInfo kPattern{
+  "pattern", OptionInfo::RequiredTag<std::string_view>{},
+  "RE2 regular expression pattern for matching or splitting"};
+
+inline constexpr OptionInfo kGroup{
+  "group", -1,
+  "Capture group to extract: -1=split, 0=whole match, N>0=Nth group"};
+
+// Path Hierarchy
+
+inline constexpr OptionInfo kPathDelimiter{
+  "delimiter", "/"sv, "Path separator character or string (UTF-8)"};
+
+inline constexpr OptionInfo kPathReplacement{
+  "replacement", ""sv, "Replacement for delimiter in tokens"};
+
+inline constexpr OptionInfo kReverse{
+  "reverse", false, "Use reverse tokenization for domain-like hierarchies"};
+
+inline constexpr OptionInfo kSkip{"skip", 0,
+                                  "Number of initial tokens to skip"};
+
+inline constexpr OptionInfo kBufferSize{
+  "buffersize", 1024, "Term buffer size hint (characters per pass)"};
+
 // Per-tokenizer option arrays
 
 inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
@@ -196,6 +225,11 @@ inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
 
 inline constexpr OptionInfo kEdgeNGramOptions[] = {kMinGram, kMaxGram,
                                                    kPreserveOriginal};
+
+inline constexpr OptionInfo kPatternOptions[] = {kPattern, kGroup};
+
+inline constexpr OptionInfo kPathHierarchyOptions[] = {
+  kPathDelimiter, kPathReplacement, kReverse, kSkip, kBufferSize};
 
 // Groups
 
@@ -269,12 +303,23 @@ inline constexpr OptionGroup kPipelineGroup{
   {},
   {},
 };
+inline constexpr OptionGroup kPatternGroup{
+  irs::analysis::PatternTokenizer::type_name(),
+  kPatternOptions,
+  {},
+};
+inline constexpr OptionGroup kPathHierarchyGroup{
+  irs::analysis::PathHierarchyTokenizer::type_name(),
+  kPathHierarchyOptions,
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,
   kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
   kClassificationGroup,   kCollationGroup, kDelimiterGroup,
   kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
-  kSegmentationGroup,     kPipelineGroup,  kCopyFromGroup};
+  kSegmentationGroup,     kPipelineGroup,  kPatternGroup,
+  kPathHierarchyGroup,    kCopyFromGroup};
 
 }  // namespace sdb::pg::tokenizer_options

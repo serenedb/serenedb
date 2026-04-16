@@ -1,0 +1,258 @@
+control substitution on
+
+
+# ERROR CASES
+
+# --- Missing required parameter: pattern ---
+
+statement error required parameter "pattern" was not found
+CREATE TEXT SEARCH DICTIONARY pat_err1(
+    template = 'pattern'
+)
+
+
+# --- Invalid regex pattern ---
+
+statement error Failed to create text search dictionary
+CREATE TEXT SEARCH DICTIONARY pat_err2(
+    template = 'pattern',
+    pattern = '('
+)
+
+
+# --- Pattern option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY pat_err3(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    pattern = '[0-9]+'
+)
+----
+db error: ERROR: option "pattern" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Group option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY pat_err4(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    group = 1
+)
+----
+db error: ERROR: option "group" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# PATTERN TOKENIZER
+
+# --- Basic split mode (group = -1): emit text between matches ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_split(
+    template = 'pattern',
+    pattern = '[0-9]+'
+)
+
+
+query
+SELECT ts_lexize('pattern_split', 'abc123def456ghi');
+----
+ts_lexize
+{abc,def,ghi}
+
+
+# --- Whole match mode (group = 0): emit the entire match ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_whole(
+    template = 'pattern',
+    pattern = '[0-9]+',
+    group = 0
+)
+
+
+query
+SELECT ts_lexize('pattern_whole', 'abc123def456ghi');
+----
+ts_lexize
+{123,456}
+
+
+# --- Capturing group mode (group = 1): emit specific capture group ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_group1(
+    template = 'pattern',
+    pattern = '([a-z]+)([0-9]+)',
+    group = 1
+)
+
+
+query
+SELECT ts_lexize('pattern_group1', 'abc123def456');
+----
+ts_lexize
+{abc,def}
+
+
+# --- Capturing group mode (group = 2): emit second capture group ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_group2(
+    template = 'pattern',
+    pattern = '([a-z]+)([0-9]+)',
+    group = 2
+)
+
+
+query
+SELECT ts_lexize('pattern_group2', 'abc123def456');
+----
+ts_lexize
+{123,456}
+
+
+# --- Split on whitespace: default behavior ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_whitespace(
+    template = 'pattern',
+    pattern = '\\s+'
+)
+
+
+query
+SELECT ts_lexize('pattern_whitespace', 'Hello   World   Test');
+----
+ts_lexize
+{Hello,World,Test}
+
+
+# --- Match word characters ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_words(
+    template = 'pattern',
+    pattern = '\\w+',
+    group = 0
+)
+
+
+query
+SELECT ts_lexize('pattern_words', 'Hello 123 _underscore!');
+----
+ts_lexize
+{Hello,123,_underscore}
+
+
+# --- Email-like pattern with capturing groups ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_email(
+    template = 'pattern',
+    pattern = '([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)',
+    group = 1
+)
+
+
+query
+SELECT ts_lexize('pattern_email', 'user@example.com admin@test.org');
+----
+ts_lexize
+{user,admin}
+
+
+# --- Email domain extraction ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_domain(
+    template = 'pattern',
+    pattern = '([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+)',
+    group = 2
+)
+
+
+query
+SELECT ts_lexize('pattern_domain', 'user@example.com admin@test.org');
+----
+ts_lexize
+{example.com,test.org}
+
+
+# --- Case sensitivity: regex is case-sensitive ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_case_sens(
+    template = 'pattern',
+    pattern = '[A-Z]+',
+    group = 0
+)
+
+
+query
+SELECT ts_lexize('pattern_case_sens', 'HelloWORLD');
+----
+ts_lexize
+{H,WORLD}
+
+
+# --- Unicode support: match Unicode word boundaries ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_unicode(
+    template = 'pattern',
+    pattern = '\\p{L}+',
+    group = 0
+)
+
+
+query
+SELECT ts_lexize('pattern_unicode', 'café naïve');
+----
+ts_lexize
+{café,naïve}
+
+
+# --- Empty pattern should fail ---
+
+statement error Failed to create text search dictionary
+CREATE TEXT SEARCH DICTIONARY pattern_empty(
+    template = 'pattern',
+    pattern = ''
+)
+
+# --- Alternation: match either pattern ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_alt(
+    template = 'pattern',
+    pattern = 'cat|dog|bird',
+    group = 0
+)
+
+
+query
+SELECT ts_lexize('pattern_alt', 'I have a cat and a dog');
+----
+ts_lexize
+{cat,dog}
+
+
+# --- Optional groups: match with or without optional pattern ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pattern_optional(
+    template = 'pattern',
+    pattern = '([a-z]+)([0-9]*)',
+    group = 1
+)
+
+
+query
+SELECT ts_lexize('pattern_optional', 'abc 123 def456ghi');
+----
+ts_lexize
+{abc,def,ghi}

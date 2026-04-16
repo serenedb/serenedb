@@ -24,6 +24,7 @@
 #include "fst/union.h"
 #include "fstext/determinize-star.h"
 #include "re2/regexp.h"
+#include "re2/unicode_casefold.h"
 #include "re2/walker-inl.h"
 #include "iresearch/utils/utf8_utils.hpp"
 
@@ -123,6 +124,53 @@ automaton MakeCharFromRune(int rune) {
   byte_type buf[utf8_utils::kMaxCharSize];
   auto len = utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf);
   return MakeChar(bytes_view{buf, len});
+}
+
+// Build automaton accepting all case-folded variants of `rune`.
+// RE2 uses Unicode case folding cycles: for 'a' the cycle is {a, A},
+// for 'k' it's {k, K, U+212A (Kelvin)}, for 's' it's {s, S, U+017F}, etc.
+// We walk the cycle using RE2's public LookupCaseFold + ApplyFold API
+// (see re2/unicode_casefold.h) to cover every variant exactly as RE2 does.
+//
+// The resulting automaton must be ilabel-sorted - the rest of the pipeline
+// (DeterminizeStar, Match via SortedRangeExplicitMatcher) relies on this
+// invariant.  CycleFoldRune returns variants in fold-cycle order, not in
+// codepoint order, so for (?i:a) it yields {a, A} where 'a' (0x61) comes
+// before 'A' (0x41) - producing unsorted arcs.  We fix this by collecting
+// the variants first and sorting by codepoint before emitting arcs.
+// UTF-8 is lexicographically consistent with codepoint ordering, so sorting
+// by codepoint also sorts by first-byte ilabel.
+automaton MakeCaseFoldedChar(int rune) {
+  auto cycle_fold = [](re2::Rune r) -> re2::Rune {
+    const re2::CaseFold* f = re2::LookupCaseFold(
+      re2::unicode_casefold, re2::num_unicode_casefold, r);
+    if (f == nullptr || r < f->lo) {
+      return r;
+    }
+    return re2::ApplyFold(f, r);
+  };
+
+  std::vector<re2::Rune> variants;
+  re2::Rune r = rune;
+  do {
+    variants.push_back(r);
+    r = cycle_fold(r);
+  } while (r != rune);
+
+  std::sort(variants.begin(), variants.end());
+
+  automaton a;
+  a.AddStates(2);
+  a.SetStart(0);
+  a.SetFinal(1);
+
+  for (re2::Rune v : variants) {
+    byte_type buf[utf8_utils::kMaxCharSize];
+    auto len = utf8_utils::FromChar32(static_cast<uint32_t>(v), buf);
+    Utf8EmplaceArc(a, 0, bytes_view{buf, len}, 1);
+  }
+
+  return a;
 }
 
 
@@ -296,16 +344,28 @@ class Re2ToAutomatonWalker : public re2::Regexp::Walker<automaton> {
   automaton PostVisit(re2::Regexp* re, automaton parent_arg, automaton pre_arg,
                       automaton* child_args, int nchild_args) override {
     switch (re->op()) {
-      case re2::kRegexpLiteral:
+      case re2::kRegexpLiteral: {
+        // RE2 encodes case-insensitive single chars (e.g. from (?i:a))
+        // as kRegexpLiteral with FoldCase flag set - we must accept all
+        // case-folded variants of the rune.
+        if (re->parse_flags() & re2::Regexp::FoldCase) {
+          return MakeCaseFoldedChar(re->rune());
+        }
         return MakeCharFromRune(re->rune());
+      }
 
       case re2::kRegexpLiteralString: {
         if (re->nrunes() == 0) {
           return MakeEpsilon();
         }
-        automaton result = MakeCharFromRune(re->runes()[re->nrunes() - 1]);
+        const bool fold_case =
+          (re->parse_flags() & re2::Regexp::FoldCase) != 0;
+        auto make_char = [fold_case](int rune) {
+          return fold_case ? MakeCaseFoldedChar(rune) : MakeCharFromRune(rune);
+        };
+        automaton result = make_char(re->runes()[re->nrunes() - 1]);
         for (int i = re->nrunes() - 2; i >= 0; --i) {
-          auto ch = MakeCharFromRune(re->runes()[i]);
+          auto ch = make_char(re->runes()[i]);
           fst::Concat(ch, &result);
         }
         return result;
@@ -529,7 +589,7 @@ automaton FromRegexpRe2(bytes_view pattern, int64_t max_dfa_states) {
   //   LikePerl = ClassNL | OneLine | PerlB | PerlX | UnicodeGroups
   //
   // Why LikePerl and not individual flags:
-  //   - PerlX: enables (?:...), (?i:...), (?P<name>...) - essential for
+  //   - PerlX: enables (?:...), (?i:...), (?P<n>...) - essential for
   //     advanced users.  Without it these are parse errors.
   //   - UnicodeGroups: enables \p{Cyrillic}, \P{Latin} etc. - essential
   //     for i18n.  Without it these are parse errors.

@@ -270,8 +270,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
 
-  r = catalog_impl.CreateTable(database_id, name, std::move(options),
-                               op_options);
+  r =
+    catalog_impl.CreateTable(database_id, name, std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;

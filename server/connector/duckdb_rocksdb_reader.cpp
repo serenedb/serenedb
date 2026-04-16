@@ -735,7 +735,7 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   if (!keys_size) {
     // Empty MAP
     duckdb::ListVector::GetData(output)[idx] =
-    duckdb::list_entry_t{duckdb::ListVector::GetListSize(output), 0};
+      duckdb::list_entry_t{duckdb::ListVector::GetListSize(output), 0};
     return;
   }
   const uint8_t* keys_start = ptr;

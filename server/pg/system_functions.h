@@ -918,8 +918,8 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {DEFAULT_SCHEMA, "tand",
    R"((x) AS tan(radians(x)))"},
 
-  {DEFAULT_SCHEMA, "cotd",
-   R"((x) AS cot(radians(x)))"},
+  // cotd is registered as a scalar function in RegisterPgMathFunctions
+  // with PG-compatible division-by-zero error handling.
 
   {DEFAULT_SCHEMA, "asind",
    R"((x) AS degrees(asin(x)))"},

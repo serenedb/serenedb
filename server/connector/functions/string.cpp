@@ -974,8 +974,9 @@ struct RegexpInstrBindData : public duckdb::FunctionData {
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
-  duckdb::ClientContext& context, duckdb::ScalarFunction& bound_function,
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& arguments) {
+  duckdb::BindScalarFunctionInput& input) {
+  auto& context = input.GetClientContext();
+  auto& arguments = input.GetArguments();
   // Check if pattern argument is a constant
   if (arguments[1]->IsFoldable()) {
     auto val =

@@ -34,6 +34,8 @@
 namespace sdb::connector {
 namespace {
 
+constexpr std::string_view kZeroLengthVector{"\0", 1};
+
 template<typename T>
 T GetVectorValue(const duckdb::Vector& vec, duckdb::idx_t idx) {
   if (vec.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
@@ -842,10 +844,7 @@ void DuckDBColumnSerializer::WriteSubVector(const duckdb::Vector& vec,
                                             duckdb::idx_t count,
                                             const duckdb::LogicalType& type) {
   if (count == 0) {
-    // Empty vector: just a header with zero count
-    auto* header = Allocate(1);
-    header[0] = 0;  // varint(0) = single byte 0
-    _row_slices.emplace_back(header, 1);
+    _row_slices.emplace_back(kZeroLengthVector);
     return;
   }
 
@@ -1029,16 +1028,7 @@ void DuckDBColumnSerializer::WriteMapValue(const duckdb::Vector& vec,
   auto elem_offset = entry.offset;
 
   if (elem_count == 0) {
-    // Empty map: same as old code -- one-value header + two zero-length vectors
-    static constexpr char kOneVal[] = {std::bit_cast<char>(ValueFlags::None)};
-    _row_slices.emplace_back(kOneVal, sizeof(kOneVal));
-    // Two zero-length sub-vectors (keys + values): varint(0) = single byte 0
-    auto* zero1 = Allocate(1);
-    zero1[0] = 0;
-    _row_slices.emplace_back(zero1, 1);
-    auto* zero2 = Allocate(1);
-    zero2[0] = 0;
-    _row_slices.emplace_back(zero2, 1);
+    _row_slices.emplace_back(kZeroLengthVector);
     return;
   }
 
@@ -1060,12 +1050,10 @@ void DuckDBColumnSerializer::WriteMapValue(const duckdb::Vector& vec,
   auto& val_type = duckdb::MapType::ValueType(type);
   WriteSubVector(val_vec, elem_offset, elem_count, val_type);
 
-  // Fill header: [flags][keys_size_varint] -- NO elem_count prefix
-  auto header_size =
-    sizeof(ValueFlags) + irs::bytes_io<uint32_t>::vsize(keys_size);
+  // Fill header: [keys_size_varint] -- NO elem_count prefix
+  auto header_size = irs::bytes_io<uint32_t>::vsize(keys_size);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
-  *(header++) = std::bit_cast<char>(ValueFlags::None);
   irs::WriteVarint(keys_size, header);
 }
 

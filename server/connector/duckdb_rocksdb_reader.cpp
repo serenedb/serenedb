@@ -731,10 +731,13 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   auto* ptr = reinterpret_cast<const uint8_t*>(value.data());
   auto* end = ptr + value.size();
 
-  // Skip the map-level flags byte (always None in current writer).
-  ++ptr;
-
   auto keys_size = irs::vread<uint32_t>(ptr);
+  if (!keys_size) {
+    // Empty MAP
+    duckdb::ListVector::GetData(output)[idx] =
+    duckdb::list_entry_t{duckdb::ListVector::GetListSize(output), 0};
+    return;
+  }
   const uint8_t* keys_start = ptr;
   const uint8_t* keys_end = ptr + keys_size;
 
@@ -742,6 +745,7 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   // writing.
   const uint8_t* peek = keys_start;
   auto elem_count = irs::vread<uint32_t>(peek);
+  SDB_ASSERT(elem_count > 0);
 
   auto current_size = duckdb::ListVector::GetListSize(output);
   duckdb::ListVector::Reserve(output, current_size + elem_count);
@@ -754,11 +758,6 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   auto& val_vec = duckdb::StructVector::GetEntries(struct_child)[1];
   auto& key_type = duckdb::MapType::KeyType(type);
   auto& val_type = duckdb::MapType::ValueType(type);
-
-  if (elem_count == 0) {
-    duckdb::ListVector::SetListSize(output, current_size);
-    return;
-  }
 
   // Parse sub-vector header at ptr into flags/have_*/length_array_size.
   // Fills `child` starting at child_offset. Advances ptr.

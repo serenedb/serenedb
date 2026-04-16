@@ -264,12 +264,11 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     // FullTableScan (regular table) or a SecondaryIndexScan (FROM
     // sk_index_name). iresearch-claimed scans, ANN, range-search, and
     // already-specialised pk/sk scans stay as-is.
-    if (!std::holds_alternative<connector::FullTableScan>(
-          bind_data.scan_source) &&
-        !std::holds_alternative<connector::SecondaryIndexScan>(
-          bind_data.scan_source)) {
-      return false;
-    }
+    SDB_ASSERT(
+      std::holds_alternative<connector::FullTableScan>(bind_data.scan_source) ||
+        std::holds_alternative<connector::SecondaryIndexScan>(
+          bind_data.scan_source),
+      "Other scans should be constructed here?");
 
     auto candidates = BuildCandidates(bind_data);
     if (candidates.empty()) {

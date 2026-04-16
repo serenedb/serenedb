@@ -74,6 +74,7 @@ class PathHierarchyTokenizer : public TypedAnalyzer<PathHierarchyTokenizer> {
   const Options _options;
 
   bool _term_eof = true;
+  std::string_view _data;  // input data
 };
 
 }  // namespace analysis

@@ -30,6 +30,7 @@ const restoreLayout = (event: GridviewReadyEvent, storageKey: string) => {
         return true;
     } catch (error) {
         console.warn("Failed to restore console layout:", error);
+        localStorage.removeItem(storageKey);
         return false;
     }
 };
@@ -39,10 +40,15 @@ const ensureMainAreaPanel = (event: GridviewReadyEvent) => {
         return;
     }
 
-    event.api.addPanel({
-        id: CONSOLE_GRID_EDITOR_PANEL_ID,
-        component: "editor",
-    });
+    try {
+        event.api.addPanel({
+            id: CONSOLE_GRID_EDITOR_PANEL_ID,
+            component: "editor",
+        });
+    } catch (error) {
+        console.warn("Failed to add console main area panel:", error);
+        localStorage.removeItem(CONSOLE_LAYOUT_STORAGE_KEY);
+    }
 };
 
 const ensureSidebarPanel = (event: GridviewReadyEvent) => {
@@ -50,16 +56,23 @@ const ensureSidebarPanel = (event: GridviewReadyEvent) => {
         return;
     }
 
-    event.api.addPanel({
-        id: CONSOLE_GRID_SIDEBAR_PANEL_ID,
-        component: "sidebar",
-        minimumWidth: CONSOLE_SIDEBAR_MIN_SIZE,
-        size: CONSOLE_SIDEBAR_SIZE,
-        position: {
-            referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
-            direction: "left",
-        },
-    });
+    ensureMainAreaPanel(event);
+
+    try {
+        event.api.addPanel({
+            id: CONSOLE_GRID_SIDEBAR_PANEL_ID,
+            component: "sidebar",
+            minimumWidth: CONSOLE_SIDEBAR_MIN_SIZE,
+            size: CONSOLE_SIDEBAR_SIZE,
+            position: {
+                referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
+                direction: "left",
+            },
+        });
+    } catch (error) {
+        console.warn("Failed to add console sidebar panel:", error);
+        localStorage.removeItem(CONSOLE_LAYOUT_STORAGE_KEY);
+    }
 };
 
 const ConsoleLayout: React.FC = () => {
@@ -85,13 +98,15 @@ const ConsoleLayout: React.FC = () => {
             restoreLayout(event, CONSOLE_LAYOUT_STORAGE_KEY);
 
         ensureMainAreaPanel(event);
+        const sidebarPanel = event.api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+        if (sidebarCollapsed && sidebarPanel) {
+            event.api.removePanel(sidebarPanel);
+        } else if (!sidebarCollapsed && !sidebarPanel) {
+            ensureSidebarPanel(event);
+        }
 
         if (restored) {
             return;
-        }
-
-        if (!sidebarCollapsed) {
-            ensureSidebarPanel(event);
         }
     };
 

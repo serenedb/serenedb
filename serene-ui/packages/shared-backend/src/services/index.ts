@@ -1,4 +1,4 @@
-export { ConnectionService } from "./connection";
+export { ConnectionService, loadDefaultConnection } from "./connection";
 export { DashboardService } from "./dashboard";
 export { SavedQueryService, loadImportQueries } from "./saved-query";
 export { QueryExecutionService } from "./query-execution";

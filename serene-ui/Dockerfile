@@ -35,6 +35,10 @@ FROM public.ecr.aws/docker/library/node:22-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production
+ARG DEFAULT_CONNECTION_STRING=""
+ARG DEFAULT_CONNECTION_NAME=""
+ENV DEFAULT_CONNECTION_STRING=${DEFAULT_CONNECTION_STRING}
+ENV DEFAULT_CONNECTION_NAME=${DEFAULT_CONNECTION_NAME}
 
 RUN apk add --no-cache nginx supervisor && \
   npm install --no-save better-sqlite3@12.2.0 && \

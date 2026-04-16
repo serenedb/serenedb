@@ -439,6 +439,7 @@ export const ConsoleEditor: FC = () => {
                 restored = true;
             } catch (error) {
                 console.warn("Failed to restore console editor layout:", error);
+                localStorage.removeItem(CONSOLE_EDITOR_LAYOUT_STORAGE_KEY);
             }
         }
 

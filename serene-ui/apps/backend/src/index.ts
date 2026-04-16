@@ -1,5 +1,6 @@
 import {
     initDatabase,
+    loadDefaultConnection,
     loadImportQueries,
     logger,
     setWorkerPath,
@@ -22,6 +23,7 @@ const run = async () => {
         : path.join(__dirname, "migrations");
 
     initDatabase(dbPath, migrationsPath);
+    loadDefaultConnection();
     loadImportQueries();
 
     const workerPath = isDevMode

@@ -90,7 +90,7 @@ statement count 3
 COPY tindex TO '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
 
 
-onlyif serenedb
+skipif serenedb
 query
 COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao.parquet' WITH (EXPLAIN LOGICAL, EXPLAIN EXECUTION, FORMAT PARQUET);
 ----

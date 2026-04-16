@@ -12,15 +12,33 @@ INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c');
 statement count 3
 INSERT INTO t2 VALUES (1, 'foo'), (2, 'bar'), (4, 'baz');
 
+
 query
-EXPLAIN (EXECUTION) SELECT * FROM t1 NATURAL JOIN t2;
+EXPLAIN SELECT * FROM t1 NATURAL JOIN t2;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- MergeJoin[2][INNER id=id] -> "id":INTEGER, "v1":VARCHAR, "v2":VARCHAR
-  -- TableScan[0][t1, type=<slt:ignore>] -> "id":INTEGER, "v1":VARCHAR
-  -- TableScan[1][t2, type=<slt:ignore>] -> "id":INTEGER, "v2":VARCHAR
+┌───────────────────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: INNER     │
+│    Conditions: id = id    ├──────────────┐
+│                           │              │
+│           ~1 row          │              │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  ││   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   ││    ────────────────────   │
+│         Table: t1         ││         Table: t2         │
+│                           ││                           │
+│         Strategy:         ││         Strategy:         │
+│   rocksdb_table_fullscan  ││   rocksdb_table_fullscan  │
+│                           ││                           │
+│        Projections:       ││        Projections:       │
+│             id            ││             id            │
+│             v1            ││             v2            │
+│                           ││                           │
+│          ~0 rows          ││          ~0 rows          │
+└───────────────────────────┘└───────────────────────────┘
 
 
 query ??? rowsort

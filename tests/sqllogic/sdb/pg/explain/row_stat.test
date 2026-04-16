@@ -16,16 +16,66 @@ INSERT INTO f VALUES ('3', 1), ('7', 2), ('13', 3);
 
 
 query
-EXPLAIN (ANALYZE) SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
+EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 ----
 QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=<slt:ignore>:
--- Project[3][expressions: (id:VARCHAR, "id"), (value:INTEGER, "value")] -> "id":VARCHAR, "value":INTEGER
-   Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
-  -- HashJoin[2][INNER id=id] -> "value":INTEGER, "id":VARCHAR
-     Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
-    -- TableScan[0][t, type=<slt:ignore>] -> "id":VARCHAR
-       Input: <slt:ignore>, Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Splits: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
-    -- TableScan[1][f, type=<slt:ignore>] -> "id":VARCHAR, "value":INTEGER
-       Input: <slt:ignore>, Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: <slt:ignore>, Splits: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
+┌────────────────────────────────────────────────┐
+│┌──────────────────────────────────────────────┐│
+││              Total Time: <slt:ignore>             ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+┌───────────────────────────┐
+│           QUERY           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│           value           │
+│                           │
+│                           │
+│                           │
+│          <slt:ignore>     │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: INNER     │
+│    Conditions: id = id    │
+│                           ├──────────────┐
+│                           │              │
+│                           │              │
+│          <slt:ignore>     │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         TABLE_SCAN        ││         TABLE_SCAN        │
+│    ────────────────────   ││    ────────────────────   │
+│          Table: f         ││          Table: t         │
+│                           ││                           │
+│         Strategy:         ││         Strategy:         │
+│   rocksdb_table_fullscan  ││   rocksdb_table_fullscan  │
+│                           ││                           │
+│        Projections:       ││      Projections: id      │
+│             id            ││                           │
+│           value           ││                           │
+│                           ││                           │
+│                           ││                           │
+│                           ││           <slt:ignore>    │
+│           <slt:ignore>    ││         <slt:ignore>      │
+│           <slt:ignore>    ││          <slt:ignore>     │
+└───────────────────────────┘└───────────────────────────┘

@@ -7,62 +7,47 @@ CREATE TABLE t (c1 VARCHAR PRIMARY KEY, c2 INT);
 
 
 query
-EXPLAIN (LOGICAL, EXECUTION) select * from t;
+EXPLAIN select * from t;
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableScan: t -> ROW<"c1":VARCHAR,"c2":INTEGER>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- TableScan[0][t, type=<slt:ignore>] -> "c1":VARCHAR, "c2":INTEGER
+┌───────────────────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│         Strategy:         │
+│   rocksdb_table_fullscan  │
+│                           │
+│        Projections:       │
+│             c1            │
+│             c2            │
+│                           │
+│          ~0 rows          │
+└───────────────────────────┘
 
 
 query
-EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text', 42);
+EXPLAIN INSERT INTO t VALUES ('text', 42);
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    c1 := c1
-    c2 := c2
-  - Filter: IF(spark_isnotnull(c1), true, CAST(pg_error(33575106, 0, null value in column "c1" of relation "t" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(c1 AS VARCHAR), null), , , COALESCE(CAST(c2 AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"c1":VARCHAR,"c2":INTEGER>
-    - Project: -> ROW<"c1":VARCHAR,"c2":INTEGER>
-        c1 := column1
-        c2 := column2
-      - Values: 1 rows -> ROW<"column1":VARCHAR,"column2":INTEGER>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=1:
--- TableWrite[3][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
-  -- Project[2][expressions: (c1:VARCHAR, "column1"), (c2:INTEGER, "column2")] -> "c1":VARCHAR, "c2":INTEGER
-    -- Filter[0][expression: if(spark_isnotnull("column1"),true,cast(pg_error(33575106,0,null value in column "c1" of relation "t" violates not-null constraint,presto_concat(Failing row contains (,coalesce("column1",null),, ,coalesce(cast("column2" as VARCHAR),null),).)) as BOOLEAN))] -> "column1":VARCHAR, "column2":INTEGER
-      -- Values[1][1 rows in 1 vectors] -> "column1":VARCHAR, "column2":INTEGER
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      COLUMN_DATA_SCAN     │
+│    ────────────────────   │
+│           ~1 row          │
+└───────────────────────────┘
 
 
-query
-EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text');
-----
-QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    c1 := c1
-    c2 := c2
-  - Filter: IF(spark_isnotnull(c1), true, CAST(pg_error(33575106, 0, null value in column "c1" of relation "t" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(c1 AS VARCHAR), null), , , COALESCE(CAST(c2 AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"c1":VARCHAR,"c2":INTEGER>
-    - Project: -> ROW<"c1":VARCHAR,"c2":INTEGER>
-        c1 := column1
-        c2 := null
-      - Values: 1 rows -> ROW<"column1":VARCHAR>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=1:
--- TableWrite[3][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
-  -- Project[2][expressions: (c1:VARCHAR, "column1"), (c2:INTEGER, null)] -> "c1":VARCHAR, "c2":INTEGER
-    -- Filter[0][expression: if(spark_isnotnull("column1"),true,cast(pg_error(33575106,0,null value in column "c1" of relation "t" violates not-null constraint,presto_concat(Failing row contains (,coalesce("column1",null),, ,null,).)) as BOOLEAN))] -> "column1":VARCHAR
-      -- Values[1][1 rows in 1 vectors] -> "column1":VARCHAR
+query error db error: ERROR: table t has 2 columns but 1 values were supplied
+EXPLAIN INSERT INTO t VALUES ('text');
 
 
 statement error
 INSERT INTO t (c2, c2) VALUES (1, 4);
 ----
-db error: ERROR: column "c2" specified more than once
+db error: ERROR: Duplicate column name "c2" in INSERT
 
 
 query

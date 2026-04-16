@@ -88,7 +88,6 @@
 #include "pg/pg_catalog/pg_rewrite.h"
 #include "pg/pg_catalog/pg_seclabel.h"
 #include "pg/pg_catalog/pg_sequence.h"
-#include "pg/pg_catalog/pg_settings.h"
 #include "pg/pg_catalog/pg_shdepend.h"
 #include "pg/pg_catalog/pg_shdescription.h"
 #include "pg/pg_catalog/pg_shseclabel.h"
@@ -221,7 +220,6 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
   MakeTable<SystemTable<SdbLog>>(),
-  MakeTable<SystemTable<SdbShowAllSettings>>(),
   MakeTable<SystemTable<SdbSearchTasksStatus>>(),
 };
 

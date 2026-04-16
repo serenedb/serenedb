@@ -55,9 +55,10 @@ enum class IsolationLevel : uint8_t {
 struct VariableDescription {
   duckdb::LogicalTypeId type;
   std::string_view description;
-  std::string_view default_value;  // .data() == nullptr if None
+  duckdb::Value (*default_value)() = nullptr;  // called at registration time
   duckdb::set_option_callback_t set_callback = nullptr;
   duckdb::reset_option_callback_t reset_callback = nullptr;
+  duckdb::SetScope scope = duckdb::SetScope::AUTOMATIC;
 };
 
 std::string_view GetOriginalName(std::string_view name);
@@ -98,13 +99,6 @@ class Config {
   void DropCatalogSnapshot() { _snapshot.reset(); }
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
-
-  // Visit all the settings and call function f(setting_name, value,
-  // description) value is std::string, because it could be non-default
-  void VisitFullDescription(
-    absl::FunctionRef<void(std::string_view, std::string_view,
-                           std::string_view)>
-      f) const;
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> GetSetting(std::string_view key) const {

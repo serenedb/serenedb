@@ -41,10 +41,12 @@
 #include "catalog/mangling.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_scan_entry.h"
+#include "connector/duckdb_key_builder.hpp"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "connector/multiget_context.hpp"
+#include "connector/rocksdb_filter.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "connector/secondary_sink_writer.hpp"
 #include "functions/search.h"
@@ -136,9 +138,9 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   size_t ann_current_idx = 0;
   bool ann_search_done = false;
 
-  // TODO reuse builders and materializers
+  // TODO renmae reused
   // PK point-scan state
-  size_t pk_point_offset = 0;
+  size_t point_offset = 0;
   std::vector<std::string> pk_suffixes;
   std::vector<std::string> pk_multiget_key_storage;
   std::vector<rocksdb::Slice> pk_multiget_key_slices;
@@ -146,9 +148,7 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::vector<size_t> pk_found_indices;
 
   // SK point-scan state (dedicated fields -- NOT shared with ANN fields above)
-  std::vector<std::string> sk_point_pk_bytes;
-  size_t sk_point_current_idx = 0;
-  bool sk_point_init_done = false;
+  size_t sk_found_total = 0;  // cumulative found rows (for rowid)
 
   // Rows actually emitted by this scan -- used by the rows_scanned callback
   // for runtime stats.
@@ -354,115 +354,9 @@ static void SereneDBPkPointScanFunction(duckdb::ClientContext& context,
                                         duckdb::TableFunctionInput& data,
                                         duckdb::DataChunk& output);
 
-static void SereneDBSkPointScanFunction(duckdb::ClientContext& context,
-                                        duckdb::TableFunctionInput& data,
-                                        duckdb::DataChunk& output);
-
-// Encode a duckdb::Value into a binary-sortable RocksDB key suffix.
-// Matches the encoding produced by AppendPKValueFromDuckDB (write path).
-static void AppendDuckDBValueToKey(std::string& key, const duckdb::Value& v) {
-  switch (v.type().id()) {
-    case duckdb::LogicalTypeId::BOOLEAN:
-      key.push_back(v.GetValue<bool>() ? '\x01' : '\x00');
-      break;
-    case duckdb::LogicalTypeId::TINYINT: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(int8_t));
-      key[base] = static_cast<char>(v.GetValue<int8_t>());
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
-    case duckdb::LogicalTypeId::SMALLINT: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(int16_t));
-      absl::big_endian::Store16(key.data() + base, v.GetValue<int16_t>());
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
-    case duckdb::LogicalTypeId::INTEGER: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(int32_t));
-      absl::big_endian::Store32(key.data() + base, v.GetValue<int32_t>());
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
-    case duckdb::LogicalTypeId::BIGINT: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(int64_t));
-      absl::big_endian::Store64(key.data() + base, v.GetValue<int64_t>());
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(int64_t));
-      absl::big_endian::Store64(key.data() + base,
-                                v.GetValue<duckdb::timestamp_t>().value);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
-    case duckdb::LogicalTypeId::DATE: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(int32_t));
-      absl::big_endian::Store32(key.data() + base,
-                                v.GetValue<duckdb::date_t>().days);
-      key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      break;
-    }
-    case duckdb::LogicalTypeId::VARCHAR:
-    case duckdb::LogicalTypeId::BLOB: {
-      static constexpr std::string_view kNullEsc{"\0\1", 2};
-      static constexpr std::string_view kStringEnd{"\0\0", 2};
-      for (char c : duckdb::StringValue::Get(v)) {
-        if (c == '\0') {
-          key.append(kNullEsc);
-        } else {
-          key.push_back(c);
-        }
-      }
-      key.append(kStringEnd);
-      break;
-    }
-    case duckdb::LogicalTypeId::FLOAT: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(float));
-      const float f = v.GetValue<float>();
-      if (f != 0 && !std::isnan(f)) {
-        absl::big_endian::Store32(key.data() + base,
-                                  irs::numeric_utils::Ftoi32(f));
-        key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      } else if (f == 0) {
-        static constexpr char kZero[] = "\x80\x00\x00\x00";
-        std::memcpy(key.data() + base, kZero, sizeof(float));
-      } else {
-        static constexpr char kPosNaN[] = "\xFF\xC0\x00\x00";
-        std::memcpy(key.data() + base, kPosNaN, sizeof(float));
-      }
-      break;
-    }
-    case duckdb::LogicalTypeId::DOUBLE: {
-      const auto base = key.size();
-      basics::StrAppend(key, sizeof(double));
-      const double d = v.GetValue<double>();
-      if (d != 0 && !std::isnan(d)) {
-        absl::big_endian::Store64(key.data() + base,
-                                  irs::numeric_utils::Dtoi64(d));
-        key[base] = static_cast<uint8_t>(key[base]) ^ 0x80;
-      } else if (d == 0) {
-        static constexpr char kZero[] = "\x80\x00\x00\x00\x00\x00\x00\x00";
-        std::memcpy(key.data() + base, kZero, sizeof(double));
-      } else {
-        static constexpr char kPosNaN[] = "\xFF\xF8\x00\x00\x00\x00\x00\x00";
-        std::memcpy(key.data() + base, kPosNaN, sizeof(double));
-      }
-      break;
-    }
-    default:
-      SDB_ASSERT(false, "PK point lookup: unsupported key type ",
-                 v.type().ToString());
-  }
-}
+[[maybe_unused]] static void SereneDBSkPointScanFunction(
+  duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
+  duckdb::DataChunk& output);
 
 // Wraps a per-strategy scan call so we can accumulate produced_rows once
 // for the rows_scanned callback (avoids touching every per-strategy
@@ -510,6 +404,7 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
       output);
     return;
   }
+  // TODO(mkornaukhov) enable
   // if (bind_data.IsSkPointScan()) {
   //   RunStrategyAndAccount(
   //     [&] { SereneDBSkPointScanFunction(context, data, output); }, gstate,
@@ -997,350 +892,381 @@ static void SereneDBANNScanFunction(duckdb::ClientContext& context,
   }
 }
 
-// --- PK point scan: ResolvedPoints -> MultiGet -> materialization ---
+// --- Point scan: PK and SK unified via policy template ---
+
+class DuckDBPKResultCollector {
+ public:
+  static constexpr bool kIsSecondaryIndex = false;
+
+  void Init(const duckdb::LogicalType& type, size_t capacity,
+            duckdb::Vector& vec) {
+    _type = &type;
+    _vec = &vec;
+    _found_indices.clear();
+    _found_indices.reserve(capacity);
+  }
+
+  void Fill(size_t batch_idx, size_t found_idx,
+            const rocksdb::PinnableSlice& val) {
+    _found_indices.push_back(batch_idx);
+    DeserializeValueIntoDuckDB(val.ToStringView(), *_vec, *_type, found_idx);
+  }
+
+  void Finish(size_t /*found_count*/) {}
+
+  std::span<const size_t> PresentRows() const { return _found_indices; }
+
+ private:
+  const duckdb::LogicalType* _type = nullptr;
+  duckdb::Vector* _vec = nullptr;
+  std::vector<size_t> _found_indices;
+};
+
+// TODO simplify interface
+
+template<typename Materializer>
+class DuckDBSKResultCollector {
+ public:
+  static constexpr bool kIsSecondaryIndex = true;
+
+  explicit DuckDBSKResultCollector(Materializer materializer)
+    : _materializer{std::move(materializer)} {}
+
+  void Init(const duckdb::LogicalType& /*type*/, size_t capacity,
+            duckdb::Vector& /*vec*/) {
+    _pk_bytes.clear();
+    _pk_bytes.reserve(capacity);
+  }
+
+  void Fill(size_t /*batch_idx*/, size_t /*found_idx*/,
+            const rocksdb::PinnableSlice& val) {
+    SDB_ASSERT(val.size() > 1 && val[0] == secondary_key::kPKInValue,
+               "SK point scan: unexpected value format");
+    _pk_bytes.emplace_back(val.data() + 1, val.size() - 1);
+  }
+
+  void Finish(size_t /*found_count*/, duckdb::DataChunk& output) {
+    _materializer.ReadRows(_pk_bytes, output);
+  }
+
+  std::span<const size_t> PresentRows() const { return {}; }
+
+ private:
+  Materializer _materializer;
+  std::vector<std::string> _pk_bytes;
+};
+
+class DuckDBSKMaterializer {
+ public:
+  DuckDBSKMaterializer(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf,
+                       rocksdb::ReadOptions ro, rocksdb::Transaction* txn,
+                       std::string table_key, SereneDBScanGlobalState& gstate,
+                       const SereneDBScanBindData& bind_data)
+    : _db{db},
+      _cf{cf},
+      _ro{std::move(ro)},
+      _txn{txn},
+      _table_key{std::move(table_key)},
+      _gstate{gstate},
+      _found_base{gstate.sk_found_total},
+      _bind_data{bind_data} {}
+
+  // TODO make span of bytes
+  // Why pk bytes here, not row keys?
+  void ReadRows(const std::vector<std::string>& pk_bytes,
+                duckdb::DataChunk& output) {
+    const size_t batch_size = pk_bytes.size();
+    std::string key_buffer;
+    rocksdb::PinnableSlice value;
+
+    for (duckdb::idx_t proj = 0; proj < _gstate.projected_columns.size();
+         ++proj) {
+      const auto bind_col = _gstate.projected_columns[proj];
+      if (bind_col == duckdb::DConstants::INVALID_INDEX) {
+        if (_gstate.scan_tableoid && proj == _gstate.tableoid_output_idx) {
+          output.data[proj].Reference(
+            duckdb::Value::BIGINT(_gstate.tableoid_value));
+        } else {
+          auto* d =
+            duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+          for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+            d[i] = static_cast<int64_t>(_found_base + i);
+          }
+        }
+        continue;
+      }
+
+      const auto col_id = _bind_data.column_ids[bind_col];
+      auto& type = _gstate.projected_types[proj];
+
+      for (duckdb::idx_t row = 0; row < batch_size; ++row) {
+        key_buffer.assign(_table_key.data(), kTablePrefixSize);
+        key_utils::AppendColumnKey(key_buffer, col_id);
+        key_buffer.append(pk_bytes[row]);
+
+        value.Reset();
+        const auto s = _txn ? _txn->Get(_ro, _cf, key_buffer, &value)
+                            : _db->Get(_ro, _cf, key_buffer, &value);
+        if (s.IsNotFound()) {
+          duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
+          continue;
+        }
+        SDB_ASSERT(s.ok(), "RocksDB SK->PK lookup failed: ", s.ToString());
+        DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj],
+                                   type, row);
+      }
+    }
+  }
+
+ private:
+  rocksdb::DB* _db;
+  rocksdb::ColumnFamilyHandle* _cf;
+  rocksdb::ReadOptions _ro;
+  rocksdb::Transaction* _txn;
+  std::string _table_key;
+  SereneDBScanGlobalState& _gstate;
+  size_t _found_base;
+  const SereneDBScanBindData& _bind_data;
+};
+
+struct DuckDBPKPointLookupPolicy {
+  static constexpr bool kIsSecondaryIndex = false;
+  using KeyBuilder = DuckDBPrimaryKeyBuilder;
+  using ResultCollector = DuckDBPKResultCollector;
+};
+
+template<typename Materializer>
+struct DuckDBSKPointLookupPolicy {
+  static constexpr bool kIsSecondaryIndex = true;
+  using KeyBuilder = DuckDBSecondaryKeyBuilder;
+  using ResultCollector = DuckDBSKResultCollector<Materializer>;
+};
+
+template<typename Policy>
+static void SereneDBPointScanFunctionImpl(
+  duckdb::ClientContext& /*context*/, duckdb::TableFunctionInput& data,
+  duckdb::DataChunk& output, typename Policy::KeyBuilder builder,
+  typename Policy::ResultCollector collector) {
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
+
+  if (gstate.finished) {
+    output.SetCardinality(0);
+    return;
+  }
+
+  auto* db = GetServerEngine().db();
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
+  SDB_ASSERT(cf);
+
+  rocksdb::ReadOptions ro;
+  ro.snapshot = gstate.snapshot;
+
+  const auto& points = [&] {
+    if constexpr (Policy::kIsSecondaryIndex) {
+      return std::get<SkPointScan>(bind_data.scan_source).points;
+    } else {
+      return std::get<PkPointScan>(bind_data.scan_source).points;
+    }
+  }();
+
+  const size_t total = points.size();
+  const size_t batch_start = gstate.point_offset;
+  if (batch_start >= total) {
+    gstate.finished = true;
+    output.SetCardinality(0);
+    return;
+  }
+
+  const size_t batch_size =
+    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
+
+  MultiGetContext mgc{*cf, ro};
+
+  // todo fix later
+  if constexpr (!Policy::kIsSecondaryIndex) {
+    duckdb::idx_t found_count = 0;
+
+    auto do_multiget = [&](std::span<const rocksdb::Slice> slices, auto&& cb) {
+      size_t pos = 0;
+      auto proc = [&](const rocksdb::Slice&, const rocksdb::PinnableSlice& val,
+                      const rocksdb::Status& s) { cb(pos++, val, s); };
+      if (gstate.txn) {
+        mgc.MultiGet(*gstate.txn, slices, proc);
+      } else {
+        mgc.MultiGet(*db, slices, proc);
+      }
+    };
+
+    // Find first real projected column (the "least" column used for probing).
+    duckdb::idx_t first_proj = duckdb::DConstants::INVALID_INDEX;
+    for (duckdb::idx_t p = 0; p < gstate.projected_columns.size(); ++p) {
+      if (gstate.projected_columns[p] != duckdb::DConstants::INVALID_INDEX) {
+        first_proj = p;
+        break;
+      }
+    }
+
+    std::vector<size_t> present_rows;
+
+    if (first_proj != duckdb::DConstants::INVALID_INDEX) {
+      const auto col_id =
+        bind_data.column_ids[gstate.projected_columns[first_proj]];
+      auto& type = gstate.projected_types[first_proj];
+      collector.Init(type, batch_size, output.data[first_proj]);
+      auto slices = builder.BuildKeys(col_id, points, batch_start, batch_size);
+      size_t found_idx = 0;
+      do_multiget(slices,
+                  [&](size_t batch_idx, const rocksdb::PinnableSlice& val,
+                      const rocksdb::Status& s) {
+                    if (s.ok()) {
+                      collector.Fill(batch_idx, found_idx++, val);
+                    } else {
+                      SDB_ASSERT(s.IsNotFound(),
+                                 "RocksDB PK lookup failed: ", s.ToString());
+                    }
+                  });
+      found_count = static_cast<duckdb::idx_t>(found_idx);
+    } else {
+      // No real column projected (rowid/tableoid only): probe first bind
+      // column to determine which points exist.
+      SDB_ASSERT(!bind_data.column_ids.empty());
+      duckdb::Vector dummy{duckdb::LogicalType::BIGINT};
+      collector.Init(duckdb::LogicalType::BIGINT, batch_size, dummy);
+      auto slices = builder.BuildKeys(bind_data.column_ids[0], points,
+                                      batch_start, batch_size);
+      size_t found_idx = 0;
+      do_multiget(slices,
+                  [&](size_t batch_idx, const rocksdb::PinnableSlice& val,
+                      const rocksdb::Status& s) {
+                    if (s.ok()) {
+                      collector.Fill(batch_idx, found_idx++, val);
+                    } else {
+                      SDB_ASSERT(s.IsNotFound(),
+                                 "RocksDB PK lookup failed: ", s.ToString());
+                    }
+                  });
+      found_count = static_cast<duckdb::idx_t>(found_idx);
+    }
+
+    collector.Finish(found_count);
+    auto prows = collector.PresentRows();
+    present_rows.assign(prows.begin(), prows.end());
+
+    // Fetch remaining real columns: patch key prefix for found rows only.
+    if (first_proj != duckdb::DConstants::INVALID_INDEX) {
+      for (duckdb::idx_t proj = first_proj + 1;
+           proj < gstate.projected_columns.size(); ++proj) {
+        const auto bind_col = gstate.projected_columns[proj];
+        if (bind_col == duckdb::DConstants::INVALID_INDEX) {
+          continue;
+        }
+        const auto col_id = bind_data.column_ids[bind_col];
+        auto& type = gstate.projected_types[proj];
+        auto slices = builder.BuildPresentKeys(col_id, present_rows);
+        size_t j = 0;
+        do_multiget(slices, [&](size_t, const rocksdb::PinnableSlice& val,
+                                const rocksdb::Status& s) {
+          if (s.IsNotFound()) {
+            duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(j);
+          } else {
+            SDB_ASSERT(s.ok(), "RocksDB PK lookup failed: ", s.ToString());
+            DeserializeValueIntoDuckDB(val.ToStringView(), output.data[proj],
+                                       type, j);
+          }
+          ++j;
+        });
+      }
+    }
+
+    SDB_ASSERT(!gstate.has_generated_pk);
+
+    if (gstate.scan_tableoid) {
+      output.data[gstate.tableoid_output_idx].Reference(
+        duckdb::Value::BIGINT(gstate.tableoid_value));
+    }
+
+    gstate.point_offset += batch_size;
+    if (gstate.point_offset >= total) {
+      gstate.finished = true;
+    }
+    output.SetCardinality(static_cast<duckdb::idx_t>(found_count));
+
+  } else {
+    auto slices =
+      builder.BuildKeys(catalog::Column::Id{}, points, batch_start, batch_size);
+
+    duckdb::Vector dummy{duckdb::LogicalType::BIGINT};
+    collector.Init(duckdb::LogicalType::BIGINT, batch_size, dummy);
+
+    size_t found_count = 0;
+    auto collect = [&](const rocksdb::Slice&, const rocksdb::PinnableSlice& val,
+                       const rocksdb::Status& s) {
+      if (s.ok()) {
+        collector.Fill(found_count, found_count, val);
+        ++found_count;
+      } else {
+        SDB_ASSERT(s.IsNotFound(), "RocksDB SK lookup failed: ", s.ToString());
+      }
+    };
+    if (gstate.txn) {
+      mgc.MultiGet(*gstate.txn, slices, collect);
+    } else {
+      mgc.MultiGet(*db, slices, collect);
+    }
+
+    if (found_count > 0) {
+      collector.Finish(found_count, output);
+    }
+
+    gstate.point_offset += batch_size;
+    gstate.sk_found_total += found_count;
+    output.SetCardinality(static_cast<duckdb::idx_t>(found_count));
+    if (gstate.point_offset >= total) {
+      gstate.finished = true;
+    }
+  }
+}
 
 static void SereneDBPkPointScanFunction(duckdb::ClientContext& context,
                                         duckdb::TableFunctionInput& data,
                                         duckdb::DataChunk& output) {
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
-  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
 
-  if (gstate.finished) {
-    output.SetCardinality(0);
-    return;
-  }
+  DuckDBPrimaryKeyBuilder builder{bind_data.table->GetId()};
 
-  auto& scan = std::get<PkPointScan>(bind_data.scan_source);
-  const size_t total = scan.points.size();
-  const size_t batch_start = gstate.pk_point_offset;
-
-  if (batch_start >= total) {
-    gstate.finished = true;
-    output.SetCardinality(0);
-    return;
-  }
-
-  const size_t batch_size =
-    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
-
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  SDB_ASSERT(cf);
-
-  rocksdb::ReadOptions ro;
-  ro.snapshot = gstate.snapshot;
-
-  // Pre-encode the PK suffix (binary key bytes) for each point in the batch.
-  // All columns share the same suffix; only the column-id prefix differs.
-  // pk_suffixes is a gstate field (sized to STANDARD_VECTOR_SIZE at init) so
-  // the strings' heap capacity is reused across batches.
-  auto& pk_suffixes = gstate.pk_suffixes;
-  for (size_t i = 0; i < batch_size; ++i) {
-    pk_suffixes[i].clear();
-    for (const auto& v : scan.points[batch_start + i]) {
-      AppendDuckDBValueToKey(pk_suffixes[i], v);
-    }
-  }
-
-  MultiGetContext mgc{*cf, ro};
-
-  const std::string col_prefix_base =
-    key_utils::PrepareTableKey(bind_data.table->GetId());
-
-  auto& key_storage = gstate.pk_multiget_key_storage;
-  auto& key_slices = gstate.pk_multiget_key_slices;
-  auto& found_indices = gstate.pk_found_indices;
-  found_indices.clear();
-
-  auto multiget_dispatch = [&](size_t count, auto&& callback) {
-    size_t pos = 0;
-    auto processor = [&](const rocksdb::Slice&,
-                         const rocksdb::PinnableSlice& val,
-                         const rocksdb::Status& s) { callback(pos++, val, s); };
-    const auto slices =
-      std::span<const rocksdb::Slice>(key_slices.data(), count);
-    if (gstate.txn) {
-      mgc.MultiGet(*gstate.txn, slices, processor);
-    } else {
-      mgc.MultiGet(*db, slices, processor);
-    }
-  };
-
-  auto do_multiget_all = [&](catalog::Column::Id col_id, auto&& callback) {
-    for (size_t j = 0; j < batch_size; ++j) {
-      key_storage[j].assign(col_prefix_base);
-      key_utils::AppendColumnKey(key_storage[j], col_id);
-      key_storage[j] += pk_suffixes[j];
-      key_slices[j] = rocksdb::Slice(key_storage[j]);
-    }
-    multiget_dispatch(batch_size, std::forward<decltype(callback)>(callback));
-  };
-
-  auto do_multiget_found = [&](catalog::Column::Id col_id, auto&& callback) {
-    for (size_t j = 0; j < found_indices.size(); ++j) {
-      key_storage[j].assign(col_prefix_base);
-      key_utils::AppendColumnKey(key_storage[j], col_id);
-      key_storage[j] += pk_suffixes[found_indices[j]];
-      key_slices[j] = rocksdb::Slice(key_storage[j]);
-    }
-    multiget_dispatch(found_indices.size(),
-                      std::forward<decltype(callback)>(callback));
-  };
-
-  // Output is always dense (no gaps for missing PKs).
-  duckdb::idx_t found_count = 0;
-  bool first_column = false;
-
-  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
-    const auto bind_col = gstate.projected_columns[proj];
-    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      continue;  // rowid / tableoid -- filled after the column loop
-    }
-
-    auto col_id = bind_data.column_ids[bind_col];
-    auto& type = gstate.projected_types[proj];
-
-    if (!first_column) {
-      // First real column: probe all batch points. Found indices are pushed
-      // directly into found_indices in ascending order (j increases).
-      found_count = 0;
-      do_multiget_all(col_id, [&](size_t j, const rocksdb::PinnableSlice& val,
-                                  const rocksdb::Status& s) {
-        if (s.ok()) {
-          found_indices.push_back(j);
-          DeserializeValueIntoDuckDB(val.ToStringView(), output.data[proj],
-                                     type, found_count);
-          ++found_count;
-        } else {
-          SDB_ASSERT(s.IsNotFound(),
-                     "RocksDB PK lookup failed: ", s.ToString());
-        }
-      });
-      first_column = true;
-    } else {
-      // Remaining columns: only fetch rows known to exist.
-      // j == sequential position in found_indices == output row.
-      do_multiget_found(col_id, [&](size_t j, const rocksdb::PinnableSlice& val,
-                                    const rocksdb::Status& s) {
-        if (s.IsNotFound()) {
-          duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(j);
-        } else {
-          SDB_ASSERT(s.ok(), "RocksDB PK lookup failed: ", s.ToString());
-          DeserializeValueIntoDuckDB(val.ToStringView(), output.data[proj],
-                                     type, j);
-        }
-      });
-    }
-  }
-
-  // If only rowid / tableoid was requested (no real columns projected), probe
-  // the first bind column to determine which points actually exist.
-  if (!first_column) {
-    SDB_ASSERT(!bind_data.column_ids.empty());
-    do_multiget_all(bind_data.column_ids[0], [&](size_t j,
-                                                 const rocksdb::PinnableSlice&,
-                                                 const rocksdb::Status& s) {
-      if (s.ok()) {
-        found_indices.push_back(j);
-      } else {
-        SDB_ASSERT(s.IsNotFound(), "RocksDB PK lookup failed: ", s.ToString());
-      }
-    });
-    found_count = found_indices.size();
-  }
-
-  SDB_ASSERT(!gstate.has_generated_pk);
-
-  if (gstate.scan_tableoid) {
-    output.data[gstate.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(gstate.tableoid_value));
-  }
-
-  gstate.pk_point_offset += batch_size;
-  if (gstate.pk_point_offset >= total) {
-    gstate.finished = true;
-  }
-  output.SetCardinality(static_cast<duckdb::idx_t>(found_count));
+  SereneDBPointScanFunctionImpl<DuckDBPKPointLookupPolicy>(
+    context, data, output, std::move(builder), DuckDBPKResultCollector{});
 }
 
-// --- SK point scan: SK MultiGet -> PKs -> RocksDB materialization ---
-
-[[maybe_unused]] static void SereneDBSkPointScanFunction(
-  duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
-  duckdb::DataChunk& output) {
-  // TODO(mkornaukhov) find out logics and fix it. DOES NOT WORK NOW!
+static void SereneDBSkPointScanFunction(duckdb::ClientContext& context,
+                                        duckdb::TableFunctionInput& data,
+                                        duckdb::DataChunk& output) {
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
   auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
 
-  if (gstate.finished) {
-    output.SetCardinality(0);
-    return;
-  }
-
-  // Lazy init: probe the SK index for all points to collect raw PK bytes.
-  if (!gstate.sk_point_init_done) {
-    gstate.sk_point_init_done = true;
-
-    auto& scan = std::get<SkPointScan>(bind_data.scan_source);
-    auto& engine = GetServerEngine();
-    auto* db = engine.db();
-    auto* cf = RocksDBColumnFamilyManager::get(
-      RocksDBColumnFamilyManager::Family::Default);
-    SDB_ASSERT(cf);
-
-    rocksdb::ReadOptions ro;
-    ro.snapshot = gstate.snapshot;
-
-    for (const auto& point : scan.points) {
-      // Build SK key prefix: [shard_id][dummy_col_id][null_marker | (not-null
-      // marker + value) per SK column]
-      std::string sk_key;
-      secondary_key::AppendShardPrefix(sk_key, scan.shard_id);
-      secondary_key::AppendDummyColumnId(sk_key);
-
-      bool any_null = false;
-      for (const auto& v : point) {
-        if (v.IsNull()) {
-          secondary_key::AppendNullMarker(sk_key);
-          any_null = true;
-        } else {
-          secondary_key::AppendNotNullMarker(sk_key);
-          AppendDuckDBValueToKey(sk_key, v);
-        }
-      }
-
-      if (scan.is_unique && !any_null) {
-        // Unique + non-NULL: exact Get, PK is in value after kPKInValue flag.
-        rocksdb::PinnableSlice val;
-        const auto s = db->Get(ro, cf, sk_key, &val);
-        if (s.ok()) {
-          SDB_ASSERT(val.size() >= 1);
-          if (static_cast<char>(val[0]) == secondary_key::kPKInValue) {
-            gstate.sk_point_pk_bytes.emplace_back(val.data() + 1,
-                                                  val.size() - 1);
-          }
-          // kPKInKey for unique+non-null would be unexpected; skip silently.
-        } else {
-          SDB_ASSERT(s.IsNotFound(),
-                     "RocksDB SK lookup failed: ", s.ToString());
-        }
-      } else {
-        // Non-unique or any-null: iterate the SK prefix to collect all
-        // matching PKs (multiple rows may share the same SK value).
-        std::string upper_bound = sk_key;
-        for (auto it = upper_bound.rbegin(); it != upper_bound.rend(); ++it) {
-          if (static_cast<uint8_t>(*it) < 0xFF) {
-            ++(*it);
-            break;
-          }
-          *it = '\0';
-        }
-        rocksdb::Slice ub_slice{upper_bound};
-
-        rocksdb::ReadOptions iter_ro = ro;
-        iter_ro.total_order_seek = true;
-        iter_ro.iterate_upper_bound = &ub_slice;
-
-        auto it =
-          std::unique_ptr<rocksdb::Iterator>(db->NewIterator(iter_ro, cf));
-        it->Seek(sk_key);
-        while (it->Valid()) {
-          const auto key = it->key();
-          const auto val = it->value();
-          if (val.size() >= 1 &&
-              static_cast<char>(val[0]) == secondary_key::kPKInValue) {
-            gstate.sk_point_pk_bytes.emplace_back(val.data() + 1,
-                                                  val.size() - 1);
-          } else if (val.size() >= 2) {
-            // PK bytes are the last pk_size bytes of the key.
-            const uint8_t pk_size = static_cast<uint8_t>(val[1]);
-            SDB_ASSERT(key.size() >= pk_size);
-            gstate.sk_point_pk_bytes.emplace_back(
-              key.data() + key.size() - pk_size, pk_size);
-          }
-          it->Next();
-        }
-        rocksutils::CheckIteratorStatus(*it);
-      }
-    }
-
-    if (gstate.sk_point_pk_bytes.empty()) {
-      gstate.finished = true;
-      output.SetCardinality(0);
-      return;
-    }
-  }
-
-  // Paginate over collected PK bytes -- same pattern as search / ANN scan.
-  const size_t total = gstate.sk_point_pk_bytes.size();
-  const size_t batch_start = gstate.sk_point_current_idx;
-
-  if (batch_start >= total) {
-    gstate.finished = true;
-    output.SetCardinality(0);
-    return;
-  }
-
-  const size_t batch_size =
-    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
-
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
+  auto& sk_scan = std::get<SecondaryIndexScan>(bind_data.scan_source);
+  DuckDBSecondaryKeyBuilder builder{sk_scan.shard_id};
+  auto* db = GetServerEngine().db();
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);
   SDB_ASSERT(cf);
-  std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
-  std::string key_buffer;
+
   rocksdb::ReadOptions ro;
   ro.snapshot = gstate.snapshot;
-  rocksdb::PinnableSlice value;
+  DuckDBSKMaterializer mat{db,
+                           cf,
+                           ro,
+                           gstate.txn,
+                           key_utils::PrepareTableKey(bind_data.table->GetId()),
+                           gstate,
+                           bind_data};
+  DuckDBSKResultCollector collector{std::move(mat)};
 
-  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
-    const auto bind_col = gstate.projected_columns[proj];
-    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
-        output.data[proj].Reference(
-          duckdb::Value::BIGINT(gstate.tableoid_value));
-      } else {
-        auto* d =
-          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-        for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-          d[i] = static_cast<int64_t>(batch_start + i);
-        }
-      }
-      continue;
-    }
-
-    auto col_id = bind_data.column_ids[bind_col];
-    auto& type = gstate.projected_types[proj];
-
-    for (duckdb::idx_t row = 0; row < batch_size; ++row) {
-      const auto& pk = gstate.sk_point_pk_bytes[batch_start + row];
-      key_buffer = table_key;
-      basics::StrResize(key_buffer, kTablePrefixSize);
-      key_utils::AppendColumnKey(key_buffer, col_id);
-      key_buffer.append(pk);
-
-      value.Reset();
-      const auto s = gstate.txn ? gstate.txn->Get(ro, cf, key_buffer, &value)
-                                : db->Get(ro, cf, key_buffer, &value);
-      if (s.IsNotFound()) {
-        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
-        continue;
-      }
-      SDB_ASSERT(s.ok(), "RocksDB SK->PK lookup failed: ", s.ToString());
-      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
-                                 row);
-    }
-  }
-
-  gstate.sk_point_current_idx += batch_size;
-  output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
-  if (gstate.sk_point_current_idx >= total) {
-    gstate.finished = true;
-  }
+  SereneDBPointScanFunctionImpl<
+    DuckDBSKPointLookupPolicy<DuckDBSKMaterializer>>(
+    context, data, output, std::move(builder), std::move(collector));
 }
 
 // --- Range search scan: HNSW range -> PKs -> RocksDB materialization ---

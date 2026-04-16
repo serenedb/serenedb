@@ -460,6 +460,57 @@ target_include_directories(
 add_subdirectory(nghttp2)
 
 ################################################################################
+## CURL (required by DuckDB's httpfs extension for S3 I/O)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "curl" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+# Force static HTTP(S)-only build, using our vendored OpenSSL.
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
+set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH OFF CACHE BOOL "" FORCE)
+set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+set(ENABLE_UNIX_SOCKETS OFF CACHE BOOL "" FORCE)
+set(PICKY_COMPILER OFF CACHE BOOL "" FORCE)
+set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
+# Pre-answer all of curl's check_symbol_exists() tests that link OpenSSL.
+# Those tests pass OpenSSL::SSL / OpenSSL::Crypto via CMAKE_REQUIRED_LIBRARIES,
+# but those are ALIAS targets from our vendored OpenSSL and don't propagate
+# into a fresh try_compile subproject. We know the flavor and version of the
+# OpenSSL we link, so pre-answer and skip the detection.
+# Keep this list in sync with curl's CMakeLists.txt if curl is bumped.
+set(HAVE_BORINGSSL 0 CACHE INTERNAL "")
+set(HAVE_AWSLC 0 CACHE INTERNAL "")
+set(HAVE_LIBRESSL 0 CACHE INTERNAL "")
+set(HAVE_DES_ECB_ENCRYPT 1 CACHE INTERNAL "")
+set(HAVE_SSL_SET0_WBIO 1 CACHE INTERNAL "")
+set(HAVE_OPENSSL_SRP 0 CACHE INTERNAL "")
+set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
+set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
+set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
+
+add_subdirectory(curl)
+
+# Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
+# FindCURL.cmake short-circuits when these variables are already set.
+if(NOT TARGET CURL::libcurl)
+    add_library(CURL::libcurl ALIAS libcurl_static)
+endif()
+set(CURL_FOUND TRUE CACHE INTERNAL "")
+set(CURL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/curl/include" CACHE INTERNAL "")
+set(CURL_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/curl/include" CACHE INTERNAL "")
+set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
+set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
+
+################################################################################
 ## IMMER
 ################################################################################
 
@@ -662,7 +713,7 @@ set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json"
+    "core_functions;parquet;tpch;tpcds;json;httpfs"
     CACHE STRING
     ""
     FORCE
@@ -692,4 +743,5 @@ target_link_libraries(
         tpch_extension
         tpcds_extension
         json_extension
+        httpfs_extension
 )

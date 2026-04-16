@@ -37,7 +37,7 @@ namespace sdb::connector {
 namespace {
 
 // ---------------------------------------------------------------------------
-// JsonParser — ported from server/pg/functions/json.tpp
+// JsonParser -- ported from server/pg/functions/json.tpp
 // ---------------------------------------------------------------------------
 
 enum class JsonOutputType { JSON, TEXT };
@@ -168,7 +168,7 @@ class JsonParser {
 };
 
 // ---------------------------------------------------------------------------
-// Validation (::json cast) — ported from PgJsonInFunction
+// Validation (::json cast) -- ported from PgJsonInFunction
 // ---------------------------------------------------------------------------
 
 template<typename T>
@@ -176,21 +176,33 @@ bool ValidateJson(T& value) {
   switch (value.type()) {
     case simdjson::ondemand::json_type::array: {
       simdjson::ondemand::array arr;
-      if (value.get_array().get(arr)) return false;
+      if (value.get_array().get(arr)) {
+        return false;
+      }
       for (auto element : arr) {
         simdjson::ondemand::value element_value;
-        if (element.get(element_value)) return false;
-        if (!ValidateJson(element_value)) return false;
+        if (element.get(element_value)) {
+          return false;
+        }
+        if (!ValidateJson(element_value)) {
+          return false;
+        }
       }
       return true;
     }
     case simdjson::ondemand::json_type::object: {
       simdjson::ondemand::object obj;
-      if (value.get_object().get(obj)) return false;
+      if (value.get_object().get(obj)) {
+        return false;
+      }
       for (auto field : obj) {
         simdjson::ondemand::value field_value;
-        if (field.value().get(field_value)) return false;
-        if (!ValidateJson(field_value)) return false;
+        if (field.value().get(field_value)) {
+          return false;
+        }
+        if (!ValidateJson(field_value)) {
+          return false;
+        }
       }
       return true;
     }
@@ -229,12 +241,11 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 // ---------------------------------------------------------------------------
-// -> operator (index / field) — ported from PgJsonExtractIndex/Field
+// -> operator (index / field) -- ported from PgJsonExtractIndex/Field
 // ---------------------------------------------------------------------------
 
 // json -> int  (returns JSON)
-void JsonExtractIndexFunction(duckdb::DataChunk& args,
-                              duckdb::ExpressionState&,
+void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, int64_t,
                                            duckdb::string_t>(
@@ -253,15 +264,13 @@ void JsonExtractIndexFunction(duckdb::DataChunk& args,
 }
 
 // json -> text  (returns JSON)
-void JsonExtractFieldFunction(duckdb::DataChunk& args,
-                              duckdb::ExpressionState&,
+void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::BinaryExecutor::ExecuteWithNulls<duckdb::string_t, duckdb::string_t,
                                            duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json, duckdb::string_t field,
-        duckdb::ValidityMask& mask,
-        duckdb::idx_t row) -> duckdb::string_t {
+        duckdb::ValidityMask& mask, duckdb::idx_t row) -> duckdb::string_t {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::JSON>(
@@ -275,7 +284,7 @@ void JsonExtractFieldFunction(duckdb::DataChunk& args,
 }
 
 // ---------------------------------------------------------------------------
-// ->> operator (index / field) — ported from PgJsonExtractIndexText/FieldText
+// ->> operator (index / field) -- ported from PgJsonExtractIndexText/FieldText
 // ---------------------------------------------------------------------------
 
 // json ->> int  (returns text)
@@ -306,8 +315,7 @@ void JsonExtractFieldTextFunction(duckdb::DataChunk& args,
                                            duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json, duckdb::string_t field,
-        duckdb::ValidityMask& mask,
-        duckdb::idx_t row) -> duckdb::string_t {
+        duckdb::ValidityMask& mask, duckdb::idx_t row) -> duckdb::string_t {
       JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::TEXT>(
@@ -360,15 +368,15 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
         result_validity.SetInvalid(row);
         continue;
       }
-      auto& list_entry = duckdb::UnifiedVectorFormat::GetData<
-        duckdb::list_entry_t>(vdata[1])[list_idx];
+      auto& list_entry =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(
+          vdata[1])[list_idx];
       auto& child = duckdb::ListVector::GetEntry(args.data[1]);
       duckdb::UnifiedVectorFormat child_data;
       child.ToUnifiedFormat(duckdb::ListVector::GetListSize(args.data[1]),
                             child_data);
       for (duckdb::idx_t i = 0; i < list_entry.length; i++) {
-        auto child_idx =
-          child_data.sel->get_index(list_entry.offset + i);
+        auto child_idx = child_data.sel->get_index(list_entry.offset + i);
         if (!child_data.validity.RowIsValid(child_idx)) {
           result_validity.SetInvalid(row);
           goto next_row;
@@ -398,10 +406,11 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (str.empty() && !str.data()) {
         result_validity.SetInvalid(row);
       } else {
-        result_data[row] = duckdb::StringVector::AddString(result, str.data(), str.size());
+        result_data[row] =
+          duckdb::StringVector::AddString(result, str.data(), str.size());
       }
     }
-next_row:;
+  next_row:;
   }
 }
 
@@ -418,7 +427,7 @@ void JsonExtractPathTextFunction(duckdb::DataChunk& args,
 }
 
 // ---------------------------------------------------------------------------
-// json_typeof — ported from PgJsonTypeof
+// json_typeof -- ported from PgJsonTypeof
 // ---------------------------------------------------------------------------
 
 void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -434,12 +443,23 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       const char* name = "null";
       if (!tp.error()) {
         switch (tp.value()) {
-          case simdjson::ondemand::json_type::object: name = "object"; break;
-          case simdjson::ondemand::json_type::array: name = "array"; break;
-          case simdjson::ondemand::json_type::string: name = "string"; break;
-          case simdjson::ondemand::json_type::number: name = "number"; break;
-          case simdjson::ondemand::json_type::boolean: name = "boolean"; break;
-          default: break;
+          case simdjson::ondemand::json_type::object:
+            name = "object";
+            break;
+          case simdjson::ondemand::json_type::array:
+            name = "array";
+            break;
+          case simdjson::ondemand::json_type::string:
+            name = "string";
+            break;
+          case simdjson::ondemand::json_type::number:
+            name = "number";
+            break;
+          case simdjson::ondemand::json_type::boolean:
+            name = "boolean";
+            break;
+          default:
+            break;
         }
       }
       return duckdb::StringVector::AddString(result, name);
@@ -447,7 +467,7 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 // ---------------------------------------------------------------------------
-// json_strip_nulls — ported from PgJsonStripNulls
+// json_strip_nulls -- ported from PgJsonStripNulls
 // ---------------------------------------------------------------------------
 
 void WriteValue(simdjson::ondemand::value val, std::string& out);
@@ -460,7 +480,9 @@ void WriteObject(simdjson::ondemand::object obj, std::string& out) {
     if (val.type().value() == simdjson::ondemand::json_type::null) {
       continue;
     }
-    if (!first) out += ',';
+    if (!first) {
+      out += ',';
+    }
     first = false;
     out += '"';
     out += field.escaped_key().value();
@@ -475,7 +497,9 @@ void WriteArray(simdjson::ondemand::array arr, std::string& out) {
   out += '[';
   bool first = true;
   for (simdjson::ondemand::value elem : arr) {
-    if (!first) out += ',';
+    if (!first) {
+      out += ',';
+    }
     first = false;
     WriteValue(elem, out);
   }
@@ -496,8 +520,7 @@ void WriteValue(simdjson::ondemand::value val, std::string& out) {
   }
 }
 
-void JsonStripNullsFunction(duckdb::DataChunk& args,
-                            duckdb::ExpressionState&,
+void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
@@ -548,14 +571,16 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
     "json_extract_field", {JSON, VARCHAR}, JSON, JsonExtractFieldFunction});
 
   // json ->> int  (json_extract_index_text)
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "json_extract_index_text", {JSON, BIGINT}, VARCHAR,
-    JsonExtractIndexTextFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"json_extract_index_text",
+                                                 {JSON, BIGINT},
+                                                 VARCHAR,
+                                                 JsonExtractIndexTextFunction});
 
   // json ->> text  (json_extract_field_text)
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "json_extract_field_text", {JSON, VARCHAR}, VARCHAR,
-    JsonExtractFieldTextFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"json_extract_field_text",
+                                                 {JSON, VARCHAR},
+                                                 VARCHAR,
+                                                 JsonExtractFieldTextFunction});
 
   // json_extract_path(json, VARIADIC text) -> json
   {
@@ -577,49 +602,49 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
 
   // Internal names for #> / #>> operators (takes json, text[])
   {
-    duckdb::ScalarFunction func{
-      "pg_json_extract_path",
-      {JSON, duckdb::LogicalType::LIST(VARCHAR)}, JSON,
-      JsonExtractPathFunction};
+    duckdb::ScalarFunction func{"pg_json_extract_path",
+                                {JSON, duckdb::LogicalType::LIST(VARCHAR)},
+                                JSON,
+                                JsonExtractPathFunction};
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);
   }
   {
-    duckdb::ScalarFunction func{
-      "pg_json_extract_path_text",
-      {JSON, duckdb::LogicalType::LIST(VARCHAR)}, VARCHAR,
-      JsonExtractPathTextFunction};
+    duckdb::ScalarFunction func{"pg_json_extract_path_text",
+                                {JSON, duckdb::LogicalType::LIST(VARCHAR)},
+                                VARCHAR,
+                                JsonExtractPathTextFunction};
     func.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(func);
   }
 
-  // jsonin — validation cast
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "jsonin", {VARCHAR}, JSON, JsonInFunction});
+  // jsonin -- validation cast
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"jsonin", {VARCHAR}, JSON, JsonInFunction});
 
   // json_typeof
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "json_typeof", {JSON}, VARCHAR, JsonTypeofFunction});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"json_typeof", {JSON}, VARCHAR, JsonTypeofFunction});
 
-  // json_array_length — not registered, DuckDB's json extension provides it
+  // json_array_length -- not registered, DuckDB's json extension provides it
 
   // json_strip_nulls
   loader.RegisterFunction(duckdb::ScalarFunction{
     "json_strip_nulls", {JSON}, JSON, JsonStripNullsFunction});
 
   // Override DuckDB's json extension functions so whitespace is preserved.
-  // json_extract (-> operator) — DuckDB's version re-serializes JSON
+  // json_extract (-> operator) -- DuckDB's version re-serializes JSON
   {
     duckdb::ScalarFunctionSet extract_set("json_extract");
     {
-      duckdb::ScalarFunction f{"json_extract", {JSON, BIGINT}, JSON,
-                               JsonExtractIndexFunction};
+      duckdb::ScalarFunction f{
+        "json_extract", {JSON, BIGINT}, JSON, JsonExtractIndexFunction};
       f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       extract_set.AddFunction(f);
     }
     {
-      duckdb::ScalarFunction f{"json_extract", {JSON, VARCHAR}, JSON,
-                               JsonExtractFieldFunction};
+      duckdb::ScalarFunction f{
+        "json_extract", {JSON, VARCHAR}, JSON, JsonExtractFieldFunction};
       f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       extract_set.AddFunction(f);
     }
@@ -629,14 +654,14 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunctionSet arrow_text_set("->>");
     {
-      duckdb::ScalarFunction f{"->>", {JSON, BIGINT}, VARCHAR,
-                               JsonExtractIndexTextFunction};
+      duckdb::ScalarFunction f{
+        "->>", {JSON, BIGINT}, VARCHAR, JsonExtractIndexTextFunction};
       f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       arrow_text_set.AddFunction(f);
     }
     {
-      duckdb::ScalarFunction f{"->>", {JSON, VARCHAR}, VARCHAR,
-                               JsonExtractFieldTextFunction};
+      duckdb::ScalarFunction f{
+        "->>", {JSON, VARCHAR}, VARCHAR, JsonExtractFieldTextFunction};
       f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       arrow_text_set.AddFunction(f);
     }
@@ -645,13 +670,17 @@ void RegisterPgJsonFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunctionSet extract_string_set("json_extract_string");
     {
-      duckdb::ScalarFunction f{"json_extract_string", {JSON, BIGINT}, VARCHAR,
+      duckdb::ScalarFunction f{"json_extract_string",
+                               {JSON, BIGINT},
+                               VARCHAR,
                                JsonExtractIndexTextFunction};
       f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       extract_string_set.AddFunction(f);
     }
     {
-      duckdb::ScalarFunction f{"json_extract_string", {JSON, VARCHAR}, VARCHAR,
+      duckdb::ScalarFunction f{"json_extract_string",
+                               {JSON, VARCHAR},
+                               VARCHAR,
                                JsonExtractFieldTextFunction};
       f.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       extract_string_set.AddFunction(f);

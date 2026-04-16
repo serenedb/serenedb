@@ -71,7 +71,7 @@ query
 SELECT age(timestamp '2001-04-10', timestamp '1957-06-13');
 ----
 age
-43 years 9 months 27 days
+43 years 9 mons 27 days
 
 
 # date_bin

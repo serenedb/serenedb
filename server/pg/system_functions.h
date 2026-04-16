@@ -896,6 +896,14 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {DEFAULT_SCHEMA, "overlay",
    R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
 
+  // PG datetime functions missing from DuckDB
+  // clock_timestamp: real wall-clock time (not statement time).
+  // DuckDB's now() is transaction-scoped, but close enough for most uses.
+  {DEFAULT_SCHEMA, "clock_timestamp", R"(() AS now())"},
+  // timeofday: wall clock as formatted text
+  {DEFAULT_SCHEMA, "timeofday",
+   R"(() AS strftime(now()::timestamp, '%a %b %d %H:%M:%S %Y UTC'))"},
+
   // PG math functions missing from DuckDB
 
   // div: registered as C++ function in connector/functions/math.cpp

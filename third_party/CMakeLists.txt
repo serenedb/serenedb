@@ -505,8 +505,16 @@ if(NOT TARGET CURL::libcurl)
     add_library(CURL::libcurl ALIAS libcurl_static)
 endif()
 set(CURL_FOUND TRUE CACHE INTERNAL "")
-set(CURL_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/curl/include" CACHE INTERNAL "")
-set(CURL_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/curl/include" CACHE INTERNAL "")
+set(CURL_INCLUDE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
+    CACHE INTERNAL
+    ""
+)
+set(CURL_INCLUDE_DIRS
+    "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
+    CACHE INTERNAL
+    ""
+)
 set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
 set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
 

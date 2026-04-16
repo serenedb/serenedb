@@ -21,6 +21,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_join.h>
 
+#include <duckdb/common/assert.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/config.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -87,6 +88,26 @@ constexpr std::pair<std::string_view, VariableDescription>
 
           ClearFailurePointsDebugging();
           connector::GetSereneDBContext(ctx).OnSet(kName, false);
+        },
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+#endif
+#ifdef D_ASSERT_IS_ENABLED
+    {
+      "debug_verification",
+      {
+        LogicalTypeId::BOOLEAN,
+        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
+        "false to disable verification projections in EXPLAIN and speed "
+        "up tests in debug builds. Default: false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          duckdb::g_debug_verify_enabled.store(value.GetValue<bool>(),
+                                               std::memory_order_relaxed);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          duckdb::g_debug_verify_enabled.store(false, std::memory_order_relaxed);
         },
         duckdb::SetScope::GLOBAL,
       },

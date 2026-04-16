@@ -24,27 +24,34 @@
 #include <absl/strings/internal/damerau_levenshtein_distance.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
-#include <absl/strings/str_replace.h>
 
 #include <algorithm>
+#include <duckdb/common/case_insensitive_map.hpp>
+#include <duckdb/common/exception.hpp>
+#include <duckdb/common/named_parameter_map.hpp>
+#include <duckdb/common/string_util.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <functional>
+#include <optional>
 #include <type_traits>
-#include <variant>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/errors.h"
 #include "pg/option_help.h"
-#include "pg/pg_list_utils.h"
-#include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
-#include "query/context.h"
-#include "utils/elog.h"
 
 namespace sdb::pg {
 
-using Options = containers::FlatHashMap<std::string_view, const DefElem*>;
+// Value stored per option: a typed duckdb::Value plus optional cursor location.
+struct OptionEntry {
+  duckdb::Value value;
+  int location = -1;  // query cursor position; -1 if unavailable
+  bool has_value =
+    true;  // false for presence-only flags written without =value
+};
 
+using Options = containers::FlatHashMap<std::string, OptionEntry>;
+
+/*
 namespace explain_options {
 
 using query::ExplainWith;
@@ -102,24 +109,23 @@ inline void AddByName(std::string_view name, ExplainOptions& result) {
 }
 
 }  // namespace explain_options
+*/
 
 struct OptionsContext {
   std::string_view operation;
-  std::string_view query_string;
   std::function<void(std::string)> notice;
-  explain_options::ExplainOptions* explain = nullptr;
+  // explain_options::ExplainOptions* explain = nullptr;
 };
 
 class OptionsParser {
  public:
-  OptionsParser(const List* options, const OptionGroup& option_group,
-                OptionsContext context)
-    : _query_string{context.query_string},
-      _operation{context.operation},
+  OptionsParser(const duckdb::named_parameter_map_t& named_parameters,
+                const OptionGroup& option_group, OptionsContext context)
+    : _operation{context.operation},
       _notice{std::move(context.notice)},
-      _explain{context.explain},
+      // _explain{context.explain},
       _option_group{option_group} {
-    MakeOptions(options);
+    MakeOptions(named_parameters);
     HandleHelp();
   }
 
@@ -129,28 +135,33 @@ class OptionsParser {
     static_assert(Info.type != OptionInfo::Type::Enum,
                   "Use EnumOptionInfo overload for enum options");
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
-    if (const auto* option = EraseOption(Info, !kIsBool, prefix)) {
+    constexpr bool kIsString = Info.type == OptionInfo::Type::String;
+    if (auto entry = EraseOption(Info, !kIsBool, prefix)) {
       if constexpr (kIsBool) {
-        if (!option->arg) {
+        if (!entry->has_value) {
           return true;
         }
       }
-      auto value = TryGet<T>(option->arg);
+      auto value = TryExtract<T>(entry->value);
       if (!value) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG(Info.ErrorMessage(_operation, DeparseValue(option->arg))));
+        throw duckdb::InvalidInputException(
+          Info.ErrorMessage(_operation, entry->value.ToString()));
       }
       if constexpr (!std::holds_alternative<std::monostate>(Info.constraint)) {
-        SDB_ASSERT(std::holds_alternative<void (*)(T)>(Info.constraint));
-        std::get<void (*)(T)>(Info.constraint)(*value);
+        if constexpr (kIsString) {
+          // ConstraintFunction stores void(*)(string_view); string converts
+          // implicitly.
+          std::get<void (*)(std::string_view)>(Info.constraint)(
+            std::string_view{*value});
+        } else {
+          SDB_ASSERT(std::holds_alternative<void (*)(T)>(Info.constraint));
+          std::get<void (*)(T)>(Info.constraint)(*value);
+        }
       }
       return *value;
     } else if (Info.IsRequired()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("required parameter \"", Info.name, "\" was not found"));
+      throw duckdb::InvalidInputException(
+        "required parameter \"%s\" was not found", std::string{Info.name});
     }
     return Info.GetDefaultValue<T>();
   }
@@ -170,58 +181,52 @@ class OptionsParser {
                       }));
     };
 
-    if (const auto* option = EraseOption(Info.base, true, prefix)) {
-      auto raw = TryGet<std::string_view>(option->arg);
+    if (auto entry = EraseOption(Info.base, true, prefix)) {
+      auto raw = TryExtract<std::string>(entry->value);
       if (!raw) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG(Info.base.ErrorMessage(
-                          _operation, DeparseValue(option->arg))),
-                        ERR_HINT(make_hint()));
+        throw duckdb::InvalidInputException(
+          "%s\n%s", Info.base.ErrorMessage(_operation, entry->value.ToString()),
+          make_hint());
       }
       auto result =
         magic_enum::enum_cast<E>(*raw, magic_enum::case_insensitive);
       if (!result) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG(Info.base.ErrorMessage(_operation, *raw)),
-                        ERR_HINT(make_hint()));
+        throw duckdb::InvalidInputException(
+          "%s\n%s", Info.base.ErrorMessage(_operation, *raw), make_hint());
       }
       return *result;
     }
 
     if (Info.base.IsRequired()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        ERR_MSG("required parameter \"", Info.base.name, "\" was not found"));
+      throw duckdb::InvalidInputException(
+        "required parameter \"%s\" was not found", std::string{Info.base.name});
     }
 
     return Info.base.template GetDefaultValue<E>();
   }
 
-  // requires_parameter == presence flag like ... WITH (FLAG)
-  const DefElem* EraseOption(const OptionInfo& info,
-                             bool requires_parameter = true,
-                             std::string_view prefix = "") {
+  // Returns the entry by value (moved out of the map) or nullopt if not found.
+  // requires_parameter: if true and the option has no =value, throws an error.
+  std::optional<OptionEntry> EraseOption(const OptionInfo& info,
+                                         bool requires_parameter = true,
+                                         std::string_view prefix = "") {
     decltype(_options)::iterator it;
     if (!prefix.empty()) {
       auto full_name = OptionInfo::AdjustPrefix(prefix, info.name);
       it = _options.find(full_name);
     } else {
-      it = _options.find(info.name);
+      it = _options.find(std::string{info.name});
     }
     if (it == _options.end()) {
-      return nullptr;
+      return std::nullopt;
     }
-    const auto* option = it->second;
+    auto entry = std::move(it->second);
     _options.erase(it);
-    SDB_ASSERT(option);
-    if (requires_parameter && !option->arg) {
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG(info.name, " requires a parameter"));
+    if (requires_parameter && !entry.has_value) {
+      throw duckdb::InvalidInputException("%s requires a parameter",
+                                          std::string{info.name});
     }
-    return option;
+    return entry;
   }
 
   bool HasOption(const OptionInfo& info, std::string_view prefix = "") const {
@@ -233,18 +238,16 @@ class OptionsParser {
       auto full_name = OptionInfo::AdjustPrefix(prefix, name);
       return _options.contains(full_name);
     } else {
-      return _options.contains(name);
+      return _options.contains(std::string{name});
     }
   }
 
   int OptionLocation(const OptionInfo& info) const {
-    auto it = _options.find(info.name);
+    auto it = _options.find(std::string{info.name});
     if (it == _options.end()) {
       return -1;
     }
-
-    SDB_ASSERT(it->second);
-    return it->second->location;
+    return it->second.location;
   }
 
   template<typename F>
@@ -254,37 +257,71 @@ class OptionsParser {
   }
 
  private:
-  void MakeOptions(const List* options) {
-    _options.reserve(list_length(options));
-    Options explain;
-    VisitNodes(options, [&](const DefElem& option) {
-      std::string_view option_name = option.defname;
-      if (_explain && option_name == "explain") {
-        if (!option.arg) {
-          HandleHelp();
+  // Extracts a typed C++ value from a duckdb::Value.
+  template<typename T>
+  static std::optional<T> TryExtract(const duckdb::Value& v) {
+    try {
+      if constexpr (std::is_same_v<T, std::string>) {
+        return v.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+          .GetValue<std::string>();
+      } else if constexpr (std::is_same_v<T, bool>) {
+        if (v.type().id() == duckdb::LogicalTypeId::VARCHAR) {
+          auto s = duckdb::StringUtil::Lower(v.GetValue<std::string>());
+          if (s == "true" || s == "on" || s == "1") {
+            return true;
+          }
+          if (s == "false" || s == "off" || s == "0") {
+            return false;
+          }
+          return std::nullopt;
         }
-        auto name = TryGet<std::string_view>(option.arg);
-        if (!name) {
-          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                          ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
+        return v.DefaultCastAs(duckdb::LogicalType::BOOLEAN).GetValue<bool>();
+      } else if constexpr (std::is_same_v<T, int>) {
+        return static_cast<int>(
+          v.DefaultCastAs(duckdb::LogicalType::BIGINT).GetValue<int64_t>());
+      } else if constexpr (std::is_same_v<T, double>) {
+        return v.DefaultCastAs(duckdb::LogicalType::DOUBLE).GetValue<double>();
+      } else if constexpr (std::is_same_v<T, char>) {
+        auto s =
+          v.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+        if (s.size() != 1) {
+          return std::nullopt;
         }
-        explain.try_emplace(*name, &option);
-        return;
+        return s[0];
       }
-      auto [_, emplaced] = _options.try_emplace(option_name, &option);
-      if (!emplaced) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    });
-
-    if (!explain.empty()) {
-      SDB_ASSERT(_explain);
-      ParseExplainElems(std::move(explain));
+    } catch (...) {
+      return std::nullopt;
     }
+  }
+
+  void MakeOptions(const duckdb::named_parameter_map_t& params) {
+    _options.reserve(params.size());
+    // Options explain_opts;
+    for (const auto& [key, val] : params) {
+      OptionEntry entry{val, -1, true};
+
+      // if (_explain && duckdb::StringUtil::CIEquals(key, "explain")) {
+      //   // Explain option: value is the stage name.
+      //   auto name = TryExtract<std::string>(val);
+      //   if (!name) {
+      //     throw duckdb::InvalidInputException(
+      //       "invalid value for parameter \"explain\": \"%s\"",
+      //       val.ToString());
+      //   }
+      //   explain_opts.try_emplace(*name, std::move(entry));
+      //   continue;
+      // }
+
+      auto [_, emplaced] =
+        _options.try_emplace(std::string{key}, std::move(entry));
+      if (!emplaced) {
+        throw duckdb::InvalidInputException("conflicting or redundant options");
+      }
+    }
+    // if (!explain_opts.empty()) {
+    //   SDB_ASSERT(_explain);
+    //   ParseExplainElems(std::move(explain_opts));
+    // }
   }
 
   void HandleHelp() {
@@ -293,29 +330,28 @@ class OptionsParser {
       return;
     }
     std::string help = "\n";
-    if (_explain) {
-      absl::StrAppend(&help, "Explain, use WITH (EXPLAIN 'option_name'):\n");
-      absl::StrAppend(&help, FormatHelp(explain_options::kExplainGroup));
-    }
+    // if (_explain) {
+    //   absl::StrAppend(&help, "Explain, use WITH (EXPLAIN 'option_name'):\n");
+    //   absl::StrAppend(&help, FormatHelp(explain_options::kExplainGroup));
+    // }
     absl::StrAppend(&help, FormatHelp(_option_group));
-    THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(it->second))),
-                    ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(help));
+    throw duckdb::InvalidInputException(help);
   }
 
-  void ParseExplainElems(Options explain) {
-    for (const auto& name : explain_options::kExplainGroup.FlatNames()) {
-      if (auto it = std::ranges::find_if(explain,
-                                         [&](const auto& entry) {
-                                           return absl::EqualsIgnoreCase(
-                                             entry.first, name);
-                                         });
-          it != explain.end()) {
-        explain.erase(it);
-        explain_options::AddByName(name, *_explain);
-      }
-    }
-    CheckUnrecognizedOptions(explain, explain_options::kExplainGroup);
-  }
+  // void ParseExplainElems(Options explain) {
+  //   for (const auto& name : explain_options::kExplainGroup.FlatNames()) {
+  //     if (auto it = std::ranges::find_if(explain,
+  //                                        [&](const auto& entry) {
+  //                                          return absl::EqualsIgnoreCase(
+  //                                            entry.first, name);
+  //                                        });
+  //         it != explain.end()) {
+  //       explain.erase(it);
+  //       explain_options::AddByName(name, *_explain);
+  //     }
+  //   }
+  //   CheckUnrecognizedOptions(explain, explain_options::kExplainGroup);
+  // }
 
   void CheckUnrecognizedOptions() const {
     CheckUnrecognizedOptions(_options, _option_group);
@@ -325,17 +361,16 @@ class OptionsParser {
                                 const OptionGroup& option_group) const {
     auto known_names = option_group.FlatNames();
     known_names.emplace_back("help");
-    if (_explain) {
-      known_names.emplace_back("explain");
-    }
+    // if (_explain) {
+    //   known_names.emplace_back("explain");
+    // }
 
-    for (const auto& [name, option] : options) {
+    for (const auto& [name, entry] : options) {
       if (absl::c_contains(known_names, name)) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("option \"", name, "\" is not applicable in this context"),
-          ERR_HINT("Use WITH (HELP) to see available options"));
+        throw duckdb::InvalidInputException(
+          "option \"%s\" is not applicable in this context\nHint: Use WITH "
+          "(HELP) to see available options",
+          name);
       }
       auto hint = FindClosestOption(known_names, name);
       auto msg =
@@ -343,9 +378,8 @@ class OptionsParser {
           ? absl::StrCat("option \"", name, "\" not recognized")
           : absl::StrCat("option \"", name,
                          "\" not recognized, did you mean \"", hint, "\"?");
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                      ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(msg),
-                      ERR_HINT("Use WITH (HELP) to see available options"));
+      throw duckdb::InvalidInputException(
+        "%s\nHint: Use WITH (HELP) to see available options", msg);
     }
   }
 
@@ -371,20 +405,15 @@ class OptionsParser {
   }
 
  protected:
-  int ErrorPosition(int location) const {
-    return ::sdb::pg::ErrorPosition(_query_string, location);
-  }
-
   void WriteNotice(std::string msg) {
     if (_notice) {
       _notice(std::move(msg));
     }
   }
 
-  std::string_view _query_string;
   std::string _operation;
   std::function<void(std::string)> _notice;
-  explain_options::ExplainOptions* _explain;
+  // explain_options::ExplainOptions* _explain;
   Options _options;
   const OptionGroup& _option_group;
 };

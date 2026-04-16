@@ -21,9 +21,21 @@
 #include "connector/functions/search.h"
 
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/utils/string.hpp>
+
+#include "catalog/catalog.h"
+#include "catalog/tokenizer.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 namespace {
@@ -34,6 +46,105 @@ void SearchStubFn(duckdb::DataChunk& /*args*/,
   throw duckdb::InvalidInputException(
     "Inverted index function called outside inverted index context. "
     "Use in WHERE clause on a table with an inverted index.");
+}
+
+// ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
+// Runs `token` through the named text search dictionary and returns
+// the resulting lexemes as a VARCHAR array. Mirrors pg_catalog.ts_lexize().
+void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                      duckdb::Vector& result) {
+  auto count = args.size();
+  auto& context = state.GetContext();
+  auto& conn_ctx = GetSereneDBContext(context);
+
+  auto db_id = conn_ctx.GetDatabaseId();
+  auto current_schema = conn_ctx.GetCurrentSchema();
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+
+  duckdb::UnifiedVectorFormat dict_format, text_format;
+  args.data[0].ToUnifiedFormat(count, dict_format);
+  args.data[1].ToUnifiedFormat(count, text_format);
+
+  auto* dict_data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(dict_format);
+  auto* text_data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text_format);
+
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::ListVector::SetListSize(result, 0);
+
+  auto* list_entries =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+  auto& result_validity = duckdb::FlatVector::Validity(result);
+
+  // Collect tokens per row first (tokenizer output is ephemeral).
+  std::vector<std::vector<std::string>> row_tokens(count);
+  duckdb::idx_t total_tokens = 0;
+
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto dict_idx = dict_format.sel->get_index(i);
+    auto text_idx = text_format.sel->get_index(i);
+
+    if (!dict_format.validity.RowIsValid(dict_idx) ||
+        !text_format.validity.RowIsValid(text_idx)) {
+      result_validity.SetInvalid(i);
+      list_entries[i] = {total_tokens, 0};
+      continue;
+    }
+
+    std::string_view dict_name_sv{dict_data[dict_idx].GetData(),
+                                  dict_data[dict_idx].GetSize()};
+    std::string_view text_sv{text_data[text_idx].GetData(),
+                             text_data[text_idx].GetSize()};
+
+    auto name = pg::ParseObjectName(dict_name_sv, current_schema);
+
+    auto dict = snapshot->GetTokenizer(db_id, name.schema, name.relation);
+    if (!dict) {
+      throw duckdb::InvalidInputException(
+        "text search dictionary \"%s\" does not exist",
+        std::string{dict_name_sv});
+    }
+
+    auto tokenizer_result = dict->GetTokenizer();
+    if (!tokenizer_result) {
+      throw duckdb::InvalidInputException(
+        "failed to get tokenizer: %s",
+        std::string{tokenizer_result.error().errorMessage()});
+    }
+
+    auto& tokenizer = *tokenizer_result;
+    if (!tokenizer->reset(text_sv)) {
+      throw duckdb::InvalidInputException("error while preparing tokenizer");
+    }
+
+    auto* term = irs::get<irs::TermAttr>(*tokenizer);
+    while (tokenizer->next()) {
+      auto char_view = irs::ViewCast<char>(term->value);
+      row_tokens[i].emplace_back(char_view.data(), char_view.size());
+    }
+    total_tokens += row_tokens[i].size();
+  }
+
+  // Fill result list vector.
+  duckdb::ListVector::Reserve(result, total_tokens);
+  auto& child = duckdb::ListVector::GetEntry(result);
+  auto* child_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
+
+  duckdb::idx_t offset = 0;
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    if (!result_validity.RowIsValid(i)) {
+      continue;
+    }
+    list_entries[i].offset = offset;
+    list_entries[i].length = row_tokens[i].size();
+    for (const auto& tok : row_tokens[i]) {
+      child_data[offset++] =
+        duckdb::StringVector::AddString(child, tok.c_str(), tok.size());
+    }
+  }
+  duckdb::ListVector::SetListSize(result, total_tokens);
 }
 
 }  // namespace
@@ -145,6 +256,17 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   loader.RegisterFunction(duckdb::ScalarFunction(
     std::string{kOffsets}, {duckdb::LogicalType::VARCHAR},
     duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
+
+  // ts_lexize(dict_name, token) -> VARCHAR[]
+  // Runs a single token through the named text search dictionary.
+  {
+    duckdb::ScalarFunction fn(
+      "ts_lexize", {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+      TsLexizeFunction);
+    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    loader.RegisterFunction(std::move(fn));
+  }
 }
 
 }  // namespace sdb::connector

@@ -72,7 +72,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
         NULL::TEXT as sourcefile,
         NULL::INT as sourceline,
         NULL::BOOL as pending_restart
-      FROM pg_settings;
+      FROM duckdb_settings();
   END;)"},
 
   {"pg_catalog", "pg_stat_get_progress_info",

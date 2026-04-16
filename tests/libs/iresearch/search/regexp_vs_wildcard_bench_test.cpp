@@ -124,8 +124,8 @@ class RegexpVsWildcardBenchTestCase : public tests::FilterTestCaseBase {
 
     std::cout << std::fixed << std::setprecision(1);
     std::cout << "  " << label << "\n"
-              << "  docs matched: " << wt.doc_count
-              << "  (avg of " << kMeasureRuns << " runs)\n"
+              << "  docs matched: " << wt.doc_count << "  (avg of "
+              << kMeasureRuns << " runs)\n"
               << "  wildcard    \"" << wildcard_pattern << "\"\n"
               << "    prepare: " << us(wt.prepare) << " us\n"
               << "    execute: " << us(wt.execute) << " us\n"
@@ -151,8 +151,8 @@ TEST_P(RegexpVsWildcardBenchTestCase, europarl_big) {
             << " Dataset: europarl.subset.big.txt\n"
             << " Directory: mmap\n"
             << " Field: body_anl\n"
-            << " Warmup: " << kWarmupRuns
-            << ", Measure: " << kMeasureRuns << " (averaged)\n"
+            << " Warmup: " << kWarmupRuns << ", Measure: " << kMeasureRuns
+            << " (averaged)\n"
             << std::endl;
 
   BenchPair(rdr, "prefix: comm%  vs  comm.*", "comm%", "comm.*");

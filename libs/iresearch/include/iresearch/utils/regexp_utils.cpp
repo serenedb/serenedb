@@ -23,10 +23,10 @@
 #include "fst/concat.h"
 #include "fst/union.h"
 #include "fstext/determinize-star.h"
+#include "iresearch/utils/utf8_utils.hpp"
 #include "re2/regexp.h"
 #include "re2/unicode_casefold.h"
 #include "re2/walker-inl.h"
-#include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 namespace {
@@ -142,8 +142,8 @@ automaton MakeCharFromRune(int rune) {
 // by codepoint also sorts by first-byte ilabel.
 automaton MakeCaseFoldedChar(int rune) {
   auto cycle_fold = [](re2::Rune r) -> re2::Rune {
-    const re2::CaseFold* f = re2::LookupCaseFold(
-      re2::unicode_casefold, re2::num_unicode_casefold, r);
+    const re2::CaseFold* f =
+      re2::LookupCaseFold(re2::unicode_casefold, re2::num_unicode_casefold, r);
     if (f == nullptr || r < f->lo) {
       return r;
     }
@@ -157,7 +157,7 @@ automaton MakeCaseFoldedChar(int rune) {
     r = cycle_fold(r);
   } while (r != rune);
 
-  std::sort(variants.begin(), variants.end());
+  absl::c_sort(variants);
 
   automaton a;
   a.AddStates(2);
@@ -172,7 +172,6 @@ automaton MakeCaseFoldedChar(int rune) {
 
   return a;
 }
-
 
 void AddUtf8ByteRange(automaton& a, automaton::StateId from,
                       automaton::StateId to, const byte_type* lo,
@@ -337,9 +336,10 @@ automaton BuildCharClass(re2::CharClass* cc) {
 //   AST node, not an error.
 class RegexpToAutomatonWalker : public re2::Regexp::Walker<automaton> {
  public:
+  // NOLINTNEXTLINE(clang-analyzer-optin.cplusplus.UninitializedObject)
   RegexpToAutomatonWalker() : _error{false} {}
 
-  bool has_error() const { return _error; }
+  bool HasError() const { return _error; }
 
   automaton PostVisit(re2::Regexp* re, automaton parent_arg, automaton pre_arg,
                       automaton* child_args, int nchild_args) override {
@@ -358,8 +358,7 @@ class RegexpToAutomatonWalker : public re2::Regexp::Walker<automaton> {
         if (re->nrunes() == 0) {
           return MakeEpsilon();
         }
-        const bool fold_case =
-          (re->parse_flags() & re2::Regexp::FoldCase) != 0;
+        const bool fold_case = (re->parse_flags() & re2::Regexp::FoldCase) != 0;
         auto make_char = [fold_case](int rune) {
           return fold_case ? MakeCaseFoldedChar(rune) : MakeCharFromRune(rune);
         };
@@ -381,7 +380,7 @@ class RegexpToAutomatonWalker : public re2::Regexp::Walker<automaton> {
 
         // Build concatenation by prepending children in reverse order.
         // fst::Concat(A, &B) prepends A before B (modifying B in place),
-        // so to build child[0]·child[1]·...·child[N-1] we start from
+        // so to build child[0]Xchild[1]X...Xchild[N-1] we start from
         // child[N-1] and prepend child[N-2], child[N-3], ..., child[0].
         // This matches the wildcard approach and avoids the overhead of
         // the appending alternative (which would need to rewire growing
@@ -638,9 +637,9 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
   auto nfa = walker.Walk(sre.get(), MakeEpsilon());
 
   SDB_ASSERT(!walker.stopped_early());
-  SDB_ASSERT(!walker.has_error());
+  SDB_ASSERT(!walker.HasError());
 
-  if (walker.has_error() || walker.stopped_early()) {
+  if (walker.HasError() || walker.stopped_early()) {
     return {};
   }
 
@@ -656,8 +655,7 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
 
   // Guard against exponential state blowup from pathological
   // patterns (e.g. [ab]{20} can produce 2^20 DFA states).
-  if (max_dfa_states > 0 &&
-      dfa.NumStates() > max_dfa_states) {
+  if (max_dfa_states > 0 && dfa.NumStates() > max_dfa_states) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               absl::StrCat("RE2 regexp DFA too large: ", dfa.NumStates(),
                            " states (limit: ", max_dfa_states, ")"));

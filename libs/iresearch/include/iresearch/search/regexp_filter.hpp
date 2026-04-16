@@ -29,9 +29,7 @@ struct FilterVisitor;
 struct ByRegexpFilterOptions {
   bstring pattern;
 
-  bool operator==(const ByRegexpFilterOptions& rhs) const noexcept {
-    return pattern == rhs.pattern;
-  }
+  bool operator==(const ByRegexpFilterOptions&) const noexcept = default;
 };
 
 struct ByRegexpOptions : ByRegexpFilterOptions {

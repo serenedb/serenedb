@@ -589,8 +589,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_match_all) {
   }
   auto rdr = open_reader();
   Docs all;
-  for (size_t i = 0; i < 32; ++i)
+  for (size_t i = 0; i < 32; ++i) {
     all.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+  }
   Costs all_costs{all.size()};
   CheckQuery(MakeFilter("same", ".*"), all, all_costs, rdr);
   CheckQuery(MakeFilter("same", "..."), all, all_costs, rdr);
@@ -676,8 +677,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_cross_validation) {
   CheckQuery(MakeFilter<irs::ByPrefix>("term", "foo"), prefix_expected,
              Costs{15}, rdr);
   Docs all_expected;
-  for (irs::doc_id_t i = 1; i <= 20; ++i)
+  for (irs::doc_id_t i = 1; i <= 20; ++i) {
     all_expected.push_back(i);
+  }
   CheckQuery(MakeFilter("term", ".*"), all_expected, Costs{20}, rdr);
   CheckQuery(MakeFilter<irs::ByPrefix>("term", ""), all_expected, Costs{20},
              rdr);
@@ -716,8 +718,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
   auto rdr = open_reader();
   {
     Docs all;
-    for (size_t i = 0; i < 32; ++i)
+    for (size_t i = 0; i < 32; ++i) {
       all.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
     CheckQuery(q, all, Costs{32}, rdr);
   }
 }
@@ -974,16 +977,18 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
     auto p = q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     for (auto& s : rdr) {
       auto d = p->execute({.segment = s});
-      while (d->advance() != irs::doc_limits::eof())
+      while (d->advance() != irs::doc_limits::eof()) {
         run1.push_back(d->value());
+      }
     }
   }
   {
     auto p = q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     for (auto& s : rdr) {
       auto d = p->execute({.segment = s});
-      while (d->advance() != irs::doc_limits::eof())
+      while (d->advance() != irs::doc_limits::eof()) {
         run2.push_back(d->value());
+      }
     }
   }
   ASSERT_EQ(run1, run2);
@@ -1008,8 +1013,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_two_segments) {
   ASSERT_EQ(2, rdr.size());
   {
     Docs all;
-    for (size_t i = 0; i < 32; ++i)
+    for (size_t i = 0; i < 32; ++i) {
       all.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
     CheckQuery(MakeFilter("same", ".*"), all, rdr);
   }
   CheckQuery(MakeFilter("nonexistent", ".*"), Docs{}, rdr);
@@ -1033,8 +1039,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
     auto rdr = open_reader();
     ASSERT_EQ(2, rdr.size());
     Docs all;
-    for (size_t i = 0; i < 32; ++i)
+    for (size_t i = 0; i < 32; ++i) {
       all.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
     CheckQuery(MakeFilter("same", ".*"), all, rdr);
   }
   ASSERT_TRUE(writer->Consolidate(
@@ -1048,8 +1055,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
     auto p = q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
     for (auto& s : rdr) {
       auto d = p->execute({.segment = s});
-      while (d->advance() != irs::doc_limits::eof())
+      while (d->advance() != irs::doc_limits::eof()) {
         result.push_back(d->value());
+      }
     }
     ASSERT_EQ(32, result.size());
   }
@@ -1214,8 +1222,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   }
   {
     Docs docs;
-    for (irs::doc_id_t i = 1; i <= 20; ++i)
+    for (irs::doc_id_t i = 1; i <= 20; ++i) {
       docs.push_back(i);
+    }
     CheckQuery(MakeFilter("class", "\\w+"), docs, Costs{20}, rdr);
   }
   {
@@ -1235,8 +1244,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   }
   {
     Docs docs;
-    for (irs::doc_id_t i = 1; i <= 20; ++i)
+    for (irs::doc_id_t i = 1; i <= 20; ++i) {
       docs.push_back(i);
+    }
     CheckQuery(MakeFilter("class", "\\S+"), docs, Costs{20}, rdr);
   }
 }
@@ -1459,8 +1469,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_very_long_pattern) {
   {
     std::string p;
     for (int i = 1; i <= 50; ++i) {
-      if (i > 1)
+      if (i > 1) {
         p += '|';
+      }
       p += std::string(i, 'x');
     }
     ASSERT_NE(nullptr,

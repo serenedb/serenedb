@@ -74,15 +74,13 @@ field_visitor ByRegexp::visitor(bytes_view pattern) {
       auto acceptor = FromRegexp(pattern);
 
       if (!Validate(acceptor)) {
-        // Invalid pattern or too complex — return visitor that matches nothing
-        return [](const SubReader&, const TermReader&,
-                  FilterVisitor&) {};
+        // Invalid pattern or too complex - return visitor that matches nothing
+        return [](const SubReader&, const TermReader&, FilterVisitor&) {};
       }
 
       struct AutomatonContext : util::Noncopyable {
         explicit AutomatonContext(automaton&& a)
-          : acceptor{std::move(a)},
-            matcher{MakeAutomatonMatcher(acceptor)} {}
+          : acceptor{std::move(a)}, matcher{MakeAutomatonMatcher(acceptor)} {}
 
         automaton acceptor;
         automaton_table_matcher matcher;
@@ -102,9 +100,8 @@ field_visitor ByRegexp::visitor(bytes_view pattern) {
 }
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
-                                        std::string_view field,
-                                        bytes_view pattern,
-                                        size_t scored_terms_limit) {
+                                     std::string_view field, bytes_view pattern,
+                                     size_t scored_terms_limit) {
   bstring buf;
   const auto type = ComputeRegexpType(pattern);
 

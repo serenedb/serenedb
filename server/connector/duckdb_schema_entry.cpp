@@ -270,7 +270,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
 
-  r = catalog_impl.CreateTable(database_id, "public", std::move(options),
+  r = catalog_impl.CreateTable(database_id, name, std::move(options),
                                op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
@@ -367,12 +367,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
     create_result = catalog_impl.CreateInvertedIndex(
-      database_id, "public", sdb_table->GetName(), info.index_name,
+      database_id, name, sdb_table->GetName(), info.index_name,
       std::move(idx_columns), shard_options);
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
-      database_id, "public", sdb_table->GetName(), info.index_name,
+      database_id, name, sdb_table->GetName(), info.index_name,
       std::move(idx_columns), unique);
   }
 
@@ -390,7 +390,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   // Start background tasks for inverted indexes
   auto new_snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    new_snapshot->GetRelation(database_id, "public", info.index_name);
+    new_snapshot->GetRelation(database_id, name, info.index_name);
   if (catalog_index) {
     auto shard = new_snapshot->GetIndexShard(catalog_index->GetId());
     if (shard && shard->GetType() == catalog::ObjectType::InvertedIndexShard) {

@@ -129,3 +129,4 @@
 [submodule "third_party/curl"]
 	path = third_party/curl
 	url = https://github.com/serenedb/curl.git
+	shallow = true

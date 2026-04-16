@@ -5,6 +5,9 @@ add_library(
     search_sink_writer.cpp
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
+    rocksdb_filter.cpp
+    search_filter_builder.cpp
+    search_filter_printer.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
@@ -12,6 +15,7 @@ add_library(
     duckdb_system_table_entry.cpp
     duckdb_table_entry.cpp
     duckdb_index_entry.cpp
+    duckdb_index_scan_entry.cpp
     duckdb_table_function.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp

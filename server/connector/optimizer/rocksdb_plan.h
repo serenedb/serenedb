@@ -27,19 +27,21 @@ class DatabaseInstance;
 
 namespace sdb::optimizer {
 
-// Registers the ANN search plan optimizer with DuckDB.
-// It detects the pattern:
-//   ORDER BY <distance_func>(col, const_vector) ASC LIMIT k
-// over a serenedb_scan, and rewrites it to use the HNSW index for
-// efficient approximate nearest-neighbour retrieval.
+// Registers the rocksdb_plan optimizer rule with DuckDB.
 //
-// Index selection priority:
-//   1. Explicit: the index named in the query via "FROM i ON t" syntax
-//      (bind_data.table_entry->GetInvertedIndex() is non-null).
-//   2. Auto: the first InvertedIndex on the table that covers the
-//      distance column (fallback when no explicit index is given).
+// Detects PK and SK predicate patterns above a `serenedb_scan` LogicalGet
+// and swaps the LogicalGet's function to a more specialised scan that uses
+// RocksDB MultiGet (point lookups) or a bounded prefix iterator (range
+// scans). On match, claimed filter expressions are removed from the
+// surrounding LogicalFilter (the operator is dropped if it becomes empty).
 //
-// Optimization is skipped when LIMIT is absent (top_k == 0).
-void RegisterANNSearchOptimizer(duckdb::DatabaseInstance& db);
+// Initial scope: PK equality / IN-list (point lookup). PK range and SK
+// variants land in subsequent phases.
+//
+// Order of registration: this rule runs after the iresearch_plan rule so
+// iresearch-only predicates always win. Mutation subtrees (DELETE /
+// UPDATE / MERGE) are not skipped by this rule; rocksdb-backed scans are
+// safe to drive mutations.
+void RegisterRocksDBPlanOptimizer(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::optimizer

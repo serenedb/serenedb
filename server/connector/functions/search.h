@@ -38,8 +38,23 @@ inline constexpr std::string_view kNgramMatch = "sdb_ngram_match";
 inline constexpr std::string_view kLevenshteinMatch = "sdb_levenshtein_match";
 inline constexpr std::string_view kBoost = "sdb_boost";
 
-// Pseudo-functions that are completely replaced by columns
-inline constexpr std::string_view kOffsets = "offsets";
+// Pseudo-functions that are claimed by the iresearch_plan rule and
+// turn into projected columns on the SearchScan rather than running
+// per-row at execution time. Scorer parameters are constants; the
+// rule extracts them at compile time and threads them into bind_data
+// so the runtime executor doesn't re-parse per row.
+//
+//   bm25(tableoid [, k1 DOUBLE, b DOUBLE])    -> FLOAT
+//   tfidf(tableoid [, with_norms BOOLEAN])    -> FLOAT
+//   sdb_offsets(col)                          -> BIGINT[]
+//
+// bm25 / tfidf need a scan anchor; the convention is `tableoid` so
+// the binding survives projection pushdown. sdb_offsets takes the
+// indexed column directly (the column ref's own binding.table_index
+// is enough -- no separate anchor needed).
+inline constexpr std::string_view kBm25 = "bm25";
+inline constexpr std::string_view kTfidf = "tfidf";
+inline constexpr std::string_view kOffsets = "sdb_offsets";
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 

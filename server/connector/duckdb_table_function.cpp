@@ -40,6 +40,7 @@
 #include "catalog/mangling.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
+#include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "connector/search_remove_filter.hpp"
@@ -131,6 +132,10 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   std::vector<std::string> ann_pk_bytes;
   size_t ann_current_idx = 0;
   bool ann_search_done = false;
+
+  // Rows actually emitted by this scan -- used by the rows_scanned callback
+  // for runtime stats.
+  std::atomic<duckdb::idx_t> produced_rows{0};
 
   ~SereneDBScanGlobalState() override {
     iterators.clear();  // Release iterators before snapshot
@@ -319,24 +324,46 @@ static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& context,
                                             duckdb::TableFunctionInput& data,
                                             duckdb::DataChunk& output);
 
+// Wraps a per-strategy scan call so we can accumulate produced_rows once
+// for the rows_scanned callback (avoids touching every per-strategy
+// SetCardinality site).
+static void RunStrategyAndAccount(
+  const std::function<void()>& run, SereneDBScanGlobalState& gstate,
+  duckdb::DataChunk& output) {
+  run();
+  if (output.size() > 0) {
+    gstate.produced_rows.fetch_add(output.size(), std::memory_order_relaxed);
+  }
+}
+
 static void SereneDBScanFunction(duckdb::ClientContext& context,
                                  duckdb::TableFunctionInput& data,
                                  duckdb::DataChunk& output) {
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
   if (bind_data.IsSearchScan()) {
-    return SereneDBSearchScanFunction(context, data, output);
+    RunStrategyAndAccount(
+      [&] { SereneDBSearchScanFunction(context, data, output); }, gstate,
+      output);
+    return;
   }
   if (bind_data.IsSecondaryIndexScan()) {
-    return SereneDBSecondaryIndexScanFunction(context, data, output);
+    RunStrategyAndAccount(
+      [&] { SereneDBSecondaryIndexScanFunction(context, data, output); },
+      gstate, output);
+    return;
   }
   if (bind_data.IsANNScan()) {
-    return SereneDBANNScanFunction(context, data, output);
+    RunStrategyAndAccount(
+      [&] { SereneDBANNScanFunction(context, data, output); }, gstate, output);
+    return;
   }
   if (bind_data.IsRangeSearchScan()) {
-    return SereneDBRangeSearchScanFunction(context, data, output);
+    RunStrategyAndAccount(
+      [&] { SereneDBRangeSearchScanFunction(context, data, output); }, gstate,
+      output);
+    return;
   }
-
-  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
 
   if (gstate.finished || gstate.iterators.empty()) {
     output.SetCardinality(0);
@@ -432,6 +459,9 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
   }
 
   output.SetCardinality(count);
+  if (count > 0) {
+    gstate.produced_rows.fetch_add(count, std::memory_order_relaxed);
+  }
 }
 
 // --- Search scan: IResearch query -> PKs -> RocksDB materialization ---
@@ -956,16 +986,23 @@ static void SereneDBRangeSearchScanFunction(duckdb::ClientContext& context,
 // --- pushdown_complex_filter: intercept search predicates ---
 
 static void SereneDBPushdownComplexFilter(
-  duckdb::ClientContext& context, duckdb::LogicalGet& get,
-  duckdb::FunctionData* bind_data_ptr,
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
+  duckdb::ClientContext& /*context*/, duckdb::LogicalGet& /*get*/,
+  duckdb::FunctionData* /*bind_data_ptr*/,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& /*filters*/) {
+  // No-op: all iresearch / rocksdb predicate claims now happen in the
+  // sdb::optimizer::Register{Iresearch,RocksDB}PlanOptimizer extensions
+  // (which run after the built-in FilterPushdown pass). Built-in
+  // FilterPushdown still calls this hook, so we keep it wired up but
+  // don't claim anything here -- otherwise the rules would see a
+  // pre-claimed scan and skip it.
+  return;
+  // Original implementation kept below, fully unreachable, to be deleted
+  // in Phase 9 cleanup.
+#if 0
   if (!bind_data_ptr) {
     return;
   }
-  // Guard: only process our own scan function's bind data.
-  // Check the function name to avoid processing DuckDB's internal scans
-  // (e.g., from CREATE INDEX which returns a table scan plan).
-  if (get.function.name != "serenedb_scan") {
+  if (!get.function.name.starts_with("serenedb_")) {
     return;
   }
   auto& bind_data = bind_data_ptr->Cast<SereneDBScanBindData>();
@@ -976,12 +1013,14 @@ static void SereneDBPushdownComplexFilter(
   auto table_id = bind_data.table->GetId();
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
 
-  // Find inverted index -- prefer the one from the table entry (FROM idx_name)
+  // Find inverted index -- prefer the one from the index-scan entry
+  // (FROM idx_name); regular SereneDBTableEntry does not carry one.
   std::shared_ptr<const catalog::InvertedIndex> inverted_index;
-  if (bind_data.table_entry &&
-      dynamic_cast<const SereneDBTableEntry*>(&*bind_data.table_entry)) {
-    auto& sdb_entry = bind_data.table_entry->Cast<SereneDBTableEntry>();
-    inverted_index = sdb_entry.GetInvertedIndex();
+  if (bind_data.table_entry) {
+    if (const auto* idx_entry = dynamic_cast<const SereneDBIndexScanEntry*>(
+          &*bind_data.table_entry)) {
+      inverted_index = idx_entry->GetInvertedIndex();
+    }
   }
 
   // Fallback: search for any inverted index on the table
@@ -1137,12 +1176,308 @@ static void SereneDBPushdownComplexFilter(
   for (auto idx : consumed) {
     filters.erase(filters.begin() + idx);
   }
+#endif  // legacy SereneDBPushdownComplexFilter implementation
+}
+
+// --- cardinality / rows_scanned / virtual columns ---
+
+static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(
+  duckdb::ClientContext& context, const duckdb::FunctionData* bind_data) {
+  if (!bind_data) {
+    return nullptr;
+  }
+  auto& bind = bind_data->Cast<SereneDBScanBindData>();
+  if (!bind.table) {
+    return nullptr;
+  }
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto shard = snapshot->GetTableShard(bind.table->GetId());
+  if (!shard) {
+    return nullptr;
+  }
+  auto stats = shard->GetTableStats();
+  return duckdb::make_uniq<duckdb::NodeStatistics>(
+    static_cast<duckdb::idx_t>(stats.num_rows));
+}
+
+static duckdb::idx_t SereneDBScanRowsScanned(
+  duckdb::GlobalTableFunctionState& gstate_p,
+  duckdb::LocalTableFunctionState&) {
+  auto& gstate = gstate_p.Cast<SereneDBScanGlobalState>();
+  return gstate.produced_rows.load(std::memory_order_relaxed);
+}
+
+static duckdb::virtual_column_map_t SereneDBScanGetVirtualColumns(
+  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
+  duckdb::virtual_column_map_t result;
+  if (!bind_p) {
+    return result;
+  }
+  auto& bind = bind_p->Cast<SereneDBScanBindData>();
+  if (bind.table_entry) {
+    result = bind.table_entry->GetVirtualColumns();
+  }
+  return result;
+}
+
+static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
+  duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
+  duckdb::vector<duckdb::column_t> result;
+  if (!bind_p) {
+    return result;
+  }
+  auto& bind = bind_p->Cast<SereneDBScanBindData>();
+  if (bind.table_entry) {
+    result = bind.table_entry->GetRowIdColumns();
+  }
+  return result;
+}
+
+// --- to_string ---
+
+static std::string_view ScanSourceKindName(const ScanSource& s) {
+  if (const auto* ss = std::get_if<SearchScan>(&s)) {
+    // Pure boolean filter: iresearch_lookup [+ offsets].
+    // With scorer: iresearch_score_scan or iresearch_score_topk_scan,
+    //              + _with_offsets suffix when offsets are emitted.
+    const bool off = ss->emit_offsets();
+    if (ss->scorer.kind != SearchScan::ScorerKind::None) {
+      if (ss->score_top_k) {
+        return off ? "iresearch_score_topk_scan_with_offsets"
+                   : "iresearch_score_topk_scan";
+      }
+      return off ? "iresearch_score_scan_with_offsets"
+                 : "iresearch_score_scan";
+    }
+    return off ? "iresearch_lookup_with_offsets" : "iresearch_lookup";
+  }
+  if (std::holds_alternative<SecondaryIndexScan>(s)) {
+    return "rocksdb_secondary_key_fullscan";
+  }
+  if (std::holds_alternative<ANNScan>(s)) {
+    return "iresearch_ann_topk_scan";
+  }
+  if (std::holds_alternative<RangeSearchScan>(s)) {
+    return "iresearch_ann_range_scan";
+  }
+  if (std::holds_alternative<PkPointScan>(s)) {
+    return "rocksdb_primary_key_points_lookup";
+  }
+  if (std::holds_alternative<PkRangeScan>(s)) {
+    return "rocksdb_primary_key_ranges_scan";
+  }
+  if (std::holds_alternative<SkPointScan>(s)) {
+    return "rocksdb_secondary_key_points_lookup";
+  }
+  if (std::holds_alternative<SkRangeScan>(s)) {
+    return "rocksdb_secondary_key_ranges_scan";
+  }
+  return "rocksdb_table_fullscan";
+}
+
+// Returns the catalog column name for the given id, or "col<id>" if not
+// found (paranoid fallback -- the rule only puts table-owned ids in bind
+// data, so the lookup should always succeed).
+static std::string ColumnNameFor(const catalog::Table& table,
+                                 catalog::Column::Id col_id) {
+  for (const auto& c : table.Columns()) {
+    if (c.id == col_id) {
+      return c.name;
+    }
+  }
+  return absl::StrCat("col", col_id);
+}
+
+// Pretty-print a ResolvedPoint as "(col0=v0, col1=v1, ...)". Format
+// mirrors the Velox-era toString on SereneDBConnectorTableHandle so
+// EXPLAIN output stays familiar.
+static std::string FormatResolvedPoint(
+  const ResolvedPoint& point, const catalog::Table& table,
+  std::span<const catalog::Column::Id> column_ids) {
+  std::string out = "(";
+  for (size_t i = 0; i < point.size(); ++i) {
+    if (i) absl::StrAppend(&out, ", ");
+    absl::StrAppend(&out, ColumnNameFor(table, column_ids[i]), "=",
+                    point[i].ToString());
+  }
+  absl::StrAppend(&out, ")");
+  return out;
+}
+
+// Pretty-print a ResolvedRange: prefix equalities + trailing range column
+// bound, wrapped in "{...}" -- matching the Velox-era format.
+static std::string FormatResolvedRange(
+  const ResolvedRange& range, const catalog::Table& table,
+  std::span<const catalog::Column::Id> column_ids) {
+  std::string out = "{";
+  for (size_t i = 0; i < range.prefix.size(); ++i) {
+    if (i) absl::StrAppend(&out, ", ");
+    absl::StrAppend(&out, ColumnNameFor(table, column_ids[i]), "=",
+                    range.prefix[i].ToString());
+  }
+  const auto range_col_idx = range.prefix.size();
+  if (range_col_idx < column_ids.size()) {
+    if (!range.prefix.empty()) {
+      absl::StrAppend(&out, ", ");
+    }
+    absl::StrAppend(&out, ColumnNameFor(table, column_ids[range_col_idx]), "=",
+                    range.range_column.toString());
+  }
+  absl::StrAppend(&out, "}");
+  return out;
+}
+
+// Render all points / ranges of a PK/SK scan as a single "Filter" value,
+// capped to a human-readable length (the cap guards against massive IN
+// lists blowing up EXPLAIN output).
+template<typename PointsOrRanges, typename FormatOne>
+static std::string FormatClaimList(const PointsOrRanges& items,
+                                   FormatOne&& format_one) {
+  constexpr size_t kMaxShown = 8;
+  std::string out;
+  for (size_t i = 0; i < items.size() && i < kMaxShown; ++i) {
+    if (i) absl::StrAppend(&out, ", ");
+    absl::StrAppend(&out, format_one(items[i]));
+  }
+  if (items.size() > kMaxShown) {
+    absl::StrAppend(&out, ", ... (+", items.size() - kMaxShown, " more)");
+  }
+  return out;
+}
+
+// Per-strategy claim-summary emitter. For rocksdb strategies this shows
+// the resolved points / ranges; for iresearch strategies it shows the
+// top-level search parameters (k, radius, etc.). The executor-side state
+// (actual prepared iresearch query objects) is intentionally opaque here
+// -- EXPLAIN should expose intent, not runtime plumbing.
+static void AppendClaimSummary(
+  duckdb::InsertionOrderPreservingMap<std::string>& result,
+  const SereneDBScanBindData& bind) {
+  const auto& s = bind.scan_source;
+  if (const auto* p = std::get_if<PkPointScan>(&s)) {
+    if (!p->points.empty() && bind.table) {
+      auto& table = *bind.table;
+      auto cols = std::span<const catalog::Column::Id>(p->column_ids);
+      result.insert("Filter",
+                    FormatClaimList(p->points, [&](const ResolvedPoint& pt) {
+                      return FormatResolvedPoint(pt, table, cols);
+                    }));
+    }
+    return;
+  }
+  if (const auto* r = std::get_if<PkRangeScan>(&s)) {
+    if (!r->ranges.empty() && bind.table) {
+      auto& table = *bind.table;
+      auto cols = std::span<const catalog::Column::Id>(r->column_ids);
+      result.insert("Filter",
+                    FormatClaimList(r->ranges, [&](const ResolvedRange& rr) {
+                      return FormatResolvedRange(rr, table, cols);
+                    }));
+    }
+    return;
+  }
+  if (const auto* p = std::get_if<SkPointScan>(&s)) {
+    if (!p->points.empty() && bind.table) {
+      auto& table = *bind.table;
+      auto cols = std::span<const catalog::Column::Id>(p->column_ids);
+      result.insert("Filter",
+                    FormatClaimList(p->points, [&](const ResolvedPoint& pt) {
+                      return FormatResolvedPoint(pt, table, cols);
+                    }));
+    }
+    if (p->is_unique) {
+      result.insert("Unique", "true");
+    }
+    return;
+  }
+  if (const auto* r = std::get_if<SkRangeScan>(&s)) {
+    if (!r->ranges.empty() && bind.table) {
+      auto& table = *bind.table;
+      auto cols = std::span<const catalog::Column::Id>(r->column_ids);
+      result.insert("Filter",
+                    FormatClaimList(r->ranges, [&](const ResolvedRange& rr) {
+                      return FormatResolvedRange(rr, table, cols);
+                    }));
+    }
+    if (r->is_unique) {
+      result.insert("Unique", "true");
+    }
+    return;
+  }
+  if (const auto* a = std::get_if<ANNScan>(&s)) {
+    result.insert("TopK", std::to_string(a->top_k));
+    result.insert("Dims", std::to_string(a->query_vector.size()));
+    return;
+  }
+  if (const auto* a = std::get_if<RangeSearchScan>(&s)) {
+    result.insert("Radius", std::to_string(a->radius));
+    result.insert("Dims", std::to_string(a->query_vector.size()));
+    return;
+  }
+  if (const auto* ss = std::get_if<SearchScan>(&s)) {
+    // Filter repr populated by the iresearch_plan rule (Phase 5d) via
+    // irs::ToStringDemangled; empty for trivial all-rows matches.
+    if (!ss->filter_summary.empty()) {
+      result.insert("Filter", ss->filter_summary);
+    }
+    // Print the scorer kind + compile-time parameters. Same values
+    // the rule extracted from the projection's bm25(...) / tfidf(...)
+    // call; the runtime executor reads these directly from bind data
+    // (no re-parse per row).
+    switch (ss->scorer.kind) {
+      case SearchScan::ScorerKind::Bm25:
+        result.insert(
+          "Score", absl::StrCat("bm25(k1=", ss->scorer.bm25_k1,
+                                ", b=", ss->scorer.bm25_b, ")"));
+        break;
+      case SearchScan::ScorerKind::Tfidf:
+        result.insert("Score",
+                      absl::StrCat("tfidf(with_norms=",
+                                   ss->scorer.tfidf_with_norms ? "true"
+                                                               : "false",
+                                   ")"));
+        break;
+      case SearchScan::ScorerKind::None:
+        break;
+    }
+    if (ss->score_top_k) {
+      result.insert("TopK", std::to_string(*ss->score_top_k));
+    }
+    if (ss->emit_offsets()) {
+      // Render the columns we'll emit offsets for.
+      std::string cols;
+      for (size_t i = 0; i < ss->offsets.size(); ++i) {
+        if (i) absl::StrAppend(&cols, ", ");
+        absl::StrAppend(&cols,
+                        ColumnNameFor(*bind.table, ss->offsets[i].column_id));
+      }
+      result.insert("Offsets", std::move(cols));
+    }
+    return;
+  }
+  // SecondaryIndexScan / FullTableScan: no extra info.
+}
+
+static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
+  duckdb::TableFunctionToStringInput& input) {
+  duckdb::InsertionOrderPreservingMap<std::string> result;
+  if (!input.bind_data) {
+    return result;
+  }
+  auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
+  if (bind.table) {
+    result.insert("Table", std::string{bind.table->GetName()});
+  }
+  result.insert("Strategy", std::string{ScanSourceKindName(bind.scan_source)});
+  AppendClaimSummary(result, bind);
+  return result;
 }
 
 // --- Factory ---
 
 duckdb::TableFunction CreateSereneDBScanFunction() {
-  duckdb::TableFunction func("serenedb_scan", {}, SereneDBScanFunction,
+  duckdb::TableFunction func("rocksdb_table_fullscan", {}, SereneDBScanFunction,
                              SereneDBScanBind);
   func.init_global = SereneDBScanInitGlobal;
   func.init_local = SereneDBScanInitLocal;
@@ -1150,6 +1485,101 @@ duckdb::TableFunction CreateSereneDBScanFunction() {
   func.projection_pushdown = true;
   func.filter_pushdown = false;
   func.pushdown_complex_filter = SereneDBPushdownComplexFilter;
+  func.to_string = SereneDBScanToString;
+  func.cardinality = SereneDBScanCardinality;
+  func.rows_scanned = SereneDBScanRowsScanned;
+  func.get_virtual_columns = SereneDBScanGetVirtualColumns;
+  func.get_row_id_columns = SereneDBScanGetRowIdColumns;
+  // Full-table prefix scan emits rows in PK order; SK / iresearch
+  // strategies (when split out) override per their own order.
+  func.order_preservation_type = duckdb::OrderPreservationType::FIXED_ORDER;
+  return func;
+}
+
+duckdb::TableFunction CreatePkPointScanFunction() {
+  // First cut: same body as the full-table scan, just a distinct name so
+  // EXPLAIN shows the rule fired. The MultiGet implementation lands in a
+  // follow-up step within Phase 2 by dispatching on bind_data.IsPkPointScan()
+  // inside the existing scan callback. Until then, with PkPointScan bind
+  // data the dispatcher still falls through to the full-table loop, which
+  // will iterate everything but produce correct results -- a temporary
+  // performance regression we accept for incrementality.
+  auto func = CreateSereneDBScanFunction();
+  func.name = "rocksdb_primary_key_points_lookup";
+  return func;
+}
+
+duckdb::TableFunction CreatePkRangeScanFunction() {
+  // First cut: same body as the full-table scan, just a distinct name so
+  // EXPLAIN shows the rule fired. The bounded-prefix iterator implementation
+  // lands in a follow-up Phase 2 step by dispatching on IsPkRangeScan() in
+  // the existing scan callback. Until then the dispatcher falls through to
+  // the full-table loop -- correct but not yet faster.
+  auto func = CreateSereneDBScanFunction();
+  func.name = "rocksdb_primary_key_ranges_scan";
+  return func;
+}
+
+duckdb::TableFunction CreateFullSkScanFunction() {
+  // Stub: same body as the full-table scan, just a distinct name so EXPLAIN
+  // shows that an SK-index entry was bound. Phase 4's rocksdb_plan rule
+  // swaps to SkPoint / SkRange when SK predicates fire; until then this
+  // falls through to the full-table loop -- correct but not yet faster.
+  auto func = CreateSereneDBScanFunction();
+  func.name = "rocksdb_secondary_key_fullscan";
+  return func;
+}
+
+duckdb::TableFunction CreateFullIresearchScanFunction() {
+  // Stub: same body as the full-table scan, just a distinct name so EXPLAIN
+  // shows that an iresearch-index entry was bound. Phase 5's iresearch_plan
+  // rule swaps to specialised iresearch search/ANN/range scans when the
+  // corresponding predicates fire; until then this falls through to the
+  // full-table loop -- correct but not yet faster.
+  auto func = CreateSereneDBScanFunction();
+  func.name = "iresearch_fullscan";
+  return func;
+}
+
+duckdb::TableFunction CreateSkPointScanFunction() {
+  // Stub: same body as the full-table scan, just a distinct name so EXPLAIN
+  // shows the rule fired. The SK-probe + PK MultiGet implementation lands
+  // in a follow-up Phase 4 step by dispatching on IsSkPointScan() in the
+  // existing scan callback. Until then the dispatcher falls through to the
+  // full-table loop -- correct but not yet faster.
+  auto func = CreateSereneDBScanFunction();
+  func.name = "rocksdb_secondary_key_points_lookup";
+  return func;
+}
+
+duckdb::TableFunction CreateSkRangeScanFunction() {
+  auto func = CreateSereneDBScanFunction();
+  func.name = "rocksdb_secondary_key_ranges_scan";
+  return func;
+}
+
+duckdb::TableFunction CreateIresearchSearchScanFunction() {
+  // Stub: full scan body + distinct name. Real search execution still
+  // runs via SereneDBSearchScanFunction when bind_data.scan_source ==
+  // SearchScan (which the iresearch_plan rule sets). Phase 5 follow-up
+  // will move search claim logic fully into the rule and drop the
+  // auto-detect path inside SereneDBPushdownComplexFilter.
+  auto func = CreateSereneDBScanFunction();
+  func.name = "iresearch_lookup";
+  return func;
+}
+
+duckdb::TableFunction CreateIresearchAnnScanFunction() {
+  // Stub: full scan body + distinct name. Runtime dispatch via
+  // bind_data.scan_source == ANNScan (set by the iresearch_plan rule).
+  auto func = CreateSereneDBScanFunction();
+  func.name = "iresearch_ann_topk_scan";
+  return func;
+}
+
+duckdb::TableFunction CreateIresearchRangeScanFunction() {
+  auto func = CreateSereneDBScanFunction();
+  func.name = "iresearch_ann_range_scan";
   return func;
 }
 

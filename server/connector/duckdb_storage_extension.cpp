@@ -29,8 +29,8 @@
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_transaction.h"
-#include "connector/optimizer/ann_search_plan.h"
-#include "connector/optimizer/range_search_plan.h"
+#include "connector/optimizer/iresearch_plan.h"
+#include "connector/optimizer/rocksdb_plan.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -142,8 +142,16 @@ void RegisterSereneDBStorage(duckdb::DBConfig& config) {
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
-  optimizer::RegisterANNSearchOptimizer(db);
-  optimizer::RegisterRangeSearchOptimizer(db);
+  // iresearch_plan runs first: iresearch-only predicates (sdb_phrase,
+  // distance(), ...) cannot be evaluated by the rocksdb layer, so any
+  // such predicate must claim the scan as iresearch_search / ann_topk /
+  // ann_range. Mutation subtrees are skipped (iresearch is eventually
+  // consistent with the rocksdb-backed table).
+  optimizer::RegisterIresearchPlanOptimizer(db);
+  // rocksdb_plan runs after iresearch: PK / SK predicates become
+  // specialised pk_*/sk_* scans only when no iresearch claim took the
+  // scan first.
+  optimizer::RegisterRocksDBPlanOptimizer(db);
 }
 
 }  // namespace sdb::connector

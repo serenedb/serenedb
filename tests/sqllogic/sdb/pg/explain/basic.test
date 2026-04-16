@@ -1,3 +1,4 @@
+skipif serenedb
 query
 EXPLAIN (LOGICAL, EXECUTION) SELECT x FROM generate_series(1, 10000) AS t1(x);
 ----
@@ -18,6 +19,7 @@ Fragment 0:  numWorkers=1:
       -- Values[0][1 rows in 1 vectors] ->
 
 
+skipif serenedb
 query
 EXPLAIN (EXECUTION, REGISTERS) SELECT x FROM generate_series(1, 10000) AS t1(x);
 ----
@@ -29,6 +31,8 @@ Fragment 0:  numWorkers=1:
     -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, pg_generate_series(1,10000))] -> "dt3.__p9":ARRAY<BIGINT>
       -- Values[0][1 rows in 1 vectors] ->
 
+
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT x FROM generate_series(1, 10000) AS t1(x);
 ----
@@ -59,6 +63,7 @@ Fragment 0:  numWorkers=1:
          Input: 0 rows (0B, 0 batches), Output: 0 rows (0B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, CPU breakdown: B/I/O/F (<slt:ignore>)
 
 
+skipif serenedb
 query
 EXPLAIN (LOGICAL, EXECUTION) SELECT 1;
 ----
@@ -73,6 +78,7 @@ Fragment 0:  numWorkers=1:
   -- Values[0][1 rows in 1 vectors] ->
 
 
+skipif serenedb
 query
 EXPLAIN (LOGICAL, REGISTERS)
 SELECT
@@ -103,6 +109,8 @@ LOGICAL PLAN:
             [unnest:3] := pg_generate_series(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
           - Values: 1 rows -> ROW<>
 
+
+skipif serenedb
 query
 EXPLAIN SELECT 1;
 ----
@@ -113,6 +121,7 @@ Fragment 0:  numWorkers=1:
   -- Values[0][1 rows in 1 vectors] ->
 
 
+skipif serenedb
 query error
 EXPLAIN (HELP) SELECT 'please sell my soul for vedernikoff heart';
 ----

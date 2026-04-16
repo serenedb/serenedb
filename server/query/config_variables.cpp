@@ -107,7 +107,8 @@ constexpr std::pair<std::string_view, VariableDescription>
                                                std::memory_order_relaxed);
         },
         [](duckdb::ClientContext&, duckdb::SetScope) {
-          duckdb::g_debug_verify_enabled.store(false, std::memory_order_relaxed);
+          duckdb::g_debug_verify_enabled.store(false,
+                                               std::memory_order_relaxed);
         },
         duckdb::SetScope::GLOBAL,
       },

@@ -262,6 +262,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalSSTInsert::Finalize(
   const uint64_t post_ingest_seq = gstate.db->GetLatestSequenceNumber();
   conn_ctx.CommitSearchTransactions(post_ingest_seq);
 
+  if (gstate.insert_count > 0) {
+    conn_ctx.UpdateNumRows(gstate.table_id,
+                           static_cast<int64_t>(gstate.insert_count));
+  }
+
   gstate.finalized = true;
   return duckdb::SinkFinalizeType::READY;
 }

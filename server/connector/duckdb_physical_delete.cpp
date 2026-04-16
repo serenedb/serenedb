@@ -258,6 +258,12 @@ duckdb::SinkFinalizeType SereneDBPhysicalDelete::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& gstate = sink_state->Cast<SereneDBDeleteGlobalState>();
+  if (gstate.delete_count > 0) {
+    auto& conn_ctx = GetSereneDBContext(context);
+    conn_ctx.UpdateNumRows(gstate.table_id,
+                           -static_cast<int64_t>(gstate.delete_count));
+  }
   return duckdb::SinkFinalizeType::READY;
 }
 

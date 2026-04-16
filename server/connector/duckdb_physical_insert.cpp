@@ -245,6 +245,12 @@ duckdb::SinkFinalizeType SereneDBPhysicalInsert::Finalize(
   duckdb::Pipeline& pipeline, duckdb::Event& event,
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& gstate = sink_state->Cast<SereneDBInsertGlobalState>();
+  if (gstate.insert_count > 0) {
+    auto& conn_ctx = GetSereneDBContext(context);
+    conn_ctx.UpdateNumRows(gstate.table_id,
+                           static_cast<int64_t>(gstate.insert_count));
+  }
   return duckdb::SinkFinalizeType::READY;
 }
 

@@ -29,12 +29,11 @@
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
-#include "catalog/virtual_table.h"
-
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "catalog/catalog.h"
+#include "catalog/virtual_table.h"
 #include "pg/isolation_level.h"
 
 namespace sdb {

@@ -106,6 +106,12 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::REGCOLLATION(),
       nullptr,
     },
+    // oid -- overrides DuckDB builtin (plain BIGINT) with aliased BIGINT
+    {
+      "oid",
+      sdb::pg::OID(),
+      nullptr,
+    },
     // System identifier types -- aliased BIGINT
     {
       "tid",

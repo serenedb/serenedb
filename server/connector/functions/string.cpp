@@ -29,6 +29,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 
+#include "connector/pg_logical_types.h"
 #include "iresearch/utils/utf8_utils.hpp"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
@@ -1289,11 +1290,9 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     duckdb::LogicalType::BLOB,
     ConvertToFunction});
 
-  // pg_client_encoding() -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{"pg_client_encoding",
-                                                 {},
-                                                 duckdb::LogicalType::VARCHAR,
-                                                 PgClientEncodingFunction});
+  // pg_client_encoding() -> name
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "pg_client_encoding", {}, pg::NAME(), PgClientEncodingFunction});
 
   // quote_ident(text) -> text
   loader.RegisterFunction(duckdb::ScalarFunction{"quote_ident",

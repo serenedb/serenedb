@@ -971,7 +971,7 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_get_constraintdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_userbyid", "(oid) AS CAST('postgres' AS TEXT)"},
+  {"pg_catalog", "pg_get_userbyid", "(oid) AS 'postgres'::name"},
   {"pg_catalog", "pg_get_function_arguments", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_function_arg_default", "(oid, n) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_functiondef", "(oid) AS CAST(NULL AS TEXT)"},
@@ -1103,6 +1103,11 @@ inline constexpr SystemMacro kExternalMacros[] = {
   // Always UTF-8 -> max 4 bytes per character. Argument ignored.
   {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
   {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},
+  // Always UTF-8 -> encoding 6. Stub: only UTF8 supported.
+  {"pg_catalog", "pg_encoding_to_char", "(encoding int4) AS 'UTF8'::name"},
+  {"pg_catalog", "pg_char_to_encoding", "(enc_name) AS 6::int4"},
+  // No temp schemas supported yet.
+  {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
   // clang-format on
 };
 

@@ -398,6 +398,19 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                [](int64_t) -> int64_t { return 0; });
                            }});
 
+  // Stub functions that throw "not supported"
+  auto not_supported = [](duckdb::DataChunk&, duckdb::ExpressionState&,
+                          duckdb::Vector&) {
+    throw duckdb::NotImplementedException(
+      "Function is not supported in SereneDB");
+  };
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "pg_current_xact_id", {}, pg::XID8(), not_supported});
+  loader.RegisterFunction(duckdb::ScalarFunction{"pg_xact_status",
+                                                 {pg::XID8()},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 not_supported});
+
   // pg_database_size(text) and pg_database_size(bigint/oid)
   loader.RegisterFunction(duckdb::ScalarFunction{"pg_database_size",
                                                  {duckdb::LogicalType::VARCHAR},

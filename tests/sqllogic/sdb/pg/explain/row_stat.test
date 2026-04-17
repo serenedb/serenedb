@@ -27,7 +27,7 @@ QUERY PLAN
 EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 ┌────────────────────────────────────────────────┐
 │┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>             ││
+││              Total Time: <slt:ignore>        ││
 │└──────────────────────────────────────────────┘│
 └────────────────────────────────────────────────┘
 ┌───────────────────────────┐
@@ -38,7 +38,7 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           <slt:ignore>    │
+│           0.00s           │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -48,8 +48,8 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │                           │
 │                           │
 │                           │
-│          <slt:ignore>     │
-│           <slt:ignore>    │
+│          28 rows          │
+│           0.00s           │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         HASH_JOIN         │
@@ -59,23 +59,23 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │                           ├──────────────┐
 │                           │              │
 │                           │              │
-│          <slt:ignore>     │
-│           <slt:ignore>    │
+│          28 rows          │              │
+│           0.00s           │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │         TABLE_SCAN        ││         TABLE_SCAN        │
 │    ────────────────────   ││    ────────────────────   │
-│          Table: f         ││          Table: t         │
+│          Table: t         ││          Table: f         │
 │                           ││                           │
 │         Strategy:         ││         Strategy:         │
 │   rocksdb_table_fullscan  ││   rocksdb_table_fullscan  │
 │                           ││                           │
-│        Projections:       ││      Projections: id      │
-│             id            ││                           │
-│           value           ││                           │
+│      Projections: id      ││        Projections:       │
+│                           ││             id            │
+│                           ││           value           │
 │                           ││                           │
 │                           ││                           │
-│                           ││           <slt:ignore>    │
-│           <slt:ignore>    ││         <slt:ignore>      │
-│           <slt:ignore>    ││          <slt:ignore>     │
+│           0.00s           ││                           │
+│         1,000 rows        ││           3 rows          │
+│          (0.00s)          ││           0.00s           │
 └───────────────────────────┘└───────────────────────────┘

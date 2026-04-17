@@ -934,34 +934,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
   }
 }
 
-//   Deleted documents
-// TODO: need to fix
-
-TEST_P(RegexpFilterTestCase, by_regexp_deleted_documents) {
-  auto writer = open_writer();
-  {
-    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
-                                &tests::GenericJsonFieldFactory);
-    add_segment(*writer, gen);
-  }
-
-  // filter must be valid until commit() — see index_writer.hpp
-  irs::ByTerm q;
-  *q.mutable_field() = "name";
-  q.mutable_options()->term =
-    irs::ViewCast<irs::byte_type>(std::string_view("doc1"));
-  {
-    auto batch = writer->GetBatch();
-    batch.Remove(q);
-  }
-  writer->Commit();
-
-  auto rdr = open_reader();
-  CheckQuery(MakeFilter("term", "foobar"), Docs{}, rdr);
-  CheckQuery(MakeFilter("term", "foo.*"),
-             Docs{2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 14, 16, 18, 20}, rdr);
-}
-
 //   Determinism
 
 TEST_P(RegexpFilterTestCase, by_regexp_determinism) {

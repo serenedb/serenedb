@@ -45,7 +45,6 @@ class Transaction : public Config {
     None = 0,
     HasRocksDBRead = 1 << 0,
     HasRocksDBWrite = 1 << 1,
-    HasTransactionBegin = 1 << 2,
   };
 
 #ifdef SDB_DEV
@@ -75,9 +74,6 @@ class Transaction : public Config {
 
   void AddRocksDBWrite() noexcept;
   bool HasRocksDBWrite() const noexcept;
-
-  void AddTransactionBegin() noexcept;
-  bool HasTransactionBegin() const noexcept;
 
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);

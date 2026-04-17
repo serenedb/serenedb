@@ -124,11 +124,11 @@ void Config::OnSet(std::string_view name, bool is_local) {
   auto context = VariableContext::Session;
   if (is_local) {
     context = VariableContext::Local;
-  } else if (!IsAutoCommit()) {
+  } else if (IsExplicitTransaction()) {
     context = VariableContext::Transaction;
   }
   // transaction_isolation is always Local -- reverts at txn end
-  if (canonical == pg::kTransactionIsolation && !IsAutoCommit()) {
+  if (canonical == pg::kTransactionIsolation && IsExplicitTransaction()) {
     context = VariableContext::Local;
   }
   SaveForRollback(canonical, context);
@@ -173,8 +173,8 @@ void Config::ResetAll() {
   _client_ctx.config.user_settings = {};
 }
 
-bool Config::IsAutoCommit() const {
-  return _client_ctx.transaction.IsAutoCommit();
+bool Config::IsExplicitTransaction() const {
+  return !_client_ctx.transaction.IsAutoCommit();
 }
 
 void Config::Reset(std::string_view key) {

@@ -156,10 +156,12 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   ~SereneDBScanGlobalState() override {
     iterators.clear();  // Release iterators before snapshot
-    if (snapshot) {
+    // Only release if we took the snapshot via db->GetSnapshot().
+    // When using a transaction, the snapshot is owned by the transaction.
+    if (snapshot && !txn) {
       GetServerEngine().db()->ReleaseSnapshot(snapshot);
-      snapshot = nullptr;
     }
+    snapshot = nullptr;
   }
 };
 
@@ -210,8 +212,10 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   // sees the transaction's own uncommitted writes (read-your-writes).
   // Outside a transaction, use a DB snapshot for read-only scans.
   auto& conn_ctx = GetSereneDBContext(context);
-  if (conn_ctx.HasTransactionBegin() || conn_ctx.HasRocksDBWrite()) {
+  if (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite()) {
     state->txn = &conn_ctx.EnsureRocksDBTransaction();
+    // Pin reads to the transaction's snapshot so REPEATABLE READ is honored.
+    state->snapshot = state->txn->GetSnapshot();
   } else {
     state->snapshot = db->GetSnapshot();
   }

@@ -62,7 +62,7 @@ void SereneDBClientState::Register(
           ERR_HINT("Available values: repeatable read, read committed."));
       }
       auto& conn_ctx = GetSereneDBContext(ctx);
-      if (!conn_ctx.IsAutoCommit() &&
+      if (conn_ctx.IsExplicitTransaction() &&
           (conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
           level != conn_ctx.GetIsolationLevel()) {
         throw duckdb::InvalidInputException(

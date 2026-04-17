@@ -107,7 +107,7 @@ class Config {
 
   void OnSet(std::string_view name, bool is_local);
   void SetSetting(std::string_view key, std::string value, bool is_local);
-  bool IsAutoCommit() const;
+  bool IsExplicitTransaction() const;
 
  protected:
   void CommitVariables() noexcept;

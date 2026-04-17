@@ -144,15 +144,6 @@ bool Transaction::HasRocksDBWrite() const noexcept {
   return (_state & State::HasRocksDBWrite) != State::None;
 }
 
-void Transaction::AddTransactionBegin() noexcept {
-  SDB_ASSERT(!HasTransactionBegin());
-  _state |= State::HasTransactionBegin;
-}
-
-bool Transaction::HasTransactionBegin() const noexcept {
-  return (_state & State::HasTransactionBegin) != State::None;
-}
-
 const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
@@ -174,7 +165,7 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT(HasRocksDBRead());
   EnsureCatalogSnapshot();
   if (!_rocksdb_snapshot) {
-    if (HasRocksDBWrite() || HasTransactionBegin()) {
+    if (HasRocksDBWrite() || IsExplicitTransaction()) {
       EnsureRocksDBTransaction();
     } else {
       SDB_ASSERT(!_storage_snapshot);
@@ -188,7 +179,7 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT(HasRocksDBWrite() || HasTransactionBegin());
+  SDB_ASSERT(HasRocksDBWrite() || IsExplicitTransaction());
   if (!_rocksdb_transaction) [[unlikely]] {
     SDB_ASSERT(!_rocksdb_snapshot);
     auto* db = GetServerEngine().db();

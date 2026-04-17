@@ -149,7 +149,7 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
 PgSQLCommTaskBase::~PgSQLCommTaskBase() {
   if (_connection_ctx) {
     // Rollback unconditionally: even for auto-commit connections
-    // (HasTransactionBegin() == false), Config::_snapshot may be set and must
+    // (IsExplicitTransaction() == false), Config::_snapshot may be set and must
     // be released via Destroy() to avoid unreleased RocksDB snapshots at
     // shutdown.
     std::ignore = _connection_ctx->Rollback();

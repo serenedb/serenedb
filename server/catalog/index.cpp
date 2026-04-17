@@ -37,24 +37,16 @@ Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
   for (auto c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
-    // if (c.catalog_column->type->providesCustomComparison()) {
-    //   return {ERROR_BAD_PARAMETER, "Column ", c.name,
-    //           " has type with custom comparison and can not be indexed"};
-    // }
-    // if (!c.catalog_column->type->isPrimitiveType()) {
-    //   return {ERROR_BAD_PARAMETER, "Column ", c.name,
-    //           " has non primitive type and can not be indexed"};
-    // }
-    // if (c.catalog_column->type->kind() == velox::TypeKind::TIMESTAMP ||
-    //     c.catalog_column->type->kind() == velox::TypeKind::HUGEINT) {
-    //   return {ERROR_BAD_PARAMETER, "Column ", c.name,
-    //           " has unsupported kind and can not be indexed"};
-    // }
-    // if (c.catalog_column->type->kind() != velox::TypeKind::VARCHAR &&
-    //     !c.opclass.empty()) {
-    //   return {ERROR_BAD_PARAMETER, "Column ", c.name,
-    //           " has text dictionary defined but is not VARCHAR"};
-    // }
+    if (c.catalog_column->type.id() == duckdb::LogicalTypeId::TIMESTAMP ||
+        c.catalog_column->type.id() == duckdb::LogicalTypeId::HUGEINT) {
+      return {ERROR_BAD_PARAMETER, "Column ", c.name,
+              " has unsupported kind and can not be indexed"};
+    }
+    if (c.catalog_column->type.id() != duckdb::LogicalTypeId::VARCHAR &&
+        !c.opclass.empty()) {
+      return {ERROR_BAD_PARAMETER, "Column ", c.name,
+              " has text dictionary defined but is not VARCHAR"};
+    }
   }
   return {};
 }

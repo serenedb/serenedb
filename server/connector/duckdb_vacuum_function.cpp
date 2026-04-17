@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
+#include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/database.hpp>
 
 #include "app/app_server.h"
@@ -134,13 +135,40 @@ void VacuumExecute(duckdb::ClientContext& context,
   output.SetCardinality(0);
 }
 
+// PRAGMA serenedb_vacuum('option', 'table_name', 'schema_name')
+// Called when DuckDB transforms VACUUM (UPDATE_INDEXES) t into this PRAGMA.
+void VacuumPragma(duckdb::ClientContext& context,
+                  const duckdb::FunctionParameters& params) {
+  auto& args = params.values;
+  VacuumBindData bind_data;
+  if (args.size() >= 1) {
+    bind_data.option = args[0].GetValue<std::string>();
+  }
+  if (args.size() >= 2) {
+    bind_data.table_name = args[1].GetValue<std::string>();
+  }
+  if (args.size() >= 3) {
+    bind_data.schema_name = args[2].GetValue<std::string>();
+  }
+
+  duckdb::DataChunk dummy;
+  duckdb::TableFunctionInput input{&bind_data, nullptr, nullptr};
+  VacuumExecute(context, input, dummy);
+}
+
 }  // namespace
 
 void RegisterVacuumFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
+
   duckdb::TableFunction func("serenedb_vacuum", {}, VacuumExecute, VacuumBind);
   func.varargs = duckdb::LogicalType::VARCHAR;
   loader.RegisterFunction(func);
+
+  auto pragma = duckdb::PragmaFunction::PragmaCall(
+    "serenedb_vacuum", VacuumPragma, {duckdb::LogicalType::VARCHAR});
+  pragma.varargs = duckdb::LogicalType::VARCHAR;
+  loader.RegisterFunction(pragma);
 }
 
 }  // namespace sdb::connector

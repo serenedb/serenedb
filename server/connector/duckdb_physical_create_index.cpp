@@ -109,6 +109,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
   ~CreateIndexGlobalState() {
+    search_trx.reset();
     if (created && !finalized) {
       try {
         auto& catalog = SerenedServer::Instance()
@@ -244,7 +245,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // Get fresh snapshot with the new index
   auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_index =
-    snapshot->GetRelation(_database_id, "public", _info->index_name);
+    snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
   SDB_ASSERT(catalog_index);
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);

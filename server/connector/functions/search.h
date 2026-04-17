@@ -26,17 +26,17 @@
 namespace sdb::connector {
 
 // TODO(codeworse): add constexpr prefix + function name
-inline constexpr std::string_view kPhrase = "sdb_phrase";
-inline constexpr std::string_view kTermEq = "sdb_term_eq";
-inline constexpr std::string_view kTermLt = "sdb_term_lt";
-inline constexpr std::string_view kTermLe = "sdb_term_lte";
-inline constexpr std::string_view kTermGe = "sdb_term_gte";
-inline constexpr std::string_view kTermGt = "sdb_term_gt";
-inline constexpr std::string_view kTermIn = "sdb_term_in";
-inline constexpr std::string_view kTermLike = "sdb_term_like";
-inline constexpr std::string_view kNgramMatch = "sdb_ngram_match";
-inline constexpr std::string_view kLevenshteinMatch = "sdb_levenshtein_match";
-inline constexpr std::string_view kBoost = "sdb_boost";
+inline constexpr std::string_view kPhrase = "phrase";
+inline constexpr std::string_view kTermEq = "term_eq";
+inline constexpr std::string_view kTermLt = "term_lt";
+inline constexpr std::string_view kTermLe = "term_lte";
+inline constexpr std::string_view kTermGe = "term_gte";
+inline constexpr std::string_view kTermGt = "term_gt";
+inline constexpr std::string_view kTermIn = "term_in";
+inline constexpr std::string_view kTermLike = "term_like";
+inline constexpr std::string_view kNgramMatch = "ngram_match";
+inline constexpr std::string_view kLevenshteinMatch = "levenshtein_match";
+inline constexpr std::string_view kBoost = "boost";
 
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running
@@ -54,7 +54,7 @@ inline constexpr std::string_view kBoost = "sdb_boost";
 // is enough -- no separate anchor needed).
 inline constexpr std::string_view kBm25 = "bm25";
 inline constexpr std::string_view kTfidf = "tfidf";
-inline constexpr std::string_view kOffsets = "sdb_offsets";
+inline constexpr std::string_view kOffsets = "offsets";
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 

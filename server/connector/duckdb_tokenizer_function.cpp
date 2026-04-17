@@ -511,17 +511,15 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   auto dict_name = args[0].GetValue<std::string>();
   auto missing_ok = args[1].GetValue<bool>();
 
+  auto& conn_ctx = GetSereneDBContext(context);
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalog_feature.Global();
-  auto snapshot = catalog.GetCatalogSnapshot();
-  auto databases = snapshot->GetDatabases();
-  SDB_ASSERT(!databases.empty());
 
   auto name = pg::ParseObjectName(dict_name, StaticStrings::kPublic);
 
-  auto r = catalog.DropTokenizer(databases.front()->GetName(), name.schema,
-                                 name.relation);
+  auto r =
+    catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation);
 
   if (r.is(ERROR_SERVER_ILLEGAL_NAME) && missing_ok) {
     return;

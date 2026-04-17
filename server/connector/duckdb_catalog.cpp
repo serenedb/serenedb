@@ -66,15 +66,15 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 
-// DROP FUNCTION name(type, ...) — selective overload removal.
+// DROP FUNCTION name(type, ...) -- selective overload removal.
 // Fetches the existing PgSqlFunction, finds the matching overload by
 // parameter signature, and either removes just that overload (updating the
 // stored function) or drops the whole function if it was the last one.
-// DROP FUNCTION name(type, ...) — selective overload removal.
+// DROP FUNCTION name(type, ...) -- selective overload removal.
 static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
                                    const duckdb::DropInfo& info) {
-  auto schema_name =
-    info.schema.empty() ? std::string_view{"public"} : std::string_view{info.schema};
+  auto schema_name = info.schema.empty() ? std::string_view{"public"}
+                                         : std::string_view{info.schema};
   auto snapshot = catalog.GetCatalogSnapshot();
   auto db = snapshot->GetDatabase(info.catalog);
   if (!db) {
@@ -114,7 +114,7 @@ static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
   }
 
   if (macro_info.macros.size() == 1) {
-    // Last overload — drop the whole function.
+    // Last overload -- drop the whole function.
     return catalog.DropFunction(info.catalog, schema_name, info.name);
   }
 
@@ -148,10 +148,10 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
       if (info.has_func_args) {
-        // DROP FUNCTION name(type, ...) — selective overload removal.
+        // DROP FUNCTION name(type, ...) -- selective overload removal.
         r = DropFunctionOverload(catalog, info);
       } else {
-        // DROP FUNCTION name — drop all overloads.
+        // DROP FUNCTION name -- drop all overloads.
         r = catalog.DropFunction(info.catalog, info.schema, info.name);
       }
       break;

@@ -27,6 +27,7 @@
 #include "catalog/catalog.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
 #include "pg/connection_context.h"
 
@@ -138,6 +139,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   SDB_ASSERT(catalog_table);
 
   auto state = duckdb::make_uniq<CTASGlobalState>();
+  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
+    duckdb::BufferAllocator::Get(context));
   state->database_name = database->GetName();
   state->schema_name = _schema.name;
   state->table_name = table_info.table;

@@ -98,9 +98,7 @@ class Config {
 
   void ResetAll();
 
-  void DropCatalogSnapshot() {
-    _snapshot.reset();
-  }
+  void DropCatalogSnapshot() { _snapshot.reset(); }
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
 

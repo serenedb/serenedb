@@ -476,12 +476,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
         }
       }
       if (!found) {
-        // New signature — append as a new overload.
+        // New signature -- append as a new overload.
         merged_info->macros.push_back(new_macro->Copy());
       }
     }
 
-    // Use a fresh ObjectId — the resolution table's replace=true will
+    // Use a fresh ObjectId -- the resolution table's replace=true will
     // re-point the function name to the new ID. The old object becomes
     // orphaned in the snapshot objects map (harmless, gets GC'd on
     // next snapshot rotation).
@@ -496,7 +496,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
     return nullptr;
   }
 
-  // No existing function — create new.
+  // No existing function -- create new.
   auto function = std::make_shared<catalog::PgSqlFunction>(
     database_id, ObjectId{}, info.name, std::move(new_macro_info));
   auto r = catalog_impl.CreateFunction(database_id, name, function, false);

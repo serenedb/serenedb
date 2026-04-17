@@ -155,9 +155,9 @@ class DuckDBColumnSerializer {
                                      duckdb::idx_t offset, duckdb::idx_t count);
   void WriteDictionarySubVectorBool(const duckdb::UnifiedVectorFormat& vdata,
                                     duckdb::idx_t offset, duckdb::idx_t count);
-  void WriteDictionarySubVectorVarchar(
-    const duckdb::UnifiedVectorFormat& vdata, duckdb::idx_t offset,
-    duckdb::idx_t count);
+  void WriteDictionarySubVectorVarchar(const duckdb::UnifiedVectorFormat& vdata,
+                                       duckdb::idx_t offset,
+                                       duckdb::idx_t count);
   void WriteDictionaryComplexSubVector(const duckdb::Vector& vec,
                                        duckdb::idx_t offset,
                                        duckdb::idx_t count,

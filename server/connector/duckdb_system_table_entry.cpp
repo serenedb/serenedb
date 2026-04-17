@@ -129,10 +129,10 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
 }
 
 // TODO(Dronplane): consider caching if that will start to slowdown queries.
-// Beware that storing cache in catalog snapshot will require syncing write access
-// between connections
-std::shared_ptr<catalog::VirtualTableSnapshot>
-SystemTableEntry::CreateSnapshot(duckdb::ClientContext& context) {
+// Beware that storing cache in catalog snapshot will require syncing write
+// access between connections
+std::shared_ptr<catalog::VirtualTableSnapshot> SystemTableEntry::CreateSnapshot(
+  duckdb::ClientContext& context) {
   auto& conn_ctx = GetSereneDBContext(context);
   return _virtual_table.CreateSnapshot(conn_ctx.GetDatabaseId(), conn_ctx);
 }

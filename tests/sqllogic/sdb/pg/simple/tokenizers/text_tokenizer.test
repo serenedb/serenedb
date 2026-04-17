@@ -56,7 +56,7 @@ CREATE TEXT SEARCH DICTIONARY t_err5(
 )
 ----
 db error: ERROR: option "locale" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 
@@ -67,7 +67,7 @@ CREATE TEXT SEARCH DICTIONARY t_err6(
 )
 ----
 db error: ERROR: option "stopwords" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 
@@ -78,7 +78,7 @@ CREATE TEXT SEARCH DICTIONARY t_err7(
 )
 ----
 db error: ERROR: option "accent" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 
@@ -90,7 +90,7 @@ CREATE TEXT SEARCH DICTIONARY t_err8(
 )
 ----
 db error: ERROR: option "numhashes" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 
@@ -102,7 +102,7 @@ CREATE TEXT SEARCH DICTIONARY t_err9(
 )
 ----
 db error: ERROR: option "delimiter" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 
@@ -114,7 +114,7 @@ CREATE TEXT SEARCH DICTIONARY t_err10(
 )
 ----
 db error: ERROR: option "mingram" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 
@@ -1269,7 +1269,7 @@ CREATE TEXT SEARCH DICTIONARY copy_err(
 )
 ----
 db error: ERROR: option "numhashes" is not applicable in this context
-Hint: Use WITH (HELP) to see available options
+HINT: Use WITH (HELP) to see available options
 
 
 statement ok

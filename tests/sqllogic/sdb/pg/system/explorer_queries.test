@@ -136,8 +136,9 @@ schema_oid	id	name
 
 # indexes: list indexes for a table
 
-query error
-SELECT
+query
+SELECT COUNT(*) > 0 FROM (
+    SELECT
     (SELECT relname FROM pg_class c WHERE c.oid = i.indexrelid) AS name,
     gs.i AS index_order,
     i.indexrelid AS id,
@@ -151,9 +152,10 @@ JOIN generate_series(1, array_length(i.indkey, 1)) AS gs(i)
 LEFT JOIN pg_attribute a
     ON i.indrelid = a.attrelid AND a.attnum = i.indkey[gs.i]
 WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'explorer_t1')
-ORDER BY i.indexrelid, gs.i
+ORDER BY i.indexrelid, gs.i)
 ----
-db error: ERROR: column "i.indkey" does not exist
+?column?
+t
 
 
 query

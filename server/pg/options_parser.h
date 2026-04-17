@@ -368,7 +368,7 @@ class OptionsParser {
     for (const auto& [name, entry] : options) {
       if (absl::c_contains(known_names, name)) {
         throw duckdb::InvalidInputException(
-          "option \"%s\" is not applicable in this context\nHint: Use WITH "
+          "option \"%s\" is not applicable in this context\nHINT: Use WITH "
           "(HELP) to see available options",
           name);
       }
@@ -379,7 +379,7 @@ class OptionsParser {
           : absl::StrCat("option \"", name,
                          "\" not recognized, did you mean \"", hint, "\"?");
       throw duckdb::InvalidInputException(
-        "%s\nHint: Use WITH (HELP) to see available options", msg);
+        "%s\nHINT: Use WITH (HELP) to see available options", msg);
     }
   }
 

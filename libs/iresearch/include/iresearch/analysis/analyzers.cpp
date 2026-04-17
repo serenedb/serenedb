@@ -44,6 +44,7 @@
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/union_tokenizer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -268,6 +269,7 @@ void Init() {
   NGramTokenizerBase::init();
   PatternTokenizer::init();
   PipelineTokenizer::init();
+  UnionTokenizer::init();
   SegmentationTokenizer::init();
   NormalizingTokenizer::init();
   StemmingTokenizer::init();

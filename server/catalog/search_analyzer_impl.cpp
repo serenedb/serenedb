@@ -26,6 +26,7 @@
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 
 #include "app/name_validator.h"
@@ -193,6 +194,13 @@ Result Features::Validate(std::string_view type) const {
     }
     if (IsGeoAnalyzer(type)) {
       return irs::IndexFeatures::None;
+    }
+    if (type == irs::analysis::UnionTokenizer::type_name()) {
+      // Union does not expose OffsAttr; interleaving tokens from independent
+      // sub-tokenizers over the same input breaks the monotonic offset
+      // invariant required by the indexer.
+      return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+             irs::IndexFeatures::Norm;
     }
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
            irs::IndexFeatures::Norm | irs::IndexFeatures::Offs;

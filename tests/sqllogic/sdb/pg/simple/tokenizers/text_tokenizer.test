@@ -1413,6 +1413,236 @@ ts_lexize
 {CL4pTgTN/r4,aA/5fo9OvB4,X0zdNxFFkdY}
 
 
+# ========================
+# UNION TOKENIZER
+# ========================
+
+# --- Basic union: text + delimiter ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_text_delim(
+    template = 'union',
+    tokenizer1_template = 'text',
+    tokenizer1_locale = 'en_US.UTF-8',
+    tokenizer1_case = 'lower',
+    tokenizer1_stemming = false,
+    tokenizer2_template = 'delimiter',
+    tokenizer2_delimiter = ' ',
+    frequency = true,
+    position = true
+)
+
+
+query
+SELECT ts_lexize('union_text_delim', 'Hello World');
+----
+ts_lexize
+{hello,Hello,world,World}
+
+
+# --- Basic union: text + fixed-size ngram ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_text_ngram3(
+    template = 'union',
+    tokenizer1_template = 'text',
+    tokenizer1_locale = 'en_US.UTF-8',
+    tokenizer1_case = 'lower',
+    tokenizer1_stemming = true,
+    tokenizer2_template = 'ngram',
+    tokenizer2_mingram = 3,
+    tokenizer2_maxgram = 3,
+    frequency = true,
+    position = true
+)
+
+
+query
+SELECT ts_lexize('union_text_ngram3', 'Hello');
+----
+ts_lexize
+{hello,Hel,ell,llo}
+
+
+# --- Basic union: three children ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_three_children(
+    template = 'union',
+    tokenizer1_template = 'text',
+    tokenizer1_locale = 'en_US.UTF-8',
+    tokenizer1_case = 'lower',
+    tokenizer1_stemming = false,
+    tokenizer2_template = 'text',
+    tokenizer2_locale = 'en_US.UTF-8',
+    tokenizer2_case = 'upper',
+    tokenizer2_stemming = false,
+    tokenizer3_template = 'delimiter',
+    tokenizer3_delimiter = ' ',
+    frequency = true,
+    position = true
+)
+
+
+query
+SELECT ts_lexize('union_three_children', 'Hello World');
+----
+ts_lexize
+{hello,HELLO,Hello,world,WORLD,World}
+
+
+# --- OFFSET = true must be rejected for union ---
+
+statement error Unsupported index features are specified
+CREATE TEXT SEARCH DICTIONARY union_offset_err(
+    template = 'union',
+    tokenizer1_template = 'text',
+    tokenizer1_locale = 'en_US.UTF-8',
+    offset = true,
+    position = true,
+    frequency = true
+)
+
+
+# --- OFFSET = true must be rejected for pipeline containing union ---
+
+statement error Unsupported index features are specified
+CREATE TEXT SEARCH DICTIONARY pipe_union_offset_err(
+    template = 'pipeline',
+    step1_template = 'union',
+    step1_tokenizer1_template = 'text',
+    step1_tokenizer1_locale = 'en_US.UTF-8',
+    step1_tokenizer2_template = 'delimiter',
+    step1_tokenizer2_delimiter = ' ',
+    offset = true,
+    position = true,
+    frequency = true
+)
+
+
+# --- Nested: union containing a pipeline ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_with_pipe(
+    template = 'union',
+    tokenizer1_template = 'pipeline',
+    tokenizer1_step1_template = 'delimiter',
+    tokenizer1_step1_delimiter = '.',
+    tokenizer1_step2_template = 'norm',
+    tokenizer1_step2_locale = 'en_US.UTF-8',
+    tokenizer1_step2_case = 'upper',
+    tokenizer2_template = 'delimiter',
+    tokenizer2_delimiter = '.',
+    frequency = true,
+    position = true
+)
+
+
+query
+SELECT ts_lexize('union_with_pipe', 'a.b.c');
+----
+ts_lexize
+{A,a,B,b,C,c}
+
+
+# --- Nested: pipeline containing a union ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pipe_with_union(
+    template = 'pipeline',
+    step1_template = 'delimiter',
+    step1_delimiter = '|',
+    step2_template = 'union',
+    step2_tokenizer1_template = 'norm',
+    step2_tokenizer1_locale = 'en_US.UTF-8',
+    step2_tokenizer1_case = 'lower',
+    step2_tokenizer2_template = 'norm',
+    step2_tokenizer2_locale = 'en_US.UTF-8',
+    step2_tokenizer2_case = 'upper',
+    frequency = true,
+    position = true
+)
+
+
+query
+SELECT ts_lexize('pipe_with_union', 'Hello|World');
+----
+ts_lexize
+{hello,HELLO,world,WORLD}
+
+
+# --- copy_from with union, overriding a sub-tokenizer option ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_base(
+    template = 'union',
+    tokenizer1_template = 'text',
+    tokenizer1_locale = 'en_US.UTF-8',
+    tokenizer1_case = 'lower',
+    tokenizer1_stemming = false,
+    tokenizer2_template = 'delimiter',
+    tokenizer2_delimiter = ' ',
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY union_copy(
+    template = 'copy_from',
+    from = 'union_base',
+    tokenizer1_case = 'upper'
+)
+
+
+query
+SELECT ts_lexize('union_copy', 'Hello World');
+----
+ts_lexize
+{HELLO,Hello,WORLD,World}
+
+
+# --- Error: empty union (no tokenizer<N>_ children) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY union_empty_err(
+    template = 'union',
+    frequency = true
+)
+
+
+# --- Error: sparse numbering (tokenizer2_ without tokenizer1_) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY union_sparse(
+    template = 'union',
+    tokenizer2_template = 'text',
+    tokenizer2_locale = 'en_US.UTF-8',
+    frequency = true,
+    position = true
+)
+
+
+# --- Error: invalid child template ---
+
+statement error Invalid type of text search dictionary
+CREATE TEXT SEARCH DICTIONARY union_badchild(
+    template = 'union',
+    tokenizer1_template = 'nonexistent_type',
+    frequency = true
+)
+
+
+# --- Error: missing required child option (delimiter without delimiter=) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY union_missing_opt(
+    template = 'union',
+    tokenizer1_template = 'delimiter',
+    frequency = true
+)
+
+
 # HELP
 
 statement error
@@ -1482,5 +1712,7 @@ Text Search Dictionary:
     reverse (boolean) [default: false] - Use reverse tokenization for domain-like hierarchies
     skip (integer) [default: 0] - Number of initial tokens to skip
     buffersize (integer) [default: 1024] - Term buffer size hint (characters per pass)
+  union:
+    (no additional options)
   copy_from:
     from[required] (string) [default: none] - the source tokenizer name

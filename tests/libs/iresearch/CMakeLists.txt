@@ -8,6 +8,7 @@ set(iresearch-tests_sources
     ./analysis/minhash_tokenizer_test.cpp
     ./analysis/multi_delimited_tokenizer_tests.cpp
     ./analysis/pipeline_tokenizer_tests.cpp
+    ./analysis/union_tokenizer_tests.cpp
     ./analysis/segmentation_tokenizer_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
     ./analysis/stemming_tokenizer_tests.cpp

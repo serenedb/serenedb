@@ -42,6 +42,7 @@
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <type_traits>
@@ -159,6 +160,16 @@ class CreateTSDictionaryOptions : public OptionsParser {
   auto Result() && { return std::make_pair(std::move(_builder), _features); }
 
  private:
+  bool HasUnionChildOption(std::string_view prefix) const {
+    auto child_prefix = OptionInfo::AdjustPrefix(prefix, "tokenizer");
+    for (const auto& [name, _] : _options) {
+      if (name.starts_with(child_prefix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void ParseTemplateType(std::string_view type, std::string_view prefix) {
     bool found = false;
     VisitValues<kTSDictionaryGroup.subgroups>([&]<const OptionGroup & Group> {
@@ -308,6 +319,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if constexpr (Group.name == tokenizer_options::kPipelineGroup.name) {
       ParsePipeline(prefix);
       return;
+    } else if constexpr (Group.name == tokenizer_options::kUnionGroup.name) {
+      ParseUnion(prefix);
+      return;
     } else if constexpr (Group.name == tokenizer_options::kCopyFromGroup.name) {
       ParseCopyFrom(prefix);
       return;
@@ -371,6 +385,62 @@ class CreateTSDictionaryOptions : public OptionsParser {
       step++;
     }
     _builder.close();  // close array for pipeline
+  }
+
+  void ParseUnion(std::string_view prefix) {
+    int tokenizer_num = 1;
+    _builder.add(tokenizer_options::kUnionGroup.name,
+                 vpack::Value{vpack::ValueType::Array});
+    auto slice = vpack::Slice::noneSlice();
+    if (!_copy_from.empty() && _copy_from.back().first == prefix) {
+      slice = GetFromPath(tokenizer_options::kUnionGroup.name, prefix,
+                          _copy_from.back().first, _copy_from.back().second);
+      SDB_ASSERT(slice.isArray());
+    }
+    while (true) {
+      auto tok_prefix =
+        OptionInfo::AdjustPrefix(prefix, "tokenizer", tokenizer_num);
+      std::string_view type;
+      bool type_from_copy = false;
+      if (OptionsParser::HasOption(tokenizer_options::kTemplate, tok_prefix)) {
+        type =
+          OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+            tok_prefix);
+      } else if (!slice.isNone()) {
+        if (tokenizer_num > static_cast<int>(slice.length())) {
+          break;
+        }
+        auto elem = slice.at(tokenizer_num - 1);
+        if (elem.isNone()) {
+          break;
+        }
+        type_from_copy = true;
+        type = elem.get(kTypeField).stringView();
+        _copy_from.emplace_back(tok_prefix, elem.get(kPropertiesField));
+      }
+      if (type.empty()) {
+        break;
+      }
+      _builder.openObject();
+      Parse<false>(type, tok_prefix);
+      _builder.close();
+      if (type_from_copy) {
+        _copy_from.pop_back();
+      }
+
+      tokenizer_num++;
+    }
+    if (tokenizer_num == 1) {
+      if (!slice.isNone() || !HasUnionChildOption(prefix)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("Union tokenizer requires at least one "
+                                "tokenizer<N> child"));
+      }
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Union tokenizer children must be numbered "
+                              "densely starting from tokenizer1"));
+    }
+    _builder.close();  // close array for union
   }
 
   void ParseMinHash(std::string_view prefix) {
@@ -479,6 +549,17 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("Failed to create text search dictionary \"",
                                 tokenizer_name.relation, "\""));
+      }
+      if (features.HasFeatures(irs::IndexFeatures::Offs)) {
+        auto test_analyzer = irs::analysis::analyzers::Get(
+          type_slice.stringView(), irs::Type<irs::text_format::VPack>::get(),
+          {reinterpret_cast<const char*>(properties_slice.getDataPtr()),
+           properties_slice.byteSize()},
+          false);
+        if (test_analyzer && !irs::get<irs::OffsAttr>(*test_analyzer)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("Unsupported index features are specified"));
+        }
       }
     }
   }

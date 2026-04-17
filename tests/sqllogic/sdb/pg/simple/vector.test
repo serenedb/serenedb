@@ -2,13 +2,20 @@ query
 SELECT [0.0, 1.0, 2.0]::FLOAT[3] <-> [2.0, 1.0, 0.0]::FLOAT[3];
 ----
 ?column?
-8
+2.8<slt:ignore>
 
 
 query
 SELECT l2_distance([0.0, 1.0, 2.0]::FLOAT[3], ARRAY[2.0, 1.0, 0.0]::FLOAT[3]);
 ----
 l2_distance
+2.8<slt:ignore>
+
+
+query
+SELECT l2_sqr_distance([0.0, 1.0, 2.0]::FLOAT[3], ARRAY[2.0, 1.0, 0.0]::FLOAT[3]);
+----
+l2_sqr_distance
 8
 
 

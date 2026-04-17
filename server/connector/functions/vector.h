@@ -27,6 +27,7 @@ namespace sdb::connector {
 
 inline constexpr std::string_view kL2Distance = "l2_distance";
 inline constexpr std::string_view kL2DistanceOp = "<->";
+inline constexpr std::string_view kL2SqrDistance = "l2_sqr_distance";
 inline constexpr std::string_view kL1Distance = "l1_distance";
 inline constexpr std::string_view kL1DistanceOp = "<+>";
 inline constexpr std::string_view kCosineDistance = "cosine_distance";

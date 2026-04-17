@@ -41,15 +41,22 @@ namespace {
 enum class Distance {
   L1 = 0,
   L2,
+  L2Sqr,
   Cosine,
   IP,
 };
 
 template<typename T, typename R>
-R ComputeL2(const T* l, const T* r, size_t size) {
+R ComputeL2Sqr(const T* l, const T* r, size_t size) {
   return irs::vector::L2Space<T, T, R>::Dist(
     reinterpret_cast<const irs::byte_type*>(l),
     reinterpret_cast<const irs::byte_type*>(r), static_cast<uint16_t>(size));
+}
+
+template<typename T, typename R>
+R ComputeL2(const T* l, const T* r, size_t size) {
+  auto res = ComputeL2Sqr<T, R>(l, r, size);
+  return std::sqrt(res);
 }
 
 template<typename T, typename R>
@@ -88,6 +95,8 @@ void Execute(R& result, const T* l, const T* r, size_t size) {
     result = ComputeCosine<T, R>(l, r, size);
   } else if constexpr (D == Distance::IP) {
     result = ComputeDotProduct<T, R>(l, r, size);
+  } else if constexpr (D == Distance::L2Sqr) {
+    result = ComputeL2Sqr<T, R>(l, r, size);
   } else {
     SDB_UNREACHABLE();
   }
@@ -167,6 +176,8 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
   } else if constexpr (D == Distance::L2) {
     name = kL2Distance;
     op_name = kL2DistanceOp;
+  } else if constexpr (D == Distance::L2Sqr) {
+    name = kL2SqrDistance;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
     op_name = kCosineDistanceOp;
@@ -192,10 +203,12 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
   distance.AddFunction(float_fn);
   distance.AddFunction(double_fn);
   loader.RegisterFunction(std::move(distance));
-  duckdb::ScalarFunctionSet op{op_name};
-  op.AddFunction(float_fn);
-  op.AddFunction(double_fn);
-  loader.RegisterFunction(std::move(op));
+  if (!op_name.empty()) {
+    duckdb::ScalarFunctionSet op{op_name};
+    op.AddFunction(float_fn);
+    op.AddFunction(double_fn);
+    loader.RegisterFunction(std::move(op));
+  }
 }
 
 }  // namespace
@@ -206,6 +219,7 @@ void RegisterVectorFunctions(duckdb::DatabaseInstance& db) {
   RegisterDistance<Distance::L2>(loader);
   RegisterDistance<Distance::Cosine>(loader);
   RegisterDistance<Distance::IP>(loader);
+  RegisterDistance<Distance::L2Sqr>(loader);
 }
 
 }  // namespace sdb::connector

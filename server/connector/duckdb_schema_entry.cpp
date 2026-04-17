@@ -25,6 +25,7 @@
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
+#include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
@@ -588,58 +589,233 @@ void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
   DropObject(context, info);
 }
 
+namespace {
+
+// Maps the Result of a relation-level rename (table / view / index) to a
+// PG-compatible error. DuckDB's binder resolves the relation before we reach
+// here, so ERROR_SERVER_DATA_SOURCE_NOT_FOUND / ERROR_SERVER_ILLEGAL_NAME can
+// only happen on a race with a concurrent DROP -- handle defensively.
+void HandleRenameRelationError(Result r, std::string_view name,
+                               std::string_view new_name,
+                               std::string_view expected_type) {
+  if (r.ok()) {
+    return;
+  }
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("\"", name, "\" is not ",
+                            basics::string_utils::GetArticle(expected_type),
+                            " ", expected_type));
+  }
+  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
+      r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", name, "\" does not exist"));
+  }
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", new_name, "\" already exists"));
+  }
+  SDB_THROW(std::move(r));
+}
+
+}  // namespace
+
 void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
-  if (info.type != duckdb::AlterType::ALTER_TABLE) {
-    throw duckdb::NotImplementedException("ALTER through DuckDB");
-  }
-  auto& table_info = info.Cast<duckdb::AlterTableInfo>();
-  if (table_info.alter_table_type != duckdb::AlterTableType::DROP_CONSTRAINT) {
-    throw duckdb::NotImplementedException("ALTER TABLE through DuckDB");
-  }
-
-  auto& drop_info = table_info.Cast<duckdb::DropConstraintInfo>();
   auto& catalog_impl =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto db = GetDatabaseId();
-  auto table_name = info.name;
 
-  Result r = catalog_impl.ChangeTable(
-    db, name, table_name,
-    [&](const catalog::Table& table, std::shared_ptr<catalog::Table>& updated) {
-      return table.DropConstraint(updated, drop_info.constraint_name);
-    });
+  if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION) {
+    auto& fn_info = info.Cast<duckdb::AlterScalarFunctionInfo>();
+    if (fn_info.alter_scalar_function_type !=
+        duckdb::AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
+      throw duckdb::NotImplementedException("ALTER FUNCTION through DuckDB");
+    }
+    auto& rename_info = fn_info.Cast<duckdb::RenameScalarFunctionInfo>();
 
-  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
-    auto actual_type =
-      basics::string_utils::GetPluralFormLowerCase(r.errorMessage());
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
-      ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
-              "relation \"",
-              table_name, "\""),
-      ERR_DETAIL("This operation is not supported for ", actual_type, "."));
-  }
+    Result r =
+      catalog_impl.RenameFunction(db, name, info.name, rename_info.new_name);
 
-  if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-    // Table not found -- DuckDB's binder already handles IF EXISTS,
-    // so if we reach here the table should exist.
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                    ERR_MSG("relation \"", table_name, "\" does not exist"));
-  }
-
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
-    if (!drop_info.if_constraint_not_found) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("constraint \"", drop_info.constraint_name, "\" of relation \"",
-                table_name, "\" does not exist"));
+    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND) ||
+        r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+      const bool missing_ok =
+        info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+      if (!missing_ok) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+          ERR_MSG("could not find a function named \"", info.name, "\""));
+      }
+      return;
+    }
+    if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                      ERR_MSG("relation \"", rename_info.new_name,
+                              "\" already exists"));
+    }
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
     }
     return;
   }
 
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
+  if (info.type == duckdb::AlterType::ALTER_VIEW) {
+    auto& view_info = info.Cast<duckdb::AlterViewInfo>();
+    if (view_info.alter_view_type != duckdb::AlterViewType::RENAME_VIEW) {
+      throw duckdb::NotImplementedException("ALTER VIEW through DuckDB");
+    }
+    auto& rename_info = view_info.Cast<duckdb::RenameViewInfo>();
+    Result r =
+      catalog_impl.RenameView(db, name, info.name, rename_info.new_view_name);
+    HandleRenameRelationError(std::move(r), info.name,
+                              rename_info.new_view_name, "view");
+    return;
+  }
+
+  if (info.type != duckdb::AlterType::ALTER_TABLE) {
+    throw duckdb::NotImplementedException("ALTER through DuckDB");
+  }
+
+  auto& table_info = info.Cast<duckdb::AlterTableInfo>();
+  auto table_name = info.name;
+
+  switch (table_info.alter_table_type) {
+    case duckdb::AlterTableType::DROP_CONSTRAINT: {
+      auto& drop_info = table_info.Cast<duckdb::DropConstraintInfo>();
+
+      Result r = catalog_impl.ChangeTable(
+        db, name, table_name,
+        [&](const catalog::Table& table,
+            std::shared_ptr<catalog::Table>& updated) {
+          return table.DropConstraint(updated, drop_info.constraint_name);
+        });
+
+      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+        auto actual_type =
+          basics::string_utils::GetPluralFormLowerCase(r.errorMessage());
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("ALTER action DROP CONSTRAINT cannot be performed on "
+                  "relation \"",
+                  table_name, "\""),
+          ERR_DETAIL("This operation is not supported for ", actual_type, "."));
+      }
+
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        // Table not found -- DuckDB's binder already handles IF EXISTS,
+        // so if we reach here the table should exist.
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+
+      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        if (!drop_info.if_constraint_not_found) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                          ERR_MSG("constraint \"", drop_info.constraint_name,
+                                  "\" of relation \"", table_name,
+                                  "\" does not exist"));
+        }
+        return;
+      }
+
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    case duckdb::AlterTableType::RENAME_TABLE: {
+      auto& rename_info = table_info.Cast<duckdb::RenameTableInfo>();
+      // RenameRelation routes by actual object type, so ALTER TABLE on a view
+      // or index (which Postgres allows) still renames the correct object.
+      Result r = catalog_impl.RenameRelation(db, name, table_name,
+                                             rename_info.new_table_name);
+      HandleRenameRelationError(std::move(r), table_name,
+                                rename_info.new_table_name, "table");
+      return;
+    }
+
+    case duckdb::AlterTableType::RENAME_CONSTRAINT: {
+      auto& rename_info = table_info.Cast<duckdb::RenameConstraintInfo>();
+
+      Result r = catalog_impl.ChangeTable(
+        db, name, table_name,
+        [&](const catalog::Table& table,
+            std::shared_ptr<catalog::Table>& updated) {
+          return table.RenameConstraint(updated, rename_info.old_name,
+                                        rename_info.new_name);
+        });
+
+      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH) ||
+          r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+          ERR_MSG("constraint \"", rename_info.old_name, "\" for table \"",
+                  table_name, "\" does not exist"));
+      }
+
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+
+      if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+          ERR_MSG("constraint \"", rename_info.new_name, "\" for relation \"",
+                  table_name, "\" already exists"));
+      }
+
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    case duckdb::AlterTableType::RENAME_COLUMN: {
+      auto& rename_info = table_info.Cast<duckdb::RenameColumnInfo>();
+
+      Result r = catalog_impl.ChangeTable(
+        db, name, table_name,
+        [&](const catalog::Table& table,
+            std::shared_ptr<catalog::Table>& updated) {
+          return table.RenameColumn(updated, rename_info.old_name,
+                                    rename_info.new_name);
+        });
+
+      if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("cannot rename columns of a non-table relation"));
+      }
+
+      if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+      }
+
+      if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+          ERR_MSG("column \"", rename_info.old_name, "\" does not exist"));
+      }
+
+      if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+          ERR_MSG("column \"", rename_info.new_name, "\" of relation \"",
+                  table_name, "\" already exists"));
+      }
+
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return;
+    }
+
+    default:
+      throw duckdb::NotImplementedException("ALTER TABLE through DuckDB");
   }
 }
 

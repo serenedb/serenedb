@@ -101,6 +101,15 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   // Set of column IDs that are being updated, for fast lookup
   containers::FlatHashSet<catalog::Column::Id> update_col_id_set;
 
+  // Non-updated columns that are part of at least one index.
+  // Their chunk position is the idx_virtual slot assigned in PlanUpdate.
+  struct NonUpdateIdxColMeta {
+    catalog::Column::Id id;
+    duckdb::LogicalType duckdb_type;
+    duckdb::idx_t chunk_idx;
+  };
+  std::vector<NonUpdateIdxColMeta> non_update_idx_cols;
+
   DuckDBWriteConflictResolver conflict_resolver;
 };
 
@@ -302,6 +311,61 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     for (size_t i = 0; i < _indexed_col_indices.size(); ++i) {
       del_col_mapping[non_pk_idx_col_ids[i]] = _indexed_col_indices[i];
     }
+
+    for (size_t i = 0; i < _indexed_col_indices.size(); ++i) {
+      auto col_id = non_pk_idx_col_ids[i];
+      if (state->update_col_id_set.contains(col_id)) {
+        continue;
+      }
+      for (const auto& col : columns) {
+        if (col.id == col_id) {
+          state->non_update_idx_cols.push_back(
+            SereneDBUpdateGlobalState::NonUpdateIdxColMeta{
+              .id = col_id,
+              .duckdb_type = col.type,
+              .chunk_idx = _indexed_col_indices[i],
+            });
+          break;
+        }
+      }
+    }
+
+    // Also handle PK columns that are explicitly listed in an index (e.g.
+    // inverted indexes index PK as a searchable field). Secondary index writers
+    // ignore them via SwitchColumn returning false.
+    for (size_t i = 0; i < _pk_col_indices.size() && i < pk_col_ids.size();
+         ++i) {
+      auto pk_col_id = pk_col_ids[i];
+      if (state->update_col_id_set.contains(pk_col_id)) {
+        continue;
+      }
+      bool in_any_index = false;
+      for (auto& index : indexes) {
+        for (auto idx_col_id : index->GetColumnIds()) {
+          if (idx_col_id == pk_col_id) {
+            in_any_index = true;
+            break;
+          }
+        }
+        if (in_any_index) {
+          break;
+        }
+      }
+      if (!in_any_index) {
+        continue;
+      }
+      for (const auto& col : columns) {
+        if (col.id == pk_col_id) {
+          state->non_update_idx_cols.push_back(
+            SereneDBUpdateGlobalState::NonUpdateIdxColMeta{
+              .id = pk_col_id,
+              .duckdb_type = col.type,
+              .chunk_idx = _pk_col_indices[i],
+            });
+          break;
+        }
+      }
+    }
   }
 
   // When update_pk, ALL secondary indexes must be refreshed because PK bytes
@@ -489,6 +553,31 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                     gstate.active_writers);
     }
 
+    // Trigger index writers whose first column is not in the SET clause.
+    // Use SstWriter{nullptr} to skip RocksDB puts (values already written
+    // above); index Write() calls still fire via WriteRowSlices.
+    {
+      DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
+      for (const auto& col : gstate.non_update_idx_cols) {
+        gstate.active_writers.clear();
+        for (auto& writer : gstate.index_writers) {
+          if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
+                                   col.id)) {
+            gstate.active_writers.push_back(writer.get());
+          }
+        }
+        if (gstate.active_writers.empty()) {
+          continue;
+        }
+        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+          key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
+        }
+        gstate.serializer.WriteColumn(
+          noop_writer, chunk.data[col.chunk_idx], col.duckdb_type, num_rows,
+          gstate.new_row_keys, gstate.active_writers);
+      }
+    }
+
     // Non-updated columns: from saved values via Put.
     for (auto& [col_id, col_vals] : gstate.saved_columns) {
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
@@ -547,6 +636,29 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
                                     num_rows, gstate.row_keys,
                                     gstate.active_writers);
+    }
+
+    // Trigger index writers whose first column is not in the SET clause.
+    {
+      DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
+      for (const auto& col : gstate.non_update_idx_cols) {
+        gstate.active_writers.clear();
+        for (auto& writer : gstate.index_writers) {
+          if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
+                                   col.id)) {
+            gstate.active_writers.push_back(writer.get());
+          }
+        }
+        if (gstate.active_writers.empty()) {
+          continue;
+        }
+        for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+          key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+        }
+        gstate.serializer.WriteColumn(noop_writer, chunk.data[col.chunk_idx],
+                                      col.duckdb_type, num_rows,
+                                      gstate.row_keys, gstate.active_writers);
+      }
     }
   }
 

@@ -52,7 +52,6 @@
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
-#include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
@@ -75,18 +74,19 @@ inline constexpr std::string_view kTypeField = "type";
 using namespace std::string_view_literals;
 
 // TODO: Remove this mapping
-const absl::flat_hash_map<std::string_view, std::string_view> kNameMappings = {
-  {tokenizer_options::kStopwordsPath.name, "stopwordsPath"},
-  {tokenizer_options::kMinGram.name, "min"},
-  {tokenizer_options::kMaxGram.name, "max"},
-  {tokenizer_options::kEdgeNGramGroup.name, "edgeNGram"},
-  {tokenizer_options::kPreserveOriginal.name, "preserveOriginal"},
-  {tokenizer_options::kInputType.name, "streamType"},
-  {tokenizer_options::kStartMarker.name, "startMarker"},
-  {tokenizer_options::kEndMarker.name, "endMarker"},
-  {tokenizer_options::kModelLocation.name, "model_location"},
-  {tokenizer_options::kTopK.name, "top_k"},
-  {tokenizer_options::kNumHashes.name, "numHashes"},
+const containers::FlatHashMap<std::string_view, std::string_view>
+  kNameMappings = {
+    {tokenizer_options::kStopwordsPath.name, "stopwordsPath"},
+    {tokenizer_options::kMinGram.name, "min"},
+    {tokenizer_options::kMaxGram.name, "max"},
+    {tokenizer_options::kEdgeNGramGroup.name, "edgeNGram"},
+    {tokenizer_options::kPreserveOriginal.name, "preserveOriginal"},
+    {tokenizer_options::kInputType.name, "streamType"},
+    {tokenizer_options::kStartMarker.name, "startMarker"},
+    {tokenizer_options::kEndMarker.name, "endMarker"},
+    {tokenizer_options::kModelLocation.name, "model_location"},
+    {tokenizer_options::kTopK.name, "top_k"},
+    {tokenizer_options::kNumHashes.name, "numHashes"},
 };
 
 template<const auto& Array>
@@ -110,9 +110,9 @@ void ParseCommaSeparated(std::string_view input,
       token.remove_suffix(1);
     }
     if (token.front() != '\"' || token.back() != '\"') {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("Invalid format of list of words(should be "
-                              "comma-separated and quoted)"));
+      throw duckdb::InvalidInputException(
+        "Invalid format of list of words(should be comma-separated and "
+        "quoted)");
     }
     token.remove_suffix(1);
     token.remove_prefix(1);
@@ -138,8 +138,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
  public:
   CreateTSDictionaryOptions(std::shared_ptr<const catalog::Snapshot> snapshot,
                             ObjectId db_id, std::string_view current_schema,
-                            const List* ts_dictionary_options)
-    : OptionsParser{ts_dictionary_options,
+                            const duckdb::named_parameter_map_t& named_params)
+    : OptionsParser{named_params,
                     kTSDictionaryGroup,
                     {.operation = "CREATE TEXT SEARCH DICTIONARY"}},
       _snapshot{std::move(snapshot)},
@@ -148,7 +148,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     ParseOptions([&] {
       _builder.openObject();
       _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
-      std::string_view type =
+      std::string type =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
       Parse<true>(type);
       _builder.close();  // close analyzer
@@ -198,8 +198,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (field.isNone()) {
       return std::nullopt;
     }
-    if constexpr (std::is_same_v<T, std::string_view>) {
-      return field.stringView();
+    if constexpr (std::is_same_v<T, std::string>) {
+      return std::string{field.stringView()};
     } else if constexpr (std::is_same_v<T, bool>) {
       return field.getBool();
     } else if constexpr (std::is_same_v<T, int>) {
@@ -290,7 +290,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       } else {
         auto value = EraseOptionOrDefault<Option>(prefix);
         if constexpr (std::is_same_v<std::remove_cvref_t<decltype(value)>,
-                                     std::string_view>) {
+                                     std::string>) {
           if (value.empty()) {
             return;
           }
@@ -340,7 +340,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     }
     while (true) {
       auto step_prefix = OptionInfo::AdjustPrefix(prefix, "step", step);
-      std::string_view type;
+      std::string type;
       bool type_from_copy = false;
       if (OptionsParser::HasOption(tokenizer_options::kTemplate, step_prefix)) {
         type =
@@ -355,7 +355,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
           break;
         }
         type_from_copy = true;
-        type = elem.get(kTypeField).stringView();
+        type = std::string{elem.get(kTypeField).stringView()};
         _copy_from.emplace_back(step_prefix, elem.get(kPropertiesField));
       }
       if (type.empty()) {
@@ -375,7 +375,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   void ParseMinHash(std::string_view prefix) {
     auto analyzer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
-    std::string_view type;
+    std::string type;
     bool type_from_template = false;
     if (OptionsParser::HasOption(tokenizer_options::kTemplate,
                                  analyzer_prefix) ||
@@ -386,7 +386,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       SDB_ASSERT(!_copy_from.empty());
       auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
                                _copy_from.back().second);
-      type = slice.get(kTypeField).stringView();
+      type = std::string{slice.get(kTypeField).stringView()};
       _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
       type_from_template = true;
     }
@@ -402,15 +402,14 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseCopyFrom(std::string_view prefix) {
-    std::string_view from =
+    std::string from =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kFrom>(prefix);
     auto name = ParseObjectName(from, _current_schema);
     auto tokenizer =
       _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
     if (!tokenizer) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("text search dictionary \"", from, "\" does not exist"));
+      throw duckdb::InvalidInputException(
+        "text search dictionary \"%s\" does not exist", std::string{from});
     }
     auto slice = tokenizer->Slice().get(kAnalyzerField);
 
@@ -431,14 +430,13 @@ class CreateTSDictionaryOptions : public OptionsParser {
       });
     auto r = _features.Validate(type);
     if (!r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG(r.errorMessage()));
+      throw duckdb::InvalidInputException("%s", std::string{r.errorMessage()});
     }
   }
 
   vpack::Builder _builder;
   search::Features _features;
-  std::vector<std::pair<std::string_view, vpack::Slice>> _copy_from;
+  std::vector<std::pair<std::string, vpack::Slice>> _copy_from;
   std::shared_ptr<const catalog::Snapshot> _snapshot;
   ObjectId _db_id;
   std::string_view _current_schema;
@@ -446,20 +444,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
 }  // namespace
 
-yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
-  const auto& conn_ctx = basics::downCast<const ConnectionContext>(ctx);
-  const auto db = ctx.GetDatabaseId();
+void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
+                     std::string_view schema, bool if_not_exists,
+                     const duckdb::named_parameter_map_t& options) {
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
-  const auto tokenizer_name =
-    ParseObjectName(stmt.defnames, ctx.GetDatabase(), current_schema);
-
-  auto& catalogs =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-
-  auto [b, features] =
-    std::move(CreateTSDictionaryOptions{conn_ctx.EnsureCatalogSnapshot(), db,
-                                        current_schema, stmt.definition})
-      .Result();
+  auto [b, features] = std::move(CreateTSDictionaryOptions{
+                                   snapshot, db_id, current_schema, options})
+                         .Result();
 
   // Validate analyzer/tokenizer configuration
   auto analyzer_slice = b.slice().get(kAnalyzerField);
@@ -476,28 +469,29 @@ yaclib::Future<> CreateTokenizer(ExecContext& ctx, const DefineStmt& stmt) {
               properties_slice.byteSize()},
             false)) {
         // If validation fails, the error should already be logged
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("Failed to create text search dictionary \"",
-                                tokenizer_name.relation, "\""));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Failed to create text search dictionary \"", name, "\""));
       }
     }
   }
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
-    ObjectId{0}, tokenizer_name.relation, features,
+    ObjectId{0}, std::string{name}, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 
-  auto& catalog = catalogs.Global();
-  auto r =
-    catalog.CreateTokenizer(db, tokenizer_name.schema, std::move(tokenizer));
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
 
-  if (!r.ok() && !stmt.if_not_exists) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                    ERR_MSG("text search dictionary \"",
-                            tokenizer_name.relation, "\" already exists"));
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
+    return;
   }
-  return {};
+  if (!r.ok()) {
+    throw duckdb::InvalidInputException(
+      "text search dictionary \"%s\" already exists", std::string{name});
+  }
 }
 
 }  // namespace sdb::pg

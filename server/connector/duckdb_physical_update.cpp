@@ -55,6 +55,9 @@ struct UpdateColumnMeta {
 };
 
 struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
+  explicit SereneDBUpdateGlobalState(duckdb::Allocator& allocator)
+    : serializer(allocator) {}
+
   duckdb::idx_t update_count = 0;
 
   ObjectId table_id;
@@ -172,7 +175,8 @@ SereneDBPhysicalUpdate::SereneDBPhysicalUpdate(
 duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalUpdate::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
-  auto state = duckdb::make_uniq<SereneDBUpdateGlobalState>();
+  auto state = duckdb::make_uniq<SereneDBUpdateGlobalState>(
+    duckdb::BufferAllocator::Get(context));
 
   state->cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);

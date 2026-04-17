@@ -70,8 +70,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
   std::string value_buffer;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
-    duckdb::make_uniq<DuckDBColumnSerializer>();
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
   DuckDBWriteConflictResolver conflict_resolver;
 };
 
@@ -98,6 +97,8 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalInsert::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SereneDBInsertGlobalState>();
+  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
+    duckdb::BufferAllocator::Get(context));
 
   state->cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);

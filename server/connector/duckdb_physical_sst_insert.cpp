@@ -130,6 +130,8 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<SSTInsertGlobalState>();
+  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
+    duckdb::BufferAllocator::Get(context));
 
   SetupSSTState(*state, *_table);
 

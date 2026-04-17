@@ -122,7 +122,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     for (auto& key : col_keys) {
       key_utils::SetupColumnForKey(key, col_id);
     }
-    DuckDBColumnSerializer serializer;
+    DuckDBColumnSerializer serializer{duckdb::Allocator::DefaultAllocator()};
     DuckDBColumnSerializer::TxnWriter writer{txn, _cf_handles.front()};
     serializer.WriteColumn(writer, vec, type, num_rows, col_keys, {});
   }

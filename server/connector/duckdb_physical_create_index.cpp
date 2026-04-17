@@ -106,8 +106,7 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::string value_buffer;
   duckdb::idx_t backfill_count = 0;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
-    duckdb::make_uniq<DuckDBColumnSerializer>();
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
   ~CreateIndexGlobalState() {
     if (created && !finalized) {
@@ -148,6 +147,8 @@ duckdb::unique_ptr<duckdb::GlobalSinkState>
 SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
+  state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
+    duckdb::BufferAllocator::Get(context));
   state->database_id = _database_id;
   state->database_name = _schema_entry.catalog.GetName();
   state->schema_name = _schema_entry.name;

@@ -58,8 +58,7 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<std::string> row_keys;
   std::string value_buffer;
   std::vector<DuckDBSinkIndexWriter*> active_writers;
-  duckdb::unique_ptr<DuckDBColumnSerializer> serializer =
-    duckdb::make_uniq<DuckDBColumnSerializer>();
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
   bool has_data = false;
   bool finalized = false;

@@ -76,7 +76,7 @@ class DuckDBColumnSerializer {
     void WriteNull(std::string_view key) const;
   };
 
-  DuckDBColumnSerializer();
+  explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
 
   // --- Layer 1: Per-column write (one RocksDB Put per row) ---
   // Templated on Writer (TxnWriter or SstWriter) -- inlined, no virtual

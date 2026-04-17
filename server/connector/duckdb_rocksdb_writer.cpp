@@ -194,8 +194,8 @@ void AppendPKValueFromDuckDB(std::string& key, const duckdb::Vector& vec,
 // DuckDBColumnSerializer -- port of RocksDBDataSinkBase serialization
 // ---------------------------------------------------------------------------
 
-DuckDBColumnSerializer::DuckDBColumnSerializer()
-  : _arena{duckdb::Allocator::DefaultAllocator()} {}
+DuckDBColumnSerializer::DuckDBColumnSerializer(duckdb::Allocator& allocator)
+  : _arena{allocator} {}
 
 void DuckDBColumnSerializer::ResetForNewRow() noexcept {
   _row_slices.clear();

@@ -147,6 +147,21 @@ class DuckDBColumnSerializer {
   char* Allocate(size_t size);
   bool WriteNullBitmap(const duckdb::ValidityMask& validity,
                        duckdb::idx_t offset, duckdb::idx_t count);
+  bool WriteDictNullBitmap(const duckdb::UnifiedVectorFormat& vdata,
+                           duckdb::idx_t offset, duckdb::idx_t count);
+
+  template<typename T>
+  void WriteDictionaryFixedSubVector(const duckdb::UnifiedVectorFormat& vdata,
+                                     duckdb::idx_t offset, duckdb::idx_t count);
+  void WriteDictionarySubVectorBool(const duckdb::UnifiedVectorFormat& vdata,
+                                    duckdb::idx_t offset, duckdb::idx_t count);
+  void WriteDictionarySubVectorVarchar(
+    const duckdb::UnifiedVectorFormat& vdata, duckdb::idx_t offset,
+    duckdb::idx_t count);
+  void WriteDictionaryComplexSubVector(const duckdb::Vector& vec,
+                                       duckdb::idx_t offset,
+                                       duckdb::idx_t count,
+                                       const duckdb::LogicalType& type);
 
   // Layer 1 helpers -- templated on Writer
   template<typename Writer, typename T>

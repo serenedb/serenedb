@@ -55,10 +55,11 @@ void SereneDBClientState::Register(
     [](duckdb::ClientContext& ctx, duckdb::TransactionIsolationLevel level) {
       if (level != duckdb::TransactionIsolationLevel::READ_COMMITTED &&
           level != duckdb::TransactionIsolationLevel::REPEATABLE_READ) {
-        throw duckdb::InvalidInputException(
-          "transaction isolation level \"%s\" is not supported. "
-          "Available values: repeatable read, read committed.",
-          duckdb::EnumUtil::ToChars(level));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("transaction isolation level \"",
+                  duckdb::EnumUtil::ToChars(level), "\" is not supported"),
+          ERR_HINT("Available values: repeatable read, read committed."));
       }
       auto& conn_ctx = GetSereneDBContext(ctx);
       if (!conn_ctx.IsAutoCommit() &&

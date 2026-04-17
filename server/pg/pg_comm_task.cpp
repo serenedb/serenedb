@@ -345,7 +345,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       _send.Write(ToBuffer(backend_key_data), false);
 
       connector::SereneDBClientState::Register(*_duckdb_conn->context,
-                                                _connection_ctx);
+                                               _connection_ctx);
       // Set default catalog to the user's database
       _duckdb_conn->context->client_data->catalog_search_path->Set(
         duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},

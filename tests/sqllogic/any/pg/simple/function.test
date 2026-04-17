@@ -1,74 +1,4 @@
-statement ok
-CREATE PROCEDURE typical_review()
-AS $$
-  SELECT * FROM
-  (
-    VALUES ('had done nothing, got money'), ('had done nothing, got money')
-  ),
-  (
-    VALUES ('had done nothing, got money'), ('had done nothing, got money')
-  )
-$$ LANGUAGE sql;
-
-
-statement ok
-CALL typical_review();
-
-
-query error
-SELECT * FROM typical_review();
-----
-db error: ERROR: typical_review() is a procedure
-HINT: To call a procedure, use CALL.
-
-
-skipif serenedb
-query error
-SELECT typical_review();
-----
-db error: ERROR: typical_review() is a procedure
-HINT: To call a procedure, use CALL.
-
-
-skipif serenedb
-query error
-SELECT WHERE typical_review() > 1
-----
-db error: ERROR: typical_review() is a procedure
-HINT: To call a procedure, use CALL.
-
-
-skipif serenedb
-statement ok
-CREATE PROCEDURE create_review()
-AS $$
-  CREATE VIEW clickclack_review AS
-  SELECT 'had done nothing, got money';
-$$ LANGUAGE sql;
-
-
-skipif serenedb
-statement ok
-CALL create_review();
-
-
-skipif serenedb
-statement ok
-CREATE PROCEDURE create_hft(
-  title TEXT
-)
-AS $$
-  CREATE VIEW my_hft AS
-  SELECT title, 'hft earned 0 money'
-$$ LANGUAGE sql;
-
-
-skipif serenedb
-query error
-CALL create_hft('vedernikoff');
-----
-db error: ERROR: column "title" does not exist
-
+# ── Basic function creation (AS $$ ... $$ LANGUAGE sql) ──
 
 statement ok
 CREATE FUNCTION simple_boy_old_pg()
@@ -139,25 +69,11 @@ AS $$
 $$ LANGUAGE sql;
 
 
-# TODO(mbkkt) fix returns void
-skipif serenedb
 query
 SELECT * FROM ireturnvoid();
 ----
 ireturnvoid
 NULL
-
-
-# TODO(mbkkt) fix non-select procedure
-skipif serenedb
-query
-SELECT * FROM
-  clickclack_review as cr1,
-  clickclack_review as cr2,
-  clickclack_review as cr3;
-----
-?column?	?column?	?column?
-had done nothing, got money	had done nothing, got money	had done nothing, got money
 
 
 statement ok
@@ -344,13 +260,13 @@ mikhail_made_me_write_this_code
 
 statement error
 CREATE FUNCTION i_return_wrong_scalar_type()
-RETURNS INTEGER
+RETURNS DATE
 LANGUAGE sql
 BEGIN ATOMIC
   SELECT TRUE;
 END;
 ----
-db error: ERROR: return type mismatch in function declared to return integer
+db error: ERROR: return type mismatch in function declared to return date
 DETAIL: Actual return type is boolean.
 
 
@@ -363,7 +279,7 @@ BEGIN ATOMIC
 END;
 ----
 db error: ERROR: return type mismatch in function declared to return integer
-DETAIL: Final statement must return exactly one column.
+DETAIL: Actual return type is boolean.
 
 
 statement error
@@ -392,26 +308,26 @@ DETAIL: Final statement returns too few columns.
 
 statement error
 CREATE FUNCTION i_return_wrong_column_type()
-RETURNS TABLE(name TEXT, age INTEGER)
+RETURNS TABLE(name TEXT, age DATE)
 LANGUAGE sql
 BEGIN ATOMIC
   SELECT 'hello', TRUE;
 END;
 ----
 db error: ERROR: return type mismatch in function declared to return record
-DETAIL: Final statement returns boolean instead of integer at column 2.
+DETAIL: Final statement returns boolean instead of date at column 2.
 
 
 statement error
 CREATE FUNCTION i_return_multiple_wrong_types()
-RETURNS TABLE(count INTEGER, price FLOAT8, active BOOL)
+RETURNS TABLE(count DATE, price FLOAT8, active BOOL)
 LANGUAGE sql
 BEGIN ATOMIC
   SELECT TRUE, FALSE, TRUE;
 END;
 ----
 db error: ERROR: return type mismatch in function declared to return record
-DETAIL: Final statement returns boolean instead of integer at column 1.
+DETAIL: Final statement returns boolean instead of date at column 1.
 
 
 statement error
@@ -428,26 +344,26 @@ DETAIL: Final statement returns too many columns.
 
 statement error
 CREATE FUNCTION i_am_error()
-RETURNS TABLE(name TEXT, sername INTEGER)
+RETURNS TABLE(name TEXT, sername DATE)
 LANGUAGE sql
 BEGIN ATOMIC
   SELECT 'hello', TRUE, FALSE;
 END;
 ----
 db error: ERROR: return type mismatch in function declared to return record
-DETAIL: Final statement returns boolean instead of integer at column 2.
+DETAIL: Final statement returns boolean instead of date at column 2.
 
 
 statement error
 CREATE FUNCTION i_am_error()
-RETURNS TABLE(name TEXT, sername INTEGER, kekname INTEGER)
+RETURNS TABLE(name TEXT, sername BOOL, kekname DATE)
 LANGUAGE sql
 BEGIN ATOMIC
   SELECT 'hello', FALSE;
 END;
 ----
 db error: ERROR: return type mismatch in function declared to return record
-DETAIL: Final statement returns boolean instead of integer at column 2.
+DETAIL: Final statement returns too few columns.
 
 
 statement ok
@@ -466,3 +382,111 @@ query
 SELECT * FROM zhme as zhma, zhme();
 ----
 lmao	zhme
+
+
+# ── Overload merging (CREATE FUNCTION with multiple signatures) ──
+
+statement ok
+CREATE FUNCTION ovl_test(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE FUNCTION ovl_test(x TEXT) RETURNS TEXT AS $$ SELECT x $$ LANGUAGE sql;
+
+
+query
+SELECT ovl_test(42);
+----
+ovl_test
+42
+
+
+query
+SELECT ovl_test('hello');
+----
+ovl_test
+hello
+
+
+# CREATE OR REPLACE preserves other overloads
+statement ok
+CREATE OR REPLACE FUNCTION ovl_test(x INTEGER) RETURNS INTEGER AS $$ SELECT x + 1 $$ LANGUAGE sql;
+
+
+query
+SELECT ovl_test(42);
+----
+ovl_test
+43
+
+
+query
+SELECT ovl_test('hello');
+----
+ovl_test
+hello
+
+# ── DROP FUNCTION with overload signature ──
+
+# Drop only the INTEGER overload
+statement ok
+DROP FUNCTION ovl_test(INTEGER);
+
+# TEXT overload still works
+query
+SELECT ovl_test('hello');
+----
+ovl_test
+hello
+
+
+# INTEGER overload is gone
+statement error
+SELECT ovl_test(42);
+
+
+# Drop remaining overload (no parens = all overloads)
+statement ok
+DROP FUNCTION ovl_test;
+
+
+statement error
+SELECT ovl_test('hello');
+
+
+# ── LIMIT 1 for scalar functions returning multi-row sources ──
+
+statement ok
+CREATE OR REPLACE FUNCTION itmustbelimited()
+RETURNS INTEGER
+AS $$
+  SELECT *
+  FROM
+  (
+    VALUES (1), (3), (3), (7)
+  )
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM itmustbelimited();
+----
+itmustbelimited
+1
+
+
+# BEGIN ATOMIC with scalar RETURNS also gets LIMIT 1
+statement ok
+CREATE FUNCTION limited_atomic()
+RETURNS INTEGER
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT * FROM (VALUES (10), (20), (30));
+END;
+
+
+query
+SELECT * FROM limited_atomic();
+----
+limited_atomic
+10

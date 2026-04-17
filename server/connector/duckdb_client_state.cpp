@@ -44,12 +44,12 @@ void SereneDBClientState::Register(
     duckdb::make_shared_ptr<SereneDBClientState>(std::move(connection_ctx));
   client_ctx.registered_state->Insert(kSereneDBClientStateKey,
                                       std::move(state));
-  client_ctx.warning_handler =
-    [](duckdb::ClientContext& ctx, const char* message) {
-      GetSereneDBContext(ctx).AddNotice(
-        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
-      return true;
-    };
+  client_ctx.warning_handler = [](duckdb::ClientContext& ctx,
+                                  const char* message) {
+    GetSereneDBContext(ctx).AddNotice(
+      SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
+    return true;
+  };
 
   client_ctx.isolation_level_validator =
     [](duckdb::ClientContext& ctx, duckdb::TransactionIsolationLevel level) {

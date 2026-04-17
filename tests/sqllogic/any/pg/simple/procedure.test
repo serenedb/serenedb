@@ -1,0 +1,198 @@
+# ── Basic procedure creation and CALL ──
+
+statement ok
+CREATE PROCEDURE typical_review()
+AS $$
+  SELECT * FROM
+  (
+    VALUES ('had done nothing, got money'), ('had done nothing, got money')
+  ),
+  (
+    VALUES ('had done nothing, got money'), ('had done nothing, got money')
+  )
+$$ LANGUAGE sql;
+
+
+statement ok
+CALL typical_review();
+
+
+# ── Procedure not callable with SELECT ──
+
+query error
+SELECT * FROM typical_review();
+----
+db error: ERROR: typical_review() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+skipif serenedb
+query error
+SELECT typical_review();
+----
+db error: ERROR: typical_review() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+skipif serenedb
+query error
+SELECT WHERE typical_review() > 1
+----
+db error: ERROR: typical_review() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+# ── Procedure overloads ──
+
+statement ok
+CREATE PROCEDURE proc_ovl(x INTEGER) AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement ok
+CREATE PROCEDURE proc_ovl(x TEXT) AS $$ SELECT x $$ LANGUAGE sql;
+
+
+statement ok
+CALL proc_ovl(42);
+
+
+statement ok
+CALL proc_ovl('hello');
+
+
+# ── CREATE OR REPLACE PROCEDURE preserves other overloads ──
+
+statement ok
+CREATE OR REPLACE PROCEDURE proc_ovl(x INTEGER) AS $$ SELECT x + 1 $$ LANGUAGE sql;
+
+
+statement ok
+CALL proc_ovl(42);
+
+
+statement ok
+CALL proc_ovl('hello');
+
+
+# ── DROP PROCEDURE with signature ──
+
+statement ok
+DROP PROCEDURE proc_ovl(INTEGER);
+
+
+statement ok
+CALL proc_ovl('hello');
+
+
+statement error
+CALL proc_ovl(42);
+
+
+statement ok
+DROP PROCEDURE proc_ovl(TEXT);
+
+
+statement error
+CALL proc_ovl('hello');
+
+
+# ── DROP FUNCTION on procedure is an error ──
+
+statement ok
+CREATE PROCEDURE drop_mismatch_proc() AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+statement error
+DROP FUNCTION drop_mismatch_proc();
+----
+db error: ERROR: drop_mismatch_proc() is not a function
+
+
+statement ok
+DROP PROCEDURE drop_mismatch_proc();
+
+
+# ── DROP PROCEDURE on function is an error ──
+
+statement ok
+CREATE FUNCTION drop_mismatch_func() RETURNS INTEGER AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+statement error
+DROP PROCEDURE drop_mismatch_func();
+----
+db error: ERROR: drop_mismatch_func() is not a procedure
+
+
+statement ok
+DROP FUNCTION drop_mismatch_func();
+
+
+# ── Non-SELECT procedure bodies (DML) ──
+
+skipif serenedb
+statement ok
+CREATE TABLE proc_dml_tbl (id INTEGER, name TEXT);
+
+
+skipif serenedb
+statement ok
+CREATE PROCEDURE insert_proc(id INTEGER, name TEXT) AS $$ INSERT INTO proc_dml_tbl VALUES (id, name) $$ LANGUAGE sql;
+
+
+skipif serenedb
+statement ok
+CALL insert_proc(1, 'hello');
+
+
+skipif serenedb
+statement ok
+CALL insert_proc(2, 'world');
+
+
+skipif serenedb
+query
+SELECT * FROM proc_dml_tbl;
+----
+id	name
+1	hello
+2	world
+
+
+skipif serenedb
+statement ok
+DROP PROCEDURE insert_proc(INTEGER, TEXT);
+
+
+skipif serenedb
+statement ok
+DROP TABLE proc_dml_tbl;
+
+
+# ── DDL procedure ──
+
+skipif serenedb
+statement ok
+CREATE PROCEDURE ddl_proc() AS $$ CREATE TABLE test_from_proc (x INTEGER) $$ LANGUAGE sql;
+
+
+skipif serenedb
+statement ok
+CALL ddl_proc();
+
+
+skipif serenedb
+query
+SELECT * FROM test_from_proc;
+----
+x
+
+
+skipif serenedb
+statement ok
+DROP TABLE test_from_proc;
+
+
+skipif serenedb
+statement ok
+DROP PROCEDURE ddl_proc();

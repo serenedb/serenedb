@@ -21,9 +21,9 @@
 #pragma once
 
 #include <duckdb/common/enums/set_scope.hpp>
-#include <duckdb/parser/parsed_data/transaction_info.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
+#include <duckdb/parser/parsed_data/transaction_info.hpp>
 #include <string>
 #include <string_view>
 

@@ -65,14 +65,16 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+namespace {
 
 // DROP FUNCTION name(type, ...) -- selective overload removal.
 // Fetches the existing PgSqlFunction, finds the matching overload by
 // parameter signature, and either removes just that overload (updating the
 // stored function) or drops the whole function if it was the last one.
 // DROP FUNCTION name(type, ...) -- selective overload removal.
-static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
-                                   const duckdb::DropInfo& info) {
+Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
+                            duckdb::ClientContext& context,
+                            duckdb::DropInfo& info) {
   auto schema_name = info.schema.empty() ? std::string_view{"public"}
                                          : std::string_view{info.schema};
   auto snapshot = catalog.GetCatalogSnapshot();
@@ -86,6 +88,12 @@ static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  // Resolve UNBOUND types from the DROP statement to concrete types.
+  auto binder = duckdb::Binder::CreateBinder(context);
+  for (auto& t : info.func_parameters) {
+    binder->BindLogicalType(t);
+  }
+
   auto& macro_info = existing->GetInfo();
   // Find the matching overload by parameter signature.
   ssize_t match_idx = -1;
@@ -96,10 +104,7 @@ static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
     }
     bool match = true;
     for (size_t j = 0; j < macro.types.size(); ++j) {
-      // The DROP-parsed types are UNBOUND (not yet resolved to concrete
-      // LogicalTypeId). Compare by string name which is always resolved
-      // (e.g. "INTEGER" matches "INTEGER" regardless of id).
-      if (macro.types[j].ToString() != info.func_parameters[j].ToString()) {
+      if (macro.types[j] != info.func_parameters[j]) {
         match = false;
         break;
       }
@@ -111,6 +116,14 @@ static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
   }
   if (match_idx < 0) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  // PG: DROP FUNCTION on a procedure (or vice versa) is an error.
+  auto& matched = *macro_info.macros[match_idx];
+  if (matched.is_procedure != info.is_procedure) {
+    auto expect = info.is_procedure ? "procedure" : "function";
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG(info.name, "() is not a ", expect));
   }
 
   if (macro_info.macros.size() == 1) {
@@ -128,6 +141,57 @@ static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
     database_id, ObjectId{}, info.name, std::move(new_info));
   return catalog.CreateFunction(database_id, schema_name, function, true);
 }
+
+// DROP FUNCTION/PROCEDURE name -- drop overloads matching the drop kind.
+// PG: DROP FUNCTION drops only function overloads, DROP PROCEDURE drops only
+// procedure overloads. If mixed (func + proc under same name), keep the other.
+Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
+                          const duckdb::DropInfo& info) {
+  auto schema_name = info.schema.empty() ? std::string_view{"public"}
+                                         : std::string_view{info.schema};
+  auto snapshot = catalog.GetCatalogSnapshot();
+  auto db = snapshot->GetDatabase(info.catalog);
+  if (!db) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto database_id = db->GetId();
+  auto existing = snapshot->GetFunction(database_id, schema_name, info.name);
+  if (!existing) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto& macros = existing->GetInfo().macros;
+  bool all_match = true;
+  bool any_match = false;
+  for (auto& m : macros) {
+    if (m->is_procedure == info.is_procedure) {
+      any_match = true;
+    } else {
+      all_match = false;
+    }
+  }
+  if (!any_match) {
+    auto kind = info.is_procedure ? "procedure" : "function";
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("could not find a ", kind, " named \"", info.name, "\""));
+  }
+  if (all_match) {
+    return catalog.DropFunction(info.catalog, schema_name, info.name);
+  }
+  // Mixed: remove only matching overloads, keep the rest.
+  auto new_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      existing->GetInfo().Copy());
+  std::erase_if(new_info->macros, [&](const auto& m) {
+    return m->is_procedure == info.is_procedure;
+  });
+  auto function = std::make_shared<catalog::PgSqlFunction>(
+    database_id, ObjectId{}, info.name, std::move(new_info));
+  return catalog.CreateFunction(database_id, schema_name, function, true);
+}
+
+}  // namespace
 
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   auto& catalog =
@@ -148,11 +212,9 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
       if (info.has_func_args) {
-        // DROP FUNCTION name(type, ...) -- selective overload removal.
-        r = DropFunctionOverload(catalog, info);
+        r = DropFunctionOverload(catalog, context, info);
       } else {
-        // DROP FUNCTION name -- drop all overloads.
-        r = catalog.DropFunction(info.catalog, info.schema, info.name);
+        r = DropFunctionByKind(catalog, info);
       }
       break;
     case SCHEMA_ENTRY:
@@ -199,10 +261,11 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     auto& ctx = GetSereneDBContext(context);
     if (info.type == duckdb::CatalogType::MACRO_ENTRY ||
         info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+      auto kind = info.is_procedure ? "procedure" : "function";
       if (!missing_ok) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
-          ERR_MSG("could not find a function named \"", info.name, "\""));
+          ERR_MSG("could not find a ", kind, " named \"", info.name, "\""));
       }
       ctx.AddNotice(SQL_ERROR_DATA(
         ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),

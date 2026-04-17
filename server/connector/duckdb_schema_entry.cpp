@@ -650,9 +650,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       return;
     }
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                      ERR_MSG("relation \"", rename_info.new_name,
-                              "\" already exists"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+        ERR_MSG("relation \"", rename_info.new_name, "\" already exists"));
     }
     if (!r.ok()) {
       SDB_THROW(std::move(r));
@@ -705,16 +705,17 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
         // Table not found -- DuckDB's binder already handles IF EXISTS,
         // so if we reach here the table should exist.
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
       }
 
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
         if (!drop_info.if_constraint_not_found) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                          ERR_MSG("constraint \"", drop_info.constraint_name,
-                                  "\" of relation \"", table_name,
-                                  "\" does not exist"));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+            ERR_MSG("constraint \"", drop_info.constraint_name,
+                    "\" of relation \"", table_name, "\" does not exist"));
         }
         return;
       }
@@ -756,8 +757,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       }
 
       if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
       }
 
       if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
@@ -791,8 +793,9 @@ void SereneDBSchemaEntry::Alter(duckdb::CatalogTransaction transaction,
       }
 
       if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                        ERR_MSG("relation \"", table_name, "\" does not exist"));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+          ERR_MSG("relation \"", table_name, "\" does not exist"));
       }
 
       if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {

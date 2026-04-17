@@ -175,6 +175,12 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Controls whether queries can see uncommitted writes from the current "
         "transaction.",
         []() -> duckdb::Value { return duckdb::Value{"true"}; },
+        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
+           duckdb::Value& /*value*/) {
+          static constexpr std::string_view kName = "sdb_read_your_own_writes";
+          connector::GetSereneDBContext(ctx).OnSet(
+            kName, scope == duckdb::SetScope::LOCAL);
+        },
       },
     },
     {

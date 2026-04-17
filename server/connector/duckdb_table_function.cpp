@@ -211,8 +211,11 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   // When inside BEGIN/COMMIT, use the connection's transaction so the scan
   // sees the transaction's own uncommitted writes (read-your-writes).
   // Outside a transaction, use a DB snapshot for read-only scans.
+  // If sdb_read_your_own_writes is false, always use a DB snapshot so reads
+  // see only committed data even within an explicit transaction.
   auto& conn_ctx = GetSereneDBContext(context);
-  if (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite()) {
+  if (conn_ctx.GetReadYourOwnWrites() &&
+      (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
     state->txn = &conn_ctx.EnsureRocksDBTransaction();
     // Pin reads to the transaction's snapshot so REPEATABLE READ is honored.
     state->snapshot = state->txn->GetSnapshot();
@@ -408,6 +411,7 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
       output);
     return;
   }
+  SDB_ASSERT(!bind_data.IsSkPointScan() && !bind_data.IsSkRangeScan());
   // TODO(mkornaukhov) enable
   // if (bind_data.IsSkPointScan()) {
   //   RunStrategyAndAccount(
@@ -666,7 +670,11 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
     ro.total_order_seek = true;
     ro.iterate_upper_bound = &gstate.sk_upper_bound_slice;
 
-    gstate.sk_iterator.reset(db->NewIterator(ro, cf));
+    if (gstate.txn) {
+      gstate.sk_iterator.reset(gstate.txn->GetIterator(ro, cf));
+    } else {
+      gstate.sk_iterator.reset(db->NewIterator(ro, cf));
+    }
     gstate.sk_iterator->Seek(scan_prefix);
   }
 
@@ -711,6 +719,7 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
   std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
   std::string key_buffer;
   rocksdb::ReadOptions ro;
+  ro.snapshot = gstate.snapshot;
   rocksdb::PinnableSlice value;
 
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
@@ -739,7 +748,12 @@ static void SereneDBSecondaryIndexScanFunction(duckdb::ClientContext& context,
       key_buffer.append(pk_bytes[row]);
 
       value.Reset();
-      auto s = db->Get(ro, cf, key_buffer, &value);
+      rocksdb::Status s;
+      if (gstate.txn) {
+        s = gstate.txn->Get(ro, cf, key_buffer, &value);
+      } else {
+        s = db->Get(ro, cf, key_buffer, &value);
+      }
       if (s.IsNotFound()) {
         duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
         continue;

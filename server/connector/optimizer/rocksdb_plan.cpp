@@ -186,6 +186,7 @@ std::vector<Candidate> BuildCandidates(
 
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   const auto table_id = bind_data.table->GetId();
+
   for (auto& index : snapshot->GetIndexesByTable(table_id)) {
     if (index->GetType() != catalog::ObjectType::SecondaryIndex) {
       continue;
@@ -352,23 +353,29 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         get.function = connector::CreatePkRangeScanFunction();
       }
     } else {
-      if (best.kind == connector::ConstraintKind::Points) {
-        bind_data.scan_source = connector::SkPointScan{
-          .shard_id = best.candidate->sk_shard_id,
-          .is_unique = best.candidate->sk_unique,
-          .column_ids = cols,
-          .points = std::move(points),
-        };
-        get.function = connector::CreateSkPointScanFunction();
-      } else {
-        bind_data.scan_source = connector::SkRangeScan{
-          .shard_id = best.candidate->sk_shard_id,
-          .is_unique = best.candidate->sk_unique,
-          .column_ids = cols,
-          .ranges = std::move(ranges),
-        };
-        get.function = connector::CreateSkRangeScanFunction();
-      }
+      // TODO(mkornaukhov) implement scans below
+      // if (best.kind == connector::ConstraintKind::Points) {
+      //   bind_data.scan_source = connector::SkPointScan{
+      //     .shard_id = best.candidate->sk_shard_id,
+      //     .is_unique = best.candidate->sk_unique,
+      //     .column_ids = cols,
+      //     .points = std::move(points),
+      //   };
+      //   get.function = connector::CreateSkPointScanFunction();
+      // } else if (best.kind == connector::ConstraintKind::Ranges) {
+      //   bind_data.scan_source = connector::SkRangeScan{
+      //     .shard_id = best.candidate->sk_shard_id,
+      //     .is_unique = best.candidate->sk_unique,
+      //     .column_ids = cols,
+      //     .ranges = std::move(ranges),
+      //   };
+      //   get.function = connector::CreateSkRangeScanFunction();
+      // } else
+      bind_data.scan_source = connector::SecondaryIndexScan{
+        .shard_id = best.candidate->sk_shard_id,
+        .is_unique = best.candidate->sk_unique,
+      };
+      //}
     }
 
     // TODO(phase2/4-follow-up): once the scan executor honours the
@@ -380,6 +387,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     //   if (filter.expressions.empty()) {
     //     plan = std::move(filter.children[0]);
     //   }
+
     return true;
   }
 

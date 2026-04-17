@@ -891,6 +891,7 @@ SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
 pid
 1
 3
+4
 
 
 statement ok
@@ -927,10 +928,40 @@ query
 EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (tag:VARCHAR, "tag")] -> "pid":INTEGER, "tag":VARCHAR
-  -- TableScan[0][babsky_composite, scan=secondary_index, points=[(city=berlin, level=10)]] -> "pid":INTEGER, "tag":VARCHAR
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #2            │
+│             #3            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((level = 10) AND (city = │
+│         'berlin'))        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│           Table:          │
+│      babsky_composite     │
+│                           │
+│         Strategy:         │
+│rocksdb_secondary_key_fulls│
+│            can            │
+│                           │
+│        Projections:       │
+│            city           │
+│           level           │
+│            pid            │
+│            tag            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 query
 SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 10 ORDER BY pid;
@@ -1003,11 +1034,36 @@ query
 EXPLAIN SELECT pid, name FROM gayazov_dual_inv_idx WHERE rank = 10;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[2][expressions: (pid:INTEGER, "pid"), (name:VARCHAR, "name")] -> "pid":INTEGER, "name":VARCHAR
-  -- Filter[1][expression: presto_eq("rank",10)] -> "pid":INTEGER, "name":VARCHAR, "rank":INTEGER
-    -- TableScan[0][gayazov_dual, type=search_lookup, filter=AND[]] -> "pid":INTEGER, "name":VARCHAR, "rank":INTEGER
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (rank = 10)        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│     IRESEARCH_FULLSCAN    │
+│    ────────────────────   │
+│    Table: gayazov_dual    │
+│                           │
+│         Strategy:         │
+│   rocksdb_table_fullscan  │
+│                           │
+│        Projections:       │
+│            rank           │
+│            pid            │
+│            name           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 onlyif serenedb
 statement ok
@@ -1080,10 +1136,38 @@ query
 EXPLAIN SELECT pid, nickname FROM vedernikoff_csv_crew WHERE stocks = 30;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (nickname:VARCHAR, "nickname")] -> "pid":INTEGER, "nickname":VARCHAR
-  -- TableScan[0][vedernikoff_csv_crew, scan=secondary_index, points=[(stocks=30)]] -> "pid":INTEGER, "nickname":VARCHAR
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│       (stocks = 30)       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│           Table:          │
+│    vedernikoff_csv_crew   │
+│                           │
+│         Strategy:         │
+│rocksdb_secondary_key_fulls│
+│            can            │
+│                           │
+│        Projections:       │
+│           stocks          │
+│            pid            │
+│          nickname         │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE vedernikoff_csv_crew;
@@ -1235,10 +1319,38 @@ query
 EXPLAIN SELECT pid, nickname FROM vedernikoff_pq_crew WHERE stocks = 30;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (nickname:VARCHAR, "nickname")] -> "pid":INTEGER, "nickname":VARCHAR
-  -- TableScan[0][vedernikoff_pq_crew, scan=secondary_index, points=[(stocks=30)]] -> "pid":INTEGER, "nickname":VARCHAR
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│       (stocks = 30)       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│           Table:          │
+│    vedernikoff_pq_crew    │
+│                           │
+│         Strategy:         │
+│rocksdb_secondary_key_fulls│
+│            can            │
+│                           │
+│        Projections:       │
+│           stocks          │
+│            pid            │
+│          nickname         │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE vedernikoff_pq_crew;

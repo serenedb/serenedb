@@ -92,6 +92,12 @@ WriteConflictPolicy Config::GetWriteConflictPolicy() const {
   return GetEnumValue<WriteConflictPolicy>(*value);
 }
 
+bool Config::GetReadYourOwnWrites() const {
+  auto value = Get("sdb_read_your_own_writes");
+  SDB_ASSERT(value);
+  return *value != "false" && *value != "0";
+}
+
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {

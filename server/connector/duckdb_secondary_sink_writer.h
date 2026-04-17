@@ -215,7 +215,20 @@ class DuckDBSecondarySinkUpdateWriter final
     std::vector<duckdb_secondary_key::SKColumn> sk_columns,
     std::vector<duckdb_secondary_key::SKColumn> old_sk_columns)
     : Base{trx, shard_id, columns, std::move(sk_columns)},
-      _old_sk_columns{std::move(old_sk_columns)} {}
+      _old_sk_columns{std::move(old_sk_columns)} {
+    // The default trigger is columns[0] (first SK column), but that column may
+    // not be in the SET clause. SwitchColumn() won't fire for it, so Write()
+    // and the GetForUpdate uniqueness check would be silently skipped.
+    // Find the first SK column whose chunk position differs between ins and del
+    // mappings -- that column is actually being SET and will appear in step 2.
+    for (size_t i = 0; i < this->_sk_columns.size(); ++i) {
+      if (this->_sk_columns[i].input_col_idx !=
+          _old_sk_columns[i].input_col_idx) {
+        this->_trigger_column_id = columns[i];
+        break;
+      }
+    }
+  }
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) final {
     Base::InitBase(input);

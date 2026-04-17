@@ -91,6 +91,7 @@ class Config {
   ByteaOutput GetByteaOutput() const;
   IsolationLevel GetIsolationLevel() const;
   WriteConflictPolicy GetWriteConflictPolicy() const;
+  bool GetReadYourOwnWrites() const;
 
   void Reset(std::string_view key);
 

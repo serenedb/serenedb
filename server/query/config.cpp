@@ -30,11 +30,7 @@
 #include <optional>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "catalog/catalog.h"
-#include "catalog/virtual_table.h"
-#include "pg/isolation_level.h"
 
 namespace sdb {
 namespace {
@@ -126,10 +122,6 @@ void Config::OnSet(std::string_view name, bool is_local) {
     context = VariableContext::Local;
   } else if (IsExplicitTransaction()) {
     context = VariableContext::Transaction;
-  }
-  // transaction_isolation is always Local -- reverts at txn end
-  if (canonical == pg::kTransactionIsolation && IsExplicitTransaction()) {
-    context = VariableContext::Local;
   }
   SaveForRollback(canonical, context);
 }

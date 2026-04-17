@@ -34,7 +34,6 @@
 #include "basics/static_strings.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/isolation_level.h"
 #include "query/config.h"
 #include "vpack/serializer.h"
 

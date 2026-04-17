@@ -46,9 +46,9 @@ constexpr std::string_view kSerializable = "serializable";
 
 constexpr std::string_view IsolationLevelName(IsolationLevel isolation_level) {
   switch (isolation_level) {
-    case IsolationLevel::ReadCommitted:
+    case IsolationLevel::READ_COMMITTED:
       return kReadCommitted;
-    case IsolationLevel::RepeatableRead:
+    case IsolationLevel::REPEATABLE_READ:
       return kRepeatableRead;
     default:
       SDB_UNREACHABLE();

@@ -367,12 +367,29 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
     plan = &ResolveDefaultsWithGenerated(planner, op, *plan);
   }
 
+  // Resolve on-conflict action: when no explicit ON CONFLICT clause was given
+  // (action is THROW by default), override with the session-level
+  // sdb_write_conflict_policy setting.
+  auto on_conflict_action = op.on_conflict_info.action_type;
+  if (on_conflict_action == duckdb::OnConflictAction::THROW) {
+    switch (GetSereneDBContext(context).GetWriteConflictPolicy()) {
+    case WriteConflictPolicy::EmitError:
+      on_conflict_action = duckdb::OnConflictAction::THROW;
+      break;
+    case WriteConflictPolicy::DoNothing:
+      on_conflict_action = duckdb::OnConflictAction::NOTHING;
+      break;
+    case WriteConflictPolicy::Replace:
+      on_conflict_action = duckdb::OnConflictAction::REPLACE;
+      break;
+    }
+  }
+
   // Use SST bulk insert for COPY FROM / INSERT...SELECT (has child plan).
   // SST bypasses transactions -- no conflict detection or constraint checks.
   // Fall back to regular insert when there are constraints to enforce.
   bool use_sst =
-    plan != nullptr &&
-    op.on_conflict_info.action_type == duckdb::OnConflictAction::THROW &&
+    plan != nullptr && on_conflict_action == duckdb::OnConflictAction::THROW &&
     op.bound_constraints.empty();
 
   if (use_sst) {
@@ -423,7 +440,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 
   auto& insert = planner.Make<SereneDBPhysicalInsert>(
     std::move(sdb_table), std::move(op.types), op.estimated_cardinality,
-    op.on_conflict_info.action_type, std::move(op.bound_constraints));
+    on_conflict_action, std::move(op.bound_constraints));
   if (plan) {
     insert.children.push_back(*plan);
   }

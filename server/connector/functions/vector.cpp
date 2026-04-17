@@ -102,15 +102,28 @@ static void ArrayDistanceExecutor(duckdb::DataChunk& args,
   duckdb::idx_t batch_size = args.size();
 
   duckdb::idx_t array_size = duckdb::ArrayType::GetSize(left_vector.GetType());
+  duckdb::idx_t right_array_size =
+    duckdb::ArrayType::GetSize(right_vector.GetType());
+  if (array_size == 0) {
+    throw duckdb::InvalidInputException(
+      "Distance operators require non-empty arrays");
+  }
+  if (array_size != right_array_size) {
+    throw duckdb::InvalidInputException(
+      "Array dimensions must be equal: left has %llu, right has %llu",
+      array_size, right_array_size);
+  }
 
   duckdb::UnifiedVectorFormat left_vdata, right_vdata;
   left_vector.ToUnifiedFormat(batch_size, left_vdata);
   right_vector.ToUnifiedFormat(batch_size, right_vdata);
 
-  const Elem* left_data = duckdb::FlatVector::GetData<Elem>(
-    duckdb::ArrayVector::GetEntry(left_vector));
-  const Elem* right_data = duckdb::FlatVector::GetData<Elem>(
-    duckdb::ArrayVector::GetEntry(right_vector));
+  auto& left_child = duckdb::ArrayVector::GetEntry(left_vector);
+  auto& right_child = duckdb::ArrayVector::GetEntry(right_vector);
+  const Elem* left_data = duckdb::FlatVector::GetData<Elem>(left_child);
+  const Elem* right_data = duckdb::FlatVector::GetData<Elem>(right_child);
+  auto& left_child_validity = duckdb::FlatVector::Validity(left_child);
+  auto& right_child_validity = duckdb::FlatVector::Validity(right_child);
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   Res* result_data = duckdb::FlatVector::GetDataMutable<Res>(result);
@@ -126,6 +139,19 @@ static void ArrayDistanceExecutor(duckdb::DataChunk& args,
       continue;
     }
 
+    bool has_null = false;
+    for (duckdb::idx_t i = 0; i < array_size; i++) {
+      if (!left_child_validity.RowIsValid(left_idx * array_size + i) ||
+          !right_child_validity.RowIsValid(right_idx * array_size + i)) {
+        has_null = true;
+        break;
+      }
+    }
+    if (has_null) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
+
     Execute<D, Elem, Res>(result_data[row], left_data + (left_idx * array_size),
                           right_data + (right_idx * array_size), array_size);
   }
@@ -134,25 +160,42 @@ static void ArrayDistanceExecutor(duckdb::DataChunk& args,
 template<Distance D>
 void RegisterDistance(duckdb::ExtensionLoader& loader) {
   std::string name;
+  std::string op_name;
   if constexpr (D == Distance::L1) {
     name = kL1Distance;
+    op_name = kL1DistanceOp;
   } else if constexpr (D == Distance::L2) {
     name = kL2Distance;
+    op_name = kL2DistanceOp;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
+    op_name = kCosineDistanceOp;
   } else if constexpr (D == Distance::IP) {
     name = kInnerProduct;
+    op_name = kIPDistanceOp;
   } else {
     SDB_UNREACHABLE();
   }
-  duckdb::ScalarFunctionSet distance{name};
-  distance.AddFunction(duckdb::ScalarFunction(
+  const duckdb::ScalarFunction float_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{}),
      duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{})},
-    duckdb::LogicalType::FLOAT, ArrayDistanceExecutor<D, float, float>));
+    duckdb::LogicalType::FLOAT, ArrayDistanceExecutor<D, float, float>);
+  const duckdb::ScalarFunction double_fn(
+    {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
+                                duckdb::optional_idx{}),
+     duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
+                                duckdb::optional_idx{})},
+    duckdb::LogicalType::DOUBLE, ArrayDistanceExecutor<D, double, double>);
+  duckdb::ScalarFunctionSet distance{name};
+  distance.AddFunction(float_fn);
+  distance.AddFunction(double_fn);
   loader.RegisterFunction(std::move(distance));
+  duckdb::ScalarFunctionSet op{op_name};
+  op.AddFunction(float_fn);
+  op.AddFunction(double_fn);
+  loader.RegisterFunction(std::move(op));
 }
 
 }  // namespace

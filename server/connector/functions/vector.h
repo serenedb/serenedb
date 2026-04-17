@@ -25,10 +25,14 @@
 
 namespace sdb::connector {
 
-inline constexpr std::string_view kL2Distance = "sdb_l2_distance";
-inline constexpr std::string_view kL1Distance = "sdb_l1_distance";
-inline constexpr std::string_view kCosineDistance = "sdb_cosine_distance";
-inline constexpr std::string_view kInnerProduct = "sdb_inner_product_distance";
+inline constexpr std::string_view kL2Distance = "l2_distance";
+inline constexpr std::string_view kL2DistanceOp = "<->";
+inline constexpr std::string_view kL1Distance = "l1_distance";
+inline constexpr std::string_view kL1DistanceOp = "<+>";
+inline constexpr std::string_view kCosineDistance = "cosine_distance";
+inline constexpr std::string_view kCosineDistanceOp = "<=>";
+inline constexpr std::string_view kInnerProduct = "inner_product";
+inline constexpr std::string_view kIPDistanceOp = "<#>";
 
 void RegisterVectorFunctions(duckdb::DatabaseInstance& db);
 

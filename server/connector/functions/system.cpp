@@ -20,10 +20,12 @@
 
 #include "connector/functions/system.h"
 
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 
@@ -85,6 +87,20 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       SDB_ASSERT(ok);
       return duckdb::StringVector::AddString(result, current.ToString());
     });
+}
+
+// search_path_canonical() -> text
+// Returns the full catalog-qualified search path (catalog.schema,...).
+// The PG-compliant SHOW search_path only lists schemas in the current database;
+// this function exposes the raw DuckDB representation.
+void SearchPathCanonicalFunction(duckdb::DataChunk& args,
+                                 duckdb::ExpressionState& state,
+                                 duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  auto& set_paths =
+    duckdb::ClientData::Get(context).catalog_search_path->GetSetPaths();
+  auto str = duckdb::CatalogSearchEntry::ListToString(set_paths);
+  result.Reference(duckdb::Value{std::move(str)});
 }
 
 // num_nonnulls(...) -> int
@@ -260,6 +276,12 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
      duckdb::LogicalType::BOOLEAN},
     duckdb::LogicalType::VARCHAR,
     SetConfigFunction});
+
+  // search_path_canonical() -> text
+  loader.RegisterFunction(duckdb::ScalarFunction{"search_path_canonical",
+                                                 {},
+                                                 duckdb::LogicalType::VARCHAR,
+                                                 SearchPathCanonicalFunction});
 
   // num_nonnulls(...) -> int
   {

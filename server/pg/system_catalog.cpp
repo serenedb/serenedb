@@ -423,10 +423,6 @@ void InitSystemViews() {
                   : gPgCatalogViews;
     map[view.name] = std::move(entry);
   }
-  fprintf(
-    stderr,
-    "[InitSystemViews] pg_catalog: %zu views, information_schema: %zu views\n",
-    gPgCatalogViews.size(), gInfoSchemaViews.size());
 }
 
 static duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(

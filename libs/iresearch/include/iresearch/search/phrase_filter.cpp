@@ -295,7 +295,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
 
   return memory::make_tracked<FixedPhraseQuery>(
     ctx.memory, std::move(phrase_states), std::move(positions),
-    std::move(stats), ctx.boost);
+    std::move(stats), ctx.boost, options.slop());
 }
 
 Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,

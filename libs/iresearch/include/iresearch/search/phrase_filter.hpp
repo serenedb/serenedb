@@ -86,7 +86,7 @@ class ByPhraseOptions {
 
   // Returns true is options are equal, false - otherwise
   bool operator==(const ByPhraseOptions& rhs) const noexcept {
-    return _phrase == rhs._phrase;
+    return _phrase == rhs._phrase && _slop == rhs._slop;
   }
 
   // Clear phrase contents
@@ -109,6 +109,8 @@ class ByPhraseOptions {
 
   // Returns iterator referring to past-the-end element of the phrase
   phrase_type::const_iterator end() const noexcept { return _phrase.end(); }
+  PosAttr::value_t slop() const noexcept { return _slop; }
+  void set_slop(PosAttr::value_t value) noexcept { _slop = value; }
 
  private:
   template<typename PhrasePart>
@@ -126,6 +128,7 @@ class ByPhraseOptions {
 
   phrase_type _phrase;
   bool _is_simple_term_only{true};
+  PosAttr::value_t _slop{0};
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {

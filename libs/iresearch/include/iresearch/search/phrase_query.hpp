@@ -49,11 +49,12 @@ class PhraseQuery : public Filter::Query {
     IndexFeatures::Freq | IndexFeatures::Pos;
 
   PhraseQuery(states_t&& states, positions_t&& positions, bstring&& stats,
-              score_t boost) noexcept
+              score_t boost, PosAttr::value_t slop = 0) noexcept
     : states{std::move(states)},
       positions{std::move(positions)},
       stats{std::move(stats)},
-      boost{boost} {}
+      boost{boost},
+      slop{slop} {}
 
   void visit(const SubReader& segment, PreparedStateVisitor& visitor,
              score_t boost) const final {
@@ -75,14 +76,15 @@ class PhraseQuery : public Filter::Query {
   positions_t positions;
   bstring stats;
   score_t boost;
+  PosAttr::value_t slop{0};
 };
 
 class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {
  public:
   FixedPhraseQuery(states_t&& states, positions_t&& positions, bstring&& stats,
-                   score_t boost) noexcept
+                   score_t boost, PosAttr::value_t slop = 0) noexcept
     : PhraseQuery{std::move(states), std::move(positions), std::move(stats),
-                  boost} {}
+                  boost, slop} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final;
 

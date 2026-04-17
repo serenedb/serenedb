@@ -88,6 +88,19 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
     positions.emplace_back(
       sdb::basics::downCast<FixedTermPositionImpl<false>>(pos), *position++);
   }
+  if (this->slop > 0) {
+    using SlopIterator =
+      PhraseIterator<Conjunction<Adapter>, SlopPhraseFrequency<false>>;
+    if (!ctx.scorer) {
+      return memory::make_managed<SlopIterator>(
+        static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
+        std::move(positions), this->slop);
+    }
+    return memory::make_managed<SlopIterator>(
+      static_cast<doc_id_t>(rdr.docs_count()), std::move(itrs),
+      std::move(positions), this->slop, phrase_state->reader->meta(),
+      stats.c_str(), boost);
+  }
   const bool has_intervals = absl::c_any_of(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });

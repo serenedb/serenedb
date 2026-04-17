@@ -71,7 +71,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SystemTableInit(
   auto state = duckdb::make_uniq_base<duckdb::GlobalTableFunctionState,
                                       SystemTableState>();
   auto& s = state->Cast<SystemTableState>();
-  s.snapshot = bind_data.entry->GetOrCreateSnapshot(context);
+  s.snapshot = bind_data.entry->CreateSnapshot(context);
   s.data = &s.snapshot->GetData(bind_data.column_names);
   s.tableoid = bind_data.tableoid;
 
@@ -128,11 +128,13 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableEntry::GetStatistics(
   return nullptr;
 }
 
+// TODO(Dronplane): consider caching if that will start to slowdown queries.
+// Beware that storing cache in catalog snapshot will require syncing write access
+// between connections
 std::shared_ptr<catalog::VirtualTableSnapshot>
-SystemTableEntry::GetOrCreateSnapshot(duckdb::ClientContext& context) {
+SystemTableEntry::CreateSnapshot(duckdb::ClientContext& context) {
   auto& conn_ctx = GetSereneDBContext(context);
-  return conn_ctx.GetOrCreateSystemTableSnapshot(_virtual_table,
-                                                 conn_ctx.GetDatabaseId());
+  return _virtual_table.CreateSnapshot(conn_ctx.GetDatabaseId(), conn_ctx);
 }
 
 duckdb::TableFunction SystemTableEntry::GetScanFunction(

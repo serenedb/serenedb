@@ -47,8 +47,7 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
-  // Returns a snapshot from the per-connection Config cache.
-  std::shared_ptr<catalog::VirtualTableSnapshot> GetOrCreateSnapshot(
+  std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(
     duckdb::ClientContext& context);
 
  private:

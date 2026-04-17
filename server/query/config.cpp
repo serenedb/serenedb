@@ -106,17 +106,6 @@ std::optional<std::string> Config::Get(std::string_view key) const {
   return std::nullopt;
 }
 
-std::shared_ptr<catalog::VirtualTableSnapshot>
-Config::GetOrCreateSystemTableSnapshot(const catalog::VirtualTable& table,
-                                       ObjectId database_id) {
-  auto [it, inserted] =
-    _system_table_snapshots.try_emplace(table.Id(), nullptr);
-  if (inserted) {
-    it->second = table.CreateSnapshot(database_id, *this);
-  }
-  return it->second;
-}
-
 std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   if (_snapshot) {
     return _snapshot;

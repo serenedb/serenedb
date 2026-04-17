@@ -27,7 +27,6 @@
 #include <string_view>
 
 #include "basics/containers/node_hash_map.h"
-#include "catalog/identifiers/object_id.h"
 #include "catalog/types.h"
 
 namespace duckdb {
@@ -100,16 +99,10 @@ class Config {
   void ResetAll();
 
   void DropCatalogSnapshot() {
-    _system_table_snapshots.clear();
     _snapshot.reset();
   }
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
-
-  // Returns a cached VirtualTableSnapshot for the given system table,
-  // creating one if not yet cached. Cleared together with the catalog snapshot.
-  std::shared_ptr<catalog::VirtualTableSnapshot> GetOrCreateSystemTableSnapshot(
-    const catalog::VirtualTable& table, ObjectId database_id);
 
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> GetSetting(std::string_view key) const {
@@ -135,9 +128,6 @@ class Config {
 
   // TODO: use FlatHashMap, there're now problems with ASAN build
   containers::NodeHashMap<std::string_view, TxnVariable> _transaction;
-  containers::NodeHashMap<ObjectId,
-                          std::shared_ptr<catalog::VirtualTableSnapshot>>
-    _system_table_snapshots;
   mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
   duckdb::ClientContext& _client_ctx;
 };

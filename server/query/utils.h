@@ -24,8 +24,6 @@
 #include <string>
 #include <vector>
 
-#include "basics/fwd.h"
-
 namespace sdb::query {
 
 inline constexpr std::string_view kColumnSeparator = ":";

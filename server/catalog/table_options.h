@@ -36,7 +36,6 @@
 #include "basics/containers/node_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/fwd.h"
 #include "basics/reboot_id.h"
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"

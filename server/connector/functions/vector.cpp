@@ -33,7 +33,6 @@
 #include <iresearch/utils/vector.hpp>
 #include <vector>
 
-#include "basics/fwd.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {

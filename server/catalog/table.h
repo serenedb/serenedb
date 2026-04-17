@@ -25,7 +25,6 @@
 
 #include <duckdb/common/types.hpp>
 
-#include "basics/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"

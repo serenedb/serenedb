@@ -25,7 +25,6 @@
 #include <string_view>
 
 #include "basics/bit_utils.hpp"
-#include "basics/fwd.h"
 #include "catalog/table_options.h"
 
 namespace sdb::connector {

@@ -25,7 +25,6 @@
 #include <type_traits>
 
 #include "basics/assert.h"
-#include "basics/fwd.h"
 #include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector::primary_key {

@@ -27,7 +27,6 @@
 #include <span>
 
 #include "basics/containers/flat_hash_map.h"
-#include "basics/fwd.h"
 #include "basics/result.h"
 #include "catalog/inverted_index.h"
 #include "catalog/table.h"

@@ -28,8 +28,6 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/fwd.h"
-
 namespace sdb {
 
 class StorageOptions {

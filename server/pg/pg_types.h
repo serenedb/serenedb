@@ -25,7 +25,6 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/exceptions.h"
-#include "basics/fwd.h"
 
 namespace sdb {
 namespace catalog {

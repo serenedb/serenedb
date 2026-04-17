@@ -27,7 +27,6 @@
 #include <string>
 #include <utility>
 
-#include "basics/fwd.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
 

@@ -25,7 +25,6 @@
 
 #include "basics/assert.h"
 #include "basics/endian.h"
-#include "basics/fwd.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"

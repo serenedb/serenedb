@@ -66,6 +66,69 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 
+// DROP FUNCTION name(type, ...) — selective overload removal.
+// Fetches the existing PgSqlFunction, finds the matching overload by
+// parameter signature, and either removes just that overload (updating the
+// stored function) or drops the whole function if it was the last one.
+// DROP FUNCTION name(type, ...) — selective overload removal.
+static Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
+                                   const duckdb::DropInfo& info) {
+  auto schema_name =
+    info.schema.empty() ? std::string_view{"public"} : std::string_view{info.schema};
+  auto snapshot = catalog.GetCatalogSnapshot();
+  auto db = snapshot->GetDatabase(info.catalog);
+  if (!db) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  auto database_id = db->GetId();
+  auto existing = snapshot->GetFunction(database_id, schema_name, info.name);
+  if (!existing) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  auto& macro_info = existing->GetInfo();
+  // Find the matching overload by parameter signature.
+  ssize_t match_idx = -1;
+  for (size_t i = 0; i < macro_info.macros.size(); ++i) {
+    auto& macro = *macro_info.macros[i];
+    if (macro.types.size() != info.func_parameters.size()) {
+      continue;
+    }
+    bool match = true;
+    for (size_t j = 0; j < macro.types.size(); ++j) {
+      // The DROP-parsed types are UNBOUND (not yet resolved to concrete
+      // LogicalTypeId). Compare by string name which is always resolved
+      // (e.g. "INTEGER" matches "INTEGER" regardless of id).
+      if (macro.types[j].ToString() != info.func_parameters[j].ToString()) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      match_idx = static_cast<ssize_t>(i);
+      break;
+    }
+  }
+  if (match_idx < 0) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  if (macro_info.macros.size() == 1) {
+    // Last overload — drop the whole function.
+    return catalog.DropFunction(info.catalog, schema_name, info.name);
+  }
+
+  // Remove just the matched overload and update the stored function.
+  auto new_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      macro_info.Copy());
+  new_info->macros.erase(new_info->macros.begin() + match_idx);
+
+  auto function = std::make_shared<catalog::PgSqlFunction>(
+    database_id, ObjectId{}, info.name, std::move(new_info));
+  return catalog.CreateFunction(database_id, schema_name, function, true);
+}
+
 void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
@@ -84,7 +147,13 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       break;
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
-      r = catalog.DropFunction(info.catalog, info.schema, info.name);
+      if (info.has_func_args) {
+        // DROP FUNCTION name(type, ...) — selective overload removal.
+        r = DropFunctionOverload(catalog, info);
+      } else {
+        // DROP FUNCTION name — drop all overloads.
+        r = catalog.DropFunction(info.catalog, info.schema, info.name);
+      }
       break;
     case SCHEMA_ENTRY:
       if (info.name == StaticStrings::kPgCatalogSchema ||

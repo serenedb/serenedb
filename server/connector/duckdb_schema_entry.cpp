@@ -415,6 +415,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   return nullptr;
 }
 
+// Returns true if two MacroFunction parameter signatures are identical
+// (same number of params, same types in order).
+static bool MacroSignatureMatches(const duckdb::MacroFunction& a,
+                                  const duckdb::MacroFunction& b) {
+  if (a.types.size() != b.types.size()) {
+    return false;
+  }
+  for (size_t i = 0; i < a.types.size(); ++i) {
+    if (a.types[i] != b.types[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   duckdb::CatalogTransaction transaction, duckdb::CreateFunctionInfo& info) {
   auto& catalog_feature =
@@ -422,15 +437,69 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateFunction(
   auto& catalog_impl = catalog_feature.Global();
   auto database_id = GetDatabaseId();
 
-  auto macro_info =
+  auto new_macro_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       info.Copy());
-  auto function = std::make_shared<catalog::PgSqlFunction>(
-    database_id, ObjectId{}, info.name, std::move(macro_info));
 
   bool replace =
     info.on_conflict == duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
-  auto r = catalog_impl.CreateFunction(database_id, name, function, replace);
+
+  // Check for existing function to support overload merging.
+  // PG semantics: multiple CREATE FUNCTION with the same name but
+  // different parameter signatures are legal (they're distinct overloads).
+  // CREATE OR REPLACE replaces only the matching overload, preserving
+  // others.
+  auto snapshot = catalog_impl.GetCatalogSnapshot();
+  auto existing = snapshot->GetFunction(database_id, name, info.name);
+
+  if (existing) {
+    // Clone the existing macros vector and merge the new overload(s).
+    auto merged_info =
+      duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+        existing->GetInfo().Copy());
+
+    for (auto& new_macro : new_macro_info->macros) {
+      // Find an existing overload with the same parameter signature.
+      bool found = false;
+      for (size_t i = 0; i < merged_info->macros.size(); ++i) {
+        if (MacroSignatureMatches(*merged_info->macros[i], *new_macro)) {
+          if (!replace) {
+            // Plain CREATE FUNCTION: duplicate signature is an error.
+            throw duckdb::CatalogException(
+              "function \"%s\" already exists with same argument types",
+              info.name);
+          }
+          // CREATE OR REPLACE: swap in the new overload.
+          merged_info->macros[i] = new_macro->Copy();
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        // New signature — append as a new overload.
+        merged_info->macros.push_back(new_macro->Copy());
+      }
+    }
+
+    // Use a fresh ObjectId — the resolution table's replace=true will
+    // re-point the function name to the new ID. The old object becomes
+    // orphaned in the snapshot objects map (harmless, gets GC'd on
+    // next snapshot rotation).
+    auto function = std::make_shared<catalog::PgSqlFunction>(
+      database_id, ObjectId{}, info.name, std::move(merged_info));
+    // Always replace=true for the catalog layer since we're replacing
+    // the whole PgSqlFunction with the merged version.
+    auto r = catalog_impl.CreateFunction(database_id, name, function, true);
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+    return nullptr;
+  }
+
+  // No existing function — create new.
+  auto function = std::make_shared<catalog::PgSqlFunction>(
+    database_id, ObjectId{}, info.name, std::move(new_macro_info));
+  auto r = catalog_impl.CreateFunction(database_id, name, function, false);
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {

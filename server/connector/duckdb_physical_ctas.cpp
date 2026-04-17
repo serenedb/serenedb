@@ -36,6 +36,7 @@ namespace {
 
 // TODO(mbkkt) fix this, drop by object id! Otherwise rename can break this
 struct CTASGlobalState : public SSTInsertGlobalState {
+  ObjectId database_id;
   std::string database_name;
   std::string schema_name;
   std::string table_name;
@@ -141,12 +142,14 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto state = duckdb::make_uniq<CTASGlobalState>();
   state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
     duckdb::BufferAllocator::Get(context));
+  state->database_id = database_id;
   state->database_name = database->GetName();
   state->schema_name = _schema.name;
   state->table_name = table_info.table;
   SetupSSTState(*state, *catalog_table);
 
   auto& conn_ctx = GetSereneDBContext(context);
+  conn_ctx.DropCatalogSnapshot();
   conn_ctx.AddRocksDBWrite();
 
   return state;
@@ -163,12 +166,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
 
   // Remove tombstone if table was created (sink_state is non-null)
   if (sink_state) {
+    auto& gstate = sink_state->Cast<CTASGlobalState>();
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto& table_info = _info->Base().Cast<duckdb::CreateTableInfo>();
-    auto r = catalog.RemoveTombstone(
-      _schema.Cast<SereneDBSchemaEntry>().GetDatabaseId(), _schema.name,
-      table_info.table);
+    auto r = catalog.RemoveTombstone(gstate.database_id, gstate.schema_name,
+                                     gstate.table_name);
     if (!r.ok()) {
       throw duckdb::InternalException("Failed to remove tombstone: %s",
                                       std::string{r.errorMessage()});

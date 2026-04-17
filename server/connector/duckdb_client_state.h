@@ -49,6 +49,11 @@ inline constexpr const char* kSereneDBClientStateKey = "serenedb";
 //   context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
 class SereneDBClientState final : public duckdb::ClientContextState {
  public:
+  // Creates a SereneDBClientState, registers it in the ClientContext, and wires
+  // up per-connection hooks (e.g. transaction isolation level validator).
+  static void Register(duckdb::ClientContext& client_ctx,
+                       std::shared_ptr<ConnectionContext> connection_ctx);
+
   explicit SereneDBClientState(
     std::shared_ptr<ConnectionContext> connection_ctx)
     : _connection_ctx{std::move(connection_ctx)} {}

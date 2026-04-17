@@ -344,12 +344,8 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
       _send.Write(ToBuffer(backend_key_data), false);
 
-      {
-        auto state = duckdb::make_shared_ptr<connector::SereneDBClientState>(
-          _connection_ctx);
-        _duckdb_conn->context->registered_state->Insert(
-          connector::kSereneDBClientStateKey, std::move(state));
-      }
+      connector::SereneDBClientState::Register(*_duckdb_conn->context,
+                                                _connection_ctx);
       // Set default catalog to the user's database
       _duckdb_conn->context->client_data->catalog_search_path->Set(
         duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},

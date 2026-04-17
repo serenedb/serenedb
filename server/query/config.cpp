@@ -87,9 +87,7 @@ ByteaOutput Config::GetByteaOutput() const {
 }
 
 IsolationLevel Config::GetIsolationLevel() const {
-  auto value = Get("transaction_isolation");
-  SDB_ASSERT(value);
-  return GetEnumValue<IsolationLevel>(*value);
+  return _client_ctx.transaction.GetIsolationLevel();
 }
 
 WriteConflictPolicy Config::GetWriteConflictPolicy() const {
@@ -211,19 +209,6 @@ void Config::RollbackVariables() noexcept {
 }
 
 void Config::CommitVariables() noexcept {
-  // If default_transaction_isolation was changed in this txn (Keep = commit),
-  // also propagate to transaction_isolation for the next transaction.
-  // Litmus: SET default_transaction_isolation = A; BEGIN;
-  //   SET default_transaction_isolation = B; SHOW transaction_isolation == A;
-  // COMMIT; SHOW transaction_isolation == B;
-  if (auto it = _transaction.find(pg::kDefaultTransactionIsolation);
-      it != _transaction.end() && it->second.action == TxnAction::Keep) {
-    duckdb::Value current;
-    _client_ctx.TryGetCurrentSetting(
-      std::string{pg::kDefaultTransactionIsolation}, current);
-    SetInternal(pg::kTransactionIsolation, current.ToString());
-  }
-
   for (auto&& [key, var] : _transaction) {
     if (var.action == TxnAction::Revert) {
       RestoreValue(key, std::move(var.old_value));

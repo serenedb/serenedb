@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/enums/set_scope.hpp>
+#include <duckdb/parser/parsed_data/transaction_info.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/setting_info.hpp>
 #include <string>
@@ -49,10 +50,7 @@ enum class ByteaOutput : uint8_t {
   Escape,
 };
 
-enum class IsolationLevel : uint8_t {
-  ReadCommitted,
-  RepeatableRead,
-};
+using IsolationLevel = duckdb::TransactionIsolationLevel;
 
 struct VariableDescription {
   duckdb::LogicalTypeId type;
@@ -142,10 +140,12 @@ template<>
 [[maybe_unused]] constexpr customize::customize_t
 customize::enum_name<sdb::IsolationLevel>(sdb::IsolationLevel value) noexcept {
   switch (value) {
-    case sdb::IsolationLevel::ReadCommitted:
+    case sdb::IsolationLevel::READ_COMMITTED:
       return "read committed";
-    case sdb::IsolationLevel::RepeatableRead:
+    case sdb::IsolationLevel::REPEATABLE_READ:
       return "repeatable read";
+    default:
+      break;
   }
   return default_tag;
 }

@@ -20,12 +20,55 @@
 
 #include "connector/duckdb_client_state.h"
 
+#include <duckdb/common/enum_util.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_context.hpp>
 
 #include "basics/assert.h"
+#include "basics/system-compiler.h"
 #include "pg/connection_context.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+
+void SereneDBClientState::Register(
+  duckdb::ClientContext& client_ctx,
+  std::shared_ptr<ConnectionContext> connection_ctx) {
+  auto state =
+    duckdb::make_shared_ptr<SereneDBClientState>(std::move(connection_ctx));
+  client_ctx.registered_state->Insert(kSereneDBClientStateKey,
+                                      std::move(state));
+  client_ctx.warning_handler =
+    [](duckdb::ClientContext& ctx, const char* message) {
+      GetSereneDBContext(ctx).AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
+      return true;
+    };
+
+  client_ctx.isolation_level_validator =
+    [](duckdb::ClientContext& ctx, duckdb::TransactionIsolationLevel level) {
+      if (level != duckdb::TransactionIsolationLevel::READ_COMMITTED &&
+          level != duckdb::TransactionIsolationLevel::REPEATABLE_READ) {
+        throw duckdb::InvalidInputException(
+          "transaction isolation level \"%s\" is not supported. "
+          "Available values: repeatable read, read committed.",
+          duckdb::EnumUtil::ToChars(level));
+      }
+      auto& conn_ctx = GetSereneDBContext(ctx);
+      if (!conn_ctx.IsAutoCommit() &&
+          (conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
+          level != conn_ctx.GetIsolationLevel()) {
+        throw duckdb::InvalidInputException(
+          "SET TRANSACTION ISOLATION LEVEL must be called before any query");
+      }
+    };
+}
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {

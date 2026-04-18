@@ -20,6 +20,8 @@
 
 #include "connector/functions/system.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/vector_operations/generic_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
@@ -29,6 +31,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 
+#include "basics/build.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
@@ -88,6 +91,14 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       SDB_ASSERT(ok);
       return duckdb::StringVector::AddString(result, current.ToString());
     });
+}
+
+// PG-style version string. Overrides DuckDB's built-in version()
+void VersionFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
+  auto value = duckdb::Value(
+    absl::StrCat("PostgreSQL 18.3 (SereneDB ", SERENEDB_VERSION, ")"));
+  result.Reference(value);
 }
 
 // search_path_canonical() -> text
@@ -296,6 +307,10 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  {},
                                                  duckdb::LogicalType::VARCHAR,
                                                  SearchPathCanonicalFunction});
+
+  // version() -> text (overrides DuckDB's built-in)
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "version", {}, duckdb::LogicalType::VARCHAR, VersionFunction});
 
   // num_nonnulls(...) -> int
   {

@@ -243,10 +243,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
-        [] {
-          return duckdb::Value{
-            absl::StrCat("PostgreSQL 18.3 (SereneDB ", SERENEDB_VERSION, ")")};
-        },
+        [] { return duckdb::Value{"18.3"}; },
         Readonly<"server_version">,
       },
     },

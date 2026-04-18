@@ -32,6 +32,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/norm.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -183,6 +184,14 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
+  writer_options.features = [](irs::IndexFeatures feature) {
+    irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
+    irs::FeatureWriterFactory factory = nullptr;
+    if (feature == irs::IndexFeatures::Norm) {
+      factory = &irs::Norm::MakeWriter;
+    }
+    return std::make_pair(info, factory);
+  };
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {

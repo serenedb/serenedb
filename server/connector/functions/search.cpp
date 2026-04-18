@@ -48,6 +48,19 @@ void SearchStubFn(duckdb::DataChunk& /*args*/,
     "Use in WHERE clause on a table with an inverted index.");
 }
 
+void Bm25StubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& /*state*/,
+                duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "bm25() requires an inverted index scan in the same sub-query");
+}
+
+void TfidfStubFn(duckdb::DataChunk& /*args*/,
+                 duckdb::ExpressionState& /*state*/,
+                 duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "tfidf() requires an inverted index scan in the same sub-query");
+}
+
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
 // Runs `token` through the named text search dictionary and returns
 // the resulting lexemes as a VARCHAR array. Mirrors pg_catalog.ts_lexize().
@@ -228,11 +241,11 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunctionSet set{std::string{kBm25}};
     set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, SearchStubFn));
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, Bm25StubFn));
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE,
        duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::FLOAT, SearchStubFn));
+      duckdb::LogicalType::FLOAT, Bm25StubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -241,10 +254,10 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   {
     duckdb::ScalarFunctionSet set{std::string{kTfidf}};
     set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, SearchStubFn));
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, TfidfStubFn));
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BOOLEAN},
-      duckdb::LogicalType::FLOAT, SearchStubFn));
+      duckdb::LogicalType::FLOAT, TfidfStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -253,9 +266,18 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // (so length is 2*N for N positions). Claimed by the iresearch_plan
   // rule, which identifies the scan via the column ref's
   // binding.table_index.
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kOffsets}, {duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
+  {
+    duckdb::ScalarFunctionSet set{std::string{kOffsets}};
+    // offsets(col) -- auto-anchor; legacy single-index queries.
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
+    // offsets(tableoid, col) -- explicit anchor, consistent with bm25/tfidf.
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
 
   // ts_lexize(dict_name, token) -> VARCHAR[]
   // Runs a single token through the named text search dictionary.

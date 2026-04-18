@@ -90,7 +90,11 @@ class ScoreCollector {
   Tag _tag;
 };
 
-using ScoreDoc = std::pair<score_t, doc_id_t>;
+struct ScoreDoc {
+  score_t score = 0.0f;
+  doc_id_t doc = doc_limits::eof();
+  uint32_t segment_idx = 0;
+};
 
 // TODO(mbkkt) Try to make it autovectorized,
 // otherwise try to use xsimd/neon specific intrinsics
@@ -118,9 +122,11 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     TryPush(score, doc);
   }
 
+  void SetSegment(uint32_t idx) noexcept { _current_segment = idx; }
+
   IRS_FORCE_INLINE uint64_t Finalize() {
-    std::sort(_hits_begin, _hits_end, [](const auto& l, const auto& r) {
-      return std::get<score_t>(l) > std::get<score_t>(r);
+    std::sort(_hits_begin, _hits_end, [](const ScoreDoc& l, const ScoreDoc& r) {
+      return l.score > r.score;
     });
     return _count;
   }
@@ -204,17 +210,16 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 
   IRS_FORCE_INLINE bool Push(score_t score, doc_id_t doc) noexcept {
     SDB_ASSERT(*_score_threshold < score);
-    *_hits_it = {score, doc};
+    *_hits_it = {score, doc, _current_segment};
     ++_hits_it;
     if (_hits_it != _hits_end) {
       return false;
     }
     _hits_it = _hits_pivot;
-    std::nth_element(_hits_begin, _hits_pivot, _hits_end,
-                     [](const auto& l, const auto& r) {
-                       return std::get<score_t>(l) > std::get<score_t>(r);
-                     });
-    *_score_threshold = std::get<score_t>(*_hits_pivot);
+    std::nth_element(
+      _hits_begin, _hits_pivot, _hits_end,
+      [](const ScoreDoc& l, const ScoreDoc& r) { return l.score > r.score; });
+    *_score_threshold = _hits_pivot->score;
     return true;
   }
 
@@ -232,6 +237,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
 #endif
 
   uint64_t _count = 0;
+  uint32_t _current_segment = 0;
   score_t* IRS_RESTRICT _score_threshold = nullptr;
   ScoreDoc* IRS_RESTRICT _hits_it;
   ScoreDoc* IRS_RESTRICT const _hits_begin;

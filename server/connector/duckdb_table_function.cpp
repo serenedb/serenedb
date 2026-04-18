@@ -30,9 +30,14 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/phrase_filter.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <iresearch/search/tfidf.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 
 #include "basics/assert.h"
@@ -125,6 +130,22 @@ struct SereneDBScanGlobalState : public duckdb::GlobalTableFunctionState {
   irs::DocIterator::ptr search_doc;
   irs::DocIterator::ptr search_pk_iter;
   const irs::PayAttr* search_pk_value = nullptr;
+
+  // Score output state (set when kInvertedIndexScoreId is projected)
+  bool scan_score = false;
+  duckdb::idx_t score_output_idx = 0;
+  std::unique_ptr<irs::Scorer> scorer_obj;
+  // Query re-prepared with scorer so BM25/TFIDF stats are collected correctly.
+  // Replaces search.query when scoring is active.
+  irs::Filter::Query::ptr scored_query;
+  irs::ColumnArgsFetcher score_fetcher;
+  irs::ScoreFunction score_function;
+
+  // Top-K precomputed results (score_top_k path only)
+  std::vector<std::pair<float, std::string>>
+    topk_hits;  // (score, pk) sorted DESC
+  size_t topk_offset = 0;
+  bool topk_executed = false;
 
   // Secondary index scan state
   std::unique_ptr<rocksdb::Iterator> sk_iterator;
@@ -251,8 +272,44 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
       state->projected_columns.push_back(real_idx);
       state->projected_types.push_back(bind_data.column_types[real_idx]);
     } else if (col_id < num_bind_columns) {
-      state->projected_columns.push_back(col_id);
-      state->projected_types.push_back(bind_data.column_types[col_id]);
+      const auto catalog_col_id = bind_data.column_ids[col_id];
+      if (catalog_col_id == catalog::Column::kInvertedIndexScoreId) {
+        state->scan_score = true;
+        state->score_output_idx = state->projected_columns.size();
+        state->projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+        state->projected_types.push_back(duckdb::LogicalType::FLOAT);
+      } else {
+        state->projected_columns.push_back(col_id);
+        state->projected_types.push_back(bind_data.column_types[col_id]);
+      }
+    }
+  }
+
+  // Build scorer object for search scans that have BM25/TFIDF attached.
+  if (const auto* ss = std::get_if<SearchScan>(&bind_data.scan_source)) {
+    using SK = SearchScan::ScorerKind;
+    switch (ss->scorer.kind) {
+      case SK::Bm25:
+        state->scorer_obj =
+          std::make_unique<irs::BM25>(static_cast<float>(ss->scorer.bm25_k1),
+                                      static_cast<float>(ss->scorer.bm25_b));
+        break;
+      case SK::Tfidf:
+        state->scorer_obj =
+          std::make_unique<irs::TFIDF>(ss->scorer.tfidf_with_norms);
+        break;
+      case SK::None:
+        break;
+    }
+    // Re-prepare the query with the scorer so stats (IDF, norms) are collected.
+    // The original query was prepared without a scorer (scorer was unknown at
+    // plan time), so its internal stats buffer has size 0. Scoring with BM25/
+    // TFIDF requires correctly-sized and populated stats.
+    if (state->scorer_obj && ss->stored_filter) {
+      state->scored_query = ss->stored_filter->prepare({
+        .index = *ss->reader,
+        .scorer = state->scorer_obj.get(),
+      });
     }
   }
 
@@ -521,65 +578,21 @@ static void SereneDBScanFunction(duckdb::ClientContext& context,
 
 // --- Search scan: IResearch query -> PKs -> RocksDB materialization ---
 
-static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
-                                       duckdb::TableFunctionInput& data,
-                                       duckdb::DataChunk& output) {
-  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
-  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
-
-  if (gstate.finished) {
-    output.SetCardinality(0);
-    return;
-  }
-
-  const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
+// Shared RocksDB materialization for search scan results. Fills all projected
+// columns for `num_rows` rows identified by `pk_bytes`. When
+// `gstate.scan_score` is true, fills the score column from `scores` (must have
+// num_rows entries).
+static void SearchScanMaterialize(SereneDBScanGlobalState& gstate,
+                                  const SereneDBScanBindData& bind_data,
+                                  duckdb::DataChunk& output,
+                                  const std::vector<std::string_view>& pk_bytes,
+                                  const std::vector<float>& scores) {
+  const auto num_rows = pk_bytes.size();
   auto& engine = GetServerEngine();
   auto* db = engine.db();
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);
 
-  std::vector<std::string> pk_bytes;
-  pk_bytes.reserve(batch_size);
-
-  auto& search = std::get<SearchScan>(bind_data.scan_source);
-  auto& reader = *search.reader;
-  auto& query = *search.query;
-
-  while (pk_bytes.size() < batch_size) {
-    if (!gstate.search_doc) {
-      if (gstate.search_segment_idx >= reader.size()) {
-        break;
-      }
-      auto& segment = reader[gstate.search_segment_idx++];
-      gstate.search_doc = segment.mask(query.execute({.segment = segment}));
-      const auto* pk_column = segment.column(kPkFieldName);
-      if (!pk_column) {
-        gstate.search_doc.reset();
-        continue;
-      }
-      gstate.search_pk_iter = pk_column->iterator(irs::ColumnHint::Normal);
-      gstate.search_pk_value = irs::get<irs::PayAttr>(*gstate.search_pk_iter);
-    }
-
-    auto doc_id = gstate.search_doc->advance();
-    if (irs::doc_limits::eof(doc_id)) {
-      gstate.search_doc.reset();
-      continue;
-    }
-
-    SDB_ASSERT(doc_id == gstate.search_pk_iter->seek(doc_id));
-    auto pk_view = gstate.search_pk_value->value;
-    pk_bytes.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
-                          pk_view.size());
-  }
-
-  if (pk_bytes.empty()) {
-    gstate.finished = true;
-    output.SetCardinality(0);
-    return;
-  }
-
-  const auto num_rows = pk_bytes.size();
   std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
   std::string key_buffer;
   rocksdb::ReadOptions ro;
@@ -591,6 +604,12 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
       if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
         output.data[proj].Reference(
           duckdb::Value::BIGINT(gstate.tableoid_value));
+      } else if (gstate.scan_score && proj == gstate.score_output_idx) {
+        auto* score_data =
+          duckdb::FlatVector::GetDataMutable<float>(output.data[proj]);
+        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+          score_data[i] = scores[i];
+        }
       } else {
         auto* data =
           duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
@@ -623,6 +642,198 @@ static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
   }
 
   output.SetCardinality(num_rows);
+}
+
+static void SereneDBSearchScanFunction(duckdb::ClientContext& context,
+                                       duckdb::TableFunctionInput& data,
+                                       duckdb::DataChunk& output) {
+  auto& gstate = data.global_state->Cast<SereneDBScanGlobalState>();
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+
+  if (gstate.finished) {
+    output.SetCardinality(0);
+    return;
+  }
+
+  const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
+  auto& search = std::get<SearchScan>(bind_data.scan_source);
+  auto& reader = *search.reader;
+  auto& query = gstate.scored_query ? *gstate.scored_query : *search.query;
+
+  // -------------------------------------------------------------------------
+  // Top-K precomputed path (ORDER BY BM25(...) DESC LIMIT k)
+  // -------------------------------------------------------------------------
+  if (search.score_top_k && gstate.scorer_obj) {
+    if (!gstate.topk_executed) {
+      const size_t k = *search.score_top_k;
+      std::vector<irs::ScoreDoc> hits(irs::BlockSize(k));
+      irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
+      irs::NthPartitionScoreCollector collector{score_threshold, k, hits};
+      irs::ColumnArgsFetcher fetcher;
+      uint32_t seg_idx = 0;
+
+      for (size_t si = 0; si < reader.size(); ++si) {
+        auto& segment = reader[si];
+        fetcher.Clear();
+        collector.SetSegment(seg_idx++);
+        auto it = segment.mask(query.execute(
+          {.segment = segment, .scorer = gstate.scorer_obj.get()}));
+        auto score_func = it->PrepareScore({
+          .scorer = gstate.scorer_obj.get(),
+          .segment = &segment,
+          .fetcher = &fetcher,
+        });
+        it->Collect(score_func, fetcher, collector);
+      }
+      collector.Finalize();
+
+      // hits[0..k-1] are top-k results sorted by score DESC.
+      // Stop when we encounter an uninitialized entry (eof doc).
+      for (size_t i = 0; i < k; ++i) {
+        auto& sd = hits[i];
+        if (irs::doc_limits::eof(sd.doc) || sd.segment_idx >= reader.size()) {
+          break;
+        }
+        auto& seg = reader[sd.segment_idx];
+        const auto* pk_col = seg.column(kPkFieldName);
+        if (!pk_col) {
+          continue;
+        }
+        auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+        auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
+        if (!pk_val || irs::doc_limits::eof(pk_iter->seek(sd.doc))) {
+          continue;
+        }
+        auto pk_view = pk_val->value;
+        gstate.topk_hits.emplace_back(
+          sd.score, std::string(reinterpret_cast<const char*>(pk_view.data()),
+                                pk_view.size()));
+      }
+      gstate.topk_executed = true;
+    }
+
+    const size_t remaining = gstate.topk_hits.size() - gstate.topk_offset;
+    if (remaining == 0) {
+      gstate.finished = true;
+      output.SetCardinality(0);
+      return;
+    }
+    const size_t num_rows = std::min<size_t>(remaining, batch_size);
+
+    std::vector<std::string_view> pk_batch;
+    pk_batch.reserve(num_rows);
+    std::vector<float> score_batch;
+    score_batch.reserve(num_rows);
+    for (size_t i = 0; i < num_rows; ++i) {
+      pk_batch.push_back(gstate.topk_hits[gstate.topk_offset + i].second);
+      score_batch.push_back(gstate.topk_hits[gstate.topk_offset + i].first);
+    }
+    gstate.topk_offset += num_rows;
+
+    SearchScanMaterialize(gstate, bind_data, output, pk_batch, score_batch);
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // Streaming path (with optional block-based scoring)
+  // -------------------------------------------------------------------------
+  std::vector<std::string> pk_storage;
+  pk_storage.reserve(batch_size);
+  std::vector<float> scores;
+  if (gstate.scan_score) {
+    scores.reserve(batch_size);
+  }
+
+  std::array<irs::doc_id_t, irs::kScoreBlock> score_block_docs;
+  irs::scores_size_t block_count = 0;
+
+  auto flush_score_block = [&]() {
+    if (!gstate.scan_score || block_count == 0) {
+      return;
+    }
+    gstate.score_fetcher.Fetch({score_block_docs.data(), block_count});
+    float tmp[irs::kScoreBlock];
+    gstate.score_function.Score(tmp, block_count);
+    for (irs::scores_size_t j = 0; j < block_count; ++j) {
+      scores.push_back(tmp[j]);
+    }
+    block_count = 0;
+  };
+
+  while (pk_storage.size() < batch_size) {
+    if (!gstate.search_doc) {
+      if (gstate.search_segment_idx >= reader.size()) {
+        break;
+      }
+      auto& segment = reader[gstate.search_segment_idx++];
+      gstate.search_doc = segment.mask(query.execute({
+        .segment = segment,
+        .scorer = gstate.scorer_obj.get(),
+      }));
+      const auto* pk_column = segment.column(kPkFieldName);
+      if (!pk_column) {
+        gstate.search_doc.reset();
+        continue;
+      }
+      gstate.search_pk_iter = pk_column->iterator(irs::ColumnHint::Normal);
+      gstate.search_pk_value = irs::get<irs::PayAttr>(*gstate.search_pk_iter);
+
+      if (gstate.scan_score) {
+        gstate.score_fetcher.Clear();
+        gstate.score_function = gstate.search_doc->PrepareScore({
+          .scorer = gstate.scorer_obj.get(),
+          .segment = &segment,
+          .fetcher = &gstate.score_fetcher,
+        });
+      }
+    }
+
+    auto doc_id = gstate.search_doc->advance();
+    if (irs::doc_limits::eof(doc_id)) {
+      flush_score_block();
+      if (gstate.scan_score) {
+        gstate.score_function = irs::ScoreFunction{};
+      }
+      gstate.search_doc.reset();
+      continue;
+    }
+
+    if (gstate.scan_score) {
+      gstate.search_doc->FetchScoreArgs(block_count);
+      score_block_docs[block_count++] = doc_id;
+      if (block_count == irs::kScoreBlock) {
+        gstate.score_fetcher.Fetch({score_block_docs.data(), block_count});
+        float tmp[irs::kScoreBlock];
+        gstate.score_function.ScoreBlock(tmp);
+        for (irs::scores_size_t j = 0; j < irs::kScoreBlock; ++j) {
+          scores.push_back(tmp[j]);
+        }
+        block_count = 0;
+      }
+    }
+
+    SDB_ASSERT(doc_id == gstate.search_pk_iter->seek(doc_id));
+    auto pk_view = gstate.search_pk_value->value;
+    pk_storage.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
+                            pk_view.size());
+  }
+
+  // Flush remaining partial score block before materializing.
+  flush_score_block();
+
+  if (pk_storage.empty()) {
+    gstate.finished = true;
+    output.SetCardinality(0);
+    return;
+  }
+
+  std::vector<std::string_view> pk_views;
+  pk_views.reserve(pk_storage.size());
+  for (const auto& s : pk_storage) {
+    pk_views.push_back(s);
+  }
+
+  SearchScanMaterialize(gstate, bind_data, output, pk_views, scores);
 }
 
 // --- Secondary index scan: iterate SK keys -> PKs -> RocksDB materialization

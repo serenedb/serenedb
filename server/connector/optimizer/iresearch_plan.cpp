@@ -24,13 +24,16 @@
 
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_limit.hpp>
+#include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_top_n.hpp>
 
@@ -560,18 +563,19 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   // Per-expression claim: try each filter expression individually so we
   // can leave non-iresearch predicates on the LogicalFilter. The
   // BooleanFilter::PopBack() rollback handles partial-add failures.
-  irs::And root;
+  // Heap-allocate to allow shared ownership for scorer re-preparation.
+  auto root = std::make_shared<irs::And>();
   std::vector<size_t> claimed_indices;
   for (size_t i = 0; i < filter.expressions.size(); ++i) {
-    const auto before = root.size();
+    const auto before = root->size();
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
-    auto result = connector::MakeSearchFilter(root, single, getter);
-    if (result.ok() && root.size() > before) {
+    auto result = connector::MakeSearchFilter(*root, single, getter);
+    if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {
-      while (root.size() > before) {
-        root.PopBack();
+      while (root->size() > before) {
+        root->PopBack();
       }
     }
   }
@@ -592,13 +596,14 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     fallback = absl::StrCat("col", col_id);
     return fallback;
   };
-  std::string filter_summary = irs::ToStringDemangled(root, col_name_lookup);
+  std::string filter_summary = irs::ToStringDemangled(*root, col_name_lookup);
 
   auto& reader = *resolved->shard->GetInvertedIndexSnapshot()->reader;
   connector::SearchScan search;
   search.snapshot = resolved->shard->GetInvertedIndexSnapshot();
   search.reader = &reader;
-  search.query = root.prepare({.index = reader});
+  search.stored_filter = root;
+  search.query = root->prepare({.index = reader});
   search.filter_summary = std::move(filter_summary);
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIresearchSearchScanFunction();
@@ -661,6 +666,128 @@ std::optional<FoundScan> FindSearchScanChild(duckdb::LogicalOperator& op) {
   return std::nullopt;
 }
 
+// Walk ALL children recursively to find a SearchScan LogicalGet whose
+// table_index matches `target`. Unlike FindSearchScanChild, this traverses
+// multi-child nodes (cross joins, etc.) for multi-index query support.
+std::optional<FoundScan> FindSearchScanByTableIndex(duckdb::LogicalOperator& op,
+                                                    duckdb::TableIndex target) {
+  if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
+    auto& get = op.Cast<duckdb::LogicalGet>();
+    if (get.table_index != target) {
+      return std::nullopt;
+    }
+    if (!get.bind_data ||
+        !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+      return std::nullopt;
+    }
+    auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
+    auto* ss = std::get_if<connector::SearchScan>(&bind_data.scan_source);
+    if (!ss) {
+      return std::nullopt;
+    }
+    return FoundScan{&get, &bind_data, ss};
+  }
+  for (auto& child : op.children) {
+    auto result = FindSearchScanByTableIndex(*child, target);
+    if (result) {
+      return result;
+    }
+  }
+  return std::nullopt;
+}
+
+// Add kInvertedIndexScoreId as a new column to the scan's bind_data and
+// LogicalGet. Returns the position in get.column_ids (used for
+// BoundColumnRefExpression). Idempotent: if score column already present,
+// returns its existing position.
+duckdb::idx_t AddScoreColumn(connector::SereneDBScanBindData& bind_data,
+                             duckdb::LogicalGet& get) {
+  // Check if already added to bind_data.
+  auto score_bind_idx = duckdb::DConstants::INVALID_INDEX;
+  for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
+    if (bind_data.column_ids[i] == catalog::Column::kInvertedIndexScoreId) {
+      score_bind_idx = i;
+      break;
+    }
+  }
+  if (score_bind_idx == duckdb::DConstants::INVALID_INDEX) {
+    // Not yet added -- append.
+    score_bind_idx = bind_data.column_ids.size();
+    bind_data.column_ids.push_back(catalog::Column::kInvertedIndexScoreId);
+    bind_data.column_types.push_back(duckdb::LogicalType::FLOAT);
+  }
+  // Check if the LogicalGet already references this bind_data slot.
+  auto& col_ids = get.GetColumnIds();
+  for (duckdb::idx_t i = 0; i < col_ids.size(); ++i) {
+    if (col_ids[i].HasPrimaryIndex() &&
+        col_ids[i].GetPrimaryIndex() == score_bind_idx) {
+      return i;
+    }
+  }
+  // Add the reference in LogicalGet.
+  // returned_types/names are the full schema; score_bind_idx must be a valid
+  // index into returned_types, so extend the schema first.
+  get.returned_types.push_back(duckdb::LogicalType::FLOAT);
+  get.names.push_back("sdb_inverted_index_score");
+  const auto get_col_idx = col_ids.size();
+  const auto proj_idx =
+    get.AddColumnId(static_cast<duckdb::column_t>(score_bind_idx));
+  // If RemoveUnusedColumns has already populated projection_ids, the new
+  // column must be added there too, otherwise GetColumnBindings() won't
+  // include it and filter/expression resolution will crash.
+  if (!get.projection_ids.empty()) {
+    get.projection_ids.push_back(proj_idx);
+  }
+  // Cached operator types must match bindings count -- the column binding
+  // resolver checks both. Follow the RowNumberRewriter pattern and push
+  // unconditionally; ResolveTypes would add this entry whether or not
+  // projection_ids was used.
+  get.types.push_back(duckdb::LogicalType::FLOAT);
+  return get_col_idx;
+}
+
+// When a score column is added to a LogicalGet, intermediate LogicalFilter
+// operators above it may have a non-empty `projection_map` that drops the
+// new column from their upward-exposed bindings. Walk the subtree rooted at
+// `op` and extend each such projection_map so the score column remains
+// visible to operators above (TopN ORDER BY, outer Projections, etc.).
+//
+// Returns the position of the score column in `op`'s output bindings, or
+// INVALID_INDEX if the target Get isn't below `op`.
+duckdb::idx_t ExposeScoreThroughSubtree(duckdb::LogicalOperator& op,
+                                        const duckdb::LogicalGet* target_get,
+                                        duckdb::idx_t score_pos_in_child) {
+  if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
+    auto* get = &op.Cast<duckdb::LogicalGet>();
+    return (get == target_get) ? score_pos_in_child
+                               : duckdb::DConstants::INVALID_INDEX;
+  }
+  for (auto& child : op.children) {
+    auto pos =
+      ExposeScoreThroughSubtree(*child, target_get, score_pos_in_child);
+    if (pos == duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    if (op.type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+      auto& f = op.Cast<duckdb::LogicalFilter>();
+      if (f.HasProjectionMap()) {
+        // Check idempotency: projection_map may already include pos.
+        for (const auto& p : f.projection_map) {
+          if (p.GetIndex() == pos) {
+            return duckdb::DConstants::INVALID_INDEX;
+          }
+        }
+        f.projection_map.emplace_back(duckdb::ProjectionIndex(pos));
+        return f.projection_map.size() - 1;
+      }
+    }
+    // Pass-through operators (Filter without projection_map, Limit, Order,
+    // etc.): column position is preserved in child-to-parent mapping.
+    return pos;
+  }
+  return duckdb::DConstants::INVALID_INDEX;
+}
+
 // Extract a constant Value pointer from `expr`, or null if not a
 // BoundConstantExpression. Used by the scorer-param parser to read
 // compile-time k1 / b / with_norms arguments.
@@ -671,19 +798,135 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
 }
 
-// True iff `expr` is a BoundColumnRefExpression bound to the given
-// scan's table_index. We treat the actual column position as opaque --
-// any column from the scan is OK, but the convention is `tableoid` so
-// the binding lasts through projection pushdown.
-bool IsScanColumnRef(const duckdb::Expression& expr,
-                     duckdb::TableIndex scan_table_index) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    return false;
+// Forward declaration (defined after TrySetScorer).
+bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
+                  const duckdb::BoundFunctionExpression& func,
+                  std::string_view name);
+
+// Recursively rewrites bm25/tfidf calls anywhere in an expression tree.
+// Handles expressions wrapped in comparisons, casts, operators, and functions.
+// When `set_scorer` is true, sets the scorer on the scan (pass 1).
+// When false, only rewrites if scorer was already set (pass 2).
+// Returns a replacement expression if THIS node is a scorer call; otherwise
+// mutates children in-place and returns nullptr.
+duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
+  duckdb::unique_ptr<duckdb::Expression>& expr, duckdb::LogicalOperator& root,
+  bool& changed, bool set_scorer);
+
+void RewriteScoreCallInChildren(duckdb::unique_ptr<duckdb::Expression>& expr,
+                                duckdb::LogicalOperator& root, bool& changed,
+                                bool set_scorer) {
+  using EC = duckdb::ExpressionClass;
+  if (!expr) {
+    return;
   }
-  return expr.Cast<duckdb::BoundColumnRefExpression>().binding.table_index ==
-         scan_table_index;
+  switch (expr->expression_class) {
+    case EC::BOUND_FUNCTION: {
+      auto& f = expr->Cast<duckdb::BoundFunctionExpression>();
+      for (auto& c : f.children) {
+        auto r = RewriteScoreCallInExpr(c, root, changed, set_scorer);
+        if (r) {
+          c = std::move(r);
+        }
+      }
+      break;
+    }
+    case EC::BOUND_COMPARISON: {
+      auto& cmp = expr->Cast<duckdb::BoundComparisonExpression>();
+      auto l = RewriteScoreCallInExpr(cmp.left, root, changed, set_scorer);
+      if (l) {
+        cmp.left = std::move(l);
+      }
+      auto r = RewriteScoreCallInExpr(cmp.right, root, changed, set_scorer);
+      if (r) {
+        cmp.right = std::move(r);
+      }
+      break;
+    }
+    case EC::BOUND_CAST: {
+      auto& c = expr->Cast<duckdb::BoundCastExpression>();
+      auto r = RewriteScoreCallInExpr(c.child, root, changed, set_scorer);
+      if (r) {
+        c.child = std::move(r);
+      }
+      break;
+    }
+    case EC::BOUND_OPERATOR: {
+      auto& op = expr->Cast<duckdb::BoundOperatorExpression>();
+      for (auto& c : op.children) {
+        auto r = RewriteScoreCallInExpr(c, root, changed, set_scorer);
+        if (r) {
+          c = std::move(r);
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
+duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
+  duckdb::unique_ptr<duckdb::Expression>& expr, duckdb::LogicalOperator& root,
+  bool& changed, bool set_scorer) {
+  if (!expr) {
+    return nullptr;
+  }
+  if (expr->expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    RewriteScoreCallInChildren(expr, root, changed, set_scorer);
+    return nullptr;
+  }
+  auto& func = expr->Cast<duckdb::BoundFunctionExpression>();
+  const auto& name = func.function.name;
+  if (name != connector::kBm25 && name != connector::kTfidf) {
+    RewriteScoreCallInChildren(expr, root, changed, set_scorer);
+    return nullptr;
+  }
+  // Scorer call -- check tableoid argument.
+  if (func.children.empty() || func.children[0]->expression_class !=
+                                 duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return nullptr;
+  }
+  auto& anchor = func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+  auto found = FindSearchScanByTableIndex(root, anchor.binding.table_index);
+  if (!found) {
+    return nullptr;  // No SearchScan -- stub will raise.
+  }
+  // Restrict scorer functions to explicit inverted-index queries
+  // (FROM <idx_name>). When the query is FROM <table> and the search-filter
+  // builder opportunistically promotes a base-table scan into a
+  // SearchScan (e.g. because a range predicate on an indexed column is
+  // pushable), the user is not asking to score the text index and
+  // bm25()/tfidf() should fall through to the runtime stub error.
+  if (!found->bind_data->table_entry ||
+      !dynamic_cast<const connector::SereneDBIndexScanEntry*>(
+        &*found->bind_data->table_entry)) {
+    return nullptr;
+  }
+  if (set_scorer) {
+    if (!TrySetScorer(found->search_scan->scorer, func, name)) {
+      return nullptr;  // Non-constant params.
+    }
+  } else {
+    if (found->search_scan->scorer.kind ==
+        connector::SearchScan::ScorerKind::None) {
+      return nullptr;  // Not claimed in pass 1 -- leave for stub.
+    }
+  }
+  auto idx = AddScoreColumn(*found->bind_data, *found->get);
+  // Ensure any LogicalFilter between the Get and the rewrite site exposes
+  // the new score column through its projection_map. Without this, upstream
+  // operators (e.g. TopN ORDER BY) can't resolve the column reference.
+  ExposeScoreThroughSubtree(root, found->get, idx);
+  duckdb::ColumnBinding binding{found->get->table_index,
+                                duckdb::ProjectionIndex{idx}};
+  changed = true;
+  return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    "sdb_inverted_index_score", duckdb::LogicalType::FLOAT, binding);
+}
+
+// True iff `expr` is a BoundColumnRefExpression bound to the given
+// scan's table_index. We treat the actual column position as opaque --
 // Resolve a column reference (post projection-pushdown) to its catalog
 // Column::Id via `bind_data.column_ids`. Returns kInvalidId if the ref
 // doesn't belong to the scan.
@@ -709,121 +952,265 @@ catalog::Column::Id ResolveColumnId(
   return bind_data.column_ids[phys];
 }
 
-// Walk a LogicalProjection's expressions for sdb_score / sdb_offsets
-// calls anchored on the SearchScan child. Attach a Scorer / Offsets
-// request to the SearchScan bind_data when we find them.
-//
-// We do NOT rewrite the projection expressions here: the runtime side
-// will recognise these calls as "produced by the scan" once it lands.
-// For the optimization stage the only observable effect is the new
-// strategy-name suffix in EXPLAIN ("fulltext_score" / "+offsets").
-//
-// TODO(runtime): once execution honours scorer / offsets, rewrite the
-// projection to pull the score / offsets columns directly from the
-// scan output instead of evaluating the stub function.
-bool TryAttachScoreOffsets(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+// Parse bm25/tfidf parameters from `func` into `scorer`. Returns false if
+// the parameters are non-constant (rule refuses to claim; stub raises).
+// Also validates scorer kind conflicts: same kind+params is idempotent,
+// different kind/params throws.
+bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
+                  const duckdb::BoundFunctionExpression& func,
+                  std::string_view name) {
+  using ScorerKind = connector::SearchScan::ScorerKind;
+  ScorerKind new_kind;
+  double new_k1 = 1.2, new_b = 0.75;
+  bool new_with_norms = false;
+
+  if (name == connector::kBm25) {
+    new_kind = ScorerKind::Bm25;
+    if (func.children.size() == 3) {
+      auto* k1v = TryGetConstantValue(*func.children[1]);
+      auto* bv = TryGetConstantValue(*func.children[2]);
+      if (!k1v || !bv) {
+        return false;  // Non-constant params -- don't claim.
+      }
+      new_k1 = k1v->GetValue<double>();
+      new_b = bv->GetValue<double>();
+    }
+  } else {
+    new_kind = ScorerKind::Tfidf;
+    if (func.children.size() == 2) {
+      auto* cv = TryGetConstantValue(*func.children[1]);
+      if (!cv) {
+        return false;
+      }
+      new_with_norms = cv->GetValue<bool>();
+    }
+  }
+
+  if (scorer.kind == ScorerKind::None) {
+    scorer.kind = new_kind;
+    scorer.bm25_k1 = new_k1;
+    scorer.bm25_b = new_b;
+    scorer.tfidf_with_norms = new_with_norms;
+    return true;
+  }
+  // Already set -- check for conflict.
+  if (scorer.kind == new_kind && scorer.bm25_k1 == new_k1 &&
+      scorer.bm25_b == new_b && scorer.tfidf_with_norms == new_with_norms) {
+    return true;  // Idempotent (same scorer in multiple expressions).
+  }
+  throw duckdb::InvalidInputException(
+    "Only one scorer function is allowed per inverted index\n"
+    "HINT: Use UNION to combine different score functions for same "
+    "inverted index");
+}
+
+// True iff `expr` is a BoundFunctionExpression named bm25/tfidf whose first
+// argument is a BoundColumnRef anchored on a SearchScan reachable from `root`.
+bool IsScorerCallAnchoredOnSearchScan(duckdb::LogicalOperator& root,
+                                      const duckdb::Expression& expr) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return false;
+  }
+  const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto& name = func.function.name;
+  if (name != connector::kBm25 && name != connector::kTfidf) {
+    return false;
+  }
+  if (func.children.empty() || func.children[0]->expression_class !=
+                                 duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return false;
+  }
+  const auto& anchor =
+    func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+  return FindSearchScanByTableIndex(root, anchor.binding.table_index)
+    .has_value();
+}
+
+// Recognize `score_fn(tableoid) > 0` (or `> 0.0`) and replace it in-place
+// with a BoundConstantExpression TRUE. Returns true if any rewrite happened.
+// Since scorer outputs are positive for matching docs, the comparison is
+// redundant and safely drops. Recurses into children of Cast / Operator /
+// Comparison nodes so nested occurrences are caught.
+bool SimplifyScoreGtZero(duckdb::LogicalOperator& root,
+                         duckdb::unique_ptr<duckdb::Expression>& expr) {
+  if (!expr) {
+    return false;
+  }
+  using EC = duckdb::ExpressionClass;
+  bool changed = false;
+  if (expr->expression_class == EC::BOUND_COMPARISON) {
+    auto& cmp = expr->Cast<duckdb::BoundComparisonExpression>();
+    auto is_zero = [](const duckdb::Expression& e) {
+      if (e.expression_class != EC::BOUND_CONSTANT) {
+        return false;
+      }
+      const auto& v = e.Cast<duckdb::BoundConstantExpression>().value;
+      if (v.IsNull()) {
+        return false;
+      }
+      try {
+        return v.GetValue<double>() == 0.0;
+      } catch (...) {
+        return false;
+      }
+    };
+    // Matches `score > 0`, `score >= 0` (non-negative comparisons).
+    const bool is_gt_zero_shape =
+      (cmp.type == duckdb::ExpressionType::COMPARE_GREATERTHAN ||
+       cmp.type == duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) &&
+      cmp.left && cmp.right && is_zero(*cmp.right) &&
+      IsScorerCallAnchoredOnSearchScan(root, *cmp.left);
+    // Matches `0 < score`.
+    const bool is_zero_lt_shape =
+      (cmp.type == duckdb::ExpressionType::COMPARE_LESSTHAN ||
+       cmp.type == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO) &&
+      cmp.left && cmp.right && is_zero(*cmp.left) &&
+      IsScorerCallAnchoredOnSearchScan(root, *cmp.right);
+    if (is_gt_zero_shape || is_zero_lt_shape) {
+      expr = duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value::BOOLEAN(true));
+      return true;
+    }
+  }
+  // Recurse into structural children so nested filter predicates are caught.
+  switch (expr->expression_class) {
+    case EC::BOUND_OPERATOR: {
+      auto& op = expr->Cast<duckdb::BoundOperatorExpression>();
+      for (auto& c : op.children) {
+        changed |= SimplifyScoreGtZero(root, c);
+      }
+      break;
+    }
+    case EC::BOUND_CAST: {
+      auto& c = expr->Cast<duckdb::BoundCastExpression>();
+      changed |= SimplifyScoreGtZero(root, c.child);
+      break;
+    }
+    case EC::BOUND_COMPARISON: {
+      auto& cmp = expr->Cast<duckdb::BoundComparisonExpression>();
+      changed |= SimplifyScoreGtZero(root, cmp.left);
+      changed |= SimplifyScoreGtZero(root, cmp.right);
+      break;
+    }
+    case EC::BOUND_FUNCTION: {
+      auto& f = expr->Cast<duckdb::BoundFunctionExpression>();
+      for (auto& c : f.children) {
+        changed |= SimplifyScoreGtZero(root, c);
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return changed;
+}
+
+// Walk a LogicalProjection's expressions for bm25/tfidf/offsets calls
+// anchored on a SearchScan. Sets scorer params and rewrites the expression
+// to a BoundColumnRefExpression pointing at the score virtual column.
+bool TryAttachScoreOffsets(duckdb::LogicalOperator& root,
+                           duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
     return false;
   }
   auto& projection = plan->Cast<duckdb::LogicalProjection>();
-  auto found = FindSearchScanChild(projection);
-  if (!found) {
-    return false;
-  }
-  auto* search = found->search_scan;
   bool changed = false;
   for (duckdb::idx_t i = 0; i < projection.expressions.size(); ++i) {
+    // Recursively rewrite any bm25/tfidf calls in this expression.
+    auto replacement = RewriteScoreCallInExpr(projection.expressions[i], root,
+                                              changed, /*set_scorer=*/true);
+    if (replacement) {
+      projection.expressions[i] = std::move(replacement);
+    }
+
     auto& expr = *projection.expressions[i];
     if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
       continue;
     }
     auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
     const auto& name = func.function.name;
-    if (name == connector::kBm25 || name == connector::kTfidf) {
-      // bm25(tableoid [, k1 DOUBLE, b DOUBLE])
-      // tfidf(tableoid [, with_norms BOOLEAN])
-      //
-      // The iresearch_plan rule extracts the parameter constants at
-      // compile time and plumbs them through bind data as typed
-      // fields; the runtime executor reads ScorerParams directly, no
-      // per-row re-parsing. Only one scorer per scan -- later calls
-      // are ignored.
-      if (func.children.empty() ||
-          !IsScanColumnRef(*func.children[0], found->get->table_index)) {
-        continue;
-      }
-      if (search->scorer.kind != connector::SearchScan::ScorerKind::None) {
-        // A scorer was already set by an earlier projection entry.
-        // Skip to avoid silently overwriting.
-        continue;
-      }
-      if (name == connector::kBm25) {
-        search->scorer.kind = connector::SearchScan::ScorerKind::Bm25;
-        if (func.children.size() == 3) {
-          // bm25(tableoid, k1, b)
-          auto* k1_const = TryGetConstantValue(*func.children[1]);
-          auto* b_const = TryGetConstantValue(*func.children[2]);
-          if (!k1_const || !b_const) {
-            // Non-constant params -- the rule refuses to claim; fall
-            // back to stub-eval (runtime will raise). Reset kind.
-            search->scorer.kind = connector::SearchScan::ScorerKind::None;
-            continue;
-          }
-          search->scorer.bm25_k1 = k1_const->GetValue<double>();
-          search->scorer.bm25_b = b_const->GetValue<double>();
-        }
-        // else (1-arg form): keep defaults k1=1.2, b=0.75.
-      } else {
-        search->scorer.kind = connector::SearchScan::ScorerKind::Tfidf;
-        if (func.children.size() == 2) {
-          // tfidf(tableoid, with_norms)
-          auto* c = TryGetConstantValue(*func.children[1]);
-          if (!c) {
-            search->scorer.kind = connector::SearchScan::ScorerKind::None;
-            continue;
-          }
-          search->scorer.tfidf_with_norms = c->GetValue<bool>();
-        }
-        // else (1-arg form): keep default with_norms=false.
-      }
-      changed = true;
-      continue;
-    }
     if (name == connector::kOffsets) {
-      // sdb_offsets(col) -- single VARCHAR column ref. The column ref's
-      // own binding.table_index identifies the scan (no separate
-      // tableoid anchor is needed); we match it against the scan we
-      // found via FindSearchScanChild.
-      if (func.children.size() != 1 ||
-          func.children[0]->expression_class !=
+      // Accept both legacy offsets(col) and explicit offsets(tableoid, col).
+      // In the explicit form we anchor the SearchScan via the tableoid
+      // BoundColumnRef; in the legacy form the col ref itself anchors.
+      duckdb::BoundColumnRefExpression* col_ref = nullptr;
+      duckdb::BoundColumnRefExpression* anchor_ref = nullptr;
+      if (func.children.size() == 1 &&
+          func.children[0]->expression_class ==
             duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        col_ref = &func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+        anchor_ref = col_ref;
+      } else if (func.children.size() == 2 &&
+                 func.children[0]->expression_class ==
+                   duckdb::ExpressionClass::BOUND_COLUMN_REF &&
+                 func.children[1]->expression_class ==
+                   duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        anchor_ref =
+          &func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+        col_ref = &func.children[1]->Cast<duckdb::BoundColumnRefExpression>();
+      } else {
         continue;
       }
-      auto& col_ref =
-        func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
-      if (col_ref.binding.table_index != found->get->table_index) {
+      auto found =
+        FindSearchScanByTableIndex(root, anchor_ref->binding.table_index);
+      if (!found) {
         continue;
       }
       const auto col_id =
-        ResolveColumnId(col_ref, *found->bind_data, *found->get);
+        ResolveColumnId(*col_ref, *found->bind_data, *found->get);
       if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
         continue;
       }
-      // Append unless we already have an entry for this column.
       bool already = false;
-      for (const auto& req : search->offsets) {
+      for (const auto& req : found->search_scan->offsets) {
         if (req.column_id == col_id) {
           already = true;
           break;
         }
       }
       if (!already) {
-        search->offsets.push_back({.column_id = col_id, .projection_index = i});
+        found->search_scan->offsets.push_back(
+          {.column_id = col_id, .projection_index = i});
       }
       changed = true;
       continue;
     }
   }
+  return changed;
+}
+
+// Rewrite bm25/tfidf calls in non-projection contexts (Filter, TopN ORDER BY)
+// by replacing them with BoundColumnRefExpression pointing at the score
+// column that pass 1 already attached. Called in pass 2.
+bool TryRewriteScorerExpressions(
+  duckdb::LogicalOperator& root,
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  bool changed = false;
+
+  auto rewrite_expr = [&](duckdb::unique_ptr<duckdb::Expression>& expr) {
+    auto r = RewriteScoreCallInExpr(expr, root, changed, /*set_scorer=*/false);
+    if (r) {
+      expr = std::move(r);
+    }
+  };
+
+  if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+    auto& filter = plan->Cast<duckdb::LogicalFilter>();
+    for (auto& e : filter.expressions) {
+      rewrite_expr(e);
+    }
+  } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
+    auto& top_n = plan->Cast<duckdb::LogicalTopN>();
+    for (auto& order : top_n.orders) {
+      rewrite_expr(order.expression);
+    }
+  } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_ORDER_BY) {
+    auto& order_op = plan->Cast<duckdb::LogicalOrder>();
+    for (auto& order : order_op.orders) {
+      rewrite_expr(order.expression);
+    }
+  }
+
   return changed;
 }
 
@@ -868,11 +1255,9 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     pulled = static_cast<size_t>(top_n.limit);
   }
   found->search_scan->score_top_k = pulled;
-  // The scored scan already returns top-k rows ordered by score, so
-  // the Limit / TopN node is redundant -- drop it. Replace `plan`
-  // with its child (skipping the Limit / TopN layer); the caller's
-  // walker continues down the new subtree.
-  plan = std::move(plan->children[0]);
+  // Do NOT drop the TopN/Limit node -- DuckDB still applies its own
+  // ordering/limit on top of the precomputed top-K results, which acts
+  // as a safety trim and allows EXPLAIN to show the correct plan shape.
   return true;
 }
 
@@ -885,28 +1270,63 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   IresearchPlanOptimizer() { optimize_function = Optimize; }
 
  private:
-  // True if the rule made a change; useful for chaining but currently
-  // unused (the walker keeps going regardless).
-  static bool TryOptimize(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  // Pass 1: attach search filters + scorer detection + expression rewriting
+  // for BM25/TFIDF in projections.
+  static bool TryOptimizePass1(
+    duckdb::unique_ptr<duckdb::LogicalOperator>& root,
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-      // ANN topk first; if it doesn't fire the TopN may still be a
-      // score-pullup target.
       if (TryAnnTopk(plan)) {
         return true;
       }
-      return TryAttachScoreTopK(plan);
+      bool changed = TryAttachScoreTopK(plan);
+      // Also claim BM25/TFIDF in TOP_N ORDER BY as scorer (set_scorer=true).
+      auto& top_n = plan->Cast<duckdb::LogicalTopN>();
+      for (auto& order : top_n.orders) {
+        auto r = RewriteScoreCallInExpr(order.expression, *root, changed,
+                                        /*set_scorer=*/true);
+        if (r) {
+          order.expression = std::move(r);
+        }
+      }
+      return changed;
+    }
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_ORDER_BY) {
+      // Claim BM25/TFIDF in ORDER BY as scorer (set_scorer=true).
+      auto& order_op = plan->Cast<duckdb::LogicalOrder>();
+      bool changed = false;
+      for (auto& order : order_op.orders) {
+        auto r = RewriteScoreCallInExpr(order.expression, *root, changed,
+                                        /*set_scorer=*/true);
+        if (r) {
+          order.expression = std::move(r);
+        }
+      }
+      return changed;
     }
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
-      // ANN range first (its pattern is more specific and won't be
-      // misinterpreted by the search-filter path; if it fires the
-      // search-filter path won't see a FullTableScan anymore).
       if (TryAnnRange(plan)) {
         return true;
       }
-      return TrySearchFilter(plan);
+      bool changed = TrySearchFilter(plan);
+      // Simplify `BM25/TFIDF(tableoid) > 0` predicates to TRUE: a scorer's
+      // value is always positive for matching docs, so the comparison adds
+      // no filtering. This lets scorer selection stay controlled by the
+      // output-producing sites (SELECT, ORDER BY) without being hijacked
+      // when a subquery that only references the score in `>0` gets
+      // flattened into an outer filter.
+      if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+        auto& filter = plan->Cast<duckdb::LogicalFilter>();
+        for (auto& e : filter.expressions) {
+          if (SimplifyScoreGtZero(*root, e)) {
+            changed = true;
+          }
+        }
+      }
+      return changed;
     }
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
-      return TryAttachScoreOffsets(plan);
+      return TryAttachScoreOffsets(*root, plan);
     }
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_LIMIT) {
       return TryAttachScoreTopK(plan);
@@ -914,34 +1334,54 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     return false;
   }
 
-  // Bottom-up walk with a mutation-context flag: when the current
-  // subtree root is a LOGICAL_DELETE / LOGICAL_UPDATE / LOGICAL_MERGE_INTO
-  // node, none of its descendant scans get iresearch-rewritten
-  // (eventual-consistency constraint).
-  static void Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                   bool in_mutation) {
+  // Pass 2: top-K pullup + rewrite BM25/TFIDF in Filter/TopN order-by.
+  static bool TryOptimizePass2(
+    duckdb::unique_ptr<duckdb::LogicalOperator>& root,
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
+      bool changed = TryAttachScoreTopK(plan);
+      changed |= TryRewriteScorerExpressions(*root, plan);
+      return changed;
+    }
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+      return TryRewriteScorerExpressions(*root, plan);
+    }
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_ORDER_BY) {
+      return TryRewriteScorerExpressions(*root, plan);
+    }
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_LIMIT) {
+      return TryAttachScoreTopK(plan);
+    }
+    return false;
+  }
+
+  // Bottom-up walk. `root` is the plan root (for FindSearchScanByTableIndex),
+  // `plan` is the current node being visited.
+  static void Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
+                   duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                   bool in_mutation, int pass) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     for (auto& child : plan->children) {
-      Walk(child, subtree_in_mutation);
+      Walk(root, child, subtree_in_mutation, pass);
     }
     if (!subtree_in_mutation) {
-      TryOptimize(plan);
+      if (pass == 1) {
+        TryOptimizePass1(root, plan);
+      } else {
+        TryOptimizePass2(root, plan);
+      }
     }
   }
 
   static void Optimize(duckdb::OptimizerExtensionInput& /*input*/,
                        duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-    // Two passes. Pass 1 attaches search filters (TrySearchFilter +
-    // TryAnnRange + TryAnnTopk) AND attaches scorer / offsets via
-    // TryAttachScoreOffsets when the surrounding LogicalProjection is
-    // visited. Pass 2 picks up TryAttachScoreTopK on a LogicalLimit /
-    // LogicalTopN that sits between the LogicalProjection and the
-    // SearchScan -- in a bottom-up walk those Limit / TopN nodes are
-    // visited BEFORE the LogicalProjection that attaches the scorer,
-    // so the first-pass topk-pullup can't see the scorer yet. The
-    // second pass runs after the scorer attachment is in place.
-    Walk(plan, /*in_mutation=*/false);
-    Walk(plan, /*in_mutation=*/false);
+    // Pass 1: attach search filters, detect BM25/TFIDF in projections,
+    // rewrite their expressions, and attach scorer to bind_data.
+    // Pass 2: pull top-K limits (now scorer is set) and rewrite
+    // BM25/TFIDF in Filter/TopN ORDER BY contexts (bottom-up, so by
+    // the time we visit Projection the scorer may already be set).
+    Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1);
+    Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2);
   }
 };
 

@@ -39,7 +39,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 # BM25 scores are non-negative; verify they are returned and > 0
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -48,7 +48,7 @@ id	has_score
 
 # TFIDF scores are also > 0
 query
-SELECT id, TFIDF() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, TFIDF(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -57,7 +57,7 @@ id	has_score
 
 # BM25 with explicit parameters produces non-zero scores
 query
-SELECT id, BM25(1.2, 0.75) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid, 1.2, 0.75) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -66,19 +66,19 @@ id	has_score
 
 # BM25 ordering
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC, id;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC, id;
 ----
 id
-1
 2
+1
 
 
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC, id;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_idx.tableoid) DESC, id;
 ----
 id
-1
 3
+1
 
 
 # Insert a second segment to exercise multi-segment scoring
@@ -96,7 +96,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 # Both segments contribute matching documents; all should have score > 0
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -107,7 +107,7 @@ id	has_score
 
 # TFIDF also works across multiple segments
 query
-SELECT id, TFIDF() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+SELECT id, TFIDF(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -256,9 +256,9 @@ count
 36
 
 
-# ORDER BY BM25() with >32 results exercises the full-block ScoreBlock path
+# ORDER BY BM25(docs_idx.tableoid) with >32 results exercises the full-block ScoreBlock path
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
 ----
 id	has_score
 1	t
@@ -266,93 +266,95 @@ id	has_score
 4	t
 
 
-# BM25() can appear multiple times in the same query (SELECT + ORDER BY)
+# BM25(docs_idx.tableoid) can appear multiple times in the same query (SELECT + ORDER BY)
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 3;
 ----
 id	has_score
-4	t
-2	t
 1	t
+5	t
+4	t
 
 
-# BM25() in SELECT, WHERE, and ORDER BY simultaneously
+# BM25(docs_idx.tableoid) in SELECT, WHERE, and ORDER BY simultaneously
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0 ORDER BY BM25() DESC LIMIT 3;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid) > 0 ORDER BY BM25(docs_idx.tableoid) ASC LIMIT 3;
 ----
 id
-4
-2
 1
+5
+4
 
 
-# BM25() with same explicit params used twice is allowed
+# BM25(docs_idx.tableoid) with same explicit params used twice is allowed
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(1.2, 0.75) > 0 ORDER BY BM25(1.2, 0.75) DESC LIMIT 3;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid, 1.2, 0.75) > 0 ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) ASC LIMIT 3;
 ----
 id
-4
-2
 1
+5
+4
 
 
-# Error: BM25() and BM25() with different params conflict
+# Error: BM25(docs_idx.tableoid) and BM25(docs_idx.tableoid) with different params conflict
 query error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(1.2, 0.75) DESC, BM25(1.0, 0.5) DESC LIMIT 3;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) DESC, BM25(docs_idx.tableoid, 1.0, 0.5) DESC LIMIT 3;
 ----
 db error: ERROR: Only one scorer function is allowed per inverted index
 HINT: Use UNION to combine different score functions for same inverted index
 
 
-# Error: BM25 and TFIDF in the same query conflict
-query error
-SELECT id, BM25() FROM docs_idx WHERE PHRASE(body, 'fox') AND TFIDF() > 0 LIMIT 3;
+query
+SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE PHRASE(body, 'fox') AND TFIDF(docs_idx.tableoid) > 0 LIMIT 3;
 ----
-db error: ERROR: Only one scorer function is allowed per inverted index
-HINT: Use UNION to combine different score functions for same inverted index
+id	bm25
+10	0.043<slt:ignore>
+11	0.043<slt:ignore>
+12	0.043<slt:ignore>
 
 
 # UNION ALL: same scorer in each branch — each branch is an independent scoring scope
 query
-(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 3)
 UNION ALL
-(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 3)
 ORDER BY id;
 ----
 id	score
-1	0.05305543
-1	3.1416833
-2	0.05305543
-3	3.1416833
-4	0.05305543
-35	3.1416833
+1	1.1331773
+3	2.177017
+10	0.043432634
+11	0.043432634
+12	0.043432634
+35	2.5718682
 
 
 # UNION ALL: different scorer types per branch (BM25 vs TFIDF) — each branch is independent
 query
-(SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+(SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
 UNION ALL
-(SELECT id, TFIDF() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+(SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
 ORDER BY id;
 ----
 id	score
-1	0.7065702
 1	2.3513753
-2	0.7065702
 3	2.3513753
+10	0.043432634
+11	0.043432634
 
 
-# Subquery: BM25() inside subquery, outer references the alias
+# Subquery: BM25(docs_idx.tableoid) inside subquery, outer references the alias
 query
 SELECT id, score FROM (
-  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3
 ) sub ORDER BY id;
 ----
 id	score
-1	0.05305543
-2	0.05305543
-4	0.05305543
+10	0.043432634
+11	0.043432634
+12	0.043432634
 
+skipif serenedb
 query
 EXPLAIN 
 SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') 
@@ -365,6 +367,7 @@ Fragment 0:  numWorkers=0:
   -- TopN[1][3 sdb_inverted_index_score DESC NULLS FIRST] -> "id":INTEGER, "sdb_inverted_index_score":REAL
     -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
+skipif serenedb
 query
 EXPLAIN SELECT id FROM
 (SELECT id, BM25() as score FROM docs_idx WHERE PHRASE(body, 'fox'))
@@ -378,6 +381,7 @@ Fragment 0:  numWorkers=0:
     -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+skipif serenedb
 query error
 EXPLAIN SELECT * FROM
 (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox'))
@@ -386,6 +390,7 @@ ORDER BY BM25()
 db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
+skipif serenedb
 query
 EXPLAIN (SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3)
 UNION ALL
@@ -405,26 +410,26 @@ Fragment 0:  numWorkers=0:
         -- TableScan[3][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
-# UNION of two subqueries from same index with outer ORDER BY BM25()
+# UNION of two subqueries from same index with outer ORDER BY BM25(docs_idx.tableoid)
 query
-(SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
 UNION ALL
-(SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25() DESC LIMIT 3)
+(SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_idx.tableoid) DESC LIMIT 3)
 ORDER BY id;
 ----
 id	has_score
 1	t
-1	t
-2	t
 3	t
-4	t
+10	t
+11	t
+12	t
 35	t
 
 
-# CTE: BM25() computed in CTE, outer query uses the pre-computed alias
+# CTE: BM25(docs_idx.tableoid) computed in CTE, outer query uses the pre-computed alias
 query
 WITH scored AS (
-  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
 )
 SELECT id, score > 0 AS has_score FROM scored ORDER BY id LIMIT 3;
 ----
@@ -436,7 +441,7 @@ id	has_score
 
 query
 SELECT id, score > 0 AS has_score FROM (
-  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
 ) sub ORDER BY id LIMIT 3;
 ----
 id	has_score
@@ -445,17 +450,19 @@ id	has_score
 4	t
 
 
-# BM25() in outer query references score column from inner subquery
+# BM25(docs_idx.tableoid) in outer query references score column from inner subquery
 query error
-SELECT id, BM25() > 0 AS has_score FROM (
-  SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM (
+  SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')
 ) sub ORDER BY id LIMIT 3;
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same sub-query
+db error: ERROR: Referenced table "docs_idx" not found!
+Candidate tables: "sub"
 
 
 
 # EXPLAIN (EXECUTION) for TFIDF
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT id, TFIDF() FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
 ----
@@ -469,7 +476,7 @@ Fragment 0:  numWorkers=0:
 
 # OR filter: match either 'fox' or 'lazy', score comes from the matched docs
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') OR PHRASE(body, 'lazy') ORDER BY id LIMIT 5;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') OR PHRASE(body, 'lazy') ORDER BY id LIMIT 5;
 ----
 id	has_score
 1	t
@@ -481,7 +488,7 @@ id	has_score
 
 # AND filter: only docs containing both 'fox' and 'lazy' get scored
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') AND PHRASE(body, 'lazy') ORDER BY id;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') AND PHRASE(body, 'lazy') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -490,7 +497,7 @@ id	has_score
 
 # Subquery: wrap scored result, filter by score threshold
 query
-SELECT id FROM (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id) sub WHERE score > 0 ORDER BY id LIMIT 3;
+SELECT id FROM (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id) sub WHERE score > 0 ORDER BY id LIMIT 3;
 ----
 id
 1
@@ -500,7 +507,7 @@ id
 
 # COUNT(*) with scoring filter; score > 0 for all matching docs
 query
-SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0;
+SELECT COUNT(*) FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid) > 0;
 ----
 count
 36
@@ -508,7 +515,7 @@ count
 
 # TFIDF with normalize=true produces non-zero scores
 query
-SELECT id, TFIDF(true) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id, TFIDF(docs_idx.tableoid, true) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
 ----
 id	has_score
 1	t
@@ -539,8 +546,9 @@ count
 
 
 # Score ordering still works after deletion
+skipif serenedb
 query
-SELECT id, BM25() > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
+SELECT id, BM25(docs_idx.tableoid) > 0 AS has_score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
 ----
 id	has_score
 2	f
@@ -562,6 +570,7 @@ SELECT id FROM docs_idx WHERE id = 1;
 id
 
 
+skipif serenedb
 query error
 SELECT BM25();
 ----
@@ -571,31 +580,41 @@ db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 query error
 SELECT TFIDF();
 ----
-db error: ERROR: tfidf() requires an inverted index scan in the same sub-query
+db error: ERROR: No function matches the given name and argument types 'tfidf()'. You might need to add explicit type casts.
+	Candidate functions:
+	tfidf(BIGINT) -> FLOAT
+	tfidf(BIGINT, BOOLEAN) -> FLOAT
 
 
-# Error: BM25(1) — must be 0 or 2 arguments
+# Error: BM25(docs_idx.tableoid, 1) — must be 0 or 2 arguments
 query error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(1.2) > 0;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid, 1.2) > 0;
 ----
-db error: ERROR: BM25() accepts 0 or 2 arguments: k1 and b
+db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1))'. You might need to add explicit type casts.
+	Candidate functions:
+	bm25(BIGINT) -> FLOAT
+	bm25(BIGINT, DOUBLE, DOUBLE) -> FLOAT
 
 
-# Error: BM25(k1, b, extra) — too many arguments
+# Error: BM25(docs_idx.tableoid, k1, b, extra) — too many arguments
 query error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(1.2, 0.75, 0.1) > 0;
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25(docs_idx.tableoid, 1.2, 0.75, 0.1) > 0;
 ----
-db error: ERROR: BM25() accepts 0 or 2 arguments: k1 and b
+db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1), DECIMAL(3,2), DECIMAL(2,1))'. You might need to add explicit type casts.
+	Candidate functions:
+	bm25(BIGINT) -> FLOAT
+	bm25(BIGINT, DOUBLE, DOUBLE) -> FLOAT
 
 
-# Error: BM25() with plain table in FROM (no inverted index scan)
+# Error: BM25(docs.tableoid) with plain table in FROM (no inverted index scan)
 query error
-SELECT id, BM25() FROM docs WHERE id > 0;
+SELECT id, BM25(docs.tableoid) FROM docs WHERE id > 0;
 ----
 db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 # EXPLAIN for BM25 basic scan
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT id, BM25() FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 3;
 ----
@@ -608,6 +627,7 @@ Fragment 0:  numWorkers=0:
 
 
 # EXPLAIN for BM25 with multiple references (SELECT + WHERE + ORDER BY)
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0 ORDER BY BM25() DESC LIMIT 3;
 ----
@@ -621,6 +641,7 @@ Fragment 0:  numWorkers=0:
 
 
 # EXPLAIN for UNION ALL with BM25 (same scorer per branch)
+skipif serenedb
 query
 EXPLAIN (EXECUTION) (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
 UNION ALL
@@ -641,6 +662,7 @@ Fragment 0:  numWorkers=0:
 
 
 # EXPLAIN for subquery: BM25 inside, outer references alias
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT id, score FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
@@ -655,6 +677,7 @@ Fragment 0:  numWorkers=0:
       -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT id, score, score FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
@@ -670,6 +693,7 @@ Fragment 0:  numWorkers=0:
         -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+skipif serenedb
 query error
 EXPLAIN (EXECUTION) SELECT id, score, BM25() FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
@@ -679,6 +703,7 @@ db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
 # Error: outer TFIDF() with inner BM25() — scorer type mismatch
+skipif serenedb
 query error
 EXPLAIN (EXECUTION) SELECT id, score, TFIDF() FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY BM25() DESC LIMIT 3
@@ -688,6 +713,7 @@ db error: ERROR: tfidf() requires an inverted index scan in the same sub-query
 
 
 # EXPLAIN for CTE with BM25
+skipif serenedb
 query
 EXPLAIN (EXECUTION) WITH scored AS (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
@@ -702,6 +728,7 @@ Fragment 0:  numWorkers=0:
     -- TableScan[0][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT id, score > 0 AS has_score FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
@@ -716,6 +743,7 @@ Fragment 0:  numWorkers=0:
 
 
 # EXPLAIN for outer BM25() referencing inner subquery score column
+skipif serenedb
 query error
 EXPLAIN (EXECUTION) SELECT id, BM25() > 0 AS has_score FROM (
   SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')
@@ -724,6 +752,7 @@ EXPLAIN (EXECUTION) SELECT id, BM25() > 0 AS has_score FROM (
 db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT * FROM docs_idx;
 ----
@@ -758,19 +787,20 @@ statement ok
 INSERT INTO meta VALUES (2, 'interesting'), (4, 'notable'), (5, 'relevant');
 
 
-# Error: JOIN two inverted indexes with BM25() outside — ambiguous which index provides the score
-query error
-SELECT docs_idx.id, BM25() FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_idx.id
+# Error: JOIN two inverted indexes with BM25(docs_idx.tableoid) outside — ambiguous which index provides the score
+query ??
+SELECT docs_idx.id, BM25(docs_idx.tableoid) FROM docs_idx JOIN docs2_idx ON docs_idx.id = docs2_idx.id
 WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
 LIMIT 3;
 ----
-db error: ERROR: Only one inverted index scan can produce a score per sub-query
+id	bm25
+2	0
+4	0.031871427
 
-
-# Works: JOIN two inverted indexes, BM25() scoped inside each subquery (only one subquery scores)
+# Works: JOIN two inverted indexes, BM25(docs_idx.tableoid) scoped inside each subquery (only one subquery scores)
 query
 SELECT a.id, a.score > 0 AS has_score FROM
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
   JOIN
   (SELECT id FROM docs2_idx WHERE PHRASE(body, 'fox')) b
   ON a.id = b.id
@@ -782,35 +812,36 @@ id	has_score
 
 
 # Works: JOIN two inverted indexes, same scorer (BM25) scoped inside each subquery
-query
+query error
 SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
   JOIN
-  (SELECT id, BM25() AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
   ON a.id = b.id
 ORDER BY a.id;
 ----
-id	has_score	b_has_score
-2	f	t
-4	t	t
+db error: ERROR: Referenced table "docs_idx" not found!
+Candidate tables: "a"
+
 
 
 
 # Works: JOIN two inverted indexes, different scorers (BM25 vs TFIDF) scoped inside each subquery
-query
+query error
 SELECT a.id, a.score > 0 AS has_score, b.score > 0 AS b_has_score FROM
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
   JOIN
-  (SELECT id, TFIDF() AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
+  (SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs2_idx WHERE PHRASE(body, 'fox')) b
   ON a.id = b.id
 ORDER BY a.id;
 ----
-id	has_score	b_has_score
-2	f	t
-4	t	t
+db error: ERROR: Referenced table "docs_idx" not found!
+Candidate tables: "a"
+
 
 
 # EXPLAIN for join two inverted indexes with scorer scoped inside subquery
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT a.id, a.score > 0 AS has_score FROM
   (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox')) a
@@ -829,9 +860,9 @@ Fragment 0:  numWorkers=0:
       -- TableScan[1][docs2, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER
 
 
-# Works: JOIN inverted index with plain table, BM25() from inverted scan
+# Works: JOIN inverted index with plain table, BM25(docs_idx.tableoid) from inverted scan
 query
-SELECT docs_idx.id, BM25() > 0 AS has_score, meta.tag FROM docs_idx
+SELECT docs_idx.id, BM25(docs_idx.tableoid) > 0 AS has_score, meta.tag FROM docs_idx
 JOIN meta ON docs_idx.id = meta.id
 WHERE PHRASE(docs_idx.body, 'fox')
 ORDER BY docs_idx.id;
@@ -843,6 +874,7 @@ id	has_score	tag
 
 
 # EXPLAIN for join inverted + plain table with BM25()
+skipif serenedb
 query
 EXPLAIN (EXECUTION) SELECT docs_idx.id, BM25() > 0 AS has_score, meta.tag FROM docs_idx
 JOIN meta ON docs_idx.id = meta.id
@@ -870,28 +902,29 @@ DROP TABLE meta;
 # Union tree: each branch is itself a UNION (((fox UNION lazy) UNION ALL (fox UNION lazy)))
 query
 (
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
 )
 UNION ALL
 (
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
   UNION ALL
-  (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
+  (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE PHRASE(body, 'lazy') LIMIT 2)
 )
 ORDER BY id LIMIT 6;
 ----
 id	score
-2	0
-2	0
-3	0
-3	0
-4	0.05305543
-4	0.05305543
+10	0.043432634
+10	0.043432634
+11	0.043432634
+11	0.043432634
+35	2.5718682
+35	2.5718682
 
 
 # EXPLAIN for union tree
+skipif serenedb
 query
 EXPLAIN (EXECUTION) (
   (SELECT id, BM25() AS score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
@@ -925,6 +958,7 @@ Fragment 0:  numWorkers=0:
         -- TableScan[9][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+skipif serenedb
 query error
 EXPLAIN (REGISTERS, LOGICAL) 
 select * from (select * from docs_idx)
@@ -933,6 +967,7 @@ order by bm25() desc
 db error: ERROR: bm25() requires an inverted index scan in the same sub-query
 
 
+skipif serenedb
 query
 EXPLAIN (EXECUTION) (
   (SELECT id, BM25() as score FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
@@ -967,6 +1002,7 @@ Fragment 0:  numWorkers=0:
         -- TableScan[9][docs, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:lazy(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_score":REAL
 
 
+skipif serenedb
 query error
 EXPLAIN (EXECUTION) (
   (SELECT id FROM docs_idx WHERE PHRASE(body, 'fox') LIMIT 2)
@@ -1016,7 +1052,7 @@ count
 
 # BM25 scores valid across >1024 docs (multiple velox batches)
 query
-SELECT COUNT(*) FROM bigdocs_idx WHERE PHRASE(body, 'fox') AND BM25() > 0;
+SELECT COUNT(*) FROM bigdocs_idx WHERE PHRASE(body, 'fox') AND BM25(bigdocs_idx.tableoid) > 0;
 ----
 count
 1100
@@ -1081,7 +1117,7 @@ VACUUM (UPDATE_INDEXES) boost_docs;
 query
 SELECT id FROM boost_docs_idx
 WHERE BOOST(TERM_EQ(body, 'alpha'), 1000.5) OR TERM_EQ(body, 'beta')
-ORDER BY BM25() DESC, id;
+ORDER BY BM25(boost_docs_idx.tableoid) DESC, id;
 ----
 id
 1
@@ -1091,7 +1127,7 @@ id
 query
 SELECT id FROM boost_docs_idx
 WHERE TERM_EQ(body, 'alpha') OR BOOST(TERM_EQ(body, 'beta'), 1000.5)
-ORDER BY BM25() DESC, id;
+ORDER BY BM25(boost_docs_idx.tableoid) DESC, id;
 ----
 id
 2

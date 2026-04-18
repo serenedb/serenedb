@@ -143,9 +143,9 @@ TEST_P(BoostQueryTestCase, MoreOptionalMatchesYieldHigherScore) {
   // hits[0] = doc C (2 optionals),
   // hits[1] = doc B (1 optional),
   // hits[2] = doc A (0)
-  EXPECT_GT(std::get<irs::score_t>(hits[0]), std::get<irs::score_t>(hits[1]))
+  EXPECT_GT(hits[0].score, hits[1].score)
     << "doc with 2 optional matches should outscore doc with 1";
-  EXPECT_GT(std::get<irs::score_t>(hits[1]), std::get<irs::score_t>(hits[2]))
+  EXPECT_GT(hits[1].score, hits[2].score)
     << "doc with 1 optional match should outscore doc with 0";
 }
 
@@ -191,8 +191,8 @@ TEST_P(BoostQueryTestCase, ManualRequiredOptionalConstruction) {
   ASSERT_EQ(3u, hits.size());
 
   // Score ordering must be: C > B > A
-  EXPECT_GT(std::get<irs::score_t>(hits[0]), std::get<irs::score_t>(hits[1]));
-  EXPECT_GT(std::get<irs::score_t>(hits[1]), std::get<irs::score_t>(hits[2]));
+  EXPECT_GT(hits[0].score, hits[1].score);
+  EXPECT_GT(hits[1].score, hits[2].score);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

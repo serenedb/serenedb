@@ -57,6 +57,10 @@ struct FullTableScan {};
 struct SearchScan {
   // Boolean filter side (plain text/search predicates).
   irs::Filter::Query::ptr query;
+  // Stored filter for re-preparation with a scorer (see
+  // SereneDBScanInitGlobal). Kept alive here because prepare() is const and
+  // stats depend on the scorer.
+  std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
   const irs::IndexReader* reader = nullptr;
   // Human-readable repr of the boolean filter tree, captured before

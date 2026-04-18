@@ -290,7 +290,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource<Materializer>::next(
         _doc->FetchScoreArgs(block_count);
         block_docs[block_count++] = doc_id;
         if (block_count == irs::kScoreBlock) {
-          _fetcher.Fetch(block_docs);
+          _fetcher.Fetch({block_docs.data(), block_count});
           _score_function.ScoreBlock(score_raw + score_idx);
           score_idx += irs::kScoreBlock;
           block_count = 0;

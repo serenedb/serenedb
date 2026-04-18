@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_catalog.h"
 
+#include <absl/strings/match.h>
+
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
@@ -297,6 +299,30 @@ void SereneDBCatalog::Initialize(bool load_builtin) {}
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
+  // PG: schemas beginning with "pg_" are reserved for the system.
+  if (absl::StartsWithIgnoreCase(info.schema, "pg_")) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_SCHEMA_NAME),
+      ERR_MSG("unacceptable schema name \"", info.schema, "\""),
+      ERR_DETAIL("The prefix \"pg_\" is reserved for system schemas."));
+  }
+  // PG: schemas pre-populated by the system catalog (e.g. information_schema)
+  // shadow the user catalog. Reject creation if a system schema with the same
+  // name already exists.
+  if (transaction.HasContext()) {
+    auto& system = duckdb::Catalog::GetSystemCatalog(*transaction.context);
+    auto existing = system.GetSchema(*transaction.context, info.schema,
+                                     duckdb::OnEntryNotFound::RETURN_NULL);
+    bool if_not_exists =
+      info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+    if (existing) {
+      if (if_not_exists) {
+        return nullptr;
+      }
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+                      ERR_MSG("schema \"", info.schema, "\" already exists"));
+    }
+  }
   auto& catalog_impl = catalog::GetCatalog();
   auto schema = std::make_shared<catalog::Schema>(
     GetDatabaseId(), catalog::SchemaOptions{.name = info.schema});

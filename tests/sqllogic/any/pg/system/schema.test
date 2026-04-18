@@ -12,11 +12,32 @@ DETAIL: The prefix "pg_" is reserved for system schemas.
 
 
 statement error
+CREATE SCHEMA pg_foo;
+----
+db error: ERROR: unacceptable schema name "pg_foo"
+DETAIL: The prefix "pg_" is reserved for system schemas.
+
+
+statement error
 CREATE SCHEMA information_schema;
 ----
 db error: ERROR: schema "information_schema" already exists
 
 
+# IF NOT EXISTS silently succeeds for system-catalog schemas
+statement ok
+CREATE SCHEMA IF NOT EXISTS information_schema;
+
+
+skipif postgres
+query error
+SELECT * FROM sql_parts LIMIT 0;
+----
+db error: ERROR: Table with name sql_parts does not exist!
+Did you mean "sqlite_master"?
+
+
+onlyif postgres
 query error
 SELECT * FROM sql_parts LIMIT 0;
 ----

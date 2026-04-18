@@ -25,6 +25,7 @@
 #include <duckdb/main/client_context.hpp>
 
 #include "basics/assert.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/system-compiler.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception_macro.h"
@@ -49,6 +50,16 @@ void SereneDBClientState::Register(
     GetSereneDBContext(ctx).AddNotice(
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
     return true;
+  };
+
+  client_ctx.setting_visibility = [](duckdb::ClientContext&,
+                                     const std::string& name) {
+    // Internal knobs — hidden from SHOW ALL / pg_settings / duckdb_settings().
+    // Still settable/readable by name.
+    static constexpr containers::TrivialSet kHidden = [](auto selector) {
+      return selector().Case("sdb_faults").Case("debug_verification");
+    };
+    return !kHidden.Contains(name);
   };
 
   client_ctx.isolation_level_validator =

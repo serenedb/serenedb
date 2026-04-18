@@ -677,12 +677,12 @@ Result CatalogFeature::Open() {
     auto snapshot = GetCatalog().GetCatalogSnapshot();
     auto conn = query::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
-      auto id_str = std::to_string(db->GetId().id());
       auto query =
-        "ATTACH '" + id_str + "' AS \"" + db->GetName() + "\" (TYPE serenedb)";
+      absl::StrCat(
+        "ATTACH '" , db->GetId().id() , "' AS \"" , db->GetName() , "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
-        std::cerr << "Failed to attach database " << db->GetName() << ": "
+        SDB_FATAL("xxxxx", Logger::FIXME,  "Failed to attach database " , db->GetName() << ": "
                   << result->GetError() << std::endl;
       }
     }

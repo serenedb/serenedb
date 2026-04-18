@@ -891,11 +891,11 @@ SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
 pid
 1
 3
-4
 
 
 statement ok
 COMMIT;
+
 
 query
 SELECT pid FROM clickclack_ryow WHERE score = 10 ORDER BY pid;
@@ -905,6 +905,7 @@ pid
 3
 4
 
+
 statement ok
 DROP TABLE clickclack_ryow;
 
@@ -912,8 +913,10 @@ DROP TABLE clickclack_ryow;
 statement ok
 CREATE TABLE babsky_composite (pid INTEGER PRIMARY KEY, city VARCHAR, level INTEGER, tag VARCHAR);
 
+
 statement ok
 CREATE INDEX babsky_composite_idx ON babsky_composite(city, level);
+
 
 statement ok
 INSERT INTO babsky_composite VALUES

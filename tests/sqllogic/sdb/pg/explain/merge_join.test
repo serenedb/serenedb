@@ -23,7 +23,7 @@ QUERY PLAN
 │      Join Type: INNER     │
 │    Conditions: id = id    ├──────────────┐
 │                           │              │
-│           ~1 row          │              │
+│           ~3 rows         │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │   ROCKSDB_TABLE_FULLSCAN  ││   ROCKSDB_TABLE_FULLSCAN  │
@@ -37,7 +37,7 @@ QUERY PLAN
 │             id            ││             id            │
 │             v1            ││             v2            │
 │                           ││                           │
-│          ~0 rows          ││          ~0 rows          │
+│          ~3 rows          ││          ~3 rows          │
 └───────────────────────────┘└───────────────────────────┘
 
 

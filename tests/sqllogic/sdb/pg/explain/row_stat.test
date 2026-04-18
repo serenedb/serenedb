@@ -38,7 +38,7 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │    ────────────────────   │
 │                           │
 │           0 rows          │
-│           0.00s           │
+│        <slt:ignore>       │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │
@@ -49,7 +49,7 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │                           │
 │                           │
 │          28 rows          │
-│           0.00s           │
+│        <slt:ignore>       │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         HASH_JOIN         │
@@ -60,7 +60,7 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │                           │              │
 │                           │              │
 │          28 rows          │              │
-│           0.00s           │              │
+│      <slt:ignore>         │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │         TABLE_SCAN        ││         TABLE_SCAN        │
@@ -75,7 +75,7 @@ EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 │                           ││           value           │
 │                           ││                           │
 │                           ││                           │
-│           0.00s           ││                           │
+│       <slt:ignore>        ││                           │
 │         1,000 rows        ││           3 rows          │
-│          (0.00s)          ││           0.00s           │
+│        <slt:ignore>       ││        <slt:ignore>       │
 └───────────────────────────┘└───────────────────────────┘

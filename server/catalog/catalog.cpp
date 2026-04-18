@@ -681,8 +681,8 @@ Result CatalogFeature::Open() {
                                 db->GetName(), "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
-        SDB_FATAL("xxxxx", Logger::FIXME,  "Failed to attach database " , db->GetName() << ": "
-                  << result->GetError() << std::endl;
+        SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
+                  db->GetName(), ": ", result->GetError());
       }
     }
   }

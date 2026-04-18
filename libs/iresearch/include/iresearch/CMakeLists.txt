@@ -58,6 +58,7 @@ set(IResearch_core_sources
     ./analysis/stopwords_tokenizer.cpp
     ./analysis/ngram_tokenizer.cpp
     ./analysis/pipeline_tokenizer.cpp
+    ./analysis/union_tokenizer.cpp
     ./analysis/segmentation_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp

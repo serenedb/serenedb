@@ -63,7 +63,7 @@ default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_F
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
-default_transaction_read_only	off	Sets the default read-only status of new transactions.
+default_transaction_read_only	false	Sets the default read-only status of new transactions.
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
 disable_database_invalidation	true	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
 disable_parquet_prefetching	false	Disable the prefetching mechanism in Parquet
@@ -185,7 +185,6 @@ scalar_subquery_error_on_multiple_rows	true	When a scalar subquery returns multi
 scheduler_process_partial	false	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-sdb_faults	(empty)	Fault injection control. SET sdb_faults = 'name' to add a failure point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to clear all.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
@@ -287,7 +286,7 @@ default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_F
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
-default_transaction_read_only	off	Sets the default read-only status of new transactions.
+default_transaction_read_only	false	Sets the default read-only status of new transactions.
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
 disable_database_invalidation	true	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
 disable_parquet_prefetching	false	Disable the prefetching mechanism in Parquet
@@ -409,7 +408,6 @@ scalar_subquery_error_on_multiple_rows	true	When a scalar subquery returns multi
 scheduler_process_partial	false	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-sdb_faults	(empty)	Fault injection control. SET sdb_faults = 'name' to add a failure point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to clear all.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.

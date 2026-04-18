@@ -54,7 +54,7 @@ void SereneDBClientState::Register(
 
   client_ctx.setting_visibility = [](duckdb::ClientContext&,
                                      const std::string& name) {
-    // Internal knobs — hidden from SHOW ALL / pg_settings / duckdb_settings().
+    // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
     // Still settable/readable by name.
     static constexpr containers::TrivialSet kHidden = [](auto selector) {
       return selector().Case("sdb_faults").Case("debug_verification");

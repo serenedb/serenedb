@@ -110,9 +110,9 @@ void ParseCommaSeparated(std::string_view input,
       token.remove_suffix(1);
     }
     if (token.front() != '\"' || token.back() != '\"') {
-      throw duckdb::InvalidInputException(
-        "Invalid format of list of words(should be comma-separated and "
-        "quoted)");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Invalid format of list of words(should be "
+                              "comma-separated and quoted)"));
     }
     token.remove_suffix(1);
     token.remove_prefix(1);
@@ -487,10 +487,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto r = catalog.CreateTokenizer(db_id, schema, std::move(tokenizer));
 
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return;
-  }
-  if (!r.ok()) {
+  if (!r.ok() && !if_not_exists) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
       ERR_MSG("text search dictionary \"", name, "\" already exists"));

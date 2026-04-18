@@ -51,9 +51,17 @@
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
+#include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/connection_context.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 namespace {
@@ -92,8 +100,8 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
       "drop_text_search_dictionary requires name and missing_ok");
   }
 
-  auto dict_name = args[0].GetValue<std::string>();
-  auto missing_ok = args[1].GetValue<bool>();
+  const auto dict_name = args[0].GetValue<std::string>();
+  const auto missing_ok = args[1].GetValue<bool>();
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto& catalog_feature =
@@ -105,13 +113,33 @@ void DropTSDictionaryPragma(duckdb::ClientContext& context,
   auto r =
     catalog.DropTokenizer(conn_ctx.GetDatabase(), name.schema, name.relation);
 
-  if (r.is(ERROR_SERVER_ILLEGAL_NAME) && missing_ok) {
-    return;
+  std::string_view object_name = "text search dictionary";
+  if (r.is(ERROR_SERVER_OBJECT_TYPE_MISMATCH)) {
+    // The error message from catalog contains the actual object type name
+    auto actual_type = r.errorMessage();
+    auto actual_name = absl::AsciiStrToLower(actual_type);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+      ERR_MSG("\"", name.relation, "\" is not ",
+              basics::string_utils::GetArticle(object_name), " ", object_name),
+      ERR_HINT("Use DROP ", absl::AsciiStrToUpper(actual_type), " to remove ",
+               basics::string_utils::GetArticle(actual_name), " ", actual_name,
+               "."));
   }
+  if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    if (!missing_ok) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG(object_name, " \"", name.relation, "\" does not exist"));
+    }
+    conn_ctx.AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                                      ERR_MSG(object_name, " \"", name.relation,
+                                              "\" does not exist, skipping")));
+    r = {};
+  }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException(
-      "Failed to drop text search dictionary: %s",
-      std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
 }
 

@@ -89,7 +89,7 @@ void VacuumExecute(duckdb::ClientContext& context,
                                                 : bind_data.schema_name;
     auto table = snapshot->GetTable(database_id, schema, bind_data.table_name);
     if (!table) {
-      throw duckdb::CatalogException("relation '%s' not found",
+      throw duckdb::CatalogException("relation '%s' not found.",
                                      bind_data.table_name);
     }
     tables.push_back(std::move(table));
@@ -120,7 +120,7 @@ void VacuumExecute(duckdb::ClientContext& context,
       auto shard = snapshot->GetTableShard(table->GetId());
       if (auto r = engine.SyncTableShard(*shard); !r.ok()) {
         throw duckdb::InternalException("SyncTableShard failed: %s",
-                                        std::string{r.errorMessage()});
+                                        r.errorMessage());
       }
     }
   }

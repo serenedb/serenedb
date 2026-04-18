@@ -118,13 +118,15 @@ DROP TEXT SEARCH DICTIONARY test_english;
 statement error
 CREATE INDEX test_index ON invalid USING inverted (invalid);
 ----
-db error: ERROR: relation "invalid" does not exist
+db error: ERROR: Table with name invalid does not exist!
+Did you mean "pg_index"?
 
 
 statement error
 CREATE INDEX test_index ON invalid USING inverted (invalid);
 ----
-db error: ERROR: relation "invalid" does not exist
+db error: ERROR: Table with name invalid does not exist!
+Did you mean "pg_index"?
 
 
 statement ok
@@ -134,7 +136,7 @@ CREATE TABLE test(i int);
 statement error
 CREATE INDEX test_index ON test USING inverted (invalid);
 ----
-db error: ERROR: column "invalid" does not exist
+db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
 
 
 statement ok
@@ -144,7 +146,7 @@ CREATE INDEX test_index ON test USING inverted (i);
 statement error
 CREATE INDEX test_index ON test USING inverted (i);
 ----
-db error: ERROR: relation "test_index" already exists
+db error: ERROR: Index with name "test_index" already exists!
 
 
 statement ok
@@ -178,7 +180,7 @@ indexrelid	indrelid
 statement error
 DROP INDEX test_index;
 ----
-db error: ERROR: index "test_index" does not exist
+db error: ERROR: Index with name test_index does not exist!
 
 
 statement ok
@@ -206,7 +208,7 @@ CREATE TABLE tstest (a INTEGER, b TIMESTAMP, c VARCHAR);
 statement error
 CREATE INDEX index_ts on tstest USING inverted(b);
 ----
-db error: ERROR: Column b has unsupported kind and can not be indexed
+db error: ERROR: Failed to create index: Column b has unsupported kind and can not be indexed
 
 
 statement ok
@@ -220,25 +222,25 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 ----
-db error: ERROR: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
+db error: ERROR: Failed to create index: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Column a has text dictionary defined but is not VARCHAR
+db error: ERROR: Failed to create index: Column a has text dictionary defined but is not VARCHAR
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
 ----
-db error: ERROR: Index column opclass options are not supported
+db error: ERROR: syntax error at or near "("
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(ts_lexize('test_english', c));
 ----
-db error: ERROR: Unsupported index column definition
+db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
 
 
 statement ok
@@ -321,36 +323,31 @@ CREATE VIEW view_idx_view AS SELECT a, b FROM view_idx_test;
 statement error
 CREATE INDEX view_idx ON view_idx_view USING inverted(b);
 ----
-db error: ERROR: cannot create index on relation "view_idx_view"
-DETAIL: This operation is not supported for views.
+db error: ERROR: can only create an index on a base table
 
 
 statement error
 INSERT INTO view_idx_view VALUES (1, 'hello');
 ----
-db error: ERROR: cannot insert into view "view_idx_view"
-HINT: To enable inserting into the view, provide an INSTEAD OF INSERT trigger or an unconditional ON INSERT DO INSTEAD rule.
+db error: ERROR: view_idx_view is not an table
 
 
 statement error
 UPDATE view_idx_view SET b = 'world' WHERE a = 1;
 ----
-db error: ERROR: cannot update view "view_idx_view"
-HINT: To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+db error: ERROR: Can only update base table
 
 
 statement error
 DELETE FROM view_idx_view WHERE a = 1;
 ----
-db error: ERROR: cannot delete from view "view_idx_view"
-HINT: To enable deleting from the view, provide an INSTEAD OF DELETE trigger or an unconditional ON DELETE DO INSTEAD rule.
+db error: ERROR: Can only delete from base table
 
 
 statement error
 COPY view_idx_view FROM '/tmp/nonexistent.parquet' (FORMAT PARQUET);
 ----
-db error: ERROR: cannot copy to view "view_idx_view"
-HINT: To enable copying to a view, provide an INSTEAD OF INSERT trigger.
+db error: ERROR: view_idx_view is not an table
 
 
 statement ok
@@ -475,7 +472,7 @@ CREATE TABLE s2.foo (a INTEGER, b VARCHAR);
 statement error
 CREATE INDEX idx ON s2.foo USING inverted(b s1.te);
 ----
-db error: ERROR: Accessing text dictionary from different schema is not supported
+db error: ERROR: Failed to create index: Accessing text dictionary from different schema is not supported
 
 
 statement ok

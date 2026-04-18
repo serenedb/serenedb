@@ -132,3 +132,79 @@ SELECT 1::numeric(true);
 
 query error
 SELECT 1::numeric(10, true);
+
+
+query
+SELECT 42.069::numeric(5, 3) + 1.337::numeric(4, 3);
+----
+?column?
+43.406
+
+
+query
+SELECT 420.00::numeric(5, 2) + 0.1337::numeric(5, 4);
+----
+?column?
+420.1337
+
+
+query
+SELECT 69.420::numeric(5, 3) - 42.069::numeric(5, 3);
+----
+?column?
+27.351
+
+
+query
+SELECT 1337.00::numeric(6, 2) - 0.420::numeric(4, 3);
+----
+?column?
+1336.580
+
+
+query
+SELECT 4.20::numeric(3, 2) * 6.9::numeric(2, 1);
+----
+?column?
+28.980
+
+
+query
+SELECT 0.042::numeric(3, 3) * 0.069::numeric(3, 3);
+----
+?column?
+0.002898
+
+
+query
+SELECT 420::numeric(3, 0) % 69::numeric(2, 0);
+----
+?column?
+6
+
+
+query
+SELECT 13.37::numeric(4, 2) % 4.20::numeric(3, 2);
+----
+?column?
+0.77
+
+
+query
+select 123::numeric(3, 0);
+----
+numeric
+123
+
+query
+select 0.0005::numeric(4, 4);
+----
+numeric
+0.0005
+
+skipif pg-wire-extended
+query
+select 1234567890123456::numeric(16, 0);
+----
+numeric
+1234567890123456

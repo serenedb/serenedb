@@ -329,8 +329,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   auto r = catalog_impl.CreateSchema(GetDatabaseId(), std::move(schema));
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME) && if_not_exists) {
-    return nullptr;
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    if (if_not_exists) {
+      return nullptr;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_SCHEMA),
+                    ERR_MSG("schema \"", info.schema, "\" already exists"));
   }
   if (!r.ok()) {
     throw duckdb::InvalidInputException("Failed to create schema: %s",

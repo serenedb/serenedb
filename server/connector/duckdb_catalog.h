@@ -29,7 +29,11 @@
 
 namespace sdb::connector {
 
-void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info);
+// `database` is the target catalog name known to the caller (typically the
+// attached Catalog's GetName()); we use it in place of info.catalog, which
+// DuckDB's binder may leave empty for unqualified drops.
+void DropObject(duckdb::ClientContext& context, std::string_view database,
+                duckdb::DropInfo& info);
 
 class SereneDBCatalog final : public duckdb::Catalog {
  public:

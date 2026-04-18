@@ -586,7 +586,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
 
 void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,
                                     duckdb::DropInfo& info) {
-  DropObject(context, info);
+  DropObject(context, catalog.GetName(), info);
 }
 
 namespace {

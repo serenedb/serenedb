@@ -76,11 +76,12 @@ namespace {
 // DROP FUNCTION name(type, ...) -- selective overload removal.
 Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
                             duckdb::ClientContext& context,
+                            std::string_view database,
                             duckdb::DropInfo& info) {
   auto schema_name = info.schema.empty() ? std::string_view{"public"}
                                          : std::string_view{info.schema};
   auto snapshot = catalog.GetCatalogSnapshot();
-  auto db = snapshot->GetDatabase(info.catalog);
+  auto db = snapshot->GetDatabase(database);
   if (!db) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
@@ -130,7 +131,7 @@ Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
 
   if (macro_info.macros.size() == 1) {
     // Last overload -- drop the whole function.
-    return catalog.DropFunction(info.catalog, schema_name, info.name);
+    return catalog.DropFunction(database, schema_name, info.name);
   }
 
   // Remove just the matched overload and update the stored function.
@@ -148,11 +149,12 @@ Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
 // PG: DROP FUNCTION drops only function overloads, DROP PROCEDURE drops only
 // procedure overloads. If mixed (func + proc under same name), keep the other.
 Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
+                          std::string_view database,
                           const duckdb::DropInfo& info) {
   auto schema_name = info.schema.empty() ? std::string_view{"public"}
                                          : std::string_view{info.schema};
   auto snapshot = catalog.GetCatalogSnapshot();
-  auto db = snapshot->GetDatabase(info.catalog);
+  auto db = snapshot->GetDatabase(database);
   if (!db) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
@@ -179,7 +181,7 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
       ERR_MSG("could not find a ", kind, " named \"", info.name, "\""));
   }
   if (all_match) {
-    return catalog.DropFunction(info.catalog, schema_name, info.name);
+    return catalog.DropFunction(database, schema_name, info.name);
   }
   // Mixed: remove only matching overloads, keep the rest.
   auto new_info =
@@ -195,7 +197,8 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
 
 }  // namespace
 
-void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
+void DropObject(duckdb::ClientContext& context, std::string_view database,
+                duckdb::DropInfo& info) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
@@ -203,20 +206,20 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
   switch (info.type) {
     using enum duckdb::CatalogType;
     case TABLE_ENTRY:
-      r = catalog.DropTable(info.catalog, info.schema, info.name);
+      r = catalog.DropTable(database, info.schema, info.name);
       break;
     case INDEX_ENTRY:
-      r = catalog.DropIndex(info.catalog, info.schema, info.name);
+      r = catalog.DropIndex(database, info.schema, info.name);
       break;
     case VIEW_ENTRY:
-      r = catalog.DropView(info.catalog, info.schema, info.name);
+      r = catalog.DropView(database, info.schema, info.name);
       break;
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
       if (info.has_func_args) {
-        r = DropFunctionOverload(catalog, context, info);
+        r = DropFunctionOverload(catalog, context, database, info);
       } else {
-        r = DropFunctionByKind(catalog, info);
+        r = DropFunctionByKind(catalog, database, info);
       }
       break;
     case SCHEMA_ENTRY:
@@ -227,7 +230,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
           ERR_MSG("cannot drop schema ", info.name,
                   " because it is required by the database system"));
       } else {
-        r = catalog.DropSchema(info.catalog, info.name, info.cascade);
+        r = catalog.DropSchema(database, info.name, info.cascade);
         // TODO(mbkkt) better error handling
         if (!info.cascade && r.is(ERROR_BAD_PARAMETER)) {
           THROW_SQL_ERROR(
@@ -370,7 +373,7 @@ void SereneDBCatalog::ScanSchemas(
 
 void SereneDBCatalog::DropSchema(duckdb::ClientContext& context,
                                  duckdb::DropInfo& info) {
-  DropObject(context, info);
+  DropObject(context, GetName(), info);
 }
 
 duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(

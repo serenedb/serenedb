@@ -44,7 +44,7 @@ statement error
 ALTER TABLE vedernikoff DROP CONSTRAINT foo;
 ----
 db error: ERROR: Table with name vedernikoff does not exist!
-Did you mean "pg_extension"?
+Did you mean "<slt:ignore>"?
 
 
 statement ok

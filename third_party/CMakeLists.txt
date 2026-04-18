@@ -64,6 +64,31 @@ add_subdirectory(openssl-cmake)
 set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
 set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
 
+# Repeating the trick done by NuRaft that helped our build survive folly.
+# Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
+# nested find_package(OpenSSL) (folly, curl, …) short-circuits onto our vendored
+# OpenSSL instead of silently linking against the system libssl/libcrypto and
+# producing an ABI-mismatched binary. OPENSSL_INCLUDE_DIR was already set above
+# by openssl-cmake's PARENT_SCOPE export; we only need to promote it to CACHE.
+# OPENSSL_LIBRARIES is exported as the target names OpenSSL::{Crypto,SSL}, but
+# FindOpenSSL's find_library() short-circuit needs file paths, so spell those
+# out here.
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}" CACHE PATH "" FORCE)
+set(OPENSSL_CRYPTO_LIBRARY
+    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
+    CACHE FILEPATH "" FORCE
+)
+set(OPENSSL_SSL_LIBRARY
+    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
+    CACHE FILEPATH "" FORCE
+)
+
+# Snapshot the pre-seeded values so we can verify at the end of this file that
+# no later add_subdirectory() has silently re-pointed OpenSSL at a system copy.
+set(_sdb_expected_OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}")
+set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
+set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
+
 ################################################################################
 ## liburing
 ################################################################################
@@ -698,6 +723,10 @@ sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.
 add_subdirectory(folly)
 target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
+# folly-deps.cmake consumes OPENSSL_LIBRARIES as plain file paths (our vendored
+# libssl.a / libcrypto.a via the pre-seeded cache vars above). Build system does not
+# infer a build-order dependency from a raw path, so wire it explicitly.
+add_dependencies(folly ssl crypto)
 # Velox S3 connector uses folly::Uri
 target_sources(folly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/folly/folly/Uri.cpp)
 
@@ -753,3 +782,25 @@ target_link_libraries(
         json_extension
         httpfs_extension
 )
+
+# !!! KEEP THIS LAST !!!
+# Guard against a future add_subdirectory() in this file re-pointing OpenSSL at
+# a system copy via find_package / CACHE FORCE / etc. The pre-seeded cache
+# variables at the top of this file are what makes sure folly & curl link the
+# vendored libssl/libcrypto; if any of them drift, the binary will silently go
+# back to the ABI-mismatched state that crashes.
+# if this starts breaking  - most likely someone in third_party is playing
+# with FORCE setting variables. Then maybe dependency provider will help,
+# but looks like overkill for now.
+foreach(_var OPENSSL_INCLUDE_DIR OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
+    if(NOT "${${_var}}" STREQUAL "${_sdb_expected_${_var}}")
+        message(FATAL_ERROR
+            "${_var} drifted from the vendored pre-seed.\n"
+            "  expected: ${_sdb_expected_${_var}}\n"
+            "  actual:   ${${_var}}\n"
+            "Something added in third_party/ changed this cache variable. "
+            "Re-point it at the vendored tree or rework the pre-seed at the "
+            "top of third_party/CMakeLists.txt."
+        )
+    endif()
+endforeach()

@@ -668,6 +668,7 @@ set(CRYPTO_SRC
     ${OPENSSL_SOURCE_DIR}/crypto/rand/rand_deprecated.c
     ${OPENSSL_SOURCE_DIR}/crypto/rand/rand_err.c
     ${OPENSSL_SOURCE_DIR}/crypto/rand/rand_lib.c
+    ${OPENSSL_SOURCE_DIR}/crypto/rand/rand_meth.c
     ${OPENSSL_SOURCE_DIR}/crypto/rand/rand_pool.c
     ${OPENSSL_SOURCE_DIR}/crypto/rand/rand_uniform.c
     ${OPENSSL_SOURCE_DIR}/crypto/rand/randfile.c
@@ -737,8 +738,10 @@ set(CRYPTO_SRC
     ${OPENSSL_SOURCE_DIR}/crypto/ssl_err.c
     ${OPENSSL_SOURCE_DIR}/crypto/stack/stack.c
     ${OPENSSL_SOURCE_DIR}/crypto/store/store_err.c
+    ${OPENSSL_SOURCE_DIR}/crypto/store/store_init.c
     ${OPENSSL_SOURCE_DIR}/crypto/store/store_lib.c
     ${OPENSSL_SOURCE_DIR}/crypto/store/store_meth.c
+    ${OPENSSL_SOURCE_DIR}/crypto/store/store_register.c
     ${OPENSSL_SOURCE_DIR}/crypto/store/store_result.c
     ${OPENSSL_SOURCE_DIR}/crypto/store/store_strings.c
     ${OPENSSL_SOURCE_DIR}/crypto/thread/api.c
@@ -1379,14 +1382,15 @@ set(SSL_SRC
     ${OPENSSL_SOURCE_DIR}/ssl/tls_depr.c
 )
 
-# Disable all deprecated API
-#
 # Engine API is deprecated in OpenSSL 3.0.
 # https://docs.openssl.org/3.3/man3/ENGINE_add/#history
 #
 # SRP API is deprecated in OpenSSL 3.0.
 # https://docs.openssl.org/3.1/man3/SRP_Calc_B/#history
-add_definitions(-DOPENSSL_NO_DEPRECATED)
+#
+# (OPENSSL_NO_DEPRECATED is intentionally NOT set here — consumers like folly,
+# curl-NTLM, and our own ssl_interface.cpp still use HMAC_CTX_*, RSA, DSA,
+# DES_*, MD5, etc., which are deprecated in OpenSSL 3 but still present.)
 add_definitions(-DOPENSSL_NO_ENGINE)
 add_definitions(-DOPENSSL_NO_SRP)
 
@@ -1429,6 +1433,20 @@ target_include_directories(ssl
     PRIVATE ${OPENSSL_SOURCE_DIR})
 
 target_link_libraries(ssl crypto)
+
+# These must match the add_definitions() calls above. The build-tree definitions
+# only propagate to sources compiled inside this subdirectory; consumers (curl,
+# folly, our own code) include openssl headers too and would otherwise see
+# declarations for APIs whose definitions are stripped from libcrypto, causing
+# link-time "undefined reference to ENGINE_*" / "SRP_*" errors.
+target_compile_definitions(crypto INTERFACE
+    OPENSSL_NO_ENGINE
+    OPENSSL_NO_SRP
+)
+target_compile_definitions(ssl INTERFACE
+    OPENSSL_NO_ENGINE
+    OPENSSL_NO_SRP
+)
 
 add_library(OpenSSL::Crypto ALIAS crypto)
 add_library(OpenSSL::SSL ALIAS ssl)

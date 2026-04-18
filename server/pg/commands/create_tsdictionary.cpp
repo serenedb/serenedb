@@ -396,14 +396,15 @@ class CreateTSDictionaryOptions : public OptionsParser {
       SDB_ASSERT(slice.isArray());
     }
     while (true) {
-      auto tok_prefix =
+      auto tokenizer_prefix =
         OptionInfo::AdjustPrefix(prefix, "tokenizer", tokenizer_num);
-      std::string_view type;
+      std::string type;
       bool type_from_copy = false;
-      if (OptionsParser::HasOption(tokenizer_options::kTemplate, tok_prefix)) {
+      if (OptionsParser::HasOption(tokenizer_options::kTemplate,
+                                   tokenizer_prefix)) {
         type =
           OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
-            tok_prefix);
+            tokenizer_prefix);
       } else if (!slice.isNone()) {
         if (tokenizer_num > static_cast<int>(slice.length())) {
           break;
@@ -414,13 +415,13 @@ class CreateTSDictionaryOptions : public OptionsParser {
         }
         type_from_copy = true;
         type = elem.get(kTypeField).stringView();
-        _copy_from.emplace_back(tok_prefix, elem.get(kPropertiesField));
+        _copy_from.emplace_back(tokenizer_prefix, elem.get(kPropertiesField));
       }
       if (type.empty()) {
         break;
       }
       _builder.openObject();
-      Parse<false>(type, tok_prefix);
+      Parse<false>(type, tokenizer_prefix);
       _builder.close();
       if (type_from_copy) {
         _copy_from.pop_back();
@@ -442,25 +443,25 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseMinHash(std::string_view prefix) {
-    auto analyzer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
+    auto tokenizer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
     std::string type;
     bool type_from_template = false;
     if (OptionsParser::HasOption(tokenizer_options::kTemplate,
-                                 analyzer_prefix) ||
+                                 tokenizer_prefix) ||
         _copy_from.empty()) {
       type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
-        analyzer_prefix);
+        tokenizer_prefix);
     } else {
       SDB_ASSERT(!_copy_from.empty());
       auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
                                _copy_from.back().second);
       type = slice.get(kTypeField).stringView();
-      _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
+      _copy_from.emplace_back(tokenizer_prefix, slice.get(kPropertiesField));
       type_from_template = true;
     }
     SDB_ASSERT(!type.empty());
     _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
-    Parse<false>(type, analyzer_prefix);
+    Parse<false>(type, tokenizer_prefix);
     _builder.close();  // close analyzer
     if (type_from_template) {
       _copy_from.pop_back();

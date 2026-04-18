@@ -66,7 +66,7 @@ set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
 
 # Repeating the trick done by NuRaft that helped our build survive folly.
 # Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
-# nested find_package(OpenSSL) (folly, curl, …) short-circuits onto our vendored
+# nested find_package(OpenSSL) (folly, curl, ...) short-circuits onto our vendored
 # OpenSSL instead of silently linking against the system libssl/libcrypto and
 # producing an ABI-mismatched binary. OPENSSL_INCLUDE_DIR was already set above
 # by openssl-cmake's PARENT_SCOPE export; we only need to promote it to CACHE.
@@ -76,11 +76,15 @@ set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
 set(OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}" CACHE PATH "" FORCE)
 set(OPENSSL_CRYPTO_LIBRARY
     "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
-    CACHE FILEPATH "" FORCE
+    CACHE FILEPATH
+    ""
+    FORCE
 )
 set(OPENSSL_SSL_LIBRARY
     "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
-    CACHE FILEPATH "" FORCE
+    CACHE FILEPATH
+    ""
+    FORCE
 )
 
 # Snapshot the pre-seeded values so we can verify at the end of this file that
@@ -794,7 +798,8 @@ target_link_libraries(
 # but looks like overkill for now.
 foreach(_var OPENSSL_INCLUDE_DIR OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
     if(NOT "${${_var}}" STREQUAL "${_sdb_expected_${_var}}")
-        message(FATAL_ERROR
+        message(
+            FATAL_ERROR
             "${_var} drifted from the vendored pre-seed.\n"
             "  expected: ${_sdb_expected_${_var}}\n"
             "  actual:   ${${_var}}\n"

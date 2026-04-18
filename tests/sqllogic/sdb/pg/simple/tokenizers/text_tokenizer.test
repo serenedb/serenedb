@@ -140,6 +140,17 @@ CREATE TEXT SEARCH DICTIONARY t_err12(
 db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "stemming": "yes"
 
 
+statement error
+CREATE TEXT SEARCH DICTIONARY t_err13(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 3,
+    preserveoriginal = 'aaa'
+)
+----
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "preserveoriginal": "aaa"
+
+
 # --- Invalid integer value ---
 
 statement error

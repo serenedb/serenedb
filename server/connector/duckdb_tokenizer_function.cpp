@@ -18,16 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_tokenizer_function.h"
-
+#include <absl/container/flat_hash_map.h>
+#include <absl/strings/str_cat.h>
 #include <unicode/locid.h>
 #include <vpack/builder.h>
 #include <vpack/value.h>
 #include <vpack/value_type.h>
 
-#include <duckdb/function/pragma_function.hpp>
-#include <duckdb/main/database.hpp>
-#include <duckdb/main/extension/extension_loader.hpp>
+#include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
@@ -36,6 +34,8 @@
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
+#include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
+#include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
@@ -47,9 +47,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "app/app_server.h"
 #include "basics/assert.h"
-#include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
@@ -57,8 +55,13 @@
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
@@ -106,9 +109,9 @@ void ParseCommaSeparated(std::string_view input,
       token.remove_suffix(1);
     }
     if (token.front() != '\"' || token.back() != '\"') {
-      throw duckdb::InvalidInputException(
-        "Invalid format of list of words(should be comma-separated and "
-        "quoted)");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("Invalid format of list of words(should be "
+                              "comma-separated and quoted)"));
     }
     token.remove_suffix(1);
     token.remove_prefix(1);
@@ -144,7 +147,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     ParseOptions([&] {
       _builder.openObject();
       _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
-      std::string type =
+      const auto type =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
       Parse<true>(type);
       _builder.close();  // close analyzer
@@ -351,7 +354,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
           break;
         }
         type_from_copy = true;
-        type = std::string{elem.get(kTypeField).stringView()};
+        type = elem.get(kTypeField).stringView();
         _copy_from.emplace_back(step_prefix, elem.get(kPropertiesField));
       }
       if (type.empty()) {
@@ -382,7 +385,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       SDB_ASSERT(!_copy_from.empty());
       auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
                                _copy_from.back().second);
-      type = std::string{slice.get(kTypeField).stringView()};
+      type = slice.get(kTypeField).stringView();
       _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
       type_from_template = true;
     }
@@ -404,8 +407,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     auto tokenizer =
       _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
     if (!tokenizer) {
-      throw duckdb::InvalidInputException(
-        "text search dictionary \"%s\" does not exist", std::string{from});
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("text search dictionary \"", from, "\" does not exist"));
     }
     auto slice = tokenizer->Slice().get(kAnalyzerField);
 
@@ -426,13 +430,14 @@ class CreateTSDictionaryOptions : public OptionsParser {
       });
     auto r = _features.Validate(type);
     if (!r.ok()) {
-      throw duckdb::InvalidInputException("%s", std::string{r.errorMessage()});
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()));
     }
   }
 
   vpack::Builder _builder;
   search::Features _features;
-  std::vector<std::pair<std::string, vpack::Slice>> _copy_from;
+  std::vector<std::pair<std::string_view, vpack::Slice>> _copy_from;
   std::shared_ptr<const catalog::Snapshot> _snapshot;
   ObjectId _db_id;
   std::string_view _current_schema;
@@ -452,6 +457,28 @@ void CreateTokenizerFromOptions(ConnectionContext& conn_ctx,
                                    snapshot, db_id, current_schema, options})
                          .Result();
 
+  // Validate analyzer/tokenizer configuration
+  auto analyzer_slice = b.slice().get(kAnalyzerField);
+  if (!analyzer_slice.isNone()) {
+    auto type_slice = analyzer_slice.get(kTypeField);
+    auto properties_slice = analyzer_slice.get(kPropertiesField);
+    if (!type_slice.isNone() && !properties_slice.isNone()) {
+      std::string dummy_output;
+      if (!irs::analysis::analyzers::Normalize(
+            dummy_output, type_slice.stringView(),
+            irs::Type<irs::text_format::VPack>::get(),
+            std::string{
+              reinterpret_cast<const char*>(properties_slice.getDataPtr()),
+              properties_slice.byteSize()},
+            false)) {
+        // If validation fails, the error should already be logged
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("Failed to create text search dictionary \"", name, "\""));
+      }
+    }
+  }
+
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
     ObjectId{0}, std::string{name}, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
@@ -465,8 +492,9 @@ void CreateTokenizerFromOptions(ConnectionContext& conn_ctx,
     return;
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException(
-      "text search dictionary \"%s\" already exists", std::string{name});
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+      ERR_MSG("text search dictionary \"", name, "\" already exists"));
   }
 }
 

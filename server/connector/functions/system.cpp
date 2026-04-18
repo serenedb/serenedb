@@ -37,6 +37,7 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
+namespace {
 
 // current_setting(name, missing_ok) -> text
 // Ported from server/pg/functions/system.cpp CurrentSettingMissingOkFunction.
@@ -147,13 +148,13 @@ void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 // --- pg_typeof ---
 // Returns regtype OID. The serializer formats regtype as PG type name.
-static void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                             duckdb::Vector& result) {
+void PgTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
   auto oid = static_cast<int64_t>(pg::Type2Oid(args.data[0].GetType()));
   result.Reference(duckdb::Value::BIGINT(oid));
 }
 
-static duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
+duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   duckdb::FunctionBindExpressionInput& input) {
   auto oid = static_cast<int64_t>(pg::Type2Oid(input.children[0]->return_type));
   auto val = duckdb::Value::BIGINT(oid);
@@ -161,14 +162,25 @@ static duckdb::unique_ptr<duckdb::Expression> BindPgTypeof(
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(val));
 }
 
+// format_type(oid, typmod) -> text
+// TODO(Pasha) Account typmod?
+void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                        duckdb::Vector& result) {
+  duckdb::BinaryExecutor::Execute<int64_t, int32_t, duckdb::string_t>(
+    args.data[0], args.data[1], result, args.size(),
+    [&](int64_t type_oid, int32_t) -> duckdb::string_t {
+      return duckdb::StringVector::AddString(
+        result, pg::RegtypeOut(static_cast<uint64_t>(type_oid)));
+    });
+}
+
 // --- Size functions ---
 // Ported from server/pg/functions/size.cpp
 
 // Helper: get fork size for a relation OID.
 // Ported from server/pg/functions/size.cpp GetRelationForkSize.
-static int64_t GetRelationForkSize(const catalog::Snapshot& snapshot,
-                                   uint64_t oid, std::string_view fork,
-                                   bool table_only = false) {
+int64_t GetRelationForkSize(const catalog::Snapshot& snapshot, uint64_t oid,
+                            std::string_view fork, bool table_only = false) {
   auto rel = snapshot.GetObject(ObjectId{oid});
   if (!rel) {
     throw duckdb::CatalogException("relation with OID %llu does not exist",
@@ -196,9 +208,9 @@ static int64_t GetRelationForkSize(const catalog::Snapshot& snapshot,
 }
 
 // pg_database_size(name) -> bigint
-static void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
-                                       duckdb::ExpressionState& state,
-                                       duckdb::Vector& result) {
+void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
+                                duckdb::ExpressionState& state,
+                                duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
@@ -217,9 +229,9 @@ static void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
 }
 
 // pg_database_size(oid) -> bigint
-static void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
-                                      duckdb::ExpressionState& state,
-                                      duckdb::Vector& result) {
+void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
+                               duckdb::ExpressionState& state,
+                               duckdb::Vector& result) {
   auto& context = state.GetContext();
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
@@ -243,6 +255,8 @@ static void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
         GetServerEngine().GetDatabaseSize(*snapshot, database->GetId()));
     });
 }
+
+}  // namespace
 
 void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
@@ -432,6 +446,13 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  {pg::XID8()},
                                                  duckdb::LogicalType::VARCHAR,
                                                  not_supported});
+
+  // format_type(oid, int4) -> text
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"format_type",
+                           {pg::OID(), duckdb::LogicalType::INTEGER},
+                           duckdb::LogicalType::VARCHAR,
+                           FormatTypeFunction});
 
   // pg_database_size(text) and pg_database_size(bigint/oid)
   loader.RegisterFunction(duckdb::ScalarFunction{"pg_database_size",

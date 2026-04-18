@@ -677,9 +677,8 @@ Result CatalogFeature::Open() {
     auto snapshot = GetCatalog().GetCatalogSnapshot();
     auto conn = query::DuckDBEngine::Instance().CreateConnection();
     for (auto& db : snapshot->GetDatabases()) {
-      auto query =
-      absl::StrCat(
-        "ATTACH '" , db->GetId().id() , "' AS \"" , db->GetName() , "\" (TYPE serenedb)");
+      auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
+                                db->GetName(), "\" (TYPE serenedb)");
       auto result = conn->Query(query);
       if (result->HasError()) {
         SDB_FATAL("xxxxx", Logger::FIXME,  "Failed to attach database " , db->GetName() << ": "

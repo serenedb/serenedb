@@ -26,106 +26,40 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
-#include <duckdb/common/case_insensitive_map.hpp>
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/named_parameter_map.hpp>
-#include <duckdb/common/string_util.hpp>
-#include <duckdb/common/types/value.hpp>
 #include <functional>
-#include <optional>
 #include <type_traits>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "pg/option_help.h"
+#include "pg/sql_exception_macro.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-// Value stored per option: a typed duckdb::Value plus optional cursor location.
-struct OptionEntry {
-  duckdb::Value value;
-  int location = -1;  // query cursor position; -1 if unavailable
-  bool has_value =
-    true;  // false for presence-only flags written without =value
-};
+using OptionEntry = std::unique_ptr<duckdb::Value>;
 
-using Options = containers::FlatHashMap<std::string, OptionEntry>;
-
-/*
-namespace explain_options {
-
-using query::ExplainWith;
-using ExplainOptions = query::EnumType<ExplainWith>;
-
-// plans
-inline constexpr OptionInfo kAllPlans{"all_plans", false,
-                                      "Show all plan stages"};
-inline constexpr OptionInfo kLogical{"logical", false, "Show logical plan"};
-inline constexpr OptionInfo kPhysical{"physical", false, "Show physical plan"};
-inline constexpr OptionInfo kExecution{"execution", false,
-                                       "Show execution plan"};
-inline constexpr OptionInfo kInitialQueryGraph{"initial_query_graph", false,
-                                               "Show initial query graph"};
-inline constexpr OptionInfo kFinalQueryGraph{"final_query_graph", false,
-                                             "Show final query graph"};
-
-inline constexpr OptionInfo kPlanOptions[] = {
-  kAllPlans,  kLogical,           kPhysical,
-  kExecution, kInitialQueryGraph, kFinalQueryGraph};
-
-// parameters
-inline constexpr OptionInfo kAnalyze{"analyze", false,
-                                     "Execute the query and show run times"};
-inline constexpr OptionInfo kRegisters{
-  "registers", false,
-  "Show internal column register names in all plan outputs"};
-inline constexpr OptionInfo kOneline{
-  "oneline", false, "One-line output format for physical plan"};
-inline constexpr OptionInfo kCost{"cost", false,
-                                  "Show estimated costs in physical plan"};
-
-inline constexpr OptionInfo kParamOptions[] = {kAnalyze, kRegisters, kOneline,
-                                               kCost};
-
-inline constexpr OptionGroup kPlanGroup{"Plans", kPlanOptions, {}};
-inline constexpr OptionGroup kParamGroup{"Parameters", kParamOptions, {}};
-inline constexpr OptionGroup kExplainSubgroups[] = {kPlanGroup, kParamGroup};
-inline constexpr OptionGroup kExplainGroup{"Explain", {}, kExplainSubgroups};
-
-inline void AddByName(std::string_view name, ExplainOptions& result) {
-  if (name == kAllPlans) {
-    result.Add(ExplainWith::Logical, ExplainWith::InitialQueryGraph,
-               ExplainWith::FinalQueryGraph, ExplainWith::Physical,
-               ExplainWith::Execution);
-    return;
-  }
-  SDB_ASSERT(absl::c_contains(kExplainGroup.FlatNames(), name));
-  // delete _ from snake case
-  auto normalized = absl::StrReplaceAll(name, {{"_", ""}});
-  auto flag = magic_enum::enum_cast<ExplainWith>(normalized,
-                                                 magic_enum::case_insensitive);
-  SDB_ASSERT(flag, "couldn't parse from string to enum: ", normalized);
-  result.Add(*flag);
-}
-
-}  // namespace explain_options
-*/
+using Options = containers::NodeHashMap<std::string, OptionEntry>;
 
 struct OptionsContext {
   std::string_view operation;
   std::function<void(std::string)> notice;
-  // explain_options::ExplainOptions* explain = nullptr;
 };
 
 class OptionsParser {
  public:
-  OptionsParser(const duckdb::named_parameter_map_t& named_parameters,
+  OptionsParser(const duckdb::named_parameter_map_t& options,
                 const OptionGroup& option_group, OptionsContext context)
     : _operation{context.operation},
       _notice{std::move(context.notice)},
-      // _explain{context.explain},
       _option_group{option_group} {
-    MakeOptions(named_parameters);
+    MakeOptions(options);
     HandleHelp();
   }
 
@@ -136,16 +70,17 @@ class OptionsParser {
                   "Use EnumOptionInfo overload for enum options");
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
     constexpr bool kIsString = Info.type == OptionInfo::Type::String;
-    if (auto entry = EraseOption(Info, !kIsBool, prefix)) {
+    if (const auto option = EraseOption(Info, !kIsBool, prefix)) {
       if constexpr (kIsBool) {
-        if (!entry->has_value) {
+        if (!*option) {
           return true;
         }
       }
-      auto value = TryExtract<T>(entry->value);
+      auto value = TryExtract<T>(**option);
       if (!value) {
-        throw duckdb::InvalidInputException(
-          Info.ErrorMessage(_operation, entry->value.ToString()));
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(Info.ErrorMessage(_operation, (**option).ToString())));
       }
       if constexpr (!std::holds_alternative<std::monostate>(Info.constraint)) {
         if constexpr (kIsString) {
@@ -160,8 +95,9 @@ class OptionsParser {
       }
       return *value;
     } else if (Info.IsRequired()) {
-      throw duckdb::InvalidInputException(
-        "required parameter \"%s\" was not found", std::string{Info.name});
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.name, "\" was not found"));
     }
     return Info.GetDefaultValue<T>();
   }
@@ -181,32 +117,35 @@ class OptionsParser {
                       }));
     };
 
-    if (auto entry = EraseOption(Info.base, true, prefix)) {
-      auto raw = TryExtract<std::string>(entry->value);
+    if (const auto option = EraseOption(Info.base, true, prefix)) {
+      auto raw = TryExtract<std::string>(*option);
       if (!raw) {
-        throw duckdb::InvalidInputException(
-          "%s\n%s", Info.base.ErrorMessage(_operation, entry->value.ToString()),
-          make_hint());
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(Info.base.ErrorMessage(_operation, option->ToString())),
+          ERR_HINT(make_hint()));
       }
       auto result =
         magic_enum::enum_cast<E>(*raw, magic_enum::case_insensitive);
       if (!result) {
-        throw duckdb::InvalidInputException(
-          "%s\n%s", Info.base.ErrorMessage(_operation, *raw), make_hint());
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG(Info.base.ErrorMessage(_operation, *raw)),
+                        ERR_HINT(make_hint()));
       }
       return *result;
     }
 
     if (Info.base.IsRequired()) {
-      throw duckdb::InvalidInputException(
-        "required parameter \"%s\" was not found", std::string{Info.base.name});
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.base.name, "\" was not found"));
     }
 
     return Info.base.template GetDefaultValue<E>();
   }
 
-  // Returns the entry by value (moved out of the map) or nullopt if not found.
-  // requires_parameter: if true and the option has no =value, throws an error.
+  // requires_parameter == presence flag like ... WITH (FLAG)
   std::optional<OptionEntry> EraseOption(const OptionInfo& info,
                                          bool requires_parameter = true,
                                          std::string_view prefix = "") {
@@ -215,18 +154,18 @@ class OptionsParser {
       auto full_name = OptionInfo::AdjustPrefix(prefix, info.name);
       it = _options.find(full_name);
     } else {
-      it = _options.find(std::string{info.name});
+      it = _options.find(info.name);
     }
     if (it == _options.end()) {
       return std::nullopt;
     }
-    auto entry = std::move(it->second);
+    auto option = std::move(it->second);
     _options.erase(it);
-    if (requires_parameter && !entry.has_value) {
-      throw duckdb::InvalidInputException("%s requires a parameter",
-                                          std::string{info.name});
+    if (requires_parameter && !option) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG(info.name, " requires a parameter"));
     }
-    return entry;
+    return option;
   }
 
   bool HasOption(const OptionInfo& info, std::string_view prefix = "") const {
@@ -238,16 +177,8 @@ class OptionsParser {
       auto full_name = OptionInfo::AdjustPrefix(prefix, name);
       return _options.contains(full_name);
     } else {
-      return _options.contains(std::string{name});
+      return _options.contains(name);
     }
-  }
-
-  int OptionLocation(const OptionInfo& info) const {
-    auto it = _options.find(std::string{info.name});
-    if (it == _options.end()) {
-      return -1;
-    }
-    return it->second.location;
   }
 
   template<typename F>
@@ -294,34 +225,17 @@ class OptionsParser {
     }
   }
 
-  void MakeOptions(const duckdb::named_parameter_map_t& params) {
-    _options.reserve(params.size());
-    // Options explain_opts;
-    for (const auto& [key, val] : params) {
-      OptionEntry entry{val, -1, true};
-
-      // if (_explain && duckdb::StringUtil::CIEquals(key, "explain")) {
-      //   // Explain option: value is the stage name.
-      //   auto name = TryExtract<std::string>(val);
-      //   if (!name) {
-      //     throw duckdb::InvalidInputException(
-      //       "invalid value for parameter \"explain\": \"%s\"",
-      //       val.ToString());
-      //   }
-      //   explain_opts.try_emplace(*name, std::move(entry));
-      //   continue;
-      // }
-
-      auto [_, emplaced] =
-        _options.try_emplace(std::string{key}, std::move(entry));
+  void MakeOptions(const duckdb::named_parameter_map_t& options) {
+    _options.reserve(options.size());
+    for (const auto& option : options) {
+      std::string_view option_name = option.first;
+      auto [_, emplaced] = _options.try_emplace(
+        option_name, std::make_unique<duckdb::Value>(option.second));
       if (!emplaced) {
-        throw duckdb::InvalidInputException("conflicting or redundant options");
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
       }
     }
-    // if (!explain_opts.empty()) {
-    //   SDB_ASSERT(_explain);
-    //   ParseExplainElems(std::move(explain_opts));
-    // }
   }
 
   void HandleHelp() {
@@ -330,28 +244,9 @@ class OptionsParser {
       return;
     }
     std::string help = "\n";
-    // if (_explain) {
-    //   absl::StrAppend(&help, "Explain, use WITH (EXPLAIN 'option_name'):\n");
-    //   absl::StrAppend(&help, FormatHelp(explain_options::kExplainGroup));
-    // }
     absl::StrAppend(&help, FormatHelp(_option_group));
-    throw duckdb::InvalidInputException(help);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(help));
   }
-
-  // void ParseExplainElems(Options explain) {
-  //   for (const auto& name : explain_options::kExplainGroup.FlatNames()) {
-  //     if (auto it = std::ranges::find_if(explain,
-  //                                        [&](const auto& entry) {
-  //                                          return absl::EqualsIgnoreCase(
-  //                                            entry.first, name);
-  //                                        });
-  //         it != explain.end()) {
-  //       explain.erase(it);
-  //       explain_options::AddByName(name, *_explain);
-  //     }
-  //   }
-  //   CheckUnrecognizedOptions(explain, explain_options::kExplainGroup);
-  // }
 
   void CheckUnrecognizedOptions() const {
     CheckUnrecognizedOptions(_options, _option_group);
@@ -361,16 +256,13 @@ class OptionsParser {
                                 const OptionGroup& option_group) const {
     auto known_names = option_group.FlatNames();
     known_names.emplace_back("help");
-    // if (_explain) {
-    //   known_names.emplace_back("explain");
-    // }
 
-    for (const auto& [name, entry] : options) {
+    for (const auto& [name, option] : options) {
       if (absl::c_contains(known_names, name)) {
-        throw duckdb::InvalidInputException(
-          "option \"%s\" is not applicable in this context\nHINT: Use WITH "
-          "(HELP) to see available options",
-          name);
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("option \"", name, "\" is not applicable in this context"),
+          ERR_HINT("Use WITH (HELP) to see available options"));
       }
       auto hint = FindClosestOption(known_names, name);
       auto msg =
@@ -378,8 +270,8 @@ class OptionsParser {
           ? absl::StrCat("option \"", name, "\" not recognized")
           : absl::StrCat("option \"", name,
                          "\" not recognized, did you mean \"", hint, "\"?");
-      throw duckdb::InvalidInputException(
-        "%s\nHINT: Use WITH (HELP) to see available options", msg);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR), ERR_MSG(msg),
+                      ERR_HINT("Use WITH (HELP) to see available options"));
     }
   }
 
@@ -413,7 +305,6 @@ class OptionsParser {
 
   std::string _operation;
   std::function<void(std::string)> _notice;
-  // explain_options::ExplainOptions* _explain;
   Options _options;
   const OptionGroup& _option_group;
 };

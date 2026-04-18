@@ -408,8 +408,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     auto tokenizer =
       _snapshot->GetTokenizer(_db_id, name.schema, name.relation);
     if (!tokenizer) {
-      throw duckdb::InvalidInputException(
-        "text search dictionary \"%s\" does not exist", std::string{from});
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("text search dictionary \"", from, "\" does not exist"));
     }
     auto slice = tokenizer->Slice().get(kAnalyzerField);
 
@@ -430,7 +431,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
       });
     auto r = _features.Validate(type);
     if (!r.ok()) {
-      throw duckdb::InvalidInputException("%s", std::string{r.errorMessage()});
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()));
     }
   }
 
@@ -477,7 +479,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   }
 
   auto tokenizer = std::make_shared<catalog::Tokenizer>(
-    ObjectId{0}, std::string{name}, features,
+    ObjectId{0}, name, features,
     std::string{reinterpret_cast<const char*>(b.slice().getDataPtr()),
                 b.slice().byteSize()});
 
@@ -489,8 +491,9 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
     return;
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException(
-      "text search dictionary \"%s\" already exists", std::string{name});
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+      ERR_MSG("text search dictionary \"", name, "\" already exists"));
   }
 }
 

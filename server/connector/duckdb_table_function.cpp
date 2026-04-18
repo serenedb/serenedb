@@ -235,6 +235,7 @@ SereneDBScanInitGlobal(duckdb::ClientContext& context,
   // If sdb_read_your_own_writes is false, always use a DB snapshot so reads
   // see only committed data even within an explicit transaction.
   auto& conn_ctx = GetSereneDBContext(context);
+  conn_ctx.AddRocksDBRead();
   if (conn_ctx.GetReadYourOwnWrites() &&
       (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
     state->txn = &conn_ctx.EnsureRocksDBTransaction();

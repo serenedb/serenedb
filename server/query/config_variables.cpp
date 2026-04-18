@@ -27,14 +27,12 @@
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 
-#include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
 #include "basics/debugging.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
-#include "connector/duckdb_client_state.h"
-#include "pg/connection_context.h"
 #include "query/config.h"
+#include "rest/version.h"
 #include "vpack/serializer.h"
 
 namespace sdb {
@@ -61,10 +59,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         "point, SET sdb_faults = '-name' to remove one, RESET sdb_faults to "
         "clear all.",
         [] { return duckdb::Value{""}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
-           duckdb::Value& value) {
-          static constexpr std::string_view kName = "sdb_faults";
-
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto s = value.ToString();
           if (s.starts_with('-')) {
             if (!RemoveFailurePointDebugging(std::string_view{s}.substr(1))) {
@@ -79,14 +74,9 @@ constexpr std::pair<std::string_view, VariableDescription>
           }
           auto points = GetFailurePointsDebugging();
           value = duckdb::Value(absl::StrJoin(points, ","));
-
-          connector::GetSereneDBContext(ctx).OnSet(kName, false);
         },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope) {
-          static constexpr std::string_view kName = "sdb_faults";
-
+        [](duckdb::ClientContext&, duckdb::SetScope) {
           ClearFailurePointsDebugging();
-          connector::GetSereneDBContext(ctx).OnSet(kName, false);
         },
         duckdb::SetScope::GLOBAL,
       },
@@ -125,20 +115,11 @@ constexpr std::pair<std::string_view, VariableDescription>
         "iresearch, memory, replication, requests, rocksdb, search, ssl, "
         "startup, statistics, syscall, threads.",
         [] { return duckdb::Value{log::LogLevelString()}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
-           duckdb::Value& value) {
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           log::SetLogLevel(value.ToString());
           value = duckdb::Value(log::LogLevelString());
-
-          connector::GetSereneDBContext(ctx).OnSet(log::kLogLevelVariable,
-                                                   false);
         },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope) {
-          log::ResetLogLevels();
-
-          connector::GetSereneDBContext(ctx).OnSet(log::kLogLevelVariable,
-                                                   false);
-        },
+        [](duckdb::ClientContext&, duckdb::SetScope) { log::ResetLogLevels(); },
         duckdb::SetScope::GLOBAL,
       },
     },
@@ -150,21 +131,15 @@ constexpr std::pair<std::string_view, VariableDescription>
         "'emit_error' (the default), 'do_nothing' (skip conflicted rows) and "
         "'replace'.",
         [] { return duckdb::Value{"emit_error"}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
-           duckdb::Value& value) {
-          static constexpr std::string_view kName = "sdb_write_conflict_policy";
-
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           if (!magic_enum::enum_cast<WriteConflictPolicy>(
                  value.ToString(), magic_enum::case_insensitive)
                  .has_value()) {
             throw duckdb::InvalidInputException(
-              "invalid value for parameter \"%s\": "
+              "invalid value for parameter \"sdb_write_conflict_policy\": "
               "\"%s\"",
-              kName.data(), value.ToString());
+              value.ToString());
           }
-
-          connector::GetSereneDBContext(ctx).OnSet(
-            kName, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
@@ -175,12 +150,6 @@ constexpr std::pair<std::string_view, VariableDescription>
         "Controls whether queries can see uncommitted writes from the current "
         "transaction.",
         []() -> duckdb::Value { return duckdb::Value{"true"}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
-           duckdb::Value& /*value*/) {
-          static constexpr std::string_view kName = "sdb_read_your_own_writes";
-          connector::GetSereneDBContext(ctx).OnSet(
-            kName, scope == duckdb::SetScope::LOCAL);
-        },
       },
     },
     {
@@ -189,19 +158,13 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::INTEGER,
         "Sets the number of digits displayed for floating-point values.",
         [] { return duckdb::Value{"1"}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
-           duckdb::Value& value) {
-          static constexpr std::string_view kName = "extra_float_digits";
-
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();
           if (!(-15 <= n && n <= 3)) {
             throw duckdb::InvalidInputException{
-              "invalid value for parameter \"%s\": \"%s\"", kName.data(),
+              "invalid value for parameter \"extra_float_digits\": \"%s\"",
               value.ToString()};
           }
-
-          connector::GetSereneDBContext(ctx).OnSet(
-            kName, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
@@ -211,20 +174,14 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the output format for bytea.",
         [] { return duckdb::Value{"hex"}; },
-        [](duckdb::ClientContext& ctx, duckdb::SetScope scope,
-           duckdb::Value& value) {
-          static constexpr std::string_view kName = "bytea_output";
-
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
                                                   magic_enum::case_insensitive)
                  .has_value()) {
             throw duckdb::InvalidInputException(
-              "invalid value for parameter \"%s\": \"%s\"", kName.data(),
+              "invalid value for parameter \"bytea_output\": \"%s\"",
               value.ToString());
           }
-
-          connector::GetSereneDBContext(ctx).OnSet(
-            kName, scope == duckdb::SetScope::LOCAL);
         },
       },
     },
@@ -286,7 +243,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
-        [] { return duckdb::Value{"18.3"}; },
+        [] {
+          return duckdb::Value{
+            absl::StrCat("PostgreSQL 18.3 (SereneDB ", SERENEDB_VERSION, ")")};
+        },
         Readonly<"server_version">,
       },
     },

@@ -52,6 +52,17 @@ void SereneDBClientState::Register(
     return true;
   };
 
+  client_ctx.setting_change_handler = [](duckdb::ClientContext& ctx,
+                                          const std::string& name,
+                                          duckdb::SetScope scope) {
+    // SET GLOBAL changes the DB-instance default and is not rolled back with
+    // the transaction — only session/local changes are tracked.
+    if (scope == duckdb::SetScope::GLOBAL) {
+      return;
+    }
+    GetSereneDBContext(ctx).OnSet(name, scope == duckdb::SetScope::LOCAL);
+  };
+
   client_ctx.setting_visibility = [](duckdb::ClientContext&,
                                      const std::string& name) {
     // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().

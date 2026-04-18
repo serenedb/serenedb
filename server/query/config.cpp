@@ -119,17 +119,18 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
 }
 
 void Config::OnSet(std::string_view name, bool is_local) {
+  // Prefer the canonical PG-cased name (e.g. "DateStyle") when known so the
+  // rollback key matches what SHOW returns; otherwise use the name as given
+  // (covers native DuckDB settings like default_transaction_isolation).
   auto canonical = GetOriginalName(name);
-  if (!canonical.data()) {
-    return;
-  }
+  auto key = canonical.data() ? canonical : name;
   auto context = VariableContext::Session;
   if (is_local) {
     context = VariableContext::Local;
   } else if (IsExplicitTransaction()) {
     context = VariableContext::Transaction;
   }
-  SaveForRollback(canonical, context);
+  SaveForRollback(key, context);
 }
 
 void Config::SetSetting(std::string_view key, std::string value,

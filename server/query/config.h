@@ -123,8 +123,11 @@ class Config {
 
   // Transaction variables (commit-apply / revert semantics).
 
+  // Owning-string keys: values may come from caller-provided buffers (e.g.
+  // native DuckDB setting names forwarded from PhysicalSet), so we cannot
+  // hold string_views that outlive the caller.
   // TODO: use FlatHashMap, there're now problems with ASAN build
-  containers::NodeHashMap<std::string_view, TxnVariable> _transaction;
+  containers::NodeHashMap<std::string, TxnVariable> _transaction;
   mutable std::shared_ptr<const catalog::Snapshot> _snapshot;
   duckdb::ClientContext& _client_ctx;
 };

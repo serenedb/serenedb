@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@
 #include <iresearch/utils/attribute_provider.hpp>
 #include <type_traits>
 #include <utility>
-#include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
@@ -55,14 +54,13 @@
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
-#include "pg/pg_list_utils.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_error.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
-#include "utils/elog.h"
-#include "utils/exec_context.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
@@ -148,7 +146,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     ParseOptions([&] {
       _builder.openObject();
       _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
-      std::string type =
+      const auto type =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
       Parse<true>(type);
       _builder.close();  // close analyzer
@@ -355,7 +353,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
           break;
         }
         type_from_copy = true;
-        type = std::string{elem.get(kTypeField).stringView()};
+        type = elem.get(kTypeField).stringView();
         _copy_from.emplace_back(step_prefix, elem.get(kPropertiesField));
       }
       if (type.empty()) {
@@ -386,7 +384,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
       SDB_ASSERT(!_copy_from.empty());
       auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
                                _copy_from.back().second);
-      type = std::string{slice.get(kTypeField).stringView()};
+      type = slice.get(kTypeField).stringView();
       _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
       type_from_template = true;
     }
@@ -452,6 +450,7 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto db_id = conn_ctx.GetDatabaseId();
   auto current_schema = conn_ctx.GetCurrentSchema();
+
   auto [b, features] = std::move(CreateTSDictionaryOptions{
                                    snapshot, db_id, current_schema, options})
                          .Result();

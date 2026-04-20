@@ -1,3 +1,6 @@
+halt
+
+
 statement ok
 CREATE TABLE t(r text);
 

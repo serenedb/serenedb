@@ -208,8 +208,8 @@ duckdb::TableFunction MakeExternalScanFunction(
 
   if (declared.size() != bound.types.size()) {
     throw duckdb::CatalogException(
-      "external table declares %llu columns but file has %llu",
-      declared.size(), bound.types.size());
+      "external table declares %llu columns but file has %llu", declared.size(),
+      bound.types.size());
   }
   bool needs_override = false;
   for (size_t i = 0; i < declared.size(); ++i) {

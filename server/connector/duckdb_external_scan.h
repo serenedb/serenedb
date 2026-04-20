@@ -23,7 +23,6 @@
 #include <duckdb/common/unique_ptr.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_context.hpp>
-
 #include <memory>
 
 #include "catalog/table.h"

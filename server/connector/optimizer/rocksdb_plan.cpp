@@ -338,6 +338,18 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       ranges = connector::ToDisjointRanges(best.result.constraints, cols);
     }
 
+    // TODO(phase2/4-follow-up): call this when
+    // scan will emit already filtered rows
+    auto remove_extra_filter = [&]() {
+      filter.expressions.clear();
+      if (best.result.remaining_filter) {
+        filter.expressions.push_back(std::move(best.result.remaining_filter));
+      }
+      if (filter.expressions.empty()) {
+        plan = std::move(filter.children[0]);
+      }
+    };
+
     // Swap function + bind_data based on the winner.
     if (best.candidate->kind == Candidate::Kind::Pk) {
       if (best.kind == connector::ConstraintKind::Points) {
@@ -346,6 +358,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
           .points = std::move(points),
         };
         get.function = connector::CreatePkPointScanFunction();
+        remove_extra_filter();
       } else {
         bind_data.scan_source = connector::PkRangeScan{
           .column_ids = cols,

@@ -355,6 +355,8 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "$user"},
         duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
       };
+      _duckdb_conn->context->client_data->catalog_search_path->SetDefaultPaths(
+        std::vector{default_paths});
       _duckdb_conn->context->client_data->catalog_search_path->Set(
         std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 

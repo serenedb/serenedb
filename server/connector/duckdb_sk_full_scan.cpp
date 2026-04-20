@@ -57,7 +57,7 @@ void SKFullScanFunction(duckdb::ClientContext& /*context*/,
     return;
   }
 
-  auto& sk_scan = std::get<SecondaryIndexScan>(bind_data.scan_source);
+  auto& sk_scan = bind_data.scan_source->Cast<SecondaryIndexScan>();
 
   // Lazy init: create SK iterator on first call.
   if (!gstate.sk_iterator) {

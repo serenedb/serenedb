@@ -87,10 +87,10 @@ duckdb::TableFunction SereneDBIndexScanEntry::GetScanFunction(
   data->table_entry = this;
 
   if (IsSecondaryIndex()) {
-    data->scan_source = SecondaryIndexScan{
-      .shard_id = _sk_shard_id,
-      .is_unique = _sk_unique,
-    };
+    auto sk = std::make_unique<SecondaryIndexScan>();
+    sk->shard_id = _sk_shard_id;
+    sk->is_unique = _sk_unique;
+    data->scan_source = std::move(sk);
     bind_data = std::move(data);
     return CreateFullSkScanFunction();
   }

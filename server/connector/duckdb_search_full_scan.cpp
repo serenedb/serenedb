@@ -259,7 +259,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   InitCommonState(*state, context, bind_data, input);
 
   // Build scorer object for BM25/TFIDF if requested by the scan plan.
-  const auto& ss = std::get<SearchScan>(bind_data.scan_source);
+  const auto& ss = bind_data.scan_source->Cast<SearchScan>();
   using SK = SearchScan::ScorerKind;
   switch (ss.scorer.kind) {
     case SK::Bm25:
@@ -326,7 +326,7 @@ void SearchFullScanFunction(duckdb::ClientContext& /*context*/,
   }
 
   const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
-  auto& search = std::get<SearchScan>(bind_data.scan_source);
+  auto& search = bind_data.scan_source->Cast<SearchScan>();
   auto& reader = *search.reader;
   auto& query = gstate.scored_query ? *gstate.scored_query : *search.query;
 

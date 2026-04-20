@@ -64,7 +64,7 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   // Lazy init: run HNSW search on first call.
   if (!gstate.ann_search_done) {
     gstate.ann_search_done = true;
-    auto& ann = std::get<ANNScan>(bind_data.scan_source);
+    auto& ann = bind_data.scan_source->Cast<ANNScan>();
     auto& snapshot =
       GetSereneDBContext(context).EnsureSearchSnapshot(ann.index_id);
 

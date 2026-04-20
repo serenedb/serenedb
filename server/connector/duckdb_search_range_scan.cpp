@@ -64,7 +64,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   // Lazy init: run HNSW range search on first call.
   if (!gstate.ann_search_done) {
     gstate.ann_search_done = true;
-    auto& rss = std::get<RangeSearchScan>(bind_data.scan_source);
+    auto& rss = bind_data.scan_source->Cast<RangeSearchScan>();
     auto& snapshot =
       GetSereneDBContext(context).EnsureSearchSnapshot(rss.index_id);
 

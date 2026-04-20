@@ -60,10 +60,7 @@ void InitCommonState(CommonScanGlobalState& state,
   // see only committed data even within an explicit transaction.
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBRead();
-  const bool is_search_scan =
-    std::holds_alternative<SearchScan>(bind_data.scan_source) ||
-    std::holds_alternative<ANNScan>(bind_data.scan_source) ||
-    std::holds_alternative<RangeSearchScan>(bind_data.scan_source);
+  const bool is_search_scan = bind_data.scan_source->IsSearchLike();
   if (is_search_scan && conn_ctx.GetReadYourOwnWrites() &&
       (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,

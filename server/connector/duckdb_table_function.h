@@ -24,9 +24,12 @@
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <memory>
 #include <optional>
-#include <variant>
+#include <string_view>
 
+#include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "connector/rocksdb_filter.hpp"
@@ -40,8 +43,82 @@ class IndexReader;
 
 namespace sdb::connector {
 
-// Scan source variants -- determines how the scan function reads data.
-struct FullTableScan {};
+struct SereneDBScanBindData;
+
+// Identifies the concrete scan-source subclass without RTTI. Executor
+// code uses Kind() to pick paths and ScanSource::Cast<T>() to downcast.
+enum class ScanSourceKind : uint8_t {
+  FullTable,
+  Search,
+  SecondaryIndex,
+  Ann,
+  RangeSearch,
+  PkPoint,
+  PkRange,
+  SkPoint,
+  SkRange,
+};
+
+// Base class for the different scan specialisations carried on a
+// SereneDBScanBindData. The optimizer swaps the bind data's ScanSource
+// instance (and simultaneously the LogicalGet's TableFunction) when a
+// predicate pattern matches; the executor then downcasts to the concrete
+// type it was paired with.
+struct ScanSource {
+  ScanSourceKind Kind() const { return kind_; }
+
+  // EXPLAIN "Strategy" label. Stable -- tests match on these strings.
+  virtual std::string_view KindName() const = 0;
+
+  // Extend the EXPLAIN output with per-kind fields (Filter, TopK, ...).
+  virtual void AppendSummary(
+    const SereneDBScanBindData& /*bind*/,
+    duckdb::InsertionOrderPreservingMap<std::string>& /*out*/) const {}
+
+  // Deep copy for duckdb::FunctionData::Copy(). Subclasses that hold
+  // non-copyable fields (e.g. SearchScan's prepared iresearch query)
+  // return a default FullTableScan instead -- the variant-based predecessor
+  // silently dropped such state on copy, and we preserve that behaviour.
+  virtual std::unique_ptr<ScanSource> Clone() const = 0;
+
+  // Covers SearchScan / ANNScan / RangeSearchScan -- the three that need
+  // stricter transaction isolation in duckdb_scan_base.
+  bool IsSearchLike() const {
+    return kind_ == ScanSourceKind::Search || kind_ == ScanSourceKind::Ann ||
+           kind_ == ScanSourceKind::RangeSearch;
+  }
+
+  template<class T>
+  const T& Cast() const {
+    auto* p = basics::downCast<T>(this);
+    SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
+    return *p;
+  }
+  template<class T>
+  T& Cast() {
+    auto* p = basics::downCast<T>(this);
+    SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
+    return *p;
+  }
+
+  virtual ~ScanSource() = default;
+
+ protected:
+  explicit ScanSource(ScanSourceKind k) : kind_(k) {}
+
+ private:
+  ScanSourceKind kind_;
+};
+
+// Default: full prefix iteration over the table's RocksDB keyspace.
+// Also the placeholder state for inverted-index FROM-entries until an
+// iresearch_plan rule swaps in a specialised SearchScan / ANNScan /
+// RangeSearchScan.
+struct FullTableScan : ScanSource {
+  FullTableScan() : ScanSource(ScanSourceKind::FullTable) {}
+  std::string_view KindName() const override;
+  std::unique_ptr<ScanSource> Clone() const override;
+};
 
 // Iresearch boolean-filter scan with optional score / offsets add-ons.
 // The iresearch_plan rule (Phase 5d) picks which add-ons apply for a
@@ -53,8 +130,10 @@ struct FullTableScan {};
 //
 // ANN (vector distance) cases -- topk and range -- are NOT layered on
 // top of a boolean filter in this struct; they live in their own
-// ANNScan / RangeSearchScan variants below.
-struct SearchScan {
+// ANNScan / RangeSearchScan subclasses below.
+struct SearchScan : ScanSource {
+  SearchScan() : ScanSource(ScanSourceKind::Search) {}
+
   // Boolean filter side (plain text/search predicates).
   irs::Filter::Query::ptr query;
   // Stored filter for re-preparation with a scorer (see
@@ -109,34 +188,61 @@ struct SearchScan {
 
   // Convenience for to_string / runtime checks.
   bool emit_offsets() const { return !offsets.empty(); }
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
-struct SecondaryIndexScan {
+struct SecondaryIndexScan : ScanSource {
+  SecondaryIndexScan() : ScanSource(ScanSourceKind::SecondaryIndex) {}
+
   ObjectId shard_id;
   bool is_unique = false;
+
+  std::string_view KindName() const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
 // ANN (top-k nearest-neighbour) scan using an HNSW index.
 // Populated by iresearch_plan (previously ann_search_plan) when it
 // detects the pattern:
 //   ORDER BY distance_func(col, const_vector) ASC LIMIT k
-struct ANNScan {
+struct ANNScan : ScanSource {
+  ANNScan() : ScanSource(ScanSourceKind::Ann) {}
+
   ObjectId index_id;
   // Field name: big-endian catalog::Column::Id bytes, no MangleString
   std::string field_name;
   std::vector<float> query_vector;
   size_t top_k = 0;
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
 // Range search scan using an HNSW index.
 // Populated by iresearch_plan (previously range_search_plan) when it
 // detects the pattern:
 //   WHERE distance_func(col, const_vector) < radius
-struct RangeSearchScan {
+struct RangeSearchScan : ScanSource {
+  RangeSearchScan() : ScanSource(ScanSourceKind::RangeSearch) {}
+
   ObjectId index_id;
   std::string field_name;
   std::vector<float> query_vector;
   float radius = 0.0f;
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
 // Primary-key point lookup. Populated by the rocksdb_plan optimizer when it
@@ -144,9 +250,17 @@ struct RangeSearchScan {
 // `points` are the fully-resolved PK values per point (values per PK
 // column in PK order). Byte-encoding into a MultiGet key happens at
 // runtime via the scan executor.
-struct PkPointScan {
+struct PkPointScan : ScanSource {
+  PkPointScan() : ScanSource(ScanSourceKind::PkPoint) {}
+
   std::vector<catalog::Column::Id> column_ids;  // PK columns in order
   std::vector<ResolvedPoint> points;
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
 // Primary-key range scan. Populated by the rocksdb_plan optimizer when it
@@ -154,34 +268,54 @@ struct PkPointScan {
 // equality prefix on a composite PK combined with a trailing range.
 // `ranges` hold the prefix-value + bound on the range column per
 // disjoint region.
-struct PkRangeScan {
+struct PkRangeScan : ScanSource {
+  PkRangeScan() : ScanSource(ScanSourceKind::PkRange) {}
+
   std::vector<catalog::Column::Id> column_ids;  // PK columns in order
   std::vector<ResolvedRange> ranges;
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
 // Secondary-key point lookup: SK probe -> PK list -> MultiGet. Populated
 // by the rocksdb_plan optimizer when it detects equality / IN predicates
 // covering the SK column set.
-struct SkPointScan {
+struct SkPointScan : ScanSource {
+  SkPointScan() : ScanSource(ScanSourceKind::SkPoint) {}
+
   ObjectId shard_id;
   bool is_unique = false;
   std::vector<catalog::Column::Id> column_ids;  // SK columns in order
   std::vector<ResolvedPoint> points;
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
 };
 
 // Secondary-key range scan: SK range -> PK stream -> MultiGet. Populated
 // by the rocksdb_plan optimizer when it detects range predicates on the
 // leading SK columns.
-struct SkRangeScan {
+struct SkRangeScan : ScanSource {
+  SkRangeScan() : ScanSource(ScanSourceKind::SkRange) {}
+
   ObjectId shard_id;
   bool is_unique = false;
   std::vector<catalog::Column::Id> column_ids;  // SK columns in order
   std::vector<ResolvedRange> ranges;
-};
 
-using ScanSource = std::variant<FullTableScan, SearchScan, SecondaryIndexScan,
-                                ANNScan, RangeSearchScan, PkPointScan,
-                                PkRangeScan, SkPointScan, SkRangeScan>;
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
+};
 
 struct SereneDBScanBindData : public duckdb::FunctionData {
   std::shared_ptr<catalog::Table> table;
@@ -190,7 +324,10 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   bool has_rowid = false;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
 
-  ScanSource scan_source;
+  // Always non-null. Default-constructed bind data starts as FullTableScan;
+  // optimizer rules swap in a different concrete subclass when a matching
+  // pattern is found.
+  std::unique_ptr<ScanSource> scan_source = std::make_unique<FullTableScan>();
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;
   bool Equals(const duckdb::FunctionData& other) const override;

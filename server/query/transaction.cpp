@@ -253,6 +253,10 @@ void Transaction::ApplyTableStatsDiffs() noexcept {
   }
   auto snapshot = EnsureCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
+    // It's possible that while transaction was active, table got dropped.
+    if (!snapshot->GetObject(table_id)) {
+      continue;
+    }
     auto table_shard = snapshot->GetTableShard(table_id);
     SDB_ASSERT(table_shard);
     if (table_shard) {

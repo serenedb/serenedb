@@ -262,8 +262,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!bind_data.table) {
     return false;
   }
-  if (!std::holds_alternative<connector::FullTableScan>(
-        bind_data.scan_source)) {
+  if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return false;
   }
 
@@ -286,11 +285,11 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  connector::ANNScan ann;
-  ann.index_id = resolved->index->GetId();
-  ann.field_name = MakeHnswFieldName(col_id);
-  ann.query_vector = std::move(query_vector);
-  ann.top_k = static_cast<size_t>(top_n.limit);
+  auto ann = std::make_unique<connector::ANNScan>();
+  ann->index_id = resolved->index->GetId();
+  ann->field_name = MakeHnswFieldName(col_id);
+  ann->query_vector = std::move(query_vector);
+  ann->top_k = static_cast<size_t>(top_n.limit);
   bind_data.scan_source = std::move(ann);
   get.function = connector::CreateIresearchAnnScanFunction();
 
@@ -333,8 +332,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!bind_data.table) {
     return false;
   }
-  if (!std::holds_alternative<connector::FullTableScan>(
-        bind_data.scan_source)) {
+  if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return false;
   }
 
@@ -418,11 +416,11 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  connector::RangeSearchScan rss;
-  rss.index_id = resolved->index->GetId();
-  rss.field_name = MakeHnswFieldName(col_id);
-  rss.query_vector = std::move(query_vector);
-  rss.radius = radius;
+  auto rss = std::make_unique<connector::RangeSearchScan>();
+  rss->index_id = resolved->index->GetId();
+  rss->field_name = MakeHnswFieldName(col_id);
+  rss->query_vector = std::move(query_vector);
+  rss->radius = radius;
   bind_data.scan_source = std::move(rss);
   get.function = connector::CreateIresearchRangeScanFunction();
 
@@ -514,8 +512,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!bind_data.table) {
     return false;
   }
-  if (!std::holds_alternative<connector::FullTableScan>(
-        bind_data.scan_source)) {
+  if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return false;
   }
   if (filter.expressions.empty()) {
@@ -601,12 +598,12 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   std::string filter_summary = irs::ToStringDemangled(*root, col_name_lookup);
 
   auto& reader = *resolved->shard->GetInvertedIndexSnapshot()->reader;
-  connector::SearchScan search;
-  search.snapshot = resolved->shard->GetInvertedIndexSnapshot();
-  search.reader = &reader;
-  search.stored_filter = root;
-  search.query = root->prepare({.index = reader});
-  search.filter_summary = std::move(filter_summary);
+  auto search = std::make_unique<connector::SearchScan>();
+  search->snapshot = resolved->shard->GetInvertedIndexSnapshot();
+  search->reader = &reader;
+  search->stored_filter = root;
+  search->query = root->prepare({.index = reader});
+  search->filter_summary = std::move(filter_summary);
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIresearchSearchScanFunction();
 
@@ -648,10 +645,10 @@ std::optional<FoundScan> FindSearchScanChild(duckdb::LogicalOperator& op) {
       return std::nullopt;
     }
     auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-    auto* ss = std::get_if<connector::SearchScan>(&bind_data.scan_source);
-    if (!ss) {
+    if (bind_data.scan_source->Kind() != connector::ScanSourceKind::Search) {
       return std::nullopt;
     }
+    auto* ss = &bind_data.scan_source->Cast<connector::SearchScan>();
     return FoundScan{&get, &bind_data, ss};
   }
   if (child.type == duckdb::LogicalOperatorType::LOGICAL_FILTER ||
@@ -683,10 +680,10 @@ std::optional<FoundScan> FindSearchScanByTableIndex(duckdb::LogicalOperator& op,
       return std::nullopt;
     }
     auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-    auto* ss = std::get_if<connector::SearchScan>(&bind_data.scan_source);
-    if (!ss) {
+    if (bind_data.scan_source->Kind() != connector::ScanSourceKind::Search) {
       return std::nullopt;
     }
+    auto* ss = &bind_data.scan_source->Cast<connector::SearchScan>();
     return FoundScan{&get, &bind_data, ss};
   }
   for (auto& child : op.children) {

@@ -69,7 +69,7 @@ void PKPointLookupFunction(duckdb::ClientContext& /*context*/,
   rocksdb::ReadOptions ro;
   ro.snapshot = gstate.snapshot;
 
-  const auto& points = std::get<PkPointScan>(bind_data.scan_source).points;
+  const auto& points = bind_data.scan_source->Cast<PkPointScan>().points;
   const size_t total = points.size();
   const size_t batch_start = gstate.point_offset;
   if (batch_start >= total) {

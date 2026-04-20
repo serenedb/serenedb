@@ -58,10 +58,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
   copy->column_types = column_types;
   copy->has_rowid = has_rowid;
   copy->table_entry = table_entry;
-  // SearchScan has non-copyable fields -- only copy for secondary/full
-  if (std::holds_alternative<SecondaryIndexScan>(scan_source)) {
-    copy->scan_source = std::get<SecondaryIndexScan>(scan_source);
-  }
+  copy->scan_source = scan_source->Clone();
   return copy;
 }
 
@@ -154,40 +151,79 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
 
 // --- to_string helpers ---
 
-static std::string_view ScanSourceKindName(const ScanSource& s) {
-  if (const auto* ss = std::get_if<SearchScan>(&s)) {
-    const bool off = ss->emit_offsets();
-    if (ss->scorer.kind != SearchScan::ScorerKind::None) {
-      if (ss->score_top_k) {
-        return off ? "iresearch_score_topk_scan_with_offsets"
-                   : "iresearch_score_topk_scan";
-      }
-      return off ? "iresearch_score_scan_with_offsets" : "iresearch_score_scan";
-    }
-    return off ? "iresearch_lookup_with_offsets" : "iresearch_lookup";
-  }
-  if (std::holds_alternative<SecondaryIndexScan>(s)) {
-    return "rocksdb_secondary_key_fullscan";
-  }
-  if (std::holds_alternative<ANNScan>(s)) {
-    return "iresearch_ann_topk_scan";
-  }
-  if (std::holds_alternative<RangeSearchScan>(s)) {
-    return "iresearch_ann_range_scan";
-  }
-  if (std::holds_alternative<PkPointScan>(s)) {
-    return "rocksdb_primary_key_points_lookup";
-  }
-  if (std::holds_alternative<PkRangeScan>(s)) {
-    return "rocksdb_primary_key_ranges_scan";
-  }
-  if (std::holds_alternative<SkPointScan>(s)) {
-    return "rocksdb_secondary_key_points_lookup";
-  }
-  if (std::holds_alternative<SkRangeScan>(s)) {
-    return "rocksdb_secondary_key_ranges_scan";
-  }
+std::string_view FullTableScan::KindName() const {
   return "rocksdb_table_fullscan";
+}
+std::unique_ptr<ScanSource> FullTableScan::Clone() const {
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view SecondaryIndexScan::KindName() const {
+  return "rocksdb_secondary_key_fullscan";
+}
+std::unique_ptr<ScanSource> SecondaryIndexScan::Clone() const {
+  auto copy = std::make_unique<SecondaryIndexScan>();
+  copy->shard_id = shard_id;
+  copy->is_unique = is_unique;
+  return copy;
+}
+
+std::string_view SearchScan::KindName() const {
+  const bool off = emit_offsets();
+  if (scorer.kind != SearchScan::ScorerKind::None) {
+    if (score_top_k) {
+      return off ? "iresearch_score_topk_scan_with_offsets"
+                 : "iresearch_score_topk_scan";
+    }
+    return off ? "iresearch_score_scan_with_offsets" : "iresearch_score_scan";
+  }
+  return off ? "iresearch_lookup_with_offsets" : "iresearch_lookup";
+}
+std::unique_ptr<ScanSource> SearchScan::Clone() const {
+  // SearchScan owns a prepared iresearch query + filter tree that we can't
+  // duplicate; preserve the pre-refactor behaviour of falling back to the
+  // default FullTableScan on copy.
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view ANNScan::KindName() const { return "iresearch_ann_topk_scan"; }
+std::unique_ptr<ScanSource> ANNScan::Clone() const {
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view RangeSearchScan::KindName() const {
+  return "iresearch_ann_range_scan";
+}
+std::unique_ptr<ScanSource> RangeSearchScan::Clone() const {
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view PkPointScan::KindName() const {
+  return "rocksdb_primary_key_points_lookup";
+}
+std::unique_ptr<ScanSource> PkPointScan::Clone() const {
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view PkRangeScan::KindName() const {
+  return "rocksdb_primary_key_ranges_scan";
+}
+std::unique_ptr<ScanSource> PkRangeScan::Clone() const {
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view SkPointScan::KindName() const {
+  return "rocksdb_secondary_key_points_lookup";
+}
+std::unique_ptr<ScanSource> SkPointScan::Clone() const {
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view SkRangeScan::KindName() const {
+  return "rocksdb_secondary_key_ranges_scan";
+}
+std::unique_ptr<ScanSource> SkRangeScan::Clone() const {
+  return std::make_unique<FullTableScan>();
 }
 
 static std::string ColumnNameFor(const catalog::Table& table,
@@ -255,105 +291,106 @@ static std::string FormatClaimList(const PointsOrRanges& items,
   return out;
 }
 
-static void AppendClaimSummary(
-  duckdb::InsertionOrderPreservingMap<std::string>& result,
-  const SereneDBScanBindData& bind) {
-  const auto& s = bind.scan_source;
-  if (const auto* p = std::get_if<PkPointScan>(&s)) {
-    if (!p->points.empty() && bind.table) {
-      auto& table = *bind.table;
-      auto cols = std::span<const catalog::Column::Id>(p->column_ids);
-      result.insert("Filter",
-                    FormatClaimList(p->points, [&](const ResolvedPoint& pt) {
-                      return FormatResolvedPoint(pt, table, cols);
-                    }));
-    }
-    return;
+void PkPointScan::AppendSummary(
+  const SereneDBScanBindData& bind,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  if (!points.empty() && bind.table) {
+    auto& table = *bind.table;
+    auto cols = std::span<const catalog::Column::Id>(column_ids);
+    out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
+                 return FormatResolvedPoint(pt, table, cols);
+               }));
   }
-  if (const auto* r = std::get_if<PkRangeScan>(&s)) {
-    if (!r->ranges.empty() && bind.table) {
-      auto& table = *bind.table;
-      auto cols = std::span<const catalog::Column::Id>(r->column_ids);
-      result.insert("Filter",
-                    FormatClaimList(r->ranges, [&](const ResolvedRange& rr) {
-                      return FormatResolvedRange(rr, table, cols);
-                    }));
-    }
-    return;
+}
+
+void PkRangeScan::AppendSummary(
+  const SereneDBScanBindData& bind,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  if (!ranges.empty() && bind.table) {
+    auto& table = *bind.table;
+    auto cols = std::span<const catalog::Column::Id>(column_ids);
+    out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
+                 return FormatResolvedRange(rr, table, cols);
+               }));
   }
-  if (const auto* p = std::get_if<SkPointScan>(&s)) {
-    if (!p->points.empty() && bind.table) {
-      auto& table = *bind.table;
-      auto cols = std::span<const catalog::Column::Id>(p->column_ids);
-      result.insert("Filter",
-                    FormatClaimList(p->points, [&](const ResolvedPoint& pt) {
-                      return FormatResolvedPoint(pt, table, cols);
-                    }));
-    }
-    if (p->is_unique) {
-      result.insert("Unique", "true");
-    }
-    return;
+}
+
+void SkPointScan::AppendSummary(
+  const SereneDBScanBindData& bind,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  if (!points.empty() && bind.table) {
+    auto& table = *bind.table;
+    auto cols = std::span<const catalog::Column::Id>(column_ids);
+    out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
+                 return FormatResolvedPoint(pt, table, cols);
+               }));
   }
-  if (const auto* r = std::get_if<SkRangeScan>(&s)) {
-    if (!r->ranges.empty() && bind.table) {
-      auto& table = *bind.table;
-      auto cols = std::span<const catalog::Column::Id>(r->column_ids);
-      result.insert("Filter",
-                    FormatClaimList(r->ranges, [&](const ResolvedRange& rr) {
-                      return FormatResolvedRange(rr, table, cols);
-                    }));
-    }
-    if (r->is_unique) {
-      result.insert("Unique", "true");
-    }
-    return;
+  if (is_unique) {
+    out.insert("Unique", "true");
   }
-  if (const auto* a = std::get_if<ANNScan>(&s)) {
-    result.insert("TopK", std::to_string(a->top_k));
-    result.insert("Dims", std::to_string(a->query_vector.size()));
-    return;
+}
+
+void SkRangeScan::AppendSummary(
+  const SereneDBScanBindData& bind,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  if (!ranges.empty() && bind.table) {
+    auto& table = *bind.table;
+    auto cols = std::span<const catalog::Column::Id>(column_ids);
+    out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
+                 return FormatResolvedRange(rr, table, cols);
+               }));
   }
-  if (const auto* a = std::get_if<RangeSearchScan>(&s)) {
-    result.insert("Radius", std::to_string(a->radius));
-    result.insert("Dims", std::to_string(a->query_vector.size()));
-    return;
+  if (is_unique) {
+    out.insert("Unique", "true");
   }
-  if (const auto* ss = std::get_if<SearchScan>(&s)) {
-    if (!ss->filter_summary.empty()) {
-      result.insert("Filter", ss->filter_summary);
-    }
-    switch (ss->scorer.kind) {
-      case SearchScan::ScorerKind::Bm25:
-        result.insert("Score", absl::StrCat("bm25(k1=", ss->scorer.bm25_k1,
-                                            ", b=", ss->scorer.bm25_b, ")"));
-        break;
-      case SearchScan::ScorerKind::Tfidf:
-        result.insert(
-          "Score",
-          absl::StrCat("tfidf(with_norms=",
-                       ss->scorer.tfidf_with_norms ? "true" : "false", ")"));
-        break;
-      case SearchScan::ScorerKind::None:
-        break;
-    }
-    if (ss->score_top_k) {
-      result.insert("TopK", std::to_string(*ss->score_top_k));
-    }
-    if (ss->emit_offsets()) {
-      std::string cols;
-      for (size_t i = 0; i < ss->offsets.size(); ++i) {
-        if (i) {
-          absl::StrAppend(&cols, ", ");
-        }
-        absl::StrAppend(&cols,
-                        ColumnNameFor(*bind.table, ss->offsets[i].column_id));
+}
+
+void ANNScan::AppendSummary(
+  const SereneDBScanBindData& /*bind*/,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  out.insert("TopK", std::to_string(top_k));
+  out.insert("Dims", std::to_string(query_vector.size()));
+}
+
+void RangeSearchScan::AppendSummary(
+  const SereneDBScanBindData& /*bind*/,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  out.insert("Radius", std::to_string(radius));
+  out.insert("Dims", std::to_string(query_vector.size()));
+}
+
+void SearchScan::AppendSummary(
+  const SereneDBScanBindData& bind,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  if (!filter_summary.empty()) {
+    out.insert("Filter", filter_summary);
+  }
+  switch (scorer.kind) {
+    case SearchScan::ScorerKind::Bm25:
+      out.insert("Score", absl::StrCat("bm25(k1=", scorer.bm25_k1,
+                                       ", b=", scorer.bm25_b, ")"));
+      break;
+    case SearchScan::ScorerKind::Tfidf:
+      out.insert("Score",
+                 absl::StrCat("tfidf(with_norms=",
+                              scorer.tfidf_with_norms ? "true" : "false", ")"));
+      break;
+    case SearchScan::ScorerKind::None:
+      break;
+  }
+  if (score_top_k) {
+    out.insert("TopK", std::to_string(*score_top_k));
+  }
+  if (emit_offsets()) {
+    std::string cols;
+    for (size_t i = 0; i < offsets.size(); ++i) {
+      if (i) {
+        absl::StrAppend(&cols, ", ");
       }
-      result.insert("Offsets", std::move(cols));
+      absl::StrAppend(&cols, ColumnNameFor(*bind.table, offsets[i].column_id));
     }
-    return;
+    out.insert("Offsets", std::move(cols));
   }
-  // SecondaryIndexScan / FullTableScan: no extra info.
 }
 
 static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
@@ -366,8 +403,8 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table) {
     result.insert("Table", std::string{bind.table->GetName()});
   }
-  result.insert("Strategy", std::string{ScanSourceKindName(bind.scan_source)});
-  AppendClaimSummary(result, bind);
+  result.insert("Strategy", std::string{bind.scan_source->KindName()});
+  bind.scan_source->AppendSummary(bind, result);
   return result;
 }
 

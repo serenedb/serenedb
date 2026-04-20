@@ -265,10 +265,9 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     // FullTableScan (regular table) or a SecondaryIndexScan (FROM
     // sk_index_name). iresearch-claimed scans, ANN, range-search, and
     // already-specialised pk/sk scans stay as-is.
-    if (!std::holds_alternative<connector::FullTableScan>(
-          bind_data.scan_source) &&
-        !std::holds_alternative<connector::SecondaryIndexScan>(
-          bind_data.scan_source)) {
+    const auto kind = bind_data.scan_source->Kind();
+    if (kind != connector::ScanSourceKind::FullTable &&
+        kind != connector::ScanSourceKind::SecondaryIndex) {
       return false;
     }
 
@@ -354,17 +353,17 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     // Swap function + bind_data based on the winner.
     if (best.candidate->kind == Candidate::Kind::Pk) {
       if (best.kind == connector::ConstraintKind::Points) {
-        bind_data.scan_source = connector::PkPointScan{
-          .column_ids = cols,
-          .points = std::move(points),
-        };
+        auto pk = std::make_unique<connector::PkPointScan>();
+        pk->column_ids = cols;
+        pk->points = std::move(points);
+        bind_data.scan_source = std::move(pk);
         get.function = connector::CreatePkPointScanFunction();
         remove_extra_filter();
       } else {
-        bind_data.scan_source = connector::PkRangeScan{
-          .column_ids = cols,
-          .ranges = std::move(ranges),
-        };
+        auto pk = std::make_unique<connector::PkRangeScan>();
+        pk->column_ids = cols;
+        pk->ranges = std::move(ranges);
+        bind_data.scan_source = std::move(pk);
         get.function = connector::CreatePkRangeScanFunction();
       }
     } else {
@@ -386,10 +385,10 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       //   };
       //   get.function = connector::CreateSkRangeScanFunction();
       // } else
-      bind_data.scan_source = connector::SecondaryIndexScan{
-        .shard_id = best.candidate->sk_shard_id,
-        .is_unique = best.candidate->sk_unique,
-      };
+      auto si = std::make_unique<connector::SecondaryIndexScan>();
+      si->shard_id = best.candidate->sk_shard_id;
+      si->is_unique = best.candidate->sk_unique;
+      bind_data.scan_source = std::move(si);
       //}
     }
 

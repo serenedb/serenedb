@@ -498,6 +498,59 @@ statement ok
 DROP SCHEMA s1;
 
 
-skipif serenedb
 statement ok
 CREATE TABLE empty_soul();
+
+
+statement error
+CREATE INDEX empty_index ON empty_soul USING inverted(a);
+----
+db error: ERROR: CREATE INDEX does not refer to any columns in the base table!
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ts(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false
+);
+
+
+statement ok
+CREATE TABLE t (id INT, d VARCHAR);
+
+
+statement ok
+CREATE INDEX i ON t USING inverted(d ts);
+
+
+connection conn1
+statement ok
+BEGIN;
+
+
+connection conn1
+statement ok
+INSERT INTO t VALUES (1, 'wow');
+
+
+connection conn1
+statement ok
+INSERT INTO t VALUES (2, 'kek');
+
+
+connection conn2
+statement async ok
+DROP TABLE t;
+
+
+connection conn1
+statement ok
+INSERT INTO t VALUES (3, 'lol');
+
+
+connection conn1
+statement ok
+COMMIT;

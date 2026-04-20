@@ -190,6 +190,10 @@ class InvertedIndexShard final
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
 
+  bool HasActiveSegments() const noexcept {
+    return _writer && _writer->HasActiveSegments();
+  }
+
   void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
 

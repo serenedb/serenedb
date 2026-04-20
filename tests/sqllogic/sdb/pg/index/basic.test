@@ -265,19 +265,33 @@ a	b
 1	1
 2	3
 
+# Commit (3,1),(7,3),(17,5) outside the error-producing transaction below —
+# under PG-style semantics, any error inside an explicit transaction aborts it
+# and the following COMMIT is treated as ROLLBACK, so these rows would never
+# land if they shared the transaction with the read_your_own_writes error.
+statement count 3
+INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
+
+statement ok
+VACUUM (UPDATE_INDEXES) table_numeric_idx;
+
 statement ok
 SET sdb_read_your_own_writes = 1;
 
 statement ok
 BEGIN;
 
+# With read_your_own_writes=on, a scan that would see uncommitted writes fails.
 statement count 3
-INSERT INTO table_numeric_idx VALUES (3,1), (7,3), (17,5);
+INSERT INTO table_numeric_idx VALUES (33,99), (77,99), (177,99);
 
-# With read_your_own_writes=on, we should fail
 query error
 SELECT * FROM test_index_numeric WHERE a = 1 OR b = 3 OR a = 17 ORDER BY a;
+----
+db error: ERROR: querying an index within a transaction is not supported when sdb_read_your_own_writes is enabled
 
+
+# PG: the error aborts the txn; COMMIT here is silently treated as ROLLBACK.
 statement ok
 COMMIT;
 

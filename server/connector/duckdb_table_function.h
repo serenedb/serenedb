@@ -50,6 +50,7 @@ struct SereneDBScanBindData;
 enum class ScanSourceKind : uint8_t {
   FullTable,
   Search,
+  Count,
   SecondaryIndex,
   Ann,
   RangeSearch,
@@ -81,11 +82,11 @@ struct ScanSource {
   // silently dropped such state on copy, and we preserve that behaviour.
   virtual std::unique_ptr<ScanSource> Clone() const = 0;
 
-  // Covers SearchScan / ANNScan / RangeSearchScan -- the three that need
-  // stricter transaction isolation in duckdb_scan_base.
+  // Covers SearchScan / CountScan / ANNScan / RangeSearchScan -- the four
+  // that need stricter transaction isolation in duckdb_scan_base.
   bool IsSearchLike() const {
-    return kind_ == ScanSourceKind::Search || kind_ == ScanSourceKind::Ann ||
-           kind_ == ScanSourceKind::RangeSearch;
+    return kind_ == ScanSourceKind::Search || kind_ == ScanSourceKind::Count ||
+           kind_ == ScanSourceKind::Ann || kind_ == ScanSourceKind::RangeSearch;
   }
 
   template<class T>
@@ -188,6 +189,33 @@ struct SearchScan : ScanSource {
 
   // Convenience for to_string / runtime checks.
   bool emit_offsets() const { return !offsets.empty(); }
+
+  std::string_view KindName() const override;
+  void AppendSummary(
+    const SereneDBScanBindData& bind,
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
+  std::unique_ptr<ScanSource> Clone() const override;
+};
+
+// Iresearch row-count scan: emits zero-column rows whose cardinality equals
+// the number of docs matching `query` (or the reader's live_docs_count when
+// `query` is null). Swapped in by the iresearch_plan rule in pass 2 when a
+// LogicalGet has no projected columns and the underlying SearchScan /
+// FullTableScan carries no scorer or offsets. Mirrors the Velox
+// SearchCountDataSource design: the aggregate above (count_star()) just sums
+// chunk cardinalities, so we never materialise PKs or column values.
+struct CountScan : ScanSource {
+  CountScan() : ScanSource(ScanSourceKind::Count) {}
+
+  // Null => match-all short-circuit via IndexReader::live_docs_count().
+  irs::Filter::Query::ptr query;
+  // Kept alive like SearchScan.stored_filter so filter_summary references
+  // remain valid and for debuggability.
+  std::shared_ptr<irs::Filter> stored_filter;
+  search::InvertedIndexSnapshotPtr snapshot;
+  const irs::IndexReader* reader = nullptr;
+  // Demangled boolean-filter tree for EXPLAIN. Empty when query is null.
+  std::string filter_summary;
 
   std::string_view KindName() const override;
   void AppendSummary(
@@ -377,6 +405,11 @@ duckdb::TableFunction CreateFullIresearchScanFunction();
 // the inverted index. bind_data.scan_source becomes SearchScan with the
 // prepared iresearch query.
 duckdb::TableFunction CreateIresearchSearchScanFunction();
+
+// Iresearch row-count: emits zero-column rows of cardinality == match count.
+// Swapped in by iresearch_plan on LogicalGet with no projected columns
+// (COUNT(*) / COUNT(1) / EXISTS(SELECT 1 ...) / ...).
+duckdb::TableFunction CreateIresearchCountScanFunction();
 
 // HNSW approximate-nearest-neighbour top-k. Swapped in by iresearch_plan
 // on the pattern ORDER BY distance_fn(col, const_vec) ASC LIMIT k.

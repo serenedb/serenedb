@@ -38,6 +38,7 @@
 #include "connector/duckdb_pk_range_scan.hpp"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_search_ann_scan.hpp"
+#include "connector/duckdb_search_count_scan.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
 #include "connector/duckdb_search_range_scan.hpp"
 #include "connector/duckdb_sk_full_scan.hpp"
@@ -183,6 +184,13 @@ std::unique_ptr<ScanSource> SearchScan::Clone() const {
   // SearchScan owns a prepared iresearch query + filter tree that we can't
   // duplicate; preserve the pre-refactor behaviour of falling back to the
   // default FullTableScan on copy.
+  return std::make_unique<FullTableScan>();
+}
+
+std::string_view CountScan::KindName() const { return "iresearch_count"; }
+std::unique_ptr<ScanSource> CountScan::Clone() const {
+  // Same fallback as SearchScan: the prepared iresearch query + filter
+  // tree aren't duplicable; Copy() paths land on FullTableScan.
   return std::make_unique<FullTableScan>();
 }
 
@@ -359,6 +367,13 @@ void RangeSearchScan::AppendSummary(
   out.insert("Dims", std::to_string(query_vector.size()));
 }
 
+void CountScan::AppendSummary(
+  const SereneDBScanBindData& /*bind*/,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) const {
+  out.insert("Filter", filter_summary.empty() ? "all-rows" : filter_summary);
+  out.insert("Output", "row-count only");
+}
+
 void SearchScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
@@ -490,6 +505,14 @@ duckdb::TableFunction CreateIresearchSearchScanFunction() {
   duckdb::TableFunction func("iresearch_lookup", {}, SearchFullScanFunction,
                              SereneDBScanBind);
   func.init_global = SearchFullScanInitGlobal;
+  SetCommonCallbacks(func);
+  return func;
+}
+
+duckdb::TableFunction CreateIresearchCountScanFunction() {
+  duckdb::TableFunction func("iresearch_count", {}, SearchCountScanFunction,
+                             SereneDBScanBind);
+  func.init_global = SearchCountScanInitGlobal;
   SetCommonCallbacks(func);
   return func;
 }

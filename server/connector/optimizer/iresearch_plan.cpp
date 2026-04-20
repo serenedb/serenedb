@@ -22,15 +22,19 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <duckdb/function/aggregate/distributive_functions.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression/bound_window_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/operator/logical_aggregate.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_join.hpp>
@@ -891,6 +895,34 @@ void RewriteScoreCallInChildren(duckdb::unique_ptr<duckdb::Expression>& expr,
       }
       break;
     }
+    case EC::BOUND_WINDOW: {
+      auto& w = expr->Cast<duckdb::BoundWindowExpression>();
+      auto rewrite_one = [&](duckdb::unique_ptr<duckdb::Expression>& c) {
+        if (!c) {
+          return;
+        }
+        auto r = RewriteScoreCallInExpr(c, root, changed, set_scorer);
+        if (r) {
+          c = std::move(r);
+        }
+      };
+      for (auto& c : w.children) {
+        rewrite_one(c);
+      }
+      for (auto& c : w.partitions) {
+        rewrite_one(c);
+      }
+      for (auto& o : w.orders) {
+        rewrite_one(o.expression);
+      }
+      for (auto& o : w.arg_orders) {
+        rewrite_one(o.expression);
+      }
+      rewrite_one(w.filter_expr);
+      rewrite_one(w.start_expr);
+      rewrite_one(w.end_expr);
+      break;
+    }
     default:
       break;
   }
@@ -1398,6 +1430,12 @@ bool TryRewriteScorerExpressions(
     for (auto& order : order_op.orders) {
       rewrite_expr(order.expression);
     }
+  } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_WINDOW) {
+    // BoundWindowExpression instances live directly in plan->expressions;
+    // the recursive rewriter descends into partitions/orders/bounds.
+    for (auto& e : plan->expressions) {
+      rewrite_expr(e);
+    }
   }
 
   return changed;
@@ -1447,6 +1485,115 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   // Do NOT drop the TopN/Limit node -- DuckDB still applies its own
   // ordering/limit on top of the precomputed top-K results, which acts
   // as a safety trim and allows EXPLAIN to show the correct plan shape.
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Row-count pushdown (case 5): ungrouped COUNT(*) / COUNT(1) / COUNT(const)
+// directly over an iresearch scan -> rewrite the scan to CountScan that
+// emits zero-column rows with cardinality == match count. The aggregate
+// above then sums chunk cardinalities.
+//
+// We trigger at the AGGREGATE node (not the GET) because projection-pushdown
+// runs before our extension and may leave filter-only columns (e.g. `b` in
+// WHERE PHRASE(b,...)) in get.column_ids even after we claimed the filter.
+// Detecting at aggregate level lets us verify the output shape is truly
+// "no columns needed" and then strip column_ids ourselves.
+// ---------------------------------------------------------------------------
+
+bool IsCountStarLikeAggregate(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_AGGREGATE) {
+    return false;
+  }
+  auto& agg = expr.Cast<duckdb::BoundAggregateExpression>();
+  if (agg.IsDistinct() || agg.filter || agg.order_bys) {
+    return false;
+  }
+  return agg.function.name == duckdb::CountFun::Name ||
+         agg.function.name == duckdb::CountStarFun::Name;
+}
+
+bool TryConvertAggregateToCount(
+  duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+  if (plan->type !=
+      duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+    return false;
+  }
+  auto& agg = plan->Cast<duckdb::LogicalAggregate>();
+  if (!agg.groups.empty() || !agg.grouping_sets.empty() ||
+      !agg.grouping_functions.empty()) {
+    return false;
+  }
+  if (agg.expressions.empty()) {
+    return false;
+  }
+  for (auto& e : agg.expressions) {
+    if (!IsCountStarLikeAggregate(*e)) {
+      return false;
+    }
+  }
+  if (agg.children.size() != 1 ||
+      agg.children[0]->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+    return false;
+  }
+  auto& get = agg.children[0]->Cast<duckdb::LogicalGet>();
+  if (!get.bind_data ||
+      !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+    return false;
+  }
+  auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
+  if (!bind_data.table) {
+    return false;
+  }
+
+  auto count_scan = std::make_unique<connector::CountScan>();
+
+  switch (bind_data.scan_source->Kind()) {
+    case connector::ScanSourceKind::Search: {
+      auto& search = bind_data.scan_source->Cast<connector::SearchScan>();
+      if (search.scorer.kind != connector::SearchScan::ScorerKind::None) {
+        return false;
+      }
+      if (search.emit_offsets()) {
+        return false;
+      }
+      count_scan->query = std::move(search.query);
+      count_scan->stored_filter = std::move(search.stored_filter);
+      count_scan->snapshot = std::move(search.snapshot);
+      count_scan->reader = search.reader;
+      count_scan->filter_summary = std::move(search.filter_summary);
+      break;
+    }
+    case connector::ScanSourceKind::FullTable: {
+      // No filter claimed. Only fire on an explicit FROM <idx_name> -- plain
+      // SELECT COUNT(*) FROM <table> should keep going through rocksdb so we
+      // don't silently expose the inverted-index lag.
+      if (!bind_data.table_entry ||
+          !dynamic_cast<const connector::SereneDBIndexScanEntry*>(
+            &*bind_data.table_entry)) {
+        return false;
+      }
+      auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+      auto resolved = ResolveIresearch(bind_data, *snapshot);
+      if (!resolved) {
+        return false;
+      }
+      count_scan->snapshot = resolved->shard->GetInvertedIndexSnapshot();
+      count_scan->reader = &*count_scan->snapshot->reader;
+      break;
+    }
+    default:
+      return false;
+  }
+
+  bind_data.scan_source = std::move(count_scan);
+  get.function = connector::CreateIresearchCountScanFunction();
+  // Drop every column from the scan -- CountScan emits zero columns. The
+  // aggregate's count_star/count(const) children don't reference any Get
+  // binding, so clearing these is safe.
+  get.ClearColumnIds();
+  get.projection_ids.clear();
+  get.types.clear();
   return true;
 }
 
@@ -1517,6 +1664,18 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
       return TryAttachScoreOffsets(*root, plan);
     }
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_WINDOW) {
+      // Claim BM25/TFIDF inside the window's partitions / ORDER BY as scorer.
+      bool changed = false;
+      for (auto& e : plan->expressions) {
+        auto r = RewriteScoreCallInExpr(e, *root, changed,
+                                        /*set_scorer=*/true);
+        if (r) {
+          e = std::move(r);
+        }
+      }
+      return changed;
+    }
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_LIMIT) {
       return TryAttachScoreTopK(plan);
     }
@@ -1538,8 +1697,15 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_ORDER_BY) {
       return TryRewriteScorerExpressions(*root, plan);
     }
+    if (plan->type == duckdb::LogicalOperatorType::LOGICAL_WINDOW) {
+      return TryRewriteScorerExpressions(*root, plan);
+    }
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_LIMIT) {
       return TryAttachScoreTopK(plan);
+    }
+    if (plan->type ==
+        duckdb::LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+      return TryConvertAggregateToCount(plan);
     }
     return false;
   }

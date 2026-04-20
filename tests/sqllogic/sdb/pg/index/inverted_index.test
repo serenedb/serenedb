@@ -126,12 +126,12 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│      IRESEARCH_COUNT      │
 │    ────────────────────   │
 │     Table: vedernikoff    │
 │                           │
 │         Strategy:         │
-│      iresearch_lookup     │
+│      iresearch_count      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -139,7 +139,8 @@ QUERY PLAN
 │  PHRASE[b(string) = <Term │
 │      :game(0, 0); >]]     │
 │                           │
-│       Projections: b      │
+│          Output:          │
+│       row-count only      │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘

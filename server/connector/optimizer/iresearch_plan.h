@@ -39,6 +39,9 @@ namespace sdb::optimizer {
 //             -> RangeSearchScan
 //   case 4: ORDER BY distance_func(col, const_vec) ASC LIMIT k
 //             -> ANNScan
+//   case 5: row-count-only consumer (LogicalGet with zero projected
+//           columns -- COUNT(*) / COUNT(1) / EXISTS(SELECT 1 ...))
+//             -> CountScan (pass 2, after scorer/offsets attachment)
 //
 // Runs BEFORE rocksdb_plan so iresearch-only predicates (sdb_phrase,
 // sdb_term_eq, distance, ...) always win when present. Rocksdb-side

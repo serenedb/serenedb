@@ -36,8 +36,27 @@
 #include "basics/assert.h"
 #include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_table_function.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
+
+SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
+  auto* base = dynamic_cast<SereneDBTableEntry*>(&table);
+  if (!base) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+                    ERR_MSG("cannot open relation \"", table.name, "\""),
+                    ERR_DETAIL("This operation is not supported for indexes."));
+  }
+  return *base;
+}
 
 SereneDBTableEntry::SereneDBTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,

@@ -391,7 +391,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
   duckdb::CatalogTransaction transaction, duckdb::CreateIndexInfo& info,
   duckdb::TableCatalogEntry& table) {
-  auto& sdb_table_entry = table.Cast<SereneDBTableEntry>();
+  auto& sdb_table_entry = RequireBaseTable(table);
   auto sdb_table = sdb_table_entry.GetSereneDBTable();
 
   auto& catalog_feature =

@@ -91,4 +91,10 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
   std::vector<size_t> _indexed_col_indices;
 };
 
+// Casts `table` to SereneDBTableEntry or throws an ERRCODE_WRONG_OBJECT_TYPE
+// error. Use for DML / CREATE INDEX paths that only support base tables so
+// that running them on an index entry produces a friendly error instead of a
+// reinterpret_cast assertion.
+SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table);
+
 }  // namespace sdb::connector

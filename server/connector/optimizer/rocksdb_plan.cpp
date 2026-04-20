@@ -273,7 +273,6 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     }
 
     auto candidates = BuildCandidates(bind_data);
-    SDB_PRINT("candidates.size()=", candidates.size());
     if (candidates.empty()) {
       return false;
     }

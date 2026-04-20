@@ -429,7 +429,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   if (!op.info) {
     throw duckdb::InternalException("CreateIndexInfo is null in create_plan");
   }
-  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
   auto& sdb_catalog = table_entry.schema.catalog.Cast<SereneDBCatalog>();
   auto database_id = sdb_catalog.GetDatabaseId();

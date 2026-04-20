@@ -462,7 +462,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalInsert& op,
   duckdb::optional_ptr<duckdb::PhysicalOperator> plan) {
-  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
   // Two-pass projection: see ResolveDefaultsWithGenerated comment for why
@@ -555,7 +555,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
-  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
   // Child output layout (from GetRowIdColumns):
@@ -615,7 +615,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
 duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
   duckdb::LogicalUpdate& op, duckdb::PhysicalOperator& plan) {
-  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
   // Wrap `plan` with a PhysicalProjection that resolves VALUE_DEFAULT and
@@ -740,7 +740,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
   duckdb::LogicalMergeInto& op, duckdb::PhysicalOperator& plan) {
   // DuckDB routes INSERT ON CONFLICT through MergeInto.
   // Create a PhysicalMergeInto that wraps our SereneDB operators.
-  auto& table_entry = op.table.Cast<SereneDBTableEntry>();
+  auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
   auto cardinality = op.EstimateCardinality(context);
 
@@ -833,7 +833,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   }
 
   // Fill in column IDs and scan types from table columns + parsed expressions
-  auto& sdb_entry = table.Cast<SereneDBTableEntry>();
+  auto& sdb_entry = RequireBaseTable(table);
   auto sdb_table = sdb_entry.GetSereneDBTable();
   const auto& columns = sdb_table->Columns();
 

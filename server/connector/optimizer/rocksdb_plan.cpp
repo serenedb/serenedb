@@ -273,6 +273,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     }
 
     auto candidates = BuildCandidates(bind_data);
+    SDB_PRINT("candidates.size()=", candidates.size());
     if (candidates.empty()) {
       return false;
     }
@@ -307,7 +308,8 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     Evaluated best;
     for (auto& cand : candidates) {
       auto result = connector::ExtractAndRewriteFilterExpr(
-        *combined, cand.column_ids, resolver);
+        *combined, cand.column_ids, resolver,
+        /*is_primary_key=*/cand.kind == Candidate::Kind::Pk);
       if (result.kind == connector::ConstraintKind::None) {
         continue;
       }

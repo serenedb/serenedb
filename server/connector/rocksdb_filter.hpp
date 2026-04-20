@@ -45,15 +45,16 @@ enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 // A possibly-bounded interval on a single column value.
 struct ColumnRange {
   enum Flags : uint8_t {
-    kZero = 0x0,
-    kLeftBounded = 0x1,
-    kLeftInclusive = 0x2,
-    kRightBounded = 0x4,
-    kRightInclusive = 0x8,
-    // The range is empty (no value satisfies it, e.g. pk > 5 AND
-    // pk < 3). We need to keep it to distiguish between filter absence and
-    // contradictory filters, like a>5 AND pk < 3.
+    kZero = 0x00,
+    kLeftBounded = 0x01,
+    kLeftInclusive = 0x02,
+    kRightBounded = 0x04,
+    kRightInclusive = 0x08,
+    // The range is empty (no value satisfies it, e.g. pk > 5 AND pk < 3),
+    // matching absolutely no rows -- not even NULL.
+    // Invariant: kEmptyRange and kMaybeNull are never both set.
     kEmptyRange = 0x10,
+    kMaybeNull = 0x20,
   };
 
   [[nodiscard]] bool HasLeft() const noexcept { return _flags & kLeftBounded; }
@@ -66,7 +67,16 @@ struct ColumnRange {
   [[nodiscard]] bool IsRightInclusive() const noexcept {
     return _flags & kRightInclusive;
   }
+  // kEmptyRange matches nothing, not even NULL.
   [[nodiscard]] bool IsEmpty() const noexcept { return _flags & kEmptyRange; }
+
+  [[nodiscard]] bool MaybeNull() const noexcept { return _flags & kMaybeNull; }
+
+  // True iff this is exactly the null sentinel bucket with no value interval
+  // (i.e. kMaybeNull is set and no bound flags are present).
+  [[nodiscard]] bool IsNullOnly() const noexcept {
+    return MaybeNull() && !HasLeft() && !HasRight();
+  }
 
   [[nodiscard]] const duckdb::Value& LeftValue() const noexcept {
     return _left_value;
@@ -98,6 +108,16 @@ struct ColumnRange {
     return Make(kEmptyRange, duckdb::Value{}, duckdb::Value{});
   }
 
+  // Matches only the NULL sentinel bucket (0x01 prefix): col IS NULL.
+  // kMaybeNull set, no bound flags -- no value interval.
+  [[nodiscard]] static ColumnRange NullOnly() {
+    return Make(kMaybeNull, duckdb::Value{}, duckdb::Value{});
+  }
+
+  // Unbounded non-null range: any non-NULL value. Same encoding as a default
+  // ColumnRange{} -- named explicitly for clarity in SK contexts.
+  [[nodiscard]] static ColumnRange AnyNotNull() { return ColumnRange{}; }
+
   // Full two-sided interval
   [[nodiscard]] static ColumnRange Bounded(duckdb::Value left_value,
                                            bool left_inclusive,
@@ -108,9 +128,11 @@ struct ColumnRange {
                 std::move(left_value), std::move(right_value));
   }
 
-  // Returns true when the range represents a single exact value [v, v].
-  [[nodiscard]] bool IsPoint() const noexcept {
-    return HasLeft() && HasRight() && IsLeftInclusive() && IsRightInclusive() &&
+  // Returns true when the range is a closed non-null singleton [v, v].
+  // Returns false for NullOnly() and Empty().
+  [[nodiscard]] bool IsNonNullPoint() const noexcept {
+    return !(_flags & (kEmptyRange | kMaybeNull)) && HasLeft() && HasRight() &&
+           IsLeftInclusive() && IsRightInclusive() &&
            _left_value == _right_value;
   }
 
@@ -163,7 +185,9 @@ class KeyBounds {
     return kc;
   }
 
-  [[nodiscard]] bool IsResolvedPoint() const;
+  // Returns true only when every key column has a non-null singleton range.
+  // A NullOnly constraint causes this to return false.
+  [[nodiscard]] bool IsResolvedNonNullPoint() const;
 
   [[nodiscard]] bool IsUnconstrained() const noexcept {
     return !_is_empty && _column_ranges.empty();
@@ -204,6 +228,14 @@ class KeyBounds {
 
   void AddEqFilter(catalog::Column::Id col_id, duckdb::Value value,
                    const duckdb::Expression* source_expr);
+
+  // SK IS NULL: pins col_id to the null sentinel bucket.
+  void AddNullFilter(catalog::Column::Id col_id,
+                     const duckdb::Expression* source_expr);
+
+  // SK IS NOT NULL: restricts col_id to non-null values only.
+  void AddNotNullFilter(catalog::Column::Id col_id,
+                        const duckdb::Expression* source_expr);
 
   void AddComparisonFilter(catalog::Column::Id col_id, duckdb::Value value,
                            ComparisonOp op,
@@ -339,7 +371,7 @@ struct ExtractAndRewriteResult {
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
-  const ColumnResolver& resolver);
+  const ColumnResolver& resolver, bool is_primary_key = true);
 
 // Sorts and deduplicates points in-place by key order. Column order matches
 // the pk_ids used during ToResolvedPoints.

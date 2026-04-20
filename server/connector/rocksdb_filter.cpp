@@ -49,9 +49,23 @@ std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds>);
 void MergeSourceExprs(KeyBounds::SourceExprsMap& dst,
                       const KeyBounds::SourceExprsMap& src);
 
+// Context threaded through all filter-extraction helpers.
+// is_primary_key distinguishes PK columns (always NOT NULL by storage contract)
+// from SK columns (may store NULLs), allowing ExtractFilterIsNull to choose
+// the correct KeyBounds model.
+struct FilterExtractCtx {
+  std::span<const catalog::Column::Id> key_ids;
+  const ColumnResolver& resolver;
+  bool negated = false;
+  bool is_primary_key = true;
+};
+
+std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
+                                             const FilterExtractCtx& ctx);
+
 std::vector<KeyBounds> AnyKeyConstraint(
-  std::span<const catalog::Column::Id> pk_ids) {
-  return {KeyBounds::MakeAny(pk_ids)};
+  std::span<const catalog::Column::Id> key_ids) {
+  return {KeyBounds::MakeAny(key_ids)};
 }
 
 ComparisonOp NegateOp(ComparisonOp op) {
@@ -91,20 +105,20 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
 }
 
 // Returns true if col_id is one of the PK columns.
-bool IsPKColumn(catalog::Column::Id col_id,
-                std::span<const catalog::Column::Id> pk_ids) {
-  return absl::c_linear_search(pk_ids, col_id);
+bool IsKeyColumn(catalog::Column::Id col_id,
+                 std::span<const catalog::Column::Id> key_ids) {
+  return absl::c_linear_search(key_ids, col_id);
 }
 
 // Helper: produces two key bounds for a != v -> a < v OR a > v.
 std::vector<KeyBounds> MakeNeqConstraints(
   catalog::Column::Id col_id, duckdb::Value val,
   const duckdb::Expression* source,
-  std::span<const catalog::Column::Id> pk_ids) {
-  auto less_constraint = KeyBounds::MakeAny(pk_ids);
+  std::span<const catalog::Column::Id> key_ids) {
+  auto less_constraint = KeyBounds::MakeAny(key_ids);
   less_constraint.AddComparisonFilter(col_id, val, ComparisonOp::Lt, source);
 
-  auto greater_constraint = KeyBounds::MakeAny(pk_ids);
+  auto greater_constraint = KeyBounds::MakeAny(key_ids);
   greater_constraint.AddComparisonFilter(col_id, std::move(val),
                                          ComparisonOp::Gt, source);
   return {std::move(less_constraint), std::move(greater_constraint)};
@@ -113,76 +127,71 @@ std::vector<KeyBounds> MakeNeqConstraints(
 // ── Comparison expression dispatch ──────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterEq(
-  const duckdb::BoundComparisonExpression& cmp,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
+  const duckdb::BoundComparisonExpression& cmp, const FilterExtractCtx& ctx) {
   // Either side can be the column.
-  catalog::Column::Id col_id = TryResolveColumn(*cmp.left, resolver);
+  catalog::Column::Id col_id = TryResolveColumn(*cmp.left, ctx.resolver);
   const duckdb::Value* const_val = TryGetConstant(*cmp.right);
   if (col_id == kInvalidId || !const_val) {
-    col_id = TryResolveColumn(*cmp.right, resolver);
+    col_id = TryResolveColumn(*cmp.right, ctx.resolver);
     const_val = TryGetConstant(*cmp.left);
   }
   if (col_id == kInvalidId || !const_val) {
-    return AnyKeyConstraint(pk_ids);
+    return AnyKeyConstraint(ctx.key_ids);
   }
-  if (!IsPKColumn(col_id, pk_ids)) {
-    return AnyKeyConstraint(pk_ids);
+  if (!IsKeyColumn(col_id, ctx.key_ids)) {
+    return AnyKeyConstraint(ctx.key_ids);
   }
-  if (negated) {
+  if (ctx.negated) {
     // NOT(a = v) -> a < v OR a > v
-    return MakeNeqConstraints(col_id, *const_val, &cmp, pk_ids);
+    return MakeNeqConstraints(col_id, *const_val, &cmp, ctx.key_ids);
   }
-  auto p = KeyBounds::MakeAny(pk_ids);
+  auto p = KeyBounds::MakeAny(ctx.key_ids);
   p.AddEqFilter(col_id, *const_val, &cmp);
   return {p};
 }
 
 std::vector<KeyBounds> ExtractFilterNeq(
-  const duckdb::BoundComparisonExpression& cmp,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
-  catalog::Column::Id col_id = TryResolveColumn(*cmp.left, resolver);
+  const duckdb::BoundComparisonExpression& cmp, const FilterExtractCtx& ctx) {
+  catalog::Column::Id col_id = TryResolveColumn(*cmp.left, ctx.resolver);
   const duckdb::Value* const_val = TryGetConstant(*cmp.right);
   if (col_id == kInvalidId || !const_val) {
-    col_id = TryResolveColumn(*cmp.right, resolver);
+    col_id = TryResolveColumn(*cmp.right, ctx.resolver);
     const_val = TryGetConstant(*cmp.left);
   }
   if (col_id == kInvalidId || !const_val) {
-    return AnyKeyConstraint(pk_ids);
+    return AnyKeyConstraint(ctx.key_ids);
   }
-  if (!IsPKColumn(col_id, pk_ids)) {
-    return AnyKeyConstraint(pk_ids);
+  if (!IsKeyColumn(col_id, ctx.key_ids)) {
+    return AnyKeyConstraint(ctx.key_ids);
   }
-  if (negated) {
+  if (ctx.negated) {
     // NOT(a != v) -> a = v
-    auto kc = KeyBounds::MakeAny(pk_ids);
+    auto kc = KeyBounds::MakeAny(ctx.key_ids);
     kc.AddEqFilter(col_id, *const_val, &cmp);
     return {std::move(kc)};
   }
-  return MakeNeqConstraints(col_id, *const_val, &cmp, pk_ids);
+  return MakeNeqConstraints(col_id, *const_val, &cmp, ctx.key_ids);
 }
 
 std::vector<KeyBounds> ExtractFilterComparison(
-  const duckdb::BoundComparisonExpression& cmp,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
-  const bool field_left = TryResolveColumn(*cmp.left, resolver) != kInvalidId &&
-                          TryGetConstant(*cmp.right) != nullptr;
+  const duckdb::BoundComparisonExpression& cmp, const FilterExtractCtx& ctx) {
+  const bool field_left =
+    TryResolveColumn(*cmp.left, ctx.resolver) != kInvalidId &&
+    TryGetConstant(*cmp.right) != nullptr;
   const bool field_right =
-    TryResolveColumn(*cmp.right, resolver) != kInvalidId &&
+    TryResolveColumn(*cmp.right, ctx.resolver) != kInvalidId &&
     TryGetConstant(*cmp.left) != nullptr;
   if (!field_left && !field_right) {
-    return AnyKeyConstraint(pk_ids);
+    return AnyKeyConstraint(ctx.key_ids);
   }
 
   const auto& field_expr = field_left ? *cmp.left : *cmp.right;
   const auto& const_expr = field_left ? *cmp.right : *cmp.left;
-  auto col_id = TryResolveColumn(field_expr, resolver);
+  auto col_id = TryResolveColumn(field_expr, ctx.resolver);
   const auto* const_val = TryGetConstant(const_expr);
 
-  if (!IsPKColumn(col_id, pk_ids)) {
-    return AnyKeyConstraint(pk_ids);
+  if (!IsKeyColumn(col_id, ctx.key_ids)) {
+    return AnyKeyConstraint(ctx.key_ids);
   }
 
   // Base op (field on left), then flip direction for field_right (Gt<->Lt,
@@ -225,11 +234,11 @@ std::vector<KeyBounds> ExtractFilterComparison(
   if (!field_left) {
     op = flip_direction(op);
   }
-  if (negated) {
+  if (ctx.negated) {
     op = NegateOp(op);
   }
 
-  auto constraint = KeyBounds::MakeAny(pk_ids);
+  auto constraint = KeyBounds::MakeAny(ctx.key_ids);
   constraint.AddComparisonFilter(col_id, *const_val, op, &cmp);
   return {std::move(constraint)};
 }
@@ -237,56 +246,67 @@ std::vector<KeyBounds> ExtractFilterComparison(
 // ── IS NULL ─────────────────────────────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterIsNull(
-  const duckdb::BoundOperatorExpression& op_expr,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver) {
+  const duckdb::BoundOperatorExpression& op_expr, const FilterExtractCtx& ctx) {
   SDB_ASSERT(op_expr.children.size() == 1);
-  auto col_id = TryResolveColumn(*op_expr.children[0], resolver);
-  if (col_id == kInvalidId || !IsPKColumn(col_id, pk_ids)) {
-    return AnyKeyConstraint(pk_ids);
+  auto col_id = TryResolveColumn(*op_expr.children[0], ctx.resolver);
+  if (col_id == kInvalidId || !IsKeyColumn(col_id, ctx.key_ids)) {
+    return AnyKeyConstraint(ctx.key_ids);
   }
-  // PK / SK columns are NOT NULL by storage contract -- `col IS NULL`
-  // matches zero rows. Model as a contradictory KeyBounds so downstream
-  // collapses to an empty-scan result (ExtractAndRewriteFilterExpr's
-  // "all constraints empty" branch). Never feeds a NULL value into a
-  // ColumnRange, so the sweep-merge comparisons stay safe.
-  (void)col_id;
-  return {KeyBounds::MakeContradictory(pk_ids)};
+
+  if (ctx.is_primary_key) {
+    if (ctx.negated) {
+      // PK IS NOT NULL -> always true (PK is NOT NULL by storage contract).
+      return AnyKeyConstraint(ctx.key_ids);
+    }
+    // PK IS NULL -> always false.
+    return {KeyBounds::MakeContradictory(ctx.key_ids)};
+  }
+
+  // SK column: may store NULLs via the 0x01 sentinel prefix.
+  // ctx.negated reflects the effective polarity (OPERATOR_IS_NOT_NULL already
+  // flips it before calling here).
+  auto kc = KeyBounds::MakeAny(ctx.key_ids);
+
+  if (!ctx.negated) {
+    kc.AddNullFilter(col_id, &op_expr);
+  } else {
+    kc.AddNotNullFilter(col_id, &op_expr);
+  }
+  return {kc};
 }
 
 // ── IN / NOT IN ─────────────────────────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterIn(
-  const duckdb::BoundOperatorExpression& op_expr,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
+  const duckdb::BoundOperatorExpression& op_expr, const FilterExtractCtx& ctx) {
   if (op_expr.children.empty()) {
-    return AnyKeyConstraint(pk_ids);
+    return AnyKeyConstraint(ctx.key_ids);
   }
-  auto col_id = TryResolveColumn(*op_expr.children[0], resolver);
-  if (col_id == kInvalidId || !IsPKColumn(col_id, pk_ids)) {
-    return AnyKeyConstraint(pk_ids);
+  auto col_id = TryResolveColumn(*op_expr.children[0], ctx.resolver);
+  if (col_id == kInvalidId || !IsKeyColumn(col_id, ctx.key_ids)) {
+    return AnyKeyConstraint(ctx.key_ids);
   }
 
   // children[1..] are the constant values in the IN list.
   const auto size = op_expr.children.size() - 1;
   if (size == 0) {
-    return AnyKeyConstraint(pk_ids);
+    return AnyKeyConstraint(ctx.key_ids);
   }
 
   // Verify all children[1..] are constants.
   for (size_t i = 1; i < op_expr.children.size(); ++i) {
     if (!TryGetConstant(*op_expr.children[i])) {
-      return AnyKeyConstraint(pk_ids);
+      return AnyKeyConstraint(ctx.key_ids);
     }
   }
 
-  if (!negated) {
+  if (!ctx.negated) {
     // a IN (x1, ..., xn) -> n equality constraints
     std::vector<KeyBounds> points;
     points.reserve(size);
     for (size_t i = 1; i < op_expr.children.size(); ++i) {
       const auto* val = TryGetConstant(*op_expr.children[i]);
-      auto p = KeyBounds::MakeAny(pk_ids);
+      auto p = KeyBounds::MakeAny(ctx.key_ids);
       // If any point is used for range scan or point lookup, it means
       // this filter fully utilized in table scan, so it's OK
       // to replace with true.
@@ -309,7 +329,7 @@ std::vector<KeyBounds> ExtractFilterIn(
     return *TryGetConstant(*op_expr.children[order[i] + 1]);
   };
   auto make_constraint = [&](ComparisonOp comp_op, const duckdb::Value& val) {
-    auto constraint = KeyBounds::MakeAny(pk_ids);
+    auto constraint = KeyBounds::MakeAny(ctx.key_ids);
     constraint.AddComparisonFilter(col_id, val, comp_op, &op_expr);
     return constraint;
   };
@@ -331,35 +351,33 @@ std::vector<KeyBounds> ExtractFilterIn(
 // ── BETWEEN ─────────────────────────────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterBetween(
-  const duckdb::BoundBetweenExpression& between,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
-  auto col_id = TryResolveColumn(*between.input, resolver);
-  if (col_id == kInvalidId || !IsPKColumn(col_id, pk_ids)) {
-    return AnyKeyConstraint(pk_ids);
+  const duckdb::BoundBetweenExpression& between, const FilterExtractCtx& ctx) {
+  auto col_id = TryResolveColumn(*between.input, ctx.resolver);
+  if (col_id == kInvalidId || !IsKeyColumn(col_id, ctx.key_ids)) {
+    return AnyKeyConstraint(ctx.key_ids);
   }
   const auto* lower_val = TryGetConstant(*between.lower);
   const auto* upper_val = TryGetConstant(*between.upper);
   if (!lower_val || !upper_val) {
-    return AnyKeyConstraint(pk_ids);
+    return AnyKeyConstraint(ctx.key_ids);
   }
 
-  if (!negated) {
+  if (!ctx.negated) {
     // a BETWEEN lower AND upper -> lower_op(a, lower) AND upper_op(a, upper)
     auto lower_op =
       between.lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
     auto upper_op =
       between.upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
 
-    auto lower_kc = KeyBounds::MakeAny(pk_ids);
+    auto lower_kc = KeyBounds::MakeAny(ctx.key_ids);
     lower_kc.AddComparisonFilter(col_id, *lower_val, lower_op, &between);
 
-    auto upper_kc = KeyBounds::MakeAny(pk_ids);
+    auto upper_kc = KeyBounds::MakeAny(ctx.key_ids);
     upper_kc.AddComparisonFilter(col_id, *upper_val, upper_op, &between);
 
     auto merged = KeyBounds::TryIntersect(lower_kc, upper_kc);
     if (!merged) {
-      return {KeyBounds::MakeContradictory(pk_ids)};
+      return {KeyBounds::MakeContradictory(ctx.key_ids)};
     }
     return {std::move(*merged)};
   }
@@ -368,10 +386,10 @@ std::vector<KeyBounds> ExtractFilterBetween(
   auto lower_op = between.lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
   auto upper_op = between.upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
 
-  auto lt_constraint = KeyBounds::MakeAny(pk_ids);
+  auto lt_constraint = KeyBounds::MakeAny(ctx.key_ids);
   lt_constraint.AddComparisonFilter(col_id, *lower_val, lower_op, &between);
 
-  auto gt_constraint = KeyBounds::MakeAny(pk_ids);
+  auto gt_constraint = KeyBounds::MakeAny(ctx.key_ids);
   gt_constraint.AddComparisonFilter(col_id, *upper_val, upper_op, &between);
 
   return {std::move(lt_constraint), std::move(gt_constraint)};
@@ -380,24 +398,20 @@ std::vector<KeyBounds> ExtractFilterBetween(
 // ── AND / OR ────────────────────────────────────────────────────────────────
 
 std::vector<KeyBounds> ExtractFilterAnd(
-  const duckdb::BoundConjunctionExpression& conj,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
+  const duckdb::BoundConjunctionExpression& conj, const FilterExtractCtx& ctx) {
   SDB_ASSERT(!conj.children.empty());
 
   // Cartesian product of all children's point sets, intersecting each tuple.
   // An unconstrained child (AnyPoint -- empty filters) acts as identity because
   // Intersect(P, {}) == P, so no special-casing is needed.
-  std::vector<KeyBounds> result =
-    ExtractFilterExpr(*conj.children[0], pk_ids, resolver, negated);
+  std::vector<KeyBounds> result = ExtractFilterExprImpl(*conj.children[0], ctx);
   for (size_t i = 1; i < conj.children.size(); ++i) {
     // Propagate contradictory: AND(contradictory, anything) = contradictory.
     if (absl::c_all_of(result,
                        [](const KeyBounds& c) { return c.IsEmpty(); })) {
       return result;
     }
-    const auto rhs_pts =
-      ExtractFilterExpr(*conj.children[i], pk_ids, resolver, negated);
+    const auto rhs_pts = ExtractFilterExprImpl(*conj.children[i], ctx);
     std::vector<KeyBounds> next;
     next.reserve(result.size() * rhs_pts.size());
     bool had_contradiction = false;
@@ -416,30 +430,28 @@ std::vector<KeyBounds> ExtractFilterAnd(
     if (result.empty()) {
       if (had_contradiction) {
         // All pairs were contradictions: this AND can never be satisfied.
-        return {KeyBounds::MakeContradictory(pk_ids)};
+        return {KeyBounds::MakeContradictory(ctx.key_ids)};
       }
       // All intersections produced unconstrained results: AND is unconstrained.
-      return AnyKeyConstraint(pk_ids);
+      return AnyKeyConstraint(ctx.key_ids);
     }
   }
   return result;
 }
 
 std::vector<KeyBounds> ExtractFilterOr(
-  const duckdb::BoundConjunctionExpression& conj,
-  std::span<const catalog::Column::Id> pk_ids, const ColumnResolver& resolver,
-  bool negated) {
+  const duckdb::BoundConjunctionExpression& conj, const FilterExtractCtx& ctx) {
   SDB_ASSERT(!conj.children.empty());
 
   std::vector<KeyBounds> result;
   for (const auto& child : conj.children) {
-    auto constraints = ExtractFilterExpr(*child, pk_ids, resolver, negated);
+    auto constraints = ExtractFilterExprImpl(*child, ctx);
 
     if (constraints.empty() ||
         absl::c_any_of(constraints, [](const KeyBounds& p) {
           return p.IsUnconstrained();
         })) {
-      return AnyKeyConstraint(pk_ids);
+      return AnyKeyConstraint(ctx.key_ids);
     }
 
     if (absl::c_all_of(constraints,
@@ -452,7 +464,7 @@ std::vector<KeyBounds> ExtractFilterOr(
   }
   // All branches were contradictory -> OR is itself contradictory.
   if (result.empty()) {
-    return {KeyBounds::MakeContradictory(pk_ids)};
+    return {KeyBounds::MakeContradictory(ctx.key_ids)};
   }
   return MergeKeyConstraints(std::move(result));
 }
@@ -584,20 +596,26 @@ using Atom = ColumnRange;
 
 // Lightweight constraint representation used during the recursive sweep.
 struct SweepRegion {
-  std::span<const catalog::Column::Id> pk_ids;
+  std::span<const catalog::Column::Id> key_ids;
   KeyBounds::ColumnRangeMap column_ranges;
   KeyBounds::SourceExprsMap source_exprs;
 };
 
 // Builds the atom sequence for a sorted, deduplicated list of event points.
-// Emits: (-inf, p0), {p0}, (p0,p1), {p1}, ..., {pN}, (pN, +inf).
-// If event_points is empty, emits one unconstrained open atom.
-std::vector<Atom> BuildAtoms(const std::vector<duckdb::Value>& pts) {
-  if (pts.empty()) {
-    return {ColumnRange{}};  // unconstrained (-inf, +inf)
-  }
+// When has_null_ranges is true, prepends a NullOnly() atom for the null bucket.
+// Value atoms: (-inf, p0), {p0}, (p0,p1), {p1}, ..., {pN}, (pN, +inf).
+// If pts is empty and has_null_ranges is false, emits one unconstrained atom.
+std::vector<Atom> BuildAtoms(const std::vector<duckdb::Value>& pts,
+                             bool has_null_ranges) {
   std::vector<Atom> atoms;
-  atoms.reserve(2 * pts.size() + 1);
+  if (has_null_ranges) {
+    atoms.push_back(ColumnRange::NullOnly());
+  }
+  if (pts.empty()) {
+    atoms.push_back(ColumnRange{});  // unconstrained (-inf, +inf)
+    return atoms;
+  }
+  atoms.reserve(atoms.size() + 2 * pts.size() + 1);
   atoms.push_back(ColumnRange::RightBound(pts[0], false));
   for (size_t i = 0; i + 1 < pts.size(); ++i) {
     atoms.push_back(ColumnRange::Point(pts[i]));
@@ -615,7 +633,14 @@ std::vector<Atom> BuildAtoms(const std::vector<duckdb::Value>& pts) {
 bool AtomContainedBy(const Atom& atom, const ColumnRange& column_range) {
 #ifdef SDB_DEV
   bool fully_contained;
-  if (atom.IsPoint()) {
+  if (column_range.IsEmpty()) {
+    fully_contained = false;
+  } else if (atom.IsNullOnly()) {
+    fully_contained = column_range.MaybeNull();
+  } else if (column_range.IsNullOnly()) {
+    // Non-null atom cannot be contained in a null-only range.
+    fully_contained = false;
+  } else if (atom.IsNonNullPoint()) {
     const duckdb::Value& p = atom.LeftValue();
     fully_contained =
       (!column_range.HasLeft() || column_range.LeftValue() < p ||
@@ -629,10 +654,10 @@ bool AtomContainedBy(const Atom& atom, const ColumnRange& column_range) {
     fully_contained =
       (!atom.HasLeft() ? !column_range.HasLeft()
                        : (!column_range.HasLeft() ||
-                          !(atom.LeftValue() < column_range.LeftValue()))) &&
+                          atom.LeftValue() >= column_range.LeftValue())) &&
       (!atom.HasRight() ? !column_range.HasRight()
                         : (!column_range.HasRight() ||
-                           !(column_range.RightValue() < atom.RightValue())));
+                           column_range.RightValue() >= atom.RightValue()));
   }
   const bool overlaps = atom.OverlapsWith(column_range);
   SDB_ASSERT(overlaps == fully_contained,
@@ -693,7 +718,7 @@ std::vector<duckdb::Value> CollectEventPoints(
 SweepRegion ProjectAwayDim(const SweepRegion& sweep_range,
                            catalog::Column::Id dimension_column) {
   SweepRegion out;
-  out.pk_ids = sweep_range.pk_ids;
+  out.key_ids = sweep_range.key_ids;
   out.source_exprs = sweep_range.source_exprs;
   for (const auto& [k, v] : sweep_range.column_ranges) {
     if (k != dimension_column) {
@@ -706,7 +731,7 @@ SweepRegion ProjectAwayDim(const SweepRegion& sweep_range,
 // Two SweepRegions are equal on all dimensions except dim_col.
 bool EqualExceptDim(const SweepRegion& a, const SweepRegion& b,
                     catalog::Column::Id dim_col) {
-  for (auto col_id : a.pk_ids) {
+  for (auto col_id : a.key_ids) {
     if (col_id == dim_col) {
       continue;
     }
@@ -743,7 +768,7 @@ std::vector<SweepRegion> FuseAdjacentAtoms(
   auto can_extend_run = [&](size_t i) {
     const Atom& prev = atom_results[i - 1].first;
     const Atom& curr = atom_results[i].first;
-    return prev.IsPoint() != curr.IsPoint() &&
+    return prev.IsNonNullPoint() != curr.IsNonNullPoint() &&
            prev.HasRight() == curr.HasLeft() &&
            (!prev.HasRight() || prev.RightValue() == curr.LeftValue()) &&
            EqualExceptDim(atom_results[i - 1].second, atom_results[i].second,
@@ -760,7 +785,7 @@ std::vector<SweepRegion> FuseAdjacentAtoms(
     SweepRegion out = atom_results[run_start].second;
     const ColumnRange fused = UniteAtomsRange(atom_results[run_start].first,
                                               atom_results[run_end - 1].first);
-    if (fused.HasLeft() || fused.HasRight()) {
+    if (fused.HasLeft() || fused.HasRight() || fused.MaybeNull()) {
       out.column_ranges[dim_col] = fused;
     } else {
       out.column_ranges.erase(dim_col);
@@ -776,21 +801,26 @@ std::vector<SweepRegion> FuseAdjacentAtoms(
 
 // Returns SweepRegions with ColumnRange entries for those dimensions.
 std::vector<SweepRegion> SweepDimensions(
-  std::vector<SweepRegion> ranges, std::span<const catalog::Column::Id> pk_ids,
+  std::vector<SweepRegion> ranges, std::span<const catalog::Column::Id> key_ids,
   size_t dim_idx) {
-  if (dim_idx == pk_ids.size()) {
+  if (dim_idx == key_ids.size()) {
     // Base case: all dimensions projected away. Merge source exprs.
     SweepRegion out;
-    out.pk_ids = pk_ids;
+    out.key_ids = key_ids;
     for (const auto& range : ranges) {
       MergeSourceExprs(out.source_exprs, range.source_exprs);
     }
     return {std::move(out)};
   }
 
-  const auto dim_col = pk_ids[dim_idx];
+  const auto dim_col = key_ids[dim_idx];
   const auto events = CollectEventPoints(ranges, dim_col);
-  const auto atoms = BuildAtoms(events);
+  const bool has_null_ranges =
+    absl::c_any_of(ranges, [&](const SweepRegion& sr) {
+      auto it = sr.column_ranges.find(dim_col);
+      return it != sr.column_ranges.end() && it->second.MaybeNull();
+    });
+  const auto atoms = BuildAtoms(events, has_null_ranges);
 
   std::vector<std::pair<Atom, SweepRegion>> atom_results;
   for (const auto& atom : atoms) {
@@ -806,7 +836,7 @@ std::vector<SweepRegion> SweepDimensions(
     if (active.empty()) {
       continue;
     }
-    auto sub = SweepDimensions(std::move(active), pk_ids, dim_idx + 1);
+    auto sub = SweepDimensions(std::move(active), key_ids, dim_idx + 1);
     for (auto& s : sub) {
       // (+inf, -inf) is encoded as an absence in a map
       if (atom.HasLeft() || atom.HasRight()) {
@@ -824,11 +854,11 @@ std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds> constraints) {
   if (constraints.empty()) {
     return {};
   }
-  const auto pk_ids = constraints[0].PKColumns();
+  const auto key_ids = constraints[0].PKColumns();
 
   for (const auto& c : constraints) {
     if (c.IsUnconstrained()) {
-      return {KeyBounds::MakeAny(pk_ids)};
+      return {KeyBounds::MakeAny(key_ids)};
     }
   }
   std::erase_if(constraints, [](const KeyBounds& c) { return c.IsEmpty(); });
@@ -842,8 +872,8 @@ std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds> constraints) {
   inputs.reserve(constraints.size());
   for (const auto& kc : constraints) {
     SweepRegion sr;
-    sr.pk_ids = pk_ids;
-    for (auto col_id : pk_ids) {
+    sr.key_ids = key_ids;
+    for (auto col_id : key_ids) {
       if (const auto* cr = kc.FindColumnRange(col_id)) {
         sr.column_ranges.emplace(col_id, *cr);
       }
@@ -852,13 +882,13 @@ std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds> constraints) {
     inputs.push_back(std::move(sr));
   }
 
-  auto swept = SweepDimensions(std::move(inputs), pk_ids, 0);
+  auto swept = SweepDimensions(std::move(inputs), key_ids, 0);
 
   std::vector<KeyBounds> result;
   result.reserve(swept.size());
   for (auto& sr : swept) {
     result.push_back(KeyBounds::BuildFromRanges(
-      pk_ids, std::move(sr.column_ranges), std::move(sr.source_exprs)));
+      key_ids, std::move(sr.column_ranges), std::move(sr.source_exprs)));
   }
   return result;
 }
@@ -870,6 +900,98 @@ void MergeSourceExprs(KeyBounds::SourceExprsMap& dst,
     auto& dst_set = dst[col];
     dst_set.insert(exprs.begin(), exprs.end());
   }
+}
+
+std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
+                                             const FilterExtractCtx& ctx) {
+  std::vector<KeyBounds> key_bounds;
+
+  switch (expr.expression_class) {
+    case duckdb::ExpressionClass::BOUND_COMPARISON: {
+      const auto& cmp = expr.Cast<duckdb::BoundComparisonExpression>();
+      switch (cmp.type) {
+        case duckdb::ExpressionType::COMPARE_EQUAL:
+          key_bounds = ExtractFilterEq(cmp, ctx);
+          break;
+        case duckdb::ExpressionType::COMPARE_NOTEQUAL:
+          key_bounds = ExtractFilterNeq(cmp, ctx);
+          break;
+        case duckdb::ExpressionType::COMPARE_GREATERTHAN:
+        case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+        case duckdb::ExpressionType::COMPARE_LESSTHAN:
+        case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
+          key_bounds = ExtractFilterComparison(cmp, ctx);
+          break;
+        default:
+          key_bounds = AnyKeyConstraint(ctx.key_ids);
+          break;
+      }
+      break;
+    }
+
+    case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
+      const auto& conj = expr.Cast<duckdb::BoundConjunctionExpression>();
+      if (conj.type == duckdb::ExpressionType::CONJUNCTION_AND) {
+        // De Morgan: NOT(A AND B) = NOT(A) OR NOT(B)
+        key_bounds = ctx.negated ? ExtractFilterOr(conj, ctx)
+                                 : ExtractFilterAnd(conj, ctx);
+      } else if (conj.type == duckdb::ExpressionType::CONJUNCTION_OR) {
+        // De Morgan: NOT(A OR B) = NOT(A) AND NOT(B)
+        key_bounds = ctx.negated ? ExtractFilterAnd(conj, ctx)
+                                 : ExtractFilterOr(conj, ctx);
+      } else {
+        key_bounds = AnyKeyConstraint(ctx.key_ids);
+      }
+      break;
+    }
+
+    case duckdb::ExpressionClass::BOUND_OPERATOR: {
+      const auto& op_expr = expr.Cast<duckdb::BoundOperatorExpression>();
+      switch (op_expr.type) {
+        case duckdb::ExpressionType::OPERATOR_NOT: {
+          SDB_ASSERT(op_expr.children.size() == 1);
+          auto negated_ctx = ctx;
+          negated_ctx.negated = !ctx.negated;
+          key_bounds = ExtractFilterExprImpl(*op_expr.children[0], negated_ctx);
+          break;
+        }
+        case duckdb::ExpressionType::OPERATOR_IS_NULL:
+          key_bounds = ExtractFilterIsNull(op_expr, ctx);
+          break;
+        case duckdb::ExpressionType::OPERATOR_IS_NOT_NULL: {
+          auto negated_ctx = ctx;
+          negated_ctx.negated = !ctx.negated;
+          key_bounds = ExtractFilterIsNull(op_expr, negated_ctx);
+          break;
+        }
+        case duckdb::ExpressionType::COMPARE_IN:
+          key_bounds = ExtractFilterIn(op_expr, ctx);
+          break;
+        case duckdb::ExpressionType::COMPARE_NOT_IN: {
+          auto negated_ctx = ctx;
+          negated_ctx.negated = !ctx.negated;
+          key_bounds = ExtractFilterIn(op_expr, negated_ctx);
+          break;
+        }
+        default:
+          key_bounds = AnyKeyConstraint(ctx.key_ids);
+          break;
+      }
+      break;
+    }
+
+    case duckdb::ExpressionClass::BOUND_BETWEEN: {
+      const auto& between = expr.Cast<duckdb::BoundBetweenExpression>();
+      key_bounds = ExtractFilterBetween(between, ctx);
+      break;
+    }
+
+    default:
+      key_bounds = AnyKeyConstraint(ctx.key_ids);
+      break;
+  }
+
+  return key_bounds;
 }
 
 }  // namespace
@@ -904,17 +1026,15 @@ bool ColumnRange::operator==(const ColumnRange& other) const {
 }
 
 std::string ColumnRange::toString() const {
-  // Distinguish a contradictory range (kEmptyRange) from a fully
-  // unconstrained range -- both have no Left / no Right bounds, but
-  // the former represents "no value matches" while the latter means
-  // "any value". Without this split EXPLAIN shows both as
-  // `(-inf, +inf)`, which is actively misleading for a contradictory
-  // IS NULL-on-PK claim.
   if (IsEmpty()) {
     return "empty";
   }
-  if (IsPoint()) {
-    return _left_value.ToString();
+  if (IsNullOnly()) {
+    return "null";
+  }
+  const std::string null_prefix = (_flags & kMaybeNull) ? "null | " : "";
+  if (IsNonNullPoint()) {
+    return null_prefix + _left_value.ToString();
   }
   std::string result;
   if (!HasLeft()) {
@@ -930,7 +1050,7 @@ std::string ColumnRange::toString() const {
     absl::StrAppend(&result, _right_value.ToString(),
                     IsRightInclusive() ? "]" : ")");
   }
-  return result;
+  return null_prefix + result;
 }
 
 std::string KeyBounds::toString() const {
@@ -960,7 +1080,7 @@ size_t KeyBounds::RangePrefixSize() const noexcept {
     if (!column_range) {
       return k;
     }
-    if (!column_range->IsPoint()) {
+    if (!column_range->IsNonNullPoint()) {
       // k specific points that defines prefix and
       // one on-column range that defines a rocksdb key range.
       return k + 1;
@@ -970,20 +1090,20 @@ size_t KeyBounds::RangePrefixSize() const noexcept {
   return _pk_ids.size();
 }
 
-bool KeyBounds::IsResolvedPoint() const {
+bool KeyBounds::IsResolvedNonNullPoint() const {
   return absl::c_all_of(_pk_ids, [&](catalog::Column::Id col_id) {
     auto it = _column_ranges.find(col_id);
     if (it == _column_ranges.end()) {
       return false;
     }
-    return it->second.IsPoint();
+    return it->second.IsNonNullPoint();
   });
 }
 
 KeyBounds KeyBounds::BuildFromRanges(
-  std::span<const catalog::Column::Id> pk_ids, ColumnRangeMap ranges,
+  std::span<const catalog::Column::Id> key_ids, ColumnRangeMap ranges,
   SourceExprsMap source_exprs) {
-  KeyBounds constraint{pk_ids};
+  KeyBounds constraint{key_ids};
   constraint._column_ranges = std::move(ranges);
   constraint._source_exprs = std::move(source_exprs);
   return constraint;
@@ -991,6 +1111,31 @@ KeyBounds KeyBounds::BuildFromRanges(
 
 std::optional<ColumnRange> ColumnRange::IntersectWith(
   const ColumnRange& other) const {
+  // kEmptyRange means "nothing at all, not even null". Either side being empty
+  // makes the intersection contradictory.
+  if ((_flags & kEmptyRange) || (other._flags & kEmptyRange)) {
+    return std::nullopt;
+  }
+
+  // Null bucket survives only when both sides include it.
+  const bool result_null = MaybeNull() && other.MaybeNull();
+
+  // A range has no value interval when kMaybeNull is set and no bound flags
+  // are present (IsNullOnly). An unconstrained range (no flags at all) still
+  // has a value interval: (-inf, +inf).
+  const bool this_has_values = HasLeft() || HasRight() || !MaybeNull();
+  const bool other_has_values =
+    other.HasLeft() || other.HasRight() || !other.MaybeNull();
+
+  if (!this_has_values || !other_has_values) {
+    // At least one side has no value interval -- no value intersection.
+    // The result is NullOnly if both carry the null bucket, else empty.
+    if (result_null) {
+      return NullOnly();
+    }
+    return std::nullopt;
+  }
+
   // Tightest left: greater (more restrictive) lower bound.
   // Unbounded (-inf) loses; on equal value, exclusive wins.
   auto pick_tighter_left = [](const ColumnRange& a,
@@ -1034,10 +1179,16 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
 
   if (ls.HasLeft() && rs.HasRight()) {
     if (rs._right_value < ls._left_value) {
+      if (result_null) {
+        return NullOnly();
+      }
       return std::nullopt;
     }
     if (ls._left_value == rs._right_value &&
         (!ls.IsLeftInclusive() || !rs.IsRightInclusive())) {
+      if (result_null) {
+        return NullOnly();
+      }
       return std::nullopt;
     }
   }
@@ -1048,6 +1199,9 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
   ColumnRange result;
   result._flags |= ls._flags & (kLeftBounded | kLeftInclusive);
   result._flags |= rs._flags & (kRightBounded | kRightInclusive);
+  if (result_null) {
+    result._flags |= kMaybeNull;
+  }
   result._left_value = ls._left_value;
   result._right_value = rs._right_value;
   return result;
@@ -1058,6 +1212,17 @@ bool ColumnRange::OverlapsWith(const ColumnRange& other) const {
 }
 
 bool ColumnRange::LeftBoundLessThan(const ColumnRange& other) const noexcept {
+  // NullOnly sorts before all value ranges (including -inf).
+  const bool this_null_only = (_flags & kMaybeNull) && (_flags & kEmptyRange);
+  const bool other_null_only =
+    (other._flags & kMaybeNull) && (other._flags & kEmptyRange);
+  if (this_null_only != other_null_only) {
+    return this_null_only;
+  }
+  if (this_null_only) {
+    return false;  // NullOnly == NullOnly, not strictly less
+  }
+
   if (!HasLeft()) {
     return other.HasLeft();  // -inf < bounded, -inf == -inf
   }
@@ -1120,6 +1285,20 @@ void KeyBounds::AddComparisonFilter(catalog::Column::Id col_id,
   _source_exprs[col_id].insert(source_expr);
 }
 
+void KeyBounds::AddNullFilter(catalog::Column::Id col_id,
+                              const duckdb::Expression* source_expr) {
+  SDB_ASSERT(!_column_ranges.contains(col_id));
+  _column_ranges.emplace(col_id, ColumnRange::NullOnly());
+  _source_exprs[col_id].insert(source_expr);
+}
+
+void KeyBounds::AddNotNullFilter(catalog::Column::Id col_id,
+                                 const duckdb::Expression* source_expr) {
+  SDB_ASSERT(!_column_ranges.contains(col_id));
+  _column_ranges.emplace(col_id, ColumnRange::AnyNotNull());
+  _source_exprs[col_id].insert(source_expr);
+}
+
 std::optional<KeyBounds> KeyBounds::TryIntersect(const KeyBounds& lhs,
                                                  const KeyBounds& rhs) {
   SDB_ASSERT(lhs._pk_ids.data() == rhs._pk_ids.data());
@@ -1171,7 +1350,7 @@ std::vector<ResolvedPoint> ToResolvedPoints(
 
 std::vector<ResolvedRange> ToDisjointRanges(
   const std::vector<KeyBounds>& ranges,
-  std::span<const catalog::Column::Id> pk_ids) {
+  std::span<const catalog::Column::Id> key_ids) {
   if (ranges.empty()) {
     return {ResolvedRange::Conflicting()};
   }
@@ -1184,8 +1363,8 @@ std::vector<ResolvedRange> ToDisjointRanges(
   }
 
   SDB_ASSERT(
-    !absl::c_all_of(ranges,
-                    [](const KeyBounds& kc) { return kc.IsResolvedPoint(); }),
+    !absl::c_all_of(
+      ranges, [](const KeyBounds& kc) { return kc.IsResolvedNonNullPoint(); }),
     "Specific points should prepared separately for efficiency reason");
 #endif
 
@@ -1200,14 +1379,14 @@ std::vector<ResolvedRange> ToDisjointRanges(
 
     // Columns 0..range_column_index-1 form the equality prefix.
     for (size_t i = 0; i < range_column_index; ++i) {
-      const auto* column_range = key_contraint.FindColumnRange(pk_ids[i]);
-      SDB_ASSERT(column_range && column_range->IsPoint());
+      const auto* column_range = key_contraint.FindColumnRange(key_ids[i]);
+      SDB_ASSERT(column_range && column_range->IsNonNullPoint());
       resolved_range.prefix.push_back(column_range->LeftValue());
     }
 
     // Column range_column_index is the range column.
     const auto* column_range =
-      key_contraint.FindColumnRange(pk_ids[range_column_index]);
+      key_contraint.FindColumnRange(key_ids[range_column_index]);
     SDB_ASSERT(column_range);
     resolved_range.range_column = *column_range;
 
@@ -1218,106 +1397,16 @@ std::vector<ResolvedRange> ToDisjointRanges(
 }
 
 std::vector<KeyBounds> ExtractFilterExpr(
-  const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
+  const duckdb::Expression& expr, std::span<const catalog::Column::Id> key_ids,
   const ColumnResolver& resolver, bool negated) {
-  std::vector<KeyBounds> key_bounds;
-
-  switch (expr.expression_class) {
-    case duckdb::ExpressionClass::BOUND_COMPARISON: {
-      const auto& cmp = expr.Cast<duckdb::BoundComparisonExpression>();
-      switch (cmp.type) {
-        case duckdb::ExpressionType::COMPARE_EQUAL:
-          key_bounds = ExtractFilterEq(cmp, pk_ids, resolver, negated);
-          break;
-        case duckdb::ExpressionType::COMPARE_NOTEQUAL:
-          key_bounds = ExtractFilterNeq(cmp, pk_ids, resolver, negated);
-          break;
-        case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-        case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-        case duckdb::ExpressionType::COMPARE_LESSTHAN:
-        case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-          key_bounds = ExtractFilterComparison(cmp, pk_ids, resolver, negated);
-          break;
-        default:
-          key_bounds = AnyKeyConstraint(pk_ids);
-          break;
-      }
-      break;
-    }
-
-    case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
-      const auto& conj = expr.Cast<duckdb::BoundConjunctionExpression>();
-      if (conj.type == duckdb::ExpressionType::CONJUNCTION_AND) {
-        // De Morgan: NOT(A AND B) = NOT(A) OR NOT(B)
-        key_bounds = negated
-                       ? ExtractFilterOr(conj, pk_ids, resolver, negated)
-                       : ExtractFilterAnd(conj, pk_ids, resolver, negated);
-      } else if (conj.type == duckdb::ExpressionType::CONJUNCTION_OR) {
-        // De Morgan: NOT(A OR B) = NOT(A) AND NOT(B)
-        key_bounds = negated ? ExtractFilterAnd(conj, pk_ids, resolver, negated)
-                             : ExtractFilterOr(conj, pk_ids, resolver, negated);
-      } else {
-        key_bounds = AnyKeyConstraint(pk_ids);
-      }
-      break;
-    }
-
-    case duckdb::ExpressionClass::BOUND_OPERATOR: {
-      const auto& op_expr = expr.Cast<duckdb::BoundOperatorExpression>();
-      switch (op_expr.type) {
-        case duckdb::ExpressionType::OPERATOR_NOT:
-          SDB_ASSERT(op_expr.children.size() == 1);
-          key_bounds =
-            ExtractFilterExpr(*op_expr.children[0], pk_ids, resolver, !negated);
-          break;
-        case duckdb::ExpressionType::OPERATOR_IS_NULL:
-          if (!negated) {
-            key_bounds = ExtractFilterIsNull(op_expr, pk_ids, resolver);
-          } else {
-            // NOT IS NULL == IS NOT NULL, which is unconstrained for PK
-            // extraction purposes.
-            key_bounds = AnyKeyConstraint(pk_ids);
-          }
-          break;
-        case duckdb::ExpressionType::OPERATOR_IS_NOT_NULL:
-          if (negated) {
-            // NOT IS NOT NULL == IS NULL
-            key_bounds = ExtractFilterIsNull(op_expr, pk_ids, resolver);
-          } else {
-            key_bounds = AnyKeyConstraint(pk_ids);
-          }
-          break;
-        case duckdb::ExpressionType::COMPARE_IN:
-          key_bounds = ExtractFilterIn(op_expr, pk_ids, resolver, negated);
-          break;
-        case duckdb::ExpressionType::COMPARE_NOT_IN:
-          key_bounds = ExtractFilterIn(op_expr, pk_ids, resolver, !negated);
-          break;
-        default:
-          key_bounds = AnyKeyConstraint(pk_ids);
-          break;
-      }
-      break;
-    }
-
-    case duckdb::ExpressionClass::BOUND_BETWEEN: {
-      const auto& between = expr.Cast<duckdb::BoundBetweenExpression>();
-      key_bounds = ExtractFilterBetween(between, pk_ids, resolver, negated);
-      break;
-    }
-
-    default:
-      key_bounds = AnyKeyConstraint(pk_ids);
-      break;
-  }
-
-  return key_bounds;
+  return ExtractFilterExprImpl(expr, {key_ids, resolver, negated});
 }
 
 ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
-  const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
-  const ColumnResolver& resolver) {
-  auto constraints = ExtractFilterExpr(expr, pk_ids, resolver);
+  const duckdb::Expression& expr, std::span<const catalog::Column::Id> key_ids,
+  const ColumnResolver& resolver, bool is_primary_key) {
+  auto constraints =
+    ExtractFilterExprImpl(expr, {key_ids, resolver, false, is_primary_key});
 
   if (constraints.empty()) {
     return {ConstraintKind::None, {}, expr.Copy()};
@@ -1337,8 +1426,9 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {ConstraintKind::None, {}, expr.Copy()};
   }
 
-  if (absl::c_all_of(constraints,
-                     [](const KeyBounds& p) { return p.IsResolvedPoint(); })) {
+  if (absl::c_all_of(constraints, [](const KeyBounds& p) {
+        return p.IsResolvedNonNullPoint();
+      })) {
     containers::FlatHashSet<const duckdb::Expression*> sources;
     for (const auto& point : constraints) {
       for (const auto& [col_id, source_exprs] : point.GetSourceExprs()) {
@@ -1362,9 +1452,9 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     }
     for (size_t i = 0; i < prefix_size; ++i) {
       const ColumnRange* left_column_range =
-        left_bound.FindColumnRange(pk_ids[i]);
+        left_bound.FindColumnRange(key_ids[i]);
       const ColumnRange* right_column_range =
-        right_bound.FindColumnRange(pk_ids[i]);
+        right_bound.FindColumnRange(key_ids[i]);
       if (left_column_range == right_column_range) {
         continue;
       }
@@ -1384,13 +1474,15 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   std::vector<const ColumnRange*> first_column_ranges;
   first_column_ranges.reserve(constraints.size());
   for (const auto& constraint : constraints) {
-    first_column_ranges.push_back(constraint.FindColumnRange(pk_ids[0]));
+    first_column_ranges.push_back(constraint.FindColumnRange(key_ids[0]));
   }
 
-  const bool first_unbounded =
-    !first_column_ranges.front() || !first_column_ranges.front()->HasLeft();
+  const bool first_unbounded = !first_column_ranges.front() ||
+                               (!first_column_ranges.front()->HasLeft() &&
+                                !first_column_ranges.front()->IsNullOnly());
   const bool last_unbounded =
-    !first_column_ranges.back() || !first_column_ranges.back()->HasRight();
+    !first_column_ranges.back() || (!first_column_ranges.back()->HasRight() &&
+                                    !first_column_ranges.back()->IsNullOnly());
   bool contiguous = first_unbounded && last_unbounded;
   for (size_t i = 1; contiguous && i < first_column_ranges.size(); ++i) {
     const auto* prev = first_column_ranges[i - 1];
@@ -1417,12 +1509,12 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   for (const auto& constraint : constraints) {
     const auto prefix = constraint.RangePrefixSize();
     const bool has_suffix_constraint =
-      absl::c_any_of(pk_ids.subspan(prefix), [&](catalog::Column::Id col_id) {
+      absl::c_any_of(key_ids.subspan(prefix), [&](catalog::Column::Id col_id) {
         return constraint.FindColumnRange(col_id) != nullptr;
       });
     if (!has_suffix_constraint) {
       for (size_t i = 0; i < prefix; ++i) {
-        const auto& col_exprs = constraint.GetSourceExprs(pk_ids[i]);
+        const auto& col_exprs = constraint.GetSourceExprs(key_ids[i]);
         sources.insert(col_exprs.begin(), col_exprs.end());
       }
     }

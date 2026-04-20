@@ -198,10 +198,10 @@ class OptionsParser {
       } else if constexpr (std::is_same_v<T, bool>) {
         if (v.type().id() == duckdb::LogicalTypeId::VARCHAR) {
           auto s = duckdb::StringUtil::Lower(v.GetValue<std::string>());
-          if (s == "true" || s == "on" || s == "1") {
+          if (s == "true" || s == "t" || s == "on" || s == "1") {
             return true;
           }
-          if (s == "false" || s == "off" || s == "0") {
+          if (s == "false" || s == "f" || s == "off" || s == "0") {
             return false;
           }
           return std::nullopt;

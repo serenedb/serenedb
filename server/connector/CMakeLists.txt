@@ -11,6 +11,7 @@ add_library(
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
+    duckdb_external_scan.cpp
     duckdb_schema_entry.cpp
     duckdb_system_table_entry.cpp
     duckdb_table_entry.cpp

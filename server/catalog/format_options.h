@@ -31,84 +31,29 @@
 #include "catalog/types.h"
 
 namespace sdb {
-namespace pg {
 
-class CopyProgressReporter;
-
-}  // namespace pg
-namespace connector {
-
-struct DwioWriterOptions {};
-
-struct DwioReaderOptions {};
-
-struct WriterOptions {
-  DwioWriterOptions dwio;
-  std::shared_ptr<StorageOptions> storage_options;
-  pg::CopyProgressReporter* progress = nullptr;
-};
-
-struct ReaderOptions {
-  DwioReaderOptions dwio;
-  pg::CopyProgressReporter* progress = nullptr;
-  std::shared_ptr<StorageOptions> storage_options;
-};
-
-}  // namespace connector
-
+// Bag of name -> value WITH-options for an external table. Forwarded
+// verbatim to DuckDB's file reader (read_parquet / read_csv_auto /
+// read_json_auto) at scan time. DuckDB decides which names it accepts.
+//
+// The catalog stores everything as strings; DuckDB's reader does its own
+// type coercion when it consumes the named_parameter_map_t.
 class FormatOptions {
  public:
-  virtual ~FormatOptions() = default;
+  FormatOptions() = default;
+  explicit FormatOptions(std::vector<std::pair<std::string, std::string>> pairs)
+    : _pairs{std::move(pairs)} {}
 
-  virtual void toVPack(vpack::Builder&) const = 0;
+  const std::vector<std::pair<std::string, std::string>>& Options()
+    const noexcept {
+    return _pairs;
+  }
 
-  FileFormat format() const noexcept { return _format; }
-
+  void toVPack(vpack::Builder& b) const;
   static std::shared_ptr<FormatOptions> fromVPack(vpack::Slice slice);
 
- protected:
-  FormatOptions(FileFormat format) : _format{format} {}
-  FileFormat _format;
-};
-
-class TextFormatOptions : public FormatOptions {
- public:
-  TextFormatOptions(uint8_t delim, uint8_t escape, std::string null_string,
-                    uint8_t header)
-    : FormatOptions{FileFormat::Text},
-      _delim{delim},
-      _escape{escape},
-      _null_string{std::move(null_string)},
-      _header{header} {}
-
-  void toVPack(vpack::Builder& b) const final;
-
  private:
-  uint8_t _delim;
-  uint8_t _escape;
-  std::string _null_string;
-  uint8_t _header;
-};
-
-class ParquetFormatOptions : public FormatOptions {
- public:
-  ParquetFormatOptions() : FormatOptions{FileFormat::Parquet} {}
-
-  void toVPack(vpack::Builder& b) const final;
-};
-
-class DwrfFormatOptions : public FormatOptions {
- public:
-  DwrfFormatOptions() : FormatOptions{FileFormat::Dwrf} {}
-
-  void toVPack(vpack::Builder& b) const final;
-};
-
-class OrcFormatOptions : public FormatOptions {
- public:
-  OrcFormatOptions() : FormatOptions{FileFormat::Orc} {}
-
-  void toVPack(vpack::Builder& b) const final;
+  std::vector<std::pair<std::string, std::string>> _pairs;
 };
 
 template<typename Context>

@@ -293,6 +293,20 @@ SereneDBCatalog::SereneDBCatalog(duckdb::AttachedDatabase& db,
 
 void SereneDBCatalog::Initialize(bool load_builtin) {}
 
+duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
+  duckdb::BoundCreateTableInfo& info) {
+  auto& base = info.Base();
+  if (!base.partition_keys.empty()) {
+    return duckdb::ErrorData(duckdb::ExceptionType::CATALOG,
+                             "PARTITIONED BY is not supported");
+  }
+  if (!base.sort_keys.empty()) {
+    return duckdb::ErrorData(duckdb::ExceptionType::CATALOG,
+                             "SORTED BY is not supported");
+  }
+  return {};
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
   // PG: schemas beginning with "pg_" are reserved for the system.

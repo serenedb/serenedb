@@ -20,69 +20,32 @@
 
 #include "catalog/format_options.h"
 
-#include "query/utils.h"
+#include <vpack/iterator.h>
 
 namespace sdb {
 
-void TextFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
-  b.add("delim", _delim);
-  b.add("escape", _escape);
-  b.add("null_string", std::string_view{_null_string});
-  b.add("header", _header);
-}
-
-void ParquetFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
-}
-
-void DwrfFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
-}
-
-void OrcFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
+// Serialised as a single vpack object whose keys are the WITH-option names
+// and whose values are always strings (DuckDB's reader re-parses them).
+void FormatOptions::toVPack(vpack::Builder& b) const {
+  for (const auto& [k, v] : _pairs) {
+    b.add(std::string_view{k}, std::string_view{v});
+  }
 }
 
 std::shared_ptr<FormatOptions> FormatOptions::fromVPack(vpack::Slice slice) {
   if (!slice.isObject()) {
     return nullptr;
   }
-  auto format_slice = slice.get("format");
-  if (!format_slice.isNumber()) {
-    return nullptr;
-  }
-  switch (static_cast<FileFormat>(format_slice.getNumber<uint8_t>())) {
-    case FileFormat::Text: {
-      uint8_t delim = '\t';
-      if (auto s = slice.get("delim"); s.isNumber()) {
-        delim = s.getNumber<uint8_t>();
-      }
-      uint8_t escape = '\\';
-      if (auto s = slice.get("escape"); s.isNumber()) {
-        escape = s.getNumber<uint8_t>();
-      }
-      std::string null_string = "\\N";
-      if (auto s = slice.get("null_string"); s.isString()) {
-        null_string = std::string{s.stringView()};
-      }
-      uint8_t header = 0;
-      if (auto s = slice.get("header"); s.isNumber()) {
-        header = s.getNumber<uint8_t>();
-      }
-      return std::make_shared<TextFormatOptions>(
-        delim, escape, std::move(null_string), header);
+  std::vector<std::pair<std::string, std::string>> pairs;
+  for (auto entry : vpack::ObjectIterator{slice}) {
+    auto value = entry.value();
+    if (!value.isString()) {
+      continue;
     }
-    case FileFormat::Parquet:
-      return std::make_shared<ParquetFormatOptions>();
-    case FileFormat::Dwrf:
-      return std::make_shared<DwrfFormatOptions>();
-    case FileFormat::Orc:
-      return std::make_shared<OrcFormatOptions>();
-    case FileFormat::None:
-      break;
+    pairs.emplace_back(std::string{entry.key.stringView()},
+                       std::string{value.stringView()});
   }
-  return nullptr;
+  return std::make_shared<FormatOptions>(std::move(pairs));
 }
 
 }  // namespace sdb

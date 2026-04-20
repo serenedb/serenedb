@@ -41,6 +41,9 @@ class SereneDBCatalog final : public duckdb::Catalog {
   std::string GetDefaultSchema() const final { return "public"; }
   void Initialize(bool load_builtin) final;
 
+  duckdb::ErrorData SupportsCreateTable(
+    duckdb::BoundCreateTableInfo& info) final;
+
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSchema(
     duckdb::CatalogTransaction transaction,
     duckdb::CreateSchemaInfo& info) final;

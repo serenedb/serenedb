@@ -17,6 +17,16 @@ add_library(
     duckdb_index_entry.cpp
     duckdb_index_scan_entry.cpp
     duckdb_table_function.cpp
+    duckdb_scan_base.cpp
+    duckdb_pk_full_scan.cpp
+    duckdb_pk_range_scan.cpp
+    duckdb_pk_point_lookup.cpp
+    duckdb_sk_full_scan.cpp
+    duckdb_sk_point_lookup.cpp
+    duckdb_sk_range_scan.cpp
+    duckdb_search_full_scan.cpp
+    duckdb_search_ann_scan.cpp
+    duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
     duckdb_copy_filesystem.cpp

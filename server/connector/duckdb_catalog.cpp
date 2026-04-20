@@ -76,8 +76,7 @@ namespace {
 // DROP FUNCTION name(type, ...) -- selective overload removal.
 Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
                             duckdb::ClientContext& context,
-                            std::string_view database,
-                            duckdb::DropInfo& info) {
+                            std::string_view database, duckdb::DropInfo& info) {
   auto schema_name = info.schema.empty() ? std::string_view{"public"}
                                          : std::string_view{info.schema};
   auto snapshot = catalog.GetCatalogSnapshot();

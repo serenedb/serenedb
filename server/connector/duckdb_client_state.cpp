@@ -53,10 +53,10 @@ void SereneDBClientState::Register(
   };
 
   client_ctx.setting_change_handler = [](duckdb::ClientContext& ctx,
-                                          const std::string& name,
-                                          duckdb::SetScope scope) {
+                                         const std::string& name,
+                                         duckdb::SetScope scope) {
     // SET GLOBAL changes the DB-instance default and is not rolled back with
-    // the transaction — only session/local changes are tracked.
+    // the transaction -- only session/local changes are tracked.
     if (scope == duckdb::SetScope::GLOBAL) {
       return;
     }

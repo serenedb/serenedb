@@ -58,7 +58,7 @@ struct SearchScan {
   // Boolean filter side (plain text/search predicates).
   irs::Filter::Query::ptr query;
   // Stored filter for re-preparation with a scorer (see
-  // SereneDBScanInitGlobal). Kept alive here because prepare() is const and
+  // SearchFullScanInitGlobal). Kept alive here because prepare() is const and
   // stats depend on the scorer.
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
@@ -190,31 +190,6 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
 
   ScanSource scan_source;
-
-  bool IsSearchScan() const {
-    return std::holds_alternative<SearchScan>(scan_source);
-  }
-  bool IsSecondaryIndexScan() const {
-    return std::holds_alternative<SecondaryIndexScan>(scan_source);
-  }
-  bool IsANNScan() const {
-    return std::holds_alternative<ANNScan>(scan_source);
-  }
-  bool IsRangeSearchScan() const {
-    return std::holds_alternative<RangeSearchScan>(scan_source);
-  }
-  bool IsPkPointScan() const {
-    return std::holds_alternative<PkPointScan>(scan_source);
-  }
-  bool IsPkRangeScan() const {
-    return std::holds_alternative<PkRangeScan>(scan_source);
-  }
-  bool IsSkPointScan() const {
-    return std::holds_alternative<SkPointScan>(scan_source);
-  }
-  bool IsSkRangeScan() const {
-    return std::holds_alternative<SkRangeScan>(scan_source);
-  }
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;
   bool Equals(const duckdb::FunctionData& other) const override;

@@ -116,6 +116,33 @@ count
 query
 EXPLAIN SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
 ----
+QUERY PLAN
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│     Table: vedernikoff    │
+│                           │
+│         Strategy:         │
+│      iresearch_lookup     │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│  <Term:pudge(0, 0); >] && │
+│  PHRASE[b(string) = <Term │
+│      :game(0, 0); >]]     │
+│                           │
+│       Projections: b      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 
 query
@@ -177,33 +204,125 @@ INSERT INTO biksalen_memes VALUES
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│         Strategy:         │
+│   rocksdb_table_fullscan  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│         Strategy:         │
+│   rocksdb_table_fullscan  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 query
 EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│         Strategy:         │
+│   rocksdb_table_fullscan  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 query
 EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
 ----
 QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=0:
--- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
-     Input: 3 rows (<slt:ignore>, 1 batches), Output: 3 rows (<slt:ignore>, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
+┌────────────────────────────────────────────────┐
+│┌──────────────────────────────────────────────┐│
+││              Total Time: <slt:ignore>        ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+┌───────────────────────────┐
+│           QUERY           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         EXTENSION         │
+│    ────────────────────   │
+│                           │
+│           1 row           │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         TABLE_SCAN        │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│         Strategy:         │
+│   rocksdb_table_fullscan  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│                           │
+│                           │
+│           3 rows          │
+│           <slt:ignore>    │
+└───────────────────────────┘
 
 
 # EXPLAIN ANALYZE must actually create the index

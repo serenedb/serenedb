@@ -167,5 +167,3 @@ SELECT * FROM t;
 
 statement error
 CREATE TABLE t42(r text);
-----
-db error: ERROR: no schema has been selected to create in

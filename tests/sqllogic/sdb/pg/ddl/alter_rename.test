@@ -137,7 +137,7 @@ statement error
 SELECT * FROM clickclack();
 ----
 db error: ERROR: Table Function with name clickclack does not exist!
-Did you mean "clickclack_renamed"?
+Did you mean "<slt:ignore>"?
 
 
 query

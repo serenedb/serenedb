@@ -29,6 +29,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 
 #include "basics/build.h"
@@ -463,12 +464,17 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  duckdb::LogicalType::VARCHAR,
                                                  not_supported});
 
-  // format_type(oid, int4) -> text
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"format_type",
-                           {pg::OID(), duckdb::LogicalType::INTEGER},
-                           duckdb::LogicalType::VARCHAR,
-                           FormatTypeFunction});
+  {
+    duckdb::CreateScalarFunctionInfo info{{
+      "format_type",
+      {pg::OID(), duckdb::LogicalType::INTEGER},
+      duckdb::LogicalType::VARCHAR,
+      FormatTypeFunction,
+    }};
+    info.schema = "pg_catalog";
+    info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+    loader.RegisterFunction(std::move(info));
+  }
 
   // pg_database_size(text) and pg_database_size(bigint/oid)
   loader.RegisterFunction(duckdb::ScalarFunction{"pg_database_size",

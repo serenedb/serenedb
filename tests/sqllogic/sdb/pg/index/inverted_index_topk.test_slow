@@ -97,10 +97,17 @@ VACUUM (UPDATE_INDEXES) wiki_docs;
 
 # -- Term query: "the" (very common term, many matches) --
 query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%the%';
+----
+count
+3750
+
+
+query
 SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'the');
 ----
 count
-4750
+3750
 
 
 # topk=100, verify count matches expected top-100
@@ -113,12 +120,19 @@ count
 100
 
 
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%university%';
+----
+count
+1050
+
+
 # -- Term query: "university" --
 query
 SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'university');
 ----
 count
-800
+1050
 
 
 query
@@ -132,6 +146,13 @@ count
 
 # -- Term query: "washington" --
 query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%washington%';
+----
+count
+800
+
+
+query
 SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'washington');
 ----
 count
@@ -140,13 +161,27 @@ count
 
 # -- Term query: "summit" --
 query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%summit%';
+----
+count
+1050
+
+
+query
 SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'summit');
 ----
 count
-800
+1050
 
 
 # -- Phrase query: "griffith observatory" --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%griffith observatory%';
+----
+count
+250
+
+
 query
 SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'griffith observatory');
 ----
@@ -160,19 +195,26 @@ query
 SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 10;
 ----
 id
-3
-23
-43
-63
-83
-103
-123
-143
-163
-183
+2
+22
+42
+62
+82
+102
+122
+142
+162
+182
 
 
 # -- Phrase query: "french culinary institute" --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%french culinary institute%';
+----
+count
+250
+
+
 query
 SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'french culinary institute');
 ----
@@ -226,22 +268,22 @@ query
 SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 id
-5
-25
-45
-65
-85
+4
+13
+24
+33
+44
 
 
 query
 SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 id
-5
-25
-45
-65
-85
+4
+13
+24
+33
+44
 
 
 query

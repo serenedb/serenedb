@@ -149,7 +149,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::BOOLEAN,
         "Controls whether queries can see uncommitted writes from the current "
         "transaction.",
-        []() -> duckdb::Value { return duckdb::Value::BOOLEAN(true); },
+        [] { return duckdb::Value::BOOLEAN(true); },
       },
     },
     {
@@ -207,7 +207,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::BOOLEAN,
         "Shows whether hot standby is currently active.",
-        [] { return duckdb::Value{"off"}; },
+        [] { return duckdb::Value{false}; },
         Readonly<"in_hot_standby">,
       },
     },
@@ -216,7 +216,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::BOOLEAN,
         "Shows whether datetimes are integer based.",
-        [] { return duckdb::Value{"on"}; },
+        [] { return duckdb::Value{true}; },
         Readonly<"integer_datetimes">,
       },
     },
@@ -252,7 +252,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::BOOLEAN,
         "Causes '...' strings to treat backslashes literally.",
-        [] { return duckdb::Value{"on"}; },
+        [] { return duckdb::Value{true}; },
         Readonly<"standard_conforming_strings">,
       },
     },
@@ -279,7 +279,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::BOOLEAN,
         "Shows whether the current session's user is a superuser.",
-        [] { return duckdb::Value{"on"}; },
+        [] { return duckdb::Value{true}; },
         Readonly<"is_superuser">,
       },
     },

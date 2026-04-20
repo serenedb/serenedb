@@ -103,15 +103,16 @@ void VersionFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
 
 // search_path_canonical() -> text
 // Returns the full catalog-qualified search path (catalog.schema,...).
-// The PG-compliant SHOW search_path only lists schemas in the current database;
-// this function exposes the raw DuckDB representation.
+// The PG-compliant SHOW search_path only lists schemas in the current database
+// and keeps the literal "$user" placeholder; this function exposes the
+// effective, resolved form (with "$user" expanded to the session user).
 void SearchPathCanonicalFunction(duckdb::DataChunk& args,
                                  duckdb::ExpressionState& state,
                                  duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auto& set_paths =
-    duckdb::ClientData::Get(context).catalog_search_path->GetSetPaths();
-  auto str = duckdb::CatalogSearchEntry::ListToString(set_paths);
+  auto entries =
+    duckdb::ClientData::Get(context).catalog_search_path->GetResolvedSetPaths();
+  auto str = duckdb::CatalogSearchEntry::ListToString(entries);
   result.Reference(duckdb::Value{std::move(str)});
 }
 

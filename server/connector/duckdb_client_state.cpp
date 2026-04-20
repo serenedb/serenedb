@@ -55,8 +55,28 @@ void SereneDBClientState::Register(
   client_ctx.setting_change_handler = [](duckdb::ClientContext& ctx,
                                          const std::string& name,
                                          duckdb::SetScope scope) {
-    // SET GLOBAL changes the DB-instance default and is not rolled back with
-    // the transaction -- only session/local changes are tracked.
+    // Resolve AUTOMATIC against the setting's target scope so the downstream
+    // check works uniformly regardless of how the user wrote the SET.
+    if (scope == duckdb::SetScope::AUTOMATIC) {
+      auto& db_config = duckdb::DBConfig::GetConfig(ctx);
+      auto name_ref = duckdb::String::Reference(name.data(), name.size());
+      duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+      if (db_config.TryGetSettingIndex(name_ref, option).IsValid() && option) {
+        scope =
+          (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
+           option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
+            ? duckdb::SetScope::GLOBAL
+            : duckdb::SetScope::SESSION;
+      } else {
+        duckdb::ExtensionOption ext;
+        if (db_config.TryGetExtensionOption(name_ref, ext)) {
+          scope = ext.default_scope;
+        }
+      }
+    }
+    // SET GLOBAL changes the DB-instance default (lives only in DBConfig, not
+    // user_settings / custom session store) and is not rolled back with the
+    // transaction -- only session/local changes are tracked.
     if (scope == duckdb::SetScope::GLOBAL) {
       return;
     }
@@ -91,6 +111,20 @@ void SereneDBClientState::Register(
           "SET TRANSACTION ISOLATION LEVEL must be called before any query");
       }
     };
+}
+
+void SereneDBClientState::TransactionPreCommit(
+  duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  // Revert SET LOCAL variables while the DuckDB transaction is still active
+  // so catalog lookups performed by custom-impl settings (e.g. search_path)
+  // can succeed via their normal set_local path.
+  _connection_ctx->PreCommit();
+}
+
+void SereneDBClientState::TransactionPreRollback(
+  duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
+  duckdb::optional_ptr<duckdb::ErrorData> error) {
+  _connection_ctx->PreRollback();
 }
 
 void SereneDBClientState::TransactionCommit(

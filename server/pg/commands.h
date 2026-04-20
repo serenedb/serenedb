@@ -63,8 +63,6 @@ yaclib::Future<> DropObject(ExecContext& ctx, const DropStmt& stmt);
 
 yaclib::Future<> Transaction(ExecContext& ctx, const TransactionStmt& stmt);
 
-yaclib::Future<> VariableSet(ExecContext& ctx, const VariableSetStmt& stmt);
-
 yaclib::Future<> CreateFunction(ExecContext& ctx,
                                 const CreateFunctionStmt& stmt);
 

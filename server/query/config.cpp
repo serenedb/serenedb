@@ -20,16 +20,20 @@
 
 #include "query/config.h"
 
+#include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
 
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
 #include "basics/assert.h"
+#include "basics/exceptions.h"
 #include "catalog/catalog.h"
 
 namespace sdb {
@@ -176,28 +180,47 @@ bool Config::IsExplicitTransaction() const {
   return !_client_ctx.transaction.IsAutoCommit();
 }
 
-void Config::Reset(std::string_view key) {
-  _transaction.erase(key);
-
-  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
-  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  auto setting_index = db_config.TryGetSettingIndex(
-    duckdb::String::Reference(key.data(), key.size()), option);
-  if (setting_index.IsValid()) {
-    _client_ctx.config.user_settings.ClearSetting(setting_index.GetIndex());
-  }
-}
-
 void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
+  // Called from pre-commit / pre-rollback hooks while the DuckDB transaction
+  // is still active, so catalog lookups performed by custom-impl set_local
+  // callbacks work normally.
   auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
-  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  auto setting_index = db_config.TryGetSettingIndex(
-    duckdb::String::Reference(key.data(), key.size()), option);
-  if (setting_index.IsValid()) {
-    // TODO(gnusi): SetUserSetting can throw
-    _client_ctx.config.user_settings.SetUserSetting(setting_index.GetIndex(),
-                                                    std::move(value));
-  }
+  auto name_ref = duckdb::String::Reference(key.data(), key.size());
+
+  // Best-effort restore; swallow to keep noexcept contract.
+  std::ignore = basics::SafeCall([&] {
+    // Built-in options first.
+    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+    auto setting_index = db_config.TryGetSettingIndex(name_ref, option);
+    if (option) {
+      if (option->set_local) {
+        auto parameter_type =
+          duckdb::DBConfig::ParseLogicalType(option->parameter_type);
+        auto typed = value.CastAs(_client_ctx, parameter_type);
+        option->set_local(_client_ctx, typed);
+      } else if (setting_index.IsValid()) {
+        _client_ctx.config.user_settings.SetUserSetting(setting_index.GetIndex(),
+                                                        std::move(value));
+      }
+      return;
+    }
+    // Extension options: use the registered set_function so side effects
+    // (e.g. sdb_faults toggling global fault-point state) are re-applied.
+    duckdb::ExtensionOption ext;
+    if (!db_config.TryGetExtensionOption(name_ref, ext)) {
+      return;
+    }
+    auto typed = value.CastAs(_client_ctx, ext.type);
+    // Only session/local SETs are tracked (setting_change_handler skips
+    // GLOBAL), so the restore scope is always SESSION.
+    if (ext.set_function) {
+      ext.set_function(_client_ctx, duckdb::SetScope::SESSION, typed);
+    }
+    if (ext.setting_index.IsValid()) {
+      _client_ctx.config.user_settings.SetUserSetting(ext.setting_index.GetIndex(),
+                                                      std::move(typed));
+    }
+  });
 }
 
 void Config::RollbackVariables() noexcept {
@@ -207,12 +230,25 @@ void Config::RollbackVariables() noexcept {
   _transaction.clear();
 }
 
-void Config::CommitVariables() noexcept {
-  for (auto&& [key, var] : _transaction) {
-    if (var.action == TxnAction::Revert) {
-      RestoreValue(key, std::move(var.old_value));
+void Config::RevertLocalVariables() noexcept {
+  // Called from the pre-commit hook while the transaction is still active.
+  // Reverts SET LOCAL entries to their pre-SET values; leaves plain-SET
+  // entries in _transaction so a subsequent rollback (if the commit fails)
+  // can still revert them.
+  absl::erase_if(_transaction, [this](auto& entry) {
+    auto& [key, var] = entry;
+    if (var.action != TxnAction::Revert) {
+      return false;
     }
-  }
+    RestoreValue(key, std::move(var.old_value));
+    return true;
+  });
+}
+
+void Config::DiscardCommittedVariables() noexcept {
+  // Called from the post-commit hook once the transaction is fully committed.
+  // Any remaining entries are plain-SET (Keep) values that the user wants to
+  // persist for the session — drop tracking without reverting.
   _transaction.clear();
 }
 

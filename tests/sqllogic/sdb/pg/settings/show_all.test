@@ -285,7 +285,7 @@ default_collation	(empty)	The collation setting used when none is specified
 default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
 default_secret_storage	local_file	Allows switching the default storage for secrets
-default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
+default_transaction_isolation	read committed  Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	false	Sets the default read-only status of new transactions.
 deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
 disable_database_invalidation	true	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
@@ -423,7 +423,7 @@ streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching fr
 temp_directory	.tmp	Set the directory to which to write temp files
 temp_file_encryption	false	Encrypt all temporary files if database is encrypted
 threads	1	The number of total threads used by the system.
-transaction_isolation	repeatable read	Sets the current transaction's isolation level.
+transaction_isolation	read committed  Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	false	Disable checks on ETag consistency
 user	(empty)	The username to use. Ignored for legacy compatibility.
 username	(empty)	The username to use. Ignored for legacy compatibility.

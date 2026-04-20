@@ -92,8 +92,7 @@ class Config {
   IsolationLevel GetIsolationLevel() const;
   WriteConflictPolicy GetWriteConflictPolicy() const;
   bool GetReadYourOwnWrites() const;
-
-  void Reset(std::string_view key);
+  bool IsExplicitTransaction() const;
 
   void ResetAll();
 
@@ -102,20 +101,24 @@ class Config {
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
 
   // Returns the current value of a setting, or std::nullopt if not found.
-  std::optional<std::string> GetSetting(std::string_view key) const {
-    return Get(key);
-  }
+  std::optional<std::string> Get(std::string_view key) const;
 
   void OnSet(std::string_view name, bool is_local);
   void SetSetting(std::string_view key, std::string value, bool is_local);
-  bool IsExplicitTransaction() const;
 
  protected:
-  void CommitVariables() noexcept;
+  // Pre-rollback hook helper: restores every tracked variable to its pre-SET
+  // value. Runs while the transaction is still active.
   void RollbackVariables() noexcept;
+  // Pre-commit hook helper: reverts SET LOCAL entries only (action=Revert).
+  // Plain-SET (Keep) entries remain in _transaction so a later rollback on
+  // failed commit can still revert them.
+  void RevertLocalVariables() noexcept;
+  // Post-commit hook helper: drops any remaining tracked entries (Keep ones)
+  // since the transaction committed successfully.
+  void DiscardCommittedVariables() noexcept;
 
  private:
-  std::optional<std::string> Get(std::string_view key) const;
   void Set(VariableContext context, std::string_view key, std::string value);
   void SetInternal(std::string_view key, std::string value);
   void RestoreValue(std::string_view key, duckdb::Value value) noexcept;

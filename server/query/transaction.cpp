@@ -39,6 +39,17 @@ void Transaction::OnNewStatement() {
   }
 }
 
+void Transaction::PreCommit() noexcept {
+  // Revert SET LOCAL values while the DuckDB transaction is still active so
+  // custom-impl settings (search_path, transaction_isolation) can use their
+  // normal set_local path (which may do catalog lookups).
+  RevertLocalVariables();
+}
+
+void Transaction::PreRollback() noexcept {
+  RollbackVariables();
+}
+
 Result Transaction::Commit() {
   uint64_t num_ops = _rocksdb_transaction
                        ? _rocksdb_transaction->GetNumPuts() +
@@ -62,6 +73,9 @@ Result Transaction::Commit() {
       for (auto& search_transaction : _search_transactions) {
         search_transaction.second->Abort();
       }
+      // SET LOCAL reverts already happened in PreCommit; any remaining
+      // entries are Keep (plain SET) — on rocksdb commit failure we should
+      // revert those too, so call RollbackVariables here.
       RollbackVariables();
       Destroy();
     };
@@ -105,7 +119,7 @@ Result Transaction::Commit() {
     }
   }
   ApplyTableStatsDiffs();
-  CommitVariables();
+  DiscardCommittedVariables();
   Destroy();
 
   return {};

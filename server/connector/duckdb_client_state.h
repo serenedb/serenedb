@@ -71,7 +71,14 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   std::shared_ptr<std::string> copy_stdin_buffer;
   int copy_stdin_open_count = 0;
 
-  // Transaction lifecycle callbacks
+  // Transaction lifecycle callbacks.
+  // Pre-* hooks run while the DuckDB transaction is still active; use them
+  // for work that needs ActiveTransaction (catalog lookups, set_local).
+  void TransactionPreCommit(duckdb::MetaTransaction& transaction,
+                            duckdb::ClientContext& context) override;
+  void TransactionPreRollback(duckdb::MetaTransaction& transaction,
+                              duckdb::ClientContext& context,
+                              duckdb::optional_ptr<duckdb::ErrorData> error) override;
   void TransactionCommit(duckdb::MetaTransaction& transaction,
                          duckdb::ClientContext& context) override;
   void TransactionRollback(duckdb::MetaTransaction& transaction,

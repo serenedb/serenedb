@@ -346,10 +346,17 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
       connector::SereneDBClientState::Register(*_duckdb_conn->context,
                                                _connection_ctx);
-      // Set default catalog to the user's database
-      _duckdb_conn->context->client_data->catalog_search_path->Set(
+      // PG: the session user is used to resolve "$user" in catalog_search_path.
+      _duckdb_conn->context->session_user = std::string{UserName()};
+      // PG default search_path: "$user", public. The "$user" entry is resolved
+      // on each lookup to the current session user; if no schema with that name
+      // exists it's silently skipped during resolution.
+      std::vector<duckdb::CatalogSearchEntry> default_paths{
+        duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "$user"},
         duckdb::CatalogSearchEntry{std::string{DatabaseName()}, "public"},
-        duckdb::CatalogSetPathType::SET_DIRECTLY);
+      };
+      _duckdb_conn->context->client_data->catalog_search_path->Set(
+        std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 
       _connection_ctx->SetSetting("session_authorization",
                                   std::string{UserName()}, false);
@@ -380,7 +387,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         });
       for (const auto param : kParameterStatusVariables) {
         // TODO(codeworse): Avoid copy string in GetSetting
-        SendParameterStatus(param, *_connection_ctx->GetSetting(param));
+        SendParameterStatus(param, *_connection_ctx->Get(param));
       }
 
       _send.Write(ToBuffer(kReadyForQuery), true);

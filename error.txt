@@ -1,8 +1,8 @@
 Database: serenedb
 Host: localhost
 Single Port: 7890
-Single Port SSL: 
-Cluster Port: 
+Single Port SSL:
+Cluster Port:
 Engines: pg-wire-simple
 Test Path: ./tests/sqllogic/sdb/**/*.test*
 JUnit Path: ./out/sqllogic-tests
@@ -14,8 +14,8 @@ Force override: false
 Format: false
 Show all errors: false
 Fast: true
-Skip failed: 
-Skip: 
+Skip failed:
+Skip:
 Iterations: 1
 Cancellation: false
 sqllogictest build: 0s
@@ -36,7 +36,7 @@ Caused by:
     -   "1a", 121, _12, "1$a", "CaseSensitive", not_sensitive, "A"
     +   1a, 121, _12, 1$a, CaseSensitive, not_sensitive, A
     at tests/sqllogic/sdb/pg/any/settings/show.test:40
-    
+
 
 tests/sqllogic/sdb/pg/any/simple/datetime.test               .. [OK] in 32 ms
 tests/sqllogic/sdb/pg/any/floating/float4.test               .. [OK] in 96 ms
@@ -85,7 +85,7 @@ Caused by:
     +   a	b
     +   1	10
     at tests/sqllogic/sdb/pg/any/simple/insert_conflict.test:90
-    
+
 
 tests/sqllogic/sdb/pg/any/system/functions-info.test         .. [FAILED] after 46 ms
 
@@ -99,7 +99,7 @@ Caused by:
     -   postgres
     +   duckdb
     at tests/sqllogic/sdb/pg/any/system/functions-info.test:33
-    
+
 
 tests/sqllogic/sdb/pg/any/simple/distinct.test               .. [OK] in 495 ms
 tests/sqllogic/sdb/pg/any/ddl/drop.test                      .. [OK] in 615 ms
@@ -111,7 +111,7 @@ Caused by:
     statement is expected to fail, but actually succeed:
     [SQL] CREATE TABLE t42(r text);
     at tests/sqllogic/sdb/pg/any/simple/schema.test:168
-    
+
 
 tests/sqllogic/sdb/pg/any/system/regclass.test               .. [OK] in 113 ms
 tests/sqllogic/sdb/pg/any/simple/groupby.test                .. [OK] in 562 ms
@@ -149,7 +149,7 @@ Caused by:
     query failed: error performing TLS handshake: server does not support TLS
     [SQL] select 123::numeric;
     at tests/sqllogic/sdb/pg/simple/encrypted.test:21
-    
+
 
 tests/sqllogic/sdb/pg/simple/groupby.test                    .. [OK] in 1 ms
 tests/sqllogic/sdb/pg/settings/show_all.test                 .. [OK] in 81 ms
@@ -201,7 +201,7 @@ Caused by:
       PATH = '/tmp/${__DATABASE__}_babsky_memes.parquet'
     );
     at tests/sqllogic/sdb/pg/index/inverted_index.test:380
-    
+
 
 tests/sqllogic/sdb/pg/any/tpch/tpch.test                     .. [OK] in 2679 ms
 tests/sqllogic/sdb/pg/any/simple/basic_dml.test              .. [OK] in 3691 ms
@@ -226,7 +226,7 @@ Caused by:
     -   pg_cat_t1_pkey	id	1
     +   constraint_name	column_name	ordinal_position
     at tests/sqllogic/sdb/pg/system/pg_catalog_data.test:576
-    
+
 
 tests/sqllogic/sdb/pg/data_source/choice.test                .. [OK] in 8565 ms
 tests/sqllogic/sdb/pg/any/index/secondary_index.test         .. [OK] in 9573 ms

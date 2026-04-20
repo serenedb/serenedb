@@ -64,7 +64,7 @@ class Transaction : public Config {
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
   // custom-impl settings). Runs before the rocksdb commit.
   void PreCommit() noexcept;
-  // Pre-rollback counterpart — restores all SET values.
+  // Pre-rollback counterpart -- restores all SET values.
   void PreRollback() noexcept;
 
   Result Commit();

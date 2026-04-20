@@ -62,11 +62,10 @@ void SereneDBClientState::Register(
       auto name_ref = duckdb::String::Reference(name.data(), name.size());
       duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
       if (db_config.TryGetSettingIndex(name_ref, option).IsValid() && option) {
-        scope =
-          (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
-           option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
-            ? duckdb::SetScope::GLOBAL
-            : duckdb::SetScope::SESSION;
+        scope = (option->scope == duckdb::SettingScopeTarget::GLOBAL_ONLY ||
+                 option->scope == duckdb::SettingScopeTarget::GLOBAL_DEFAULT)
+                  ? duckdb::SetScope::GLOBAL
+                  : duckdb::SetScope::SESSION;
       } else {
         duckdb::ExtensionOption ext;
         if (db_config.TryGetExtensionOption(name_ref, ext)) {

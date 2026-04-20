@@ -199,8 +199,8 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
         auto typed = value.CastAs(_client_ctx, parameter_type);
         option->set_local(_client_ctx, typed);
       } else if (setting_index.IsValid()) {
-        _client_ctx.config.user_settings.SetUserSetting(setting_index.GetIndex(),
-                                                        std::move(value));
+        _client_ctx.config.user_settings.SetUserSetting(
+          setting_index.GetIndex(), std::move(value));
       }
       return;
     }
@@ -217,8 +217,8 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
       ext.set_function(_client_ctx, duckdb::SetScope::SESSION, typed);
     }
     if (ext.setting_index.IsValid()) {
-      _client_ctx.config.user_settings.SetUserSetting(ext.setting_index.GetIndex(),
-                                                      std::move(typed));
+      _client_ctx.config.user_settings.SetUserSetting(
+        ext.setting_index.GetIndex(), std::move(typed));
     }
   });
 }
@@ -248,7 +248,7 @@ void Config::RevertLocalVariables() noexcept {
 void Config::DiscardCommittedVariables() noexcept {
   // Called from the post-commit hook once the transaction is fully committed.
   // Any remaining entries are plain-SET (Keep) values that the user wants to
-  // persist for the session — drop tracking without reverting.
+  // persist for the session -- drop tracking without reverting.
   _transaction.clear();
 }
 

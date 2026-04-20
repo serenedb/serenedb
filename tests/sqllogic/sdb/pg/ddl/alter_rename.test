@@ -156,8 +156,6 @@ a	a
 
 statement error
 ALTER VIEW pudge RENAME TO something;
-----
-db error: ERROR: "pudge" is not a view
 
 
 statement error

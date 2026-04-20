@@ -76,9 +76,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // for work that needs ActiveTransaction (catalog lookups, set_local).
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
                             duckdb::ClientContext& context) override;
-  void TransactionPreRollback(duckdb::MetaTransaction& transaction,
-                              duckdb::ClientContext& context,
-                              duckdb::optional_ptr<duckdb::ErrorData> error) override;
+  void TransactionPreRollback(
+    duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
+    duckdb::optional_ptr<duckdb::ErrorData> error) override;
   void TransactionCommit(duckdb::MetaTransaction& transaction,
                          duckdb::ClientContext& context) override;
   void TransactionRollback(duckdb::MetaTransaction& transaction,

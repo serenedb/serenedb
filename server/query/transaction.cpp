@@ -46,9 +46,7 @@ void Transaction::PreCommit() noexcept {
   RevertLocalVariables();
 }
 
-void Transaction::PreRollback() noexcept {
-  RollbackVariables();
-}
+void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
 Result Transaction::Commit() {
   uint64_t num_ops = _rocksdb_transaction
@@ -74,7 +72,7 @@ Result Transaction::Commit() {
         search_transaction.second->Abort();
       }
       // SET LOCAL reverts already happened in PreCommit; any remaining
-      // entries are Keep (plain SET) — on rocksdb commit failure we should
+      // entries are Keep (plain SET) -- on rocksdb commit failure we should
       // revert those too, so call RollbackVariables here.
       RollbackVariables();
       Destroy();

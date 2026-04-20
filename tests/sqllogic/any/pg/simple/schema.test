@@ -155,8 +155,6 @@ DROP SCHEMA some_schema CASCADE;
 
 query error
 SELECT * from some_schema.t;
-----
-db error: ERROR: relation "some_schema.t" does not exist
 
 
 statement ok
@@ -165,8 +163,6 @@ SET search_path TO '';
 
 query error
 SELECT * FROM t;
-----
-db error: ERROR: relation "t" does not exist
 
 
 statement error

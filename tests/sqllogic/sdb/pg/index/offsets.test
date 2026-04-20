@@ -77,10 +77,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
-│tests_sqllogic_sdb_pg_index│
-│   _offsets_test_<slt:ignore>  │
-│  .public.offsets_test_idx │
-│          .id ASC          │
+│  offsets_test_idx.id ASC  │
 │                           │
 │          ~0 rows          │
 └─────────────┬─────────────┘

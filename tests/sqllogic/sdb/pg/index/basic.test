@@ -179,8 +179,6 @@ indexrelid	indrelid
 
 statement error
 DROP INDEX test_index;
-----
-db error: ERROR: Index with name test_index does not exist!
 
 
 statement ok

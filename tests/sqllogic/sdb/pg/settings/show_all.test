@@ -188,7 +188,7 @@ scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
-search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
+search_path	<slt:ignore>	Sets <slt:ignore>
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.

@@ -136,6 +136,19 @@ Result DropFunctionOverload(catalog::LogicalCatalog& catalog,
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       macro_info.Copy());
   new_info->macros.erase(new_info->macros.begin() + match_idx);
+  // Align catalog_type with the surviving macros: MACRO_ENTRY iff all
+  // remaining macros are scalar, else TABLE_MACRO_ENTRY. Prevents a
+  // mismatched catalog bucket (e.g. a TableMacroFunction left in a
+  // MACRO_ENTRY bucket) which breaks Cast<>() at lookup time.
+  bool all_scalar = !new_info->macros.empty();
+  for (const auto& m : new_info->macros) {
+    if (m->type != duckdb::MacroType::SCALAR_MACRO) {
+      all_scalar = false;
+      break;
+    }
+  }
+  new_info->type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
+                              : duckdb::CatalogType::TABLE_MACRO_ENTRY;
 
   auto function = std::make_shared<catalog::PgSqlFunction>(
     database_id, ObjectId{}, info.name, std::move(new_info));
@@ -184,6 +197,17 @@ Result DropFunctionByKind(catalog::LogicalCatalog& catalog,
   std::erase_if(new_info->macros, [&](const auto& m) {
     return m->is_procedure == info.is_procedure;
   });
+  // Align catalog_type with the surviving macros (see DropFunctionOverload).
+  bool all_scalar = !new_info->macros.empty();
+  for (const auto& m : new_info->macros) {
+    if (m->type != duckdb::MacroType::SCALAR_MACRO) {
+      all_scalar = false;
+      break;
+    }
+  }
+  new_info->type = all_scalar ? duckdb::CatalogType::MACRO_ENTRY
+                              : duckdb::CatalogType::TABLE_MACRO_ENTRY;
+
   auto function = std::make_shared<catalog::PgSqlFunction>(
     database_id, ObjectId{}, info.name, std::move(new_info));
   return catalog.CreateFunction(database_id, info.schema, function, true);

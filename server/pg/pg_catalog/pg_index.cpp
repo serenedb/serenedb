@@ -64,6 +64,8 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
 
   for (const auto& schema : catalog->GetSchemas(GetDatabaseId())) {
     SDB_ASSERT(schema);
+
+    // Explicit user-created indexes
     for (const auto& index_ptr :
          catalog->GetIndexes(GetDatabaseId(), schema->GetName())) {
       SDB_ASSERT(index_ptr);
@@ -99,6 +101,50 @@ catalog::MaterializedData SystemTableSnapshot<PgIndex>::GetTableData() {
         .indisunique = false,
         .indnullsnotdistinct = false,
         .indisprimary = false,
+        .indisexclusion = false,
+        .indimmediate = true,
+        .indisclustered = false,
+        .indisvalid = true,
+        .indcheckxmin = false,
+        .indisready = true,
+        .indislive = true,
+        .indisreplident = false,
+        .indkey = indkey_storage.back(),
+      });
+    }
+
+    // Synthetic indexes for primary keys (PG semantics: each PK has a backing
+    // index). Use the table's OID as both indexrelid and indrelid so it lines
+    // up with pg_constraint.conindid and pg_class lookups.
+    for (const auto& table :
+         catalog->GetTables(GetDatabaseId(), schema->GetName())) {
+      auto& pk_columns = table->PKColumns();
+      if (pk_columns.empty()) {
+        continue;
+      }
+      auto& columns = table->Columns();
+      std::vector<int16_t> indkey;
+      indkey.reserve(pk_columns.size());
+      for (auto pk_id : pk_columns) {
+        int16_t attnum = 0;
+        for (size_t i = 0; i < columns.size(); ++i) {
+          if (columns[i].id == pk_id) {
+            attnum = static_cast<int16_t>(i + 1);
+            break;
+          }
+        }
+        indkey.push_back(attnum);
+      }
+      auto natts = static_cast<int16_t>(indkey.size());
+      indkey_storage.push_back(std::move(indkey));
+      values.push_back({
+        .indexrelid = PkIndexOid(table->GetId().id()),
+        .indrelid = table->GetId().id(),
+        .indnatts = natts,
+        .indnkeyatts = natts,
+        .indisunique = true,
+        .indnullsnotdistinct = false,
+        .indisprimary = true,
         .indisexclusion = false,
         .indimmediate = true,
         .indisclustered = false,

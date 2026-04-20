@@ -80,7 +80,8 @@ catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          .conindid = 0,
+          // Synthetic PK index OID (see PkIndexOid in fwd.h and pg_index.cpp).
+          .conindid = PkIndexOid(table->GetId().id()),
           .conparentid = 0,
           .confrelid = 0,
           .confupdtype = PgConstraint::Confchgtype::NoAction,

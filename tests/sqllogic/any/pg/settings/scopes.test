@@ -199,7 +199,7 @@ query
 SHOW default_transaction_read_only;
 ----
 default_transaction_read_only
-t
+on
 
 
 statement ok

@@ -149,7 +149,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::BOOLEAN,
         "Controls whether queries can see uncommitted writes from the current "
         "transaction.",
-        []() -> duckdb::Value { return duckdb::Value{"true"}; },
+        []() -> duckdb::Value { return duckdb::Value::BOOLEAN(true); },
       },
     },
     {

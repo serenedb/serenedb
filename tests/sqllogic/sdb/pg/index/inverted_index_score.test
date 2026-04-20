@@ -891,6 +891,21 @@ Fragment 0:  numWorkers=0:
       -- TableScan[1][meta, type=rocksdb_full_scan] -> "id":INTEGER, "tag":VARCHAR
 
 
+query
+SELECT docs_idx.id,
+       BM25(docs_idx.tableoid) AS left_score,
+       BM25(docs2_idx.tableoid) AS right_score,
+       BM25(docs_idx.tableoid) <> BM25(docs2_idx.tableoid) AS differs
+FROM docs_idx
+JOIN docs2_idx ON docs_idx.id = docs2_idx.id
+WHERE PHRASE(docs_idx.body, 'fox') AND PHRASE(docs2_idx.body, 'fox')
+ORDER BY docs_idx.id;
+----
+id	left_score	right_score	differs
+2	0	0.47<slt:ignore>	t
+4	0.031<slt:ignore>	0.47<slt:ignore>	t
+
+
 statement ok
 DROP TABLE docs2;
 

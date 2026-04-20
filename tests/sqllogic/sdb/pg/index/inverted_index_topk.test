@@ -1,0 +1,288 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_topk(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_topk_idx ON docs USING inverted(id, body en_topk);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# ---- EXPLAIN tests: verify topk appears in plan ----
+
+query
+EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│          #1 DESC          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│        Table: docs        │
+│                           │
+│         Strategy:         │
+│    iresearch_score_scan   │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# ---- EXPLAIN with LIMIT: strategy should flip to iresearch_score_topk_scan ----
+# When the query has ORDER BY BM25() DESC + LIMIT k, the optimizer rule
+# TryAttachScoreTopK pulls the limit into SearchScan.score_top_k. This changes
+# the scan function name and adds a "TopK: k" line to the EXPLAIN box.
+
+query
+EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│     Order By: #1 DESC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│        Table: docs        │
+│                           │
+│         Strategy:         │
+│ iresearch_score_topk_scan │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│          TopK: 3          │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# ---- Correctness tests: topk results match full scan + sort + limit ----
+
+# First get the expected results without topk (full scan path).
+# Length-normalized BM25 ranks shorter docs higher: id=2 (3t) > 4 (4t) > 5 (7t) > 1 (9t).
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+2
+4
+5
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
+----
+id
+2
+4
+5
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id;
+----
+id
+2
+4
+5
+1
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 1;
+----
+id
+2
+
+
+# ---- Multi-segment correctness: insert more data, create second segment ----
+
+statement count 1
+INSERT INTO docs VALUES (10, 'red fox');
+
+statement count 1
+INSERT INTO docs VALUES (11, 'blue fox');
+
+statement count 1
+INSERT INTO docs VALUES (12, 'green fox');
+
+statement count 1
+INSERT INTO docs VALUES (13, 'white fox');
+
+statement count 1
+INSERT INTO docs VALUES (14, 'black fox');
+
+statement count 1
+INSERT INTO docs VALUES (15, 'grey fox');
+
+statement count 1
+INSERT INTO docs VALUES (16, 'pink fox');
+
+statement count 1
+INSERT INTO docs VALUES (17, 'orange fox');
+
+statement count 1
+INSERT INTO docs VALUES (18, 'yellow fox');
+
+statement count 1
+INSERT INTO docs VALUES (19, 'purple fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Get expected results from full scan across two segments
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
+----
+id
+10
+11
+12
+13
+14
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
+----
+id
+10
+11
+12
+13
+14
+
+
+query
+SELECT COUNT(*) FROM (SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC) t;
+----
+count
+14
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'nonexistent_term_xyz') ORDER BY BM25(docs_topk_idx.tableoid) DESC;
+----
+id
+
+
+query
+SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
+----
+id	has_score
+10	t
+11	t
+12	t
+
+
+query
+SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 2;
+----
+id
+3
+1
+
+
+# Clean up
+statement ok
+DROP INDEX docs_topk_idx;
+
+statement ok
+DROP TABLE docs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_topk;

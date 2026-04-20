@@ -261,20 +261,20 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // offsets(col) -> BIGINT[] -- emit position pairs (start, end) for
-  // matched terms in `col` per row. List elements alternate start/end
-  // (so length is 2*N for N positions). Claimed by the iresearch_plan
-  // rule, which identifies the scan via the column ref's
-  // binding.table_index.
+  // offsets(col [, limit]) -> BIGINT[] -- emit position pairs
+  // (start, end) for matched terms in `col` per row. List elements
+  // alternate start/end (so length is 2*N for N positions). First arg
+  // is ANY so any catalog column type binds; the iresearch_plan rule
+  // rewrites the call to a BoundColumnRef on a virtual offsets column
+  // (or throws a specific error). Wrong arity or a non-integer second
+  // arg is rejected at bind time by the function resolver.
   {
     duckdb::ScalarFunctionSet set{std::string{kOffsets}};
-    // offsets(col) -- auto-anchor; legacy single-index queries.
     set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::VARCHAR},
+      {duckdb::LogicalType::ANY},
       duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
-    // offsets(tableoid, col) -- explicit anchor, consistent with bm25/tfidf.
     set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
+      {duckdb::LogicalType::ANY, duckdb::LogicalType::INTEGER},
       duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
     loader.RegisterFunction(std::move(set));
   }

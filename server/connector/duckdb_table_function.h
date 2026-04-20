@@ -96,13 +96,14 @@ struct SearchScan {
   ScorerParams scorer;
   std::optional<size_t> score_top_k;
 
-  // Optional: positions/offsets output. Each entry pairs a target
-  // column id (whose offsets will be emitted) with the projection's
-  // output column index (so the scan knows where to place the LIST).
-  // Empty when no sdb_offsets() projection was claimed.
+  // Optional: positions/offsets output. Each entry records the catalog
+  // column whose offsets will be emitted, and a per-doc limit on the
+  // number of offset pairs. The runtime produces one
+  // LIST(BIGINT) output column per entry, in this vector's order.
+  // Empty when no OFFSETS() projection was claimed.
   struct OffsetsRequest {
     catalog::Column::Id column_id;
-    duckdb::idx_t projection_index;  // matched projection.expressions slot
+    size_t limit = 0;
   };
   std::vector<OffsetsRequest> offsets;
 

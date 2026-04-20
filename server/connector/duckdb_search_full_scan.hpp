@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/offsets_collector.hpp"
 
 namespace irs {
 
@@ -56,6 +57,13 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   std::vector<std::pair<float, std::string>> topk_hits;  // (score, pk) DESC
   size_t topk_offset = 0;
   bool topk_executed = false;
+
+  // Offsets state (populated only when bind_data carries OFFSETS requests).
+  // offsets_output_idx[i] is the DataChunk slot for SearchScan.offsets[i];
+  // offsets_field_state[i] holds per-segment sub-filter state rebuilt on
+  // every segment transition (position iterators are cached inside).
+  std::vector<duckdb::idx_t> offsets_output_idx;
+  std::vector<PerFieldState> offsets_field_state;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

@@ -22,8 +22,8 @@
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/planner/filter/conjunction_filter.hpp>
-#include <duckdb/planner/filter/constant_filter.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 
 #include "basics/assert.h"
@@ -76,19 +76,23 @@ ParquetRowMaterializer::ParquetRowMaterializer(
   _column_indexes.emplace_back(
     duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
 
-  // 3. Big OR-equality filter over all file_row_numbers we ever need.
-  // TableFilterState::Initialize rejects InFilter; ConjunctionOrFilter
-  // of ConstantFilter(=id) has equivalent semantics and IS supported.
-  auto or_filter = duckdb::make_uniq<duckdb::ConjunctionOrFilter>();
-  or_filter->child_filters.reserve(all_pks.size());
+  // 3. Big IN filter over all file_row_numbers we ever need.
+  // Must be an ExpressionFilter: TableFilterState::Initialize and
+  // downstream filter copying only accept ExpressionFilter (plus null,
+  // struct, conjunction and a handful of join-side types).
+  std::vector<duckdb::Value> pk_values;
+  pk_values.reserve(all_pks.size());
   for (const auto& pk : all_pks) {
-    or_filter->child_filters.push_back(
-      duckdb::make_uniq<duckdb::ConstantFilter>(
-        duckdb::ExpressionType::COMPARE_EQUAL,
-        duckdb::Value::BIGINT(primary_key::ReadSigned<int64_t>(pk))));
+    pk_values.push_back(
+      duckdb::Value::BIGINT(primary_key::ReadSigned<int64_t>(pk)));
   }
-  _filter_set.PushFilter(duckdb::ProjectionIndex(_frn_slot),
-                         std::move(or_filter));
+  auto col_ref = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+    duckdb::LogicalType::BIGINT, 0ULL);
+  auto in_expr = duckdb::ExpressionFilter::CreateInExpression(
+    std::move(col_ref), std::move(pk_values));
+  _filter_set.PushFilter(
+    duckdb::ProjectionIndex(_frn_slot),
+    duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(in_expr)));
 
   // 4. Init one persistent parquet scan.
   duckdb::TableFunctionInitInput init_input(_bind_data.get(), _column_indexes,

@@ -18,11 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#pragma once
+
 // SQLSTATE error codes lifted from PostgreSQL
 // (src/backend/utils/errcodes.txt, generated as utils/errcodes.h).
 // MAKE_SQLSTATE / PGSIXBIT come from src/include/utils/elog.h.
-
-#pragma once
 
 #define PGSIXBIT(ch) (((ch) - '0') & 0x3F)
 #define PGUNSIXBIT(val) (((val) & 0x3F) + '0')

@@ -49,6 +49,7 @@
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
+#include "functions/string.h"
 #include "rocksdb_filter.hpp"
 
 namespace sdb::connector {
@@ -667,7 +668,8 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 template<bool GenericVersion>
 Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const duckdb::Expression& field_expr,
-                const duckdb::Expression& pattern_expr) {
+                const duckdb::Expression& pattern_expr,
+                char escape_char = '\\') {
   const auto* col_ref = TryGetColumnRef(field_expr);
   if (!col_ref) {
     return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
@@ -709,7 +711,8 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
                                       : AddFilter<irs::ByWildcard>(filter);
   wildcard_filter.boost(ctx.boost);
   *wildcard_filter.mutable_field() = field_name;
-  auto pattern = const_val->GetValue<std::string>();
+  auto pattern =
+    LikeEscapePattern(const_val->GetValue<std::string>(), escape_char);
   wildcard_filter.mutable_options()->term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
   return {};
@@ -1143,7 +1146,20 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
       return {ERROR_BAD_PARAMETER, "LIKE has ", func.children.size(),
               " inputs but at least 2 expected"};
     }
-    return FromLike<true>(filter, ctx, *func.children[0], *func.children[1]);
+    char escape_char = '\\';
+    if (name == "like_escape" && func.children.size() >= 3) {
+      const auto* esc_val = TryGetConstant(*func.children[2]);
+      if (!esc_val || esc_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+        return {ERROR_BAD_PARAMETER, "LIKE ESCAPE must be a VARCHAR constant"};
+      }
+      auto esc_str = esc_val->GetValue<std::string>();
+      if (esc_str.size() != 1) {
+        return {ERROR_BAD_PARAMETER, "LIKE ESCAPE must be a single character"};
+      }
+      escape_char = esc_str[0];
+    }
+    return FromLike<true>(filter, ctx, *func.children[0], *func.children[1],
+                          escape_char);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};

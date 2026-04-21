@@ -758,32 +758,6 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   }
 }
 
-// like_escape(pattern, escape) -> varchar
-// Normalizes a LIKE pattern's escape character to backslash.
-// If escape is already '\', returns pattern unchanged.
-// Otherwise replaces escape_char sequences with '\' sequences and escapes
-// literal backslashes.
-std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
-  if (escape_char == '\\') {
-    return std::string{pattern};
-  }
-  std::string result;
-  result.reserve(pattern.size());
-  bool afterescape = false;
-  for (char c : pattern) {
-    if (c == escape_char && !afterescape) {
-      result += '\\';
-      afterescape = true;
-      continue;
-    } else if (c == '\\' && !afterescape) {
-      result += '\\';
-    }
-    result += c;
-    afterescape = false;
-  }
-  return result;
-}
-
 void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
@@ -1144,6 +1118,35 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 }  // namespace
+
+// like_escape(pattern, escape) -> varchar
+// Normalizes a LIKE pattern's escape character to backslash.
+// If escape is already '\', returns pattern unchanged.
+// Otherwise replaces escape_char sequences with '\' sequences and escapes
+// literal backslashes. A doubled escape char (e.g. "!!") in the source
+// pattern becomes "\!" in the output -- semantically equivalent to a plain
+// "!" as far as iresearch's wildcard filter is concerned (see
+// ComputeWildcardType / FromWildcard / Unescape).
+std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
+  if (escape_char == '\\') {
+    return std::string{pattern};
+  }
+  std::string result;
+  result.reserve(pattern.size());
+  bool afterescape = false;
+  for (char c : pattern) {
+    if (c == escape_char && !afterescape) {
+      result += '\\';
+      afterescape = true;
+      continue;
+    } else if (c == '\\' && !afterescape) {
+      result += '\\';
+    }
+    result += c;
+    afterescape = false;
+  }
+  return result;
+}
 
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};

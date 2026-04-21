@@ -10,6 +10,7 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_vector_builder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_column_serializer_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_key_builder_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_filter_builder_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_sink_writer_test.cpp
     # ${CMAKE_CURRENT_SOURCE_DIR}/data_sink_test.cpp
     # ${CMAKE_CURRENT_SOURCE_DIR}/data_source_test.cpp

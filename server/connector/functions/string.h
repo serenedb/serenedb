@@ -21,9 +21,17 @@
 #pragma once
 
 #include <duckdb/main/database.hpp>
+#include <string>
+#include <string_view>
 
 namespace sdb::connector {
 
 void RegisterPgStringFunctions(duckdb::DatabaseInstance& db);
+
+// Rewrites a LIKE pattern that uses a custom escape character to one that
+// uses backslash -- the form iresearch's wildcard filter expects. Used by
+// both the runtime `like_escape` scalar and the iresearch search filter
+// builder when it translates `LIKE ... ESCAPE` predicates.
+std::string LikeEscapePattern(std::string_view pattern, char escape_char);
 
 }  // namespace sdb::connector

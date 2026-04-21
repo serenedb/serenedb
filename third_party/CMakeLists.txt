@@ -746,7 +746,7 @@ set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs"
+    "core_functions;jemalloc;parquet;tpch;tpcds;json;httpfs"
     CACHE STRING
     ""
     FORCE
@@ -772,6 +772,7 @@ target_link_libraries(
     PUBLIC
         duckdb_generated_extension_loader
         core_functions_extension
+        jemalloc_extension
         parquet_extension
         tpch_extension
         tpcds_extension

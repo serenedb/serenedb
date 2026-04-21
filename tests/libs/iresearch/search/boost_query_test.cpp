@@ -123,7 +123,7 @@ TEST_P(BoostQueryTestCase, RequiredExcludesNonMatchingDocs) {
   ASSERT_EQ(3u, hits.size())
     << "Expected exactly 3 docs matching required 'open'";
 
-  for (auto& [score, doc] : hits) {
+  for (auto& [score, doc, _] : hits) {
     EXPECT_FALSE(irs::doc_limits::eof(doc));
     EXPECT_NE(irs::doc_limits::invalid(), doc);
     EXPECT_GT(score, 0.f);

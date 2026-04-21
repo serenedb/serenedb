@@ -31,9 +31,6 @@
 
 namespace sdb::connector {
 
-// DuckDB-native search index insert writer.
-// Reuses SearchSinkInsertBaseImpl for the actual slice-based write path,
-// but replaces SwitchColumn to use DuckDB LogicalType instead of velox::Type.
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:

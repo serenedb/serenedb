@@ -22,9 +22,17 @@
 
 #include <absl/strings/numbers.h>
 #include <simdjson.h>
-#include <velox/type/StringView.h>
 
-#include "basics/fwd.h"
+#include <duckdb/common/types/string_type.hpp>
+
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::functions {
 
@@ -44,11 +52,11 @@ class JsonParser {
     if (doc.get_value().get(value)) {
       return {};
     }
-    for (const std::optional<velox::StringView>& element : path) {
+    for (const std::optional<duckdb::string_t>& element : path) {
       if (!element) {
         return {};
       }
-      auto key = static_cast<std::string_view>(*element);
+      std::string_view key{element->GetData(), element->GetSize()};
 
       if (value.type() == simdjson::ondemand::json_type::array) {
         int64_t index;
@@ -135,5 +143,45 @@ class JsonParser {
   simdjson::ondemand::parser _parser;
   simdjson::padded_string _padded_input;
 };
+
+inline simdjson::simdjson_result<simdjson::ondemand::value>
+JsonParser::GetByIndex(simdjson::ondemand::array arr, int64_t relative_index) {
+  size_t size, index;
+  auto ec = arr.count_elements().get(size);
+  SDB_ASSERT(ec == simdjson::SUCCESS);
+
+  if (relative_index < 0) {
+    if (static_cast<size_t>(-relative_index) > size) {
+      return simdjson::simdjson_result<simdjson::ondemand::value>(
+        simdjson::OUT_OF_BOUNDS);
+    }
+    index = size + relative_index;
+  } else {
+    index = static_cast<size_t>(relative_index);
+  }
+
+  return arr.at(index);
+}
+
+inline void JsonParser::PrepareJson(std::string_view json) {
+  // TODO(codeworse):
+  // https://github.com/simdjson/simdjson/blob/master/doc/performance.md#free-padding
+  _padded_input = simdjson::padded_string{json};
+}
+
+inline simdjson::ondemand::document JsonParser::GetJsonDocument() {
+  simdjson::ondemand::document doc;
+  auto ec = _parser.iterate(_padded_input).get(doc);
+  if (ec != simdjson::SUCCESS) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Invalid JSON input: ", simdjson::error_message(ec)));
+  }
+  if (doc.type().error()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Invalid JSON input: tape error"));
+  }
+  return doc;
+}
 
 }  // namespace sdb::pg::functions

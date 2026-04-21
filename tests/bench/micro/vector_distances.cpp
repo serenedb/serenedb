@@ -23,7 +23,7 @@
 #include <cstddef>
 #include <iresearch/utils/vector.hpp>
 
-#ifdef VELOX_ENABLE_FAISS
+#ifdef ENABLE_FAISS
 #include <faiss/utils/distances.h>
 #endif
 
@@ -101,6 +101,7 @@ class DistanceFixture : public benchmark::Fixture {
   return static_cast<float>(lr / std::sqrt(ll * rr));
 }
 
+#ifdef ENABLE_FAISS
 [[gnu::noinline]] float VeloxComputeCosine(const float* left,
                                            const float* right, size_t sz) {
   float norm_x = 0, norm_y = 0;
@@ -109,6 +110,7 @@ class DistanceFixture : public benchmark::Fixture {
   float product = faiss::fvec_inner_product(left, right, sz);
   return static_cast<float>(product / (norm_x * norm_y));
 }
+#endif
 
 BENCHMARK_DEFINE_F(DistanceFixture, SdbL2Squared)(benchmark::State& state) {
   for (auto _ : state) {

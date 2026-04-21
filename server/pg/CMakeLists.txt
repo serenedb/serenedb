@@ -1,4 +1,3 @@
-add_subdirectory(functions)
 add_subdirectory(sdb_catalog)
 add_subdirectory(commands)
 target_sources(
@@ -27,7 +26,6 @@ target_sources(
         system_catalog.cpp
         progress_tracker.cpp
         sdb_catalog/sdb_log.cpp
-        functions.cpp
         sql_def.cpp
         sql_utils.cpp
         option_help.cpp

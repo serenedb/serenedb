@@ -94,6 +94,8 @@ struct ScoreDoc {
   score_t score = 0.0f;
   doc_id_t doc = doc_limits::eof();
   uint32_t segment_idx = 0;
+
+  bool operator==(const ScoreDoc& other) const = default;
 };
 
 // TODO(mbkkt) Try to make it autovectorized,

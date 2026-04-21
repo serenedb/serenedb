@@ -27,7 +27,6 @@
 #include <iresearch/utils/bytes_utils.hpp>
 
 #include "basics/endian.h"
-#include "basics/fwd.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/duckdb_search_sink_writer.h"

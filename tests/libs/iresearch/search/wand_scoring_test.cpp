@@ -214,7 +214,8 @@ class WandScoringTestCase : public IndexTestBase {
       }
       ASSERT_TRUE(!irs::doc_limits::eof(docs[i].doc) &&
                   docs[i].doc != irs::doc_limits::invalid())
-        << "Doc ID at position " << i << " should be valid, got " << docs[i];
+        << "Doc ID at position " << i << " should be valid, got "
+        << docs[i].doc;
     }
   }
 

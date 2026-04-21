@@ -312,8 +312,8 @@ void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      auto schema =
-        snapshot->GetObject<catalog::Schema>(ObjectId{static_cast<uint64_t>(oid)});
+      auto schema = snapshot->GetObject<catalog::Schema>(
+        ObjectId{static_cast<uint64_t>(oid)});
       if (!schema) {
         throw duckdb::CatalogException("schema with OID %lld does not exist",
                                        oid);

@@ -65,7 +65,7 @@ Requires a local build at `build/bin/serened`.
 ./tests/sqllogic/run_recovery_tests.sh --jobs 1 --runner ../../third_party/sqllogictest-rs
 ```
 
-Same isolation (fresh serened per test), just one at a time — easier to watch
+Same isolation (fresh serened per test), just one at a time -- easier to watch
 output go by and correlate failures with serened behavior.
 
 ### Output format
@@ -98,7 +98,7 @@ cd tests/sqllogic
          --runner ../../third_party/sqllogictest-rs
 ```
 
-Terminal 1 shows serened's output live — easier than tailing a log file.
+Terminal 1 shows serened's output live -- easier than tailing a log file.
 
 ## Customizing Docker Execution
 

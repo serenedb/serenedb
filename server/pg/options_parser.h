@@ -32,14 +32,9 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "pg/errcodes.h"
 #include "pg/option_help.h"
 #include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
@@ -128,8 +123,7 @@ class OptionsParser {
       auto result =
         magic_enum::enum_cast<E>(*raw, magic_enum::case_insensitive);
       if (!result) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG(Info.base.ErrorMessage(_operation, *raw)),
                         ERR_HINT(make_hint()));
       }

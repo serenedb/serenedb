@@ -27,14 +27,9 @@
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/key_utils.hpp"
 #include "connector/secondary_sink_writer.hpp"  // for secondary_key:: helpers
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb/utilities/transaction.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 

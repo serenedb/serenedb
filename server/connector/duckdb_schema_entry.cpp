@@ -42,14 +42,6 @@
 
 #include "app/app_server.h"
 #include "basics/string_utils.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 #include "catalog/catalog.h"
 #include "catalog/format_options.h"
 #include "catalog/function.h"
@@ -64,6 +56,9 @@ LIBPG_QUERY_INCLUDES_END
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/secondary_index_shard.h"
 

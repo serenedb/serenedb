@@ -52,15 +52,11 @@
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "connector/pg_logical_types.h"
+#include "pg/errcodes.h"
 #include "pg/pg_types.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {

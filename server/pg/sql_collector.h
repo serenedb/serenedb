@@ -43,11 +43,6 @@ class Index;
 class Table;
 
 }  // namespace sdb::catalog
-
-struct RawStmt;
-struct List;
-struct Node;
-
 namespace sdb::pg {
 
 class Objects : public irs::memory::Managed {
@@ -205,20 +200,6 @@ class Objects : public irs::memory::Managed {
   containers::FlatHashMap<const void*, std::vector<OffsetsFieldInfo>>
     _node_to_offsets_fields;
 };
-
-// collect objects to objects
-void Collect(std::string_view database, const RawStmt& node, Objects& objects);
-
-// collect objects to objects
-void CollectExpr(std::string_view database, const Node& expr, Objects& objects);
-
-// collect objects to objects and track max binding param index
-void Collect(std::string_view database, const RawStmt& node, Objects& objects,
-             pg::ParamIndex& max_bind_param_idx);
-
-Objects::ObjectName ParseObjectName(const List* names,
-                                    std::string_view database,
-                                    std::string_view default_schema = {});
 
 Objects::ObjectName ParseObjectName(std::string_view name,
                                     std::string_view default_schema = {});

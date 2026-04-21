@@ -56,7 +56,6 @@ target_link_libraries(
     serene_base
     iresearch-static
     rocksdb
-    pg_query
     duckdb_static
     simdjson
     Folly::folly

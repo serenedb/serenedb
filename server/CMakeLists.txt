@@ -42,7 +42,6 @@ target_link_libraries(
         vpack
         rocksdb
         fuerte
-        pg_query
         duckdb_static
         Folly::folly
 )

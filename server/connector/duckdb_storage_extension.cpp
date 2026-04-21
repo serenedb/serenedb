@@ -34,14 +34,11 @@
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/rocksdb_plan.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rest_server/serened.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 namespace {

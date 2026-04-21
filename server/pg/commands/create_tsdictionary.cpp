@@ -59,10 +59,6 @@
 #include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-LIBPG_QUERY_INCLUDES_END
-
 namespace sdb::pg {
 namespace {
 

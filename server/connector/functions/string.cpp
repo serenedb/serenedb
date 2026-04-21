@@ -27,19 +27,15 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 
 #include "connector/pg_logical_types.h"
 #include "iresearch/utils/utf8_utils.hpp"
+#include "pg/errcodes.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "common/keywords.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 namespace {
@@ -268,7 +264,6 @@ void PgClientEncodingFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
 }
 
 // quote_ident(text) -> text -- ported from QuoteIdentFunction
-// Uses libpg_query's ScanKeywordLookup for reserved word detection.
 void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
@@ -285,9 +280,7 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
         }
       }
       if (!needs_quoting) {
-        std::string null_terminated{str};
-        int kwnum = ScanKeywordLookup(null_terminated.c_str(), &ScanKeywords);
-        if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD) {
+        if (duckdb::KeywordHelper::IsKeyword(std::string{str})) {
           needs_quoting = true;
         }
       }

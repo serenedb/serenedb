@@ -28,19 +28,14 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_constraint_verify.h"
 // THROW_SQL_ERROR + ERRCODE_UNIQUE_VIOLATION for intra-batch duplicate check
-#include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

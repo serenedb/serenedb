@@ -44,6 +44,7 @@
 #include "connector/duckdb_client_state.h"
 #include "general_server/general_server_feature.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/hba.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_types.h"
@@ -54,13 +55,6 @@
 #include "pg/sql_utils.h"
 #include "query/duckdb_engine.h"
 #include "search/inverted_index_shard.h"
-
-// PG protocol constants from libpg_query
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "libpq/pqcomm.h"
-LIBPG_QUERY_INCLUDES_END
 
 #define SDB_LOG_PGSQL(...) SDB_PRINT_IF(false, __VA_ARGS__)
 

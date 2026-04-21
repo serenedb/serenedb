@@ -27,14 +27,9 @@
 #include <duckdb/planner/constraints/bound_not_null_constraint.hpp>
 
 #include "connector/key_utils.hpp"
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 namespace {

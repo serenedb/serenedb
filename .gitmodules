@@ -18,10 +18,6 @@
 	path = third_party/rocksdb
 	url = https://github.com/serenedb/rocksdb.git
 	shallow = true
-[submodule "third_party/libpg_query"]
-	path = third_party/libpg_query
-	url = https://github.com/serenedb/libpg_query.git
-	shallow = true
 [submodule "third_party/folly"]
 	path = third_party/folly
 	url = https://github.com/serenedb/folly.git

@@ -114,12 +114,6 @@
 #include "pg/system_table.h"
 #include "pg/system_views.h"
 
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-LIBPG_QUERY_INCLUDES_END
-
 namespace sdb::pg {
 namespace {
 

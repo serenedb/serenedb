@@ -28,13 +28,8 @@
 #include "basics/containers/trivial_map.h"
 #include "basics/system-compiler.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 

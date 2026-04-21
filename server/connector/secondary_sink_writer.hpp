@@ -29,12 +29,6 @@
 #include "rocksdb/utilities/transaction.h"
 #include "sink_writer_base.hpp"
 
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
-
 namespace sdb::connector {
 
 // Utilities for building secondary index keys.

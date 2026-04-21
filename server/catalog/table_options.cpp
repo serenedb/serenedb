@@ -46,12 +46,6 @@
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/nodeFuncs.h"
-LIBPG_QUERY_INCLUDES_END
-
 namespace sdb::catalog {
 namespace {
 

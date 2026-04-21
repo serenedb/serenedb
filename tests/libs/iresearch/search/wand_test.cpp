@@ -133,8 +133,8 @@ class WandTestCase : public tests::IndexTestBase {
 
 std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
                                        const irs::Filter& filter,
-                                       irs::ScorerPtr scorer, bool wand_enabled, bool can_use_wand,
-                                       size_t limit) {
+                                       irs::ScorerPtr scorer, bool wand_enabled,
+                                       bool can_use_wand, size_t limit) {
   auto query = filter.prepare({.index = index, .scorer = scorer});
   EXPECT_NE(nullptr, query);
 
@@ -203,9 +203,10 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 
 void WandTestCase::AssertResults(const irs::DirectoryReader& index,
                                  const irs::Filter& filter,
-                                 irs::ScorerPtr scorer, bool wand_enabled, bool can_use_wand,
-                                 size_t limit) {
-  auto wand_result = Collect(index, filter, scorer, wand_enabled, can_use_wand, limit);
+                                 irs::ScorerPtr scorer, bool wand_enabled,
+                                 bool can_use_wand, size_t limit) {
+  auto wand_result =
+    Collect(index, filter, scorer, wand_enabled, can_use_wand, limit);
   auto result = Collect(index, filter, scorer, wand_enabled, false, limit);
   ASSERT_EQ(result, wand_result);
 }
@@ -286,7 +287,8 @@ void WandTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
   add_segment(gen, open_mode, GetWriterOptions(scorer, true));
 }
 
-void WandTestCase::AssertTermFilter(const irs::Scorer& scorer, bool wand_enabled) {
+void WandTestCase::AssertTermFilter(const irs::Scorer& scorer,
+                                    bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
   irs::ByTerm filter;
@@ -313,7 +315,8 @@ void WandTestCase::AssertTermFilter(const irs::Scorer& scorer, bool wand_enabled
   }
 }
 
-void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer, bool wand_enabled) {
+void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
+                                           bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
   irs::And conjunction;
@@ -341,11 +344,13 @@ void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer, bool wand_
     filter2.mutable_options()->term = terms->value();
 
     AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand, 10);
-    AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand, 100);
+    AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand,
+                  100);
   }
 }
 
-void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer, bool wand_enabled) {
+void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
+                                           bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
   irs::Or disjunction;
@@ -377,7 +382,8 @@ void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer, bool wand_
     filter3.mutable_options()->term = terms->value();
 
     AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand, 10);
-    AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand, 100);
+    AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand,
+                  100);
   }
 }
 

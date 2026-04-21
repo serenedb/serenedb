@@ -27,7 +27,6 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 
 #include "basics/static_strings.h"
-#include "catalog/identifiers/identifier.h"
 
 namespace sdb::catalog {
 
@@ -40,7 +39,6 @@ PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
 
 std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
                                                            ReadContext ctx) {
-  auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
   auto name =
     basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
 
@@ -56,13 +54,12 @@ std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
   auto macro_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
       std::move(create_info));
-  return std::make_shared<PgSqlFunction>(ctx.database_id, id, name,
+  return std::make_shared<PgSqlFunction>(ctx.database_id, ctx.id, name,
                                          std::move(macro_info));
 }
 
 void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
   builder.openObject();
-  builder.add("_key", Identifier{GetId().id()});
   builder.add(StaticStrings::kDataSourceName, GetName());
 
   // Serialize CreateMacroInfo via DuckDB BinarySerializer

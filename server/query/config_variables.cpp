@@ -78,7 +78,11 @@ constexpr std::pair<std::string_view, VariableDescription>
         [](duckdb::ClientContext&, duckdb::SetScope) {
           ClearFailurePointsDebugging();
         },
-        duckdb::SetScope::GLOBAL,
+        // SESSION scope: fault points are a test-only hook, not persistent
+        // config. GLOBAL would block `SET sdb_faults` inside transactions,
+        // but recovery tests need to arm a fault inside an uncommitted txn
+        // before triggering the crash.
+        duckdb::SetScope::SESSION,
       },
     },
 #endif

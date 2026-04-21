@@ -33,11 +33,13 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 
 #include "basics/build.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
@@ -215,6 +217,15 @@ int64_t GetRelationForkSize(const catalog::Snapshot& snapshot, uint64_t oid,
       return static_cast<int64_t>(
         GetServerEngine().GetTableSize(shard->GetId()));
     }
+    case catalog::ObjectType::InvertedIndex: {
+      auto shard = snapshot.GetIndexShard(rel->GetId());
+      SDB_ASSERT(shard);
+      SDB_ASSERT(shard->GetType() == catalog::ObjectType::InvertedIndexShard);
+      return static_cast<int64_t>(
+        basics::downCast<search::InvertedIndexShard>(shard.get())
+          ->GetStats()
+          .indexSize);
+    }
     default:
       return 0;
   }
@@ -266,6 +277,49 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
       }
       return static_cast<int64_t>(
         GetServerEngine().GetDatabaseSize(*snapshot, database->GetId()));
+    });
+}
+
+// pg_schema_size(name) -> bigint -- non-standard, included for SereneDB tests.
+void PgSchemaSizeNameFunction(duckdb::DataChunk& args,
+                              duckdb::ExpressionState& state,
+                              duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto database_id = conn_ctx.GetDatabaseId();
+
+  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
+    args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
+      std::string_view schema_name{input.GetData(), input.GetSize()};
+      auto schema = snapshot->GetSchema(database_id, schema_name);
+      if (!schema) {
+        throw duckdb::CatalogException("schema \"%s\" does not exist",
+                                       std::string{schema_name});
+      }
+      return static_cast<int64_t>(GetServerEngine().GetSchemaSize(
+        *snapshot, database_id, std::string{schema_name}));
+    });
+}
+
+// pg_schema_size(oid) -> bigint
+void PgSchemaSizeOidFunction(duckdb::DataChunk& args,
+                             duckdb::ExpressionState& state,
+                             duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
+      auto schema =
+        snapshot->GetObject<catalog::Schema>(ObjectId{static_cast<uint64_t>(oid)});
+      if (!schema) {
+        throw duckdb::CatalogException("schema with OID %lld does not exist",
+                                       oid);
+      }
+      return static_cast<int64_t>(GetServerEngine().GetSchemaSize(
+        *snapshot, schema->GetDatabaseId(), schema->GetName()));
     });
 }
 
@@ -485,6 +539,16 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::BIGINT},
                                                  duckdb::LogicalType::BIGINT,
                                                  PgDatabaseSizeOidFunction});
+
+  // pg_schema_size(text) and pg_schema_size(oid) -- non-standard helper.
+  loader.RegisterFunction(duckdb::ScalarFunction{"pg_schema_size",
+                                                 {duckdb::LogicalType::VARCHAR},
+                                                 duckdb::LogicalType::BIGINT,
+                                                 PgSchemaSizeNameFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"pg_schema_size",
+                                                 {duckdb::LogicalType::BIGINT},
+                                                 duckdb::LogicalType::BIGINT,
+                                                 PgSchemaSizeOidFunction});
 }
 
 }  // namespace sdb::connector

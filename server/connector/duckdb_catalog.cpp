@@ -371,8 +371,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
                     ERR_MSG("schema \"", info.schema, "\" already exists"));
   }
   if (!r.ok()) {
-    throw duckdb::InvalidInputException("Failed to create schema: %s",
-                                        std::string{r.errorMessage()});
+    SDB_THROW(std::move(r));
   }
   // New snapshot will have the schema; next LookupSchema will find it
   return nullptr;

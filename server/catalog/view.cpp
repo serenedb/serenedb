@@ -27,7 +27,6 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 
 #include "basics/static_strings.h"
-#include "catalog/identifiers/identifier.h"
 
 namespace sdb::catalog {
 
@@ -39,7 +38,6 @@ PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
 
 std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
                                                    ReadContext ctx) {
-  auto id = ObjectId{basics::VPackHelper::extractIdValue(slice)};
   auto name =
     basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
 
@@ -55,13 +53,12 @@ std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
   auto view_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
       std::move(create_info));
-  return std::make_shared<PgSqlView>(ctx.database_id, id, name,
+  return std::make_shared<PgSqlView>(ctx.database_id, ctx.id, name,
                                      std::move(view_info));
 }
 
 void PgSqlView::WriteInternal(vpack::Builder& builder) const {
   builder.openObject();
-  builder.add("_key", Identifier{GetId().id()});
   builder.add(StaticStrings::kDataSourceName, GetName());
 
   // Serialize CreateViewInfo via DuckDB BinarySerializer

@@ -2,7 +2,9 @@ statement ok
 RESET sdb_faults;
 
 
-statement error
+# SET ... TO DEFAULT is equivalent to RESET per standard SQL/PG semantics
+# (DuckDB enforces this), so it succeeds here.
+statement ok
 SET sdb_faults TO DEFAULT;
 
 
@@ -10,6 +12,7 @@ query
 SHOW sdb_faults
 ----
 sdb_faults
+(empty)
 
 
 statement ok
@@ -32,9 +35,7 @@ query
 SHOW sdb_faults
 ----
 sdb_faults
-some1
-some2
-some3
+some1,some2,some3
 
 
 statement ok
@@ -45,8 +46,7 @@ query
 SHOW sdb_faults
 ----
 sdb_faults
-some2
-some3
+some2,some3
 
 
 statement error
@@ -61,3 +61,4 @@ query
 SHOW sdb_faults
 ----
 sdb_faults
+(empty)

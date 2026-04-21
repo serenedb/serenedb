@@ -24,6 +24,8 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 
 #include "app/app_server.h"
+#include "basics/debugging.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
@@ -166,6 +168,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCTAS::Finalize(
 
   // Remove tombstone if table was created (sink_state is non-null)
   if (sink_state) {
+    SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
     auto& gstate = sink_state->Cast<CTASGlobalState>();
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

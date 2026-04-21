@@ -25,6 +25,8 @@
 #include <filesystem>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
+#include "basics/system-compiler.h"
 #include "catalog/identifiers/revision_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
@@ -258,6 +260,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalSSTInsert::Finalize(
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));
   }
+  SDB_IF_FAILURE("crash_sst_sink_after_ingest") { SDB_IMMEDIATE_ABORT(); }
 
   // Commit IResearch transactions with the post-ingest sequence number.
   // first_tick = post_ingest_seq (> _committed_tick) regardless of batch size.

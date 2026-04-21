@@ -37,7 +37,8 @@ connection after_rename_table
 statement error
 SELECT * FROM s1.t_renamed;
 ----
-db error: ERROR: relation "s1.t_renamed" does not exist
+db error: ERROR: Table with name t_renamed does not exist!
+<slt:ignore>
 
 
 # Crash before rename column is persisted
@@ -81,7 +82,8 @@ connection after_rename_view
 statement error
 SELECT * FROM s1.v_renamed;
 ----
-db error: ERROR: relation "s1.v_renamed" does not exist
+db error: ERROR: Table with name v_renamed does not exist!
+<slt:ignore>
 
 
 # Crash before rename function is persisted
@@ -105,7 +107,8 @@ connection after_rename_func
 statement error
 SELECT * FROM s1.f_renamed();
 ----
-db error: ERROR: function "s1.f_renamed" does not exist
+db error: ERROR: Table Function with name f_renamed does not exist!
+<slt:ignore>
 
 
 # Cleanup

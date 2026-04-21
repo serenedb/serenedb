@@ -24,6 +24,8 @@
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 
 #include "app/app_server.h"
+#include "basics/debugging.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/databases.h"
 #include "connector/duckdb_catalog.h"
@@ -123,6 +125,7 @@ void DropSereneDB(duckdb::ClientContext& context, const duckdb::string& name,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
   }

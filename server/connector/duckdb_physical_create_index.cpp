@@ -28,6 +28,8 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/debugging.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
@@ -381,9 +383,11 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     // Synchronous commit wait
     auto future = inverted_shard.CommitWait();
     std::ignore = std::move(future).Get().Ok();
+    SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
     inverted_shard.FinishCreation();
   }
 
+  SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   // Remove tombstone -- index is now fully built
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

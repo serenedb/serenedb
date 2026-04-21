@@ -23,10 +23,13 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "connector/row_materializer.h"
 #include "rocksdb/iterator.h"
+#include "rocksdb/slice.h"
 #include "rocksdb/snapshot.h"
 #include "rocksdb/utilities/transaction.h"
 
@@ -73,6 +76,18 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
 struct CommonScanLocalState : public duckdb::LocalTableFunctionState {};
 
+// Shared base for PK-based scan states (full and range).
+// Holds the upper-bound key storage that column iterators reference.
+// Iterators must be declared in derived classes after split_* key vectors so
+// they are destroyed first (C++ destroys members in reverse declaration order,
+// derived before base).
+struct PKScanGlobalState : public CommonScanGlobalState {
+  // upper_bound_slices point into upper_bound_data; both must outlive
+  // iterators.
+  std::string upper_bound_data;
+  std::vector<rocksdb::Slice> upper_bound_slices;
+};
+
 // Fills the common fields of `state` from `bind_data` and `input`.
 // Handles: snapshot/txn isolation setup, projection pushdown, has_generated_pk,
 // and virtual column (rowid, tableoid, score) detection.
@@ -97,5 +112,19 @@ duckdb::idx_t CommonScanRowsScanned(duckdb::GlobalTableFunctionState& gstate,
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> CommonScanInitLocal(
   duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
   duckdb::GlobalTableFunctionState* global_state);
+
+// Builds the scan column list and populates state.upper_bound_data and
+// state.upper_bound_slices. Must be called after InitCommonState.
+// Returns per-column prefix keys (one per scan column, same order).
+std::vector<std::string> InitPKScanColumns(
+  PKScanGlobalState& state, const SereneDBScanBindData& bind_data);
+
+// Shared scan body for PK full-scan and range-scan functions.
+// `iterators` is passed explicitly (not stored in PKScanGlobalState) so each
+// derived state can declare it last and guarantee correct destruction order.
+void PKScanFunctionImpl(
+  CommonScanGlobalState& gstate,
+  std::vector<std::unique_ptr<rocksdb::Iterator>>& iterators,
+  duckdb::DataChunk& output);
 
 }  // namespace sdb::connector

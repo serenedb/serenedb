@@ -454,7 +454,6 @@ duckdb::TableFunction CreateSereneDBScanFunction() {
                              SereneDBScanBind);
   func.init_global = PKFullScanInitGlobal;
   SetCommonCallbacks(func);
-  func.order_preservation_type = duckdb::OrderPreservationType::FIXED_ORDER;
   return func;
 }
 
@@ -471,7 +470,6 @@ duckdb::TableFunction CreatePkRangeScanFunction() {
                              PKRangeScanFunction, SereneDBScanBind);
   func.init_global = PKRangeScanInitGlobal;
   SetCommonCallbacks(func);
-  func.order_preservation_type = duckdb::OrderPreservationType::FIXED_ORDER;
   return func;
 }
 
@@ -504,7 +502,6 @@ duckdb::TableFunction CreateFullIresearchScanFunction() {
                              SereneDBScanBind);
   func.init_global = PKFullScanInitGlobal;
   SetCommonCallbacks(func);
-  func.order_preservation_type = duckdb::OrderPreservationType::FIXED_ORDER;
   return func;
 }
 

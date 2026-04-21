@@ -58,6 +58,9 @@ struct FilterExtractCtx {
   const ColumnResolver& resolver;
   bool negated = false;
   bool is_primary_key = true;
+  // ExtractFilterOr writes source expressions from all-contradictory OR
+  // branches into this set so RewriteExpr can strip them.
+  containers::FlatHashSet<const duckdb::Expression*>& dead_sources;
 };
 
 std::vector<KeyBounds> ExtractFilterExprImpl(const duckdb::Expression& expr,
@@ -456,6 +459,11 @@ std::vector<KeyBounds> ExtractFilterOr(
 
     if (absl::c_all_of(constraints,
                        [](const KeyBounds& p) { return p.IsEmpty(); })) {
+      for (const auto& c : constraints) {
+        for (const auto& [col_id, src] : c.GetSourceExprs()) {
+          ctx.dead_sources.insert(src.begin(), src.end());
+        }
+      }
       continue;
     }
 
@@ -1396,17 +1404,12 @@ std::vector<ResolvedRange> ToDisjointRanges(
   return result;
 }
 
-std::vector<KeyBounds> ExtractFilterExpr(
-  const duckdb::Expression& expr, std::span<const catalog::Column::Id> key_ids,
-  const ColumnResolver& resolver, bool negated) {
-  return ExtractFilterExprImpl(expr, {key_ids, resolver, negated});
-}
-
 ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const duckdb::Expression& expr, std::span<const catalog::Column::Id> key_ids,
   const ColumnResolver& resolver, bool is_primary_key) {
-  auto constraints =
-    ExtractFilterExprImpl(expr, {key_ids, resolver, false, is_primary_key});
+  containers::FlatHashSet<const duckdb::Expression*> dead_sources;
+  auto constraints = ExtractFilterExprImpl(
+    expr, {key_ids, resolver, false, is_primary_key, dead_sources});
 
   if (constraints.empty()) {
     return {ConstraintKind::None, {}, expr.Copy()};
@@ -1429,7 +1432,8 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   if (absl::c_all_of(constraints, [](const KeyBounds& p) {
         return p.IsResolvedNonNullPoint();
       })) {
-    containers::FlatHashSet<const duckdb::Expression*> sources;
+    containers::FlatHashSet<const duckdb::Expression*> sources =
+      std::move(dead_sources);
     for (const auto& point : constraints) {
       for (const auto& [col_id, source_exprs] : point.GetSourceExprs()) {
         sources.insert(source_exprs.begin(), source_exprs.end());
@@ -1501,22 +1505,13 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
 
   // Collect source expressions from prefix columns so they can be stripped
   // from the remaining filter (the scan will enforce them).
-  // If a constraint also covers suffix PK columns, skip it -- stripping
-  // prefix sources would break correlations between prefix and suffix
-  // conditions, e.g. OR(not_pk<2, not_pk>2) instead of (pk<2 AND not_pk<2) OR
-  // (pk>2 AND not_pk>2))
-  containers::FlatHashSet<const duckdb::Expression*> sources;
+  containers::FlatHashSet<const duckdb::Expression*> sources =
+    std::move(dead_sources);
   for (const auto& constraint : constraints) {
     const auto prefix = constraint.RangePrefixSize();
-    const bool has_suffix_constraint =
-      absl::c_any_of(key_ids.subspan(prefix), [&](catalog::Column::Id col_id) {
-        return constraint.FindColumnRange(col_id) != nullptr;
-      });
-    if (!has_suffix_constraint) {
-      for (size_t i = 0; i < prefix; ++i) {
-        const auto& col_exprs = constraint.GetSourceExprs(key_ids[i]);
-        sources.insert(col_exprs.begin(), col_exprs.end());
-      }
+    for (size_t i = 0; i < prefix; ++i) {
+      const auto& col_exprs = constraint.GetSourceExprs(key_ids[i]);
+      sources.insert(col_exprs.begin(), col_exprs.end());
     }
   }
 

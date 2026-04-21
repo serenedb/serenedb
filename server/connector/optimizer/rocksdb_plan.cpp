@@ -365,6 +365,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         pk->ranges = std::move(ranges);
         bind_data.scan_source = std::move(pk);
         get.function = connector::CreatePkRangeScanFunction();
+        remove_extra_filter();
       }
     } else {
       // TODO(mkornaukhov) implement scans below
@@ -391,16 +392,6 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       bind_data.scan_source = std::move(si);
       //}
     }
-
-    // TODO(phase2/4-follow-up): once the scan executor honours the
-    // specialised scan sources, claim the matched predicates here:
-    //   filter.expressions.clear();
-    //   if (result.remaining_filter) {
-    //     filter.expressions.push_back(std::move(result.remaining_filter));
-    //   }
-    //   if (filter.expressions.empty()) {
-    //     plan = std::move(filter.children[0]);
-    //   }
 
     return true;
   }

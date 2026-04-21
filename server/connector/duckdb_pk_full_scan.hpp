@@ -20,26 +20,17 @@
 
 #pragma once
 
-#include <duckdb.hpp>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
 #include "rocksdb/iterator.h"
-#include "rocksdb/slice.h"
 
 namespace sdb::connector {
 
-// Global state for PKFullScan (full prefix table scan).
-// Members are ordered so that iterators (which reference upper_bound_slices)
-// are destroyed before upper_bound_data -- C++ destructs in reverse declaration
-// order, so iterators must be declared last.
-struct PKFullScanGlobalState : public CommonScanGlobalState {
-  // upper_bound_data / upper_bound_slices must outlive iterators.
-  std::string upper_bound_data;
-  std::vector<rocksdb::Slice> upper_bound_slices;
-  // Destroyed first (declared last): RocksDB iterators reference the slices.
+// iterators declared last -> destroyed first, before upper_bound_slices in
+// base.
+struct PKFullScanGlobalState : public PKScanGlobalState {
   std::vector<std::unique_ptr<rocksdb::Iterator>> iterators;
 };
 

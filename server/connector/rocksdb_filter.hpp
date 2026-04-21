@@ -348,10 +348,6 @@ struct ColumnResolver {
   const std::vector<KeyBounds>& ranges,
   std::span<const catalog::Column::Id> pk_ids);
 
-[[nodiscard]] std::vector<KeyBounds> ExtractFilterExpr(
-  const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
-  const ColumnResolver& resolver, bool negated = false);
-
 enum class ConstraintKind {
   // All constraints are fully-specified equality points; use point lookup.
   Points,

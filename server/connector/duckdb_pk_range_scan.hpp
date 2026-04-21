@@ -20,12 +20,26 @@
 
 #pragma once
 
-#include "connector/duckdb_pk_full_scan.hpp"
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "connector/duckdb_scan_base.hpp"
+#include "rocksdb/iterator.h"
 
 namespace sdb::connector {
 
-// PKRangeScan currently falls back to the full prefix scan.
-// Uses PKFullScanGlobalState directly until bounded-prefix iteration lands.
+struct PKRangeScanGlobalState : public PKScanGlobalState {
+  // Per-(column x range) key storage; flat layout [col*N_ranges + range_idx].
+  // Spans into these vectors are held by iterators -- no reallocation after
+  // iterators are created.
+  std::vector<std::string> split_prefix_keys;
+  std::vector<std::string> split_upper_bound_keys;
+  // Declared last -> destroyed first; iterators hold Slice refs into
+  // upper_bound_slices (base) and spans into split_*_keys above.
+  std::vector<std::unique_ptr<rocksdb::Iterator>> iterators;
+};
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> PKRangeScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
 

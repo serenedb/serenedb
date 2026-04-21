@@ -65,22 +65,17 @@ std::string_view GetOriginalName(std::string_view name);
 
 class Config {
  public:
-  enum class VariableContext : uint8_t {
-    Session = 0,
-    Transaction,
-    Local,
-  };
-
-  enum class TxnAction : uint8_t {
-    // SET inside txn: on commit keep new value, on rollback restore old
-    Keep = 0,
-    // SET LOCAL: on both commit and rollback restore old value
-    Revert,
-  };
-
+  // Per-key tracking for a currently-open transaction. Populated only when
+  // `setting_change_handler` sees a real change inside an explicit txn;
+  // cleared on COMMIT / ROLLBACK.
   struct TxnVariable {
-    TxnAction action;
-    duckdb::Value old_value;
+    // Value to restore on ROLLBACK. Captured on the first tracked event
+    // for this key and never updated after.
+    duckdb::Value rollback_restore;
+    // Value to restore on COMMIT (to undo a SET LOCAL overlay that
+    // should not persist past the transaction). nullopt means "the live
+    // value is the commit-keeper; nothing to undo at COMMIT".
+    std::optional<duckdb::Value> commit_restore;
   };
 
   explicit Config(duckdb::ClientContext& client_ctx)
@@ -103,26 +98,27 @@ class Config {
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
 
-  void OnSet(std::string_view name, bool is_local);
+  // Record a SET / SET LOCAL event inside an explicit txn.
+  //   old_value -- value currently in effect (pre-event snapshot).
+  //   new_value -- pointer to the about-to-be value for SET; nullptr for
+  //                RESET. Used only to skip initial insertion when a SET
+  //                wouldn't actually change the value; for already-tracked
+  //                keys, scope bookkeeping still runs regardless.
+  void OnSet(std::string_view name, bool is_local, duckdb::Value old_value,
+             const duckdb::Value* new_value);
+
   void SetSetting(std::string_view key, std::string value, bool is_local);
 
  protected:
-  // Pre-rollback hook helper: restores every tracked variable to its pre-SET
-  // value. Runs while the transaction is still active.
+  // Pre-rollback hook: restore every tracked variable to its pre-SET value.
   void RollbackVariables() noexcept;
-  // Pre-commit hook helper: reverts SET LOCAL entries only (action=Revert).
-  // Plain-SET (Keep) entries remain in _transaction so a later rollback on
-  // failed commit can still revert them.
-  void RevertLocalVariables() noexcept;
-  // Post-commit hook helper: drops any remaining tracked entries (Keep ones)
-  // since the transaction committed successfully.
-  void DiscardCommittedVariables() noexcept;
+  // Pre/post-commit hook: restore SET LOCAL overlays; plain SET entries
+  // stay as-is.
+  void CommitVariables() noexcept;
 
  private:
-  void Set(VariableContext context, std::string_view key, std::string value);
   void SetInternal(std::string_view key, std::string value);
   void RestoreValue(std::string_view key, duckdb::Value value) noexcept;
-  void SaveForRollback(std::string_view key, VariableContext context);
 
   // Transaction variables (commit-apply / revert semantics).
 

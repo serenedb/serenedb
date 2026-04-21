@@ -54,7 +54,8 @@ void SereneDBClientState::Register(
 
   client_ctx.setting_change_handler = [](duckdb::ClientContext& ctx,
                                          const std::string& name,
-                                         duckdb::SetScope scope) {
+                                         duckdb::SetScope scope,
+                                         const duckdb::Value* new_value) {
     // Resolve AUTOMATIC against the setting's target scope so the downstream
     // check works uniformly regardless of how the user wrote the SET.
     if (scope == duckdb::SetScope::AUTOMATIC) {
@@ -79,7 +80,16 @@ void SereneDBClientState::Register(
     if (scope == duckdb::SetScope::GLOBAL) {
       return;
     }
-    GetSereneDBContext(ctx).OnSet(name, scope == duckdb::SetScope::LOCAL);
+    auto& sdb_ctx = GetSereneDBContext(ctx);
+    // Outside an explicit transaction there's nothing to roll back --
+    // the map stays empty.
+    if (!sdb_ctx.IsExplicitTransaction()) {
+      return;
+    }
+    duckdb::Value old_value;
+    ctx.TryGetCurrentSetting(name, old_value);
+    sdb_ctx.OnSet(name, scope == duckdb::SetScope::LOCAL, std::move(old_value),
+                  new_value);
   };
 
   client_ctx.setting_visibility = [](duckdb::ClientContext&,

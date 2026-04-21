@@ -23,6 +23,7 @@
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
 
+#include <cstdio>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -122,52 +123,47 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   return _snapshot;
 }
 
-void Config::OnSet(std::string_view name, bool is_local) {
+void Config::OnSet(std::string_view name, bool is_local,
+                   duckdb::Value old_value, const duckdb::Value* new_value) {
   // Prefer the canonical PG-cased name (e.g. "DateStyle") when known so the
   // rollback key matches what SHOW returns; otherwise use the name as given
   // (covers native DuckDB settings like default_transaction_isolation).
   auto canonical = GetOriginalName(name);
-  auto key = canonical.data() ? canonical : name;
-  auto context = VariableContext::Session;
-  if (is_local) {
-    context = VariableContext::Local;
-  } else if (IsExplicitTransaction()) {
-    context = VariableContext::Transaction;
+  std::string_view key_view = canonical.data() ? canonical : name;
+  std::string key_str{key_view};
+
+  auto [it, inserted] = _transaction.try_emplace(std::move(key_str));
+  if (inserted) {
+    // First event for this key. Skip tracking iff SET with the same value
+    // (RESET events reaching here are guaranteed real -- DuckDB's gate
+    // already short-circuits no-op RESETs).
+    if (new_value && duckdb::Value::NotDistinctFrom(old_value, *new_value)) {
+      _transaction.erase(it);
+      return;
+    }
+    it->second.rollback_restore = old_value;
+    if (is_local) {
+      it->second.commit_restore = std::move(old_value);
+    }
+    return;
   }
-  SaveForRollback(key, context);
+
+  // Already tracking -- update scope bookkeeping regardless of value.
+  if (is_local) {
+    // Preserve the earliest LOCAL-overlay snapshot so consecutive SET
+    // LOCALs revert to the same pre-first-LOCAL point.
+    if (!it->second.commit_restore) {
+      it->second.commit_restore = std::move(old_value);
+    }
+  } else {
+    // Plain SET becomes the COMMIT keeper; drop any pending LOCAL revert.
+    it->second.commit_restore.reset();
+  }
 }
 
 void Config::SetSetting(std::string_view key, std::string value,
-                        bool is_local) {
-  OnSet(key, is_local);
+                        bool /*is_local*/) {
   SetInternal(key, std::move(value));
-}
-
-void Config::Set(VariableContext context, std::string_view key,
-                 std::string value) {
-  SaveForRollback(key, context);
-  SetInternal(key, std::move(value));
-}
-
-void Config::SaveForRollback(std::string_view key, VariableContext context) {
-  if (context != VariableContext::Transaction &&
-      context != VariableContext::Local) {
-    return;
-  }
-  if (auto it = _transaction.find(key); it != _transaction.end()) {
-    // Already tracking this key -- SET LOCAL overrides a prior SET
-    if (context == VariableContext::Local) {
-      it->second.action = TxnAction::Revert;
-    }
-  } else {
-    // First SET for this key in this txn -- save old value
-    duckdb::Value old_value;
-    _client_ctx.TryGetCurrentSetting(std::string{key}, old_value);
-    _transaction[key] = {
-      context == VariableContext::Local ? TxnAction::Revert : TxnAction::Keep,
-      std::move(old_value),
-    };
-  }
 }
 
 void Config::ResetAll() {
@@ -187,13 +183,25 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
   auto name_ref = duckdb::String::Reference(key.data(), key.size());
 
+  // A NULL old_value means the setting was at its default (never explicitly
+  // SET), so the restore is a RESET rather than a SET. Calling set_local(NULL)
+  // on settings like enable_profiling unconditionally enables profiling.
+  const bool is_reset = value.IsNull();
+
   // Best-effort restore; swallow to keep noexcept contract.
   std::ignore = basics::SafeCall([&] {
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
     auto setting_index = db_config.TryGetSettingIndex(name_ref, option);
     if (option) {
-      if (option->set_local) {
+      if (is_reset) {
+        if (option->reset_local) {
+          option->reset_local(_client_ctx);
+        } else if (setting_index.IsValid()) {
+          _client_ctx.config.user_settings.ClearSetting(
+            setting_index.GetIndex());
+        }
+      } else if (option->set_local) {
         auto parameter_type =
           duckdb::DBConfig::ParseLogicalType(option->parameter_type);
         auto typed = value.CastAs(_client_ctx, parameter_type);
@@ -210,9 +218,19 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
     if (!db_config.TryGetExtensionOption(name_ref, ext)) {
       return;
     }
-    auto typed = value.CastAs(_client_ctx, ext.type);
     // Only session/local SETs are tracked (setting_change_handler skips
     // GLOBAL), so the restore scope is always SESSION.
+    if (is_reset) {
+      if (ext.reset_function) {
+        ext.reset_function(_client_ctx, duckdb::SetScope::SESSION);
+      }
+      if (ext.setting_index.IsValid()) {
+        _client_ctx.config.user_settings.ClearSetting(
+          ext.setting_index.GetIndex());
+      }
+      return;
+    }
+    auto typed = value.CastAs(_client_ctx, ext.type);
     if (ext.set_function) {
       ext.set_function(_client_ctx, duckdb::SetScope::SESSION, typed);
     }
@@ -225,30 +243,21 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
 
 void Config::RollbackVariables() noexcept {
   for (auto&& [key, var] : _transaction) {
-    RestoreValue(key, std::move(var.old_value));
+    RestoreValue(key, std::move(var.rollback_restore));
   }
   _transaction.clear();
 }
 
-void Config::RevertLocalVariables() noexcept {
+void Config::CommitVariables() noexcept {
   // Called from the pre-commit hook while the transaction is still active.
-  // Reverts SET LOCAL entries to their pre-SET values; leaves plain-SET
-  // entries in _transaction so a subsequent rollback (if the commit fails)
-  // can still revert them.
-  absl::erase_if(_transaction, [this](auto& entry) {
-    auto& [key, var] = entry;
-    if (var.action != TxnAction::Revert) {
-      return false;
+  // Any entry with a commit_restore was overlaid by a SET LOCAL whose
+  // effects should not survive past the transaction; restore it. Plain SET
+  // entries (no commit_restore) stay as-is.
+  for (auto&& [key, var] : _transaction) {
+    if (var.commit_restore) {
+      RestoreValue(key, std::move(*var.commit_restore));
     }
-    RestoreValue(key, std::move(var.old_value));
-    return true;
-  });
-}
-
-void Config::DiscardCommittedVariables() noexcept {
-  // Called from the post-commit hook once the transaction is fully committed.
-  // Any remaining entries are plain-SET (Keep) values that the user wants to
-  // persist for the session -- drop tracking without reverting.
+  }
   _transaction.clear();
 }
 

@@ -107,7 +107,7 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
 
 std::string Column::GenerateScoreName(
   std::span<const std::string> column_names) {
-  return GenerateUniqueName("sdb_inverted_index_score", column_names);
+  return GenerateUniqueName(Column::kScoreName, column_names);
 }
 
 std::optional<size_t> CheckConstraint::IsNotNull(

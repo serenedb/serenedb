@@ -141,6 +141,8 @@ struct Column {
 
   static std::string GeneratePKName(std::span<const std::string> column_names);
 
+  static constexpr std::string_view kScoreName = "sdb_inverted_index_score";
+
   static std::string GenerateScoreName(
     std::span<const std::string> column_names);
 

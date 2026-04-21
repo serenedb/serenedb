@@ -42,11 +42,6 @@ Result ValidateInvertedIndexColumns(
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
               " has unsupported kind and can not be indexed"};
     }
-    if (c.catalog_column->type.id() != duckdb::LogicalTypeId::VARCHAR &&
-        !c.opclass.empty()) {
-      return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " has text dictionary defined but is not VARCHAR"};
-    }
   }
   return {};
 }

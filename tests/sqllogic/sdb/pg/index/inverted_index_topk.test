@@ -45,16 +45,174 @@ statement ok
 VACUUM (UPDATE_INDEXES) docs;
 
 
-# ---- EXPLAIN tests: verify topk appears in plan ----
+query
+EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 5          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│        Table: docs        │
+│                           │
+│         Strategy:         │
+│    iresearch_score_scan   │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+query ?
+EXPLAIN SELECT id, BM25(docs_topk_idx.tableoid) FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 5          │
+│                           │
+│         Order By:         │
+│    docs_topk_idx.id ASC   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│        Table: docs        │
+│                           │
+│         Strategy:         │
+│    iresearch_score_scan   │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
 
 query
-EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 5          │
+│                           │
+│         Order By:         │
+│          #1 DESC          │
+│    docs_topk_idx.id ASC   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│        Table: docs        │
+│                           │
+│         Strategy:         │
+│    iresearch_score_scan   │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
-│          #1 DESC          │
+│           #1 ASC          │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -110,12 +268,133 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           TOP_N           │
+│         PROJECTION        │
 │    ────────────────────   │
-│           Top: 3          │
-│     Order By: #1 DESC     │
+│             id            │
+│  sdb_inverted_index_score │
 │                           │
 │           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│        Table: docs        │
+│                           │
+│         Strategy:         │
+│ iresearch_score_topk_scan │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│          TopK: 3          │
+│                           │
+│        Projections:       │
+│            body           │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# ---- EXPLAIN: UNION ALL of two topk branches ----
+# Each branch independently qualifies for TryAttachScoreTopK; both scans
+# should show Strategy=iresearch_score_topk_scan with TopK=3.
+
+query
+EXPLAIN (SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
+UNION ALL
+(SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
+ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│           id ASC          │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           UNION           ├──────────────┐
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         PROJECTION        ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│             #0            ││             #0            │
+│             #1            ││             #1            │
+│                           ││                           │
+│           ~1 row          ││           ~1 row          │
+└─────────────┬─────────────┘└─────────────┬─────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         PROJECTION        ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│             id            ││             id            │
+│         has_score         ││         has_score         │
+│             #1            ││             #1            │
+│                           ││                           │
+│           ~1 row          ││           ~1 row          │
+└─────────────┬─────────────┘└─────────────┬─────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         PROJECTION        ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│             id            ││             id            │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score │
+│                           ││                           │
+│           ~1 row          ││           ~1 row          │
+└─────────────┬─────────────┘└─────────────┬─────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     ││      IRESEARCH_LOOKUP     │
+│    ────────────────────   ││    ────────────────────   │
+│        Table: docs        ││        Table: docs        │
+│                           ││                           │
+│         Strategy:         ││         Strategy:         │
+│ iresearch_score_topk_scan ││ iresearch_score_topk_scan │
+│                           ││                           │
+│       Materializer:       ││       Materializer:       │
+│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│                           ││                           │
+│          Filter:          ││          Filter:          │
+│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   ││   <Term:lazy(0, 0); >]]   │
+│                           ││                           │
+│           Score:          ││           Score:          │
+│    bm25(k1=1.2, b=0.75)   ││    bm25(k1=1.2, b=0.75)   │
+│                           ││                           │
+│          TopK: 3          ││          TopK: 3          │
+│                           ││                           │
+│        Projections:       ││        Projections:       │
+│            body           ││            body           │
+│             id            ││             id            │
+│  sdb_inverted_index_score ││  sdb_inverted_index_score │
+│                           ││                           │
+│          ~5 rows          ││          ~5 rows          │
+└───────────────────────────┘└───────────────────────────┘
+
+
+# ---- EXPLAIN: topk inside a subquery, outer query has a different ORDER BY ----
+# The inner TopN matches the drop shape (its ORDER BY resolves to the score
+# column); the outer ORDER BY id is unaffected. Only one topk_scan.
+
+query
+EXPLAIN SELECT id, score FROM (
+  SELECT id, BM25(docs_topk_idx.tableoid) AS score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3
+) sub ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│         sub.id ASC        │
+│                           │
+│          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         PROJECTION        │

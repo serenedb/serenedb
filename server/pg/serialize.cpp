@@ -1315,10 +1315,7 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       }
       static constexpr auto kSerializeText =
         SerializeInt<VarFormat::Text, int64_t>;
-      if (IsOid(type) || IsRegproc(type) || IsRegprocedure(type) ||
-          IsRegoper(type) || IsRegoperator(type) || IsRegrole(type) ||
-          IsRegconfig(type) || IsRegdictionary(type) || IsRegcollation(type) ||
-          IsXid(type) || IsCid(type) || IsTid(type)) {
+      if (IsOidLike(type)) {
         RETURN_SERIALIZATION(kSerializeText, SerializeOidBinary);
       }
       static constexpr auto kSerializeBinary =

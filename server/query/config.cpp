@@ -23,7 +23,6 @@
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
 
-#include <cstdio>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/client_context.hpp>

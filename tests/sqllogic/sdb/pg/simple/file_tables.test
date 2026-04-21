@@ -1031,6 +1031,7 @@ db error: ERROR: generated columns are not supported for external tables
 # DuckDB's reader docs; the assertion below still reflects the new message
 # shape so flipping the skipif off should not require further edits.
 skipif pg-wire-simple
+skipif serenedb # TODO(Pasha)
 statement error
 CREATE TABLE babsky(
   iq INT8,

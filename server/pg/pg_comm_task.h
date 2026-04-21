@@ -154,9 +154,9 @@ class PgSQLCommTaskBase : public rest::CommTask {
   ProcessState ProcessQueryResult();
   void SendBatch(const duckdb::DataChunk& chunk);
   void SendCommandComplete(duckdb::StatementType stmt_type, uint64_t rows);
-  std::optional<DuckDBBindInfo> ParseBindVars(
-    std::string_view packet, std::string_view statement_name,
-    duckdb::PreparedStatement& prepared);
+  std::optional<DuckDBBindInfo> ParseBindVars(std::string_view packet,
+                                              std::string_view statement_name,
+                                              const DuckDBStatement& stmt);
   std::optional<std::vector<VarFormat>> ParseBindFormats(
     std::string_view& packet);
 

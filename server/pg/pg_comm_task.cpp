@@ -504,16 +504,38 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   _send.Commit(extended);
 }
 
-void DescribeParameters(const duckdb::PreparedStatement& prepared,
-                        message::Buffer& buffer) {
+void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
+  // Emit (count, [oid]*num). For each positional parameter ("1", "2", ...),
+  // prefer DuckDB's resolved type (set when the planner saw a cast or any
+  // usage that pins the type); fall back to the OID the client sent in the
+  // Parse message for parameters that DuckDB couldn't resolve.
+  const auto& prepared = *stmt.prepared;
+  const auto expected_types = prepared.GetExpectedParameterTypes();
+  const uint16_t num_fields =
+    static_cast<uint16_t>(prepared.named_param_map.size());
+
   const auto uncommitted_size = buffer.GetUncommittedSize();
   auto* prefix_data = buffer.GetContiguousData(7);
-  // TODO: get actual parameter types from prepared statement
-  const uint16_t num_fields = 0;
   prefix_data[0] = PQ_MSG_PARAMETER_DESCRIPTION;
+  absl::big_endian::Store16(prefix_data + 5, num_fields);
+
+  for (uint16_t i = 1; i <= num_fields; ++i) {
+    auto type_it = expected_types.find(absl::StrCat(i));
+    int32_t oid = 0;
+    if (type_it != expected_types.end() &&
+        type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
+        type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
+      oid = Type2Oid(type_it->second);
+    } else if (i - 1 < stmt.param_oids.size() && stmt.param_oids[i - 1] != 0) {
+      oid = stmt.param_oids[i - 1];
+    } else {
+      oid = PgTypeOID::kText;
+    }
+    absl::big_endian::Store32(buffer.GetContiguousData(4), oid);
+  }
+
   absl::big_endian::Store32(prefix_data + 1,
                             buffer.GetUncommittedSize() - uncommitted_size - 1);
-  absl::big_endian::Store16(prefix_data + 5, num_fields);
   buffer.Commit(false);
 }
 
@@ -525,7 +547,7 @@ void PgSQLCommTaskBase::DescribePortal(const DuckDBPortal& portal) {
 
 void PgSQLCommTaskBase::DescribeStatement(DuckDBStatement& statement) {
   SDB_ASSERT(statement.prepared);
-  DescribeParameters(*statement.prepared, _send);
+  DescribeParameters(statement, _send);
   DescribeAnalyzedQuery(statement, {});
 }
 
@@ -763,7 +785,7 @@ std::optional<std::vector<VarFormat>> PgSQLCommTaskBase::ParseBindFormats(
 
 std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
   std::string_view packet, std::string_view statement_name,
-  duckdb::PreparedStatement& prepared) {
+  const DuckDBStatement& stmt) {
   auto maybe_input_formats = ParseBindFormats(packet);
   if (!maybe_input_formats) {
     return std::nullopt;
@@ -772,9 +794,10 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
   uint16_t params = absl::big_endian::Load16(packet.data());
   packet.remove_prefix(sizeof(int16_t));
 
-  // Get expected param types from prepared statement
-  auto& expected_types = prepared.GetTypes();
-  // TODO: validate param count against prepared statement expected params
+  // Resolve expected param types from the prepared statement's positional
+  // parameter map ("1", "2", ...). GetTypes() returns output column types,
+  // not parameter types, so it's unusable here.
+  const auto expected_types = stmt.prepared->GetExpectedParameterTypes();
 
   if (input_formats.size() > 1 && input_formats.size() != params) {
     SendError(absl::StrCat("bind message has ", input_formats.size(),
@@ -810,10 +833,20 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
         format = input_formats[i];
       }
 
-      // Determine param type -- from prepared statement or default to VARCHAR
-      auto param_type = (i < expected_types.size())
-                          ? expected_types[i]
-                          : duckdb::LogicalType::VARCHAR;
+      // Determine param type: DuckDB's resolved type first (pinned by a
+      // cast or concrete usage), then the OID the client sent in Parse,
+      // then VARCHAR as a last resort.
+      auto type_it = expected_types.find(absl::StrCat(i + 1));
+      duckdb::LogicalType param_type;
+      if (type_it != expected_types.end() &&
+          type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
+          type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
+        param_type = type_it->second;
+      } else if (i < stmt.param_oids.size() && stmt.param_oids[i] != 0) {
+        param_type = Oid2Type(stmt.param_oids[i]);
+      } else {
+        param_type = duckdb::LogicalType::VARCHAR;
+      }
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
       auto param_value = DeserializeParameter(param_type, format, param);
@@ -896,7 +929,7 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
 
   _current_query = statement->prepared->query;
 
-  auto bind_info = ParseBindVars(packet, statement_name, *statement->prepared);
+  auto bind_info = ParseBindVars(packet, statement_name, *statement);
   if (!bind_info) {
     return;
   }
@@ -968,6 +1001,11 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
     return;
   }
   _current_query = stmt.prepared->query;
+  // Retain the client-supplied parameter OIDs; they're used as a fallback
+  // in DescribeParameters / ParseBindVars when DuckDB's planner couldn't
+  // infer a concrete type for a positional parameter (e.g. the AST doesn't
+  // expose a cast that would pin the type).
+  stmt.param_oids = std::move(oids);
 
   it = _statements.end();
   _send.Write(ToBuffer(kParseComplete), true);

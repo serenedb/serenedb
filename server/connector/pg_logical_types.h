@@ -83,6 +83,17 @@ DECLARE_PG_TYPE(TIMESTAMP,      TimeStamp,      "time_stamp",      TIMESTAMP_TZ)
 DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
 // clang-format on
 
+// 32-bit OID-family types: backed by BIGINT in DuckDB for storage, but travel
+// as 4-byte unsigned OID on the PG wire (typsend = oidsend / typreceive =
+// oidrecv in pg_type.dat). `xid8` is NOT in this set -- it's an 8-byte xid.
+inline bool IsOidLike(const duckdb::LogicalType& type) {
+  return IsOid(type) || IsRegproc(type) || IsRegprocedure(type) ||
+         IsRegoper(type) || IsRegoperator(type) || IsRegclass(type) ||
+         IsRegtype(type) || IsRegrole(type) || IsRegnamespace(type) ||
+         IsRegconfig(type) || IsRegdictionary(type) || IsRegcollation(type) ||
+         IsXid(type) || IsCid(type) || IsTid(type);
+}
+
 #undef DECLARE_PG_TYPE
 
 }  // namespace sdb::pg

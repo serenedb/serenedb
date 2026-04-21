@@ -90,7 +90,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│          IRS_SCAN         │
+│      IRESEARCH_LOOKUP     │
 │    ────────────────────   │
 │    Table: offsets_test    │
 │                           │
@@ -370,7 +370,7 @@ QUERY PLAN
 │           ~1 row          ││           ~1 row          │
 └─────────────┬─────────────┘└─────────────┬─────────────┘
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│          IRS_SCAN         ││          IRS_SCAN         │
+│      IRESEARCH_LOOKUP     ││      IRESEARCH_LOOKUP     │
 │    ────────────────────   ││    ────────────────────   │
 │    Table: offsets_test    ││    Table: offsets_test    │
 │                           ││                           │

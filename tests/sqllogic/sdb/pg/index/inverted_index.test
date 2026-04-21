@@ -126,7 +126,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         IRS_COUNT         │
+│      IRESEARCH_COUNT      │
 │    ────────────────────   │
 │     Table: vedernikoff    │
 │                           │
@@ -859,7 +859,7 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│          IRS_SCAN         │
+│      IRESEARCH_LOOKUP     │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
 │                           │

@@ -1044,7 +1044,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│        IRS_FULLSCAN       │
+│     IRESEARCH_FULLSCAN    │
 │    ────────────────────   │
 │    Table: gayazov_dual    │
 │                           │

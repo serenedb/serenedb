@@ -177,26 +177,39 @@ SELECT COUNT(*) >= 1 FROM t WHERE r = 'baz';
 t
 
 
-statement async ok
+connection new2
+statement ok
+RESET sdb_faults;
+
+
+connection new2
+statement ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+connection new2
+statement ok
+INSERT INTO t VALUES ('one'), ('two'), ('three');
+
+
+# Force the inverted index to flush pending commits before the PHRASE lookup.
+# Without this, the background commit thread's latency makes the lookup race
+# with the INSERTs.
+connection new2
+statement ok
 VACUUM (UPDATE_INDEXES) t;
 
 
-statement async ok
-INSERT INTO t VALUES ('one'), ('two'), ('three');
-
-
-statement async ok
-INSERT INTO t VALUES ('one'), ('two'), ('three');
-
-
-query async
+connection new2
+query
 SELECT r FROM index_t WHERE PHRASE(r, 'one') LIMIT 1;
 ----
 r
 one
 
 
-query async
+connection new2
+query
 SELECT COUNT(*) >= 13 FROM t;
 ----
 ?column?

@@ -102,7 +102,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   if (!state->ann_pk_bytes.empty()) {
     state->materializer = MakeRowMaterializer(
       context, bind_data, state->snapshot, state->ann_pk_bytes,
-      state->projected_columns, state->projected_types, bind_data.column_ids);
+      state->projected_columns, state->projected_types, bind_data.column_ids,
+      nullptr);
   }
   return duckdb::unique_ptr_cast<SearchAnnScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(

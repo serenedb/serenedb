@@ -23,10 +23,8 @@
 #include <duckdb/common/types/data_chunk.hpp>
 
 #include "basics/assert.h"
-#include "basics/string_utils.h"
-#include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/key_utils.hpp"
+#include "connector/row_materializer.h"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -46,7 +44,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SKFullScanInitGlobal(
   return state;
 }
 
-void SKFullScanFunction(duckdb::ClientContext& /*context*/,
+void SKFullScanFunction(duckdb::ClientContext& context,
                         duckdb::TableFunctionInput& data,
                         duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SKFullScanGlobalState>();
@@ -123,64 +121,28 @@ void SKFullScanFunction(duckdb::ClientContext& /*context*/,
     return;
   }
 
-  // Materialize rows by PK.
   const auto num_rows = pk_bytes.size();
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
-  std::string key_buffer;
-  rocksdb::ReadOptions ro;
-  ro.snapshot = gstate.snapshot;
-  rocksdb::PinnableSlice value;
+  std::vector<std::string_view> views(pk_bytes.begin(), pk_bytes.end());
+  auto materializer = MakeRowMaterializer(
+    context, bind_data, gstate.snapshot, pk_bytes, gstate.projected_columns,
+    gstate.projected_types, bind_data.column_ids, gstate.txn);
+  materializer->Materialize(views, output);
 
-  for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
-    auto bind_col = gstate.projected_columns[proj];
-    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
-        output.data[proj].Reference(
-          duckdb::Value::BIGINT(gstate.tableoid_value));
-      } else {
-        auto* data =
-          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-          data[i] = static_cast<int64_t>(i);
-        }
-      }
-      continue;
+  if (gstate.scan_rowid) {
+    const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);
+    auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(
+      output.data[gstate.rowid_output_idx]);
+    for (size_t i = 0; i < num_rows; ++i) {
+      data[i] = static_cast<int64_t>(row_base + i);
     }
-
-    auto col_id = bind_data.column_ids[bind_col];
-    auto& type = gstate.projected_types[proj];
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_buffer = table_key;
-      basics::StrResize(key_buffer, key_utils::kTablePrefixSize);
-      key_utils::AppendColumnKey(key_buffer, col_id);
-      key_buffer.append(pk_bytes[row]);
-
-      value.Reset();
-      rocksdb::Status s;
-      if (gstate.txn) {
-        s = gstate.txn->Get(ro, cf, key_buffer, &value);
-      } else {
-        s = db->Get(ro, cf, key_buffer, &value);
-      }
-      if (s.IsNotFound()) {
-        duckdb::FlatVector::ValidityMutable(output.data[proj]).SetInvalid(row);
-        continue;
-      }
-      SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
-      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
-                                 row);
-    }
+  }
+  if (gstate.scan_tableoid) {
+    output.data[gstate.tableoid_output_idx].Reference(
+      duckdb::Value::BIGINT(gstate.tableoid_value));
   }
 
   output.SetCardinality(num_rows);
-  if (num_rows > 0) {
-    gstate.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
-  }
+  gstate.produced_rows.fetch_add(num_rows, std::memory_order_relaxed);
 }
 
 }  // namespace sdb::connector

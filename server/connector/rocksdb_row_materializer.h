@@ -22,6 +22,7 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <rocksdb/db.h>
+#include <rocksdb/utilities/transaction.h>
 
 #include <memory>
 #include <vector>
@@ -53,7 +54,8 @@ class RocksDBRowMaterializer final : public RowMaterializer {
   RocksDBRowMaterializer(ObjectId table_id, const rocksdb::Snapshot* snapshot,
                          std::span<const duckdb::idx_t> projected_columns,
                          std::span<const duckdb::LogicalType> projected_types,
-                         std::span<const catalog::Column::Id> bind_column_ids);
+                         std::span<const catalog::Column::Id> bind_column_ids,
+                         rocksdb::Transaction* txn);
 
   void Materialize(std::span<const std::string_view> pk_bytes,
                    duckdb::DataChunk& output) override;
@@ -97,6 +99,7 @@ class RocksDBRowMaterializer final : public RowMaterializer {
   rocksdb::ReadOptions _read_options;
   rocksdb::DB* _db = nullptr;
   rocksdb::ColumnFamilyHandle* _cf = nullptr;
+  rocksdb::Transaction* _txn = nullptr;
   MultiGetContext _multiget_ctx;
 
   // Projection layout (fixed at construction).

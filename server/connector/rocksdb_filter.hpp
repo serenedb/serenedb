@@ -367,7 +367,7 @@ struct ExtractAndRewriteResult {
 
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
-  const ColumnResolver& resolver, bool is_primary_key = true);
+  const ColumnResolver& resolver, bool is_primary_key, bool is_unique);
 
 // Sorts and deduplicates points in-place by key order. Column order matches
 // the pk_ids used during ToResolvedPoints.

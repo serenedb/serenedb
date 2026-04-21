@@ -20,13 +20,16 @@
 
 #pragma once
 
-#include "connector/duckdb_sk_full_scan.hpp"
+#include <duckdb.hpp>
+
+#include "connector/duckdb_scan_base.hpp"
 
 namespace sdb::connector {
 
-// SKPointLookup currently falls back to SKFullScan.
-// Uses SKFullScanGlobalState directly until the SK point-lookup implementation
-// is re-enabled (the previous implementation was guarded by SDB_ASSERT(false)).
+struct SKPointLookupGlobalState : public CommonScanGlobalState {
+  size_t point_offset = 0;  // next index into SkPointScan::points to probe
+};
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SKPointLookupInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
 

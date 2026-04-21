@@ -31,6 +31,7 @@
 namespace rocksdb {
 
 class Snapshot;
+class Transaction;
 
 }  // namespace rocksdb
 namespace duckdb {
@@ -96,7 +97,8 @@ std::unique_ptr<RowMaterializer> MakeRowMaterializer(
   const rocksdb::Snapshot* snapshot, std::span<const std::string> all_pks,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids);
+  std::span<const catalog::Column::Id> bind_column_ids,
+  rocksdb::Transaction* txn);
 
 // Short label naming the materializer that MakeRowMaterializer would
 // pick for `bind_data`. Used in EXPLAIN output so the chosen

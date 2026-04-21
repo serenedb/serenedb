@@ -33,7 +33,8 @@ std::unique_ptr<RowMaterializer> MakeRowMaterializer(
   const rocksdb::Snapshot* snapshot, std::span<const std::string> all_pks,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids) {
+  std::span<const catalog::Column::Id> bind_column_ids,
+  rocksdb::Transaction* txn) {
   if (bind_data.table && bind_data.table->GetTableType() == TableType::File) {
     if (IsParquetExternalTable(*bind_data.table)) {
       return std::make_unique<ParquetRowMaterializer>(
@@ -50,7 +51,7 @@ std::unique_ptr<RowMaterializer> MakeRowMaterializer(
   }
   return std::make_unique<RocksDBRowMaterializer>(
     bind_data.table ? bind_data.table->GetId() : ObjectId{}, snapshot,
-    projected_columns, projected_types, bind_column_ids);
+    projected_columns, projected_types, bind_column_ids, txn);
 }
 
 std::string_view RowMaterializerName(const SereneDBScanBindData& bind_data) {

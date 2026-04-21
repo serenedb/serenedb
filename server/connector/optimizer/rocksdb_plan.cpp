@@ -300,6 +300,9 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     duckdb::unique_ptr<duckdb::Expression> synthetic;
     const auto* combined = AsCombinedFilterExpr(filter, synthetic);
 
+    // TODO(mkornaukhov) rewrite mechanism that choose best index
+    // in the way discussed with mbkkt
+
     // Evaluate every candidate and pick the best. We own the extraction
     // result because ExtractAndRewriteResult holds a unique_ptr (remaining
     // filter), so updates to `best` move-assign.
@@ -307,10 +310,13 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     for (auto& cand : candidates) {
       auto result = connector::ExtractAndRewriteFilterExpr(
         *combined, cand.column_ids, resolver,
-        /*is_primary_key=*/cand.kind == Candidate::Kind::Pk);
-      if (result.kind == connector::ConstraintKind::None) {
+        /*is_primary_key=*/cand.kind == Candidate::Kind::Pk,
+        /*is_unique=*/cand.sk_unique);
+      if (cand.kind == Candidate::Kind::Pk &&
+          result.kind == connector::ConstraintKind::None) {
         continue;
       }
+
       Evaluated ev;
       ev.candidate = &cand;
       ev.kind = result.kind;
@@ -368,29 +374,22 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         remove_extra_filter();
       }
     } else {
-      // TODO(mkornaukhov) implement scans below
-      // if (best.kind == connector::ConstraintKind::Points) {
-      //   bind_data.scan_source = connector::SkPointScan{
-      //     .shard_id = best.candidate->sk_shard_id,
-      //     .is_unique = best.candidate->sk_unique,
-      //     .column_ids = cols,
-      //     .points = std::move(points),
-      //   };
-      //   get.function = connector::CreateSkPointScanFunction();
-      // } else if (best.kind == connector::ConstraintKind::Ranges) {
-      //   bind_data.scan_source = connector::SkRangeScan{
-      //     .shard_id = best.candidate->sk_shard_id,
-      //     .is_unique = best.candidate->sk_unique,
-      //     .column_ids = cols,
-      //     .ranges = std::move(ranges),
-      //   };
-      //   get.function = connector::CreateSkRangeScanFunction();
-      // } else
-      auto si = std::make_unique<connector::SecondaryIndexScan>();
-      si->shard_id = best.candidate->sk_shard_id;
-      si->is_unique = best.candidate->sk_unique;
-      bind_data.scan_source = std::move(si);
-      //}
+      if (best.kind == connector::ConstraintKind::Points) {
+        auto sk = std::make_unique<connector::SkPointScan>();
+        sk->shard_id = best.candidate->sk_shard_id;
+        sk->is_unique = true;
+        sk->column_ids = cols;
+        sk->points = std::move(points);
+        bind_data.scan_source = std::move(sk);
+        get.function = connector::CreateSkPointScanFunction();
+        remove_extra_filter();
+      } else {
+        // todo range scan
+        auto si = std::make_unique<connector::SecondaryIndexScan>();
+        si->shard_id = best.candidate->sk_shard_id;
+        si->is_unique = best.candidate->sk_unique;
+        bind_data.scan_source = std::move(si);
+      }
     }
 
     return true;

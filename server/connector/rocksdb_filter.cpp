@@ -1406,7 +1406,7 @@ std::vector<ResolvedRange> ToDisjointRanges(
 
 ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const duckdb::Expression& expr, std::span<const catalog::Column::Id> key_ids,
-  const ColumnResolver& resolver, bool is_primary_key) {
+  const ColumnResolver& resolver, bool is_primary_key, bool is_unique) {
   containers::FlatHashSet<const duckdb::Expression*> dead_sources;
   auto constraints = ExtractFilterExprImpl(
     expr, {key_ids, resolver, false, is_primary_key, dead_sources});
@@ -1432,6 +1432,10 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   if (absl::c_all_of(constraints, [](const KeyBounds& p) {
         return p.IsResolvedNonNullPoint();
       })) {
+    // Non-unique SK: multiple rows can share a key, so point lookup is unsafe.
+    if (!is_primary_key && !is_unique) {
+      return {ConstraintKind::None, {}, expr.Copy()};
+    }
     containers::FlatHashSet<const duckdb::Expression*> sources =
       std::move(dead_sources);
     for (const auto& point : constraints) {
@@ -1442,6 +1446,8 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     return {ConstraintKind::Points, std::move(constraints),
             RewriteExpr(expr, sources)};
   }
+
+  // TODO treat null values in SK as ranges
 
   // Normalize: multiple constraints may share the same prefix ranges but
   // differ in suffix PK columns. They produce identical RocksDB range scans,

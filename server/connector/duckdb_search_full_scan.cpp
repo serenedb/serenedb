@@ -238,9 +238,10 @@ static void SearchScanMaterialize(duckdb::ClientContext& context,
   for (auto pk : pk_bytes) {
     pk_storage_owned.emplace_back(pk);
   }
-  auto materializer = MakeRowMaterializer(
-    context, bind_data, /*snapshot=*/nullptr, pk_storage_owned,
-    gstate.projected_columns, gstate.projected_types, bind_data.column_ids);
+  auto materializer =
+    MakeRowMaterializer(context, bind_data, /*snapshot=*/nullptr,
+                        pk_storage_owned, gstate.projected_columns,
+                        gstate.projected_types, bind_data.column_ids, nullptr);
   materializer->Materialize(pk_bytes, output);
 
   output.SetCardinality(num_rows);

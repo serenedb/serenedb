@@ -56,7 +56,8 @@ RocksDBRowMaterializer::RocksDBRowMaterializer(
   ObjectId table_id, const rocksdb::Snapshot* snapshot,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::Column::Id> bind_column_ids)
+  std::span<const catalog::Column::Id> bind_column_ids,
+  rocksdb::Transaction* txn)
   : _table_id(table_id),
     _read_options{[&] {
       rocksdb::ReadOptions opts;
@@ -67,6 +68,7 @@ RocksDBRowMaterializer::RocksDBRowMaterializer(
     _db(GetServerEngine().db()),
     _cf(RocksDBColumnFamilyManager::get(
       RocksDBColumnFamilyManager::Family::Default)),
+    _txn(txn),
     _multiget_ctx(*_cf, _read_options),
     _projected_columns(projected_columns.begin(), projected_columns.end()),
     _projected_types(projected_types.begin(), projected_types.end()),
@@ -135,7 +137,8 @@ void RocksDBRowMaterializer::IterateColumnKeys(
     buffer.assign(column_key_prefix);
     buffer.append(pk_bytes[idx].data(), pk_bytes[idx].size());
     _value_buffer.clear();
-    auto s = _db->Get(_read_options, _cf, buffer, &_value_buffer);
+    auto s = _txn ? _txn->Get(_read_options, _cf, buffer, &_value_buffer)
+                  : _db->Get(_read_options, _cf, buffer, &_value_buffer);
     if (s.IsNotFound()) {
       // Missing rows: mirror origin/main behaviour of raising; callers
       // never expect sparse index state in a consistent snapshot.
@@ -193,16 +196,19 @@ void RocksDBRowMaterializer::MultiGetIterateColumnKeys(
   }
 
   size_t sorted_pos = 0;
-  _multiget_ctx.MultiGet(
-    *_db, _key_slices,
-    [&](rocksdb::Slice, const rocksdb::PinnableSlice& value,
-        rocksdb::Status status) {
-      if (status.IsNotFound()) {
-        SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB");
-      }
-      SDB_ASSERT(status.ok(), "RocksDB MultiGet failed: ", status.ToString());
-      decode(_read_idxs[sorted_pos++], value.ToStringView());
-    });
+  auto callback = [&](rocksdb::Slice, const rocksdb::PinnableSlice& value,
+                      rocksdb::Status status) {
+    if (status.IsNotFound()) {
+      SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB");
+    }
+    SDB_ASSERT(status.ok(), "RocksDB MultiGet failed: ", status.ToString());
+    decode(_read_idxs[sorted_pos++], value.ToStringView());
+  };
+  if (_txn) {
+    _multiget_ctx.MultiGet(*_txn, _key_slices, callback);
+  } else {
+    _multiget_ctx.MultiGet(*_db, _key_slices, callback);
+  }
 }
 
 void RocksDBRowMaterializer::SeekIterateColumnKeys(
@@ -218,8 +224,9 @@ void RocksDBRowMaterializer::SeekIterateColumnKeys(
     // op would hang. (Same reasoning as in origin/main.)
     auto it_options = _read_options;
     it_options.async_io = false;
-    auto iter =
-      std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(it_options, _cf));
+    auto iter = std::unique_ptr<rocksdb::Iterator>(
+      _txn ? _txn->GetIterator(it_options, _cf)
+           : _db->NewIterator(it_options, _cf));
     column_iterator =
       _iterators.emplace(column_id, std::move(iter)).first->second.get();
   } else {

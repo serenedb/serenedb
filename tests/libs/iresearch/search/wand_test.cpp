@@ -127,7 +127,8 @@ class WandTestCase : public tests::IndexTestBase {
     // return wand_index < scorers.size();
   }
 
-  void AssertWithNewSegments(irs::Scorer* scorer);
+  void AssertWithNewSegmentsSparse(irs::Scorer* scorer);
+  void AssertWithNewSegmentsDense(irs::Scorer* scorer);
 };
 
 std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
@@ -380,7 +381,10 @@ void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer, bool wand_
   }
 }
 
-void WandTestCase::AssertWithNewSegments(irs::Scorer* scorer) {
+void WandTestCase::AssertWithNewSegmentsDense(irs::Scorer* scorer) {
+  GenerateSegment(scorer, true);
+  AssertFilters(scorer, false);
+
   GenerateSegment(scorer, true, true);  // Add another segment
   ConsolidateAll(scorer, true);
   AssertFilters(scorer, false);
@@ -393,32 +397,53 @@ void WandTestCase::AssertWithNewSegments(irs::Scorer* scorer) {
 
   GenerateSegment(scorer, true, true);  // Add another segment
   AssertFilters(scorer, false);
+
+  ConsolidateAll(scorer, true);
+  AssertFilters(scorer, false);
 }
 
-TEST_P(WandTestCase, TermFilterTFIDF) {
+void WandTestCase::AssertWithNewSegmentsSparse(irs::Scorer* scorer) {
+  GenerateSegment(scorer, false);
+  AssertFilters(scorer, false);
+
+  GenerateSegment(scorer, false, true);  // Add another segment
+  AssertFilters(scorer, false);
+
+  ConsolidateAll(scorer, false);
+  AssertFilters(scorer, false);
+}
+
+TEST_P(WandTestCase, TermFilterTFIDFDense) {
   auto scorer_holder = std::make_unique<irs::TFIDF>(false);
   auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
+  AssertWithNewSegmentsDense(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterTFIDFWithNorms) {
+TEST_P(WandTestCase, TermFilterTFIDFSparse) {
+  auto scorer_holder = std::make_unique<irs::TFIDF>(false);
+  auto* scorer = scorer_holder.get();
+
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterTFIDFWithNormsDense) {
   auto scorer_holder = std::make_unique<irs::TFIDF>(true);
   auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
+  AssertWithNewSegmentsDense(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterBM25) {
-  auto scorer_holder = std::make_unique<irs::BM25>();
+TEST_P(WandTestCase, TermFilterTFIDFWithNormsSparse) {
+  auto scorer_holder = std::make_unique<irs::TFIDF>(true);
   auto* scorer = scorer_holder.get();
 
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM25MinNorm) {
+  auto scorer_holder = std::make_unique<irs::BM25>();
+  auto* scorer = scorer_holder.get();
   ASSERT_FALSE(scorer->IsBM15());
   ASSERT_FALSE(scorer->IsBM11());
 
@@ -427,62 +452,77 @@ TEST_P(WandTestCase, TermFilterBM25) {
 
   GenerateSegmentMinNorm(scorer);
   AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterBM15) {
+TEST_P(WandTestCase, TermFilterBM25Dense) {
+  auto scorer_holder = std::make_unique<irs::BM25>();
+  auto* scorer = scorer_holder.get();
+  ASSERT_FALSE(scorer->IsBM15());
+  ASSERT_FALSE(scorer->IsBM11());
+
+  AssertWithNewSegmentsDense(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM25Sparse) {
+  auto scorer_holder = std::make_unique<irs::BM25>();
+  auto* scorer = scorer_holder.get();
+  ASSERT_FALSE(scorer->IsBM15());
+  ASSERT_FALSE(scorer->IsBM11());
+
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM15Dense) {
   auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.f);
   auto* scorer = scorer_holder.get();
   ASSERT_TRUE(scorer->IsBM15());
 
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
+  AssertWithNewSegmentsDense(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterBM11) {
+TEST_P(WandTestCase, TermFilterBM15Sparse) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.f);
+  auto* scorer = scorer_holder.get();
+  ASSERT_TRUE(scorer->IsBM15());
+
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM11Dense) {
   auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 1.f);
   auto* scorer = scorer_holder.get();
-
   ASSERT_TRUE(scorer->IsBM11());
 
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
+  AssertWithNewSegmentsDense(scorer);
+}
 
-  AssertWithNewSegments(scorer);
+TEST_P(WandTestCase, TermFilterBM11Sparse) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 1.f);
+  auto* scorer = scorer_holder.get();
+  ASSERT_TRUE(scorer->IsBM11());
+
+  AssertWithNewSegmentsSparse(scorer);
 }
 
 TEST_P(WandTestCase, TermFilterBM01) {
   auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.1f);
   auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
+  AssertWithNewSegmentsDense(scorer);
 }
 
 TEST_P(WandTestCase, TermFilterBM02) {
   auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.2f);
   auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
+  AssertWithNewSegmentsDense(scorer);
 }
 
 TEST_P(WandTestCase, TermFilterBM04) {
   auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.4f);
   auto* scorer = scorer_holder.get();
 
-
-  GenerateSegment(scorer, true);
-  AssertFilters(scorer, false);
-
-  AssertWithNewSegments(scorer);
+  AssertWithNewSegmentsDense(scorer);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

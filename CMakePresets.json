@@ -28,7 +28,6 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "STATIC_EXECUTABLES": "Off",
-        "SDB_SANITIZE": "Address",
         "SDB_DEV": "On",
         "SDB_ALLOC": "SYS"
       }
@@ -42,7 +41,7 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "STATIC_EXECUTABLES": "Off",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS"
+        "SDB_ALLOC": "JE"
       }
     },
     {
@@ -56,7 +55,7 @@
         "SDB_DEV": "Off",
         "SDB_FAULT_INJECTION": "Off",
         "SDB_GTEST": "Off",
-        "SDB_ALLOC": "SYS"
+        "SDB_ALLOC": "JE"
       }
     }
   ]

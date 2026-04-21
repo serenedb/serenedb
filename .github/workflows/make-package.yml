@@ -91,7 +91,7 @@ jobs:
           echo "USE_IPO=On" >> $GITHUB_ENV
           echo "USE_COVERAGE=" >> $GITHUB_ENV
           echo "SANITIZERS=" >> $GITHUB_ENV
-          echo "SDB_ALLOC=SYS" >> $GITHUB_ENV
+          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
           echo "STRIP_TARBALL=true" >> $GITHUB_ENV

@@ -172,7 +172,7 @@ jobs:
           echo "BUILDMODE=RelWithDebInfo" >> $GITHUB_ENV
           echo "USE_DEBUG_INFO=COLUMNS" >> $GITHUB_ENV
           echo "USE_IPO=Off" >> $GITHUB_ENV
-          echo "SDB_ALLOC=SYS" >> $GITHUB_ENV
+          echo "SDB_ALLOC=JE" >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
           echo "STRIP_TARBALL=false" >> $GITHUB_ENV

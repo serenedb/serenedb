@@ -25,6 +25,7 @@
 #include <duckdb/function/table_function.hpp>
 #include <vector>
 
+#include "connector/row_materializer.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/snapshot.h"
 #include "rocksdb/utilities/transaction.h"
@@ -64,6 +65,8 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
 
   // Rows emitted -- read by the rows_scanned DuckDB callback.
   std::atomic<duckdb::idx_t> produced_rows{0};
+
+  std::unique_ptr<RowMaterializer> materializer;
 
   ~CommonScanGlobalState() override;
 };

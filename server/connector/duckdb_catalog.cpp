@@ -22,6 +22,7 @@
 
 #include <absl/strings/match.h>
 
+#include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
@@ -49,6 +50,7 @@
 #include "catalog/schema.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
+#include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
@@ -876,8 +878,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   }
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   auto& get = plan->Cast<duckdb::LogicalGet>();
+
+  const bool use_row_number_col = IsParquetExternalTable(*sdb_table);
+
   // The binder creates an empty LogicalGet. Populate column_ids for all
-  // table columns so the scan outputs everything the backfill needs.
+  // table columns so the scan outputs everything the backfill needs. For
+  // parquet external tables, add the trailing file_row_number virtual
+  // column;
   if (get.GetColumnIds().empty()) {
     for (size_t i = 0; i < columns.size(); ++i) {
       get.AddColumnId(static_cast<duckdb::column_t>(i));
@@ -886,6 +893,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     for (size_t i = 0; i < columns.size(); ++i) {
       get.types.push_back(columns[i].type);
     }
+    if (use_row_number_col) {
+      get.AddColumnId(
+        duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
+      get.types.push_back(duckdb::LogicalType::BIGINT);
+    }
   }
   create_index_info->names = get.names;
   create_index_info->schema = table.schema.name;
@@ -893,7 +905,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
 
   // Build BoundColumnRefExpression for ALL table columns so DuckDB's
   // column pruning keeps them in the scan. The backfill needs all columns
-  // (PK bytes + index column values + serialization for the writer).
+  // (PK bytes + index column values + serialization for the writer). The
+  // file_row_number column (external tables) is NOT added here -- the
+  // BindContext doesn't know about it, so a bound column ref can't
+  // resolve. It's kept in the scan via column_ids and read by the sink
+  // from the trailing chunk position.
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
   for (size_t i = 0; i < columns.size(); ++i) {
     expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(

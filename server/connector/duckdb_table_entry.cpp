@@ -75,7 +75,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
   if (_sdb_table->GetTableType() == TableType::File) {
-    return MakeExternalScanFunction(context, _sdb_table, bind_data);
+    return MakeExternalScanFunction(context, _sdb_table, this, bind_data);
   }
   auto data = duckdb::make_uniq<SereneDBScanBindData>();
   data->table = _sdb_table;

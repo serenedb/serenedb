@@ -98,6 +98,9 @@ QUERY PLAN
 │iresearch_lookup_with_offse│
 │             ts            │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
 │    <Term:fox(0, 0); >]]   │
@@ -378,6 +381,9 @@ QUERY PLAN
 │         Strategy:         ││         Strategy:         │
 │iresearch_lookup_with_offse││iresearch_lookup_with_offse│
 │             ts            ││             ts            │
+│                           ││                           │
+│       Materializer:       ││       Materializer:       │
+│    rocksdb (point Get)    ││    rocksdb (point Get)    │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │

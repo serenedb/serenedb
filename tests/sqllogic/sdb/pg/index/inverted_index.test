@@ -133,6 +133,9 @@ QUERY PLAN
 │         Strategy:         │
 │      iresearch_count      │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
 │  <Term:pudge(0, 0); >] && │
@@ -383,7 +386,7 @@ CREATE TABLE babsky_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_babsky_memes.parquet'
 );
@@ -462,7 +465,7 @@ CREATE TABLE text_idx_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_text_idx_memes.csv'
 );
@@ -538,7 +541,7 @@ statement ok
 CREATE TABLE score_parquet_ext(
   a INT8,
   b TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_score_parquet.parquet'
 );
@@ -559,18 +562,18 @@ statement ok
 CREATE INDEX score_parquet_idx ON score_parquet_ext USING inverted(a, b score_en);
 
 query
-SELECT a, BM25() > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
 a	has_score
 1	t
 2	t
 
 query
-SELECT a FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+SELECT a FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(score_parquet_idx.tableoid) DESC, a;
 ----
 a
-1
 2
+1
 
 statement ok
 DROP TABLE score_parquet_ext;
@@ -597,7 +600,7 @@ statement ok
 CREATE TABLE score_text_ext(
   a INT8,
   b TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_score_text.csv'
 );
@@ -606,18 +609,18 @@ statement ok
 CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
 
 query
-SELECT a, BM25() > 0 AS has_score FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(score_text_idx.tableoid) > 0 AS has_score FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
 a	has_score
 1	t
 2	t
 
 query
-SELECT a FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+SELECT a FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(score_text_idx.tableoid) DESC, a;
 ----
 a
-1
 2
+1
 
 statement ok
 DROP TABLE score_text_ext;
@@ -647,7 +650,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) multi_seg;
 
 query
-SELECT a, BM25() > 0 AS has_score FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -656,7 +659,7 @@ a	has_score
 4	t
 
 query
-SELECT a FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+SELECT a FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(multi_seg_idx.tableoid) DESC, a;
 ----
 a
 1
@@ -690,7 +693,7 @@ CREATE TABLE dense_pq_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_dense_pq.parquet'
 );
@@ -782,7 +785,7 @@ a	b
 8	common word theta here
 
 query
-SELECT a, BM25() > 0 AS has_score FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+SELECT a, BM25(dense_pq_idx.tableoid) > 0 AS has_score FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -820,13 +823,79 @@ CREATE TABLE dense_csv_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_dense_csv.csv'
 );
 
+
+query
+EXPLAIN CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       READ_CSV_AUTO       │
+│    ────────────────────   │
+│         Function:         │
+│       READ_CSV_AUTO       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
+
+
 statement ok
 CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
+
+query
+EXPLAIN SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    dense_csv_idx.a ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             a             │
+│             b             │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_LOOKUP     │
+│    ────────────────────   │
+│    Table: dense_csv_ext   │
+│                           │
+│         Strategy:         │
+│      iresearch_lookup     │
+│                           │
+│       Materializer:       │
+│     counter (re-scan)     │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│  <Term:shared(0, 0); Term │
+│      :term(1, 1); >]]     │
+│                           │
+│        Projections:       │
+│             b             │
+│             a             │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
+
 
 query
 SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
@@ -917,7 +986,7 @@ a	b
 7	universal token eta
 
 query
-SELECT a, BM25() > 0 AS has_score FROM dense_multi_idx WHERE PHRASE(b, 'universal') ORDER BY a;
+SELECT a, BM25(dense_multi_idx.tableoid) > 0 AS has_score FROM dense_multi_idx WHERE PHRASE(b, 'universal') ORDER BY a;
 ----
 a	has_score
 1	t

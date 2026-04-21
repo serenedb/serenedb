@@ -38,6 +38,7 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
+#include "connector/rocksdb_row_materializer.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "rocksdb/db.h"
@@ -175,22 +176,14 @@ static void WriteOffsetsVector(
 // output chunk. All projected columns are fetched from RocksDB by PK,
 // except score/offsets/tableoid/rowid which come from already-built
 // per-row arrays.
-static void SearchScanMaterialize(SearchFullScanGlobalState& gstate,
+static void SearchScanMaterialize(duckdb::ClientContext& context,
+                                  SearchFullScanGlobalState& gstate,
                                   const SereneDBScanBindData& bind_data,
                                   duckdb::DataChunk& output,
                                   const std::vector<std::string_view>& pk_bytes,
                                   const std::vector<float>& scores,
                                   const OffsetsBatch& offsets_batch) {
   const auto num_rows = pk_bytes.size();
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-
-  std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
-  std::string key_buffer;
-  rocksdb::ReadOptions ro;
-  rocksdb::PinnableSlice value;
 
   // Map DataChunk slot -> index into gstate.offsets_output_idx.
   auto find_offsets_entry = [&](duckdb::idx_t proj) -> size_t {
@@ -202,51 +195,53 @@ static void SearchScanMaterialize(SearchFullScanGlobalState& gstate,
     return gstate.offsets_output_idx.size();
   };
 
+  // Virtual-column slots (tableoid / score / offsets / rowid): handled inline.
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
-    auto bind_col = gstate.projected_columns[proj];
-    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
-        output.data[proj].Reference(
-          duckdb::Value::BIGINT(gstate.tableoid_value));
-      } else if (gstate.scan_score && proj == gstate.score_output_idx) {
-        auto* score_data =
-          duckdb::FlatVector::GetDataMutable<float>(output.data[proj]);
-        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-          score_data[i] = scores[i];
-        }
-      } else if (const auto entry = find_offsets_entry(proj);
-                 entry < gstate.offsets_output_idx.size()) {
-        WriteOffsetsVector(output.data[proj], offsets_batch[entry]);
-      } else {
-        auto* data =
-          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-        for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-          data[i] = static_cast<int64_t>(i);
-        }
-      }
+    if (gstate.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
       continue;
     }
-
-    auto col_id = bind_data.column_ids[bind_col];
-    auto& type = gstate.projected_types[proj];
-
-    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_buffer = table_key;
-      basics::StrResize(key_buffer, key_utils::kTablePrefixSize);
-      key_utils::AppendColumnKey(key_buffer, col_id);
-      key_buffer.append(pk_bytes[row]);
-
-      value.Reset();
-      auto s = db->Get(ro, cf, key_buffer, &value);
-      if (s.IsNotFound()) {
-        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
-        continue;
+    if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+      output.data[proj].Reference(duckdb::Value::BIGINT(gstate.tableoid_value));
+    } else if (gstate.scan_score && proj == gstate.score_output_idx) {
+      auto* score_data =
+        duckdb::FlatVector::GetDataMutable<float>(output.data[proj]);
+      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+        score_data[i] = scores[i];
       }
-      SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
-      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
-                                 row);
+    } else if (const auto entry = find_offsets_entry(proj);
+               entry < gstate.offsets_output_idx.size()) {
+      WriteOffsetsVector(output.data[proj], offsets_batch[entry]);
+    } else {
+      auto* data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+        data[i] = static_cast<int64_t>(i);
+      }
     }
   }
+
+  // Real columns: delegate to the storage-specific materializer.
+  //
+  // Unlike ann/range scans which eagerly collect ALL pks in InitGlobal,
+  // full_scan's iresearch loop interleaves scoring / offsets work per
+  // batch, so we only know THIS batch's pks here. The materializer is
+  // built fresh each call with this batch's pks as `all_pks`. RocksDB
+  // doesn't care (stateless per batch). Parquet / CSV pay a per-batch
+  // re-init cost; a cleaner fix would fold the whole scoring+offsets
+  // loop into InitGlobal too, but that's a separate refactor.
+  //
+  // NOTE: preserves existing behavior of reading without a snapshot
+  // (pre-refactor SearchScanMaterialize did not set ro.snapshot; the
+  // ANN / range paths do).
+  std::vector<std::string> pk_storage_owned;
+  pk_storage_owned.reserve(pk_bytes.size());
+  for (auto pk : pk_bytes) {
+    pk_storage_owned.emplace_back(pk);
+  }
+  auto materializer = MakeRowMaterializer(
+    context, bind_data, /*snapshot=*/nullptr, pk_storage_owned,
+    gstate.projected_columns, gstate.projected_types, bind_data.column_ids);
+  materializer->Materialize(pk_bytes, output);
 
   output.SetCardinality(num_rows);
 }
@@ -311,10 +306,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     }
   }
 
-  return state;
+  return duckdb::unique_ptr_cast<SearchFullScanGlobalState,
+                                 duckdb::GlobalTableFunctionState>(
+    std::move(state));
 }
 
-void SearchFullScanFunction(duckdb::ClientContext& /*context*/,
+void SearchFullScanFunction(duckdb::ClientContext& context,
                             duckdb::TableFunctionInput& data,
                             duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchFullScanGlobalState>();
@@ -406,8 +403,8 @@ void SearchFullScanFunction(duckdb::ClientContext& /*context*/,
     SDB_ASSERT(!search.emit_offsets(),
                "OFFSETS() combined with top-K scoring is not supported");
     OffsetsBatch empty_offsets;
-    SearchScanMaterialize(gstate, bind_data, output, pk_batch, score_batch,
-                          empty_offsets);
+    SearchScanMaterialize(context, gstate, bind_data, output, pk_batch,
+                          score_batch, empty_offsets);
     gstate.produced_rows.fetch_add(output.size(), std::memory_order_relaxed);
     return;
   }
@@ -524,7 +521,7 @@ void SearchFullScanFunction(duckdb::ClientContext& /*context*/,
     pk_views.push_back(s);
   }
 
-  SearchScanMaterialize(gstate, bind_data, output, pk_views, scores,
+  SearchScanMaterialize(context, gstate, bind_data, output, pk_views, scores,
                         offsets_batch);
   if (output.size() > 0) {
     gstate.produced_rows.fetch_add(output.size(), std::memory_order_relaxed);

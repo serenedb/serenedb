@@ -36,6 +36,7 @@
 #include "catalog/secondary_index.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
@@ -43,6 +44,7 @@
 #include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/key_utils.hpp"
+#include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
 #include "search/inverted_index_shard.h"
@@ -95,6 +97,11 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::string table_key;
   std::vector<InsertColumnMeta> columns;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
+
+  bool is_external = false;
+  bool has_row_number_col = false;
+  duckdb::idx_t file_row_number_col_idx = 0;
+  int64_t external_row_counter = 0;
 
   // Index writer for the new index
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
@@ -273,6 +280,12 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     });
   }
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
+  state->is_external = _table->GetTableType() == TableType::File;
+  state->has_row_number_col = IsParquetExternalTable(*_table);
+  // For parquet, BindCreateIndex appends file_row_number as the trailing
+  // column; for CSV/JSON no trailing column exists and the sink uses a
+  // counter.
+  state->file_row_number_col_idx = columns.size();
 
   // Create index writer for the new index
   auto& conn_ctx = GetSereneDBContext(context);
@@ -320,13 +333,44 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
-  // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes]
+  // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes].
+  //
+  // Parquet external: PK = trailing BIGINT file_row_number column.
+  // CSV / JSON external: PK = monotonic counter synthesized by the sink
+  //   (the scan must be deterministic so the same counter is reproduced
+  //   at query-time re-scan).
+  // RocksDB: MakeColumnKey from the table's declared PK columns (or a
+  //   generated pk for tables without an explicit PK).
   gstate.row_keys.clear();
   gstate.row_keys.reserve(num_rows);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-      gstate.row_keys.emplace_back());
+  auto append_row_number_key = [&](int64_t row_number) {
+    auto& key = gstate.row_keys.emplace_back();
+    // Layout during construction: [ColumnId(4)][ObjectId(8)][PK(8)]
+    basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
+    std::memcpy(key.data() + sizeof(catalog::Column::Id),
+                gstate.table_key.data(), sizeof(ObjectId));
+    primary_key::AppendSigned(key, row_number);
+    // Final layout: [ObjectId(8)][ColumnId(4, filled later)][PK(8)].
+    std::memcpy(key.data(), gstate.table_key.data(), sizeof(ObjectId));
+  };
+  if (gstate.is_external && gstate.has_row_number_col) {
+    SDB_ASSERT(gstate.file_row_number_col_idx < chunk.ColumnCount());
+    auto& rownum_vec = chunk.data[gstate.file_row_number_col_idx];
+    rownum_vec.Flatten(num_rows);
+    auto* rownums = duckdb::FlatVector::GetData<int64_t>(rownum_vec);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      append_row_number_key(rownums[row]);
+    }
+  } else if (gstate.is_external) {
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      append_row_number_key(gstate.external_row_counter++);
+    }
+  } else {
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      duckdb_primary_key::MakeColumnKey(
+        chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
+        gstate.row_keys.emplace_back());
+    }
   }
 
   // Init writer for this batch

@@ -31,6 +31,7 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
+#include "connector/rocksdb_row_materializer.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -45,75 +46,74 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto state = duckdb::make_uniq<SearchRangeScanGlobalState>();
   InitCommonState(*state, context, bind_data, input);
-  // HNSW range search is lazy: executed on the first SearchRangeScanFunction
-  // call.
-  return state;
+
+  // Eager: run HNSW range search + collect pks + build materializer
+  // here so the function() loop is just hash-lookups per batch.
+  auto& rss = bind_data.scan_source->Cast<RangeSearchScan>();
+  auto& snapshot =
+    GetSereneDBContext(context).EnsureSearchSnapshot(rss.index_id);
+
+  if (snapshot.reader.size() > 0) {
+    std::vector<float> dis;
+    std::vector<int64_t> ids;
+
+    irs::HNSWRangeSearchInfo info{
+      .query =
+        reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
+      .radius = rss.radius,
+    };
+    snapshot.reader.RangeSearch(rss.field_name, info, dis, ids);
+
+    auto& reader = snapshot.reader;
+    state->ann_pk_bytes.reserve(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+      auto [seg_id, doc_id] =
+        irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
+      if (seg_id >= reader.size()) {
+        continue;
+      }
+      const auto& segment = reader[seg_id];
+      const auto* pk_col = segment.column(kPkFieldName);
+      if (!pk_col) {
+        continue;
+      }
+      auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+      if (!pk_iter) {
+        continue;
+      }
+      const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
+      if (!pk_val) {
+        continue;
+      }
+      if (pk_iter->seek(doc_id) != doc_id) {
+        continue;
+      }
+      auto val = pk_val->value;
+      state->ann_pk_bytes.emplace_back(
+        reinterpret_cast<const char*>(val.data()), val.size());
+    }
+  }
+
+  if (!state->ann_pk_bytes.empty()) {
+    state->materializer = MakeRowMaterializer(
+      context, bind_data, state->snapshot, state->ann_pk_bytes,
+      state->projected_columns, state->projected_types,
+      bind_data.column_ids);
+  }
+  return duckdb::unique_ptr_cast<SearchRangeScanGlobalState,
+                                 duckdb::GlobalTableFunctionState>(
+    std::move(state));
 }
 
-void SearchRangeScanFunction(duckdb::ClientContext& context,
+void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
                              duckdb::TableFunctionInput& data,
                              duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchRangeScanGlobalState>();
-  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
 
-  if (gstate.finished) {
+  if (gstate.finished || gstate.ann_pk_bytes.empty()) {
+    gstate.finished = true;
     output.SetCardinality(0);
     return;
-  }
-
-  // Lazy init: run HNSW range search on first call.
-  if (!gstate.ann_search_done) {
-    gstate.ann_search_done = true;
-    auto& rss = bind_data.scan_source->Cast<RangeSearchScan>();
-    auto& snapshot =
-      GetSereneDBContext(context).EnsureSearchSnapshot(rss.index_id);
-
-    if (snapshot.reader.size() > 0) {
-      std::vector<float> dis;
-      std::vector<int64_t> ids;
-
-      irs::HNSWRangeSearchInfo info{
-        .query =
-          reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
-        .radius = rss.radius,
-      };
-      snapshot.reader.RangeSearch(rss.field_name, info, dis, ids);
-
-      auto& reader = snapshot.reader;
-      gstate.ann_pk_bytes.reserve(ids.size());
-      for (size_t i = 0; i < ids.size(); ++i) {
-        auto [seg_id, doc_id] =
-          irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
-        if (seg_id >= reader.size()) {
-          continue;
-        }
-        const auto& segment = reader[seg_id];
-        const auto* pk_col = segment.column(kPkFieldName);
-        if (!pk_col) {
-          continue;
-        }
-        auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-        if (!pk_iter) {
-          continue;
-        }
-        const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-        if (!pk_val) {
-          continue;
-        }
-        if (pk_iter->seek(doc_id) != doc_id) {
-          continue;
-        }
-        auto val = pk_val->value;
-        gstate.ann_pk_bytes.emplace_back(
-          reinterpret_cast<const char*>(val.data()), val.size());
-      }
-    }
-
-    if (gstate.ann_pk_bytes.empty()) {
-      gstate.finished = true;
-      output.SetCardinality(0);
-      return;
-    }
   }
 
   const size_t total = gstate.ann_pk_bytes.size();
@@ -128,53 +128,30 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   const size_t batch_size =
     std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
 
-  auto& engine = GetServerEngine();
-  auto* db = engine.db();
-  auto* cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Default);
-  std::string table_key = key_utils::PrepareTableKey(bind_data.table->GetId());
-  std::string key_buffer;
-  rocksdb::ReadOptions ro;
-  ro.snapshot = gstate.snapshot;
-  rocksdb::PinnableSlice value;
-
+  // Virtual-column slots (rowid / tableoid): handled inline here.
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
-    auto bind_col = gstate.projected_columns[proj];
-    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
-        output.data[proj].Reference(
-          duckdb::Value::BIGINT(gstate.tableoid_value));
-      } else {
-        auto* data_ptr =
-          duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-        for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-          data_ptr[i] = static_cast<int64_t>(batch_start + i);
-        }
-      }
+    if (gstate.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
       continue;
     }
-
-    auto col_id = bind_data.column_ids[bind_col];
-    auto& type = gstate.projected_types[proj];
-
-    for (duckdb::idx_t row = 0; row < batch_size; ++row) {
-      const auto& pk = gstate.ann_pk_bytes[batch_start + row];
-      key_buffer = table_key;
-      basics::StrResize(key_buffer, key_utils::kTablePrefixSize);
-      key_utils::AppendColumnKey(key_buffer, col_id);
-      key_buffer.append(pk);
-
-      value.Reset();
-      auto s = db->Get(ro, cf, key_buffer, &value);
-      if (s.IsNotFound()) {
-        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
-        continue;
+    if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
+      output.data[proj].Reference(duckdb::Value::BIGINT(gstate.tableoid_value));
+    } else {
+      auto* data_ptr =
+        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
+      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+        data_ptr[i] = static_cast<int64_t>(batch_start + i);
       }
-      SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());
-      DeserializeValueIntoDuckDB(value.ToStringView(), output.data[proj], type,
-                                 row);
     }
   }
+
+  // Real columns: stream from the materializer constructed during
+  // InitGlobal-after-iresearch.
+  std::vector<std::string_view> pk_batch;
+  pk_batch.reserve(batch_size);
+  for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+    pk_batch.emplace_back(gstate.ann_pk_bytes[batch_start + i]);
+  }
+  gstate.materializer->Materialize(pk_batch, output);
 
   gstate.ann_current_idx += batch_size;
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));

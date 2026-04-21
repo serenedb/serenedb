@@ -45,6 +45,7 @@
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
 #include "connector/rocksdb_filter.hpp"
+#include "connector/row_materializer.h"
 #include "functions/search.h"
 #include "pg/connection_context.h"
 
@@ -419,6 +420,12 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
     result.insert("Table", std::string{bind.table->GetName()});
   }
   result.insert("Strategy", std::string{bind.scan_source->KindName()});
+  // Surface which RowMaterializer the search-scan path will use to
+  // resolve PKs from the iresearch index. Only emit for strategies
+  // that actually run the iresearch pk -> row pipeline.
+  if (bind.scan_source->IsSearchLike()) {
+    result.insert("Materializer", std::string{RowMaterializerName(bind)});
+  }
   bind.scan_source->AppendSummary(bind, result);
   return result;
 }

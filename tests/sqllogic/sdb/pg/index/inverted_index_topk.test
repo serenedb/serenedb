@@ -74,6 +74,9 @@ QUERY PLAN
 │         Strategy:         │
 │    iresearch_score_scan   │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
 │    <Term:fox(0, 0); >]]   │
@@ -129,6 +132,9 @@ QUERY PLAN
 │                           │
 │         Strategy:         │
 │ iresearch_score_topk_scan │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │

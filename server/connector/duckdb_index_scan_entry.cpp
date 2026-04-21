@@ -23,6 +23,7 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
+#include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
 
@@ -72,8 +73,12 @@ SereneDBIndexScanEntry::GetStatistics(duckdb::ClientContext& /*context*/,
 }
 
 duckdb::TableFunction SereneDBIndexScanEntry::GetScanFunction(
-  duckdb::ClientContext& /*context*/,
+  duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  if (_sdb_table->GetTableType() == TableType::File) {
+    return MakeExternalScanFunction(context, _sdb_table, this, bind_data);
+  }
+
   auto data = duckdb::make_uniq<SereneDBScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {

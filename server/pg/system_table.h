@@ -105,7 +105,7 @@ void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
     }
     duckdb::ListVector::SetListSize(vec, current_size + list_size);
   } else if constexpr (std::is_same_v<Field, Empty>) {
-    duckdb::FlatVector::Validity(vec).SetInvalid(row);
+    duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
   } else {
     static_assert(false);
   }
@@ -177,7 +177,7 @@ void WriteData(std::vector<duckdb::Vector>& columns, const T& value,
   uint32_t column = 0;
   boost::pfr::for_each_field(value, [&]<typename Field>(const Field& field) {
     if (null_mask & (uint64_t{1} << column)) {
-      duckdb::FlatVector::Validity(columns[column]).SetInvalid(row);
+      duckdb::FlatVector::ValidityMutable(columns[column]).SetInvalid(row);
     } else {
       WriteField(columns[column], row, field);
     }

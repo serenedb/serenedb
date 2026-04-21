@@ -346,7 +346,7 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
   auto result_data =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  auto& result_validity = duckdb::FlatVector::Validity(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto json_idx = vdata[0].sel->get_index(row);

@@ -153,7 +153,7 @@ void ParquetRowMaterializer::CopyBufferedRowToOutput(
     }
     duckdb::VectorOperations::Copy(src_chunk.data[pslot], output.data[proj],
                                    row_idx + 1, row_idx, out_row);
-    duckdb::FlatVector::Validity(output.data[proj]).SetValid(out_row);
+    duckdb::FlatVector::ValidityMutable(output.data[proj]).SetValid(out_row);
   }
 }
 
@@ -170,7 +170,7 @@ void ParquetRowMaterializer::Materialize(
       continue;
     }
     auto& vec = output.data[proj];
-    auto& validity = duckdb::FlatVector::Validity(vec);
+    auto& validity = duckdb::FlatVector::ValidityMutable(vec);
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
       validity.SetInvalid(i);
     }

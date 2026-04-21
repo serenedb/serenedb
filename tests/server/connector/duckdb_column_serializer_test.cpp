@@ -322,7 +322,7 @@ TEST_F(DuckDBColumnSerializerTest, DictionaryNullsInt) {
   std::vector<duckdb::sel_t> indices{3, 2, 1, 0, 0, 1, 2, 3};
   // Mark some child positions as null by setting null in child before MakeDict
   // Dict nulls: positions 3 and 5 in output are null (point to child[0])
-  duckdb::FlatVector::Validity(child).SetInvalid(0);  // child[0]=null
+  duckdb::FlatVector::ValidityMutable(child).SetInvalid(0);  // child[0]=null
   auto vec = MakeDict(std::move(child), std::span(indices));
   CheckColumn(vec, duckdb::LogicalType::INTEGER, 8);
 }
@@ -331,7 +331,7 @@ TEST_F(DuckDBColumnSerializerTest, DictionaryAllNullsInt) {
   auto child = MakeFlat<int32_t>({1, 2, 3, 5});
   std::vector<duckdb::sel_t> indices{3, 2, 1, 0, 0, 1, 2, 3};
   // Make all child entries null
-  auto& validity = duckdb::FlatVector::Validity(child);
+  auto& validity = duckdb::FlatVector::ValidityMutable(child);
   for (int i = 0; i < 4; ++i) {
     validity.SetInvalid(i);
   }
@@ -402,7 +402,7 @@ TEST_F(DuckDBColumnSerializerTest, ListIntNullElements) {
   std::vector<int32_t> child_vals = {1, 0, 3, 0, 5, 0, 7};
   duckdb::Vector child(elem_type, 7);
   auto* cdata = duckdb::FlatVector::GetDataMutable<int32_t>(child);
-  auto& cvalid = duckdb::FlatVector::Validity(child);
+  auto& cvalid = duckdb::FlatVector::ValidityMutable(child);
   for (int i = 0; i < 7; ++i) {
     cdata[i] = child_vals[i];
   }
@@ -552,7 +552,7 @@ TEST_F(DuckDBColumnSerializerTest, DictionaryEncodedListIntWithNulls) {
   entries[2] = {5, 3};
   duckdb::ListVector::SetListSize(vec, 8);
   // Mark row 1 as null list
-  duckdb::FlatVector::Validity(vec).SetInvalid(1);
+  duckdb::FlatVector::ValidityMutable(vec).SetInvalid(1);
 
   CheckColumn(vec, list_type, 3);
 }

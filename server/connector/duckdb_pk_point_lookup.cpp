@@ -164,7 +164,7 @@ void PKPointLookupFunction(duckdb::ClientContext& /*context*/,
       do_multiget(slices, [&](size_t, const rocksdb::PinnableSlice& val,
                               const rocksdb::Status& s) {
         if (s.IsNotFound()) {
-          duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(j);
+          duckdb::FlatVector::ValidityMutable(output.data[proj]).SetInvalid(j);
         } else {
           SDB_ASSERT(s.ok(), "RocksDB PK lookup failed: ", s.ToString());
           DeserializeValueIntoDuckDB(val.ToStringView(), output.data[proj],

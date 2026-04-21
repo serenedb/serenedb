@@ -88,7 +88,7 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
   auto* list_entries =
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& result_validity = duckdb::FlatVector::Validity(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   // Collect tokens per row first (tokenizer output is ephemeral).
   std::vector<std::vector<std::string>> row_tokens(count);

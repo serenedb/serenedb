@@ -136,7 +136,7 @@ static void ArrayDistanceExecutor(duckdb::DataChunk& args,
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   Res* result_data = duckdb::FlatVector::GetDataMutable<Res>(result);
-  auto& result_validity = duckdb::FlatVector::Validity(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t row = 0; row < batch_size; row++) {
     auto left_idx = left_vdata.sel->get_index(row);

@@ -140,7 +140,8 @@ void CounterRowMaterializer::Materialize(
         if (_projected_columns[proj] == duckdb::DConstants::INVALID_INDEX) {
           continue;
         }
-        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(out_row);
+        duckdb::FlatVector::ValidityMutable(output.data[proj])
+          .SetInvalid(out_row);
       }
       continue;
     }

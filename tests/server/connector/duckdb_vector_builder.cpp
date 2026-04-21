@@ -47,7 +47,7 @@ duckdb::Vector MakeNullableVarchar(
   std::span<const std::optional<std::string_view>> values) {
   duckdb::Vector result(duckdb::LogicalType::VARCHAR, values.size());
   auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  auto& validity = duckdb::FlatVector::Validity(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
   for (duckdb::idx_t i = 0; i < values.size(); ++i) {
     if (values[i].has_value()) {
       data[i] = duckdb::StringVector::AddString(result, values[i]->data(),
@@ -110,7 +110,7 @@ duckdb::Vector MakeNullableVarcharList(
   auto* child_data =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
   auto* entries = duckdb::ListVector::GetData(result);
-  auto& validity = duckdb::FlatVector::Validity(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
 
   duckdb::idx_t offset = 0;
   for (duckdb::idx_t i = 0; i < row_count; ++i) {
@@ -146,7 +146,7 @@ duckdb::Vector MakeStruct(duckdb::LogicalType struct_type,
   }
   if (!nulls.empty()) {
     SDB_ASSERT(nulls.size() == count);
-    auto& validity = duckdb::FlatVector::Validity(result);
+    auto& validity = duckdb::FlatVector::ValidityMutable(result);
     for (duckdb::idx_t i = 0; i < count; ++i) {
       if (!nulls[i]) {
         validity.SetInvalid(i);
@@ -190,7 +190,7 @@ duckdb::Vector MakeMap(duckdb::LogicalType map_type, duckdb::Vector keys_flat,
 
   if (!nulls.empty()) {
     SDB_ASSERT(nulls.size() == row_count);
-    auto& validity = duckdb::FlatVector::Validity(result);
+    auto& validity = duckdb::FlatVector::ValidityMutable(result);
     for (duckdb::idx_t i = 0; i < row_count; ++i) {
       if (!nulls[i]) {
         validity.SetInvalid(i);

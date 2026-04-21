@@ -202,7 +202,7 @@ bool PgVarcharToOidCast(duckdb::Vector& source, duckdb::Vector& result,
   auto* src_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(src_fmt);
   auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
-  auto& dst_validity = duckdb::FlatVector::Validity(result);
+  auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto src_idx = src_fmt.sel->get_index(i);
@@ -289,7 +289,7 @@ bool PgOidToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   duckdb::UnifiedVectorFormat src_fmt;
   source.ToUnifiedFormat(count, src_fmt);
   auto* src_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(src_fmt);
-  auto& dst_validity = duckdb::FlatVector::Validity(result);
+  auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto src_idx = src_fmt.sel->get_index(i);

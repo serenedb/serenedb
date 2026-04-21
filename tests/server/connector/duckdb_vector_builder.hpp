@@ -103,7 +103,7 @@ template<class T>
 duckdb::Vector MakeNullableFlat(std::span<const std::optional<T>> values) {
   duckdb::Vector result(DuckDBLogicalType<T>(), values.size());
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  auto& validity = duckdb::FlatVector::Validity(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
   for (duckdb::idx_t i = 0; i < values.size(); ++i) {
     if (values[i].has_value()) {
       data[i] = *values[i];
@@ -207,7 +207,7 @@ duckdb::Vector MakeNullableList(
   auto* child_data = duckdb::FlatVector::GetDataMutable<T>(child);
   auto* entries =
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& validity = duckdb::FlatVector::Validity(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
 
   duckdb::idx_t offset = 0;
   for (duckdb::idx_t i = 0; i < row_count; ++i) {

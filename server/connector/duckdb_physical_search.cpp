@@ -306,7 +306,8 @@ duckdb::SourceResultType SereneDBPhysicalFTSearch::GetDataInternal(
     const auto& col = _proj_columns[proj];
     if (col.col_id == kInvalidColId) {
       // Special column (rowid / tableoid) -- emit NULL for all rows.
-      duckdb::FlatVector::Validity(chunk.data[proj]).SetAllInvalid(num_rows);
+      duckdb::FlatVector::ValidityMutable(chunk.data[proj])
+        .SetAllInvalid(num_rows);
       continue;
     }
     // Precompute the [ObjectId][ColumnId] key prefix for this column.
@@ -319,7 +320,7 @@ duckdb::SourceResultType SereneDBPhysicalFTSearch::GetDataInternal(
       value.Reset();
       const auto s = db->Get(ro, cf, key_buffer, &value);
       if (s.IsNotFound()) {
-        duckdb::FlatVector::Validity(chunk.data[proj]).SetInvalid(row);
+        duckdb::FlatVector::ValidityMutable(chunk.data[proj]).SetInvalid(row);
         continue;
       }
       SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());

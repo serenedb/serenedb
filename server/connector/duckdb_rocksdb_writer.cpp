@@ -1519,7 +1519,7 @@ void DuckDBColumnSerializer::WriteDictionaryComplexSubVector(
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto src_idx = vdata.sel->get_index(offset + i);
     if (!vdata.validity.RowIsValid(src_idx)) {
-      duckdb::FlatVector::Validity(flat).SetInvalid(i);
+      duckdb::FlatVector::ValidityMutable(flat).SetInvalid(i);
     } else {
       flat.SetValue(i, vec.GetValue(offset + i));
     }

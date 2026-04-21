@@ -334,7 +334,7 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
   delim_data.ToUnifiedFormat(count, delim_fmt);
   null_str_data.ToUnifiedFormat(count, null_str_fmt);
 
-  auto& list_validity = duckdb::FlatVector::Validity(result);
+  auto& list_validity = duckdb::FlatVector::ValidityMutable(result);
   auto list_entries =
     duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
 
@@ -385,7 +385,7 @@ void StringToArray3Function(duckdb::DataChunk& args, duckdb::ExpressionState&,
     }
 
     duckdb::ListVector::Reserve(result, current_size + parts.size());
-    auto& child_validity = duckdb::FlatVector::Validity(child);
+    auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
     auto child_data =
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
     for (size_t j = 0; j < parts.size(); j++) {
@@ -512,7 +512,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
   auto result_data =
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  auto& result_validity = duckdb::FlatVector::Validity(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     // Get format string
@@ -1015,7 +1015,7 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
     auto pat_idx = vdata[1].sel->get_index(row);
     if (!vdata[0].validity.RowIsValid(text_idx) ||
         !vdata[1].validity.RowIsValid(pat_idx)) {
-      duckdb::FlatVector::Validity(result).SetInvalid(row);
+      duckdb::FlatVector::ValidityMutable(result).SetInvalid(row);
       continue;
     }
 
@@ -1031,7 +1031,7 @@ void RegexpInstrFunction(duckdb::DataChunk& args,
       auto n_idx = vdata[3].sel->get_index(row);
       if (!vdata[2].validity.RowIsValid(s_idx) ||
           !vdata[3].validity.RowIsValid(n_idx)) {
-        duckdb::FlatVector::Validity(result).SetInvalid(row);
+        duckdb::FlatVector::ValidityMutable(result).SetInvalid(row);
         continue;
       }
       start_char =
@@ -1126,7 +1126,7 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
 
       duckdb::ListVector::Reserve(result, current_size + num_groups);
-      auto& child_validity = duckdb::FlatVector::Validity(child);
+      auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
       for (int i = 1; i <= num_groups; ++i) {
         if (groups[i].data()) {
           duckdb::FlatVector::GetDataMutable<duckdb::string_t>(

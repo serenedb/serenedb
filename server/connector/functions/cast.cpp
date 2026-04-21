@@ -45,7 +45,7 @@ bool PgArrayTextToList(duckdb::Vector& source, duckdb::Vector& result,
   auto source_strings =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(source_data);
 
-  auto& result_validity = duckdb::FlatVector::Validity(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
   duckdb::idx_t total_elements = 0;
 
   for (duckdb::idx_t i = 0; i < count; i++) {
@@ -65,7 +65,7 @@ bool PgArrayTextToList(duckdb::Vector& source, duckdb::Vector& result,
         duckdb::ListVector::Reserve(result, total_elements + 1);
         auto& entry = duckdb::ListVector::GetEntry(result);
         if (is_null) {
-          duckdb::FlatVector::Validity(entry).SetInvalid(total_elements);
+          duckdb::FlatVector::ValidityMutable(entry).SetInvalid(total_elements);
         } else {
           duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
             entry)[total_elements] =
@@ -128,8 +128,9 @@ duckdb::BoundCastInfo PgArrayCastBind(duckdb::BindCastInput& input,
 
     // Step 2: LIST(VARCHAR) -> LIST(T) via DuckDB native cast
     duckdb::CastParameters child_params(
-      parameters, data.child_cast.cast_data.get(), nullptr);
-    return data.child_cast.function(intermediate, result, count, child_params);
+      parameters, data.child_cast.GetCastData().get(), nullptr);
+    return data.child_cast.GetFunction()(intermediate, result, count,
+                                         child_params);
   };
 
   return duckdb::BoundCastInfo(chain_fn, std::move(cast_data));

@@ -168,7 +168,7 @@ void SKFullScanFunction(duckdb::ClientContext& /*context*/,
         s = db->Get(ro, cf, key_buffer, &value);
       }
       if (s.IsNotFound()) {
-        duckdb::FlatVector::Validity(output.data[proj]).SetInvalid(row);
+        duckdb::FlatVector::ValidityMutable(output.data[proj]).SetInvalid(row);
         continue;
       }
       SDB_ASSERT(s.ok(), "RocksDB read failed: ", s.ToString());

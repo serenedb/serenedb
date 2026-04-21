@@ -64,7 +64,7 @@ static duckdb::idx_t ReadScalarColumn(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       duckdb::idx_t max_rows) {
   auto* data = duckdb::FlatVector::GetDataMutable<T>(output);
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -81,7 +81,7 @@ static duckdb::idx_t ReadBoolColumn(rocksdb::Iterator& it,
                                     duckdb::Vector& output,
                                     duckdb::idx_t max_rows) {
   auto* data = duckdb::FlatVector::GetDataMutable<bool>(output);
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -97,7 +97,7 @@ static duckdb::idx_t ReadBoolColumn(rocksdb::Iterator& it,
 static duckdb::idx_t ReadVarcharColumn(rocksdb::Iterator& it,
                                        duckdb::Vector& output,
                                        duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(
     it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
@@ -117,7 +117,7 @@ static duckdb::idx_t ReadVarcharColumn(rocksdb::Iterator& it,
 static duckdb::idx_t ReadBlobColumn(rocksdb::Iterator& it,
                                     duckdb::Vector& output,
                                     duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(
     it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
@@ -135,7 +135,7 @@ static duckdb::idx_t ReadTimestampColumn(rocksdb::Iterator& it,
                                          duckdb::Vector& output,
                                          duckdb::idx_t max_rows) {
   auto* data = duckdb::FlatVector::GetDataMutable<duckdb::timestamp_t>(output);
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -154,7 +154,7 @@ static duckdb::idx_t ReadDateColumn(rocksdb::Iterator& it,
                                     duckdb::Vector& output,
                                     duckdb::idx_t max_rows) {
   auto* data = duckdb::FlatVector::GetDataMutable<duckdb::date_t>(output);
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -173,7 +173,7 @@ static duckdb::idx_t ReadListColumn(rocksdb::Iterator& it,
                                     duckdb::Vector& output,
                                     const duckdb::LogicalType& type,
                                     duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -189,7 +189,7 @@ static duckdb::idx_t ReadArrayColumn(rocksdb::Iterator& it,
                                      duckdb::Vector& output,
                                      const duckdb::LogicalType& type,
                                      duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -205,7 +205,7 @@ static duckdb::idx_t ReadMapColumn(rocksdb::Iterator& it,
                                    duckdb::Vector& output,
                                    const duckdb::LogicalType& type,
                                    duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -221,7 +221,7 @@ static duckdb::idx_t ReadStructColumn(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       const duckdb::LogicalType& type,
                                       duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   return IterateColumn(it, max_rows,
                        [&](duckdb::idx_t idx, std::string_view value) {
@@ -309,7 +309,7 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
 void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
                                 const duckdb::LogicalType& type,
                                 duckdb::idx_t idx) {
-  auto& validity = duckdb::FlatVector::Validity(output);
+  auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
   if (value.empty()) {
     validity.SetInvalid(idx);
@@ -417,7 +417,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
                                   uint32_t elem_count, bool have_nulls,
                                   bool have_length, uint32_t length_array_size,
                                   const duckdb::LogicalType& child_type) {
-  auto& child_validity = duckdb::FlatVector::Validity(child);
+  auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
 
   const uint8_t* elem_nulls = nullptr;
   if (have_nulls) {
@@ -577,7 +577,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           SDB_ASSERT(!sub_have_nulls);
           auto remaining = static_cast<size_t>(end - ptr);
           if (remaining == 0) {
-            auto& lc_validity = duckdb::FlatVector::Validity(list_child);
+            auto& lc_validity = duckdb::FlatVector::ValidityMutable(list_child);
             for (uint32_t i = 0; i < total_child_elems; i++) {
               lc_validity.SetInvalid(current_child_size + i);
             }
@@ -640,7 +640,7 @@ void DeserializeListValue(std::string_view value, duckdb::Vector& output,
     auto remaining = static_cast<size_t>(end - ptr);
     if (remaining == 0) {
       // All NULLs
-      auto& child_validity = duckdb::FlatVector::Validity(child);
+      auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
       for (uint32_t i = 0; i < elem_count; i++) {
         child_validity.SetInvalid(current_size + i);
       }
@@ -705,7 +705,7 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
     auto& child_type = child_types[i].second;
 
     if (child_len == 0) {
-      duckdb::FlatVector::Validity(child).SetInvalid(idx);
+      duckdb::FlatVector::ValidityMutable(child).SetInvalid(idx);
     } else {
       auto child_sv =
         std::string_view{reinterpret_cast<const char*>(ptr), child_len};
@@ -779,7 +779,7 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
       SDB_ASSERT(!have_nulls);
       auto remaining = static_cast<size_t>(sub_end - ptr);
       if (remaining == 0) {
-        auto& child_validity = duckdb::FlatVector::Validity(child);
+        auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
         for (uint32_t i = 0; i < elem_count; i++) {
           child_validity.SetInvalid(child_offset + i);
         }
@@ -822,7 +822,7 @@ void DeserializeArrayValue(std::string_view value, duckdb::Vector& output,
   auto elem_count = irs::vread<uint32_t>(ptr);
   if (elem_count == 0) {
     // Zero-element ARRAY: mark child slots invalid
-    auto& child_validity = duckdb::FlatVector::Validity(child);
+    auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
       child_validity.SetInvalid(idx * array_size + i);
     }

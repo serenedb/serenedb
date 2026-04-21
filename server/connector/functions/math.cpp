@@ -218,7 +218,7 @@ void MakeTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto result_data =
     duckdb::FlatVector::GetDataMutable<duckdb::timestamp_t>(result);
-  auto& validity = duckdb::FlatVector::Validity(result);
+  auto& validity = duckdb::FlatVector::ValidityMutable(result);
 
   duckdb::UnifiedVectorFormat vdata[6];
   for (int i = 0; i < 6; ++i) {

@@ -23,15 +23,12 @@ QUERY PLAN
 │      Join Type: INNER     │
 │    Conditions: id = id    ├──────────────┐
 │                           │              │
-│           ~3 rows         │              │
+│          ~3 rows          │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │   ROCKSDB_TABLE_FULLSCAN  ││   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   ││    ────────────────────   │
 │         Table: t1         ││         Table: t2         │
-│                           ││                           │
-│         Strategy:         ││         Strategy:         │
-│   rocksdb_table_fullscan  ││   rocksdb_table_fullscan  │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
 │             id            ││             id            │

@@ -94,10 +94,6 @@ QUERY PLAN
 │    ────────────────────   │
 │    Table: offsets_test    │
 │                           │
-│         Strategy:         │
-│iresearch_lookup_with_offse│
-│             ts            │
-│                           │
 │       Materializer:       │
 │    rocksdb (point Get)    │
 │                           │
@@ -377,10 +373,6 @@ QUERY PLAN
 │      IRESEARCH_LOOKUP     ││      IRESEARCH_LOOKUP     │
 │    ────────────────────   ││    ────────────────────   │
 │    Table: offsets_test    ││    Table: offsets_test    │
-│                           ││                           │
-│         Strategy:         ││         Strategy:         │
-│iresearch_lookup_with_offse││iresearch_lookup_with_offse│
-│             ts            ││             ts            │
 │                           ││                           │
 │       Materializer:       ││       Materializer:       │
 │    rocksdb (point Get)    ││    rocksdb (point Get)    │

@@ -11,9 +11,6 @@ QUERY PLAN
 │    ────────────────────   │
 │          Table: t         │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │          column1          │
 │          column2          │
@@ -48,14 +45,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │   Filter: (column1=foo)   │
 │    Projections: column1   │
 │                           │
@@ -92,10 +84,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │    Projections: column2   │
 │                           │
 │          ~0 rows          │

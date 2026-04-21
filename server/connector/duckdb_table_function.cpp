@@ -151,36 +151,14 @@ static duckdb::vector<duckdb::column_t> SereneDBScanGetRowIdColumns(
   return result;
 }
 
-// --- to_string helpers ---
-
-std::string_view FullTableScan::KindName() const {
-  return "rocksdb_table_fullscan";
-}
 std::unique_ptr<ScanSource> FullTableScan::Clone() const {
   return std::make_unique<FullTableScan>();
 }
 
-std::string_view SecondaryIndexScan::KindName() const {
-  return "rocksdb_secondary_key_fullscan";
-}
 std::unique_ptr<ScanSource> SecondaryIndexScan::Clone() const {
-  auto copy = std::make_unique<SecondaryIndexScan>();
-  copy->shard_id = shard_id;
-  copy->is_unique = is_unique;
-  return copy;
+  return std::make_unique<SecondaryIndexScan>(*this);
 }
 
-std::string_view SearchScan::KindName() const {
-  const bool off = emit_offsets();
-  if (scorer.kind != SearchScan::ScorerKind::None) {
-    if (score_top_k) {
-      return off ? "iresearch_score_topk_scan_with_offsets"
-                 : "iresearch_score_topk_scan";
-    }
-    return off ? "iresearch_score_scan_with_offsets" : "iresearch_score_scan";
-  }
-  return off ? "iresearch_lookup_with_offsets" : "iresearch_lookup";
-}
 std::unique_ptr<ScanSource> SearchScan::Clone() const {
   // SearchScan owns a prepared iresearch query + filter tree that we can't
   // duplicate; preserve the pre-refactor behaviour of falling back to the
@@ -188,51 +166,34 @@ std::unique_ptr<ScanSource> SearchScan::Clone() const {
   return std::make_unique<FullTableScan>();
 }
 
-std::string_view CountScan::KindName() const { return "iresearch_count"; }
 std::unique_ptr<ScanSource> CountScan::Clone() const {
   // Same fallback as SearchScan: the prepared iresearch query + filter
   // tree aren't duplicable; Copy() paths land on FullTableScan.
   return std::make_unique<FullTableScan>();
 }
 
-std::string_view ANNScan::KindName() const { return "iresearch_ann_topk_scan"; }
 std::unique_ptr<ScanSource> ANNScan::Clone() const {
   return std::make_unique<FullTableScan>();
 }
 
-std::string_view RangeSearchScan::KindName() const {
-  return "iresearch_ann_range_scan";
-}
 std::unique_ptr<ScanSource> RangeSearchScan::Clone() const {
   return std::make_unique<FullTableScan>();
 }
 
-std::string_view PkPointScan::KindName() const {
-  return "rocksdb_primary_key_points_lookup";
-}
 std::unique_ptr<ScanSource> PkPointScan::Clone() const {
-  return std::make_unique<FullTableScan>();
+  return std::make_unique<PkPointScan>(*this);
 }
 
-std::string_view PkRangeScan::KindName() const {
-  return "rocksdb_primary_key_ranges_scan";
-}
 std::unique_ptr<ScanSource> PkRangeScan::Clone() const {
-  return std::make_unique<FullTableScan>();
+  return std::make_unique<PkRangeScan>(*this);
 }
 
-std::string_view SkPointScan::KindName() const {
-  return "rocksdb_secondary_key_points_lookup";
-}
 std::unique_ptr<ScanSource> SkPointScan::Clone() const {
-  return std::make_unique<FullTableScan>();
+  return std::make_unique<SkPointScan>(*this);
 }
 
-std::string_view SkRangeScan::KindName() const {
-  return "rocksdb_secondary_key_ranges_scan";
-}
 std::unique_ptr<ScanSource> SkRangeScan::Clone() const {
-  return std::make_unique<FullTableScan>();
+  return std::make_unique<SkRangeScan>(*this);
 }
 
 static std::string ColumnNameFor(const catalog::Table& table,
@@ -419,7 +380,6 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table) {
     result.insert("Table", std::string{bind.table->GetName()});
   }
-  result.insert("Strategy", std::string{bind.scan_source->KindName()});
   // Surface which RowMaterializer the search-scan path will use to
   // resolve PKs from the iresearch index. Only emit for strategies
   // that actually run the iresearch pk -> row pipeline.
@@ -458,7 +418,7 @@ duckdb::TableFunction CreateSereneDBScanFunction() {
 }
 
 duckdb::TableFunction CreatePkPointScanFunction() {
-  duckdb::TableFunction func("rocksdb_primary_key_points_lookup", {},
+  duckdb::TableFunction func("rocksdb_pk_points_lookup", {},
                              PKPointLookupFunction, SereneDBScanBind);
   func.init_global = PKPointLookupInitGlobal;
   SetCommonCallbacks(func);
@@ -466,23 +426,23 @@ duckdb::TableFunction CreatePkPointScanFunction() {
 }
 
 duckdb::TableFunction CreatePkRangeScanFunction() {
-  duckdb::TableFunction func("rocksdb_primary_key_ranges_scan", {},
-                             PKRangeScanFunction, SereneDBScanBind);
+  duckdb::TableFunction func("rocksdb_pk_ranges_scan", {}, PKRangeScanFunction,
+                             SereneDBScanBind);
   func.init_global = PKRangeScanInitGlobal;
   SetCommonCallbacks(func);
   return func;
 }
 
 duckdb::TableFunction CreateFullSkScanFunction() {
-  duckdb::TableFunction func("rocksdb_secondary_key_fullscan", {},
-                             SKFullScanFunction, SereneDBScanBind);
+  duckdb::TableFunction func("rocksdb_sk_fullscan", {}, SKFullScanFunction,
+                             SereneDBScanBind);
   func.init_global = SKFullScanInitGlobal;
   SetCommonCallbacks(func);
   return func;
 }
 
 duckdb::TableFunction CreateSkPointScanFunction() {
-  duckdb::TableFunction func("rocksdb_secondary_key_points_lookup", {},
+  duckdb::TableFunction func("rocksdb_sk_points_lookup", {},
                              SKPointLookupFunction, SereneDBScanBind);
   func.init_global = SKPointLookupInitGlobal;
   SetCommonCallbacks(func);
@@ -490,8 +450,8 @@ duckdb::TableFunction CreateSkPointScanFunction() {
 }
 
 duckdb::TableFunction CreateSkRangeScanFunction() {
-  duckdb::TableFunction func("rocksdb_secondary_key_ranges_scan", {},
-                             SKRangeScanFunction, SereneDBScanBind);
+  duckdb::TableFunction func("rocksdb_sk_ranges_scan", {}, SKRangeScanFunction,
+                             SereneDBScanBind);
   func.init_global = SKRangeScanInitGlobal;
   SetCommonCallbacks(func);
   return func;

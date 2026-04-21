@@ -1370,10 +1370,12 @@ std::vector<ResolvedRange> ToDisjointRanges(
     }
   }
 
-  SDB_ASSERT(
-    !absl::c_all_of(
-      ranges, [](const KeyBounds& kc) { return kc.IsResolvedNonNullPoint(); }),
-    "Specific points should prepared separately for efficiency reason");
+  // It not the case for points on secondary non-unique index
+  // SDB_ASSERT(
+  //   !absl::c_all_of(
+  //     ranges, [](const KeyBounds& kc) { return kc.IsResolvedNonNullPoint();
+  //     }),
+  //   "Specific points should prepared separately for efficiency reason");
 #endif
 
   std::vector<ResolvedRange> result;
@@ -1396,6 +1398,11 @@ std::vector<ResolvedRange> ToDisjointRanges(
     const auto* column_range =
       key_contraint.FindColumnRange(key_ids[range_column_index]);
     SDB_ASSERT(column_range);
+    // Invariant: after MergeKeyConstraints the sweep separates null and value
+    // atoms, so MaybeNull and bounds never coexist in a resolved range column.
+    SDB_ASSERT(
+      !column_range->MaybeNull() || column_range->IsNullOnly(),
+      "range column after sweep must be NullOnly or a pure value range");
     resolved_range.range_column = *column_range;
 
     result.push_back(std::move(resolved_range));
@@ -1432,22 +1439,22 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   if (absl::c_all_of(constraints, [](const KeyBounds& p) {
         return p.IsResolvedNonNullPoint();
       })) {
-    // Non-unique SK: multiple rows can share a key, so point lookup is unsafe.
-    if (!is_primary_key && !is_unique) {
-      return {ConstraintKind::None, {}, expr.Copy()};
-    }
-    containers::FlatHashSet<const duckdb::Expression*> sources =
-      std::move(dead_sources);
-    for (const auto& point : constraints) {
-      for (const auto& [col_id, source_exprs] : point.GetSourceExprs()) {
-        sources.insert(source_exprs.begin(), source_exprs.end());
+    // Non-unique SK: point lookup is unsafe (multiple rows share the key).
+    // Fall through to the range scan path -- a point [v,v] is a valid range
+    // that SkRangeScan handles by scanning the [v_encoded, v_encoded+1) slice.
+    if (is_primary_key || is_unique) {
+      containers::FlatHashSet<const duckdb::Expression*> sources =
+        std::move(dead_sources);
+      for (const auto& point : constraints) {
+        for (const auto& [col_id, source_exprs] : point.GetSourceExprs()) {
+          sources.insert(source_exprs.begin(), source_exprs.end());
+        }
       }
+      return {ConstraintKind::Points, std::move(constraints),
+              RewriteExpr(expr, sources)};
     }
-    return {ConstraintKind::Points, std::move(constraints),
-            RewriteExpr(expr, sources)};
+    // else: non-unique SK -- fall through to Ranges below
   }
-
-  // TODO treat null values in SK as ranges
 
   // Normalize: multiple constraints may share the same prefix ranges but
   // differ in suffix PK columns. They produce identical RocksDB range scans,

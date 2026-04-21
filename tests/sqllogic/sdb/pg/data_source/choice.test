@@ -24,14 +24,9 @@ EXPLAIN SELECT * FROM t_choice WHERE id = 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=2)      │
 │                           │
 │        Projections:       │
@@ -58,9 +53,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
 │                           │
 │        Projections:       │
 │             id            │
@@ -102,14 +94,9 @@ EXPLAIN SELECT * FROM t_choice WHERE id = 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=4)      │
 │                           │
 │        Projections:       │
@@ -145,13 +132,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {id=(-inf, 8)}, {id=[10,  │
@@ -185,14 +168,9 @@ EXPLAIN SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │     Filter: (a=3, b=4)    │
 │                           │
 │        Projections:       │
@@ -218,14 +196,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=3}       │
 │                           │
 │        Projections:       │
@@ -254,9 +227,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
 │                           │
 │        Projections:       │
 │             a             │
@@ -306,13 +276,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │   (a=1, b=2), (a=3, b=4)  │
@@ -346,13 +312,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │   (a=1, b=2), (a=1, b=4)  │
@@ -393,13 +355,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │   (a=1, b=4), (a=2, b=2)  │
@@ -441,9 +399,6 @@ QUERY PLAN
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -479,9 +434,6 @@ QUERY PLAN
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -507,14 +459,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │     Filter: (a=1, b=2)    │
 │                           │
 │        Projections:       │
@@ -551,13 +498,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: t_choice_cpk    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │ (a=1, b=2), (a=1, b=6), (a│
@@ -668,9 +611,6 @@ QUERY PLAN
 │    ────────────────────   ││    ────────────────────   │
 │      Table: t_big4pk      ││                           │
 │                           ││                           │
-│         Strategy:         ││                           │
-│   rocksdb_table_fullscan  ││                           │
-│                           ││                           │
 │        Projections:       ││                           │
 │             a             ││                           │
 │             b             ││                           │
@@ -743,9 +683,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  ││      COLUMN_DATA_SCAN     │
 │    ────────────────────   ││    ────────────────────   │
 │      Table: t_big4pk      ││                           │
-│                           ││                           │
-│         Strategy:         ││                           │
-│   rocksdb_table_fullscan  ││                           │
 │                           ││                           │
 │        Projections:       ││                           │
 │             a             ││                           │
@@ -831,9 +768,6 @@ QUERY PLAN
 │    ────────────────────   ││    ────────────────────   │
 │    Table: t_not_all_pk    ││                           │
 │                           ││                           │
-│         Strategy:         ││                           │
-│   rocksdb_table_fullscan  ││                           │
-│                           ││                           │
 │        Projections:       ││                           │
 │             a             ││                           │
 │             b             ││                           │
@@ -865,13 +799,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │   Table: t_choice_nulls   │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │       (id=2), (id=3)      │
@@ -922,13 +852,9 @@ EXPLAIN SELECT * FROM t_neq WHERE id != 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_neq       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {id=(-inf, 4)}, {id=(4,  │
@@ -957,13 +883,9 @@ EXPLAIN SELECT * FROM t_neq WHERE NOT (id = 4);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_neq       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {id=(-inf, 4)}, {id=(4,  │
@@ -991,13 +913,9 @@ EXPLAIN SELECT * FROM t_neq WHERE NOT (id IN (2, 4));
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_neq       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {id=(-inf, 2)}, {id=(2, 4 │
@@ -1032,14 +950,9 @@ EXPLAIN SELECT * FROM t_neq_cpk WHERE NOT (a != 1 OR b != 2);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_neq_cpk     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │     Filter: (a=1, b=2)    │
 │                           │
 │        Projections:       │
@@ -1086,13 +999,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range1      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 2)}, {a=(8, +inf│
@@ -1129,14 +1038,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range1      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=[3, +inf)}   │
 │                           │
 │        Projections:       │
@@ -1169,14 +1073,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range1      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=[5, +inf)}   │
 │                           │
 │        Projections:       │
@@ -1208,14 +1107,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range1      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(-inf, 5)}   │
 │                           │
 │        Projections:       │
@@ -1248,14 +1142,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range1      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=[2, 8]}    │
 │                           │
 │        Projections:       │
@@ -1307,13 +1196,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=1, b=(5, +inf)}    │
@@ -1348,13 +1233,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=1, b=[5, +inf)}    │
@@ -1389,13 +1270,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=2, b=(-inf, 7)}    │
@@ -1430,13 +1307,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │      {a=1, b=[3, 7]}      │
@@ -1471,13 +1344,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │      {a=1, b=(1, 9)}      │
@@ -1513,13 +1382,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=1, b=(-inf, 3)}, {a=1, │
@@ -1557,13 +1422,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │      {a=1, b=[3, 9]}      │
@@ -1599,13 +1460,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=1, b=(7, +inf)}, {a=2, │
@@ -1648,14 +1505,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(1, +inf)}   │
 │                           │
 │        Projections:       │
@@ -1693,13 +1545,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 1]}, {a=(2, +inf│
@@ -1758,9 +1606,6 @@ QUERY PLAN
 │    ────────────────────   │
 │       Table: t_range      │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             b             │
 │             a             │
@@ -1811,9 +1656,6 @@ QUERY PLAN
 │    ────────────────────   │
 │       Table: t_range      │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -1852,14 +1694,9 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(1, +inf)}   │
 │                           │
 │        Projections:       │
@@ -1905,14 +1742,9 @@ EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │     Filter: (a=1, b=5)    │
 │                           │
 │        Projections:       │
@@ -1949,13 +1781,9 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=1, b=(5, +inf)}    │
@@ -1992,13 +1820,9 @@ EXPLAIN SELECT * FROM t_range WHERE a = 4 AND b > 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_range      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=4, b=(5, +inf)}    │
@@ -2052,13 +1876,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {a=1, b=2, c=(3, +inf)}  │
@@ -2095,14 +1915,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=1, b=2}    │
 │                           │
 │        Projections:       │
@@ -2154,14 +1969,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=1}       │
 │                           │
 │        Projections:       │
@@ -2196,14 +2006,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(1, +inf)}   │
 │                           │
 │        Projections:       │
@@ -2238,13 +2043,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {a=1, b=2, c=(5, +inf)}, │
@@ -2295,14 +2096,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_range3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(-inf, 2)}   │
 │                           │
 │        Projections:       │
@@ -2347,14 +2143,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(-inf, 5]}   │
 │                           │
 │        Projections:       │
@@ -2385,14 +2176,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(-inf, 5)}   │
 │                           │
 │        Projections:       │
@@ -2424,14 +2210,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=[5, +inf)}   │
 │                           │
 │        Projections:       │
@@ -2462,14 +2243,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(5, +inf)}   │
 │                           │
 │        Projections:       │
@@ -2500,14 +2276,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(5, +inf)}   │
 │                           │
 │        Projections:       │
@@ -2540,13 +2311,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 3]}, {a=[7, +inf│
@@ -2581,14 +2348,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=[3, 7]}    │
 │                           │
 │        Projections:       │
@@ -2621,13 +2383,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 5)}, {a=(5, +inf│
@@ -2662,13 +2420,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │        Table: t_not       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 3)}, {a=(3, 7)},│
@@ -2715,14 +2469,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_not2       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │   Filter: {a=(-inf, 3]}   │
 │                           │
 │        Projections:       │
@@ -2754,13 +2503,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_not2       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=1, b=(2, +inf)}    │
@@ -2795,14 +2540,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_not2       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=[2, 4]}    │
 │                           │
 │        Projections:       │
@@ -2837,13 +2577,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_not2       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 1]}, {a=[5, +inf│
@@ -2893,9 +2629,6 @@ QUERY PLAN
 │    ────────────────────   │
 │       Table: t_not2       │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -2941,13 +2674,9 @@ EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'a
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │  (region=1, priority=10,  │
@@ -2983,13 +2712,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {region=1, priority=10,  │
@@ -3026,13 +2751,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {region=1, priority=(15,  │
@@ -3074,13 +2795,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │    {region=(-inf, 1]},    │
@@ -3135,9 +2852,6 @@ QUERY PLAN
 │    ────────────────────   │
 │      Table: t_complex     │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │           region          │
 │          priority         │
@@ -3174,13 +2888,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │      {region=[1, 2]}      │
@@ -3215,13 +2925,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {region=2, priority=(-inf,│
@@ -3260,13 +2966,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_complex     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {region=1, priority=(-inf,│
@@ -3304,14 +3006,9 @@ EXPLAIN SELECT * FROM t_void WHERE a < 1 AND a > 1;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_void       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=empty}     │
 │                           │
 │        Projections:       │
@@ -3373,14 +3070,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │       Table: t_void       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (a=3)       │
 │                           │
 │        Projections:       │
@@ -3402,14 +3094,9 @@ EXPLAIN SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │       Table: t_void       │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=empty}     │
 │                           │
 │        Projections:       │
@@ -3467,13 +3154,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 2)}, {a=(2, +inf│
@@ -3518,10 +3201,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │       Projections: a      │
 │                           │
 │          ~27 rows         │
@@ -3560,10 +3239,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │       Projections: a      │
 │                           │
 │          ~27 rows         │
@@ -3601,10 +3276,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │       Projections: a      │
 │                           │
 │          ~27 rows         │
@@ -3632,14 +3303,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=2}       │
 │       Projections: a      │
 │                           │
@@ -3669,13 +3335,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 1)}, {a=(1, 3)},│
@@ -3715,14 +3377,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=2}       │
 │                           │
 │        Projections:       │
@@ -3762,14 +3419,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=1}       │
 │                           │
 │        Projections:       │
@@ -3826,9 +3478,6 @@ QUERY PLAN
 │    ────────────────────   │
 │      Table: t_sweep3      │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -3865,13 +3514,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │ (a=1, b=1, c=1), (a=2, b=2│
@@ -3913,13 +3558,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │      (a=3, b=3, c=3)      │
@@ -3964,14 +3605,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=1, b=1}    │
 │                           │
 │        Projections:       │
@@ -4021,14 +3657,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=2}       │
 │                           │
 │        Projections:       │
@@ -4081,9 +3712,6 @@ QUERY PLAN
 │    ────────────────────   │
 │      Table: t_sweep3      │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -4121,13 +3749,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {a=1, b=2, c=(-inf, 2)}, │
@@ -4174,13 +3798,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │ (a=1, b=1, c=1), (a=2, b=2│
@@ -4240,13 +3860,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 2)}, {a=(2, +inf│
@@ -4302,13 +3918,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=(-inf, 2)}, {a=(2, +inf│
@@ -4363,13 +3975,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=1, b=(-inf, 2)}, {a=3, │
@@ -4429,13 +4037,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=1, b=(-inf, 2)}, {a=2, │
@@ -4489,13 +4093,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {a=1, b=1, c=(-inf, 3)}, │
@@ -4548,9 +4148,6 @@ QUERY PLAN
 │    ────────────────────   │
 │      Table: t_sweep3      │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -4592,13 +4189,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │ (a=1, b=1, c=2), (a=1, b=3│
@@ -4656,14 +4249,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │     Filter: {a=[1, 2]}    │
 │                           │
 │        Projections:       │
@@ -4716,13 +4304,9 @@ QUERY PLAN
 │          ~5 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_sweep3      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │ {a=1, b=(-inf, 2)}, {a=1, │
@@ -4776,9 +4360,6 @@ QUERY PLAN
 │    ────────────────────   │
 │      Table: t_sweep3      │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -4816,14 +4397,9 @@ EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_between     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │    Filter: {id=[2, 4]}    │
 │                           │
 │        Projections:       │
@@ -4846,14 +4422,9 @@ EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_between     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=3)      │
 │                           │
 │        Projections:       │
@@ -4896,13 +4467,9 @@ EXPLAIN SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │    Table: t_between_cpk   │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │      {a=1, b=[3, 6]}      │
@@ -4953,14 +4520,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_contra      │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=4)      │
 │                           │
 │        Projections:       │
@@ -5011,14 +4573,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │     Table: t_dml_point    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=3)      │
 │      Projections: id      │
 │                           │
@@ -5049,14 +4606,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │     Table: t_dml_point    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=1)      │
 │      Projections: id      │
 │                           │
@@ -5106,13 +4658,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │     Table: t_dml_point    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │       (id=2), (id=4)      │
@@ -5175,14 +4723,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │     Table: t_dml_range    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │    Filter: {id=[2, 4]}    │
 │      Projections: id      │
 │                           │
@@ -5213,13 +4756,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │     Table: t_dml_range    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │       {id=(3, +inf)}      │
@@ -5308,14 +4847,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │     Filter: (a=2, b=4)    │
 │                           │
 │        Projections:       │
@@ -5347,13 +4881,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │     {a=1, b=[3, +inf)}    │
@@ -5405,14 +4935,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
-│                           │
 │       Filter: {a=3}       │
 │       Projections: a      │
 │                           │
@@ -5440,13 +4965,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_dml_cpk     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │      {a=2, b=[2, 4]}      │
@@ -5534,14 +5055,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │     Table: t_dml_ryow     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=3)      │
 │      Projections: id      │
 │                           │
@@ -5568,14 +5084,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │     Table: t_dml_ryow     │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
-│                           │
 │       Filter: (id=2)      │
 │      Projections: id      │
 │                           │
@@ -5663,13 +5174,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │    Table: t_dml_corner    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │       {id=[5, +inf)}      │
@@ -5720,13 +5227,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │    Table: t_dml_corner    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │       {id=(-inf, 2)}      │
@@ -5777,13 +5280,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_RA...  │
+│   ROCKSDB_PK_RANGES_SCAN  │
 │    ────────────────────   │
 │    Table: t_dml_corner    │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_ranges_│
-│            scan           │
 │                           │
 │          Filter:          │
 │  {id=(-inf, 3)}, {id=(3,  │
@@ -5838,13 +5337,9 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_PRIMARY_KEY_PO...  │
+│  ROCKSDB_PK_POINTS_LOOKUP │
 │    ────────────────────   │
 │    Table: choices_array   │
-│                           │
-│         Strategy:         │
-│rocksdb_primary_key_points_│
-│           lookup          │
 │                           │
 │          Filter:          │
 │ (a=1), (a=3), (a=4), (a=5)│

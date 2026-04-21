@@ -11,9 +11,6 @@ QUERY PLAN
 │    ────────────────────   │
 │          Table: t         │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │          column1          │
 │          column2          │
@@ -40,10 +37,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │    Projections: column2   │
 │                           │
 │          ~0 rows          │
@@ -61,9 +54,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
 │                           │
 │          ~0 rows          │
 └───────────────────────────┘

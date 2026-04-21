@@ -68,9 +68,6 @@ enum class ScanSourceKind : uint8_t {
 struct ScanSource {
   ScanSourceKind Kind() const { return kind_; }
 
-  // EXPLAIN "Strategy" label. Stable -- tests match on these strings.
-  virtual std::string_view KindName() const = 0;
-
   // Extend the EXPLAIN output with per-kind fields (Filter, TopK, ...).
   virtual void AppendSummary(
     const SereneDBScanBindData& /*bind*/,
@@ -117,7 +114,6 @@ struct ScanSource {
 // RangeSearchScan.
 struct FullTableScan : ScanSource {
   FullTableScan() : ScanSource(ScanSourceKind::FullTable) {}
-  std::string_view KindName() const override;
   std::unique_ptr<ScanSource> Clone() const override;
 };
 
@@ -190,7 +186,6 @@ struct SearchScan : ScanSource {
   // Convenience for to_string / runtime checks.
   bool emit_offsets() const { return !offsets.empty(); }
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -217,7 +212,6 @@ struct CountScan : ScanSource {
   // Demangled boolean-filter tree for EXPLAIN. Empty when query is null.
   std::string filter_summary;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -230,7 +224,6 @@ struct SecondaryIndexScan : ScanSource {
   ObjectId shard_id;
   bool is_unique = false;
 
-  std::string_view KindName() const override;
   std::unique_ptr<ScanSource> Clone() const override;
 };
 
@@ -247,7 +240,6 @@ struct ANNScan : ScanSource {
   std::vector<float> query_vector;
   size_t top_k = 0;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -266,7 +258,6 @@ struct RangeSearchScan : ScanSource {
   std::vector<float> query_vector;
   float radius = 0.0f;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -284,7 +275,6 @@ struct PkPointScan : ScanSource {
   std::vector<catalog::Column::Id> column_ids;  // PK columns in order
   std::vector<ResolvedPoint> points;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -302,7 +292,6 @@ struct PkRangeScan : ScanSource {
   std::vector<catalog::Column::Id> column_ids;  // PK columns in order
   std::vector<ResolvedRange> ranges;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -320,7 +309,6 @@ struct SkPointScan : ScanSource {
   std::vector<catalog::Column::Id> column_ids;  // SK columns in order
   std::vector<ResolvedPoint> points;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
@@ -338,7 +326,6 @@ struct SkRangeScan : ScanSource {
   std::vector<catalog::Column::Id> column_ids;  // SK columns in order
   std::vector<ResolvedRange> ranges;
 
-  std::string_view KindName() const override;
   void AppendSummary(
     const SereneDBScanBindData& bind,
     duckdb::InsertionOrderPreservingMap<std::string>& out) const override;

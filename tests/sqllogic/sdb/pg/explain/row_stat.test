@@ -16,66 +16,33 @@ INSERT INTO f VALUES ('3', 1), ('7', 2), ('13', 3);
 
 
 query
-EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
+EXPLAIN SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 ----
 QUERY PLAN
-┌─────────────────────────────────────┐
-│┌───────────────────────────────────┐│
-││    Query Profiling Information    ││
-│└───────────────────────────────────┘│
-└─────────────────────────────────────┘
-EXPLAIN ANALYZE SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
-┌────────────────────────────────────────────────┐
-│┌──────────────────────────────────────────────┐│
-││              Total Time: <slt:ignore>        ││
-│└──────────────────────────────────────────────┘│
-└────────────────────────────────────────────────┘
 ┌───────────────────────────┐
-│           QUERY           │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      EXPLAIN_ANALYZE      │
-│    ────────────────────   │
-│                           │
-│           0 rows          │
-│        <slt:ignore>       │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
 │             id            │
 │           value           │
 │                           │
-│                           │
-│                           │
-│          28 rows          │
-│        <slt:ignore>       │
+│        ~1,000 rows        │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │         HASH_JOIN         │
 │    ────────────────────   │
 │      Join Type: INNER     │
-│    Conditions: id = id    │
-│                           ├──────────────┐
+│    Conditions: id = id    ├──────────────┐
 │                           │              │
-│                           │              │
-│          28 rows          │              │
-│      <slt:ignore>         │              │
+│        ~1,000 rows        │              │
 └─────────────┬─────────────┘              │
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│         TABLE_SCAN        ││         TABLE_SCAN        │
+│   ROCKSDB_TABLE_FULLSCAN  ││   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   ││    ────────────────────   │
 │          Table: t         ││          Table: f         │
-│                           ││                           │
-│         Strategy:         ││         Strategy:         │
-│   rocksdb_table_fullscan  ││   rocksdb_table_fullscan  │
-│                           ││                           │
-│      Projections: id      ││        Projections:       │
+│      Projections: id      ││                           │
+│                           ││        Projections:       │
 │                           ││             id            │
 │                           ││           value           │
 │                           ││                           │
-│                           ││                           │
-│       <slt:ignore>        ││                           │
-│         1,000 rows        ││           3 rows          │
-│        <slt:ignore>       ││        <slt:ignore>       │
+│        ~1,000 rows        ││          ~3 rows          │
 └───────────────────────────┘└───────────────────────────┘

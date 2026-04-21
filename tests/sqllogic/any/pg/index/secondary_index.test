@@ -934,28 +934,19 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│             #2            │
-│             #3            │
+│            pid            │
+│            tag            │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│ ((level = 10) AND (city = │
-│         'berlin'))        │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
 │      babsky_composite     │
 │                           │
-│         Strategy:         │
-│rocksdb_secondary_key_fulls│
-│            can            │
+│          Filter:          │
+│  {city=berlin, level=10}  │
 │                           │
 │        Projections:       │
 │            city           │
@@ -1057,9 +1048,6 @@ QUERY PLAN
 │    ────────────────────   │
 │    Table: gayazov_dual    │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │            rank           │
 │            pid            │
@@ -1142,27 +1130,18 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│             #1            │
-│             #2            │
+│            pid            │
+│          nickname         │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│       (stocks = 30)       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_csv_crew   │
 │                           │
-│         Strategy:         │
-│rocksdb_secondary_key_fulls│
-│            can            │
+│    Filter: {stocks=30}    │
 │                           │
 │        Projections:       │
 │           stocks          │
@@ -1325,27 +1304,18 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│             #1            │
-│             #2            │
+│            pid            │
+│          nickname         │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│       (stocks = 30)       │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_pq_crew    │
 │                           │
-│         Strategy:         │
-│rocksdb_secondary_key_fulls│
-│            can            │
+│    Filter: {stocks=30}    │
 │                           │
 │        Projections:       │
 │           stocks          │
@@ -1440,46 +1410,56 @@ statement ok
 DROP TABLE clickclack_pq_ops;
 
 
-# statement ok
-# CREATE TABLE babsky_from_idx (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
-#
-# statement ok
-# CREATE INDEX babsky_from_idx_val_idx ON babsky_from_idx(val);
-#
-# statement ok
-# INSERT INTO babsky_from_idx VALUES (1, 10, 'alpha'), (2, 20, 'beta'), (3, 10, 'gamma');
-#
-# query
-# SELECT * FROM babsky_from_idx_val_idx ORDER BY pid;
-# ----
-# pid	val	tag
-# 1	10	alpha
-# 2	20	beta
-# 3	10	gamma
-#
-# query
-# SELECT pid, tag FROM babsky_from_idx_val_idx WHERE val = 10 ORDER BY pid;
-# ----
-# pid	tag
-# 1	alpha
-# 3	gamma
-#
-# query
-# SELECT count(*) FROM babsky_from_idx_val_idx;
-# ----
-# count
-# 3
-#
-# query
-# EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
-# ----
-# QUERY PLAN
-# EXECUTION PLAN:
-# Fragment 0:  numWorkers=0:
-# -- TableScan[0][babsky_from_idx] -> "pid":INTEGER, "val":INTEGER, "tag":VARCHAR
-#
-# statement ok
-# DROP TABLE babsky_from_idx;
+statement ok
+CREATE TABLE babsky_from_idx (pid INTEGER PRIMARY KEY, val INTEGER, tag VARCHAR);
+
+statement ok
+CREATE INDEX babsky_from_idx_val_idx ON babsky_from_idx(val);
+
+statement ok
+INSERT INTO babsky_from_idx VALUES (1, 10, 'alpha'), (2, 20, 'beta'), (3, 10, 'gamma');
+
+query
+SELECT * FROM babsky_from_idx_val_idx ORDER BY pid;
+----
+pid	val	tag
+1	10	alpha
+2	20	beta
+3	10	gamma
+
+query
+SELECT pid, tag FROM babsky_from_idx_val_idx WHERE val = 10 ORDER BY pid;
+----
+pid	tag
+1	alpha
+3	gamma
+
+query
+SELECT count(*) FROM babsky_from_idx_val_idx;
+----
+count
+3
+
+query
+EXPLAIN SELECT * FROM babsky_from_idx_val_idx;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│    ROCKSDB_SK_FULLSCAN    │
+│    ────────────────────   │
+│           Table:          │
+│      babsky_from_idx      │
+│                           │
+│        Projections:       │
+│            pid            │
+│            val            │
+│            tag            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+statement ok
+DROP TABLE babsky_from_idx;
 
 
 statement ok

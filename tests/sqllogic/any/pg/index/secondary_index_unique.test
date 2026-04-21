@@ -307,14 +307,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_SECONDARY_KEY_...  │
+│  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
 │   vedernikoff_safehouse   │
-│                           │
-│         Strategy:         │
-│rocksdb_secondary_key_point│
-│          s_lookup         │
 │                           │
 │     Filter: (code=100)    │
 │        Unique: true       │
@@ -336,6 +332,76 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
+│            pid            │
+│          district         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│   vedernikoff_safehouse   │
+│                           │
+│    Filter: {code=null}    │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            code           │
+│            pid            │
+│          district         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│          district         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│   vedernikoff_safehouse   │
+│                           │
+│          Filter:          │
+│     {code=(100, +inf)}    │
+│                           │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            code           │
+│            pid            │
+│          district         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100 ORDER BY pid;
+----
+pid	district
+2	south
+4	west
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
 │             #1            │
 │             #2            │
 │                           │
@@ -344,7 +410,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│       (code IS NULL)      │
+│     (code IS NOT NULL)    │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -354,10 +420,6 @@ QUERY PLAN
 │           Table:          │
 │   vedernikoff_safehouse   │
 │                           │
-│         Strategy:         │
-│rocksdb_secondary_key_fulls│
-│            can            │
-│                           │
 │        Projections:       │
 │            code           │
 │            pid            │
@@ -365,6 +427,15 @@ QUERY PLAN
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘
+
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL ORDER BY pid;
+----
+pid	district
+1	north
+2	south
+4	west
 
 query
 SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
@@ -552,14 +623,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_SECONDARY_KEY_...  │
+│  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
 │     vedernikoff_ledger    │
-│                           │
-│         Strategy:         │
-│rocksdb_secondary_key_point│
-│          s_lookup         │
 │                           │
 │          Filter:          │
 │    (region=1, tier=10)    │
@@ -822,7 +889,7 @@ INSERT INTO vedernikoff_csv_unique VALUES
   (2, 'cutelooked', 20),
   (3, 'crookface', 30);
 
-statement count 3
+statement ok
 COPY vedernikoff_csv_unique TO '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
@@ -898,7 +965,7 @@ INSERT INTO babsky_csv_nulluniq VALUES
   (3, NULL, 'gamma'),
   (4, 200, 'delta');
 
-statement count 4
+statement ok
 COPY babsky_csv_nulluniq TO '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
@@ -942,7 +1009,7 @@ INSERT INTO vedernikoff_pq_unique VALUES
   (2, 'cutelooked', 20),
   (3, 'crookface', 30);
 
-statement count 3
+statement ok
 COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
 
 statement ok
@@ -1018,7 +1085,7 @@ INSERT INTO babsky_pq_nulluniq VALUES
   (3, NULL, 'gamma'),
   (4, 200, 'delta');
 
-statement count 4
+statement ok
 COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
 
 statement ok
@@ -1088,14 +1155,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_SECONDARY_KEY_...  │
+│  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_tri_uniq   │
-│                           │
-│         Strategy:         │
-│rocksdb_secondary_key_point│
-│          s_lookup         │
 │                           │
 │          Filter:          │
 │      (a=1, b=1, c=1)      │
@@ -1259,20 +1322,18 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │           FILTER          │
 │    ────────────────────   │
-│   ((b IS NULL) AND (c IS  │
-│     NULL) AND (a = 1))    │
+│        (c IS NULL)        │
 │                           │
 │          ~3 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_tri_uniq   │
 │                           │
-│         Strategy:         │
-│rocksdb_secondary_key_fulls│
-│            can            │
+│   Filter: {a=1, b=null}   │
+│        Unique: true       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1405,13 +1466,9 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_SECONDARY_KEY_...  │
+│  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │   Table: babsky_uniq_in   │
-│                           │
-│         Strategy:         │
-│rocksdb_secondary_key_point│
-│          s_lookup         │
 │                           │
 │          Filter:          │
 │   (code=100), (code=300)  │
@@ -1529,14 +1586,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_SECONDARY_KEY_...  │
+│  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_uniq_rem   │
-│                           │
-│         Strategy:         │
-│rocksdb_secondary_key_point│
-│          s_lookup         │
 │                           │
 │     Filter: (key=100)     │
 │        Unique: true       │
@@ -2100,14 +2153,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│ROCKSDB_SECONDARY_KEY_...  │
+│  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
 │ vedernikoff_uniq_idx_scan │
-│                           │
-│         Strategy:         │
-│rocksdb_secondary_key_point│
-│          s_lookup         │
 │                           │
 │     Filter: (code=20)     │
 │        Unique: true       │

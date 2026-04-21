@@ -15,9 +15,6 @@ QUERY PLAN
 │    ────────────────────   │
 │          Table: t         │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             c1            │
 │             c2            │

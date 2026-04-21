@@ -20,12 +20,31 @@
 
 #pragma once
 
-#include "connector/duckdb_sk_full_scan.hpp"
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "connector/duckdb_scan_base.hpp"
+#include "rocksdb/iterator.h"
 
 namespace sdb::connector {
 
-// SKRangeScan currently falls back to SKFullScan.
-// Uses SKFullScanGlobalState directly until proper SK range iteration lands.
+struct SKRangeScanGlobalState : public CommonScanGlobalState {
+  // Per-range lower/upper bounds (empty upper = use shard_upper_bound).
+  // Reserved upfront; spans held by sk_iterator must remain stable.
+  std::vector<std::string> lower_keys;
+  std::vector<std::string> upper_keys;
+
+  // Shard-level fallback upper bound (stable storage for the Slice).
+  std::string shard_upper_bound;
+  rocksdb::Slice shard_upper_bound_slice;
+
+  // RocksDBPrefixRangeColumnIterator wrapping a single underlying RocksDB
+  // iterator over all ranges. Stored as rocksdb::Iterator* because
+  // RocksDBPrefixRangeColumnIterator extends rocksdb::Iterator.
+  std::unique_ptr<rocksdb::Iterator> sk_iterator;
+};
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SKRangeScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
 

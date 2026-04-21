@@ -228,7 +228,7 @@ db error: ERROR: Failed to create index: Text search dictionary 'unknown_dict' d
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Failed to create index: Column a has text dictionary defined but is not VARCHAR
+db error: ERROR: Failed to create index: Text search dictionary 'test_english' does not exist. Required by column 'a'
 
 
 statement error

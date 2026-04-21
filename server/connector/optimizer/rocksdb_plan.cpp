@@ -377,14 +377,22 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
       if (best.kind == connector::ConstraintKind::Points) {
         auto sk = std::make_unique<connector::SkPointScan>();
         sk->shard_id = best.candidate->sk_shard_id;
-        sk->is_unique = true;
+        sk->is_unique = best.candidate->sk_unique;
         sk->column_ids = cols;
         sk->points = std::move(points);
         bind_data.scan_source = std::move(sk);
         get.function = connector::CreateSkPointScanFunction();
         remove_extra_filter();
+      } else if (best.kind == connector::ConstraintKind::Ranges) {
+        auto sk = std::make_unique<connector::SkRangeScan>();
+        sk->shard_id = best.candidate->sk_shard_id;
+        sk->is_unique = best.candidate->sk_unique;
+        sk->column_ids = cols;
+        sk->ranges = std::move(ranges);
+        bind_data.scan_source = std::move(sk);
+        get.function = connector::CreateSkRangeScanFunction();
+        remove_extra_filter();
       } else {
-        // todo range scan
         auto si = std::make_unique<connector::SecondaryIndexScan>();
         si->shard_id = best.candidate->sk_shard_id;
         si->is_unique = best.candidate->sk_unique;

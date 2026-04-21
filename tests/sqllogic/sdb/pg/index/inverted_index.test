@@ -130,9 +130,6 @@ QUERY PLAN
 │    ────────────────────   │
 │     Table: vedernikoff    │
 │                           │
-│         Strategy:         │
-│      iresearch_count      │
-│                           │
 │       Materializer:       │
 │    rocksdb (point Get)    │
 │                           │
@@ -217,9 +214,6 @@ QUERY PLAN
 │    ────────────────────   │
 │   Table: biksalen_memes   │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -241,9 +235,6 @@ QUERY PLAN
 │    ────────────────────   │
 │   Table: biksalen_memes   │
 │                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
-│                           │
 │        Projections:       │
 │             a             │
 │             b             │
@@ -264,9 +255,6 @@ QUERY PLAN
 │   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
 │                           │
 │        Projections:       │
 │             a             │
@@ -313,9 +301,6 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │         TABLE_SCAN        │
 │    ────────────────────   │
 │   Table: biksalen_memes   │
-│                           │
-│         Strategy:         │
-│   rocksdb_table_fullscan  │
 │                           │
 │        Projections:       │
 │             a             │
@@ -877,9 +862,6 @@ QUERY PLAN
 │      IRESEARCH_LOOKUP     │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
-│                           │
-│         Strategy:         │
-│      iresearch_lookup     │
 │                           │
 │       Materializer:       │
 │     counter (re-scan)     │

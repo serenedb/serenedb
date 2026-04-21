@@ -102,6 +102,8 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool has_row_number_col = false;
   duckdb::idx_t file_row_number_col_idx = 0;
   int64_t external_row_counter = 0;
+  bool has_generated_pk_col = false;
+  duckdb::idx_t generated_pk_col_idx = 0;
 
   // Index writer for the new index
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
@@ -286,6 +288,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // column; for CSV/JSON no trailing column exists and the sink uses a
   // counter.
   state->file_row_number_col_idx = columns.size();
+  state->has_generated_pk_col =
+    !state->is_external && _table->PKColumns().empty();
+  state->generated_pk_col_idx = columns.size();
 
   // Create index writer for the new index
   auto& conn_ctx = GetSereneDBContext(context);
@@ -364,6 +369,14 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   } else if (gstate.is_external) {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       append_row_number_key(gstate.external_row_counter++);
+    }
+  } else if (gstate.has_generated_pk_col) {
+    SDB_ASSERT(gstate.generated_pk_col_idx < chunk.ColumnCount());
+    auto& pk_vec = chunk.data[gstate.generated_pk_col_idx];
+    pk_vec.Flatten(num_rows);
+    auto* pks = duckdb::FlatVector::GetData<int64_t>(pk_vec);
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      append_row_number_key(pks[row]);
     }
   } else {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {

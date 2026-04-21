@@ -126,7 +126,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_COUNT      │
+│         IRS_COUNT         │
 │    ────────────────────   │
 │     Table: vedernikoff    │
 │                           │
@@ -859,7 +859,7 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│          IRS_SCAN         │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
 │                           │
@@ -1063,3 +1063,27 @@ a	nums	labels
 
 statement ok
 DROP TABLE arr_idx_tbl;
+
+
+statement ok
+CREATE TABLE no_pk_table AS
+SELECT
+  CASE
+    WHEN ids.value % 2 = 0 THEN
+      'word is good: ' || (ids.value)::text
+    ELSE
+      'word is bad: ' || (ids.value)::text
+  END AS word
+FROM
+  generate_series(1, 1000) as ids(value)
+
+
+statement ok
+CREATE INDEX no_pk_index ON no_pk_table USING INVERTED(word test_english);
+
+
+query
+SELECT * FROM no_pk_index WHERE PHRASE(word, 'bad') LIMIT 1;
+----
+word
+word is bad: 1

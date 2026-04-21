@@ -50,6 +50,11 @@
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
+namespace {
+
+static constexpr std::string_view kIresearchScanName = "irs_scan";
+
+}
 
 // --- SereneDBScanBindData ---
 
@@ -458,7 +463,7 @@ duckdb::TableFunction CreateSkRangeScanFunction() {
 }
 
 duckdb::TableFunction CreateFullIresearchScanFunction() {
-  duckdb::TableFunction func("iresearch_fullscan", {}, PKFullScanFunction,
+  duckdb::TableFunction func("irs_fullscan", {}, PKFullScanFunction,
                              SereneDBScanBind);
   func.init_global = PKFullScanInitGlobal;
   SetCommonCallbacks(func);
@@ -466,15 +471,15 @@ duckdb::TableFunction CreateFullIresearchScanFunction() {
 }
 
 duckdb::TableFunction CreateIresearchSearchScanFunction() {
-  duckdb::TableFunction func("iresearch_lookup", {}, SearchFullScanFunction,
-                             SereneDBScanBind);
+  duckdb::TableFunction func(std::string{kIresearchScanName}, {},
+                             SearchFullScanFunction, SereneDBScanBind);
   func.init_global = SearchFullScanInitGlobal;
   SetCommonCallbacks(func);
   return func;
 }
 
 duckdb::TableFunction CreateIresearchCountScanFunction() {
-  duckdb::TableFunction func("iresearch_count", {}, SearchCountScanFunction,
+  duckdb::TableFunction func("irs_count", {}, SearchCountScanFunction,
                              SereneDBScanBind);
   func.init_global = SearchCountScanInitGlobal;
   SetCommonCallbacks(func);
@@ -482,16 +487,16 @@ duckdb::TableFunction CreateIresearchCountScanFunction() {
 }
 
 duckdb::TableFunction CreateIresearchAnnScanFunction() {
-  duckdb::TableFunction func("iresearch_ann_topk_scan", {},
-                             SearchAnnScanFunction, SereneDBScanBind);
+  duckdb::TableFunction func("irs_ann_topk_scan", {}, SearchAnnScanFunction,
+                             SereneDBScanBind);
   func.init_global = SearchAnnScanInitGlobal;
   SetCommonCallbacks(func);
   return func;
 }
 
 duckdb::TableFunction CreateIresearchRangeScanFunction() {
-  duckdb::TableFunction func("iresearch_ann_range_scan", {},
-                             SearchRangeScanFunction, SereneDBScanBind);
+  duckdb::TableFunction func("irs_ann_range_scan", {}, SearchRangeScanFunction,
+                             SereneDBScanBind);
   func.init_global = SearchRangeScanInitGlobal;
   SetCommonCallbacks(func);
   return func;

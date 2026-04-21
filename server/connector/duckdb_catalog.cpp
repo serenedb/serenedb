@@ -875,11 +875,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   auto& get = plan->Cast<duckdb::LogicalGet>();
 
   const bool use_row_number_col = IsParquetExternalTable(*sdb_table);
+  const bool use_generated_pk_rowid_col =
+    sdb_table->GetTableType() != TableType::File &&
+    sdb_table->PKColumns().empty();
 
   // The binder creates an empty LogicalGet. Populate column_ids for all
   // table columns so the scan outputs everything the backfill needs. For
   // parquet external tables, add the trailing file_row_number virtual
-  // column;
+  // column; for RocksDB implicit-PK tables, add the trailing rowid.
   if (get.GetColumnIds().empty()) {
     for (size_t i = 0; i < columns.size(); ++i) {
       get.AddColumnId(static_cast<duckdb::column_t>(i));
@@ -891,6 +894,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     if (use_row_number_col) {
       get.AddColumnId(
         duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
+      get.types.push_back(duckdb::LogicalType::BIGINT);
+    } else if (use_generated_pk_rowid_col) {
+      get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
       get.types.push_back(duckdb::LogicalType::BIGINT);
     }
   }

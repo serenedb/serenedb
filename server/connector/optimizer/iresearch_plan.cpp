@@ -1050,8 +1050,6 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
     if (!TrySetScorer(found->search_scan->scorer, func, name)) {
       return nullptr;  // Non-constant params.
     }
-    found->get->function.name =
-      connector::IresearchSearchScanName(*found->search_scan);
   } else {
     if (found->search_scan->scorer.kind ==
         connector::SearchScan::ScorerKind::None) {
@@ -1442,8 +1440,6 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
 
   parsed.scan.search_scan->offsets.push_back(
     {.column_id = parsed.target_col_id, .limit = parsed.limit});
-  parsed.scan.get->function.name =
-    connector::IresearchSearchScanName(*parsed.scan.search_scan);
   const auto get_col_idx = AddOffsetsColumn(
     *parsed.scan.bind_data, *parsed.scan.get, parsed.target_col_id);
   // Expose the new column through any Filter projection_map between the
@@ -1595,8 +1591,6 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   found->search_scan->score_top_k = static_cast<size_t>(top_n.limit);
-  found->get->function.name =
-    connector::IresearchSearchScanName(*found->search_scan);
   // All preconditions for drop are now guaranteed by the checks above:
   // the scan emits exactly `pulled` rows sorted DESC by score from a
   // single global heap (NthPartitionScoreCollector::Finalize + streaming

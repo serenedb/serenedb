@@ -97,9 +97,10 @@ WriteConflictPolicy Config::GetWriteConflictPolicy() const {
 }
 
 bool Config::GetReadYourOwnWrites() const {
-  auto value = Get("sdb_read_your_own_writes");
-  SDB_ASSERT(value);
-  return *value != "false" && *value != "0";
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("sdb_read_your_own_writes", value);
+  SDB_ASSERT(ok && !value.IsNull());
+  return duckdb::BooleanValue::Get(value);
 }
 
 std::optional<std::string> Config::Get(std::string_view key) const {

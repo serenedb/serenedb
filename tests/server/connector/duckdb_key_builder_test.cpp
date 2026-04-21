@@ -62,8 +62,8 @@ std::vector<std::string> BuildKeys(
 
 std::vector<std::string> BuildKeys(
   std::initializer_list<std::vector<Value>> columns) {
-  return BuildKeys(std::span<const std::vector<Value>>{columns.begin(),
-                                                       columns.size()});
+  return BuildKeys(
+    std::span<const std::vector<Value>>{columns.begin(), columns.size()});
 }
 
 template<typename T>
@@ -235,9 +235,9 @@ TEST_F(DuckDBKeyBuilderTest, test_singleDouble) {
 }
 
 TEST_F(DuckDBKeyBuilderTest, test_singleTinyInteger) {
-  auto keys = BuildKeys({MakeIntColumn<int8_t>(
-    {std::numeric_limits<int8_t>::min(), -5, 0, 5,
-     std::numeric_limits<int8_t>::max()})});
+  auto keys =
+    BuildKeys({MakeIntColumn<int8_t>({std::numeric_limits<int8_t>::min(), -5, 0,
+                                      5, std::numeric_limits<int8_t>::max()})});
   ASSERT_EQ(keys[0], std::string_view("\x00", 1));
   ASSERT_EQ(keys[1], std::string_view("\x7B", 1));
   ASSERT_EQ(keys[2], std::string_view("\x80", 1));
@@ -247,9 +247,9 @@ TEST_F(DuckDBKeyBuilderTest, test_singleTinyInteger) {
 }
 
 TEST_F(DuckDBKeyBuilderTest, test_singleSmlInteger) {
-  auto keys = BuildKeys({MakeIntColumn<int16_t>(
-    {std::numeric_limits<int16_t>::min(), -5, 0, 5,
-     std::numeric_limits<int16_t>::max()})});
+  auto keys = BuildKeys(
+    {MakeIntColumn<int16_t>({std::numeric_limits<int16_t>::min(), -5, 0, 5,
+                             std::numeric_limits<int16_t>::max()})});
   ASSERT_EQ(keys[0], std::string_view("\x00\x00", 2));
   ASSERT_EQ(keys[1], std::string_view("\x7F\xFB", 2));
   ASSERT_EQ(keys[2], std::string_view("\x80\x00", 2));
@@ -259,9 +259,9 @@ TEST_F(DuckDBKeyBuilderTest, test_singleSmlInteger) {
 }
 
 TEST_F(DuckDBKeyBuilderTest, test_singleNrmInteger) {
-  auto keys = BuildKeys({MakeIntColumn<int32_t>(
-    {std::numeric_limits<int32_t>::min(), -5, 0, 5,
-     std::numeric_limits<int32_t>::max()})});
+  auto keys = BuildKeys(
+    {MakeIntColumn<int32_t>({std::numeric_limits<int32_t>::min(), -5, 0, 5,
+                             std::numeric_limits<int32_t>::max()})});
   ASSERT_EQ(keys[0], std::string_view("\x00\x00\x00\x00", 4));
   ASSERT_EQ(keys[1], std::string_view("\x7F\xFF\xFF\xFB", 4));
   ASSERT_EQ(keys[2], std::string_view("\x80\x00\x00\x00", 4));
@@ -271,9 +271,9 @@ TEST_F(DuckDBKeyBuilderTest, test_singleNrmInteger) {
 }
 
 TEST_F(DuckDBKeyBuilderTest, test_singleBigInteger) {
-  auto keys = BuildKeys({MakeIntColumn<int64_t>(
-    {std::numeric_limits<int64_t>::min(), -5, 0, 5,
-     std::numeric_limits<int64_t>::max()})});
+  auto keys = BuildKeys(
+    {MakeIntColumn<int64_t>({std::numeric_limits<int64_t>::min(), -5, 0, 5,
+                             std::numeric_limits<int64_t>::max()})});
   ASSERT_EQ(keys[0], std::string_view("\x00\x00\x00\x00\x00\x00\x00\x00", 8));
   ASSERT_EQ(keys[1], std::string_view("\x7F\xFF\xFF\xFF\xFF\xFF\xFF\xFB", 8));
   ASSERT_EQ(keys[2], std::string_view("\x80\x00\x00\x00\x00\x00\x00\x00", 8));
@@ -284,19 +284,16 @@ TEST_F(DuckDBKeyBuilderTest, test_singleBigInteger) {
 
 TEST_F(DuckDBKeyBuilderTest, test_multiSizeIntegerPositive) {
   auto keys = BuildKeys(
-    {MakeIntColumn<int8_t>({0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7,
-                            std::numeric_limits<int8_t>::max()}),
-     MakeIntColumn<int32_t>({0, 0, 0, 1, 0,
-                             std::numeric_limits<int32_t>::max(), 0, 0, 1, 2,
-                             std::numeric_limits<int32_t>::max(),
+    {MakeIntColumn<int8_t>(
+       {0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, std::numeric_limits<int8_t>::max()}),
+     MakeIntColumn<int32_t>({0, 0, 0, 1, 0, std::numeric_limits<int32_t>::max(),
+                             0, 0, 1, 2, std::numeric_limits<int32_t>::max(),
                              std::numeric_limits<int32_t>::max()}),
-     MakeIntColumn<int64_t>({0, 0, 1, 0, 0,
-                             std::numeric_limits<int64_t>::max(), 0, 0, 3, 3,
-                             std::numeric_limits<int64_t>::max(),
+     MakeIntColumn<int64_t>({0, 0, 1, 0, 0, std::numeric_limits<int64_t>::max(),
+                             0, 0, 3, 3, std::numeric_limits<int64_t>::max(),
                              std::numeric_limits<int64_t>::max()}),
-     MakeIntColumn<int16_t>({0, 1, 0, 0, 0,
-                             std::numeric_limits<int16_t>::max(), 0, 0, 3, 4,
-                             std::numeric_limits<int16_t>::max(),
+     MakeIntColumn<int16_t>({0, 1, 0, 0, 0, std::numeric_limits<int16_t>::max(),
+                             0, 0, 3, 4, std::numeric_limits<int16_t>::max(),
                              std::numeric_limits<int16_t>::max()})});
   ASSERT_FALSE(absl::c_any_of(
     keys, [&](const auto& str) { return str.size() != keys[0].size(); }));
@@ -342,13 +339,13 @@ TEST_F(DuckDBKeyBuilderTest, test_multiSizeInteger) {
 
 TEST_F(DuckDBKeyBuilderTest, test_FloatingNumbers) {
   auto keys = BuildKeys(
-    {MakeFloatColumn<float>(
-       {std::numeric_limits<float>::lowest(), -1.f, -1.f, 0.f,
-        std::numeric_limits<float>::min(), 9.f, 1000.f,
-        std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
-        std::numeric_limits<float>::max()}),
-     MakeFloatColumn<double>({4., std::numeric_limits<double>::max() * -1.,
-                              -1., 0., 6., 5., 4., 0., 1000.,
+    {MakeFloatColumn<float>({std::numeric_limits<float>::lowest(), -1.f, -1.f,
+                             0.f, std::numeric_limits<float>::min(), 9.f,
+                             1000.f, std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max()}),
+     MakeFloatColumn<double>({4., std::numeric_limits<double>::max() * -1., -1.,
+                              0., 6., 5., 4., 0., 1000.,
                               std::numeric_limits<double>::max()})});
   ASSERT_FALSE(absl::c_any_of(
     keys, [&](const auto& str) { return str.size() != keys[0].size(); }));
@@ -364,8 +361,8 @@ TEST_F(DuckDBKeyBuilderTest, test_Bools) {
     }
     return out;
   };
-  auto keys = BuildKeys({bools({false, false, true, true}),
-                         bools({false, true, false, true})});
+  auto keys = BuildKeys(
+    {bools({false, false, true, true}), bools({false, true, false, true})});
   ASSERT_TRUE(absl::c_is_sorted(keys, kKeyCheck));
   ASSERT_EQ(keys[0], std::string_view("\x00\x00", 2));
   ASSERT_EQ(keys[1], std::string_view("\x00\x01", 2));
@@ -463,25 +460,20 @@ TEST_F(DuckDBKeyBuilderTest, test_Timestamp) {
   auto ts = [](int64_t micros) {
     return Value::TIMESTAMP(duckdb::timestamp_t{micros});
   };
-  auto keys = BuildKeys(
-    {{ts(std::numeric_limits<int64_t>::min()), ts(-1'000'000), ts(0),
-      ts(1'000'000), ts(std::numeric_limits<int64_t>::max())}});
+  auto keys =
+    BuildKeys({{ts(std::numeric_limits<int64_t>::min()), ts(-1'000'000), ts(0),
+                ts(1'000'000), ts(std::numeric_limits<int64_t>::max())}});
   ASSERT_TRUE(absl::c_is_sorted(keys, kKeyCheck));
-  ASSERT_EQ(keys[0],
-            std::string_view("\x00\x00\x00\x00\x00\x00\x00\x00", 8));
-  ASSERT_EQ(keys[2],
-            std::string_view("\x80\x00\x00\x00\x00\x00\x00\x00", 8));
-  ASSERT_EQ(keys[4],
-            std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8));
+  ASSERT_EQ(keys[0], std::string_view("\x00\x00\x00\x00\x00\x00\x00\x00", 8));
+  ASSERT_EQ(keys[2], std::string_view("\x80\x00\x00\x00\x00\x00\x00\x00", 8));
+  ASSERT_EQ(keys[4], std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8));
 }
 
 TEST_F(DuckDBKeyBuilderTest, test_Date) {
-  auto date = [](int32_t days) {
-    return Value::DATE(duckdb::date_t{days});
-  };
-  auto keys = BuildKeys(
-    {{date(std::numeric_limits<int32_t>::min()), date(-1), date(0), date(1),
-      date(std::numeric_limits<int32_t>::max())}});
+  auto date = [](int32_t days) { return Value::DATE(duckdb::date_t{days}); };
+  auto keys =
+    BuildKeys({{date(std::numeric_limits<int32_t>::min()), date(-1), date(0),
+                date(1), date(std::numeric_limits<int32_t>::max())}});
   ASSERT_TRUE(absl::c_is_sorted(keys, kKeyCheck));
   ASSERT_EQ(keys[0], std::string_view("\x00\x00\x00\x00", 4));
   ASSERT_EQ(keys[2], std::string_view("\x80\x00\x00\x00", 4));

@@ -52,6 +52,7 @@
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
+#include "yaclib/async/contract.hpp"
 
 namespace irs {
 
@@ -1115,6 +1116,32 @@ class IndexWriter : private util::Noncopyable {
       } else {
         func();
       }
+    }
+
+    template<typename Func>
+      requires std::invocable<Func>
+    yaclib::Future<std::invoke_result_t<Func>> Submit(Func&& func) {
+      return Submit(std::forward<Func>(func), []() { return true; });
+    }
+
+    template<typename Func, typename Pred>
+      requires std::predicate<Pred> && std::invocable<Func>
+    yaclib::Future<std::invoke_result_t<Func>> Submit(Func&& func,
+                                                      Pred&& pred) {
+      using Out = std::invoke_result_t<Func>;
+      auto [f, p] = yaclib::MakeContract<Out>();
+
+      auto task = [func = std::forward<Func>(func),
+                   p = std::move(p)]() mutable noexcept {
+        try {
+          std::move(p).Set(func());
+        } catch (...) {
+          std::move(p).Set(std::current_exception());
+        }
+      };
+
+      Run(std::move(task), std::forward<Pred>(pred));
+      return std::move(f);
     }
   } _async_flush;
 };

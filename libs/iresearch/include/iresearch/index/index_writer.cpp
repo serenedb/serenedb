@@ -30,7 +30,6 @@
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
-#include <yaclib/async/contract.hpp>
 #include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
@@ -2100,19 +2099,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
                    .applied_delete_packet_id = std::nullopt};
       };
 
-      auto [f, p] = yaclib::MakeContract<Out>();
-      auto task = [process = std::move(process),
-                   p = std::move(p)] mutable noexcept {
-        try {
-          auto result = process();
-          std::move(p).Set(std::move(result));
-        } catch (...) {
-          std::move(p).Set(std::current_exception());
-        }
-      };
-
-      _async_flush.Run(std::move(task));
-      futures1.emplace_back(std::move(f));
+      futures1.emplace_back(_async_flush.Submit(std::move(process)));
 
     } else {
       auto f = yaclib::MakeFuture(
@@ -2258,17 +2245,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
                    .index_segment{std::move(import.segment)}};
       };
 
-      auto [f, p] = yaclib::MakeContract<Out>();
-      auto task = [process = std::move(process),
-                   p = std::move(p)] mutable noexcept {
-        try {
-          std::move(p).Set(process());
-        } catch (...) {
-          std::move(p).Set(std::current_exception());
-        }
-      };
-      _async_flush.Run(std::move(task));
-      futures2.emplace_back(std::move(f));
+      futures2.emplace_back(_async_flush.Submit(std::move(process)));
 
     } else {
       if (docs_mask_modified) {
@@ -2482,18 +2459,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
                      segment_ctx.flushed.applied_delete_packet_id};
       };
 
-      auto [f, p] = yaclib::MakeContract<Out>();
-      auto task = [process = std::move(process),
-                   p = std::move(p)]() mutable noexcept {
-        try {
-          std::move(p).Set(process());
-        } catch (...) {
-          std::move(p).Set(std::current_exception());
-        }
-      };
-
-      _async_flush.Run(std::move(task));
-      futures3.emplace_back(std::move(f));
+      futures3.emplace_back(_async_flush.Submit(std::move(process)));
     }
     process_futures(futures3);
   }

@@ -940,4 +940,79 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
   }
 }
 
+TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
+  constexpr std::string_view kPk1 = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+  constexpr std::string_view kPk2 = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+  // Phase 1: build an "existing" segment with two docs.
+  {
+    auto trx = _data_writer->GetBatch();
+    DuckDBSearchSinkInsertWriter sink{trx, AnalyzerProvider, {1}};
+    sink.Init(2, _dummy_chunk);
+    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value1", 6)}, kPk1);
+    sink.Write({rocksdb::Slice("value2", 6)}, kPk2);
+    sink.Finish();
+    ASSERT_TRUE(trx.Commit());
+    _data_writer->Commit();
+  }
+  // Phase 2: update pk1's value using the combined update writer.
+  // Update == delete old + insert new for the same PK.
+  {
+    auto trx = _data_writer->GetBatch();
+    DuckDBSearchSinkUpdateWriter sink{trx, AnalyzerProvider, {1}};
+    sink.Init(1, _dummy_chunk);
+    sink.DeleteRow("pk1");
+    sink.SwitchColumn(duckdb::LogicalType::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value1_new", 10)}, kPk1);
+    sink.Finish();
+    ASSERT_TRUE(trx.Commit());
+    _data_writer->Commit();
+  }
+
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  // Two segments: the original (pk1-old, pk2) plus the new insert (pk1-new).
+  ASSERT_EQ(2, reader.size());
+  // Three physical docs: pk1-old still contributes to docs_count even though
+  // it was deleted - this is the same after-effect as a plain delete.
+  ASSERT_EQ(3, reader.docs_count());
+  // Two live docs: pk2 (untouched) and pk1-new.
+  ASSERT_EQ(2, reader.live_docs_count());
+
+  auto find = [](const irs::SubReader& segment, std::string_view value) {
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    EXPECT_NE(nullptr, varchar_terms);
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    EXPECT_TRUE(itr->seek(irs::ViewCast<irs::byte_type>(value)));
+    return segment.mask(itr->postings(irs::IndexFeatures::None));
+  };
+  auto pk_of = [](const irs::SubReader& segment, irs::doc_id_t doc) {
+    auto pk_itr =
+      segment.column(kPkFieldName)->iterator(irs::ColumnHint::Normal);
+    EXPECT_EQ(doc, pk_itr->seek(doc));
+    return irs::ViewCast<char>(irs::get<irs::PayAttr>(*pk_itr)->value);
+  };
+
+  // Old segment: pk1's old value is masked, pk2 is still live.
+  {
+    auto& segment = reader[0];
+    auto old = find(segment, "value1");
+    ASSERT_FALSE(old->next());
+    auto kept = find(segment, "value2");
+    ASSERT_TRUE(kept->next());
+    ASSERT_EQ("pk2", pk_of(segment, kept->value()));
+    ASSERT_FALSE(kept->next());
+  }
+  // New segment: pk1's new value is visible.
+  {
+    auto& segment = reader[1];
+    auto fresh = find(segment, "value1_new");
+    ASSERT_TRUE(fresh->next());
+    ASSERT_EQ("pk1", pk_of(segment, fresh->value()));
+    ASSERT_FALSE(fresh->next());
+  }
+}
+
 }  // namespace

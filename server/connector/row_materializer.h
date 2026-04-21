@@ -93,8 +93,7 @@ class RowMaterializer {
 // RocksDB ignores it.
 std::unique_ptr<RowMaterializer> MakeRowMaterializer(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
-  const rocksdb::Snapshot* snapshot,
-  std::span<const std::string> all_pks,
+  const rocksdb::Snapshot* snapshot, std::span<const std::string> all_pks,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids);

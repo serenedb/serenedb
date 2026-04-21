@@ -61,8 +61,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
     std::vector<int64_t> ids(top_k, -1);
 
     irs::HNSWSearchInfo info{
-      .query =
-        reinterpret_cast<const irs::byte_type*>(ann.query_vector.data()),
+      .query = reinterpret_cast<const irs::byte_type*>(ann.query_vector.data()),
       .top_k = top_k,
     };
     snapshot.reader.Search(ann.field_name, info, dis.data(), ids.data());
@@ -103,8 +102,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   if (!state->ann_pk_bytes.empty()) {
     state->materializer = MakeRowMaterializer(
       context, bind_data, state->snapshot, state->ann_pk_bytes,
-      state->projected_columns, state->projected_types,
-      bind_data.column_ids);
+      state->projected_columns, state->projected_types, bind_data.column_ids);
   }
   return duckdb::unique_ptr_cast<SearchAnnScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(

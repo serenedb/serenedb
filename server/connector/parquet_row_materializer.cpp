@@ -82,16 +82,17 @@ ParquetRowMaterializer::ParquetRowMaterializer(
   auto or_filter = duckdb::make_uniq<duckdb::ConjunctionOrFilter>();
   or_filter->child_filters.reserve(all_pks.size());
   for (const auto& pk : all_pks) {
-    or_filter->child_filters.push_back(duckdb::make_uniq<duckdb::ConstantFilter>(
-      duckdb::ExpressionType::COMPARE_EQUAL,
-      duckdb::Value::BIGINT(primary_key::ReadSigned<int64_t>(pk))));
+    or_filter->child_filters.push_back(
+      duckdb::make_uniq<duckdb::ConstantFilter>(
+        duckdb::ExpressionType::COMPARE_EQUAL,
+        duckdb::Value::BIGINT(primary_key::ReadSigned<int64_t>(pk))));
   }
   _filter_set.PushFilter(duckdb::ProjectionIndex(_frn_slot),
                          std::move(or_filter));
 
   // 4. Init one persistent parquet scan.
-  duckdb::TableFunctionInitInput init_input(
-    _bind_data.get(), _column_indexes, _projection_ids, &_filter_set);
+  duckdb::TableFunctionInitInput init_input(_bind_data.get(), _column_indexes,
+                                            _projection_ids, &_filter_set);
   _gstate = _func.init_global(_context, init_input);
   _thread_ctx = std::make_unique<duckdb::ThreadContext>(_context);
   _exec_ctx =
@@ -179,8 +180,7 @@ void ParquetRowMaterializer::Materialize(
   // earlier pull, copy it immediately. Otherwise pull more chunks
   // until we find it or the scan ends.
   for (duckdb::idx_t out_row = 0; out_row < num_rows; ++out_row) {
-    const int64_t row_id =
-      primary_key::ReadSigned<int64_t>(pk_bytes[out_row]);
+    const int64_t row_id = primary_key::ReadSigned<int64_t>(pk_bytes[out_row]);
 
     auto it = _row_id_to_slot.find(row_id);
     while (it == _row_id_to_slot.end() && !_scan_done) {

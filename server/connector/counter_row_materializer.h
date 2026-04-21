@@ -43,11 +43,11 @@ namespace sdb::connector {
 // offsets).
 class CounterRowMaterializer final : public RowMaterializer {
  public:
-  CounterRowMaterializer(
-    duckdb::ClientContext& context, std::shared_ptr<catalog::Table> table,
-    std::span<const duckdb::idx_t> projected_columns,
-    std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::Column::Id> bind_column_ids);
+  CounterRowMaterializer(duckdb::ClientContext& context,
+                         std::shared_ptr<catalog::Table> table,
+                         std::span<const duckdb::idx_t> projected_columns,
+                         std::span<const duckdb::LogicalType> projected_types,
+                         std::span<const catalog::Column::Id> bind_column_ids);
 
   void Materialize(std::span<const std::string_view> pk_bytes,
                    duckdb::DataChunk& output) override;

@@ -320,7 +320,8 @@ duckdb::TablePartitionInfo ExternalScanGetPartitionInfo(
   duckdb::ClientContext& context, duckdb::TableFunctionPartitionInput& input) {
   auto& bd = input.bind_data->Cast<ExternalScanBindData>();
   if (!bd.underlying.get_partition_info) {
-    return {};  // default-constructed TablePartitionInfo = SINGLE_VALUED_PARTITIONS.
+    return {};  // default-constructed TablePartitionInfo =
+                // SINGLE_VALUED_PARTITIONS.
   }
   duckdb::TableFunctionPartitionInput delegated(bd.underlying_bind_data.get(),
                                                 input.partition_ids);

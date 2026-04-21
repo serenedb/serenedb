@@ -50,11 +50,10 @@ namespace sdb::connector {
 // permutation vector (`_read_idxs`).
 class RocksDBRowMaterializer final : public RowMaterializer {
  public:
-  RocksDBRowMaterializer(
-    ObjectId table_id, const rocksdb::Snapshot* snapshot,
-    std::span<const duckdb::idx_t> projected_columns,
-    std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::Column::Id> bind_column_ids);
+  RocksDBRowMaterializer(ObjectId table_id, const rocksdb::Snapshot* snapshot,
+                         std::span<const duckdb::idx_t> projected_columns,
+                         std::span<const duckdb::LogicalType> projected_types,
+                         std::span<const catalog::Column::Id> bind_column_ids);
 
   void Materialize(std::span<const std::string_view> pk_bytes,
                    duckdb::DataChunk& output) override;

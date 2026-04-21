@@ -105,12 +105,12 @@ void RocksDBRowMaterializer::Materialize(
     SDB_ASSERT(table_key.size() == kColumnKeySize);
 
     auto& vec = output.data[proj];
-    DispatchColumnRead(
-      table_key, col_id, pk_bytes,
-      [&](size_t original_idx, std::string_view value) {
-        DeserializeValueIntoDuckDB(
-          value, vec, type, static_cast<duckdb::idx_t>(original_idx));
-      });
+    DispatchColumnRead(table_key, col_id, pk_bytes,
+                       [&](size_t original_idx, std::string_view value) {
+                         DeserializeValueIntoDuckDB(
+                           value, vec, type,
+                           static_cast<duckdb::idx_t>(original_idx));
+                       });
   }
 }
 
@@ -153,10 +153,9 @@ void RocksDBRowMaterializer::PrepareSortedBatch(
   }
   _read_idxs.resize(pk_bytes.size());
   std::iota(_read_idxs.begin(), _read_idxs.end(), size_t{0});
-  std::sort(_read_idxs.begin(), _read_idxs.end(),
-            [&](size_t lhs, size_t rhs) {
-              return pk_bytes[lhs] < pk_bytes[rhs];
-            });
+  std::sort(_read_idxs.begin(), _read_idxs.end(), [&](size_t lhs, size_t rhs) {
+    return pk_bytes[lhs] < pk_bytes[rhs];
+  });
 
   // Layout: per sorted pk we reserve `kColumnKeySize + pk.size()` bytes.
   // The column-key prefix is written at read-time (it may vary across
@@ -188,8 +187,7 @@ void RocksDBRowMaterializer::MultiGetIterateColumnKeys(
   size_t offset = 0;
   for (size_t i = 0; i < _read_idxs.size(); ++i) {
     std::memcpy(data + offset, column_key_prefix.data(), kColumnKeySize);
-    const auto full_key_size =
-      kColumnKeySize + pk_bytes[_read_idxs[i]].size();
+    const auto full_key_size = kColumnKeySize + pk_bytes[_read_idxs[i]].size();
     _key_slices[i] = {data + offset, full_key_size};
     offset += full_key_size;
   }
@@ -220,8 +218,8 @@ void RocksDBRowMaterializer::SeekIterateColumnKeys(
     // op would hang. (Same reasoning as in origin/main.)
     auto it_options = _read_options;
     it_options.async_io = false;
-    auto iter = std::unique_ptr<rocksdb::Iterator>(
-      _db->NewIterator(it_options, _cf));
+    auto iter =
+      std::unique_ptr<rocksdb::Iterator>(_db->NewIterator(it_options, _cf));
     column_iterator =
       _iterators.emplace(column_id, std::move(iter)).first->second.get();
   } else {

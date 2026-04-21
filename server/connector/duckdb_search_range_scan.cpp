@@ -58,8 +58,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
     std::vector<int64_t> ids;
 
     irs::HNSWRangeSearchInfo info{
-      .query =
-        reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
+      .query = reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
       .radius = rss.radius,
     };
     snapshot.reader.RangeSearch(rss.field_name, info, dis, ids);
@@ -97,8 +96,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   if (!state->ann_pk_bytes.empty()) {
     state->materializer = MakeRowMaterializer(
       context, bind_data, state->snapshot, state->ann_pk_bytes,
-      state->projected_columns, state->projected_types,
-      bind_data.column_ids);
+      state->projected_columns, state->projected_types, bind_data.column_ids);
   }
   return duckdb::unique_ptr_cast<SearchRangeScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(

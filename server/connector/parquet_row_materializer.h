@@ -50,12 +50,12 @@ namespace sdb::connector {
 //   the scan again. Memory ~ O(total_rows * row_size).
 class ParquetRowMaterializer final : public RowMaterializer {
  public:
-  ParquetRowMaterializer(
-    duckdb::ClientContext& context, std::shared_ptr<catalog::Table> table,
-    std::span<const std::string> all_pks,
-    std::span<const duckdb::idx_t> projected_columns,
-    std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::Column::Id> bind_column_ids);
+  ParquetRowMaterializer(duckdb::ClientContext& context,
+                         std::shared_ptr<catalog::Table> table,
+                         std::span<const std::string> all_pks,
+                         std::span<const duckdb::idx_t> projected_columns,
+                         std::span<const duckdb::LogicalType> projected_types,
+                         std::span<const catalog::Column::Id> bind_column_ids);
 
   void Materialize(std::span<const std::string_view> pk_bytes,
                    duckdb::DataChunk& output) override;
@@ -68,8 +68,7 @@ class ParquetRowMaterializer final : public RowMaterializer {
 
   // Copy row `row_idx` of buffered chunk `chunk_idx` into `output` at
   // position `out_row` for every real-column projection slot.
-  void CopyBufferedRowToOutput(duckdb::idx_t chunk_idx,
-                               duckdb::idx_t row_idx,
+  void CopyBufferedRowToOutput(duckdb::idx_t chunk_idx, duckdb::idx_t row_idx,
                                duckdb::idx_t out_row,
                                duckdb::DataChunk& output);
 

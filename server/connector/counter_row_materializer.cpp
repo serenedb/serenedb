@@ -21,7 +21,6 @@
 #include "connector/counter_row_materializer.h"
 
 #include <algorithm>
-
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/parallel/thread_context.hpp>
@@ -112,12 +111,12 @@ void CounterRowMaterializer::BuildBuffer() {
 std::pair<duckdb::idx_t, duckdb::idx_t> CounterRowMaterializer::LocateRow(
   int64_t counter) const {
   // Find the chunk whose start <= counter < next start.
-  auto it = std::upper_bound(_chunk_starts.begin(), _chunk_starts.end(),
-                             counter);
+  auto it =
+    std::upper_bound(_chunk_starts.begin(), _chunk_starts.end(), counter);
   SDB_ASSERT(it != _chunk_starts.begin(),
              "counter out of range (before first chunk)");
-  auto chunk_idx = static_cast<duckdb::idx_t>(
-    std::distance(_chunk_starts.begin(), it) - 1);
+  auto chunk_idx =
+    static_cast<duckdb::idx_t>(std::distance(_chunk_starts.begin(), it) - 1);
   SDB_ASSERT(chunk_idx < _chunks.size(),
              "counter out of range (beyond last chunk)");
   auto row_idx = static_cast<duckdb::idx_t>(counter - _chunk_starts[chunk_idx]);
@@ -131,8 +130,7 @@ void CounterRowMaterializer::Materialize(
     return;
   }
 
-  const int64_t total_rows =
-    _chunk_starts.empty() ? 0 : _chunk_starts.back();
+  const int64_t total_rows = _chunk_starts.empty() ? 0 : _chunk_starts.back();
 
   for (duckdb::idx_t out_row = 0; out_row < num_rows; ++out_row) {
     const int64_t counter = primary_key::ReadSigned<int64_t>(pk_bytes[out_row]);

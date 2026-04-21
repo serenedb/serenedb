@@ -38,8 +38,7 @@ Executor::Executor(std::string_view path, const BenchConfig& config)
       config.tokenizer_options)},
     _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
-    _reader{
-      irs::DirectoryReader(_dir, _format, {.scorers = {&_scorer_ptr, 1}})} {}
+    _reader{irs::DirectoryReader(_dir, _format, {.scorer = _scorer_ptr})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);
@@ -48,9 +47,9 @@ size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
     _result_count = 0;
     return 0;
   }
-  auto count =
-    irs::ExecuteTopK(_reader, *filter, *_scorer, k,
-                     {.index = 0, .strict = true}, std::span{_results});
+  auto count = irs::ExecuteTopK(_reader, *filter, *_scorer, k,
+                                {.wand_enabled = true, .strict = true},
+                                std::span{_results});
   _result_count = std::min<size_t>(k, count);
   return count;
 }

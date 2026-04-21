@@ -108,22 +108,10 @@ IRS_FORCE_INLINE void CopyState(SkipState& to,
 // TODO(mbkkt) Make it overloads
 // Remove to many Readers implementations
 
-template<typename WandExtent, typename Input>
-void CommonSkipWandData(WandExtent extent, Input& in) {
-  switch (auto count = extent.GetExtent(); count) {
-    case 0:
-      return;
-    case 1:
-      in.Skip(in.ReadByte());
-      return;
-    default: {
-      uint64_t skip{};
-      for (; count; --count) {
-        skip += in.ReadByte();
-      }
-      in.Skip(skip);
-      return;
-    }
+template<typename Input>
+void CommonSkipWandData(bool has_wand, Input& in) {
+  if (has_wand) {
+    in.Skip(in.ReadByte());
   }
 }
 template<typename It, typename T, typename Cmp = std::less<>>

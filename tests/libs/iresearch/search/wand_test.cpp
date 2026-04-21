@@ -20,6 +20,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "index/index_tests.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
@@ -35,29 +38,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace {
-
-class Scorers {
- public:
-  template<typename T, typename... Args>
-  const T& PushBack(Args&&... args) {
-    auto scorer = std::make_unique<T>(std::forward<Args>(args)...);
-    auto& bucket = _scorers.emplace_back();
-    bucket = scorer.release();
-    return static_cast<T&>(*bucket);
-  }
-
-  // Intentionally imlicit
-  operator irs::ScorersView() const noexcept { return _scorers; }
-
-  ~Scorers() {
-    for (auto* scorer : _scorers) {
-      delete scorer;
-    }
-  }
-
- private:
-  std::vector<irs::Scorer*> _scorers;
-};
 
 struct Doc {
   Doc(size_t segment, irs::doc_id_t doc) noexcept
@@ -94,32 +74,28 @@ struct ScoredDoc : Doc {
 
 class WandTestCase : public tests::IndexTestBase {
  public:
-  static irs::IndexWriterOptions GetWriterOptions(irs::ScorersView scorers,
+  static irs::IndexWriterOptions GetWriterOptions(irs::ScorerPtr scorer,
                                                   bool write_norms);
 
   std::vector<Doc> Collect(const irs::DirectoryReader& index,
-                           const irs::Filter& filter, irs::ScorersView scorers,
-                           irs::byte_type wand_idx, bool can_use_wand,
-                           size_t limit);
+                           const irs::Filter& filter, irs::ScorerPtr scorer,
+                           bool wand_enabled, bool can_use_wand, size_t limit);
 
   void AssertResults(const irs::DirectoryReader& index,
-                     const irs::Filter& filter, irs::ScorersView scorers,
-                     irs::byte_type wand_idx, bool can_use_wand, size_t limit);
+                     const irs::Filter& filter, irs::ScorerPtr scorer,
+                     bool wand_enabled, bool can_use_wand, size_t limit);
 
-  void GenerateSegment(irs::ScorersView scorers, bool write_norms,
+  void GenerateSegment(irs::ScorerPtr scorer, bool write_norms,
                        bool append_data = false);
-  void GenerateSegmentMinNorm(irs::ScorersView scorers);
-  void ConsolidateAll(irs::ScorersView scorers, bool write_norms);
+  void GenerateSegmentMinNorm(irs::ScorerPtr scorer);
+  void ConsolidateAll(irs::ScorerPtr scorer, bool write_norms);
 
-  void AssertFilters(irs::ScorersView scorers, bool disjunction = true) {
+  void AssertFilters(irs::ScorerPtr scorer, bool disjunction = true) {
     auto apply = [&](auto assert_filter) {
-      ASSERT_FALSE(scorers.empty());
-      for (size_t idx = 0; auto* scorer : scorers) {
-        std::invoke(assert_filter, *this, scorers, *scorer, idx);
-        ++idx;
-      }
+      ASSERT_TRUE(scorer);
+      std::invoke(assert_filter, *this, *scorer, true);
       // Invalid scorer
-      std::invoke(assert_filter, *this, scorers, *scorers[0], scorers.size());
+      std::invoke(assert_filter, *this, *scorer, false);
     };
     apply(&WandTestCase::AssertTermFilter);
     apply(&WandTestCase::AssertConjunctionFilter);
@@ -128,19 +104,13 @@ class WandTestCase : public tests::IndexTestBase {
     }
   }
 
-  void AssertTermFilter(irs::ScorersView scorers, const irs::Scorer& scorer,
-                        irs::byte_type wand_index);
+  void AssertTermFilter(const irs::Scorer& scorer, bool wand_enabled);
 
-  void AssertConjunctionFilter(irs::ScorersView scorers,
-                               const irs::Scorer& scorer,
-                               irs::byte_type wand_index);
+  void AssertConjunctionFilter(const irs::Scorer& scorer, bool wand_enabled);
 
-  void AssertDisjunctionFilter(irs::ScorersView scorers,
-                               const irs::Scorer& scorer,
-                               irs::byte_type wand_index);
+  void AssertDisjunctionFilter(const irs::Scorer& scorer, bool wand_enabled);
 
-  bool CanUseWand(irs::ScorersView scorers, const irs::Scorer& scorer,
-                  irs::byte_type wand_index, const irs::TermReader& field) {
+  bool CanUseWand(const irs::Scorer& scorer, const irs::TermReader& field) {
     return false;
     // TODO(mbkkt) Enable this back?
     // const auto& field_meta = field.meta();
@@ -156,17 +126,19 @@ class WandTestCase : public tests::IndexTestBase {
 
     // return wand_index < scorers.size();
   }
+
+  void AssertWithNewSegmentsSparse(irs::Scorer* scorer);
+  void AssertWithNewSegmentsDense(irs::Scorer* scorer);
 };
 
 std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
                                        const irs::Filter& filter,
-                                       irs::ScorersView scorers,
-                                       irs::byte_type wand_idx,
+                                       irs::ScorerPtr scorer, bool wand_enabled,
                                        bool can_use_wand, size_t limit) {
-  auto query = filter.prepare({.index = index, .scorer = scorers.front()});
+  auto query = filter.prepare({.index = index, .scorer = scorer});
   EXPECT_NE(nullptr, query);
 
-  const irs::WandContext mode{.index = wand_idx};
+  const irs::WandContext mode{.wand_enabled = wand_enabled};
 
   std::vector<ScoredDoc> sorted;
   sorted.reserve(limit);
@@ -175,16 +147,16 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     irs::ColumnArgsFetcher fetcher;
     auto docs = query->execute(irs::ExecutionContext{
       .segment = segment,
-      .scorer = scorers.front(),
+      .scorer = scorer,
       .wand = mode,
     });
     EXPECT_NE(nullptr, docs);
 
     irs::ScoreFunction score;
-    if (wand_idx != irs::WandContext::kDisable && can_use_wand) {
+    if (wand_enabled && can_use_wand) {
       // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
       score = docs->PrepareScore({
-        .scorer = scorers[wand_idx],
+        .scorer = scorer,
         .segment = &segment,
         .fetcher = &fetcher,
       });
@@ -196,8 +168,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
       EXPECT_TRUE(!sorted.empty());
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
     }
-    std::vector<irs::score_t> scores(scorers.size());
-    auto& score_value = *scores.data();
+    irs::score_t score_value = 0;
     while (docs->next()) {
       auto doc = docs->value();
       fetcher.Fetch(doc);
@@ -232,33 +203,28 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 
 void WandTestCase::AssertResults(const irs::DirectoryReader& index,
                                  const irs::Filter& filter,
-                                 irs::ScorersView scorers,
-                                 irs::byte_type scorer_idx, bool can_use_wand,
-                                 size_t limit) {
+                                 irs::ScorerPtr scorer, bool wand_enabled,
+                                 bool can_use_wand, size_t limit) {
   auto wand_result =
-    Collect(index, filter, scorers, scorer_idx, can_use_wand, limit);
-  auto result = Collect(index, filter, scorers, irs::WandContext::kDisable,
-                        can_use_wand, limit);
+    Collect(index, filter, scorer, wand_enabled, can_use_wand, limit);
+  auto result = Collect(index, filter, scorer, wand_enabled, false, limit);
   ASSERT_EQ(result, wand_result);
 }
 
-void WandTestCase::ConsolidateAll(irs::ScorersView scorers, bool write_norms) {
+void WandTestCase::ConsolidateAll(irs::ScorerPtr scorer, bool write_norms) {
   const irs::index_utils::ConsolidateCount consolidate_all;
   auto writer =
-    open_writer(irs::kOmAppend, GetWriterOptions(scorers, write_norms));
+    open_writer(irs::kOmAppend, GetWriterOptions(scorer, write_norms));
   ASSERT_TRUE(
     writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all)));
   ASSERT_TRUE(writer->Commit());
   ASSERT_EQ(1, writer->GetSnapshot().size());
 }
 
-irs::IndexWriterOptions WandTestCase::GetWriterOptions(irs::ScorersView scorers,
+irs::IndexWriterOptions WandTestCase::GetWriterOptions(irs::ScorerPtr scorer,
                                                        bool write_norms) {
-  EXPECT_TRUE(std::all_of(scorers.begin(), scorers.end(),
-                          [](auto* scorer) { return scorer != nullptr; }));
-
   irs::IndexWriterOptions writer_options;
-  writer_options.reader_options.scorers = scorers;
+  writer_options.reader_options.scorer = scorer;
   writer_options.features = [write_norms](irs::IndexFeatures id) {
     if (write_norms && irs::IndexFeatures::Norm == id) {
       return std::make_pair(
@@ -274,7 +240,7 @@ irs::IndexWriterOptions WandTestCase::GetWriterOptions(irs::ScorersView scorers,
   return writer_options;
 }
 
-void WandTestCase::GenerateSegment(irs::ScorersView scorers, bool write_norms,
+void WandTestCase::GenerateSegment(irs::ScorerPtr scorer, bool write_norms,
                                    bool append_data) {
   tests::JsonDocGenerator gen(
     resource("simple_single_column_multi_term.json"),
@@ -295,10 +261,10 @@ void WandTestCase::GenerateSegment(irs::ScorersView scorers, bool write_norms,
     open_mode |= irs::kOmAppend;
   }
 
-  add_segment(gen, open_mode, GetWriterOptions(scorers, write_norms));
+  add_segment(gen, open_mode, GetWriterOptions(scorer, write_norms));
 }
 
-void WandTestCase::GenerateSegmentMinNorm(irs::ScorersView scorers) {
+void WandTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
   tests::JsonDocGenerator gen(
     resource("simple_single_column_multi_term_norm.json"),
     [](tests::Document& doc, std::string_view name,
@@ -318,41 +284,39 @@ void WandTestCase::GenerateSegmentMinNorm(irs::ScorersView scorers) {
   //   open_mode |= irs::OM_APPEND;
   // }
 
-  add_segment(gen, open_mode, GetWriterOptions(scorers, true));
+  add_segment(gen, open_mode, GetWriterOptions(scorer, true));
 }
 
-void WandTestCase::AssertTermFilter(irs::ScorersView scorers,
-                                    const irs::Scorer& scorer,
-                                    irs::byte_type wand_index) {
+void WandTestCase::AssertTermFilter(const irs::Scorer& scorer,
+                                    bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
   irs::ByTerm filter;
   *filter.mutable_field() = kFieldName;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorers = scorers}};
+    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
     const auto* field = segment.field(kFieldName);
     ASSERT_NE(nullptr, field);
 
-    const auto can_use_wand = CanUseWand(scorers, scorer, wand_index, *field);
+    const auto can_use_wand = CanUseWand(scorer, *field);
     // TODO(mbkkt) enable this!
     // ASSERT_EQ(can_use_wand, field->has_scorer(wand_index));
 
     for (auto terms = field->iterator(irs::SeekMode::NORMAL); terms->next();) {
       filter.mutable_options()->term = terms->value();
 
-      AssertResults(reader, filter, scorers, wand_index, can_use_wand, 10);
-      AssertResults(reader, filter, scorers, wand_index, can_use_wand, 100);
+      AssertResults(reader, filter, &scorer, wand_enabled, can_use_wand, 10);
+      AssertResults(reader, filter, &scorer, wand_enabled, can_use_wand, 100);
     }
   }
 }
 
-void WandTestCase::AssertConjunctionFilter(irs::ScorersView scorers,
-                                           const irs::Scorer& scorer,
-                                           irs::byte_type wand_index) {
+void WandTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
+                                           bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
   irs::And conjunction;
@@ -362,14 +326,14 @@ void WandTestCase::AssertConjunctionFilter(irs::ScorersView scorers,
   *filter2.mutable_field() = kFieldName;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorers = scorers}};
+    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
     const auto* field = segment.field(kFieldName);
     ASSERT_NE(nullptr, field);
 
-    const auto can_use_wand = CanUseWand(scorers, scorer, wand_index, *field);
+    const auto can_use_wand = CanUseWand(scorer, *field);
     // TODO(mbkkt) enable this!
     // ASSERT_EQ(can_use_wand, field->has_scorer(wand_index));
 
@@ -379,14 +343,14 @@ void WandTestCase::AssertConjunctionFilter(irs::ScorersView scorers,
     ASSERT_TRUE(terms->next());
     filter2.mutable_options()->term = terms->value();
 
-    AssertResults(reader, conjunction, scorers, wand_index, can_use_wand, 10);
-    AssertResults(reader, conjunction, scorers, wand_index, can_use_wand, 100);
+    AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand, 10);
+    AssertResults(reader, conjunction, &scorer, wand_enabled, can_use_wand,
+                  100);
   }
 }
 
-void WandTestCase::AssertDisjunctionFilter(irs::ScorersView scorers,
-                                           const irs::Scorer& scorer,
-                                           irs::byte_type wand_index) {
+void WandTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
+                                           bool wand_enabled) {
   static constexpr std::string_view kFieldName = "name";
 
   irs::Or disjunction;
@@ -398,14 +362,14 @@ void WandTestCase::AssertDisjunctionFilter(irs::ScorersView scorers,
   *filter3.mutable_field() = kFieldName;
 
   auto reader = irs::DirectoryReader{
-    dir(), codec(), irs::IndexReaderOptions{.scorers = scorers}};
+    dir(), codec(), irs::IndexReaderOptions{.scorer = &scorer}};
   ASSERT_NE(nullptr, reader);
 
   for (const auto& segment : reader) {
     const auto* field = segment.field(kFieldName);
     ASSERT_NE(nullptr, field);
 
-    const auto can_use_wand = CanUseWand(scorers, scorer, wand_index, *field);
+    const auto can_use_wand = CanUseWand(scorer, *field);
     // TODO(mbkkt) enable this!
     // ASSERT_EQ(can_use_wand, field->has_scorer(wand_index));
 
@@ -417,139 +381,154 @@ void WandTestCase::AssertDisjunctionFilter(irs::ScorersView scorers,
     ASSERT_TRUE(terms->next());
     filter3.mutable_options()->term = terms->value();
 
-    AssertResults(reader, disjunction, scorers, wand_index, can_use_wand, 10);
-    AssertResults(reader, disjunction, scorers, wand_index, can_use_wand, 100);
+    AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand, 10);
+    AssertResults(reader, disjunction, &scorer, wand_enabled, can_use_wand,
+                  100);
   }
 }
 
-TEST_P(WandTestCase, TermFilterMultipleScorersDense) {
-  Scorers scorers;
-  scorers.PushBack<irs::TFIDF>(false);
-  scorers.PushBack<irs::TFIDF>(true);
-  const auto& bm25 = scorers.PushBack<irs::BM25>();
-  ASSERT_FALSE(bm25.IsBM15() || bm25.IsBM11());
-  const auto& bm15 = scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.f);
-  ASSERT_TRUE(bm15.IsBM15());
-  const auto& bm11 = scorers.PushBack<irs::BM25>(irs::BM25::K(), 1.f);
-  ASSERT_TRUE(bm11.IsBM11());
+void WandTestCase::AssertWithNewSegmentsDense(irs::Scorer* scorer) {
+  GenerateSegment(scorer, true);
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
+  GenerateSegment(scorer, true, true);  // Add another segment
+  ConsolidateAll(scorer, true);
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true, true);  // Add another segment
-  ConsolidateAll(scorers, true);
-  AssertFilters(scorers, false);
+  GenerateSegment(scorer, true, true);  // Add another segment
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers, false);
+  GenerateSegment(scorer, true, true);  // Add another segment
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers, false);
+  GenerateSegment(scorer, true, true);  // Add another segment
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers, false);
-
-  ConsolidateAll(scorers, true);
-  AssertFilters(scorers, false);
+  ConsolidateAll(scorer, true);
+  AssertFilters(scorer, false);
 }
 
-TEST_P(WandTestCase, TermFilterManyScorersDense) {
-  Scorers scorers;
-  scorers.PushBack<irs::TFIDF>(false);
-  scorers.PushBack<irs::TFIDF>(true);
-  scorers.PushBack<irs::BM25>();
-  scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.0f);
-  scorers.PushBack<irs::BM25>(irs::BM25::K(), 1.0f);
-  scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.4f);
-  scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.2f);
-  scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.1f);
+void WandTestCase::AssertWithNewSegmentsSparse(irs::Scorer* scorer) {
+  GenerateSegment(scorer, false);
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
+  GenerateSegment(scorer, false, true);  // Add another segment
+  AssertFilters(scorer, false);
 
-  GenerateSegment(scorers, true, true);  // Add another segment
-  ConsolidateAll(scorers, true);
-  AssertFilters(scorers, false);
-
-  GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers, false);
-
-  GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers, false);
-
-  GenerateSegment(scorers, true, true);  // Add another segment
-  AssertFilters(scorers, false);
-
-  ConsolidateAll(scorers, true);
-  AssertFilters(scorers, false);
+  ConsolidateAll(scorer, false);
+  AssertFilters(scorer, false);
 }
 
-TEST_P(WandTestCase, TermFilterMultipleScorersSparse) {
-  Scorers scorers;
-  scorers.PushBack<irs::TFIDF>(false);
-  scorers.PushBack<irs::TFIDF>(true);
-  const auto& bm25 = scorers.PushBack<irs::BM25>();
-  ASSERT_FALSE(bm25.IsBM15() || bm25.IsBM11());
-  const auto& bm15 = scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.f);
-  ASSERT_TRUE(bm15.IsBM15());
-  const auto& bm11 = scorers.PushBack<irs::BM25>(irs::BM25::K(), 1.f);
-  ASSERT_TRUE(bm11.IsBM11());
+TEST_P(WandTestCase, TermFilterTFIDFDense) {
+  auto scorer_holder = std::make_unique<irs::TFIDF>(false);
+  auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorers, false);
-  AssertFilters(scorers, false);
-
-  GenerateSegment(scorers, false, true);  // Add another segment
-  AssertFilters(scorers, false);
-
-  ConsolidateAll(scorers, false);
-  AssertFilters(scorers, false);
+  AssertWithNewSegmentsDense(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterTFIDF) {
-  Scorers scorers;
-  scorers.PushBack<irs::TFIDF>(false);
+TEST_P(WandTestCase, TermFilterTFIDFSparse) {
+  auto scorer_holder = std::make_unique<irs::TFIDF>(false);
+  auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
+  AssertWithNewSegmentsSparse(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterTFIDFWithNorms) {
-  Scorers scorers;
-  scorers.PushBack<irs::TFIDF>(true);
+TEST_P(WandTestCase, TermFilterTFIDFWithNormsDense) {
+  auto scorer_holder = std::make_unique<irs::TFIDF>(true);
+  auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
+  AssertWithNewSegmentsDense(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterBM25) {
-  Scorers scorers;
-  auto& scorer = scorers.PushBack<irs::BM25>();
-  ASSERT_FALSE(scorer.IsBM15());
-  ASSERT_FALSE(scorer.IsBM11());
+TEST_P(WandTestCase, TermFilterTFIDFWithNormsSparse) {
+  auto scorer_holder = std::make_unique<irs::TFIDF>(true);
+  auto* scorer = scorer_holder.get();
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
-
-  GenerateSegmentMinNorm(scorers);
-  AssertFilters(scorers, false);
+  AssertWithNewSegmentsSparse(scorer);
 }
 
-TEST_P(WandTestCase, TermFilterBM15) {
-  Scorers scorers;
-  auto& scorer = scorers.PushBack<irs::BM25>(irs::BM25::K(), 0.f);
-  ASSERT_TRUE(scorer.IsBM15());
+TEST_P(WandTestCase, TermFilterBM25MinNorm) {
+  auto scorer_holder = std::make_unique<irs::BM25>();
+  auto* scorer = scorer_holder.get();
+  ASSERT_FALSE(scorer->IsBM15());
+  ASSERT_FALSE(scorer->IsBM11());
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
+  GenerateSegment(scorer, true);
+  AssertFilters(scorer, false);
+
+  GenerateSegmentMinNorm(scorer);
+  AssertFilters(scorer, false);
 }
 
-TEST_P(WandTestCase, TermFilterBM11) {
-  Scorers scorers;
-  auto& scorer = scorers.PushBack<irs::BM25>(irs::BM25::K(), 1.f);
-  ASSERT_TRUE(scorer.IsBM11());
+TEST_P(WandTestCase, TermFilterBM25Dense) {
+  auto scorer_holder = std::make_unique<irs::BM25>();
+  auto* scorer = scorer_holder.get();
+  ASSERT_FALSE(scorer->IsBM15());
+  ASSERT_FALSE(scorer->IsBM11());
 
-  GenerateSegment(scorers, true);
-  AssertFilters(scorers, false);
+  AssertWithNewSegmentsDense(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM25Sparse) {
+  auto scorer_holder = std::make_unique<irs::BM25>();
+  auto* scorer = scorer_holder.get();
+  ASSERT_FALSE(scorer->IsBM15());
+  ASSERT_FALSE(scorer->IsBM11());
+
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM15Dense) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.f);
+  auto* scorer = scorer_holder.get();
+  ASSERT_TRUE(scorer->IsBM15());
+
+  AssertWithNewSegmentsDense(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM15Sparse) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.f);
+  auto* scorer = scorer_holder.get();
+  ASSERT_TRUE(scorer->IsBM15());
+
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM11Dense) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 1.f);
+  auto* scorer = scorer_holder.get();
+  ASSERT_TRUE(scorer->IsBM11());
+
+  AssertWithNewSegmentsDense(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM11Sparse) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 1.f);
+  auto* scorer = scorer_holder.get();
+  ASSERT_TRUE(scorer->IsBM11());
+
+  AssertWithNewSegmentsSparse(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM01) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.1f);
+  auto* scorer = scorer_holder.get();
+
+  AssertWithNewSegmentsDense(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM02) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.2f);
+  auto* scorer = scorer_holder.get();
+
+  AssertWithNewSegmentsDense(scorer);
+}
+
+TEST_P(WandTestCase, TermFilterBM04) {
+  auto scorer_holder = std::make_unique<irs::BM25>(irs::BM25::K(), 0.4f);
+  auto* scorer = scorer_holder.get();
+
+  AssertWithNewSegmentsDense(scorer);
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();

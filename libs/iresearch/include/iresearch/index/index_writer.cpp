@@ -942,7 +942,6 @@ void IndexWriter::SegmentContext::Flush() {
 
   DocsMask docs_mask{.set{flushed_docs.get_allocator()}};
   auto old2new = writer->flush(writer_meta, docs_mask);
-
   if (writer_meta.meta.live_docs_count == 0) {
     return;
   }
@@ -1123,9 +1122,9 @@ IndexWriter::IndexWriter(
   SDB_ASSERT(feature_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
-  _wand_scorers = _committed_reader->Options().scorers;
-  for (auto* scorer : _wand_scorers) {
-    _wand_features |= scorer->GetIndexFeatures();
+  _wand_scorer = _committed_reader->Options().scorer;
+  if (_wand_scorer) {
+    _wand_features |= _wand_scorer->GetIndexFeatures();
   }
 
   _flush_context.store(_flush_contexts.data());
@@ -1186,8 +1185,6 @@ void IndexWriter::Clear(uint64_t tick) {
 IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
                                    OpenMode mode,
                                    const IndexWriterOptions& options) {
-  SDB_ASSERT(absl::c_all_of(options.reader_options.scorers,
-                            [](const auto* v) { return v != nullptr; }));
   IndexLock::ptr lock;
   IndexFileRefs::ref_t lock_ref;
 
@@ -1254,7 +1251,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.features ? options.features : kDefaultFeatureInfo,
     options.meta_payload_provider, std::move(reader));
-
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1678,7 +1674,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .column_info = _column_info,
     .feature_info = _feature_info,
     .scorers_features = _wand_features,
-    .scorers = _wand_scorers,
+    .scorer = _wand_scorer,
     .comparator = _comparator,
     .resource_manager = consolidation ? *_dir.ResourceManager().consolidations
                                       : *_dir.ResourceManager().transactions,

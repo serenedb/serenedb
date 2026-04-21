@@ -143,7 +143,7 @@ Did you mean "<slt:ignore>"?
 query
 SELECT * FROM clickclack_renamed();
 ----
-a	a
+a	b
 
 statement ok
 ALTER FUNCTION clickclack_renamed RENAME TO clickclack;
@@ -151,7 +151,7 @@ ALTER FUNCTION clickclack_renamed RENAME TO clickclack;
 query
 SELECT * FROM clickclack();
 ----
-a	a
+a	b
 
 
 statement error

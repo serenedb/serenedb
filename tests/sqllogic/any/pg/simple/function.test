@@ -242,6 +242,41 @@ itmustbelimited
 1
 
 
+# Scalar RETURNS with a VALUES body: the output column is aliased to the
+# function name (PG behavior). Regression test for an earlier bug where the
+# RETURNS-TABLE alias code mistakenly fired here and crashed the binder with
+# an empty column name.
+statement ok
+CREATE OR REPLACE FUNCTION scalar_values_alias()
+RETURNS INTEGER
+AS $$ SELECT * FROM (VALUES (1), (3), (3), (7)) $$
+LANGUAGE sql;
+
+
+query
+SELECT * FROM scalar_values_alias();
+----
+scalar_values_alias
+1
+
+
+# Table RETURNS with named columns and a VALUES body: the declared column
+# names must be visible to downstream references (here, ORDER BY).
+statement ok
+CREATE OR REPLACE FUNCTION table_values_aliases()
+RETURNS TABLE(x INTEGER, y INTEGER)
+AS $$ VALUES (1, 10), (2, 20) $$
+LANGUAGE sql;
+
+
+query
+SELECT x, y FROM table_values_aliases() ORDER BY y DESC;
+----
+x	y
+2	20
+1	10
+
+
 statement ok
 CREATE FUNCTION mikhail_made_me_write_this_code()
 RETURNS INTEGER

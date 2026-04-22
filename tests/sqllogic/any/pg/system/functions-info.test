@@ -446,14 +446,14 @@ t
 
 # both current_role and current_user must be in pg_roles
 query
-SELECT rolname, rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = current_user(); 
+SELECT rolname, rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = current_user; 
 ----
 rolname	rolcanlogin
 <slt:ignore>	t
 
 
 query
-SELECT rolname, rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = current_role(); 
+SELECT rolname, rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = current_role; 
 ----
 rolname	rolcanlogin
 <slt:ignore>	t

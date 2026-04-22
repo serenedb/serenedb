@@ -231,16 +231,12 @@ static std::string FormatResolvedRange(
 template<typename PointsOrRanges, typename FormatOne>
 static std::string FormatClaimList(const PointsOrRanges& items,
                                    FormatOne&& format_one) {
-  constexpr size_t kMaxShown = 8;
   std::string out;
-  for (size_t i = 0; i < items.size() && i < kMaxShown; ++i) {
+  for (size_t i = 0; i < items.size(); ++i) {
     if (i) {
-      absl::StrAppend(&out, ", ");
+      absl::StrAppend(&out, "\n");
     }
     absl::StrAppend(&out, format_one(items[i]));
-  }
-  if (items.size() > kMaxShown) {
-    absl::StrAppend(&out, ", ... (+", items.size() - kMaxShown, " more)");
   }
   return out;
 }
@@ -364,10 +360,7 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table) {
     result.insert("Table", std::string{bind.table->GetName()});
   }
-  // Surface which RowMaterializer the search-scan path will use to
-  // resolve PKs from the iresearch index. Only emit for strategies
-  // that actually run the iresearch pk -> row pipeline.
-  if (bind.scan_source->IsSearchLike()) {
+  if (bind.scan_source->IsSearchLike() || bind.scan_source->IsSkLike()) {
     result.insert("Materializer", std::string{RowMaterializerName(bind)});
   }
   bind.scan_source->AppendSummary(bind, result);

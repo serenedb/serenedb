@@ -155,6 +155,18 @@ struct ColumnRange {
   // NOLINTNEXTLINE(readability-identifier-naming)
   [[nodiscard]] std::string toString() const;
 
+  template<typename H>
+  friend H AbslHashValue(H h, const ColumnRange& cr) {
+    h = H::combine(std::move(h), cr._flags);
+    if (cr.HasLeft()) {
+      h = H::combine(std::move(h), cr._left_value.Hash());
+    }
+    if (cr.HasRight()) {
+      h = H::combine(std::move(h), cr._right_value.Hash());
+    }
+    return h;
+  }
+
  private:
   [[nodiscard]] static ColumnRange Make(uint8_t f, duckdb::Value l,
                                         duckdb::Value r) {

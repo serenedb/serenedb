@@ -1395,12 +1395,6 @@ std::vector<ResolvedRange> ToDisjointRanges(
     }
   }
 
-  // It not the case for points on secondary non-unique index
-  // SDB_ASSERT(
-  //   !absl::c_all_of(
-  //     ranges, [](const KeyBounds& kc) { return kc.IsResolvedNonNullPoint();
-  //     }),
-  //   "Specific points should prepared separately for efficiency reason");
 #endif
 
   std::vector<ResolvedRange> result;
@@ -1435,6 +1429,43 @@ std::vector<ResolvedRange> ToDisjointRanges(
 
   return result;
 }
+
+// Thin reference wrapper for scan-equivalence dedup. Holds only a pointer to a
+// KeyBounds and the shared key_ids span -- no per-entry heap allocation.
+// Two ScanKeyRefs are equal iff their prefix_size matches and every prefix
+// column range compares equal (via ColumnRange::operator==).
+struct ScanKeyRef {
+  const KeyBounds* key_bounds;
+  std::span<const catalog::Column::Id> key_ids;
+
+  bool operator==(const ScanKeyRef& other) const noexcept {
+    const size_t prefix_size = key_bounds->RangePrefixSize();
+    if (prefix_size != other.key_bounds->RangePrefixSize()) {
+      return false;
+    }
+    for (size_t i = 0; i < prefix_size; ++i) {
+      const auto* l = key_bounds->FindColumnRange(key_ids[i]);
+      const auto* r = other.key_bounds->FindColumnRange(other.key_ids[i]);
+      if (l != r && (!l || !r || *l != *r)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  template<typename H>
+  friend H AbslHashValue(H h, const ScanKeyRef& self) {
+    const size_t prefix_size = self.key_bounds->RangePrefixSize();
+    h = H::combine(std::move(h), prefix_size);
+    for (size_t i = 0; i < prefix_size; ++i) {
+      if (const auto* range_column =
+            self.key_bounds->FindColumnRange(self.key_ids[i])) {
+        h = H::combine(std::move(h), *range_column);
+      }
+    }
+    return h;
+  }
+};
 
 ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const duckdb::Expression& expr, std::span<const catalog::Column::Id> key_ids,
@@ -1487,24 +1518,26 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // Two constraints are scan-equivalent iff their prefix size matches and
   // every column range in the prefix is equal. SweepDimensions can emit
   // equivalent pieces non-adjacently (one block per trailing-col value),
-  // so O(n) hash-set dedup on a string key beats std::unique.
-  auto scan_key = [&](const KeyBounds& c) {
-    std::string key;
-    const auto prefix = c.RangePrefixSize();
-    absl::StrAppend(&key, prefix, "|");
-    for (size_t i = 0; i < prefix; ++i) {
-      const ColumnRange* r = c.FindColumnRange(key_ids[i]);
-      absl::StrAppend(&key, r ? r->toString() : std::string{"-"}, "|");
-    }
-    return key;
-  };
+  // so O(n) hash-set dedup on a prefix key beats std::unique.
   {
-    containers::FlatHashSet<std::string> seen;
+    absl::flat_hash_set<ScanKeyRef> seen;
     seen.reserve(constraints.size());
-    auto kept = std::remove_if(
-      constraints.begin(), constraints.end(),
-      [&](KeyBounds& c) { return !seen.insert(scan_key(c)).second; });
-    constraints.erase(kept, constraints.end());
+    std::vector<size_t> kept;
+    kept.reserve(constraints.size());
+    for (size_t i = 0; i < constraints.size(); ++i) {
+      if (seen.insert({&constraints[i], key_ids}).second) {
+        kept.push_back(i);
+      }
+    }
+    size_t write = 0;
+    for (const size_t idx : kept) {
+      if (write != idx) {
+        constraints[write] = std::move(constraints[idx]);
+      }
+      ++write;
+    }
+    constraints.erase(constraints.begin() + static_cast<ptrdiff_t>(write),
+                      constraints.end());
   }
 
   // If the prefix ranges together cover (-inf, +inf) with no gaps,

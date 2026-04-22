@@ -86,6 +86,12 @@ struct ScanSource {
            _kind == ScanSourceKind::Ann || _kind == ScanSourceKind::RangeSearch;
   }
 
+  // Covers SecondaryIndexScan / SkPointScan / SkRangeScan.
+  bool IsSkLike() const {
+    return _kind == ScanSourceKind::SecondaryIndex ||
+           _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
+  }
+
   template<class T>
   const T& Cast() const {
     auto* p = basics::downCast<T>(this);

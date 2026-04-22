@@ -322,24 +322,21 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     std::move(built.indexed_col_indices), sk_shard_id, sec_index.IsUnique());
 }
 
-static bool IsRelationType(duckdb::CatalogType type) {
-  switch (type) {
-    case duckdb::CatalogType::TABLE_ENTRY:
-    case duckdb::CatalogType::VIEW_ENTRY:
-    case duckdb::CatalogType::INDEX_ENTRY:
-      return true;
-    default:
-      return false;
-  }
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::EnsureEntry(
   duckdb::CatalogType type, duckdb::Catalog& catalog,
   duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view name,
   const catalog::Snapshot& snapshot) {
   auto map_selector = [](SchemaCache& sc, duckdb::CatalogType t) -> auto& {
-    return IsRelationType(t) ? sc.relations : sc.functions;
+    switch (t) {
+      case duckdb::CatalogType::TABLE_ENTRY:
+      case duckdb::CatalogType::VIEW_ENTRY:
+        return sc.tables;
+      case duckdb::CatalogType::INDEX_ENTRY:
+        return sc.indexes;
+      default:
+        return sc.functions;
+    }
   };
 
   {

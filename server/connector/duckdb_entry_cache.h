@@ -90,15 +90,19 @@ class DuckDBEntryCache {
 
     duckdb::CreateSchemaInfo info;
     SereneDBSchemaEntry entry;
-    // Separate maps for relations (tables/views/indexes) and functions
-    // because PG allows same name for both (e.g. pg_available_extensions
-    // is both a view and a table function).
-    containers::NodeHashMap<std::string,
-                            duckdb::unique_ptr<duckdb::CatalogEntry>>
-      relations;  // TABLE_ENTRY, VIEW_ENTRY, INDEX_ENTRY
-    containers::NodeHashMap<std::string,
-                            duckdb::unique_ptr<duckdb::CatalogEntry>>
-      functions;  // MACRO_ENTRY, TABLE_MACRO_ENTRY, *_FUNCTION_ENTRY
+    // Separate maps per entry-type group because:
+    //  - PG allows the same name for a relation and a function (e.g.
+    //    pg_available_extensions is both a view and a table function), and
+    //  - an inverted/secondary index legitimately maps to two different
+    //    catalog entries under the same name: a SereneDBIndexScanEntry
+    //    (TABLE_ENTRY, the "FROM idx_name" scan wrapper) and a
+    //    SereneDBIndexEntry (INDEX_ENTRY, for DROP INDEX / duckdb_indexes).
+    using EntryMap =
+      containers::NodeHashMap<std::string,
+                              duckdb::unique_ptr<duckdb::CatalogEntry>>;
+    EntryMap tables;     // TABLE_ENTRY, VIEW_ENTRY
+    EntryMap indexes;    // INDEX_ENTRY
+    EntryMap functions;  // MACRO_ENTRY, TABLE_MACRO_ENTRY, *_FUNCTION_ENTRY
   };
 
   struct DatabaseCache {

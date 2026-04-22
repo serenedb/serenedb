@@ -174,6 +174,13 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(doc
 ----
 QUERY PLAN
 ┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
 │          ORDER_BY         │
 │    ────────────────────   │
 │           #1 ASC          │

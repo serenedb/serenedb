@@ -452,20 +452,8 @@ std::vector<KeyBounds> ExtractFilterOr(
 
     if (constraints.empty() ||
         absl::c_any_of(constraints, [](const KeyBounds& p) {
-          return p.IsUnconstrained() || p.RangePrefixSize() == 0;
+          return p.IsUnconstrained();
         })) {
-      // Bail: one OR branch either puts no constraint on the key at all,
-      // or constrains only columns past the key's leading prefix (e.g.
-      // `e IN (...)` against a `(a, b, c, d, e)` SK -- only `e` is set,
-      // but the scan can't enforce it without a full prefix sweep).
-      // Merging such a branch with other branches via SweepDimensions
-      // decomposes the shared leading-column space once per value, and
-      // the scan returns every resulting sub-range independently. Since
-      // the scan's range is indexed only up to the range column, the
-      // suffix predicate (e IN (...)) is not enforced, and RewriteExpr
-      // may still strip it from remaining_filter -- the same rows then
-      // come out multiple times without ever being re-filtered by e.
-      // Fall back to a full scan for correctness.
       return AnyKeyConstraint(ctx.key_ids);
     }
 
@@ -777,15 +765,40 @@ bool EqualExceptDim(const SweepRegion& a, const SweepRegion& b,
 std::vector<SweepRegion> FuseAdjacentAtoms(
   std::vector<std::pair<Atom, SweepRegion>> atom_results,
   catalog::Column::Id dim_col) {
+  // An atom that produced multiple sub-regions at this dim (e.g. a point
+  // atom where two deeper-dim atoms survived with disjoint sub-results)
+  // has more than one entry in atom_results with the SAME first-field.
+  // Fusing across such an atom would extend an adjacent open range to
+  // cover that atom value, while the sibling duplicate entry also
+  // covers the atom value -- producing overlapping scan ranges and
+  // emitting the same row twice. Flag those entries so can_extend_run
+  // bails when either side sits on a multi-occurrence atom.
+  std::vector<bool> atom_has_duplicates(atom_results.size(), false);
+  for (size_t i = 0; i < atom_results.size(); ++i) {
+    if (atom_has_duplicates[i]) {
+      continue;
+    }
+    for (size_t j = i + 1; j < atom_results.size(); ++j) {
+      if (atom_results[j].first == atom_results[i].first) {
+        atom_has_duplicates[i] = true;
+        atom_has_duplicates[j] = true;
+      }
+    }
+  }
+
   // Two adjacent entries can extend the same run when:
   //  - atoms alternate point/open (a skipped point means a gap -- do not
   //  merge),
   //  - they share a boundary value (or both are unbounded on the touching
   //  side),
-  //  - their sub-results agree on all other dimensions.
+  //  - their sub-results agree on all other dimensions,
+  //  - neither side is an atom with multiple sub-regions at this dim.
   // Since a point has LeftValue() == RightValue(), prev.RightValue() and
   // curr.LeftValue() give the shared endpoint for both point and open atoms.
   auto can_extend_run = [&](size_t i) {
+    if (atom_has_duplicates[i - 1] || atom_has_duplicates[i]) {
+      return false;
+    }
     const Atom& prev = atom_results[i - 1].first;
     const Atom& curr = atom_results[i].first;
     return prev.IsNonNullPoint() != curr.IsNonNullPoint() &&
@@ -1472,31 +1485,27 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // differ in suffix PK columns. They produce identical RocksDB range scans,
   // so keep one representative and let remaining_filter handle the rest.
   // Two constraints are scan-equivalent iff their prefix size matches and
-  // every column range in the prefix is equal.
-  auto scan_equivalent = [&](const KeyBounds& left_bound,
-                             const KeyBounds& right_bound) {
-    const size_t prefix_size = left_bound.RangePrefixSize();
-    if (prefix_size != right_bound.RangePrefixSize()) {
-      return false;
+  // every column range in the prefix is equal. SweepDimensions can emit
+  // equivalent pieces non-adjacently (one block per trailing-col value),
+  // so O(n) hash-set dedup on a string key beats std::unique.
+  auto scan_key = [&](const KeyBounds& c) {
+    std::string key;
+    const auto prefix = c.RangePrefixSize();
+    absl::StrAppend(&key, prefix, "|");
+    for (size_t i = 0; i < prefix; ++i) {
+      const ColumnRange* r = c.FindColumnRange(key_ids[i]);
+      absl::StrAppend(&key, r ? r->toString() : std::string{"-"}, "|");
     }
-    for (size_t i = 0; i < prefix_size; ++i) {
-      const ColumnRange* left_column_range =
-        left_bound.FindColumnRange(key_ids[i]);
-      const ColumnRange* right_column_range =
-        right_bound.FindColumnRange(key_ids[i]);
-      if (left_column_range == right_column_range) {
-        continue;
-      }
-      if (!left_column_range || !right_column_range ||
-          *left_column_range != *right_column_range) {
-        return false;
-      }
-    }
-    return true;
+    return key;
   };
-  constraints.erase(
-    std::unique(constraints.begin(), constraints.end(), scan_equivalent),
-    constraints.end());
+  {
+    containers::FlatHashSet<std::string> seen;
+    seen.reserve(constraints.size());
+    auto kept = std::remove_if(
+      constraints.begin(), constraints.end(),
+      [&](KeyBounds& c) { return !seen.insert(scan_key(c)).second; });
+    constraints.erase(kept, constraints.end());
+  }
 
   // If the prefix ranges together cover (-inf, +inf) with no gaps,
   // the scan reads every row -- just do a full scan instead.
@@ -1530,15 +1539,38 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
 
   // Collect source expressions from prefix columns so they can be stripped
   // from the remaining filter (the scan will enforce them).
-  containers::FlatHashSet<const duckdb::Expression*> sources =
-    std::move(dead_sources);
+  // A source is safe to strip only when it appears in some constraint's
+  // prefix AND in NO constraint's suffix. SweepDimensions decomposes
+  // `(AND all_pk) OR (IN on trailing)` into a mix of fully-prefixed
+  // pieces (e.g. `{a=v1, b=v2, ..., z=Point(k)}`, whose source is `&IN`
+  // via the `z` prefix column) and sweep-split pieces (e.g.
+  // `{a=(-inf, v1), z=Point(k)}`, whose `z=Point(k)` is in the SUFFIX --
+  // past the scan's range column). The scan only enforces up to the
+  // range column, so the sweep-split piece does NOT enforce `z=k`; the
+  // scan's union of ranges over-reads. If we strip `&IN` anyway (because
+  // the fully-prefixed piece puts it in the prefix bucket), the over-read
+  // goes uncorrected. Subtracting suffix sources from the strippable set
+  // keeps the trailing predicate in remaining_filter whenever any sibling
+  // piece leaves it unenforced.
+  containers::FlatHashSet<const duckdb::Expression*> prefix_sources;
+  containers::FlatHashSet<const duckdb::Expression*> suffix_sources;
   for (const auto& constraint : constraints) {
     const auto prefix = constraint.RangePrefixSize();
     for (size_t i = 0; i < prefix; ++i) {
       const auto& col_exprs = constraint.GetSourceExprs(key_ids[i]);
-      sources.insert(col_exprs.begin(), col_exprs.end());
+      prefix_sources.insert(col_exprs.begin(), col_exprs.end());
+    }
+    for (auto col_id : key_ids.subspan(prefix)) {
+      const auto& col_exprs = constraint.GetSourceExprs(col_id);
+      suffix_sources.insert(col_exprs.begin(), col_exprs.end());
     }
   }
+  for (const auto* s : suffix_sources) {
+    prefix_sources.erase(s);
+  }
+  containers::FlatHashSet<const duckdb::Expression*> sources =
+    std::move(dead_sources);
+  sources.insert(prefix_sources.begin(), prefix_sources.end());
 
   auto remaining = RewriteExpr(expr, sources);
   return {ConstraintKind::Ranges, std::move(constraints), std::move(remaining)};

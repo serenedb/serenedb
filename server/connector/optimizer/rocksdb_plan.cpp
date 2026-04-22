@@ -56,6 +56,7 @@
 
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/optimizer/remove_unused_columns.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -68,6 +69,7 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_entry.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/rocksdb_filter.hpp"
 
 namespace sdb::optimizer {
@@ -363,14 +365,14 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         pk->column_ids = cols;
         pk->points = std::move(points);
         bind_data.scan_source = std::move(pk);
-        get.function = connector::CreatePkPointScanFunction();
+        get.function = connector::CreatePKPointsLookupFunction();
         remove_extra_filter();
       } else {
         auto pk = std::make_unique<connector::PkRangeScan>();
         pk->column_ids = cols;
         pk->ranges = std::move(ranges);
         bind_data.scan_source = std::move(pk);
-        get.function = connector::CreatePkRangeScanFunction();
+        get.function = connector::CreatePKRangesScanFunction();
         remove_extra_filter();
       }
     } else {
@@ -381,7 +383,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         sk->column_ids = cols;
         sk->points = std::move(points);
         bind_data.scan_source = std::move(sk);
-        get.function = connector::CreateSkPointScanFunction();
+        get.function = connector::CreateSKPointsLookupFunction();
         remove_extra_filter();
       } else if (best.kind == connector::ConstraintKind::Ranges) {
         auto sk = std::make_unique<connector::SkRangeScan>();
@@ -390,7 +392,7 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
         sk->column_ids = cols;
         sk->ranges = std::move(ranges);
         bind_data.scan_source = std::move(sk);
-        get.function = connector::CreateSkRangeScanFunction();
+        get.function = connector::CreateSKRangesScanFunction();
         remove_extra_filter();
       } else {
         auto si = std::make_unique<connector::SecondaryIndexScan>();
@@ -414,9 +416,36 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     return changed;
   }
 
+  // Post-walk cleanup: any LogicalGet we swapped to a filter_prune=false
+  // variant carries stale projection_ids if an earlier optimizer pass
+  // populated them (e.g. parquet/json external tables run filter_prune=true
+  // before the swap). Collapse projection_ids into column_ids so the
+  // subsequent RemoveUnusedColumns pass doesn't leave dangling indices --
+  // see flatten_projection_ids.h.
+  static void FlattenSwappedGets(
+    duckdb::LogicalOperator& root,
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    for (auto& child : plan->children) {
+      FlattenSwappedGets(root, child);
+    }
+    if (plan->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+      return;
+    }
+    auto& get = plan->Cast<duckdb::LogicalGet>();
+    if (get.projection_ids.empty() || get.function.filter_prune) {
+      return;
+    }
+    FlattenProjectionIds(root, get);
+  }
+
   static void Optimize(duckdb::OptimizerExtensionInput& input,
                        duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
-    OptimizeChildren(input.context, plan);
+    bool changed = OptimizeChildren(input.context, plan);
+    if (changed) {
+      FlattenSwappedGets(*plan, plan);
+      duckdb::RemoveUnusedColumns unused{input.optimizer};
+      unused.VisitOperator(plan);
+    }
   }
 };
 

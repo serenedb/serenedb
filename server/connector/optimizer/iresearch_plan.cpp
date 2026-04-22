@@ -25,6 +25,7 @@
 #include <duckdb/function/aggregate/distributive_functions.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
+#include <duckdb/optimizer/remove_unused_columns.hpp>
 #include <duckdb/planner/expression/bound_aggregate_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -50,6 +51,7 @@
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
 #include "connector/functions/vector.h"
+#include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "search/inverted_index_shard.h"
@@ -295,7 +297,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
   bind_data.scan_source = std::move(ann);
-  get.function = connector::CreateIresearchAnnScanFunction();
+  get.function = connector::CreateIResearchANNFullscanFunction();
 
   // The HNSW scan returns rows pre-sorted, bounded; drop the TopN.
   plan = std::move(top_n.children[0]);
@@ -426,7 +428,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
   bind_data.scan_source = std::move(rss);
-  get.function = connector::CreateIresearchRangeScanFunction();
+  get.function = connector::CreateIResearchANNRangeScanFunction();
 
   filter.expressions.erase(filter.expressions.begin() + match_idx);
   if (filter.expressions.empty()) {
@@ -609,7 +611,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   search->query = root->prepare({.index = reader});
   search->filter_summary = std::move(filter_summary);
   bind_data.scan_source = std::move(search);
-  get.function = connector::CreateIresearchSearchScanFunction();
+  get.function = connector::CreateIResearchScanFunction();
 
   // Drop claimed expressions from the filter. If everything was claimed,
   // lift the LogicalGet up to replace the LogicalFilter entirely.
@@ -1700,7 +1702,7 @@ bool TryConvertAggregateToCount(
   }
 
   bind_data.scan_source = std::move(count_scan);
-  get.function = connector::CreateIresearchCountScanFunction();
+  get.function = connector::CreateIResearchCountFunction();
   // Drop every column from the scan -- CountScan emits zero columns. The
   // aggregate's count_star/count(const) children don't reference any Get
   // binding, so clearing these is safe.
@@ -1824,31 +1826,60 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
 
   // Bottom-up walk. `root` is the plan root (for FindSearchScanByTableIndex),
   // `plan` is the current node being visited.
-  static void Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
+  static bool Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
                    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
                    bool in_mutation, int pass) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
+    bool changed = false;
     for (auto& child : plan->children) {
-      Walk(root, child, subtree_in_mutation, pass);
+      changed |= Walk(root, child, subtree_in_mutation, pass);
     }
     if (!subtree_in_mutation) {
       if (pass == 1) {
-        TryOptimizePass1(root, plan);
+        changed |= TryOptimizePass1(root, plan);
       } else {
-        TryOptimizePass2(root, plan);
+        changed |= TryOptimizePass2(root, plan);
       }
     }
+    return changed;
   }
 
-  static void Optimize(duckdb::OptimizerExtensionInput& /*input*/,
+  // Post-walk cleanup: wherever we swapped a LogicalGet.function to one
+  // of our iresearch scan variants (all filter_prune=false), collapse any
+  // `projection_ids` that an earlier pass (e.g. parquet's filter_prune=true
+  // RemoveUnusedColumns) left behind. Required before re-running
+  // RemoveUnusedColumns -- see flatten_projection_ids.h for the rationale.
+  static void FlattenSwappedGets(
+    duckdb::LogicalOperator& root,
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    for (auto& child : plan->children) {
+      FlattenSwappedGets(root, child);
+    }
+    if (plan->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+      return;
+    }
+    auto& get = plan->Cast<duckdb::LogicalGet>();
+    if (get.projection_ids.empty() || get.function.filter_prune) {
+      return;
+    }
+    FlattenProjectionIds(root, get);
+  }
+
+  static void Optimize(duckdb::OptimizerExtensionInput& input,
                        duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     // Pass 1: attach search filters, detect BM25/TFIDF in projections,
     // rewrite their expressions, and attach scorer to bind_data.
     // Pass 2: pull top-K limits (now scorer is set) and rewrite
     // BM25/TFIDF in Filter/TopN ORDER BY contexts (bottom-up, so by
     // the time we visit Projection the scorer may already be set).
-    Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1);
-    Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2);
+    bool changed = Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2);
+
+    if (changed) {
+      FlattenSwappedGets(*plan, plan);
+      duckdb::RemoveUnusedColumns unused{input.optimizer};
+      unused.VisitOperator(plan);
+    }
   }
 };
 

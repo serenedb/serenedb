@@ -65,15 +65,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
 │                           │
@@ -88,7 +80,6 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│            body           │
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
@@ -111,15 +102,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
 │                           │
@@ -134,7 +117,6 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│            body           │
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
@@ -165,15 +147,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
 │                           │
@@ -188,7 +162,6 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│            body           │
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
@@ -208,15 +181,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
 │                           │
@@ -231,7 +196,6 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │        Projections:       │
-│            body           │
 │             id            │
 │  sdb_inverted_index_score │
 │                           │
@@ -249,22 +213,7 @@ EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(doc
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             #0            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
 │                           │
@@ -279,11 +228,7 @@ QUERY PLAN
 │    bm25(k1=1.2, b=0.75)   │
 │                           │
 │          TopK: 3          │
-│                           │
-│        Projections:       │
-│            body           │
-│             id            │
-│  sdb_inverted_index_score │
+│      Projections: id      │
 │                           │
 │          ~5 rows          │
 └───────────────────────────┘
@@ -313,30 +258,13 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │         PROJECTION        ││         PROJECTION        │
 │    ────────────────────   ││    ────────────────────   │
-│             #0            ││             #0            │
-│             #1            ││             #1            │
-│                           ││                           │
-│           ~1 row          ││           ~1 row          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│         PROJECTION        ││         PROJECTION        │
-│    ────────────────────   ││    ────────────────────   │
 │             id            ││             id            │
 │         has_score         ││         has_score         │
-│             #1            ││             #1            │
 │                           ││                           │
 │           ~1 row          ││           ~1 row          │
 └─────────────┬─────────────┘└─────────────┬─────────────┘
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│         PROJECTION        ││         PROJECTION        │
-│    ────────────────────   ││    ────────────────────   │
-│             id            ││             id            │
-│  sdb_inverted_index_score ││  sdb_inverted_index_score │
-│                           ││                           │
-│           ~1 row          ││           ~1 row          │
-└─────────────┬─────────────┘└─────────────┬─────────────┘
-┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     ││      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
 │        Table: docs        ││        Table: docs        │
 │                           ││                           │
@@ -353,7 +281,6 @@ QUERY PLAN
 │          TopK: 3          ││          TopK: 3          │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
-│            body           ││            body           │
 │             id            ││             id            │
 │  sdb_inverted_index_score ││  sdb_inverted_index_score │
 │                           ││                           │
@@ -379,15 +306,7 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│  sdb_inverted_index_score │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
 │                           │
@@ -404,7 +323,6 @@ QUERY PLAN
 │          TopK: 3          │
 │                           │
 │        Projections:       │
-│            body           │
 │             id            │
 │  sdb_inverted_index_score │
 │                           │

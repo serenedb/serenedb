@@ -50,13 +50,6 @@
 #include "pg/connection_context.h"
 
 namespace sdb::connector {
-namespace {
-
-static constexpr std::string_view kIresearchScanName = "iresearch_lookup";
-
-}
-
-// --- SereneDBScanBindData ---
 
 duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
   auto copy = duckdb::make_uniq<SereneDBScanBindData>();
@@ -92,20 +85,6 @@ static duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::vector<duckdb::string>& names) {
   throw duckdb::InternalException(
     "SereneDBScanBind: should be provided via GetScanFunction");
-}
-
-// --- pushdown_complex_filter: kept as no-op ---
-
-static void SereneDBPushdownComplexFilter(
-  duckdb::ClientContext& /*context*/, duckdb::LogicalGet& /*get*/,
-  duckdb::FunctionData* /*bind_data_ptr*/,
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& /*filters*/) {
-  // No-op: all iresearch / rocksdb predicate claims now happen in the
-  // sdb::optimizer::Register{Iresearch,RocksDB}PlanOptimizer extensions
-  // (which run after the built-in FilterPushdown pass). Built-in
-  // FilterPushdown still calls this hook, so we keep it wired up but
-  // don't claim anything here -- otherwise the rules would see a
-  // pre-claimed scan and skip it.
 }
 
 // --- cardinality / rows_scanned / virtual columns ---
@@ -395,109 +374,147 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   return result;
 }
 
-// --- Factory helpers ---
-
 // Populate the common callbacks shared by every scan function variant.
 static void SetCommonCallbacks(duckdb::TableFunction& func) {
-  func.bind = SereneDBScanBind;
-  func.get_bind_info = SereneDBGetBindInfo;
-  func.init_local = CommonScanInitLocal;
-  func.projection_pushdown = true;
-  func.filter_pushdown = false;
-  func.pushdown_complex_filter = SereneDBPushdownComplexFilter;
-  func.to_string = SereneDBScanToString;
+  // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
+  func.init_local = CommonScanInitLocal;  // TODO: Use separate callbacks
+  // TODO: Provide statistics
+  // TODO: Better cardinality estimates
   func.cardinality = SereneDBScanCardinality;
   func.rows_scanned = CommonScanRowsScanned;
+  // TODO: Use pushdown_complex_filter instead of RBO approach for
+  // indexes/primary keys
+  // TODO: Use pushdown_expression this instead of RBO approach for
+  // scoring/offsets
+  func.to_string = SereneDBScanToString;
+  // TODO: Implement dynamic_to_string
+  // TODO: Implement table_scan_progress
+  // TODO: Use get_partition_data for partition pruning of partitioned
+  // tables/indexes
+  func.get_bind_info = SereneDBGetBindInfo;
+  // TODO: Why type_pushdown is needed? Is it about cast for text-formats?
+  // TODO: Is get_multi_file_reader helpful for us? Will it allow us
+  // faster/simpler implementation of multi-threaded scanning?
+  // TODO: Implement supports_pushdown_extract for struct extract pushdown
+  // (e.g., JSON fields)
+  // TODO: Implement get_partition_info and get_partition_stats for partitioned
+  // tables/indexes
   func.get_virtual_columns = SereneDBScanGetVirtualColumns;
   func.get_row_id_columns = SereneDBScanGetRowIdColumns;
+  // TODO: Implement set_scan_order for order by primary key columns in PK/RBO
+  // scans, and for order by indexed columns in SK scans
+  func.verify_serialization = false;
+  func.projection_pushdown = true;
+  // TODO: Use filter_pushdown, filter_prune instead of RBO approach for
+  // indexes/primary keys
+  // TODO: Use sampling_pushdown for sampling from rocksdb/etc
+  // TODO: Use late_materialization instead of our materialization approach for
+  // indexes/primary keys
+  // TODO: Better order preservation types for different scan strategies, e.g.,
+  // PK scans preserve insertion order, SK scans don't guarantee any order, but
+  // could be made to preserve index order if we implement set_scan_order
+  func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
+  // TODO: We can init_global on schedule for some scan types, with
+  // global_initialization, but why?
 }
 
 // --- Factory ---
 
-duckdb::TableFunction CreateSereneDBScanFunction() {
-  duckdb::TableFunction func("rocksdb_table_fullscan", {}, PKFullScanFunction,
-                             SereneDBScanBind);
-  func.init_global = PKFullScanInitGlobal;
+duckdb::TableFunction CreateTableFullscanFunction() {
+  duckdb::TableFunction func{
+    "rocksdb_table_fullscan", {}, PKFullScanFunction, SereneDBScanBind,
+    PKFullScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreatePkPointScanFunction() {
-  duckdb::TableFunction func("rocksdb_pk_points_lookup", {},
-                             PKPointLookupFunction, SereneDBScanBind);
-  func.init_global = PKPointLookupInitGlobal;
+duckdb::TableFunction CreatePKPointsLookupFunction() {
+  duckdb::TableFunction func{
+    "rocksdb_pk_points_lookup", {}, PKPointLookupFunction, SereneDBScanBind,
+    PKPointLookupInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreatePkRangeScanFunction() {
-  duckdb::TableFunction func("rocksdb_pk_ranges_scan", {}, PKRangeScanFunction,
-                             SereneDBScanBind);
-  func.init_global = PKRangeScanInitGlobal;
+duckdb::TableFunction CreatePKRangesScanFunction() {
+  duckdb::TableFunction func{
+    "rocksdb_pk_ranges_scan", {}, PKRangeScanFunction, SereneDBScanBind,
+    PKRangeScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateFullSkScanFunction() {
-  duckdb::TableFunction func("rocksdb_sk_fullscan", {}, SKFullScanFunction,
-                             SereneDBScanBind);
-  func.init_global = SKFullScanInitGlobal;
+duckdb::TableFunction CreateSKFullscanFunction() {
+  duckdb::TableFunction func{
+    "rocksdb_sk_fullscan", {}, SKFullScanFunction, SereneDBScanBind,
+    SKFullScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateSkPointScanFunction() {
-  duckdb::TableFunction func("rocksdb_sk_points_lookup", {},
-                             SKPointLookupFunction, SereneDBScanBind);
-  func.init_global = SKPointLookupInitGlobal;
+duckdb::TableFunction CreateSKPointsLookupFunction() {
+  duckdb::TableFunction func{
+    "rocksdb_sk_points_lookup", {}, SKPointLookupFunction, SereneDBScanBind,
+    SKPointLookupInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateSkRangeScanFunction() {
-  duckdb::TableFunction func("rocksdb_sk_ranges_scan", {}, SKRangeScanFunction,
-                             SereneDBScanBind);
-  func.init_global = SKRangeScanInitGlobal;
+duckdb::TableFunction CreateSKRangesScanFunction() {
+  duckdb::TableFunction func{
+    "rocksdb_sk_ranges_scan", {}, SKRangeScanFunction, SereneDBScanBind,
+    SKRangeScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateFullIresearchScanFunction() {
-  duckdb::TableFunction func("iresearch_fullscan", {}, PKFullScanFunction,
-                             SereneDBScanBind);
-  func.init_global = PKFullScanInitGlobal;
+duckdb::TableFunction CreateIResearchFullscanFunction() {
+  duckdb::TableFunction func{
+    "iresearch_fullscan", {}, PKFullScanFunction, SereneDBScanBind,
+    PKFullScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateIresearchSearchScanFunction() {
-  duckdb::TableFunction func(std::string{kIresearchScanName}, {},
-                             SearchFullScanFunction, SereneDBScanBind);
-  func.init_global = SearchFullScanInitGlobal;
+duckdb::TableFunction CreateIResearchScanFunction() {
+  duckdb::TableFunction func{
+    "iresearch_scan",         {}, SearchFullScanFunction, SereneDBScanBind,
+    SearchFullScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateIresearchCountScanFunction() {
-  duckdb::TableFunction func("iresearch_count", {}, SearchCountScanFunction,
-                             SereneDBScanBind);
-  func.init_global = SearchCountScanInitGlobal;
+duckdb::TableFunction CreateIResearchCountFunction() {
+  duckdb::TableFunction func{
+    "iresearch_count",         {}, SearchCountScanFunction, SereneDBScanBind,
+    SearchCountScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateIresearchAnnScanFunction() {
-  duckdb::TableFunction func("irs_ann_topk_scan", {}, SearchAnnScanFunction,
-                             SereneDBScanBind);
-  func.init_global = SearchAnnScanInitGlobal;
+duckdb::TableFunction CreateIResearchANNFullscanFunction() {
+  duckdb::TableFunction func{
+    "iresearch_ann_fullscan", {}, SearchAnnScanFunction, SereneDBScanBind,
+    SearchAnnScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }
 
-duckdb::TableFunction CreateIresearchRangeScanFunction() {
-  duckdb::TableFunction func("irs_ann_range_scan", {}, SearchRangeScanFunction,
-                             SereneDBScanBind);
-  func.init_global = SearchRangeScanInitGlobal;
+duckdb::TableFunction CreateIResearchANNRangeScanFunction() {
+  duckdb::TableFunction func{
+    "iresearch_ann_range_scan", {}, SearchRangeScanFunction, SereneDBScanBind,
+    SearchRangeScanInitGlobal,
+  };
   SetCommonCallbacks(func);
   return func;
 }

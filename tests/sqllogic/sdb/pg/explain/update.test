@@ -49,7 +49,6 @@ QUERY PLAN
 │    ────────────────────   │
 │          Table: t         │
 │   Filter: (column1=foo)   │
-│    Projections: column1   │
 │                           │
 │          ~0 rows          │
 └───────────────────────────┘

@@ -351,61 +351,61 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
 // Default scan over a SereneDB RocksDB table: full prefix iteration.
 // Optimizer rules may swap LogicalGet.function to a more specialised
 // function below when query patterns warrant it.
-duckdb::TableFunction CreateSereneDBScanFunction();
+duckdb::TableFunction CreateTableFullscanFunction();
 
 // PK point lookup: RocksDB MultiGet over the PK byte sequences in
 // PkPointScan bind data. Swapped in by the rocksdb_plan rule when it
 // detects PK equality / IN predicates above the LogicalGet.
-duckdb::TableFunction CreatePkPointScanFunction();
+duckdb::TableFunction CreatePKPointsLookupFunction();
 
 // PK range scan: bounded prefix iterator(s) over RocksDB. Swapped in by
 // the rocksdb_plan rule when it detects PK range predicates (<, <=, >, >=,
 // BETWEEN) or a composite-PK equality prefix + trailing range.
-duckdb::TableFunction CreatePkRangeScanFunction();
+duckdb::TableFunction CreatePKRangesScanFunction();
 
 // Default for SK-index entries (FROM sk_index_name): full SK iteration ->
 // PK stream -> MultiGet. Stub for now: same body as the full table scan,
 // just a distinct name so EXPLAIN shows when an index entry is bound.
 // The rocksdb_plan rule (Phase 4) swaps to SkPoint / SkRange when SK
 // predicates fire.
-duckdb::TableFunction CreateFullSkScanFunction();
+duckdb::TableFunction CreateSKFullscanFunction();
 
 // SK point lookup: SK probe -> PK list -> MultiGet. Swapped in by the
 // rocksdb_plan rule when SK equality / IN predicates match the leading
 // columns of a secondary index (either auto-chosen over PK for a regular
 // table scan, or the designated index when FROM idx_name).
-duckdb::TableFunction CreateSkPointScanFunction();
+duckdb::TableFunction CreateSKPointsLookupFunction();
 
 // SK range scan: SK range -> PK stream -> MultiGet. Swapped in by the
 // rocksdb_plan rule when SK range predicates match.
-duckdb::TableFunction CreateSkRangeScanFunction();
+duckdb::TableFunction CreateSKRangesScanFunction();
 
 // Default for inverted-index entries (FROM iresearch_index_name): full
 // iresearch doc iteration -> PK stream -> MultiGet. Stub for now: same
 // body as the full table scan, just a distinct name. The iresearch_plan
 // rule (Phase 5) swaps to specialised iresearch search/ANN/range scans
 // when the corresponding predicates fire.
-duckdb::TableFunction CreateFullIresearchScanFunction();
+duckdb::TableFunction CreateIResearchFullscanFunction();
 
 // Iresearch phrase / term_eq search. Swapped in by iresearch_plan when
 // the filter contains one or more sdb_phrase/sdb_term_eq predicates over
 // the inverted index. bind_data.scan_source becomes SearchScan with the
 // prepared iresearch query.
-duckdb::TableFunction CreateIresearchSearchScanFunction();
+duckdb::TableFunction CreateIResearchScanFunction();
 
 // Iresearch row-count: emits zero-column rows of cardinality == match count.
 // Swapped in by iresearch_plan on LogicalGet with no projected columns
 // (COUNT(*) / COUNT(1) / EXISTS(SELECT 1 ...) / ...).
-duckdb::TableFunction CreateIresearchCountScanFunction();
+duckdb::TableFunction CreateIResearchCountFunction();
 
 // HNSW approximate-nearest-neighbour top-k. Swapped in by iresearch_plan
 // on the pattern ORDER BY distance_fn(col, const_vec) ASC LIMIT k.
 // bind_data.scan_source becomes ANNScan.
-duckdb::TableFunction CreateIresearchAnnScanFunction();
+duckdb::TableFunction CreateIResearchANNFullscanFunction();
 
 // HNSW bounded-radius range search. Swapped in by iresearch_plan on
 // WHERE distance_fn(col, const_vec) < radius. bind_data.scan_source
 // becomes RangeSearchScan.
-duckdb::TableFunction CreateIresearchRangeScanFunction();
+duckdb::TableFunction CreateIResearchANNRangeScanFunction();
 
 }  // namespace sdb::connector

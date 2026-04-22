@@ -97,13 +97,13 @@ duckdb::TableFunction SereneDBIndexScanEntry::GetScanFunction(
     sk->is_unique = _sk_unique;
     data->scan_source = std::move(sk);
     bind_data = std::move(data);
-    return CreateFullSkScanFunction();
+    return CreateSKFullscanFunction();
   }
   // Inverted-index entry: leave scan_source as default FullTableScan; the
   // iresearch_plan rule (Phase 5) swaps the function on a search/ANN/range
   // match. The full-iresearch stub iterates all docs in the meantime.
   bind_data = std::move(data);
-  return CreateFullIresearchScanFunction();
+  return CreateIResearchFullscanFunction();
 }
 
 duckdb::TableStorageInfo SereneDBIndexScanEntry::GetStorageInfo(

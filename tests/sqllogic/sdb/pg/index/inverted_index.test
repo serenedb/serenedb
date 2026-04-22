@@ -546,6 +546,50 @@ CREATE TEXT SEARCH DICTIONARY score_en(
 statement ok
 CREATE INDEX score_parquet_idx ON score_parquet_ext USING inverted(a, b score_en);
 
+onlyif serenedb
+query
+EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│  score_parquet_idx.a ASC  │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             a             │
+│         has_score         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Table:          │
+│     score_parquet_ext     │
+│                           │
+│       Materializer:       │
+│ parquet (file_row_number) │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             a             │
+│  sdb_inverted_index_score │
+│                           │
+│          ~0 rows          │
+└───────────────────────────┘
+
+
 query
 SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
@@ -859,7 +903,7 @@ QUERY PLAN
 │          ~2 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
 │                           │

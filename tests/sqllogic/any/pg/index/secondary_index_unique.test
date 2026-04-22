@@ -299,14 +299,6 @@ EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          district         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
@@ -316,7 +308,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│            code           │
 │            pid            │
 │          district         │
 │                           │
@@ -330,14 +321,6 @@ EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          district         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
@@ -347,7 +330,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│            code           │
 │            pid            │
 │          district         │
 │                           │
@@ -360,14 +342,6 @@ EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          district         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
@@ -379,7 +353,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│            code           │
 │            pid            │
 │          district         │
 │                           │
@@ -615,14 +588,6 @@ EXPLAIN SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│            note           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
@@ -634,8 +599,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│           region          │
-│            tier           │
 │            pid            │
 │            note           │
 │                           │
@@ -1147,14 +1110,6 @@ EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c =
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│            note           │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │           Table:          │
@@ -1166,9 +1121,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│             a             │
-│             b             │
-│             c             │
 │            pid            │
 │            note           │
 │                           │
@@ -1314,8 +1266,8 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│             #3            │
-│             #4            │
+│           pid             │
+│           note            │
 │                           │
 │          ~3 rows          │
 └─────────────┬─────────────┘
@@ -1336,8 +1288,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│             a             │
-│             b             │
 │             c             │
 │            pid            │
 │            note           │
@@ -1458,14 +1408,6 @@ EXPLAIN SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300);
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│            tag            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │   Table: babsky_uniq_in   │
@@ -1476,7 +1418,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│            code           │
 │            pid            │
 │            tag            │
 │                           │
@@ -1573,8 +1514,8 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│             #2            │
-│             #3            │
+│            pid            │
+│            tag            │
 │                           │
 │           ~1 row          │
 └─────────────┬─────────────┘
@@ -1595,7 +1536,6 @@ QUERY PLAN
 │        Unique: true       │
 │                           │
 │        Projections:       │
-│            key            │
 │           level           │
 │            pid            │
 │            tag            │

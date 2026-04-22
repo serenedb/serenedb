@@ -932,14 +932,6 @@ EXPLAIN SELECT pid, tag FROM babsky_composite WHERE city = 'berlin' AND level = 
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│            tag            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
@@ -949,8 +941,6 @@ QUERY PLAN
 │  {city=berlin, level=10}  │
 │                           │
 │        Projections:       │
-│            city           │
-│           level           │
 │            pid            │
 │            tag            │
 │                           │
@@ -1128,14 +1118,6 @@ EXPLAIN SELECT pid, nickname FROM vedernikoff_csv_crew WHERE stocks = 30;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          nickname         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
@@ -1144,7 +1126,6 @@ QUERY PLAN
 │    Filter: {stocks=30}    │
 │                           │
 │        Projections:       │
-│           stocks          │
 │            pid            │
 │          nickname         │
 │                           │
@@ -1302,14 +1283,6 @@ EXPLAIN SELECT pid, nickname FROM vedernikoff_pq_crew WHERE stocks = 30;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          nickname         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
@@ -1318,7 +1291,6 @@ QUERY PLAN
 │    Filter: {stocks=30}    │
 │                           │
 │        Projections:       │
-│           stocks          │
 │            pid            │
 │          nickname         │
 │                           │

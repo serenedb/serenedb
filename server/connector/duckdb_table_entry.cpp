@@ -86,7 +86,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   data->table_entry = this;
 
   bind_data = std::move(data);
-  return CreateSereneDBScanFunction();
+  return CreateTableFullscanFunction();
 }
 
 void SereneDBTableEntry::BindUpdateConstraints(duckdb::Binder& binder,

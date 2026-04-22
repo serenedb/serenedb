@@ -82,15 +82,7 @@ QUERY PLAN
 │          ~0 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             id            │
-│             bo            │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: offsets_test    │
 │                           │
@@ -104,7 +96,6 @@ QUERY PLAN
 │       Offsets: body       │
 │                           │
 │        Projections:       │
-│            body           │
 │             id            │
 │ sdb_inverted_index_offsets│
 │             $2            │
@@ -365,12 +356,12 @@ QUERY PLAN
 │    ────────────────────   ││    ────────────────────   │
 │             id            ││             id            │
 │            lim            ││             4             │
-│         body_offs         ││             #2            │
+│         body_offs         ││             #1            │
 │                           ││                           │
 │           ~1 row          ││           ~1 row          │
 └─────────────┬─────────────┘└─────────────┬─────────────┘
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
-│      IRESEARCH_LOOKUP     ││      IRESEARCH_LOOKUP     │
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
 │    Table: offsets_test    ││    Table: offsets_test    │
 │                           ││                           │
@@ -384,7 +375,6 @@ QUERY PLAN
 │       Offsets: body       ││       Offsets: body       │
 │                           ││                           │
 │        Projections:       ││        Projections:       │
-│            body           ││            body           │
 │             id            ││             id            │
 │ sdb_inverted_index_offsets││ sdb_inverted_index_offsets│
 │             $2            ││             $2            │

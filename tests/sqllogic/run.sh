@@ -54,24 +54,57 @@ validate_boolean() {
 	}
 }
 
+# Trap is armed before launch_external so a MinIO startup failure still cleans
+# up the container. Helpers clear their state var before doing work, so repeat
+# invocations (e.g. INT then EXIT) are no-ops on the second pass.
+MINIO_CONTAINER_NAME=""
+MINIO_LOG_FILE=""
+cancel_pid=""
+
+cleanup_minio() {
+	if [[ -n "$MINIO_CONTAINER_NAME" ]]; then
+		local name="$MINIO_CONTAINER_NAME"
+		MINIO_CONTAINER_NAME=""
+		if [[ -n "$MINIO_LOG_FILE" ]]; then
+			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
+			docker logs "$name" >"${MINIO_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping MinIO container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
+cleanup_cancel_pid() {
+	if [[ -n "$cancel_pid" ]]; then
+		local pid="$cancel_pid"
+		cancel_pid=""
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+}
+
+cleanup_all() {
+	cleanup_cancel_pid
+	cleanup_minio
+}
+
+trap cleanup_all EXIT
+# Signal handlers just exit; EXIT trap then runs cleanup_all. Without these,
+# a default `trap ... INT` would run cleanup but NOT exit -- bash would resume
+# the test loop after Ctrl-C, which is not what we want.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 launch_s3() {
 	PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio-${USER:-$(id -un)}.log"
 	MINIO_CONTAINER_NAME="${PREFIX}-serenedb-test-minio-$$"
-	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio.log"
 	export MINIO_ACCESS_KEY="minioadmin"
 	export MINIO_SECRET_KEY="minioadmin"
 	export MINIO_BUCKET="testbucket"
 	export MINIO_PORT
 	MINIO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-
-	cleanup_minio() {
-		if [[ -n "${MINIO_CONTAINER_NAME:-}" ]]; then
-			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
-			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
-			echo "Stopping MinIO container..."
-			docker rm -fv "$MINIO_CONTAINER_NAME" 2>/dev/null || true
-		fi
-	}
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -279,7 +312,6 @@ run_tests() {
 		skip_opt="--skip $skip"
 	fi
 
-	# Execute the command and capture the exit code
 	sqllogictest "$test" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
@@ -318,11 +350,17 @@ echo "sqllogictest build: $(($(date +%s) - build_start))s"
 export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
-cancel_pid=""
-trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT TERM
 if [[ "$cancellation" == "true" ]]; then
+	# TODO: move this cancellation driver into the sqllogictest-rs runner.
+	# Doing it there is more native -- we can cancel queries at the protocol
+	# level instead of spraying SIGINTs across our own process group and
+	# relying on `trap '' INT` to shield the parent shell. Known issues here:
+	#   * `trap '' INT` is never restored, so INT stays ignored for the rest
+	#     of the script (including the health check below).
+	#   * `kill -INT 0` hits every process in our pgid; children inherit
+	#     SIG_IGN from the parent's `trap '' INT`, so the runner only sees
+	#     SIGINT because tokio reinstalls its own handler on startup.
 	trap '' INT
-	# One background process that keeps sending SIGINT at random intervals
 	(
 		while true; do
 			sleep "$(awk "BEGIN{srand(); printf \"%.3f\", 0.05 + rand() * 2.0}")"
@@ -342,9 +380,7 @@ done
 
 if [[ "$cancellation" == "true" ]]; then
 	# Stop the SIGINT sender before the health check so pg_isready isn't killed
-	kill "$cancel_pid" 2>/dev/null || true
-	wait "$cancel_pid" 2>/dev/null || true
-	cancel_pid=""
+	cleanup_cancel_pid
 
 	local_port="${single_port:-$cluster_port}"
 	# TODO: pg_isready -h "$host" -p "$local_port" returns "no attempt" (exit 3)

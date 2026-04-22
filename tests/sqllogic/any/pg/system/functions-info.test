@@ -444,6 +444,21 @@ has_column_privilege
 t
 
 
+# both current_role and current_user must be in pg_roles
+query
+SELECT rolname, rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = current_user(); 
+----
+rolname	rolcanlogin
+<slt:ignore>	t
+
+
+query
+SELECT rolname, rolcanlogin FROM pg_catalog.pg_roles WHERE rolname = current_role(); 
+----
+rolname	rolcanlogin
+<slt:ignore>	t
+
+
 onlyif serenedb
 query
 SELECT row_security_active('pg_class');
@@ -1286,3 +1301,10 @@ query error
 SELECT pg_get_wal_summarizer_state();
 ----
 db error: ERROR: Function is not supported in SereneDB
+
+
+query
+SELECT pg_backend_pid();
+----
+pg_backend_pid
+<slt:ignore>

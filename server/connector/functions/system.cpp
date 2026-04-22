@@ -72,6 +72,18 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     });
 }
 
+void CurrentUserFunction(duckdb::DataChunk&, duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  const auto& conn_ctx = GetSereneDBContext(context);
+  result.Reference(conn_ctx.user());
+}
+
+void PgBackendPidFunction(duckdb::DataChunk&, duckdb::ExpressionState&,
+                          duckdb::Vector& result) {
+  result.Reference(duckdb::Value::INTEGER(0));
+}
+
 // set_config(name, value, is_local) -> text
 // Ported from server/pg/functions/system.cpp SetConfigFunction.
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -549,6 +561,16 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::BIGINT},
                                                  duckdb::LogicalType::BIGINT,
                                                  PgSchemaSizeOidFunction});
+
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "current_user", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
+
+  // current_role is same as current_user in postgres
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "current_role", {}, duckdb::LogicalType::VARCHAR, CurrentUserFunction});
+
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    "pg_backend_pid", {}, duckdb::LogicalType::INTEGER, PgBackendPidFunction});
 }
 
 }  // namespace sdb::connector

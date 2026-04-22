@@ -66,7 +66,7 @@ enum class ScanSourceKind : uint8_t {
 // predicate pattern matches; the executor then downcasts to the concrete
 // type it was paired with.
 struct ScanSource {
-  ScanSourceKind Kind() const { return kind_; }
+  ScanSourceKind Kind() const { return _kind; }
 
   // Extend the EXPLAIN output with per-kind fields (Filter, TopK, ...).
   virtual void AppendSummary(
@@ -82,8 +82,8 @@ struct ScanSource {
   // Covers SearchScan / CountScan / ANNScan / RangeSearchScan -- the four
   // that need stricter transaction isolation in duckdb_scan_base.
   bool IsSearchLike() const {
-    return kind_ == ScanSourceKind::Search || kind_ == ScanSourceKind::Count ||
-           kind_ == ScanSourceKind::Ann || kind_ == ScanSourceKind::RangeSearch;
+    return _kind == ScanSourceKind::Search || _kind == ScanSourceKind::Count ||
+           _kind == ScanSourceKind::Ann || _kind == ScanSourceKind::RangeSearch;
   }
 
   template<class T>
@@ -102,10 +102,10 @@ struct ScanSource {
   virtual ~ScanSource() = default;
 
  protected:
-  explicit ScanSource(ScanSourceKind k) : kind_(k) {}
+  explicit ScanSource(ScanSourceKind k) : _kind{k} {}
 
  private:
-  ScanSourceKind kind_;
+  ScanSourceKind _kind;
 };
 
 // Default: full prefix iteration over the table's RocksDB keyspace.

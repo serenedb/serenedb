@@ -452,8 +452,20 @@ std::vector<KeyBounds> ExtractFilterOr(
 
     if (constraints.empty() ||
         absl::c_any_of(constraints, [](const KeyBounds& p) {
-          return p.IsUnconstrained();
+          return p.IsUnconstrained() || p.RangePrefixSize() == 0;
         })) {
+      // Bail: one OR branch either puts no constraint on the key at all,
+      // or constrains only columns past the key's leading prefix (e.g.
+      // `e IN (...)` against a `(a, b, c, d, e)` SK -- only `e` is set,
+      // but the scan can't enforce it without a full prefix sweep).
+      // Merging such a branch with other branches via SweepDimensions
+      // decomposes the shared leading-column space once per value, and
+      // the scan returns every resulting sub-range independently. Since
+      // the scan's range is indexed only up to the range column, the
+      // suffix predicate (e IN (...)) is not enforced, and RewriteExpr
+      // may still strip it from remaining_filter -- the same rows then
+      // come out multiple times without ever being re-filtered by e.
+      // Fall back to a full scan for correctness.
       return AnyKeyConstraint(ctx.key_ids);
     }
 

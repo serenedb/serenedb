@@ -3331,3 +3331,134 @@ count
 
 statement ok
 DROP TABLE babsky_idx_scan_comp;
+
+
+# Regression: `OR` where one branch only constrains a non-leading column of
+# a multi-column SK must NOT drive an SK range scan. The sweep across the
+# OR would otherwise split the leading-column range once per value in the
+# non-leading branch (e.g. `e IN (100, 500)` -> two copies of the entire
+# prefix decomposition), and because the scan only enforces columns up to
+# the leading range column, the same rows get emitted once per copy and
+# the rewritten "remaining_filter" is wrongly stripped to true.
+
+statement ok
+CREATE TABLE mbkkt_or_suffix_in(pid INTEGER PRIMARY KEY, a INT, b INT, c INT, d INT, e INT);
+
+statement ok
+CREATE INDEX mbkkt_or_suffix_in_idx ON mbkkt_or_suffix_in(a, b, c, d, e);
+
+statement ok
+INSERT INTO mbkkt_or_suffix_in VALUES
+  (1, 1, 1, 1, 1, 999),
+  (2, 2, 2, 2, 2, 100),
+  (3, 3, 3, 3, 3, 999),
+  (4, 4, 4, 4, 4, 500),
+  (5, 5, 5, 5, 5, 600),
+  (6, 10, 20, 30, 40, 50),
+  (7, 11, 21, 31, 41, 51),
+  (8, 12, 22, 32, 42, 100),
+  (9, 13, 23, 33, 43, 999),
+  (10, 14, 24, 34, 44, 500);
+
+# Branch 1 matches pid=6; branch 2 (e IN (100, 500)) matches pids 2, 4, 8, 10.
+# Union is 5 rows; reproducer of the bug returns 19 because {a=(-inf, 10)},
+# {a=(10, +inf)} etc. get emitted once per e IN value and then again.
+query
+SELECT count(*) FROM mbkkt_or_suffix_in
+  WHERE (a=10 AND b=20 AND c=30 AND d=40 AND e=50) OR e IN (100, 500);
+----
+count
+5
+
+query
+SELECT pid FROM mbkkt_or_suffix_in
+  WHERE (a=10 AND b=20 AND c=30 AND d=40 AND e=50) OR e IN (100, 500)
+  ORDER BY pid;
+----
+pid
+2
+4
+6
+8
+10
+
+# Plan must stay on the full-table path -- the OR is not SK-extractable
+# because one branch (e IN ...) only constrains the tail of the SK.
+onlyif serenedb
+query
+EXPLAIN SELECT pid FROM mbkkt_or_suffix_in
+  WHERE (a=10 AND b=20 AND c=30 AND d=40 AND e=50) OR e IN (100, 500);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #5            │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│  (((e = 50) OR ((e = 100) │
+│  OR (e = 500))) AND (((e =│
+│  100) OR (e = 500)) OR ((a│
+│  = 10) AND (b = 20) AND (c│
+│  = 30) AND (d = 40) AND (e│
+│          = 50))))         │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_TABLE_FULLSCAN   │
+│    ────────────────────   │
+│           Table:          │
+│     mbkkt_or_suffix_in    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│             d             │
+│             e             │
+│            pid            │
+│                           │
+│          ~10 rows         │
+└───────────────────────────┘
+
+# Positive case: OR where *every* branch constrains the leading column IS
+# still extractable -- the sweep produces disjoint prefix ranges that the
+# scan can enforce.
+query
+SELECT pid FROM mbkkt_or_suffix_in
+  WHERE a IN (10, 12) OR (a = 14 AND b = 24)
+  ORDER BY pid;
+----
+pid
+6
+8
+10
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid FROM mbkkt_or_suffix_in
+  WHERE a IN (10, 12) OR (a = 14 AND b = 24);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│     mbkkt_or_suffix_in    │
+│                           │
+│          Filter:          │
+│  {a=10}, {a=12}, {a=14, b │
+│            =24}           │
+│                           │
+│      Projections: pid     │
+│                           │
+│          ~10 rows         │
+└───────────────────────────┘
+
+statement ok
+DROP TABLE mbkkt_or_suffix_in;

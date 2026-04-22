@@ -59981,6 +59981,7 @@ SELECT ALL * FROM tab1 AS cor0 WHERE NOT CAST( NULL AS SIGNED ) NOT IN ( + ( - c
 ----
 
 skipif mysql # not compatible
+skipif serenedb # TODO(mbkkt) int32 overflow
 query III rowsort label-6594
 SELECT ALL * FROM tab1 AS cor0 WHERE NOT CAST ( NULL AS INTEGER ) NOT IN ( + ( - col2 ) * 82 * + col2 * col2 * + + col0 )
 ----

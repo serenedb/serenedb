@@ -64,6 +64,35 @@ add_subdirectory(openssl-cmake)
 set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
 set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
 
+# Repeating the trick done by NuRaft that helped our build survive folly.
+# Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
+# nested find_package(OpenSSL) (folly, curl, ...) short-circuits onto our vendored
+# OpenSSL instead of silently linking against the system libssl/libcrypto and
+# producing an ABI-mismatched binary. OPENSSL_INCLUDE_DIR was already set above
+# by openssl-cmake's PARENT_SCOPE export; we only need to promote it to CACHE.
+# OPENSSL_LIBRARIES is exported as the target names OpenSSL::{Crypto,SSL}, but
+# FindOpenSSL's find_library() short-circuit needs file paths, so spell those
+# out here.
+set(OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}" CACHE PATH "" FORCE)
+set(OPENSSL_CRYPTO_LIBRARY
+    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
+    CACHE FILEPATH
+    ""
+    FORCE
+)
+set(OPENSSL_SSL_LIBRARY
+    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
+    CACHE FILEPATH
+    ""
+    FORCE
+)
+
+# Snapshot the pre-seeded values so we can verify at the end of this file that
+# no later add_subdirectory() has silently re-pointed OpenSSL at a system copy.
+set(_sdb_expected_OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}")
+set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
+set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
+
 ################################################################################
 ## liburing
 ################################################################################
@@ -460,6 +489,65 @@ target_include_directories(
 add_subdirectory(nghttp2)
 
 ################################################################################
+## CURL (required by DuckDB's httpfs extension for S3 I/O)
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "curl" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+# Force static HTTP(S)-only build, using our vendored OpenSSL.
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
+set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+set(CURL_USE_LIBSSH OFF CACHE BOOL "" FORCE)
+set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+set(ENABLE_UNIX_SOCKETS OFF CACHE BOOL "" FORCE)
+set(PICKY_COMPILER OFF CACHE BOOL "" FORCE)
+set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
+# Pre-answer all of curl's check_symbol_exists() tests that link OpenSSL.
+# Those tests pass OpenSSL::SSL / OpenSSL::Crypto via CMAKE_REQUIRED_LIBRARIES,
+# but those are ALIAS targets from our vendored OpenSSL and don't propagate
+# into a fresh try_compile subproject. We know the flavor and version of the
+# OpenSSL we link, so pre-answer and skip the detection.
+# Keep this list in sync with curl's CMakeLists.txt if curl is bumped.
+set(HAVE_BORINGSSL 0 CACHE INTERNAL "")
+set(HAVE_AWSLC 0 CACHE INTERNAL "")
+set(HAVE_LIBRESSL 0 CACHE INTERNAL "")
+set(HAVE_DES_ECB_ENCRYPT 1 CACHE INTERNAL "")
+set(HAVE_SSL_SET0_WBIO 1 CACHE INTERNAL "")
+set(HAVE_OPENSSL_SRP 0 CACHE INTERNAL "")
+set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
+set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
+set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
+
+add_subdirectory(curl)
+
+# Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
+# FindCURL.cmake short-circuits when these variables are already set.
+if(NOT TARGET CURL::libcurl)
+    add_library(CURL::libcurl ALIAS libcurl_static)
+endif()
+set(CURL_FOUND TRUE CACHE INTERNAL "")
+set(CURL_INCLUDE_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
+    CACHE INTERNAL
+    ""
+)
+set(CURL_INCLUDE_DIRS
+    "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
+    CACHE INTERNAL
+    ""
+)
+set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
+set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
+
+################################################################################
 ## IMMER
 ################################################################################
 
@@ -508,24 +596,6 @@ endif()
 ################################################################################
 
 set(LINK_DIRECTORIES "${LINK_DIRECTORIES}" PARENT_SCOPE)
-
-################################################################################
-## taojson
-################################################################################
-
-set(TAOCPP_JSON_BUILD_TESTS
-    OFF
-    CACHE BOOL
-    "Build taocpp::json test programs"
-    FORCE
-)
-set(TAOCPP_JSON_BUILD_EXAMPLES
-    OFF
-    CACHE BOOL
-    "Build taocpp::json example programs"
-    FORCE
-)
-add_subdirectory(taocpp-json)
 
 ################################################################################
 ## tzdata
@@ -587,30 +657,6 @@ else()
     )
 endif()
 
-################################################################################
-## NuRaft
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "nuraft" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
-set(BOOST_LIBRARY_PATH On)
-set(LIBBOOST_SYSTEM boost_boost CACHE STRING "" FORCE)
-
-set(OPENSSL_INCLUDE_PATH ${OPENSSL_INCLUDE_DIR})
-set(OPENSSL_LIBRARY_PATH ${PROJECT_BINARY_DIR}/bin)
-add_subdirectory(nuraft)
-unset(OPENSSL_INCLUDE_PATH)
-unset(OPENSSL_LIBRARY_PATH)
-
-################################################################################
-## libpg_query
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "libpg_query" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-add_subdirectory(libpg_query)
-
 ###############################################################################
 ## simdjson
 ################################################################################
@@ -633,15 +679,6 @@ add_subdirectory(tests)
 set(FASTFLOAT_INSTALL OFF CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(fast_float)
-
-################################################################################
-## xsimd
-################################################################################
-
-set(XSIMD_SKIP_INSTALL OFF CACHE BOOL "" FORCE)
-sdb_update_module(${GIT_EXECUTABLE} "xsimd" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(xsimd)
-
 ################################################################################
 ## double-conversion
 ################################################################################
@@ -649,265 +686,6 @@ add_subdirectory(xsimd)
 sdb_update_module(${GIT_EXECUTABLE} "double-conversion" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(double-conversion)
 add_library(double-conversion::double-conversion ALIAS double-conversion)
-
-################################################################################
-## PROTOBUF
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "protobuf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
-set(protobuf_BUILD_PROTOBUF_BINARIES ON CACHE BOOL "" FORCE)
-set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
-set(protobuf_BUILD_LIBPROTOC ON CACHE BOOL "" FORCE)
-set(protobuf_BUILD_LIBUPB ON CACHE BOOL "" FORCE)
-add_subdirectory(protobuf)
-set(Protobuf_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protobuf/src)
-include_directories(${Protobuf_INCLUDE_DIRS})
-
-################################################################################
-## flatbuffers
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "flatbuffers" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-
-set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_BUILD_FLATLIB ON CACHE BOOL "" FORCE)
-set(FLATBUFFERS_BUILD_FLATC OFF CACHE BOOL "" FORCE)
-# TODO(mbkkt) newer cmake in CI: set(FLATBUFFERS_CPP_STD 26)
-add_subdirectory(flatbuffers)
-
-################################################################################
-## thrift
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "thrift" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-
-add_library(
-    thrift
-    STATIC
-    # Velox Parquet Reader and Writer
-    thrift/lib/cpp/src/thrift/protocol/TProtocol.cpp
-    thrift/lib/cpp/src/thrift/transport/TTransportException.cpp
-    # Velox Parquet Writer
-    thrift/lib/cpp/src/thrift/transport/TBufferTransports.cpp
-)
-target_include_directories(thrift SYSTEM PUBLIC thrift/lib/cpp/src)
-target_link_libraries(thrift PRIVATE Boost::headers)
-
-################################################################################
-## arrow
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "arrow" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_library(
-    arrow
-    STATIC
-    # Velox Parquet Reader and Writer
-    arrow/cpp/src/arrow/result.cc
-    arrow/cpp/src/arrow/status.cc
-    arrow/cpp/src/arrow/array/array_nested.cc
-    arrow/cpp/src/arrow/array/data.cc
-    arrow/cpp/src/arrow/util/atfork_internal.cc
-    arrow/cpp/src/arrow/util/bit_run_reader.cc
-    arrow/cpp/src/arrow/util/bpacking.cc
-    arrow/cpp/src/arrow/util/cpu_info.cc
-    arrow/cpp/src/arrow/util/io_util.cc
-    arrow/cpp/src/arrow/util/logging.cc
-    arrow/cpp/src/arrow/util/ree_util.cc
-    arrow/cpp/src/arrow/util/string.cc
-    arrow/cpp/src/arrow/util/string_builder.cc
-    # Velox Parquet Writer
-    arrow/cpp/src/arrow/array/array_base.cc
-    arrow/cpp/src/arrow/array/array_binary.cc
-    arrow/cpp/src/arrow/array/array_decimal.cc
-    arrow/cpp/src/arrow/array/array_dict.cc
-    # arrow/cpp/src/arrow/array/array_nested.cc
-    arrow/cpp/src/arrow/array/array_primitive.cc
-    arrow/cpp/src/arrow/array/array_run_end.cc
-    arrow/cpp/src/arrow/array/builder_adaptive.cc
-    arrow/cpp/src/arrow/array/builder_base.cc
-    arrow/cpp/src/arrow/array/builder_binary.cc
-    arrow/cpp/src/arrow/array/builder_decimal.cc
-    arrow/cpp/src/arrow/array/builder_dict.cc
-    arrow/cpp/src/arrow/array/builder_run_end.cc
-    arrow/cpp/src/arrow/array/builder_nested.cc
-    arrow/cpp/src/arrow/array/builder_primitive.cc
-    arrow/cpp/src/arrow/array/builder_union.cc
-    arrow/cpp/src/arrow/array/concatenate.cc
-    # arrow/cpp/src/arrow/array/data.cc
-    arrow/cpp/src/arrow/array/diff.cc
-    arrow/cpp/src/arrow/array/util.cc
-    arrow/cpp/src/arrow/array/validate.cc
-    arrow/cpp/src/arrow/builder.cc
-    arrow/cpp/src/arrow/buffer.cc
-    arrow/cpp/src/arrow/chunked_array.cc
-    arrow/cpp/src/arrow/chunk_resolver.cc
-    arrow/cpp/src/arrow/compare.cc
-    arrow/cpp/src/arrow/config.cc
-    arrow/cpp/src/arrow/datum.cc
-    arrow/cpp/src/arrow/device.cc
-    arrow/cpp/src/arrow/extension_type.cc
-    arrow/cpp/src/arrow/memory_pool.cc
-    arrow/cpp/src/arrow/pretty_print.cc
-    arrow/cpp/src/arrow/record_batch.cc
-    # arrow/cpp/src/arrow/result.cc
-    arrow/cpp/src/arrow/scalar.cc
-    arrow/cpp/src/arrow/sparse_tensor.cc
-    # arrow/cpp/src/arrow/status.cc
-    arrow/cpp/src/arrow/table.cc
-    arrow/cpp/src/arrow/table_builder.cc
-    arrow/cpp/src/arrow/tensor.cc
-    arrow/cpp/src/arrow/tensor/coo_converter.cc
-    arrow/cpp/src/arrow/tensor/csf_converter.cc
-    arrow/cpp/src/arrow/tensor/csx_converter.cc
-    arrow/cpp/src/arrow/type.cc
-    arrow/cpp/src/arrow/type_traits.cc
-    arrow/cpp/src/arrow/visitor.cc
-    arrow/cpp/src/arrow/c/bridge.cc
-    arrow/cpp/src/arrow/c/dlpack.cc
-    arrow/cpp/src/arrow/io/buffered.cc
-    arrow/cpp/src/arrow/io/caching.cc
-    arrow/cpp/src/arrow/io/compressed.cc
-    arrow/cpp/src/arrow/io/file.cc
-    # arrow/cpp/src/arrow/io/hdfs.cc
-    # arrow/cpp/src/arrow/io/hdfs_internal.cc
-    arrow/cpp/src/arrow/io/interfaces.cc
-    arrow/cpp/src/arrow/io/memory.cc
-    arrow/cpp/src/arrow/io/slow.cc
-    arrow/cpp/src/arrow/io/stdio.cc
-    arrow/cpp/src/arrow/io/transform.cc
-    arrow/cpp/src/arrow/util/align_util.cc
-    arrow/cpp/src/arrow/util/async_util.cc
-    # arrow/cpp/src/arrow/util/atfork_internal.cc
-    arrow/cpp/src/arrow/util/basic_decimal.cc
-    arrow/cpp/src/arrow/util/bit_block_counter.cc
-    # arrow/cpp/src/arrow/util/bit_run_reader.cc
-    arrow/cpp/src/arrow/util/bit_util.cc
-    arrow/cpp/src/arrow/util/bitmap.cc
-    arrow/cpp/src/arrow/util/bitmap_builders.cc
-    arrow/cpp/src/arrow/util/bitmap_ops.cc
-    # arrow/cpp/src/arrow/util/bpacking.cc
-    arrow/cpp/src/arrow/util/byte_size.cc
-    arrow/cpp/src/arrow/util/cancel.cc
-    arrow/cpp/src/arrow/util/compression.cc
-    arrow/cpp/src/arrow/util/counting_semaphore.cc
-    # arrow/cpp/src/arrow/util/cpu_info.cc
-    arrow/cpp/src/arrow/util/crc32.cc
-    arrow/cpp/src/arrow/util/debug.cc
-    arrow/cpp/src/arrow/util/decimal.cc
-    arrow/cpp/src/arrow/util/delimiting.cc
-    arrow/cpp/src/arrow/util/dict_util.cc
-    arrow/cpp/src/arrow/util/float16.cc
-    arrow/cpp/src/arrow/util/formatting.cc
-    arrow/cpp/src/arrow/util/future.cc
-    arrow/cpp/src/arrow/util/hashing.cc
-    arrow/cpp/src/arrow/util/int_util.cc
-    # arrow/cpp/src/arrow/util/io_util.cc
-    arrow/cpp/src/arrow/util/list_util.cc
-    # arrow/cpp/src/arrow/util/logging.cc
-    arrow/cpp/src/arrow/util/key_value_metadata.cc
-    arrow/cpp/src/arrow/util/memory.cc
-    arrow/cpp/src/arrow/util/mutex.cc
-    # arrow/cpp/src/arrow/util/ree_util.cc
-    # arrow/cpp/src/arrow/util/string.cc
-    # arrow/cpp/src/arrow/util/string_builder.cc
-    arrow/cpp/src/arrow/util/task_group.cc
-    arrow/cpp/src/arrow/util/tdigest.cc
-    arrow/cpp/src/arrow/util/thread_pool.cc
-    arrow/cpp/src/arrow/util/time.cc
-    arrow/cpp/src/arrow/util/tracing.cc
-    arrow/cpp/src/arrow/util/trie.cc
-    arrow/cpp/src/arrow/util/union_util.cc
-    arrow/cpp/src/arrow/util/unreachable.cc
-    arrow/cpp/src/arrow/util/uri.cc
-    arrow/cpp/src/arrow/util/utf8.cc
-    arrow/cpp/src/arrow/util/value_parsing.cc
-    arrow/cpp/src/arrow/vendored/base64.cpp
-    arrow/cpp/src/arrow/compute/api_aggregate.cc
-    arrow/cpp/src/arrow/compute/api_scalar.cc
-    arrow/cpp/src/arrow/compute/api_vector.cc
-    arrow/cpp/src/arrow/compute/cast.cc
-    arrow/cpp/src/arrow/compute/exec.cc
-    arrow/cpp/src/arrow/compute/expression.cc
-    arrow/cpp/src/arrow/compute/function.cc
-    arrow/cpp/src/arrow/compute/function_internal.cc
-    arrow/cpp/src/arrow/compute/kernel.cc
-    arrow/cpp/src/arrow/compute/key_hash.cc
-    arrow/cpp/src/arrow/compute/key_map.cc
-    arrow/cpp/src/arrow/compute/light_array.cc
-    arrow/cpp/src/arrow/compute/ordering.cc
-    arrow/cpp/src/arrow/compute/registry.cc
-    arrow/cpp/src/arrow/compute/kernels/codegen_internal.cc
-    arrow/cpp/src/arrow/compute/kernels/row_encoder.cc
-    arrow/cpp/src/arrow/compute/kernels/ree_util_internal.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_boolean.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_dictionary.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_extension.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_internal.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_nested.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_numeric.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_string.cc
-    arrow/cpp/src/arrow/compute/kernels/scalar_cast_temporal.cc
-    arrow/cpp/src/arrow/compute/kernels/util_internal.cc
-    arrow/cpp/src/arrow/compute/kernels/vector_hash.cc
-    arrow/cpp/src/arrow/compute/kernels/vector_selection.cc
-    arrow/cpp/src/arrow/compute/kernels/vector_selection_filter_internal.cc
-    arrow/cpp/src/arrow/compute/kernels/vector_selection_internal.cc
-    arrow/cpp/src/arrow/compute/kernels/vector_selection_take_internal.cc
-    arrow/cpp/src/arrow/compute/row/encode_internal.cc
-    arrow/cpp/src/arrow/compute/row/compare_internal.cc
-    arrow/cpp/src/arrow/compute/row/grouper.cc
-    arrow/cpp/src/arrow/compute/row/row_internal.cc
-    arrow/cpp/src/arrow/compute/util.cc
-    arrow/cpp/src/arrow/ipc/dictionary.cc
-    arrow/cpp/src/arrow/ipc/feather.cc
-    arrow/cpp/src/arrow/ipc/message.cc
-    arrow/cpp/src/arrow/ipc/metadata_internal.cc
-    arrow/cpp/src/arrow/ipc/options.cc
-    arrow/cpp/src/arrow/ipc/reader.cc
-    arrow/cpp/src/arrow/ipc/writer.cc
-)
-target_include_directories(arrow SYSTEM PUBLIC arrow/cpp/src)
-target_link_libraries(
-    arrow
-    PUBLIC date_interface
-    PRIVATE double-conversion
-    PRIVATE FlatBuffers
-    PUBLIC xsimd
-)
-if("${SDB_ALLOC}" MATCHES "JE")
-    target_sources(arrow PRIVATE arrow/cpp/src/arrow/memory_pool_jemalloc.cc)
-    target_compile_definitions(arrow PUBLIC ARROW_JEMALLOC)
-endif()
-if(ARCH_AMD64)
-    target_compile_definitions(
-        arrow
-        PUBLIC ARROW_HAVE_SSE4_2 ARROW_HAVE_AVX2
-        PRIVATE
-            ARROW_HAVE_BMI2
-            ARROW_HAVE_RUNTIME_SSE4_2
-            ARROW_HAVE_RUNTIME_AVX2
-            ARROW_HAVE_RUNTIME_BMI2
-            ARROW_HAVE_RUNTIME_AVX512
-    )
-    target_sources(
-        arrow
-        PRIVATE
-            arrow/cpp/src/arrow/util/bpacking_avx2.cc
-            arrow/cpp/src/arrow/util/bpacking_avx512.cc
-    )
-    set_source_files_properties(
-        arrow/cpp/src/arrow/util/bpacking_avx512.cc
-        PROPERTIES
-            COMPILE_FLAGS -mavx512f
-            -mavx512cd -mavx512vl
-            -mavx512dq -mavx512bw
-    )
-elseif(ARCH_AARCH64)
-    target_compile_definitions(arrow PRIVATE ARROW_HAVE_NEON)
-    target_sources(arrow PRIVATE arrow/cpp/src/arrow/util/bpacking_neon.cc)
-endif()
 
 ################################################################################
 ## fmt
@@ -941,91 +719,86 @@ sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.
 add_subdirectory(folly)
 target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
+# folly-deps.cmake consumes OPENSSL_LIBRARIES as plain file paths (our vendored
+# libssl.a / libcrypto.a via the pre-seeded cache vars above). Build system does not
+# infer a build-order dependency from a raw path, so wire it explicitly.
+add_dependencies(folly ssl crypto)
 # Velox S3 connector uses folly::Uri
 target_sources(folly PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/folly/folly/Uri.cpp)
 
 ################################################################################
-## AWS SDK (monolithic build)
+## duckdb
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-auth" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-cal" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-common" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-compression" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-event-stream" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-http" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-io" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-mqtt" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-s3" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-c-sdkutils" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-checksums" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-sdk-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "aws-crt-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(aws-cmake)
+set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
+set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
+set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
+set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
+set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
+# Keep builtin extensions (core_functions, parquet, json, etc.)
+set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
+set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
+set(EXTENSION_STATIC_BUILD TRUE CACHE BOOL "" FORCE)
+set(ENABLE_SANITIZER FALSE CACHE BOOL "" FORCE)
+set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
+set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
+set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
+set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
+set(BUILD_EXTENSIONS
+    "core_functions;jemalloc;parquet;tpch;tpcds;json;httpfs"
+    CACHE STRING
+    ""
+    FORCE
+)
 
-set(AWSSDK_FOUND ON CACHE BOOL "" FORCE)
-set(AWSSDK_LIBRARIES _aws CACHE STRING "" FORCE)
-set(AWSSDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/aws-cmake" CACHE PATH "" FORCE)
+# DON'T CHANGE THIS sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-################################################################################
-## velox
-################################################################################
+# Override install() to no-op within DuckDB suCMake Errobdirectory
+macro(install)
+endmacro()
 
-if(SDB_GTEST)
-    # Needed for our connector tests
-    set(VELOX_BUILD_VECTOR_TEST_UTILS ON CACHE BOOL "" FORCE)
-else()
-    set(VELOX_BUILD_VECTOR_TEST_UTILS OFF CACHE BOOL "" FORCE)
-endif()
-
-set(VELOX_ENABLE_PARSE OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_DUCKDB OFF CACHE BOOL "" FORCE)
-set(VELOX_BUILD_TEST_UTILS OFF CACHE BOOL "" FORCE)
-set(VELOX_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(VELOX_MONO_LIBRARY ON CACHE BOOL "" FORCE)
-set(VELOX_DEPENDENCY_SOURCE_DEFAULT "BUNDLED" CACHE STRING "" FORCE)
-set(VELOX_DEPENDENCY_SOURCE "BUNDLED" CACHE STRING "" FORCE)
-
-set(VELOX_ENABLE_EXEC ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_AGGREGATES ON CACHE BOOL "" FORCE)
-set(VELOX_BUILD_MINIMAL_WITH_DWIO ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_HIVE_CONNECTOR OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_HIVE_CONNECTOR_UTILS ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_TPCH_CONNECTOR OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_TPCDS_CONNECTOR OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_PRESTO_FUNCTIONS ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_SPARK_FUNCTIONS ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_ICEBERG_FUNCTIONS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_EXPRESSION ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_BENCHMARKS_BASIC OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_S3 ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_GCS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_ABFS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_HDFS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_PARQUET ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_ARROW ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_GEO OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_REMOTE_FUNCTIONS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_CCACHE OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_FAISS ON CACHE BOOL "" FORCE)
-
-set(VELOX_SIMDJSON_SKIPUTF8VALIDATION OFF CACHE BOOL "" FORCE)
-
-sdb_update_module(${GIT_EXECUTABLE} "velox" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(velox)
-
-################################################################################
-## axiom
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "axiom" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(axiom)
+add_subdirectory(duckdb)
 
 target_include_directories(
-    velox
+    duckdb_static
     SYSTEM
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/velox
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/axiom
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
+
+# Link extension objects that aren't automatically included in duckdb_static
+target_link_libraries(
+    duckdb_static
+    PUBLIC
+        duckdb_generated_extension_loader
+        core_functions_extension
+        jemalloc_extension
+        parquet_extension
+        tpch_extension
+        tpcds_extension
+        json_extension
+        httpfs_extension
+)
+
+# !!! KEEP THIS LAST !!!
+# Guard against a future add_subdirectory() in this file re-pointing OpenSSL at
+# a system copy via find_package / CACHE FORCE / etc. The pre-seeded cache
+# variables at the top of this file are what makes sure folly & curl link the
+# vendored libssl/libcrypto; if any of them drift, the binary will silently go
+# back to the ABI-mismatched state that crashes.
+# if this starts breaking  - most likely someone in third_party is playing
+# with FORCE setting variables. Then maybe dependency provider will help,
+# but looks like overkill for now.
+foreach(_var OPENSSL_INCLUDE_DIR OPENSSL_CRYPTO_LIBRARY OPENSSL_SSL_LIBRARY)
+    if(NOT "${${_var}}" STREQUAL "${_sdb_expected_${_var}}")
+        message(
+            FATAL_ERROR
+            "${_var} drifted from the vendored pre-seed.\n"
+            "  expected: ${_sdb_expected_${_var}}\n"
+            "  actual:   ${${_var}}\n"
+            "Something added in third_party/ changed this cache variable. "
+            "Re-point it at the vendored tree or rework the pre-seed at the "
+            "top of third_party/CMakeLists.txt."
+        )
+    endif()
+endforeach()

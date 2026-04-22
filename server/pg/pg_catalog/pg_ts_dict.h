@@ -40,7 +40,6 @@ struct PgTsDict {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgTsDict>::GetTableData(
-  velox::memory::MemoryPool& pool);
+catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData();
 
 }  // namespace sdb::pg

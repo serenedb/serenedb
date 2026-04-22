@@ -47,16 +47,28 @@ array
 {5.00,3.61}
 
 
-# TODO(codeworse): support different numeric numeric scales and precisions?
-# SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
-# SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 1)];
+skipif postgres # TODO(Pasha)
+query
+SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
+----
+column1 column2
+A+      5.0000
+B-      3.6100
 
-# TODO(codeworse): compare decimals with different scales and precisions
-# query
-# SELECT 0.2::numeric(3, 1) + 0.1::numeric(4, 3) = 0.3::numeric(10, 1);
-# ----
-# ?column?
-# t
+
+skipif postgres # TODO(Pasha)
+query
+SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 1)];
+----
+array
+{5.00,3.60}
+
+
+query
+SELECT 0.2::numeric(3, 1) + 0.1::numeric(4, 3) = 0.3::numeric(10, 1);
+----
+?column?
+t
 
 
 query
@@ -90,49 +102,111 @@ numeric
 
 query error
 SELECT 1::numeric('true');
-----
-db error: ERROR: invalid input syntax for type integer: "true"
 
 
 query error
 SELECT 1::numeric(10, 'true');
-----
-db error: ERROR: invalid input syntax for type integer: "true"
 
 
 query error
 SELECT 1::numeric('aboba');
-----
-db error: ERROR: invalid input syntax for type integer: "aboba"
 
 
 query error
 SELECT 1::numeric(10, 'aboba');
-----
-db error: ERROR: invalid input syntax for type integer: "aboba"
 
 
+# TODO(mbkkt) fix in duckdb
+skipif serenedb
 query error
 SELECT 1::numeric(1.1);
-----
-db error: ERROR: invalid input syntax for type integer: "1.1"
 
 
+# TODO(mbkkt) fix in duckdb
+skipif serenedb
 query error
 SELECT 1::numeric(10, 1.1);
-----
-db error: ERROR: invalid input syntax for type integer: "1.1"
 
 
-onlyif serenedb
 query error
 SELECT 1::numeric(true);
-----
-db error: ERROR: invalid input syntax for type integer: "true"
 
 
-onlyif serenedb
 query error
 SELECT 1::numeric(10, true);
+
+
+query
+SELECT 42.069::numeric(5, 3) + 1.337::numeric(4, 3);
 ----
-db error: ERROR: invalid input syntax for type integer: "true"
+?column?
+43.406
+
+
+query
+SELECT 420.00::numeric(5, 2) + 0.1337::numeric(5, 4);
+----
+?column?
+420.1337
+
+
+query
+SELECT 69.420::numeric(5, 3) - 42.069::numeric(5, 3);
+----
+?column?
+27.351
+
+
+query
+SELECT 1337.00::numeric(6, 2) - 0.420::numeric(4, 3);
+----
+?column?
+1336.580
+
+
+query
+SELECT 4.20::numeric(3, 2) * 6.9::numeric(2, 1);
+----
+?column?
+28.980
+
+
+query
+SELECT 0.042::numeric(3, 3) * 0.069::numeric(3, 3);
+----
+?column?
+0.002898
+
+
+query
+SELECT 420::numeric(3, 0) % 69::numeric(2, 0);
+----
+?column?
+6
+
+
+query
+SELECT 13.37::numeric(4, 2) % 4.20::numeric(3, 2);
+----
+?column?
+0.77
+
+
+query
+select 123::numeric(3, 0);
+----
+numeric
+123
+
+query
+select 0.0005::numeric(4, 4);
+----
+numeric
+0.0005
+
+skipif pg-wire-extended
+query
+select 1234567890123456::numeric(16, 0);
+----
+numeric
+1234567890123456

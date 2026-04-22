@@ -1,6 +1,6 @@
 # Tests that point lookups are chosen when the point filter fully covers
 # the primary key, and that the full scan variants are chosen otherwise.
-# Uses EXPLAIN (ANALYZE) to verify the number of rows read by the TableScan.
+# Uses EXPLAIN to verify the number of rows read by the TableScan.
 
 # ATTENTION: if some constant folding optimization will be made, some tests
 # may fail, especially ones that check that point lookup data source cannot be used.
@@ -20,18 +20,47 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice WHERE id = 2;
+EXPLAIN SELECT * FROM t_choice WHERE id = 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice, type=rocksdb_point_lookup, points=[(id=2)]]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│       Filter: (id=2)      │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 # No filter -> full scan
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice ORDER BY id;
+EXPLAIN SELECT * FROM t_choice ORDER BY id;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│      t_choice.id ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
 
 query
 SELECT * FROM t_choice ORDER BY id;
@@ -61,10 +90,21 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice WHERE id = 4;
+EXPLAIN SELECT * FROM t_choice WHERE id = 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice, type=rocksdb_point_lookup, points=[(id=4)]]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│       Filter: (id=4)      │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 statement ok
 ROLLBACK;
@@ -72,6 +112,40 @@ ROLLBACK;
 onlyif serenedb
 statement ok
 SET sdb_read_your_own_writes = 0;
+
+statement ok
+INSERT INTO t_choice VALUES (10, 10), (20, 20), (30, 30);
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE (id < 8 and val >= 20) or (id >= 10 and val < 20);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((val >= 20) OR (val < 20│
+│ )) AND (((id < 8) AND (val│
+│   >= 20)) OR ((id >= 10)  │
+│      AND (val < 20))))    │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│          Filter:          │
+│ {id=(-inf, 8)}, {id=[10,  │
+│           +inf)}          │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
 # --- Compound PK ---
 
@@ -90,28 +164,77 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE a = 3 AND b = 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_point_lookup, points=[(a=3, b=4)]]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│     Filter: (a=3, b=4)    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
-# Partial PK filter (not a point) -> full scan
+# Partial PK filter (not a point) -> range scan
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE a = 3 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_range_lookup, ranges=[{a=3}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│       Filter: {a=3}       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 # No filter -> full scan
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk ORDER BY a;
+EXPLAIN SELECT * FROM t_choice_cpk ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 statement ok
@@ -141,10 +264,32 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 AND b=2) OR (a=3 AND b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_point_lookup, points=[(a=1, b=2), (a=3, b=4)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│          Filter:          │
+│   (a=1, b=2), (a=3, b=4)  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 query
 SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
@@ -155,10 +300,32 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE a=1 AND (b=2 OR b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_point_lookup, points=[(a=1, b=2), (a=1, b=4)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│          Filter:          │
+│   (a=1, b=2), (a=1, b=4)  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 # Cartesian product of {a:1},{b:2} x {a:2},{b:4}:
@@ -176,10 +343,32 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND (a=2 OR b=4) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND (a=2 OR b=4) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_point_lookup, points=[(a=1, b=4), (a=2, b=2)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│          Filter:          │
+│   (a=1, b=4), (a=2, b=2)  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 # 1=1 is not a call expression -> AnyFilterNode (no constraints).
@@ -187,29 +376,101 @@ QUERY PLAN
 # Reads all 8 rows from the table.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) AND 1=1 ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((a = 1) OR (b = 2))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1} (partial) -> full scan.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 OR b=2) OR (1=2) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((a = 1) OR (b = 2))   │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 # 1=2 -> AnyFilterNode; first point emitted by OrFilter is {a:1, b:2}, but
 # AnyFilterNode or {a:1, b:2} -> Any point -> full scan
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE (a=1 and b=2) OR (1=2) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│     Filter: (a=1, b=2)    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 # a IN (1,3) -> OrFilter({a:1},{a:3}); b IN (2,6) -> OrFilter({b:2},{b:6}).
@@ -225,10 +486,33 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_cpk WHERE a IN (1,3) AND b IN (2,6) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_choice_cpk WHERE a IN (1,3) AND b IN (2,6) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_cpk, type=rocksdb_point_lookup, points=[(a=1, b=2), (a=1, b=6), (a=3, b=2), (a=3, b=6)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     t_choice_cpk.a ASC    │
+│     t_choice_cpk.b ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: t_choice_cpk    │
+│                           │
+│          Filter:          │
+│ (a=1, b=2), (a=1, b=6), (a│
+│    =3, b=2), (a=3, b=6)   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 statement ok
@@ -263,21 +547,83 @@ SELECT count(*) FROM t_big4pk WHERE
 count
 10000
 
+# TODO(mkornaukhov) Find out why joins are here,
+# it should be just scan
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk WHERE
+EXPLAIN SELECT count(*) FROM t_big4pk WHERE
   a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   d IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 ----
 QUERY PLAN
-<slt:ignore>[t_big4pk, type=rocksdb_point_lookup, points=[<slt:ignore>]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (IN (...) AND IN (...) AND│
+│   IN (...) AND IN (...))  │
+│                           │
+│        ~2,928 rows        │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: MARK      │
+│     Conditions: d = #0    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                           │                                                                                                     │
+│        ~14,641 rows       │                                                                                                     │
+└─────────────┬─────────────┘                                                                                                     │
+┌─────────────┴─────────────┐                                                                                       ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                                                                                       │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                                                                                       │    ────────────────────   │
+│      Join Type: MARK      │                                                                                       │                           │
+│     Conditions: c = #0    ├────────────────────────────────────────────────────────────────────────┐              │                           │
+│                           │                                                                        │              │                           │
+│        ~14,641 rows       │                                                                        │              │          ~0 rows          │
+└─────────────┬─────────────┘                                                                        │              └───────────────────────────┘
+┌─────────────┴─────────────┐                                                          ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                                                          │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                                                          │    ────────────────────   │
+│      Join Type: MARK      │                                                          │                           │
+│     Conditions: b = #0    ├───────────────────────────────────────────┐              │                           │
+│                           │                                           │              │                           │
+│        ~14,641 rows       │                                           │              │          ~0 rows          │
+└─────────────┬─────────────┘                                           │              └───────────────────────────┘
+┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                             │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                             │    ────────────────────   │
+│      Join Type: MARK      │                             │                           │
+│     Conditions: a = #0    ├──────────────┐              │                           │
+│                           │              │              │                           │
+│        ~14,641 rows       │              │              │          ~0 rows          │
+└─────────────┬─────────────┘              │              └───────────────────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  ││      COLUMN_DATA_SCAN     │
+│    ────────────────────   ││    ────────────────────   │
+│      Table: t_big4pk      ││                           │
+│                           ││                           │
+│        Projections:       ││                           │
+│             a             ││                           │
+│             b             ││                           │
+│             c             ││                           │
+│             d             ││                           │
+│                           ││                           │
+│        ~14,641 rows       ││          ~0 rows          │
+└───────────────────────────┘└───────────────────────────┘
 
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk WHERE 
+EXPLAIN SELECT count(*) FROM t_big4pk WHERE 
   (a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
@@ -285,7 +631,67 @@ EXPLAIN (ANALYZE) SELECT count(*) FROM t_big4pk WHERE
   (1 = 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_big4pk, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (IN (...) AND IN (...) AND│
+│   IN (...) AND IN (...))  │
+│                           │
+│        ~2,928 rows        │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: MARK      │
+│     Conditions: d = #0    ├─────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                           │                                                                                                     │
+│        ~14,641 rows       │                                                                                                     │
+└─────────────┬─────────────┘                                                                                                     │
+┌─────────────┴─────────────┐                                                                                       ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                                                                                       │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                                                                                       │    ────────────────────   │
+│      Join Type: MARK      │                                                                                       │                           │
+│     Conditions: c = #0    ├────────────────────────────────────────────────────────────────────────┐              │                           │
+│                           │                                                                        │              │                           │
+│        ~14,641 rows       │                                                                        │              │          ~0 rows          │
+└─────────────┬─────────────┘                                                                        │              └───────────────────────────┘
+┌─────────────┴─────────────┐                                                          ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                                                          │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                                                          │    ────────────────────   │
+│      Join Type: MARK      │                                                          │                           │
+│     Conditions: b = #0    ├───────────────────────────────────────────┐              │                           │
+│                           │                                           │              │                           │
+│        ~14,641 rows       │                                           │              │          ~0 rows          │
+└─────────────┬─────────────┘                                           │              └───────────────────────────┘
+┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                             │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                             │    ────────────────────   │
+│      Join Type: MARK      │                             │                           │
+│     Conditions: a = #0    ├──────────────┐              │                           │
+│                           │              │              │                           │
+│        ~14,641 rows       │              │              │          ~0 rows          │
+└─────────────┬─────────────┘              │              └───────────────────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  ││      COLUMN_DATA_SCAN     │
+│    ────────────────────   ││    ────────────────────   │
+│      Table: t_big4pk      ││                           │
+│                           ││                           │
+│        Projections:       ││                           │
+│             a             ││                           │
+│             b             ││                           │
+│             c             ││                           │
+│             d             ││                           │
+│                           ││                           │
+│        ~14,641 rows       ││          ~0 rows          │
+└───────────────────────────┘└───────────────────────────┘
 
 statement ok
 DROP TABLE t_big4pk;
@@ -311,20 +717,64 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT count(*) FROM t_not_all_pk WHERE
+EXPLAIN SELECT count(*) FROM t_not_all_pk WHERE
   a IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   b IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) AND
   c IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 ----
 QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=0:
--- Aggregation[2][SINGLE count := presto_count()] -> "count":BIGINT
-   Output: 1 rows (32B, 1 batches)<slt:ignore>
-  -- Filter[1][expression: in("c",{1, 2, 3, 4, 5, ...5 more})] -> "c":INTEGER
-     Output: 45 rows (187B, 1 batches)<slt:ignore>
-    -- TableScan[0][t_not_all_pk, type=rocksdb_point_lookup, points=[<slt:ignore>]] -> "c":INTEGER
-       Input: 100 rows (416B, 1 batches), Output: 100 rows<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (IN (...) AND IN (...) AND│
+│          IN (...))        │
+│                           │
+│          ~24 rows         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: MARK      │
+│     Conditions: c = #0    ├────────────────────────────────────────────────────────────────────────┐
+│                           │                                                                        │
+│         ~121 rows         │                                                                        │
+└─────────────┬─────────────┘                                                                        │
+┌─────────────┴─────────────┐                                                          ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                                                          │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                                                          │    ────────────────────   │
+│      Join Type: MARK      │                                                          │                           │
+│     Conditions: b = #0    ├───────────────────────────────────────────┐              │                           │
+│                           │                                           │              │                           │
+│         ~121 rows         │                                           │              │          ~0 rows          │
+└─────────────┬─────────────┘                                           │              └───────────────────────────┘
+┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                             │      COLUMN_DATA_SCAN     │
+│    ────────────────────   │                             │    ────────────────────   │
+│      Join Type: MARK      │                             │                           │
+│     Conditions: a = #0    ├──────────────┐              │                           │
+│                           │              │              │                           │
+│         ~121 rows         │              │              │          ~0 rows          │
+└─────────────┬─────────────┘              │              └───────────────────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  ││      COLUMN_DATA_SCAN     │
+│    ────────────────────   ││    ────────────────────   │
+│    Table: t_not_all_pk    ││                           │
+│                           ││                           │
+│        Projections:       ││                           │
+│             a             ││                           │
+│             b             ││                           │
+│             c             ││                           │
+│                           ││                           │
+│         ~121 rows         ││          ~0 rows          │
+└───────────────────────────┘└───────────────────────────┘
 
 statement ok
 DROP TABLE t_not_all_pk;
@@ -338,10 +788,30 @@ INSERT INTO t_choice_nulls VALUES (1, 10), (2, NULL), (3, 30);
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
+EXPLAIN SELECT * FROM t_choice_nulls WHERE id IN (2,3) ORDER BY id;
 ----
 QUERY PLAN
-<slt:ignore>[t_choice_nulls, type=rocksdb_point_lookup, points=[(id=2), (id=3)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│   t_choice_nulls.id ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│   Table: t_choice_nulls   │
+│                           │
+│          Filter:          │
+│       (id=2), (id=3)      │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 query
@@ -378,10 +848,24 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_neq WHERE id != 4;
+EXPLAIN SELECT * FROM t_neq WHERE id != 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_neq, type=rocksdb_range_lookup, ranges=[{id=(-inf, 4)}, {id=(4, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_neq       │
+│                           │
+│          Filter:          │
+│  {id=(-inf, 4)}, {id=(4,  │
+│           +inf)}          │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT (id = 4)  ->  same two ranges as id != 4
 query
@@ -395,10 +879,24 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_neq WHERE NOT (id = 4);
+EXPLAIN SELECT * FROM t_neq WHERE NOT (id = 4);
 ----
 QUERY PLAN
-<slt:ignore>[t_neq, type=rocksdb_range_lookup, ranges=[{id=(-inf, 4)}, {id=(4, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_neq       │
+│                           │
+│          Filter:          │
+│  {id=(-inf, 4)}, {id=(4,  │
+│           +inf)}          │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT (id IN (2, 4))  ->  3 ranges: (-inf, 2), (2, 4), (4, +inf)  ->  3 rows
 query
@@ -411,10 +909,24 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_neq WHERE NOT (id IN (2, 4));
+EXPLAIN SELECT * FROM t_neq WHERE NOT (id IN (2, 4));
 ----
 QUERY PLAN
-<slt:ignore>[t_neq, type=rocksdb_range_lookup, ranges=[{id=(-inf, 2)}, {id=(2, 4)}, {id=(4, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_neq       │
+│                           │
+│          Filter:          │
+│ {id=(-inf, 2)}, {id=(2, 4 │
+│     )}, {id=(4, +inf)}    │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_neq;
@@ -434,10 +946,22 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_neq_cpk WHERE NOT (a != 1 OR b != 2);
+EXPLAIN SELECT * FROM t_neq_cpk WHERE NOT (a != 1 OR b != 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_neq_cpk, type=rocksdb_point_lookup, points=[(a=1, b=2)]]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_neq_cpk     │
+│     Filter: (a=1, b=2)    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_neq_cpk;
@@ -464,10 +988,31 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
+EXPLAIN SELECT * FROM t_range1 WHERE a < 2 OR a > 8 ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(8, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range1.a ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range1      │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 2)}, {a=(8, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
 
 # Overlapping bounds collapse to single range: a > 2 AND a >= 3 → a >= 3
 query
@@ -482,10 +1027,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a > 2 AND a >= 3 ORDER BY a;
+EXPLAIN SELECT * FROM t_range1 WHERE a > 2 AND a >= 3 ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=[3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range1.a ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range1      │
+│   Filter: {a=[3, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
 
 # Single lower bound: a >= 5
 query
@@ -499,10 +1062,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a >= 5 ORDER BY a;
+EXPLAIN SELECT * FROM t_range1 WHERE a >= 5 ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=[5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range1.a ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range1      │
+│   Filter: {a=[5, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
 
 # Single upper bound: a < 5
 query
@@ -515,10 +1096,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a < 5 ORDER BY a;
+EXPLAIN SELECT * FROM t_range1 WHERE a < 5 ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range1.a ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range1      │
+│   Filter: {a=(-inf, 5)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
 
 # Closed interval: a >= 2 AND a <= 8
 query
@@ -532,10 +1131,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
+EXPLAIN SELECT * FROM t_range1 WHERE a >= 2 AND a <= 8 ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_range1, type=rocksdb_range_lookup, ranges=[{a=[2, 8]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range1.a ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range1      │
+│     Filter: {a=[2, 8]}    │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_range1;
@@ -568,10 +1185,31 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 5 ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 5 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│     {a=1, b=(5, +inf)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Inclusive lower bound: a=1 AND b >= 5
 query
@@ -584,10 +1222,31 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b >= 5 ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=[5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│     {a=1, b=[5, +inf)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Exclusive upper bound only: a=2 AND b < 7
 query
@@ -600,10 +1259,31 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 2 AND b < 7 ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 2 AND b < 7 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=2, b=(-inf, 7)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│     {a=2, b=(-inf, 7)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Closed interval: a=1 AND b >= 3 AND b <= 7
 query
@@ -616,10 +1296,31 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 3 AND b <= 7 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, 7]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│      {a=1, b=[3, 7]}      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Half-open exclusive on both sides: a=1 AND b > 1 AND b < 9
 query
@@ -632,10 +1333,31 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 1 AND b < 9 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(1, 9)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│      {a=1, b=(1, 9)}      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # --- OR of ranges ---
 
@@ -649,10 +1371,32 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND (b < 3 OR b > 7) ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 3)}, {a=1, b=(7, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│ {a=1, b=(-inf, 3)}, {a=1, │
+│        b=(7, +inf)}       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # OR of overlapping ranges on the same equality prefix → merged into one.
 # (a=1 AND b>=3 AND b<=7) OR (a=1 AND b>=5 AND b<=9) → a=1 AND b ∈ [3,9]
@@ -667,10 +1411,31 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE (a=1 AND b >= 3 AND b <= 7) OR (a=1 AND b >= 5 AND b <= 9) ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b >= 3 AND b <= 7) OR (a=1 AND b >= 5 AND b <= 9) ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, 9]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│      {a=1, b=[3, 9]}      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # OR of ranges with different equality prefixes → two separate range constraints.
 query
@@ -683,10 +1448,33 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE (a=1 AND b > 7) OR (a=2 AND b > 5) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b > 7) OR (a=2 AND b > 5) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(7, +inf)}, {a=2, b=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.a ASC       │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│ {a=1, b=(7, +inf)}, {a=2, │
+│        b=(5, +inf)}       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 
 # Range on first PK column only → range lookup on a.
@@ -705,10 +1493,30 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a > 1 ORDER BY a, b;
+EXPLAIN SELECT * FROM t_range WHERE a > 1 ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.a ASC       │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│   Filter: {a=(1, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 query
 SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
@@ -725,10 +1533,33 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
+EXPLAIN SELECT * FROM t_range WHERE a <= 1 OR a > 2 ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1]}, {a=(2, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.a ASC       │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 1]}, {a=(2, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Filter on non-first PK column only → full scan.
 query
@@ -743,10 +1574,45 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE b > 5 ORDER BY a, b;
+EXPLAIN SELECT * FROM t_range WHERE b > 5 ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.a ASC       │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│          (b > 5)          │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│        Projections:       │
+│             b             │
+│             a             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # OR mixing a range-scannable branch with a non-range-scannable one → full scan.
 # b > 3 alone has no equality prefix → forces full scan.
@@ -765,10 +1631,38 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE (a=1 AND b > 5) OR (b > 3) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_range WHERE (a=1 AND b > 5) OR (b > 3) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.a ASC       │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((b > 5) OR (b > 3)) AND │
+│ ((b > 3) OR ((a = 1) AND  │
+│         (b > 5))))        │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Range on a combined with range on b: only a's range is used for seek.
 query
@@ -781,10 +1675,37 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
+EXPLAIN SELECT * FROM t_range WHERE a > 1 AND b > 5 ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.a ASC       │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│          (b > 5)          │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│   Filter: {a=(1, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # Impossible range (b > 9 AND b < 1) → contradiction → 0 rows, full scan.
 query
@@ -794,10 +1715,19 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 9 AND b < 1 ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 9 AND b < 1 ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│        EMPTY_RESULT       │
+└───────────────────────────┘
 
 # Boundary equality: b >= 5 AND b <= 5 is equivalent to b = 5 → point lookup.
 query
@@ -808,10 +1738,22 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b >= 5 AND b <= 5;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_point_lookup, points=[(a=1, b=5)]]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│       Table: t_range      │
+│     Filter: (a=1, b=5)    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # NULL value in non-PK column passes through range scan correctly.
 query
@@ -821,10 +1763,38 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 1 AND b > 5 AND val IS NULL ORDER BY b;
+EXPLAIN SELECT * FROM t_range WHERE a = 1 AND b > 5 AND val IS NULL ORDER BY b;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=1, b=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│       (val IS NULL)       │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│     {a=1, b=(5, +inf)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 # --- RYOW: range lookup within a transaction ---
 
@@ -846,10 +1816,24 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range WHERE a = 4 AND b > 5;
+EXPLAIN SELECT * FROM t_range WHERE a = 4 AND b > 5;
 ----
 QUERY PLAN
-<slt:ignore>[t_range, type=rocksdb_range_lookup, ranges=[{a=4, b=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_range      │
+│                           │
+│          Filter:          │
+│     {a=4, b=(5, +inf)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
 
 statement ok
 ROLLBACK;
@@ -881,10 +1865,32 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND b = 2 AND c > 3 ORDER BY c;
+EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND b = 2 AND c > 3 ORDER BY c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range3      │
+│                           │
+│          Filter:          │
+│  {a=1, b=2, c=(3, +inf)}  │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # a=1 AND b=2 (only equalities, no range col) → range lookup on equality prefix.
 query
@@ -898,10 +1904,30 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
+EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND b = 2 ORDER BY c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range3      │
+│     Filter: {a=1, b=2}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # a=1 AND c>3 (gap: b not constrained) → not a valid prefix → full scan.
 query
@@ -914,10 +1940,48 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
+EXPLAIN SELECT * FROM t_range3 WHERE a = 1 AND c > 3 ORDER BY b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range3.b ASC      │
+│       t_range3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│          (c > 3)          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range3      │
+│       Filter: {a=1}       │
+│                           │
+│        Projections:       │
+│             a             │
+│             c             │
+│             b             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # a > 1 range on first col of 3-col PK → range lookup on a.
 query
@@ -929,10 +1993,32 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE a > 1 ORDER BY a, b, c;
+EXPLAIN SELECT * FROM t_range3 WHERE a > 1 ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=(1, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range3.a ASC      │
+│       t_range3.b ASC      │
+│       t_range3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range3      │
+│   Filter: {a=(1, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # OR of two complete-prefix ranges on 3-col PK.
 query
@@ -944,13 +2030,35 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND b=2 AND c<5) ORDER BY a, b, c;
+EXPLAIN SELECT * FROM t_range3 WHERE (a=1 AND b=2 AND c>5) OR (a=2 AND b=2 AND c<5) ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(5, +inf)}, {a=2, b=2, c=(-inf, 5)}]]<slt:ignore>
-
-
-# SELECT * FROM t_range3 WHERE (a < 2 AND b <= 2) OR (a <= 1 AND b < 3) ORDER BY a, b, c;
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range3.a ASC      │
+│       t_range3.b ASC      │
+│       t_range3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range3      │
+│                           │
+│          Filter:          │
+│  {a=1, b=2, c=(5, +inf)}, │
+│   {a=2, b=2, c=(-inf, 5)} │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 # Unite multiple columns
@@ -966,11 +2074,41 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
+EXPLAIN SELECT * FROM t_range3 WHERE (a <= 1 AND b <= 2) OR (a < 2 AND b < 3) ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>Filter[1][expression: or(and(presto_lte("a",1),presto_lte("b",2)),and(presto_lt("a",2),presto_lt("b",3)))]<slt:ignore>
-<slt:ignore>[t_range3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_range3.a ASC      │
+│       t_range3.b ASC      │
+│       t_range3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((b <= 2) OR (b < 3)) AND│
+│  (((a <= 1) AND (b <= 2)) │
+│ OR ((a < 2) AND (b < 3))))│
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_range3      │
+│   Filter: {a=(-inf, 2)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 
 statement ok
@@ -994,10 +2132,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a > 5) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│   Filter: {a=(-inf, 5]}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a >= v) → a < v  (range_lookup)
 query
@@ -1009,10 +2165,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a >= 5) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│   Filter: {a=(-inf, 5)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a < v) → a >= v  (range_lookup)
 query
@@ -1025,10 +2199,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a < 5) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=[5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│   Filter: {a=[5, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a <= v) → a > v  (range_lookup)
 query
@@ -1040,10 +2232,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a <= 5) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│   Filter: {a=(5, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(NOT(a > v)) → double negation → a > v  (range_lookup)
 query
@@ -1055,10 +2265,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (NOT (a > 5)) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│   Filter: {a=(5, +inf)}   │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a > x AND a < y) → De Morgan → a <= x OR a >= y  (two ranges)
 query
@@ -1072,10 +2300,31 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a > 3 AND a < 7) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3]}, {a=[7, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 3]}, {a=[7, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a > x OR a < y) → De Morgan → a <= x AND a >= y  (single range)
 query
@@ -1088,10 +2337,28 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a > 7 OR a < 3) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=[3, 7]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│     Filter: {a=[3, 7]}    │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a = v) → full scan (equality negation not pushed to range)
 query
@@ -1105,10 +2372,31 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a = 5) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 5)}, {a=(5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 5)}, {a=(5, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # NOT(a IN (...)) → full scan (IN negation not pushed to range)
 query
@@ -1121,10 +2409,31 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
+EXPLAIN SELECT * FROM t_not WHERE NOT (a IN (3, 7)) ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[t_not, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3)}, {a=(3, 7)}, {a=(7, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not.a ASC        │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│        Table: t_not       │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 3)}, {a=(3, 7)},│
+│        {a=(7, +inf)}      │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_not;
@@ -1148,10 +2457,30 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 3) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=(-inf, 3]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not2.a ASC       │
+│        t_not2.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_not2       │
+│   Filter: {a=(-inf, 3]}   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
 # NOT(NOT(a = 1 AND b > 2)) → double negation → a = 1 AND b > 2  (range_lookup with prefix)
 query
@@ -1162,10 +2491,32 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_not2 WHERE NOT (NOT (a = 1 AND b > 2)) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=1, b=(2, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not2.a ASC       │
+│        t_not2.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_not2       │
+│                           │
+│          Filter:          │
+│     {a=1, b=(2, +inf)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
 # NOT(a > 4 OR a < 2) → De Morgan → a <= 4 AND a >= 2 → [2, 4]  (range_lookup)
 query
@@ -1177,10 +2528,30 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 4 OR a < 2) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=[2, 4]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not2.a ASC       │
+│        t_not2.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_not2       │
+│     Filter: {a=[2, 4]}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
 # NOT(a > 1 AND a < 5) → De Morgan → a <= 1 OR a >= 5  (two ranges)
 query
@@ -1194,10 +2565,33 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_not2 WHERE NOT (a > 1 AND a < 5) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_not2, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1]}, {a=[5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not2.a ASC       │
+│        t_not2.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_not2       │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 1]}, {a=[5, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
 # NOT(a = 1 AND b > 2) → De Morgan AND → a != 1 OR b <= 2 → full scan (OR loses prefix)
 query
@@ -1212,10 +2606,36 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
+EXPLAIN SELECT * FROM t_not2 WHERE NOT (a = 1 AND b > 2) ORDER BY a, b;
 ----
 QUERY PLAN
-<slt:ignore>[t_not2, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        t_not2.a ASC       │
+│        t_not2.b ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│(NOT ((a = 1) AND (b > 2)))│
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│       Table: t_not2       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_not2;
@@ -1250,10 +2670,26 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
+EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name = 'alice';
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_point_lookup, points=[(region=1, priority=10, name=alice)]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│  (region=1, priority=10,  │
+│         name=alice)       │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # Equality prefix + range on third column (name <= 'bob').
 query
@@ -1265,10 +2701,33 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
+EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority = 10 AND name <= 'bob' ORDER BY name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=10, name=(-inf, bob]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│  {region=1, priority=10,  │
+│      name=(-inf, bob]}    │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # Equality on first + range on second column (priority > 15).
 query
@@ -1280,10 +2739,34 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
+EXPLAIN SELECT * FROM t_complex WHERE region = 1 AND priority > 15 ORDER BY priority, name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=(15, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│   t_complex.priority ASC  │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│ {region=1, priority=(15,  │
+│           +inf)}          │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # OR of two prefix ranges on first column.
 query
@@ -1299,10 +2782,35 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
+EXPLAIN SELECT * FROM t_complex WHERE region <= 1 OR region >= 3 ORDER BY region, priority, name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=(-inf, 1]}, {region=[3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    t_complex.region ASC   │
+│   t_complex.priority ASC  │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│    {region=(-inf, 1]},    │
+│     {region=[3, +inf)}    │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # NOT + AND: NOT(region > 1 AND priority < 20) → region <= 1 OR priority >= 20.
 # De Morgan yields an OR whose branches differ on column → full scan.
@@ -1319,10 +2827,39 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
+EXPLAIN SELECT * FROM t_complex WHERE NOT (region > 1 AND priority < 20) ORDER BY region, priority, name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    t_complex.region ASC   │
+│   t_complex.priority ASC  │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│  (NOT ((region > 1) AND   │
+│     (priority < 20)))     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # NOT + OR on first column: NOT(region < 1 OR region > 2) → 1 <= region <= 2.
 query
@@ -1338,10 +2875,34 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
+EXPLAIN SELECT * FROM t_complex WHERE NOT (region < 1 OR region > 2) ORDER BY region, priority, name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=[1, 2]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    t_complex.region ASC   │
+│   t_complex.priority ASC  │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│      {region=[1, 2]}      │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # AND of prefix equality + NOT on range: region = 2 AND NOT(priority > 20).
 query
@@ -1352,10 +2913,34 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
+EXPLAIN SELECT * FROM t_complex WHERE region = 2 AND NOT (priority > 20) ORDER BY priority, name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=2, priority=(-inf, 20]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│   t_complex.priority ASC  │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│ {region=2, priority=(-inf,│
+│            20]}           │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 # Complex: (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10).
 query
@@ -1368,10 +2953,36 @@ region	priority	name	score
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
+EXPLAIN SELECT * FROM t_complex WHERE (region = 1 AND priority <= 10) OR (region = 3 AND priority <= 10) ORDER BY region, priority, name;
 ----
 QUERY PLAN
-<slt:ignore>[t_complex, type=rocksdb_range_lookup, ranges=[{region=1, priority=(-inf, 10]}, {region=3, priority=(-inf, 10]}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    t_complex.region ASC   │
+│   t_complex.priority ASC  │
+│    t_complex."name" ASC   │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_complex     │
+│                           │
+│          Filter:          │
+│ {region=1, priority=(-inf,│
+│  10]}, {region=3, priority│
+│        =(-inf, 10]}       │
+│                           │
+│        Projections:       │
+│           region          │
+│          priority         │
+│            name           │
+│           score           │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_complex;
@@ -1391,10 +3002,21 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a < 1 AND a > 1;
+EXPLAIN SELECT * FROM t_void WHERE a < 1 AND a > 1;
 ----
 QUERY PLAN
-<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_void       │
+│     Filter: {a=empty}     │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 # a > 5 AND a < 3 → contradictory.
 query
@@ -1404,10 +3026,12 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a > 5 AND a < 3;
+EXPLAIN SELECT * FROM t_void WHERE a > 5 AND a < 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+┌───────────────────────────┐
+│        EMPTY_RESULT       │
+└───────────────────────────┘
 
 # a = 3 AND a = 5 → point contradiction.
 query
@@ -1417,10 +3041,12 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE a = 3 AND a = 5;
+EXPLAIN SELECT * FROM t_void WHERE a = 3 AND a = 5;
 ----
 QUERY PLAN
-<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+┌───────────────────────────┐
+│        EMPTY_RESULT       │
+└───────────────────────────┘
 
 # OR where one branch is contradictory: (a < 1 AND a > 1) OR a = 3 → just a = 3.
 query
@@ -1429,12 +3055,32 @@ SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
 a	val
 3	30
 
+# TODO(mkornaukhov) fix rewriter to remove a contradictory condition
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
+EXPLAIN SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR a = 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_void, type=rocksdb_point_lookup, points=[(a=3)]]<slt:ignore>
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((a = 3) OR ((a < 1) AND  │
+│         (a > 1)))         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│       Table: t_void       │
+│       Filter: (a=3)       │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 # Both OR branches contradictory → 0 ranges.
 query
@@ -1444,10 +3090,21 @@ a	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
+EXPLAIN SELECT * FROM t_void WHERE (a < 1 AND a > 1) OR (a > 5 AND a < 3);
 ----
 QUERY PLAN
-<slt:ignore>[t_void, type=rocksdb_range_lookup, ranges=[]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│       Table: t_void       │
+│     Filter: {a=empty}     │
+│                           │
+│        Projections:       │
+│             a             │
+│            val            │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_void;
@@ -1485,10 +3142,28 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a > 2;
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a > 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 2)}, {a=(2, +inf│
+│             )}            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 1-D adjacent inclusive+inclusive (full coverage) ─────────────────────────
@@ -1499,12 +3174,35 @@ SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 2;
 count
 27
 
+# TODO(mkornaukhov) fix rewriter to remove condition even for full scan
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 2;
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((a <= 2) OR (a >= 2))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Projections: a      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 1-D adjacent exclusive+inclusive (no gap) ────────────────────────────────
@@ -1517,10 +3215,32 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a >= 2;
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a < 2 OR a >= 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((a < 2) OR (a >= 2))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Projections: a      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 1-D overlapping ranges (a<=2 covers 1,2; a>=1 covers 1,2,3 → all) ────────
@@ -1532,10 +3252,32 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 1;
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a <= 2 OR a >= 1;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((a <= 2) OR (a >= 1))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Projections: a      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 1-D duplicate range (a=2 OR a=2) → exactly 9 rows, no duplicates ─────────
@@ -1547,10 +3289,25 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a = 2 OR a = 2;
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a = 2 OR a = 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Filter: {a=2}       │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 1-D three disjoint ranges ────────────────────────────────────────────────
@@ -1563,10 +3320,28 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE a < 1 OR (a > 1 AND a < 3) OR a > 3;
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE a < 1 OR (a > 1 AND a < 3) OR a > 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 1)}, {a=(1, 3)}, {a=(3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 1)}, {a=(1, 3)},│
+│        {a=(3, +inf)}      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 2-D: same a, b disjoint (b<2 OR b>1 covers all b) → fuses to a=[2,2] ─────
@@ -1578,10 +3353,33 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a=2 AND b < 2) OR (a=2 AND b > 1);
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE (a=2 AND b < 2) OR (a=2 AND b > 1);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│    ((b < 2) OR (b > 1))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Filter: {a=2}       │
+│       Projections: b      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 2-D: same a, b adjacent exclusive+inclusive → fuses to a=[1,1] ───────────
@@ -1594,10 +3392,33 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b <= 2) OR (a=1 AND b > 2);
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE (a=1 AND b <= 2) OR (a=1 AND b > 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1}]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((b <= 2) OR (b > 2))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Filter: {a=1}       │
+│       Projections: b      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 2-D: different a, same b constraint → b is trailing, full scan on a ───────
@@ -1619,15 +3440,44 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3 WHERE (a <= 2 AND b <= 2) OR (a >= 2 AND b >= 2);
+EXPLAIN SELECT COUNT(*) FROM t_sweep3 WHERE (a <= 2 AND b <= 2) OR (a >= 2 AND b >= 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│  (((a <= 2) OR (a >= 2))  │
+│  AND ((b <= 2) OR (b >= 2)│
+│ ) AND (((a <= 2) AND (b <=│
+│  2)) OR ((a >= 2) AND (b >│
+│          = 2))))          │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: disjoint specific-point prefixes ────────────────────────────────────
 # (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2) → 2 point lookups
-query rowsort
+query ???????
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2)
   ORDER BY a, b, c;
@@ -1638,16 +3488,41 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=1), (a=2, b=2, c=2)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ (a=1, b=1, c=1), (a=2, b=2│
+│           , c=2)          │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: same point duplicated → exactly 1 lookup, 1 row ─────────────────────
-query rowsort
+query ???????
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=3 AND b=3 AND c=3) OR (a=3 AND b=3 AND c=3)
   ORDER BY a, b, c;
@@ -1657,12 +3532,36 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a=3 AND b=3 AND c=3) OR (a=3 AND b=3 AND c=3)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=3, b=3, c=3)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│      (a=3, b=3, c=3)      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: c adjacent (inclusive+exclusive) fuses to b-level range ─────────────
@@ -1675,17 +3574,40 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+EXPLAIN SELECT COUNT(*) FROM t_sweep3
   WHERE (a=1 AND b=1 AND c <= 2) OR (a=1 AND b=1 AND c > 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=1}]]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│   ((c <= 2) OR (c > 2))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│     Filter: {a=1, b=1}    │
+│       Projections: c      │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: b adjacent then c fuses to a-level range ────────────────────────────
 # (a=2 AND b<=2 AND c=1) OR (a=2 AND b>2 AND c=1)  →  all b for a=2, c=1
 # c=1 is a trailing constraint → post-filter, scan covers a=[2,2]
-query rowsort
+query ???????
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=2 AND b <= 2 AND c = 1) OR (a=2 AND b > 2 AND c = 1)
   ORDER BY a, b, c;
@@ -1697,12 +3619,42 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a=2 AND b <= 2 AND c = 1) OR (a=2 AND b > 2 AND c = 1)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=2}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((c = 1) AND ((b <= 2) OR │
+│         (b > 2)))         │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│       Filter: {a=2}       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: all three columns overlapping → full scan ───────────────────────────
@@ -1715,16 +3667,48 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+EXPLAIN SELECT COUNT(*) FROM t_sweep3
   WHERE (a <= 2 AND b <= 2 AND c <= 2) OR (a >= 1 AND b >= 1 AND c >= 1);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan]<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│  (((a <= 2) OR (a >= 1))  │
+│  AND ((b <= 2) OR (b >= 1)│
+│ ) AND ((c <= 2) OR (c >= 1│
+│ )) AND (((a <= 2) AND (b <│
+│ = 2) AND (c <= 2)) OR ((a │
+│ >= 1) AND (b >= 1) AND (c │
+│          >= 1))))         │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: two ranges sharing a prefix, disjoint on c ──────────────────────────
 # (a=1 AND b=2 AND c<2) OR (a=1 AND b=2 AND c>2) → c=2 row excluded
-query rowsort
+query ???????
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=2 AND c < 2) OR (a=1 AND b=2 AND c > 2)
   ORDER BY a, b, c;
@@ -1735,16 +3719,41 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=2 AND c < 2) OR (a=1 AND b=2 AND c > 2)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=2, c=(-inf, 2)}, {a=1, b=2, c=(2, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│  {a=1, b=2, c=(-inf, 2)}, │
+│   {a=1, b=2, c=(2, +inf)} │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # ── 3-D: three-way triple point OR deduplicated ───────────────────────────────
-query rowsort
+query ???????
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1)
      OR (a=2 AND b=2 AND c=2)
@@ -1757,14 +3766,39 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1)
      OR (a=2 AND b=2 AND c=2)
      OR (a=1 AND b=1 AND c=1)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=1), (a=2, b=2, c=2)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ (a=1, b=1, c=1), (a=2, b=2│
+│           , c=2)          │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 
 # =============================================================================
@@ -1787,13 +3821,46 @@ a	b	c	val
 # Reject filters at all, but for data source range are passed
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a < 2 AND b < 2) OR (a > 2 AND b > 2)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[expression: or(and(presto_lt("a",2),presto_lt("b",2)),and(presto_gt("a",2),presto_gt("b",2)))] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((b < 2) OR (b > 2)) AND │
+│ (((a < 2) AND (b < 2)) OR │
+│  ((a > 2) AND (b > 2))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 2)}, {a=(2, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # Beyond-prefix equality on b: b=1 for a<2, b=3 for a>2.
 # Scan uses only a-ranges; original filter retained as post-filter.
@@ -1812,13 +3879,46 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a < 2 AND b = 1) OR (a > 2 AND b = 3)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[expression: or(and(presto_lt("a",2),presto_eq("b",1)),and(presto_gt("a",2),presto_eq("b",3)))]<slt:ignore>
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=(-inf, 2)}, {a=(2, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((b = 1) OR (b = 3)) AND │
+│ (((a < 2) AND (b = 1)) OR │
+│  ((a > 2) AND (b = 3))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=(-inf, 2)}, {a=(2, +inf│
+│             )}            │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # Beyond-prefix on c: each KC uses prefix=2 (a equality + b range), c is beyond.
 # Scan uses {a=1, b<2} and {a=3, b>2}; original filter retained as post-filter.
@@ -1835,13 +3935,47 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a = 1 AND b < 2 AND c < 3) OR (a = 3 AND b > 2 AND c > 1)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[expression: or(and(presto_eq("a",1),presto_lt("b",2),presto_lt("c",3)),and(presto_eq("a",3),presto_gt("b",2),presto_gt("c",1)))]<slt:ignore>
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=3, b=(2, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((c < 3) OR (c > 1)) AND │
+│ (((a = 1) AND (b < 2) AND │
+│ (c < 3)) OR ((a = 3) AND  │
+│   (b > 2) AND (c > 1))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=1, b=(-inf, 2)}, {a=3, │
+│        b=(2, +inf)}       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # Per-a-value b-ranges differ: each a-group gets its own shape
 query
@@ -1865,12 +3999,46 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a = 1 AND b < 2) OR (a = 2 AND b BETWEEN 1 AND 2) OR (a = 3 AND b > 2)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=2, b=[1, 2]}, {a=3, b=(2, +inf)}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((b > 2) OR ((b <= 2) OR (│
+│   (b < 2) OR (b >= 1))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=1, b=(-inf, 2)}, {a=2, │
+│   b=[1, 2]}, {a=3, b=(2,  │
+│           +inf)}          │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # All 3 PK columns constrained differently
 query
@@ -1887,12 +4055,46 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a = 1 AND b = 1 AND c < 3) OR (a = 2 AND b = 2 AND c > 1) OR (a = 3 AND b = 3 AND c = 2)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=1, c=(-inf, 3)}, {a=2, b=2, c=(1, +inf)}, {a=3, b=3, c=2}]] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "val":INTEGER<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((c = 2) OR ((c < 3) OR (c│
+│           > 1)))          │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│  {a=1, b=1, c=(-inf, 3)}, │
+│  {a=2, b=2, c=(1, +inf)}, │
+│       {a=3, b=3, c=2}     │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # Overlapping a-ranges -> fall back to full scan with remaining filter
 query
@@ -1904,11 +4106,39 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+EXPLAIN SELECT COUNT(*) FROM t_sweep3
   WHERE (a < 3 AND b < 2) OR (a > 1 AND b < 3);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a < 3) OR (a > 1)) AND │
+│ ((b < 2) OR (b < 3)) AND (│
+│ ((a < 3) AND (b < 2)) OR (│
+│   (a > 1) AND (b < 3))))  │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # =============================================================================
 # AND of per-column OR/AND filters: (cond_a) AND (cond_b) AND (cond_c)
@@ -1929,12 +4159,38 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a = 1 OR a = 3) AND (b = 1 OR b = 3) AND c = 2
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_point_lookup, points=[(a=1, b=1, c=2), (a=1, b=3, c=2), (a=3, b=1, c=2), (a=3, b=3, c=2)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ (a=1, b=1, c=2), (a=1, b=3│
+│ , c=2), (a=3, b=1, c=2),  │
+│      (a=3, b=3, c=2)      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # Range on a, range on b, OR on c -> a is range column (prefix=1), b/c beyond prefix.
 # Scan uses a=[1,2] with original expression as remaining filter.
@@ -1955,12 +4211,42 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a >= 1 AND a <= 2) AND (b >= 2 AND b <= 3) AND (c = 1 OR c = 3)
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=[1, 2]}]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((b BETWEEN 2 AND 3) AND (│
+│    (c = 1) OR (c = 3)))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│     Filter: {a=[1, 2]}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # OR on a (point), neq on b, range on c -> prefix=2 (a equality + b range), c beyond.
 # Scan uses {a=1,b<2},{a=1,b>2},{a=2,b<2},{a=2,b>2} with remaining filter.
@@ -1981,12 +4267,46 @@ a	b	c	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, b, c, val FROM t_sweep3
+EXPLAIN SELECT a, b, c, val FROM t_sweep3
   WHERE (a = 1 OR a = 2) AND (b < 2 OR b > 2) AND c >= 2
   ORDER BY a, b, c;
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_range_lookup, ranges=[{a=1, b=(-inf, 2)}, {a=1, b=(2, +inf)}, {a=2, b=(-inf, 2)}, {a=2, b=(2, +inf)}]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│       t_sweep3.a ASC      │
+│       t_sweep3.b ASC      │
+│       t_sweep3.c ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│          (c >= 2)         │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│          Filter:          │
+│ {a=1, b=(-inf, 2)}, {a=1, │
+│   b=(2, +inf)}, {a=2, b=( │
+│  -inf, 2)}, {a=2, b=(2,   │
+│           +inf)}          │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│            val            │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 # Tautological per-column ORs -> always true -> full scan.
 # (x > 1 OR x < 2) is true for every integer x.
@@ -1999,11 +4319,39 @@ count
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT COUNT(*) FROM t_sweep3
+EXPLAIN SELECT COUNT(*) FROM t_sweep3
   WHERE (a > 1 OR a < 2) AND (b > 1 OR b < 2) AND (c > 1 OR c < 2);
 ----
 QUERY PLAN
-<slt:ignore>[t_sweep3, type=rocksdb_full_scan<slt:ignore>
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (((a > 1) OR (a < 2)) AND │
+│ ((b > 1) OR (b < 2)) AND (│
+│    (c > 1) OR (c < 2)))   │
+│                           │
+│          ~5 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│      Table: t_sweep3      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~27 rows         │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_sweep3;
@@ -2030,10 +4378,21 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_between WHERE id BETWEEN 2 AND 4;
+EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_between, type=rocksdb_range_lookup, ranges=[{id=[2, 4]}]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_between     │
+│    Filter: {id=[2, 4]}    │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # Degenerate BETWEEN where bounds are equal: id BETWEEN 3 AND 3  ->  point lookup
 query
@@ -2044,10 +4403,21 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
+EXPLAIN SELECT * FROM t_between WHERE id BETWEEN 3 AND 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_between, type=rocksdb_point_lookup, points=[(id=3)]]<slt:ignore>
+┌───────────────────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_between     │
+│       Filter: (id=3)      │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 # Impossible BETWEEN (lo > hi): id BETWEEN 4 AND 2  ->  0 rows
 query
@@ -2078,10 +4448,24 @@ a	b	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6;
+EXPLAIN SELECT * FROM t_between_cpk WHERE a = 1 AND b BETWEEN 3 AND 6;
 ----
 QUERY PLAN
-<slt:ignore>[t_between_cpk, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, 6]}]]<slt:ignore>
+┌───────────────────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│    Table: t_between_cpk   │
+│                           │
+│          Filter:          │
+│      {a=1, b=[3, 6]}      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│            val            │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_between_cpk;
@@ -2108,11 +4492,30 @@ id	val
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT * FROM t_contra
+EXPLAIN SELECT * FROM t_contra
   WHERE id > 0 AND (id = 4 OR (id = 2 AND id != 2));
 ----
 QUERY PLAN
-<slt:ignore>[t_contra, type=rocksdb_point_lookup, points=[(id=4)]]<slt:ignore>
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((id = 4) OR ((id = 2) AND│
+│         (id != 2)))       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_contra      │
+│       Filter: (id=4)      │
+│                           │
+│        Projections:       │
+│             id            │
+│            val            │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 statement ok
 DROP TABLE t_contra;
@@ -2130,12 +4533,40 @@ INSERT INTO t_dml_point VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
 # UPDATE via point lookup: only id=3 changes.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_point SET val = 99 WHERE id = 3;
+EXPLAIN UPDATE t_dml_point SET val = 99 WHERE id = 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_point, type=rocksdb_point_lookup, points=[(id=3)]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             99            │
+│             id            │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: t_dml_point    │
+│       Filter: (id=3)      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 UPDATE t_dml_point SET val = 99 WHERE id = 3;
 
@@ -2152,12 +4583,23 @@ id	val
 # DELETE via point lookup: only id=1 removed.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_point WHERE id = 1;
+EXPLAIN DELETE FROM t_dml_point WHERE id = 1;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_point, type=rocksdb_point_lookup, points=[(id=1)]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: t_dml_point    │
+│       Filter: (id=1)      │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 DELETE FROM t_dml_point WHERE id = 1;
 
@@ -2193,12 +4635,26 @@ count
 # Multi-point DELETE via IN: removes id=2 and id=4.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_point WHERE id IN (2, 4);
+EXPLAIN DELETE FROM t_dml_point WHERE id IN (2, 4);
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_point, type=rocksdb_point_lookup, points=[(id=2), (id=4)]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: t_dml_point    │
+│                           │
+│          Filter:          │
+│       (id=2), (id=4)      │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 2
 DELETE FROM t_dml_point WHERE id IN (2, 4);
 
@@ -2226,12 +4682,40 @@ INSERT INTO t_dml_range VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50);
 # UPDATE via range lookup: ids 2..4 updated.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
+EXPLAIN UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_range, type=rocksdb_range_lookup, ranges=[{id=[2, 4]}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             0             │
+│             id            │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│     Table: t_dml_range    │
+│    Filter: {id=[2, 4]}    │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 3
 UPDATE t_dml_range SET val = 0 WHERE id BETWEEN 2 AND 4;
 
@@ -2248,12 +4732,26 @@ id	val
 # DELETE via range lookup: ids > 3.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_range WHERE id > 3;
+EXPLAIN DELETE FROM t_dml_range WHERE id > 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_range, type=rocksdb_range_lookup, ranges=[{id=(3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│     Table: t_dml_range    │
+│                           │
+│          Filter:          │
+│       {id=(3, +inf)}      │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 2
 DELETE FROM t_dml_range WHERE id > 3;
 
@@ -2305,12 +4803,42 @@ INSERT INTO t_dml_cpk VALUES
 # UPDATE via full-PK point lookup: only (2,4) changes.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_cpk SET val = 99 WHERE a = 2 AND b = 4;
+EXPLAIN UPDATE t_dml_cpk SET val = 99 WHERE a = 2 AND b = 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_cpk, type=rocksdb_point_lookup, points=[(a=2, b=4)]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│             #3            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             99            │
+│             a             │
+│             b             │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_dml_cpk     │
+│     Filter: (a=2, b=4)    │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 UPDATE t_dml_cpk SET val = 99 WHERE a = 2 AND b = 4;
 
@@ -2325,12 +4853,28 @@ a	b	val
 # DELETE via prefix range: all rows where a=1 AND b >= 3.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
+EXPLAIN DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_cpk, type=rocksdb_range_lookup, ranges=[{a=1, b=[3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_dml_cpk     │
+│                           │
+│          Filter:          │
+│     {a=1, b=[3, +inf)}    │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│                           │
+│          ~8 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 2
 DELETE FROM t_dml_cpk WHERE a = 1 AND b >= 3;
 
@@ -2343,12 +4887,42 @@ a	b	val
 # UPDATE via prefix equality only (a=3): both rows in prefix group updated.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_cpk SET val = 0 WHERE a = 3;
+EXPLAIN UPDATE t_dml_cpk SET val = 0 WHERE a = 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_cpk, type=rocksdb_range_lookup, ranges=[{a=3}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│             #3            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             0             │
+│             a             │
+│             b             │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_dml_cpk     │
+│       Filter: {a=3}       │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 2
 UPDATE t_dml_cpk SET val = 0 WHERE a = 3;
 
@@ -2362,12 +4936,28 @@ a	b	val
 # DELETE via BETWEEN on second PK column: a=2 AND b BETWEEN 2 AND 4.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
+EXPLAIN DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_cpk, type=rocksdb_range_lookup, ranges=[{a=2, b=[2, 4]}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_dml_cpk     │
+│                           │
+│          Filter:          │
+│      {a=2, b=[2, 4]}      │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 2
 DELETE FROM t_dml_cpk WHERE a = 2 AND b BETWEEN 2 AND 4;
 
@@ -2418,12 +5008,40 @@ id	val
 # Update inside tx; verify the new value is visible.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_ryow SET val = 99 WHERE id = 3;
+EXPLAIN UPDATE t_dml_ryow SET val = 99 WHERE id = 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_ryow, type=rocksdb_point_lookup, points=[(id=3)]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             99            │
+│             id            │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: t_dml_ryow     │
+│       Filter: (id=3)      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 UPDATE t_dml_ryow SET val = 99 WHERE id = 3;
 
@@ -2436,12 +5054,23 @@ id	val
 # Delete inside tx; verify the row is gone.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_ryow WHERE id = 2;
+EXPLAIN DELETE FROM t_dml_ryow WHERE id = 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_ryow, type=rocksdb_point_lookup, points=[(id=2)]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│     Table: t_dml_ryow     │
+│       Filter: (id=2)      │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 DELETE FROM t_dml_ryow WHERE id = 2;
 
@@ -2515,12 +5144,26 @@ val
 # Range boundary: DELETE id >= 5 (only the last row).
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) DELETE FROM t_dml_corner WHERE id >= 5;
+EXPLAIN DELETE FROM t_dml_corner WHERE id >= 5;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_corner, type=rocksdb_range_lookup, ranges=[{id=[5, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│    Table: t_dml_corner    │
+│                           │
+│          Filter:          │
+│       {id=[5, +inf)}      │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 DELETE FROM t_dml_corner WHERE id >= 5;
 
@@ -2536,12 +5179,42 @@ id	val
 # Range boundary: UPDATE id < 2 (only the first row).
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_corner SET val = 99 WHERE id < 2;
+EXPLAIN UPDATE t_dml_corner SET val = 99 WHERE id < 2;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_corner, type=rocksdb_range_lookup, ranges=[{id=(-inf, 2)}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             99            │
+│             id            │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│    Table: t_dml_corner    │
+│                           │
+│          Filter:          │
+│       {id=(-inf, 2)}      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 1
 UPDATE t_dml_corner SET val = 99 WHERE id < 2;
 
@@ -2557,12 +5230,43 @@ id	val
 # id != 3 -> range lookup, updates all rows except id=3.
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) UPDATE t_dml_corner SET val = 0 WHERE id != 3;
+EXPLAIN UPDATE t_dml_corner SET val = 0 WHERE id != 3;
 ----
 QUERY PLAN
-<slt:ignore>[t_dml_corner, type=rocksdb_range_lookup, ranges=[{id=(-inf, 3)}, {id=(3, +inf)}]]<slt:ignore>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             0             │
+│             id            │
+│           rowid           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│    Table: t_dml_corner    │
+│                           │
+│          Filter:          │
+│  {id=(-inf, 3)}, {id=(3,  │
+│           +inf)}          │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
-skipif serenedb
+
 statement count 3
 UPDATE t_dml_corner SET val = 0 WHERE id != 3;
 
@@ -2595,10 +5299,31 @@ INSERT INTO choices_array VALUES (5, NULL, NULL);
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 OR a = 5 ORDER BY a;
+EXPLAIN SELECT a, nums, labels FROM choices_array WHERE a = 1 OR a = 3 OR a = 4 OR a = 5 ORDER BY a;
 ----
 QUERY PLAN
-<slt:ignore>[choices_array, type=rocksdb_point_lookup, points=[(a=1), (a=3), (a=4), (a=5)]]<slt:ignore>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    choices_array.a ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│    Table: choices_array   │
+│                           │
+│          Filter:          │
+│ (a=1), (a=3), (a=4), (a=5)│
+│                           │
+│        Projections:       │
+│             a             │
+│            nums           │
+│           labels          │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 
 query

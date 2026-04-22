@@ -40,6 +40,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <yaclib/async/future.hpp>
+#include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
 #include "auth/role_utils.h"
@@ -78,11 +80,11 @@
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
+#include "connector/duckdb_entry_cache.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
-#include "pg/sql_resolver.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -93,8 +95,6 @@
 #include "storage_engine/secondary_index_shard.h"
 #include "storage_engine/table_shard.h"
 #include "utils/exec_context.h"
-#include "yaclib/async/future.hpp"
-#include "yaclib/async/when_all.hpp"
 
 namespace sdb::catalog {
 
@@ -130,7 +130,12 @@ class SnapshotImpl : public Snapshot {
     result->_resolution_table = _resolution_table;
     result->_objects = _objects;
     result->_object_dependencies = _object_dependencies;
+    // New snapshot starts with empty DuckDB cache (lazily populated)
     return result;
+  }
+
+  connector::DuckDBEntryCache& GetDuckDBEntryCache() const override {
+    return _duckdb_cache;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(
@@ -522,7 +527,7 @@ class SnapshotImpl : public Snapshot {
       .value_or(nullptr);
   }
 
-  bool CheckSchemaEmptyDependency(ObjectId schema_id) {
+  bool CheckSchemaEmptyDependency(ObjectId schema_id) const {
     return GetDependency<SchemaDependency>(schema_id)->Empty();
   }
 
@@ -879,6 +884,7 @@ class SnapshotImpl : public Snapshot {
   ResolutionTable _resolution_table;
   ObjectDependencies _object_dependencies;
   ObjectSetById<Object> _objects;
+  mutable connector::DuckDBEntryCache _duckdb_cache;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1272,18 +1278,19 @@ Result LocalCatalog::CreateTable(
     auto col = absl::c_find_if(options.columns,
                                [&](const auto& c) { return c.id == pk_id; });
     SDB_ASSERT(col != options.columns.end());
-    // PK must be default sortable or we can not guarantee table scan order
-    if (col->type->providesCustomComparison()) {
-      return {
-        ERROR_BAD_PARAMETER, "Column ", col->name,
-        " has type with custom comparison and can not be part of primary key"};
-    }
-    // this is current limitation of our pirmary key builder. And might be
-    // lifted some day.
-    if (!col->type->isPrimitiveType()) {
-      return {ERROR_BAD_PARAMETER, "Column ", col->name,
-              " has non primitive type and can not be part of primary key"};
-    }
+    // // PK must be default sortable or we can not guarantee table scan order
+    // if (col->type->providesCustomComparison()) {
+    //   return {
+    //     ERROR_BAD_PARAMETER, "Column ", col->name,
+    //     " has type with custom comparison and can not be part of primary
+    //     key"};
+    // }
+    // // this is current limitation of our pirmary key builder. And might be
+    // // lifted some day.
+    // if (!col->type->isPrimitiveType()) {
+    //   return {ERROR_BAD_PARAMETER, "Column ", col->name,
+    //           " has non primitive type and can not be part of primary key"};
+    // }
   }
   auto table = std::make_shared<Table>(std::move(options), database_id);
   if (operation_options.create_with_tombstone) {
@@ -1666,18 +1673,19 @@ Result LocalCatalog::DropRole(std::string_view role) {
 Result LocalCatalog::DropDatabase(std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto db = clone->GetDatabase(name);
-    if (!db) {
+    SDB_ASSERT(clone);
+    auto database = clone->GetDatabase(name);
+    if (!database) {
       return Result{ERROR_SERVER_DATABASE_NOT_FOUND, "database \"", name,
                     "\" does not exist"};
     }
-    auto task = clone->CreateDatabaseDrop(db);
-
-    if (auto r = GetServerEngine().WriteTombstone(id::kInstance, db->GetId());
+    auto task = clone->CreateDatabaseDrop(database);
+    if (auto r =
+          GetServerEngine().WriteTombstone(id::kInstance, database->GetId());
         !r.ok()) {
       return r;
     }
-    clone->UnregisterObject(clone->GetObject<Database>(db->GetId()),
+    clone->UnregisterObject(clone->GetObject<Database>(database->GetId()),
                             id::kInstance);
     // Check that SereneDB won't open this database after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
@@ -1686,27 +1694,34 @@ Result LocalCatalog::DropDatabase(std::string_view name) {
   });
 }
 
-Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
-                                bool cascade) {
+Result LocalCatalog::DropSchema(std::string_view database,
+                                std::string_view name, bool cascade) {
   absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, name);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  if (!cascade && !_snapshot->CheckSchemaEmptyDependency(*schema_id)) {
+    return Result{ERROR_BAD_PARAMETER};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto schema = clone->GetSchema(db_id, name);
-    if (!schema) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME, "schema \"", name,
-                    "\" does not exist"};
-    }
-
-    if (!cascade && !clone->CheckSchemaEmptyDependency(schema->GetId())) {
-      return Result{ERROR_BAD_PARAMETER, "cannot drop schema ", name,
-                    " because other objects depend on it"};
-    }
-
-    auto task = clone->CreateSchemaDrop(db_id, schema, true);
-
-    if (auto r = _engine->WriteTombstone(db_id, schema->GetId()); !r.ok()) {
+    SDB_ASSERT(clone);
+    auto schema = clone->GetObject<Schema>(*schema_id);
+    SDB_ASSERT(schema);
+    auto task = clone->CreateSchemaDrop(*database_id, schema, true);
+    if (auto r = _engine->WriteTombstone(*database_id, *schema_id); !r.ok()) {
       return r;
     }
-    clone->UnregisterObject(schema, db_id);
+    clone->UnregisterObject(std::move(schema), *database_id);
     // Check that SereneDB won't open this schema after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();
@@ -1714,27 +1729,36 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
   });
 }
 
-Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
-                               std::string_view name) {
+Result LocalCatalog::DropTable(std::string_view database,
+                               std::string_view schema, std::string_view name) {
   absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto table_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!table_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto schema_id =
-      clone->GetObjectId<ResolveType::Schema>(db_id, schema_name);
-    if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto table_id = clone->GetObjectId<ResolveType::Relation>(*schema_id, name);
-    if (!table_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto obj = clone->GetObject(*table_id);
-    SDB_ASSERT(obj);
-    if (obj->GetType() != ObjectType::Table) {
+    SDB_ASSERT(clone);
+    auto object = clone->GetObject(*table_id);
+    SDB_ASSERT(object);
+    if (object->GetType() != ObjectType::Table) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    pg::ToPgObjectTypeName(obj->GetType())};
+                    pg::ToPgObjectTypeName(object->GetType())};
     }
-    auto table = basics::downCast<Table>(std::move(obj));
-    auto task = clone->CreateTableDrop(db_id, *schema_id, table, true);
+    auto table = basics::downCast<Table>(std::move(object));
+    auto task = clone->CreateTableDrop(*database_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
     }
@@ -1746,16 +1770,17 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::RemoveTombstone(ObjectId db_id,
-                                     std::string_view schema_name,
+Result LocalCatalog::RemoveTombstone(ObjectId database_id,
+                                     std::string_view schema,
                                      std::string_view name) {
   absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
+
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto object_id =
+  const auto object_id =
     _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
   if (!object_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
@@ -1785,20 +1810,28 @@ Result LocalCatalog::RemoveTombstone(ObjectId db_id,
   return r;
 }
 
-Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
-                               std::string_view name) {
+Result LocalCatalog::DropIndex(std::string_view database,
+                               std::string_view schema, std::string_view name) {
   absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto index_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!index_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
-    auto schema_id =
-      clone->GetObjectId<ResolveType::Schema>(db_id, schema_name);
-    if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto index_id = clone->GetObjectId<ResolveType::Relation>(*schema_id, name);
-    if (!index_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
     auto obj = clone->GetObject(*index_id);
     SDB_ASSERT(obj);
     if (!IsIndex(obj->GetType())) {
@@ -1814,7 +1847,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     // Check that SereneDB won't open this index after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
 
-    auto task = clone->CreateIndexDrop(db_id, *schema_id,
+    auto task = clone->CreateIndexDrop(*database_id, *schema_id,
                                        index->GetRelationId(), index, true);
     clone->UnregisterObject(index, *schema_id);
     DropTask::Schedule(std::move(task)).Detach();
@@ -1822,26 +1855,35 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
-                              std::string_view name) {
+Result LocalCatalog::DropView(std::string_view database,
+                              std::string_view schema, std::string_view name) {
   absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto view_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!view_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto schema_id =
-      clone->GetObjectId<ResolveType::Schema>(db_id, schema_name);
-    if (!schema_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto view_id = clone->GetObjectId<ResolveType::Relation>(*schema_id, name);
-    if (!view_id) {
-      return Result{ERROR_SERVER_ILLEGAL_NAME};
-    }
-    auto obj = clone->GetObject(*view_id);
-    SDB_ASSERT(obj);
-    if (obj->GetType() != ObjectType::PgSqlView) {
+    SDB_ASSERT(clone);
+    auto object = clone->GetObject(*view_id);
+    SDB_ASSERT(object);
+    if (object->GetType() != ObjectType::PgSqlView) {
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    pg::ToPgObjectTypeName(obj->GetType())};
+                    pg::ToPgObjectTypeName(object->GetType())};
     }
-    auto view = basics::downCast<PgSqlView>(std::move(obj));
+    auto view = basics::downCast<PgSqlView>(std::move(object));
     auto r =
       _engine->DropDefinition(*schema_id, ObjectType::PgSqlView, view->GetId());
     if (!r.ok()) {
@@ -1852,48 +1894,65 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
   });
 }
 
-Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
+Result LocalCatalog::DropFunction(std::string_view database,
+                                  std::string_view schema,
                                   std::string_view name) {
   absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(db_id, schema_name);
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto func_id =
+  const auto function_id =
     _snapshot->GetObjectId<ResolveType::Function>(*schema_id, name);
-  if (!func_id) {
+  if (!function_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
-    auto func = clone->GetObject<PgSqlFunction>(*func_id);
-    SDB_ASSERT(func);
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::PgSqlFunction, *func_id);
+    SDB_ASSERT(clone);
+    auto function = clone->GetObject<PgSqlFunction>(*function_id);
+    SDB_ASSERT(function);
+    auto r = _engine->DropDefinition(*schema_id, ObjectType::PgSqlFunction,
+                                     *function_id);
     if (!r.ok()) {
       return r;
     }
-    clone->UnregisterObject(std::move(func), *schema_id);
+    clone->UnregisterObject(std::move(function), *schema_id);
     return Result{};
   });
 }
 
-Result LocalCatalog::DropTokenizer(ObjectId database_id,
+Result LocalCatalog::DropTokenizer(std::string_view database,
                                    std::string_view schema,
                                    std::string_view name) {
   absl::MutexLock lock{&_mutex};
-  auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto id = _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
-  if (!id) {
+  const auto tokenizer_id =
+    _snapshot->GetObjectId<ResolveType::Tokenizer>(*schema_id, name);
+  if (!tokenizer_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  auto deps = _snapshot->GetIndexesByTokenizer(*id);
+
+  const auto deps = _snapshot->GetIndexesByTokenizer(*tokenizer_id);
   if (!deps.empty()) {
-    constexpr size_t kReportIndexes = 5;
+    static constexpr size_t kReportIndexes = 5;
     std::vector<std::string_view> confliciting_indexes;
     for (auto index : deps) {
       SDB_ASSERT(index);
@@ -1910,15 +1969,17 @@ Result LocalCatalog::DropTokenizer(ObjectId database_id,
                   absl::StrJoin(confliciting_indexes, ", ")};
   }
 
-  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-    auto dict = clone->GetObject<Tokenizer>(*id);
-    SDB_ASSERT(dict);
-    auto r = _engine->DropDefinition(*schema_id, ObjectType::Tokenizer, *id);
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
+    SDB_ASSERT(clone);
+    auto tokenizer = clone->GetObject<Tokenizer>(*tokenizer_id);
+    SDB_ASSERT(tokenizer);
+    auto r =
+      _engine->DropDefinition(*schema_id, ObjectType::Tokenizer, *tokenizer_id);
     if (!r.ok()) {
       return r;
     }
-    clone->UnregisterObject(std::move(dict), *schema_id);
-    return {};
+    clone->UnregisterObject(std::move(tokenizer), *schema_id);
+    return Result{};
   });
 }
 

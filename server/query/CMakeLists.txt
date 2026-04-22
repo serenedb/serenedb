@@ -1,14 +1,9 @@
 target_sources(
     sereneserver
     PRIVATE
-        query.cpp
-        cursor.cpp
-        explain_executor.cpp
-        show_executor.cpp
-        velox_executor.cpp
+        duckdb_engine.cpp
         config.cpp
         utils.cpp
         config_variables.cpp
         transaction.cpp
-        types.cpp
 )

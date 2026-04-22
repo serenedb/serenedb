@@ -1,5 +1,5 @@
 statement ok
-SET sdb_fault_unable_to_create TO DEFAULT;
+SET sdb_faults = 'unable_to_create';
 
 
 statement error

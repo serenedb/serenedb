@@ -47,7 +47,6 @@
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 #include "storage_engine/engine_feature.h"
@@ -71,7 +70,6 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _to{other.to()},
     _key_generator{other._key_generator},
     _sharding_strategy{other._sharding_strategy},
-    _schema{std::move(options.schema)},
     _shard_ids{other._shard_ids},
     _number_of_shards{options.number_of_shards},
     _replication_factor{options.replication_factor},
@@ -104,7 +102,6 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _from{options.from},
     _to{options.to},
     _key_generator{std::move(options.keyOptions)},
-    _schema{std::move(options.schema)},
     _shard_ids{std::move(options.shards)},
     _number_of_shards{options.numberOfShards},
     _replication_factor{options.replicationFactor},
@@ -130,7 +127,6 @@ struct Table::TableOutput {
   std::span<const CheckConstraint> checkConstraints;
   std::string_view shardingStrategy;
   // TODO make them just pointers if catalog::Table became immutable
-  vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
   const KeyGenerator* keyOptions;
   std::shared_ptr<ShardMap> shards;
   Identifier id;
@@ -155,7 +151,6 @@ Table::TableOutput Table::MakeTableOptions() const {
     .pkColumns = _pk_columns,
     .checkConstraints = _check_constraints,
     .shardingStrategy = _sharding_strategy->name(),
-    .schema = _schema,
     .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},
@@ -196,7 +191,6 @@ void catalog::Table::WriteInternal(vpack::Builder& b) const {
 NewOptions Table::MakeNewOptions() const {
   return {
     .name = GetName(),
-    .schema = _schema,
     .number_of_shards = _number_of_shards,
     .replication_factor = _replication_factor,
     .write_concern = _write_concern,
@@ -276,43 +270,37 @@ Result Table::DropConstraint(std::shared_ptr<Table>& result,
   return {};
 }
 
-velox::RowTypePtr Table::MakeTypeFromColIds(
+duckdb::LogicalType Table::MakeTypeFromColIds(
   std::span<const catalog::Column::Id> ids) const {
   return _lookup_cache.MakeTypeFromColIds(ids);
 }
 
-velox::RowTypePtr Table::LookupCache::MakeTypeFromColIds(
+duckdb::LogicalType Table::LookupCache::MakeTypeFromColIds(
   std::span<const catalog::Column::Id> ids) const {
-  std::vector<std::string> names;
-  std::vector<velox::TypePtr> types;
-  names.reserve(ids.size());
-  types.reserve(ids.size());
+  duckdb::child_list_t<duckdb::LogicalType> children;
+  children.reserve(ids.size());
   for (auto id : ids) {
     auto it = id2column.find(id);
     SDB_ASSERT(it != id2column.end());
     const auto& column = *it->second;
-    names.push_back(column.name);
-    types.push_back(column.type);
+    children.emplace_back(column.name, column.type);
   }
-  return velox::ROW(std::move(names), std::move(types));
+  return duckdb::LogicalType::STRUCT(std::move(children));
 }
 
 Table::LookupCache::LookupCache(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_columns) {
-  std::vector<std::string> row_names;
-  std::vector<velox::TypePtr> row_types;
-  row_names.reserve(columns.size());
-  row_types.reserve(columns.size());
+  duckdb::child_list_t<duckdb::LogicalType> row_children;
+  row_children.reserve(columns.size());
   name2column.reserve(columns.size());
   id2column.reserve(columns.size());
   for (const auto& col : columns) {
     name2column.emplace(col.name, &col);
     id2column.emplace(col.id, &col);
-    row_names.emplace_back(col.name);
-    row_types.emplace_back(col.type);
+    row_children.emplace_back(col.name, col.type);
   }
-  row_type = velox::ROW(std::move(row_names), std::move(row_types));
+  row_type = duckdb::LogicalType::STRUCT(std::move(row_children));
   pk_type = MakeTypeFromColIds(pk_columns);
 }
 

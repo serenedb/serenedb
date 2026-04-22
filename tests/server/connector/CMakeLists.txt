@@ -2,20 +2,25 @@ add_library(serene_tests_connector_deps INTERFACE)
 
 target_link_libraries(
     serene_tests_connector_deps
-    INTERFACE sereneserver serene_connector velox_vector_test_lib rocksdb
+    INTERFACE sereneserver serene_connector rocksdb
 )
 
 add_executable(
     serenedb-tests_connector
-    ${CMAKE_CURRENT_SOURCE_DIR}/data_sink_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/data_source_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/primary_key_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/key_utils_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/search_sink_writer_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/sink_with_search_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/search_source_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/search_filter_builder_test.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/search_test_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_vector_builder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_column_serializer_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_key_builder_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_filter_builder_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_search_sink_writer_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/data_sink_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/data_source_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/primary_key_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/key_utils_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_sink_writer_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/sink_with_search_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_source_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_filter_builder_test.cpp
+    # ${CMAKE_CURRENT_SOURCE_DIR}/search_test_utils.cpp
 )
 
 target_link_libraries(

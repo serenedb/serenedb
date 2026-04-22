@@ -39,11 +39,12 @@ namespace sdb::query {
 
 class Transaction : public Config {
  public:
+  using Config::Config;
+
   enum class State : uint8_t {
     None = 0,
     HasRocksDBRead = 1 << 0,
     HasRocksDBWrite = 1 << 1,
-    HasTransactionBegin = 1 << 2,
   };
 
 #ifdef SDB_DEV
@@ -60,6 +61,12 @@ class Transaction : public Config {
 
   void OnNewStatement();
 
+  // Pre-commit work that needs an active transaction (revert SET LOCAL for
+  // custom-impl settings). Runs before the rocksdb commit.
+  void PreCommit() noexcept;
+  // Pre-rollback counterpart -- restores all SET values.
+  void PreRollback() noexcept;
+
   Result Commit();
 
   Result Rollback();
@@ -73,13 +80,6 @@ class Transaction : public Config {
 
   void AddRocksDBWrite() noexcept;
   bool HasRocksDBWrite() const noexcept;
-
-  void AddTransactionBegin() noexcept;
-  bool HasTransactionBegin() const noexcept;
-
-  IsolationLevel GetIsolationLevel() const noexcept {
-    return Get<VariableType::SdbTransactionIsolation>("transaction_isolation");
-  }
 
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);
@@ -95,6 +95,16 @@ class Transaction : public Config {
   void Destroy() noexcept;
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
+
+  // Must be called BEFORE the SST ingest so the IResearch background commit
+  // thread knows to wait for us before advancing _committed_tick.
+  void RegisterSearchFlushes() noexcept;
+
+  // Commit all IResearch transactions after an SST ingest.
+  // Uses Commit(post_ingest_seq + queries) so first_tick = post_ingest_seq,
+  // which is guaranteed > _committed_tick when RegisterSearchFlushes() was
+  // called before the ingest.
+  void CommitSearchTransactions(uint64_t post_ingest_seq) noexcept;
 
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,

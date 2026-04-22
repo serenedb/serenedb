@@ -43,7 +43,6 @@ struct PgLanguage {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgLanguage>::GetTableData(
-  velox::memory::MemoryPool& pool);
+catalog::MaterializedData SystemTableSnapshot<PgLanguage>::GetTableData();
 
 }  // namespace sdb::pg

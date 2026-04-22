@@ -18,17 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 #include <benchmark/benchmark.h>
-#include <velox/type/StringView.h>
 
 #include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "pg/functions/json.tpp"
+#include "pg/json.tpp"
 
 namespace {
 
@@ -219,11 +219,11 @@ BENCHMARK_DEFINE_F(JsonPathFixture,
     JsonParser parser;
     parser.PrepareJson(json);
     const std::vector<std::string>& path = GetNextPath();
-    std::vector<std::optional<velox::StringView>> path_views;
+    std::vector<std::optional<duckdb::string_t>> path_views;
     path_views.reserve(path.size());
     for (const auto& p : path) {
       path_views.emplace_back(
-        std::make_optional<velox::StringView>(p.data(), p.size()));
+        std::make_optional<duckdb::string_t>(p.data(), p.size()));
     }
     auto r = parser.Extract<JsonParser::OutputType::TEXT>(path_views);
     benchmark::DoNotOptimize(r);
@@ -238,11 +238,11 @@ BENCHMARK_DEFINE_F(JsonPathFixture,
     JsonParser parser;
     parser.PrepareJson(json);
     const std::vector<std::string>& path = GetNextPath();
-    std::vector<std::optional<velox::StringView>> path_views;
+    std::vector<std::optional<duckdb::string_t>> path_views;
     path_views.reserve(path.size());
     for (const auto& p : path) {
       path_views.emplace_back(
-        std::make_optional<velox::StringView>(p.data(), p.size()));
+        std::make_optional<duckdb::string_t>(p.data(), p.size()));
     }
     auto r = parser.Extract<JsonParser::OutputType::JSON>(path_views);
     benchmark::DoNotOptimize(r);

@@ -14,6 +14,10 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <stdint.h>
+
+typedef uint32_t ProtocolVersion;
+
 /* These are the request codes sent by the frontend. */
 
 #define PQ_MSG_BIND 'B'
@@ -61,5 +65,18 @@
 
 #define PQ_MSG_COPY_DONE 'c'
 #define PQ_MSG_COPY_DATA 'd'
+
+#define PG_PROTOCOL_MAJOR(v) ((v) >> 16)
+#define PG_PROTOCOL_MINOR(v) ((v) & 0x0000ffff)
+#define PG_PROTOCOL(m, n) (((m) << 16) | (n))
+
+#define PG_PROTOCOL_EARLIEST PG_PROTOCOL(3, 0)
+#define PG_PROTOCOL_LATEST PG_PROTOCOL(3, 0)
+
+#define CANCEL_REQUEST_CODE PG_PROTOCOL(1234, 5678)
+#define NEGOTIATE_SSL_CODE PG_PROTOCOL(1234, 5679)
+#define NEGOTIATE_GSS_CODE PG_PROTOCOL(1234, 5680)
+
+#define MAX_STARTUP_PACKET_LENGTH 10000
 
 #endif /* PROTOCOL_H */

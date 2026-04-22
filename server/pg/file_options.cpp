@@ -20,11 +20,8 @@
 
 #include "pg/file_options.h"
 
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::file_options {
 

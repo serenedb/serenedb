@@ -5,19 +5,23 @@ control substitution on
 
 # --- Missing required parameter: pattern ---
 
-statement error required parameter "pattern" was not found
+statement error
 CREATE TEXT SEARCH DICTIONARY pat_err1(
     template = 'pattern'
 )
+----
+db error: ERROR: required parameter "pattern" was not found
 
 
 # --- Invalid regex pattern ---
 
-statement error Failed to create text search dictionary
+statement error
 CREATE TEXT SEARCH DICTIONARY pat_err2(
     template = 'pattern',
     pattern = '('
 )
+----
+db error: ERROR: Failed to create text search dictionary "pat_err2"
 
 
 # --- Pattern option not applicable to other tokenizers ---

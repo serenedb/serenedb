@@ -21,7 +21,10 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <velox/vector/DecodedVector.h>
+
+#include <duckdb/common/typedefs.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/vector/unified_vector_format.hpp>
 
 #include "basics/message_buffer.h"
 #include "query/config.h"
@@ -37,16 +40,19 @@ struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+  const catalog::Snapshot* snapshot = nullptr;
 };
 
+// TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
+// instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
+// for scalar types, and can lazily create child format for arrays).
 using SerializationFunction = void (*)(
-  SerializationContext context, const velox::DecodedVector& decoded_vector,
-  velox::vector_size_t row);
+  SerializationContext context,
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
 void FillContext(const Config& config, SerializationContext& context);
 
-SerializationFunction GetSerialization(const velox::TypePtr& type,
+SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
 

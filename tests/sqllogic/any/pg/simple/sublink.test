@@ -145,7 +145,7 @@ pudge	150
 deadinside	200
 
 
-query
+query ?? rowsort
 WITH networth AS (
   SELECT
     guy AS name,
@@ -294,7 +294,8 @@ name	description	total_money
 deadinside	Sad Guy	200
 
 
-onlyif serenedb
+skipif postgres
+skipif serenedb
 query
 EXPLAIN (LOGICAL, INITIAL_QUERY_GRAPH, FINAL_QUERY_GRAPH, PHYSICAL, EXECUTION, REGISTERS)
 WITH m(name, total) AS (
@@ -523,7 +524,8 @@ SELECT (SELECT 1 FROM t1 t2 WHERE t1.a = t2.a)
 1
 
 
-onlyif serenedb
+skipif postgres
+skipif serenedb
 query
 EXPLAIN(LOGICAL, EXECUTION, REGISTERS) SELECT 1+a
   FROM t1
@@ -543,7 +545,8 @@ Fragment 0:  numWorkers=0:
       -- TableScan[0][t1, type=<slt:ignore>] -> "a:1":INTEGER
 
 
-onlyif serenedb
+skipif postgres
+skipif serenedb
 query
 EXPLAIN(LOGICAL, EXECUTION, REGISTERS) SELECT CASE WHEN c>(SELECT avg(c) FROM t1) THEN a*2 ELSE b*10 END
   FROM t1

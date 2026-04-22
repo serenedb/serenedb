@@ -1,6 +1,5 @@
-add_subdirectory(commands)
-add_subdirectory(functions)
 add_subdirectory(sdb_catalog)
+add_subdirectory(commands)
 target_sources(
     sereneserver
     PRIVATE
@@ -19,25 +18,15 @@ target_sources(
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
         information_schema/sql_sizing.cpp
-        command_executor.cpp
         pg_comm_task.cpp
         pg_feature.cpp
-        sql_statement.cpp
         connection_context.cpp
-        copy_file.cpp
         pg_types.cpp
         serialize.cpp
         system_catalog.cpp
         progress_tracker.cpp
         sdb_catalog/sdb_log.cpp
-        functions.cpp
-        sql_analyzer_velox.cpp
-        sql_collector.cpp
-        sql_def.cpp
-        sql_parser.cpp
-        sql_resolver.cpp
         sql_utils.cpp
-        isolation_level.cpp
         option_help.cpp
         file_options.cpp
         tokenizer_options.cpp

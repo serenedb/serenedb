@@ -333,6 +333,19 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - To add a new dependency: fork to `serenedb/`, add submodule, update `.gitmodules`
 - Discuss with maintainers before adding new dependencies
 
+### Working with Submodules
+
+Submodules are cloned with `--depth 1` (shallow) by default, which means only the pinned commit is fetched and no branches are visible. If you need to actively develop inside a submodule (e.g. `third_party/duckdb`), run:
+
+```bash
+cd third_party/<submodule>
+git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+git fetch origin
+git checkout <your-branch>
+```
+
+This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
+
 ### PR Workflow
 
 - Branch from `main`, keep PRs focused on a single change

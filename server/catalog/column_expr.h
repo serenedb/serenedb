@@ -20,41 +20,36 @@
 
 #pragma once
 
+#include <vpack/builder.h>
 #include <vpack/slice.h>
 
-#include "pg/sql_collector.h"
-#include "pg/sql_utils.h"
+#include <duckdb/parser/parsed_expression.hpp>
+
+#include "basics/assert.h"
+#include "basics/result.h"
 
 namespace sdb {
 
-// Column Expression which can be serialized / deserialized
+// Column expression (default value, computed column).
+// In memory: DuckDB ParsedExpression.
+// On disk: DuckDB BinarySerializer bytes in VPack.
 class ColumnExpr {
  public:
   ColumnExpr() = default;
+  explicit ColumnExpr(duckdb::unique_ptr<duckdb::ParsedExpression> expr);
 
-  Result Init(ObjectId database, Node* expr);
-
-  Result Init(ObjectId database, std::string query);
-
-  static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          ColumnExpr& column_expr);
-
+  static Result FromVPack(vpack::Slice slice, ColumnExpr& column_expr);
   void ToVPack(vpack::Builder& builder) const;
 
-  std::string_view GetQuery() const noexcept { return _query; }
-
-  const Node* GetExpr() const noexcept {
-    SDB_ASSERT(_expr != nullptr);
-    return _expr;
+  duckdb::ParsedExpression& GetExpr() const {
+    SDB_ASSERT(_expr);
+    return *_expr;
   }
 
-  const pg::Objects& GetObjects() const noexcept { return _objects; }
+  bool HasExpr() const { return _expr != nullptr; }
 
  private:
-  std::string _query;
-  pg::MemoryContextPtr _memory_context;
-  const Node* _expr{nullptr};
-  pg::Objects _objects;
+  duckdb::unique_ptr<duckdb::ParsedExpression> _expr;
 };
 
 void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
@@ -62,8 +57,7 @@ void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
 }
 
 void VPackRead(auto ctx, ColumnExpr& column_expr) {
-  auto database_id = ctx.arg().database_id;
-  auto r = ColumnExpr::FromVPack(database_id, ctx.vpack(), column_expr);
+  auto r = ColumnExpr::FromVPack(ctx.vpack(), column_expr);
   SDB_ENSURE(r.ok(), r.errorNumber(), r.errorMessage());
 }
 

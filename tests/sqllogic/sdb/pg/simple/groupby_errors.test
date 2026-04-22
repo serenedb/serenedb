@@ -8,7 +8,8 @@ FROM
 ) AS clickclack(superhot, name, grade)
 GROUP BY peklo
 ----
-db error: ERROR: column reference "peklo" is ambiguous
+db error: ERROR: column "grade" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(grade)" if the exact value of "grade" is not important.
 
 
 query error
@@ -21,7 +22,8 @@ FROM
 ) AS clickclack(grade, grade, grade)
 GROUP BY grade;
 ----
-db error: ERROR: column reference "grade" is ambiguous
+db error: ERROR: Referenced column "weight" not found in FROM clause!
+Candidate bindings: "grade"
 
 
 query error
@@ -35,7 +37,8 @@ FROM
 GROUP BY grade
 ORDER BY superhot;
 ----
-db error: ERROR: column reference "superhot" is ambiguous
+db error: ERROR: column "name" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(name)" if the exact value of "name" is not important.
 
 
 query error
@@ -50,7 +53,8 @@ FROM
 ) AS university(mark, student)
 GROUP BY university.student;
 ----
-db error: ERROR: column "mark" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "mark" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(mark)" if the exact value of "mark" is not important.
 
 
 query error
@@ -63,7 +67,8 @@ FROM
 ) AS university(mark, student)
 GROUP BY university.student;
 ----
-db error: ERROR: column "a" does not exist
+db error: ERROR: Referenced column "a" not found in FROM clause!
+Candidate bindings: "mark"
 
 
 query error
@@ -77,7 +82,8 @@ FROM
 GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY deadinside_level + babsky_magic DESC;
 ----
-db error: ERROR: column "deadinside_level" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "deadinside_level" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(deadinside_level)" if the exact value of "deadinside_level" is not important.
 
 
 query error
@@ -91,7 +97,8 @@ FROM
 GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY deadinside_level + babsky_magic DESC;
 ----
-db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -105,7 +112,8 @@ FROM
 GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY kostya_iq DESC;
 ----
-db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -119,7 +127,8 @@ FROM
 GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY kostya_iq DESC;
 ----
-db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -145,7 +154,8 @@ FROM
     (1, 2, 5, 6), (3, 4, 3, 4)
 ) AS andreod_data(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic);
 ----
-db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -156,7 +166,7 @@ FROM
     ('alice'), ('bob'), ('charlie')
 ) AS test_data(student)
 ----
-db error: ERROR: DISTINCT specified, but length is not an aggregate function
+db error: ERROR: Function "length" is a Scalar Function. "DISTINCT", "FILTER", and "ORDER BY" are only applicable to window and aggregate functions.
 
 
 query error
@@ -167,7 +177,7 @@ FROM
     ('alice'), ('bob'), ('charlie')
 ) AS test_data(student)
 ----
-db error: ERROR: FILTER specified, but length is not an aggregate function
+db error: ERROR: Function "length" is a Scalar Function. "DISTINCT", "FILTER", and "ORDER BY" are only applicable to window and aggregate functions.
 
 
 query error
@@ -178,7 +188,7 @@ FROM
     ('alice'), ('bob'), ('charlie')
 ) AS test_data(student)
 ----
-db error: ERROR: ORDER BY specified, but length is not an aggregate function
+db error: ERROR: Function "length" is a Scalar Function. "DISTINCT", "FILTER", and "ORDER BY" are only applicable to window and aggregate functions.
 
 
 query error
@@ -190,7 +200,7 @@ FROM
 ) AS pudge_stats(kostya_iq, vedernikoff_power)
 WHERE AVG(vedernikoff_power) > 3;
 ----
-db error: ERROR: aggregate functions are not allowed in WHERE
+db error: ERROR: WHERE clause cannot contain aggregates!
 
 
 query error
@@ -205,7 +215,7 @@ JOIN
 ) AS b(kostya_iq, vedernikoff_power)
 ON SUM(a.kostya_iq) = b.kostya_iq;
 ----
-db error: ERROR: aggregate functions are not allowed in JOIN conditions
+db error: ERROR: WHERE clause cannot contain aggregates!
 
 
 query error
@@ -228,7 +238,7 @@ FROM
 ) AS clickclack_data(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
 GROUP BY COUNT(babsky_magic)
 ----
-db error: ERROR: aggregate functions are not allowed in GROUP BY
+db error: ERROR: GROUP BY clause cannot contain aggregates!
 
 
 query error
@@ -239,7 +249,7 @@ FROM
     (1, 2), (3, 4), (5, 6)
 ) AS university_stats(kostya_iq, vedernikoff_power);
 ----
-db error: ERROR: aggregate functions are not allowed in FILTER
+db error: ERROR: aggregate function calls cannot be nested
 
 
 query error
@@ -261,7 +271,16 @@ FROM
     (5), (10), (15)
 ) AS superhot_data(kostya_iq);
 ----
-db error: ERROR: aggregate function calls cannot contain set-returning function calls
+db error: ERROR: No function matches the given name and argument types 'sum(BIGINT[])'. You might need to add explicit type casts.
+	Candidate functions:
+	sum(DECIMAL) -> DECIMAL
+	sum(BOOLEAN) -> HUGEINT
+	sum(SMALLINT) -> HUGEINT
+	sum(INTEGER) -> HUGEINT
+	sum(BIGINT) -> HUGEINT
+	sum(HUGEINT) -> HUGEINT
+	sum(DOUBLE) -> DOUBLE
+	sum(BIGNUM) -> BIGNUM
 
 
 query error
@@ -273,20 +292,21 @@ FROM
     (1, 2, 5, 6), (3, 4, 3, 4)
 ) AS pudge_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
 ----
-db error: ERROR: aggregate function calls cannot be nested
+db error: ERROR: Scalar Function with name presto_plus does not exist!
+Did you mean "first_value"?
 
 
 query error
 SELECT * FROM UNNEST(COUNT(1000 - 7))
 ----
-db error: ERROR: aggregate functions are not allowed in functions in FROM
+db error: ERROR: Table function cannot contain aggregates!
 
 
-query error
+query ?
 SELECT * FROM COUNT(1000 - 7)
 ----
-db error: ERROR: aggregate functions are not allowed in functions in FROM
-
+count
+1
 
 query error
 SELECT kostya_iq, SUM(babsky_magic)
@@ -298,7 +318,7 @@ FROM
 ) AS university_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
 GROUP BY kostya_iq, AVG(deadinside_level)
 ----
-db error: ERROR: aggregate functions are not allowed in GROUP BY
+db error: ERROR: GROUP BY clause cannot contain aggregates!
 
 
 query error
@@ -311,4 +331,4 @@ FROM
 ) AS lmao_university(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
 GROUP BY MAX(vedernikoff_power) + MIN(deadinside_level)
 ----
-db error: ERROR: aggregate functions are not allowed in GROUP BY
+db error: ERROR: GROUP BY clause cannot contain aggregates!

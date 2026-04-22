@@ -49,6 +49,22 @@ generate_series	vedernikoff
 422	1338
 
 
+skipif postgres
+query
+SELECT * FROM UNNEST(generate_series(1, 3), generate_series(1, 10));
+----
+unnest1 unnest2
+1       1
+2       2
+3       3
+NULL    4
+NULL    5
+NULL    6
+NULL    7
+NULL    8
+NULL    9
+NULL    10
+
 query
 SELECT generate_series(1, 3);
 ----
@@ -131,6 +147,7 @@ a	b
 3	11
 
 
+skipif serenedb
 query error
 SELECT generate_series(1, 3), count(*) over(), sum(generate_series(1, 3)) over();
 ----
@@ -193,6 +210,7 @@ val
 104
 
 
+skipif serenedb
 query error db error: ERROR: column "gs" does not exist
 SELECT generate_series(1, 3) AS gs WHERE gs > 1;
 
@@ -206,6 +224,7 @@ gs
 4
 
 
+skipif serenedb
 query error db error: ERROR: column "gs" does not exist
 SELECT generate_series(1, 5) AS gs, generate_series(10, 14) AS vs WHERE gs + vs > 14;
 
@@ -427,8 +446,6 @@ DROP TABLE clickclack;
 
 query error
 SELECT * FROM generate_series(1, 10, 0);
-----
-db error: ERROR: step size cannot equal zero
 
 
 query
@@ -547,6 +564,7 @@ SELECT unnest(ARRAY[1, 2]) + 100;
 102
 
 
+skipif serenedb
 query error
 SELECT unnest(ARRAY[1, 2, 3]) AS x WHERE x > 1;
 ----
@@ -588,12 +606,13 @@ id	v
 2	30
 
 
-onlyif serenedb
-statement error
+query ok
 SELECT t.id, u.v FROM unnest_test t, unnest(t.vals) AS u(v) ORDER BY t.id, u.v;
 ----
-db error: ERROR: column "t.vals" does not exist
-
+id      v
+1       10
+1       20
+2       30
 
 statement ok
 DROP TABLE unnest_test

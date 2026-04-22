@@ -29,7 +29,7 @@ enum class LogLevel : char {
   ERR = 2,
   WARN = 3,
   INFO = 4,
-  DEBUG = 5,
+  DEB = 5,
   TRACE = 6
 };
 }

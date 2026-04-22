@@ -235,9 +235,18 @@ inline constexpr OptionInfo kPathHierarchyOptions[] = {
 // Groups
 
 inline constexpr OptionGroup kEdgeNGramGroup{
-  "edgengram", kEdgeNGramOptions, {}};
-inline constexpr OptionGroup kTextSubgroups[] = {kEdgeNGramGroup};
-inline constexpr OptionGroup kFeaturesGroup{"features", kFeaturesOptions, {}};
+  "edgengram",
+  kEdgeNGramOptions,
+  {},
+};
+inline constexpr OptionGroup kTextSubgroups[] = {
+  kEdgeNGramGroup,
+};
+inline constexpr OptionGroup kFeaturesGroup{
+  "features",
+  kFeaturesOptions,
+  {},
+};
 inline constexpr OptionGroup kTextGroup{
   irs::analysis::TextTokenizer::type_name(),
   kTextOptions,
@@ -283,7 +292,11 @@ inline constexpr OptionGroup kMultiDelimiterGroup{
   kMultiDelimiterOptions,
   {},
 };
-inline constexpr OptionGroup kCopyFromGroup{"copy_from", kCopyFromOptions, {}};
+inline constexpr OptionGroup kCopyFromGroup{
+  "copy_from",
+  kCopyFromOptions,
+  {},
+};
 inline constexpr OptionGroup kMinHashGroup{
   irs::analysis::MinHashTokenizer::type_name(),
   kMinHashOptions,
@@ -326,6 +339,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kClassificationGroup,   kCollationGroup, kDelimiterGroup,
   kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
   kSegmentationGroup,     kPipelineGroup,  kPatternGroup,
-  kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup};
+  kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup,
+};
 
 }  // namespace sdb::pg::tokenizer_options

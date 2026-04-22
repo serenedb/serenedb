@@ -18,7 +18,6 @@ target_sources(
         index.cpp
         view.cpp
         function.cpp
-        validators.cpp
         sharding_strategy.cpp
         replication_common.cpp
         role.cpp

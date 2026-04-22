@@ -21,7 +21,7 @@ COMMIT;
 
 # ==== TRIGGER FAILURE ====
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 
 # Next sent packet will trigger serened crash, so connection will be closed

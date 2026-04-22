@@ -20,15 +20,11 @@
 
 #include "search_sink_writer.hpp"
 
-#include <velox/functions/prestosql/types/JsonType.h>
-#include <velox/type/Type.h>
-#include <velox/vector/FlatVector.h>
-
+#include <duckdb/common/enum_util.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/assert.h"
 #include "basics/endian.h"
-#include "basics/fwd.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -53,6 +49,68 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
   absl::big_endian::Store(name_buffer.data(), column_id);
 }
 
+// TODO(Dronplane): most likely will need this in filter builder.
+//  Move to some shared place if it would be the case.
+
+// Underlying signed-int representation used to index numeric/temporal DuckDB
+// types in iresearch. DATE/TIMESTAMP/TIMESTAMP_TZ map to their underlying
+// int32/int64 (raw-int compare matches DuckDB's date_t::operator< /
+// timestamp_t::operator< exactly -- see date.hpp / timestamp.hpp).
+template<duckdb::LogicalTypeId Kind>
+struct NumericSliceTypeImpl;
+
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TINYINT> {
+  using Type = int8_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::SMALLINT> {
+  using Type = int16_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::INTEGER> {
+  using Type = int32_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::DATE> {
+  using Type = int32_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::BIGINT> {
+  using Type = int64_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TIMESTAMP> {
+  using Type = int64_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::TIMESTAMP_TZ> {
+  using Type = int64_t;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::FLOAT> {
+  using Type = float;
+};
+template<>
+struct NumericSliceTypeImpl<duckdb::LogicalTypeId::DOUBLE> {
+  using Type = double;
+};
+
+template<duckdb::LogicalTypeId Kind>
+using NumericSliceType = typename NumericSliceTypeImpl<Kind>::Type;
+
+template<duckdb::LogicalTypeId Kind>
+inline constexpr bool kIsNumericKind =
+  Kind == duckdb::LogicalTypeId::TINYINT ||
+  Kind == duckdb::LogicalTypeId::SMALLINT ||
+  Kind == duckdb::LogicalTypeId::INTEGER ||
+  Kind == duckdb::LogicalTypeId::BIGINT ||
+  Kind == duckdb::LogicalTypeId::FLOAT ||
+  Kind == duckdb::LogicalTypeId::DOUBLE ||
+  Kind == duckdb::LogicalTypeId::DATE ||
+  Kind == duckdb::LogicalTypeId::TIMESTAMP ||
+  Kind == duckdb::LogicalTypeId::TIMESTAMP_TZ;
+
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
@@ -65,7 +123,7 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
   if (!IsIndexed(column_id)) {
@@ -76,14 +134,59 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
   }
   // For now we do not support types that are not default comparable as our
   // ranges depend on that.
-  SDB_ASSERT(!type.providesCustomComparison());
-  if (type.kind() == facebook::velox::TypeKind::UNKNOWN) {
-    // for UNKNOWN type we always have nulls so no need of separate nulls
-    // handling
-    SetupColumnWriter<velox::TypeKind::UNKNOWN>(column_id, false);
-  } else {
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, type.kind(),
-                                       column_id, have_nulls);
+  // SDB_ASSERT(!type.providesCustomComparison());
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::SQLNULL:
+      SetupColumnWriter<duckdb::LogicalTypeId::SQLNULL>(column_id, false);
+      break;
+    case duckdb::LogicalTypeId::VARCHAR:
+      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BLOB:
+      SetupColumnWriter<duckdb::LogicalTypeId::BLOB>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BOOLEAN:
+      SetupColumnWriter<duckdb::LogicalTypeId::BOOLEAN>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TINYINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::TINYINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::SMALLINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::SMALLINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::INTEGER:
+      SetupColumnWriter<duckdb::LogicalTypeId::INTEGER>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::BIGINT:
+      SetupColumnWriter<duckdb::LogicalTypeId::BIGINT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::FLOAT:
+      SetupColumnWriter<duckdb::LogicalTypeId::FLOAT>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::DOUBLE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DOUBLE>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::DATE:
+      SetupColumnWriter<duckdb::LogicalTypeId::DATE>(column_id, have_nulls);
+      break;
+    case duckdb::LogicalTypeId::TIMESTAMP:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP>(column_id,
+                                                          have_nulls);
+      break;
+    // TODO(Dronplane): other timestamp derived types could be handled same way
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      SetupColumnWriter<duckdb::LogicalTypeId::TIMESTAMP_TZ>(column_id,
+                                                             have_nulls);
+      break;
+    case duckdb::LogicalTypeId::ARRAY: {
+      SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
+      break;
+    }
+    default:
+      // Unsupported type for inverted index (e.g. INTEGER without opclass).
+      // Skip this column rather than crashing in WriteImpl.
+      _current_writer = nullptr;
+      return false;
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -100,14 +203,13 @@ void SearchSinkInsertBaseImpl::WriteImpl(
 
 void SearchSinkInsertBaseImpl::FinishImpl() { _document.reset(); }
 
-template<velox::TypeKind Kind>
+template<duckdb::LogicalTypeId Kind>
 void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                                                  bool have_nulls) {
   basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
-  using T = typename velox::TypeTraits<Kind>::NativeType;
 
-  if (have_nulls || Kind == velox::TypeKind::UNKNOWN) {
+  if (have_nulls || Kind == duckdb::LogicalTypeId::SQLNULL) {
     basics::StrResize(_null_name_buffer, sizeof(column_id));
     SetNameToBuffer(_null_name_buffer, column_id);
     search::mangling::MangleNull(_null_name_buffer);
@@ -132,8 +234,8 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         };
     };
 
-  if constexpr (Kind == velox::TypeKind::UNKNOWN) {
-    _current_writer = MakeIndexWriter(
+  if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
+    _current_writer = MakeIndexWriter<irs::Action::INDEX>(
       [&](std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
         SDB_ASSERT(cell_slices.size() == 1);
@@ -141,37 +243,52 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         _null_field.SetNullValue();
         return _null_field;
       });
-  } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
-                       Kind == velox::TypeKind::VARBINARY) {
+  } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
+                       Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_analyzer_provider(column_id));
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteStringValue));
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+        make_nullable_writer_func(&WriteStringValue));
     } else {
-      _current_writer = MakeIndexWriter(&WriteStringValue);
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteStringValue);
     }
-  } else if constexpr (std::is_same_v<T, bool>) {
+  } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
     search::mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteBooleanValue));
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+        make_nullable_writer_func(&WriteBooleanValue));
     } else {
-      _current_writer = MakeIndexWriter(&WriteBooleanValue);
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteBooleanValue);
     }
-  } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
+  } else if constexpr (kIsNumericKind<Kind>) {
     search::mangling::MangleNumeric(_name_buffer);
     _field.PrepareForNumericValue();
+    using T = NumericSliceType<Kind>;
     if (have_nulls) {
-      _current_writer =
-        MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
+      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+        make_nullable_writer_func(&WriteNumericValue<T>));
     } else {
-      _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
+      _current_writer =
+        MakeIndexWriter<irs::Action::INDEX>(&WriteNumericValue<T>);
+    }
+  } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
+    // HNSW vector field: stored as raw float32 bytes via Action::STORE.
+    // No name mangling: the field name is the raw big-endian column ID,
+    // matching the column_info key registered in InvertedIndexShard.
+    // Null vectors are skipped (not stored) so they never appear in HNSW.
+    _field.PrepareForVectorValue();
+    if (have_nulls) {
+      _current_writer = MakeIndexWriter<irs::Action::STORE>(
+        make_nullable_writer_func(&WriteVectorValue));
+    } else {
+      _current_writer = MakeIndexWriter<irs::Action::STORE>(&WriteVectorValue);
     }
   } else {
+    // Defensive: SwitchColumnImpl only calls this for Kinds handled above.
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
-              velox::TypeKindName::toName(Kind),
+              duckdb::EnumUtil::ToString(Kind),
               " is not supported in search index");
   }
   _field.name = _name_buffer;
@@ -188,26 +305,32 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
       // We need indexed PK for removes
-      VELOX_CHECK(
+      const bool r =
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
-          _pk_field),
-        "Failed to insert PK field into IResearch document");
+          _pk_field);
+      if (!r) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert PK field into IResearch document");
+      }
       data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
   }
 }
 
-template<typename WriteFunc>
+template<irs::Action Action, typename WriteFunc>
 SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
   WriteFunc&& write_func) {
-  return
-    [&, func = std::forward<WriteFunc>(write_func)](
-      std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
-      VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(
-                    &func(full_key, cell_slices, _field)),
-                  "Failed to insert field into IResearch document");
-    };
+  return [&, func = std::forward<WriteFunc>(write_func)](
+           std::string_view full_key,
+           std::span<const rocksdb::Slice> cell_slices) {
+    const bool r =
+      _document->template Insert<Action>(&func(full_key, cell_slices, _field));
+    if (!r) {
+      SDB_THROW(ERROR_INTERNAL,
+                "Failed to insert field into IResearch document");
+    }
+  };
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
@@ -243,6 +366,21 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
   return field;
 }
 
+SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
+  std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
+  SearchSinkInsertBaseImpl::Field& field) {
+  // _row_slices layout from WriteFlatSubVector<float>:
+  //   [0] header  (varint(count) + ValueFlags)
+  //   [1] null bitmap  (only when have_nulls)
+  //   [last] raw float data  (count * sizeof(float) bytes)
+  // Always use the last slice to get the actual float bytes.
+  SDB_ASSERT(!cell_slices.empty());
+  field.value = irs::bytes_view{
+    reinterpret_cast<const irs::byte_type*>(cell_slices.back().data()),
+    cell_slices.back().size()};
+  return field;
+}
+
 template<typename T>
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteNumericValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
@@ -251,7 +389,22 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteNumericValue(
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
   static_assert(basics::IsLittleEndian());
-  field.SetNumericValue(absl::little_endian::Load<T>(cell_slices[0].data()));
+  if constexpr (sizeof(T) == 1) {
+    static_assert(std::is_integral_v<T>);
+    // absl::little_endian has no Load<int8_t>; a single byte has no endianness.
+    // NumericTokenizer has no int8 overload, so widen to int32 via T to
+    // preserve sign.
+    field.SetNumericValue(
+      static_cast<int32_t>(static_cast<T>(cell_slices[0].data()[0])));
+  } else if constexpr (sizeof(T) == 2) {
+    static_assert(std::is_integral_v<T>);
+    // NumericTokenizer has no int16 overload, so widen to int32.
+    // Load16 returns uint16_t; cast through T to preserve sign.
+    field.SetNumericValue(static_cast<int32_t>(
+      static_cast<T>(absl::little_endian::Load16(cell_slices[0].data()))));
+  } else {
+    field.SetNumericValue(absl::little_endian::Load<T>(cell_slices[0].data()));
+  }
   return field;
 }
 
@@ -262,6 +415,15 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
   SDB_ASSERT(cell_slices[0].size() == 1);
   field.SetBooleanValue(cell_slices.front() == kTrueValue);
   return field;
+}
+
+void SearchSinkInsertBaseImpl::Field::PrepareForVectorValue() {
+  // HNSW vector fields are stored via Action::STORE only (no inverted index).
+  // No tokenizer is needed: Action::STORE does not call GetTokens().
+  string_analyzer.reset();
+  analyzer.reset();
+  index_features = irs::IndexFeatures::None;
+  value = {};
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
@@ -297,18 +459,18 @@ void SearchSinkInsertBaseImpl::Field::PrepareForNumericValue() {
 
 template<typename T>
 void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
+  // Only the four types NumericTokenizer::reset() accepts natively reach here.
+  // TINYINT/SMALLINT slices are widened to int32_t inside WriteNumericValue;
+  // HUGEINT is rejected at SwitchColumnImpl.
   auto& nstream = basics::downCast<irs::NumericTokenizer>(*analyzer);
-  if constexpr (std::is_same_v<
-                  T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
-    // TODO(Dronplane): Native int128 support
-    SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
-  } else if constexpr (
-    std::is_same_v<T,
-                   velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType> ||
-    std::is_same_v<T,
-                   velox::TypeTraits<velox::TypeKind::SMALLINT>::NativeType>) {
-    // TODO(Dronplane): Native int 16/8 support
-    nstream.reset(static_cast<int32_t>(value));
+  if constexpr (std::is_same_v<T, float>) {
+#ifdef FLOAT_T_IS_DOUBLE_T
+    // On builds where float_t aliases double, NumericTokenizer has no
+    // reset(float) overload. Widen so indexed FLOAT columns still work.
+    nstream.reset(static_cast<double>(value));
+#else
+    nstream.reset(value);
+#endif
   } else {
     nstream.reset(value);
   }

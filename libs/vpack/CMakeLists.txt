@@ -33,7 +33,6 @@ add_library(
     src/asm-utf8check.cpp
     src/string-functions.cpp
     src/string.cpp
-    src/validation.cpp
     src/vpack_helper.cpp
 )
 
@@ -45,6 +44,5 @@ target_link_libraries(
     PUBLIC absl::cord
     PUBLIC absl::flat_hash_set
     PUBLIC absl::flat_hash_map
-    PUBLIC taocpp::json
     PRIVATE sse2neon
 )

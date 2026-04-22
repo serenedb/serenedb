@@ -39,8 +39,7 @@ struct SqlImplementationInfo {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SqlImplementationInfo>::GetTableData(
-  velox::memory::MemoryPool& pool);
+catalog::MaterializedData
+SystemTableSnapshot<SqlImplementationInfo>::GetTableData();
 
 }  // namespace sdb::pg

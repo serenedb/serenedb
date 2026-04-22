@@ -208,7 +208,9 @@ add_library(iresearch-static STATIC ${IResearch_core_sources})
 set_source_files_properties(
     search/bm25.cpp
     search/tfidf.cpp
-    PROPERTIES COMPILE_OPTIONS "-ffast-math"
+    PROPERTIES
+        COMPILE_OPTIONS
+            "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
 )
 
 target_include_directories(

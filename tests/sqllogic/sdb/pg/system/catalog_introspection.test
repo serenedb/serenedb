@@ -183,6 +183,7 @@ WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'vedernikoff')
 ORDER BY a.attnum
 ----
 column_name	data_type	position
+id	integer	1
 
 
 query
@@ -198,6 +199,7 @@ WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'clickclack')
 ORDER BY a.attnum
 ----
 column_name	data_type	position
+grade	bigint	1
 
 
 # pg_tables: table owner

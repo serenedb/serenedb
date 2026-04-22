@@ -19,7 +19,7 @@ CREATE FUNCTION s1.f() RETURNS INTEGER AS 'SELECT 42' LANGUAGE SQL;
 
 # Crash before rename table is persisted
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 statement error connection closed
 ALTER TABLE s1.t RENAME TO t_renamed;
@@ -37,13 +37,14 @@ connection after_rename_table
 statement error
 SELECT * FROM s1.t_renamed;
 ----
-db error: ERROR: relation "s1.t_renamed" does not exist
+db error: ERROR: Table with name t_renamed does not exist!
+<slt:ignore>
 
 
 # Crash before rename column is persisted
 connection after_rename_table
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 connection after_rename_table
 statement error connection closed
@@ -62,7 +63,7 @@ world
 # Crash before rename view is persisted
 connection after_rename_col
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 connection after_rename_col
 statement error connection closed
@@ -81,13 +82,14 @@ connection after_rename_view
 statement error
 SELECT * FROM s1.v_renamed;
 ----
-db error: ERROR: relation "s1.v_renamed" does not exist
+db error: ERROR: Table with name v_renamed does not exist!
+<slt:ignore>
 
 
 # Crash before rename function is persisted
 connection after_rename_view
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 connection after_rename_view
 statement error connection closed
@@ -105,7 +107,8 @@ connection after_rename_func
 statement error
 SELECT * FROM s1.f_renamed();
 ----
-db error: ERROR: function "s1.f_renamed" does not exist
+db error: ERROR: Table Function with name f_renamed does not exist!
+<slt:ignore>
 
 
 # Cleanup

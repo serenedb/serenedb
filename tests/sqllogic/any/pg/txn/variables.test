@@ -528,8 +528,9 @@ skipif postgres
 statement error
 SET default_transaction_isolation = "aboba";
 ----
-db error: ERROR: invalid value for parameter "default_transaction_isolation": "aboba"
-HINT: Available values: repeatable read, read committed.
+db error: ERROR: Enum value: unrecognized value "aboba" for enum "TransactionIsolationLevel"
+
+Candidates: "serializable", "read committed", "read uncommitted"
 
 
 # 21. BEGIN TRANSACTION ISOLATION LEVEL with invalid keyword -> syntax error
@@ -546,3 +547,129 @@ BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
 ----
 db error: ERROR: transaction isolation level "serializable" is not supported
 HINT: Available values: repeatable read, read committed.
+
+
+# 23. RESET ALL inside txn rolls back with ROLLBACK
+statement ok
+SET extra_float_digits = 3;
+
+
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+3
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+RESET ALL;
+
+
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+1
+
+
+statement ok
+ROLLBACK;
+
+
+# Session value restored after ROLLBACK
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+3
+
+
+# 24. RESET ALL inside txn persists after COMMIT
+statement ok
+BEGIN;
+
+
+statement ok
+RESET ALL;
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+1
+
+
+# 25. RESET LOCAL ALL outside a txn -> error
+skipif postgres
+statement error
+RESET LOCAL ALL;
+----
+db error: ERROR: RESET LOCAL can only be used in transaction blocks
+
+
+# 26. RESET LOCAL ALL reverts at both COMMIT and ROLLBACK
+statement ok
+SET extra_float_digits = 3;
+
+
+statement ok
+BEGIN;
+
+
+skipif postgres # TODO(gnusi) Maybe disable in duckdb grammar?
+statement ok
+RESET LOCAL ALL;
+
+
+skipif postgres # TODO(gnusi) Different default in postgres, fix?
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+1
+
+
+statement ok
+COMMIT;
+
+
+# Session value restored even after COMMIT (SET LOCAL semantics)
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+3
+
+
+statement ok
+BEGIN;
+
+
+onlyif serenedb # TODO(gnusi) PG doesn't support such syntax
+statement ok
+RESET LOCAL ALL;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+3
+
+
+# Cleanup
+statement ok
+RESET extra_float_digits;

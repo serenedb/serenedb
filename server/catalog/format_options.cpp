@@ -20,169 +20,32 @@
 
 #include "catalog/format_options.h"
 
-#include <velox/dwio/common/Options.h>
-#include <velox/dwio/common/WriterFactory.h>
-#include <velox/dwio/text/reader/TextReader.h>
-#include <velox/dwio/text/writer/TextWriter.h>
-
-#include "query/utils.h"
+#include <vpack/iterator.h>
 
 namespace sdb {
-namespace {
 
-connector::DwioWriterOptions CreateDefaultWriterOptions(
-  velox::dwio::common::FileFormat format, velox::RowTypePtr schema) {
-  const auto& writer_factory = velox::dwio::common::getWriterFactory(format);
-  std::shared_ptr<velox::dwio::common::WriterOptions> dwio_options{
-    writer_factory->createWriterOptions().release()};
-  dwio_options->schema = std::move(schema);
-  dwio_options->fileFormat = format;
-  return {std::move(dwio_options)};
-}
-
-connector::DwioReaderOptions CreateDefaultReaderOptions(
-  velox::dwio::common::FileFormat format, velox::RowTypePtr schema) {
-  auto dwio_options =
-    std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
-  dwio_options->setFileFormat(format);
-  dwio_options->setFileSchema(schema);
-  auto row_reader_options =
-    std::make_shared<velox::dwio::common::RowReaderOptions>();
-  row_reader_options->setRequestedType(std::move(schema));
-  return {std::move(dwio_options), std::move(row_reader_options)};
-}
-
-}  // namespace
-
-connector::DwioWriterOptions TextFormatOptions::createWriterOptions(
-  velox::RowTypePtr schema) const {
-  velox::dwio::common::SerDeOptions serde_options{_delim, '\2', '\3', _escape,
-                                                  false};
-  serde_options.nullString = _null_string;
-
-  auto text_options = std::make_shared<velox::text::WriterOptions>();
-  if (_header) {
-    SDB_ASSERT(_header == 1);  // now we support only one-line header.
-    text_options->header = query::ToAliases(schema->names());
+// Serialised as a single vpack object whose keys are the WITH-option names
+// and whose values are always strings (DuckDB's reader re-parses them).
+void FormatOptions::toVPack(vpack::Builder& b) const {
+  for (const auto& [k, v] : _pairs) {
+    b.add(std::string_view{k}, std::string_view{v});
   }
-  text_options->serDeOptions = std::move(serde_options);
-  text_options->schema = std::move(schema);
-  text_options->fileFormat = velox::dwio::common::FileFormat::TEXT;
-  return {std::move(text_options)};
-}
-
-connector::DwioReaderOptions TextFormatOptions::createReaderOptions(
-  velox::RowTypePtr schema) const {
-  velox::dwio::common::SerDeOptions serde_options{_delim, '\2', '\3', _escape,
-                                                  false};
-  serde_options.nullString = _null_string;
-
-  auto text_options = std::make_shared<velox::text::ReaderOptions>(nullptr);
-  text_options->setSerDeOptions(std::move(serde_options));
-  text_options->setFileSchema(std::move(schema));
-  text_options->setFileFormat(velox::dwio::common::FileFormat::TEXT);
-
-  auto row_reader_options =
-    std::make_shared<velox::dwio::common::RowReaderOptions>();
-  row_reader_options->setSkipRows(_header);
-  return {std::move(text_options), std::move(row_reader_options)};
-}
-
-void TextFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
-  b.add("delim", _delim);
-  b.add("escape", _escape);
-  b.add("null_string", std::string_view{_null_string});
-  b.add("header", _header);
-}
-
-connector::DwioWriterOptions ParquetFormatOptions::createWriterOptions(
-  velox::RowTypePtr schema) const {
-  return CreateDefaultWriterOptions(velox::dwio::common::FileFormat::PARQUET,
-                                    std::move(schema));
-}
-
-connector::DwioReaderOptions ParquetFormatOptions::createReaderOptions(
-  velox::RowTypePtr schema) const {
-  return CreateDefaultReaderOptions(velox::dwio::common::FileFormat::PARQUET,
-                                    std::move(schema));
-}
-
-void ParquetFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
-}
-
-connector::DwioWriterOptions DwrfFormatOptions::createWriterOptions(
-  velox::RowTypePtr schema) const {
-  return CreateDefaultWriterOptions(velox::dwio::common::FileFormat::DWRF,
-                                    std::move(schema));
-}
-
-connector::DwioReaderOptions DwrfFormatOptions::createReaderOptions(
-  velox::RowTypePtr schema) const {
-  return CreateDefaultReaderOptions(velox::dwio::common::FileFormat::DWRF,
-                                    std::move(schema));
-}
-
-void DwrfFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
-}
-
-connector::DwioWriterOptions OrcFormatOptions::createWriterOptions(
-  velox::RowTypePtr schema) const {
-  return CreateDefaultWriterOptions(velox::dwio::common::FileFormat::ORC,
-                                    std::move(schema));
-}
-
-connector::DwioReaderOptions OrcFormatOptions::createReaderOptions(
-  velox::RowTypePtr schema) const {
-  return CreateDefaultReaderOptions(velox::dwio::common::FileFormat::ORC,
-                                    std::move(schema));
-}
-
-void OrcFormatOptions::toVPack(vpack::Builder& b) const {
-  b.add("format", std::to_underlying(_format));
 }
 
 std::shared_ptr<FormatOptions> FormatOptions::fromVPack(vpack::Slice slice) {
   if (!slice.isObject()) {
     return nullptr;
   }
-  auto format_slice = slice.get("format");
-  if (!format_slice.isNumber()) {
-    return nullptr;
-  }
-  switch (static_cast<FileFormat>(format_slice.getNumber<uint8_t>())) {
-    case FileFormat::Text: {
-      uint8_t delim = '\t';
-      if (auto s = slice.get("delim"); s.isNumber()) {
-        delim = s.getNumber<uint8_t>();
-      }
-      uint8_t escape = '\\';
-      if (auto s = slice.get("escape"); s.isNumber()) {
-        escape = s.getNumber<uint8_t>();
-      }
-      std::string null_string = "\\N";
-      if (auto s = slice.get("null_string"); s.isString()) {
-        null_string = std::string{s.stringView()};
-      }
-      uint8_t header = 0;
-      if (auto s = slice.get("header"); s.isNumber()) {
-        header = s.getNumber<uint8_t>();
-      }
-      return std::make_shared<TextFormatOptions>(
-        delim, escape, std::move(null_string), header);
+  std::vector<std::pair<std::string, std::string>> pairs;
+  for (auto entry : vpack::ObjectIterator{slice}) {
+    auto value = entry.value();
+    if (!value.isString()) {
+      continue;
     }
-    case FileFormat::Parquet:
-      return std::make_shared<ParquetFormatOptions>();
-    case FileFormat::Dwrf:
-      return std::make_shared<DwrfFormatOptions>();
-    case FileFormat::Orc:
-      return std::make_shared<OrcFormatOptions>();
-    case FileFormat::None:
-      break;
+    pairs.emplace_back(std::string{entry.key.stringView()},
+                       std::string{value.stringView()});
   }
-  return nullptr;
+  return std::make_shared<FormatOptions>(std::move(pairs));
 }
 
 }  // namespace sdb

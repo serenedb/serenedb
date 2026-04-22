@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <velox/common/file/File.h>
-#include <velox/common/file/FileSystems.h>
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
@@ -30,17 +28,12 @@
 #include <string_view>
 #include <utility>
 
-#include "basics/fwd.h"
-
 namespace sdb {
 
 class StorageOptions {
  public:
   virtual ~StorageOptions() = default;
-  virtual std::unique_ptr<velox::WriteFile> CreateFileSink(
-    const velox::filesystems::FileOptions& options) = 0;
-  virtual std::shared_ptr<velox::ReadFile> CreateFileSource(
-    const velox::filesystems::FileOptions& options) = 0;
+
   virtual void toVPack(vpack::Builder&) const = 0;
 
   std::string_view Path() const { return _path; }
@@ -65,10 +58,6 @@ class LocalStorageOptions : public StorageOptions {
   LocalStorageOptions(std::string path)
     : StorageOptions{Type::Local, std::move(path)} {}
 
-  std::unique_ptr<velox::WriteFile> CreateFileSink(
-    const velox::filesystems::FileOptions& options) final;
-  std::shared_ptr<velox::ReadFile> CreateFileSource(
-    const velox::filesystems::FileOptions& options) final;
   void toVPack(vpack::Builder& b) const final;
 };
 
@@ -89,15 +78,9 @@ class S3StorageOptions : public StorageOptions {
       _ssl_enabled{ssl_enabled},
       _use_instance_credentials{use_instance_credentials} {}
 
-  std::unique_ptr<velox::WriteFile> CreateFileSink(
-    const velox::filesystems::FileOptions& options) final;
-  std::shared_ptr<velox::ReadFile> CreateFileSource(
-    const velox::filesystems::FileOptions& options) final;
   void toVPack(vpack::Builder& b) const final;
 
  private:
-  velox::config::ConfigPtr BuildConfig() const;
-
   std::string _access_key;
   std::string _secret_key;
   std::string _endpoint;

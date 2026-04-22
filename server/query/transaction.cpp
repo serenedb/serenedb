@@ -22,6 +22,8 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <duckdb/main/client_context.hpp>
+
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
@@ -30,11 +32,22 @@
 namespace sdb::query {
 
 void Transaction::OnNewStatement() {
-  if (GetIsolationLevel() == IsolationLevel::ReadCommitted) {
+  auto level = GetIsolationLevel();
+  if (level == IsolationLevel::READ_COMMITTED) {
     DropCatalogSnapshot();
     _rocksdb_snapshot = nullptr;
   }
 }
+
+void Transaction::PreCommit() noexcept {
+  // Revert SET LOCAL overlays (and clear the txn map) while the DuckDB
+  // transaction is still active so custom-impl settings (search_path,
+  // transaction_isolation) can use their normal set_local path (which may
+  // do catalog lookups).
+  CommitVariables();
+}
+
+void Transaction::PreRollback() noexcept { RollbackVariables(); }
 
 Result Transaction::Commit() {
   uint64_t num_ops = _rocksdb_transaction
@@ -59,7 +72,10 @@ Result Transaction::Commit() {
       for (auto& search_transaction : _search_transactions) {
         search_transaction.second->Abort();
       }
-      RollbackVariables();
+      // PreCommit already ran CommitVariables, which cleared the txn map
+      // after restoring SET LOCAL overlays. Nothing left to roll back here
+      // on rocksdb commit failure -- plain-SET values have already been
+      // accepted as committed.
       Destroy();
     };
 
@@ -102,7 +118,6 @@ Result Transaction::Commit() {
     }
   }
   ApplyTableStatsDiffs();
-  CommitVariables();
   Destroy();
 
   return {};
@@ -141,15 +156,6 @@ bool Transaction::HasRocksDBWrite() const noexcept {
   return (_state & State::HasRocksDBWrite) != State::None;
 }
 
-void Transaction::AddTransactionBegin() noexcept {
-  SDB_ASSERT(!HasTransactionBegin());
-  _state |= State::HasTransactionBegin;
-}
-
-bool Transaction::HasTransactionBegin() const noexcept {
-  return (_state & State::HasTransactionBegin) != State::None;
-}
-
 const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
   ObjectId index_id) {
   auto it = _search_snapshots.find(index_id);
@@ -171,7 +177,7 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT(HasRocksDBRead());
   EnsureCatalogSnapshot();
   if (!_rocksdb_snapshot) {
-    if (HasRocksDBWrite() || HasTransactionBegin()) {
+    if (HasRocksDBWrite() || IsExplicitTransaction()) {
       EnsureRocksDBTransaction();
     } else {
       SDB_ASSERT(!_storage_snapshot);
@@ -185,7 +191,7 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT(HasRocksDBWrite() || HasTransactionBegin());
+  SDB_ASSERT(HasRocksDBWrite() || IsExplicitTransaction());
   if (!_rocksdb_transaction) [[unlikely]] {
     SDB_ASSERT(!_rocksdb_snapshot);
     auto* db = GetServerEngine().db();
@@ -203,6 +209,21 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
     SDB_ASSERT(_rocksdb_snapshot);
   }
   return *_rocksdb_transaction;
+}
+
+void Transaction::RegisterSearchFlushes() noexcept {
+  for (auto& [id, trx] : _search_transactions) {
+    trx->RegisterFlush();
+  }
+}
+
+void Transaction::CommitSearchTransactions(uint64_t post_ingest_seq) noexcept {
+  for (auto& [id, trx] : _search_transactions) {
+    const auto queries = trx->GetQueries();
+    if (!trx->Commit(post_ingest_seq + queries)) {
+      trx->Abort();
+    }
+  }
 }
 
 void Transaction::Destroy() noexcept {
@@ -232,6 +253,10 @@ void Transaction::ApplyTableStatsDiffs() noexcept {
   }
   auto snapshot = EnsureCatalogSnapshot();
   for (const auto& [table_id, delta] : _table_rows_deltas) {
+    // It's possible that while transaction was active, table got dropped.
+    if (!snapshot->GetObject(table_id)) {
+      continue;
+    }
     auto table_shard = snapshot->GetTableShard(table_id);
     SDB_ASSERT(table_shard);
     if (table_shard) {

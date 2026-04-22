@@ -192,10 +192,10 @@ LIMIT 5;
 ----
 mark	student	rn	rank_by_mark
 1	vedernikoff	1	1
-2	vedernikoff	3	2
 2	vedernikoff	2	2
-3	vedernikoff	5	4
+2	vedernikoff	3	2
 3	vedernikoff	4	4
+3	vedernikoff	5	4
 
 
 query

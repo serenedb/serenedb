@@ -619,6 +619,12 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     filter.expressions.erase(filter.expressions.begin() +
                              static_cast<std::ptrdiff_t>(*it));
   }
+  // ColumnLifetimeAnalyzer set filter.projection_map based on the pre-swap
+  // state. Once we mutate filter.expressions the map indices no longer line
+  // up with what the subsequent RemoveUnusedColumns pass will produce --
+  // clear it so the filter is projection-map-free and RemoveUnusedColumns
+  // can prune/rewrite bindings without having to remap stale positions.
+  filter.projection_map.clear();
   if (filter.expressions.empty()) {
     plan = std::move(filter.children[0]);
   }

@@ -659,9 +659,21 @@ statement ok
 BEGIN;
 
 
-onlyif serenedb # TODO(gnusi) PG doesn't support such syntax
+statement ok
+SET extra_float_digits = 2;
+
+
+onlyif serenedb # PG doesn't support RESET LOCAL
 statement ok
 RESET LOCAL ALL;
+
+
+onlyif serenedb # PG doesn't support RESET LOCAL
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+1
 
 
 statement ok

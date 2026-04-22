@@ -1108,6 +1108,8 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_char_to_encoding", "(enc_name) AS 6::int4"},
   // No temp schemas supported yet.
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
+  // We do not spawn backends per connection
+  {"pg_catalog", "pg_backend_pid", "() AS CAST(0 AS INTEGER)"},
   // clang-format on
 };
 

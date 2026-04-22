@@ -350,13 +350,6 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     // scan will emit already filtered rows
     auto remove_extra_filter = [&]() {
       filter.expressions.clear();
-      // ColumnLifetimeAnalyzer set filter.projection_map based on the
-      // pre-swap state. Once we mutate filter.expressions the map indices
-      // no longer line up with what the subsequent RemoveUnusedColumns pass
-      // will produce -- clear it so the filter is projection-map-free and
-      // RemoveUnusedColumns can prune/rewrite bindings without having to
-      // remap stale positions.
-      filter.projection_map.clear();
       if (best.result.remaining_filter) {
         filter.expressions.push_back(std::move(best.result.remaining_filter));
       }
@@ -450,6 +443,13 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     bool changed = OptimizeChildren(input.context, plan);
     if (changed) {
       FlattenSwappedGets(*plan, plan);
+      // ColumnLifetimeAnalyzer ran before us and populated projection_maps
+      // on LogicalFilter/LogicalOrder/LogicalJoin based on the pre-swap
+      // key positions. Our filter mutations + the follow-up
+      // RemoveUnusedColumns will shift column_ids, leaving those maps
+      // pointing at positions that no longer exist. Wipe them so
+      // RemoveUnusedColumns operates on a clean slate.
+      ClearProjectionMaps(*plan);
       duckdb::RemoveUnusedColumns unused{input.optimizer};
       unused.VisitOperator(plan);
     }

@@ -22,7 +22,10 @@
 
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
+#include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/operator/logical_join.hpp>
+#include <duckdb/planner/operator/logical_order.hpp>
 
 #include "basics/containers/flat_hash_map.h"
 
@@ -81,6 +84,30 @@ void FlattenProjectionIds(duckdb::LogicalOperator& root,
 
   BindingRewriter rewriter(get.table_index, old_to_new);
   rewriter.VisitOperator(root);
+}
+
+void ClearProjectionMaps(duckdb::LogicalOperator& plan) {
+  for (auto& child : plan.children) {
+    ClearProjectionMaps(*child);
+  }
+  switch (plan.type) {
+    case duckdb::LogicalOperatorType::LOGICAL_FILTER:
+      plan.Cast<duckdb::LogicalFilter>().projection_map.clear();
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
+      plan.Cast<duckdb::LogicalOrder>().projection_map.clear();
+      break;
+    case duckdb::LogicalOperatorType::LOGICAL_ASOF_JOIN:
+    case duckdb::LogicalOperatorType::LOGICAL_DELIM_JOIN:
+    case duckdb::LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+    case duckdb::LogicalOperatorType::LOGICAL_ANY_JOIN: {
+      auto& join = plan.Cast<duckdb::LogicalJoin>();
+      join.left_projection_map.clear();
+      join.right_projection_map.clear();
+    } break;
+    default:
+      break;
+  }
 }
 
 }  // namespace sdb::optimizer

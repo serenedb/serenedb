@@ -50,4 +50,18 @@ namespace sdb::optimizer {
 void FlattenProjectionIds(duckdb::LogicalOperator& root,
                           duckdb::LogicalGet& get);
 
+// Clears every `projection_map` (LogicalFilter, LogicalOrder) and
+// `left_projection_map`/`right_projection_map` (LogicalJoin variants) in
+// the subtree rooted at `plan`. Run this before re-invoking DuckDB's
+// RemoveUnusedColumns from an OptimizerExtension that mutated filter
+// expressions: ColumnLifetimeAnalyzer populated those maps based on the
+// pre-mutation key positions, and once RemoveUnusedColumns shrinks
+// column_ids the old positional indices reference columns that no longer
+// exist. DuckDB's VisitChildOfOperatorWithProjectionMap tries to remap
+// them but bails out on the first missing binding, leaving stale entries
+// that the column-binding resolver then fails to match. Wiping the maps
+// entirely is the cheapest always-correct cleanup -- the maps are a
+// late-materialisation optimization, not part of correctness.
+void ClearProjectionMaps(duckdb::LogicalOperator& plan);
+
 }  // namespace sdb::optimizer

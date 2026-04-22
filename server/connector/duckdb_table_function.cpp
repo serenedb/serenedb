@@ -52,7 +52,7 @@
 namespace sdb::connector {
 namespace {
 
-static constexpr std::string_view kIresearchScanName = "irs_scan";
+static constexpr std::string_view kIresearchScanName = "iresearch_lookup";
 
 }
 
@@ -463,7 +463,7 @@ duckdb::TableFunction CreateSkRangeScanFunction() {
 }
 
 duckdb::TableFunction CreateFullIresearchScanFunction() {
-  duckdb::TableFunction func("irs_fullscan", {}, PKFullScanFunction,
+  duckdb::TableFunction func("iresearch_fullscan", {}, PKFullScanFunction,
                              SereneDBScanBind);
   func.init_global = PKFullScanInitGlobal;
   SetCommonCallbacks(func);
@@ -479,7 +479,7 @@ duckdb::TableFunction CreateIresearchSearchScanFunction() {
 }
 
 duckdb::TableFunction CreateIresearchCountScanFunction() {
-  duckdb::TableFunction func("irs_count", {}, SearchCountScanFunction,
+  duckdb::TableFunction func("iresearch_count", {}, SearchCountScanFunction,
                              SereneDBScanBind);
   func.init_global = SearchCountScanInitGlobal;
   SetCommonCallbacks(func);

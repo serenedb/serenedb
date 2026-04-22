@@ -20,7 +20,10 @@
 
 #include "catalog/index.h"
 
+#include <absl/strings/ascii.h>
 #include <vpack/serializer.h>
+
+#include <duckdb/common/exception.hpp>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
@@ -32,6 +35,114 @@
 
 namespace sdb::catalog {
 namespace {
+
+ResultOr<int64_t> GetIntOption(std::string_view column_name,
+                               std::string_view key, const duckdb::Value& v) {
+  try {
+    return v.DefaultCastAs(duckdb::LogicalType::BIGINT).GetValue<int64_t>();
+  } catch (const std::exception&) {
+    return std::unexpected<Result>{std::in_place,
+                                   ERROR_BAD_PARAMETER,
+                                   "Column '",
+                                   column_name,
+                                   "': hnsw option '",
+                                   key,
+                                   "' must be an integer, got '",
+                                   v.ToString(),
+                                   "'"};
+  }
+}
+
+ResultOr<std::string> GetStringOption(std::string_view column_name,
+                                      std::string_view key,
+                                      const duckdb::Value& v) {
+  try {
+    return v.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+      .GetValue<std::string>();
+  } catch (const std::exception&) {
+    return std::unexpected<Result>{std::in_place,
+                                   ERROR_BAD_PARAMETER,
+                                   "Column '",
+                                   column_name,
+                                   "': hnsw option '",
+                                   key,
+                                   "' must be a string, got '",
+                                   v.ToString(),
+                                   "'"};
+  }
+}
+
+Result ApplyHNSWOptions(
+  std::string_view column_name,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
+  HNSWColumnConfig& cfg) {
+  for (const auto& [key, raw_val] : opts) {
+    if (key == "metric") {
+      auto str = GetStringOption(column_name, key, raw_val);
+      if (!str) {
+        return std::move(str).error();
+      }
+      std::string v = std::move(*str);
+      absl::AsciiStrToLower(&v);
+      if (v == "l2") {
+        cfg.metric = irs::HNSWMetric::L2;
+      } else if (v == "l2sqr") {
+        cfg.metric = irs::HNSWMetric::L2Sqr;
+      } else if (v == "l1") {
+        cfg.metric = irs::HNSWMetric::L1;
+      } else if (v == "cosine") {
+        cfg.metric = irs::HNSWMetric::Cosine;
+      } else if (v == "ip" || v == "inner_product") {
+        cfg.metric = irs::HNSWMetric::InnerProduct;
+      } else {
+        return {ERROR_BAD_PARAMETER,
+                "Column '",
+                column_name,
+                "': unknown hnsw metric '",
+                v,
+                "'. Expected one of: l2, l2sqr, l1, cosine, ip"};
+      }
+    } else if (key == "m") {
+      auto n = GetIntOption(column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 2 || *n > 128) {
+        return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                "': hnsw option 'm' must be in [2, 128], got ", *n};
+      }
+      cfg.m = static_cast<int>(*n);
+    } else if (key == "ef_construction") {
+      auto n = GetIntOption(column_name, key, raw_val);
+      if (!n) {
+        return std::move(n).error();
+      }
+      if (*n < 1) {
+        return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                "': hnsw option 'ef_construction' must be positive, got ", *n};
+      }
+      cfg.ef_construction = static_cast<int>(*n);
+    } else {
+      return {ERROR_BAD_PARAMETER,
+              "Column '",
+              column_name,
+              "': unknown hnsw option '",
+              key,
+              "'. Accepted options: metric, m, ef_construction"};
+    }
+  }
+  if (cfg.ef_construction < cfg.m) {
+    return {ERROR_BAD_PARAMETER,
+            "Column '",
+            column_name,
+            "': hnsw option 'ef_construction' (",
+            cfg.ef_construction,
+            ") must be >= 'm' (",
+            cfg.m,
+            ")"};
+  }
+  return {};
+}
 
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
@@ -112,10 +223,25 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
             std::in_place, ERROR_BAD_PARAMETER, "Column '", c.name,
             "' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass"};
         }
-        index_col.hnsw_config = HNSWColumnConfig{
+        HNSWColumnConfig cfg{
           .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
         };
+        if (auto r = ApplyHNSWOptions(c.name, c.opclass_options, cfg);
+            r.fail()) {
+          return std::unexpected<Result>(std::move(r));
+        }
+        index_col.hnsw_config = cfg;
       } else {
+        if (!c.opclass_options.empty()) {
+          return std::unexpected<Result>{
+            std::in_place,
+            ERROR_BAD_PARAMETER,
+            "Opclass '",
+            c.opclass,
+            "' does not accept options (used on column '",
+            c.name,
+            "')"};
+        }
         auto object_name = pg::ParseObjectName(c.opclass, schema_name);
         if (object_name.schema != schema_name) {
           // Technically nothing prevents us from allowing so.

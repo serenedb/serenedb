@@ -160,7 +160,8 @@ bool IsDistanceFunction(std::string_view name) {
   return name == connector::kL2Distance || name == connector::kL2DistanceOp ||
          name == connector::kL1Distance || name == connector::kL1DistanceOp ||
          name == connector::kCosineDistance ||
-         name == connector::kCosineDistanceOp;
+         name == connector::kCosineDistanceOp ||
+         name == connector::kInnerProduct || name == connector::kIPDistanceOp;
 }
 
 std::optional<irs::HNSWMetric> DistanceMetricForFunction(
@@ -177,6 +178,9 @@ std::optional<irs::HNSWMetric> DistanceMetricForFunction(
   if (name == connector::kCosineDistance ||
       name == connector::kCosineDistanceOp) {
     return irs::HNSWMetric::Cosine;
+  }
+  if (name == connector::kInnerProduct || name == connector::kIPDistanceOp) {
+    return irs::HNSWMetric::InnerProduct;
   }
   return std::nullopt;
 }

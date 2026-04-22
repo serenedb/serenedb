@@ -39,27 +39,22 @@ using ColumnWarmupCallback =
                      const ColumnReader& column)>;
 
 // Scorers allowed to be used in conjunction with wanderator.
-using ScorersView = std::span<const Scorer* const>;
-
-// We support up to 64 scorers per field
-inline constexpr size_t kMaxScorers = BitsRequired<uint64_t>();
+using ScorerPtr = const Scorer*;
 
 struct WandContext {
-  static constexpr auto kDisable = std::numeric_limits<uint8_t>::max();
-
-  bool Enabled() const noexcept { return index != kDisable; }
+  bool Enabled() const noexcept { return wand_enabled; }
 
   // Index of the wand data in the IndexWriter to use for optimization.
   // Optimization is turned off by default.
-  uint8_t index = kDisable;
+  bool wand_enabled = false;
   bool strict = false;
 };
 
 struct IndexReaderOptions {
   ColumnWarmupCallback warmup_columns;
-  ScorersView scorers;      // A list of wand scorers
-  bool index = true;        // Open inverted index
-  bool columnstore = true;  // Open columnstore
+  ScorerPtr scorer = nullptr;  // A list of wand scorers
+  bool index = true;           // Open inverted index
+  bool columnstore = true;     // Open columnstore
 };
 
 }  // namespace irs

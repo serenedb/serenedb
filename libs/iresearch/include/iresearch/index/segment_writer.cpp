@@ -143,7 +143,7 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
 SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
                              const SegmentWriterOptions& options) noexcept
   : _dir{dir},
-    _scorers{options.scorers},
+    _scorer{options.scorer},
     _cached_columns{{options.resource_manager}},
     _sort{options.column_info, {}, options.resource_manager},
     _docs_context{{options.resource_manager}},
@@ -210,7 +210,7 @@ void SegmentWriter::FlushFields(FlushState& state) {
     .dir = &_dir,
     .columns = this,
     .name = _seg_name,
-    .scorers = _scorers,
+    .scorer = _scorer,
     .doc_count = buffered_docs(),
   };
 

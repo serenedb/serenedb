@@ -959,7 +959,7 @@ class IndexWriter : private util::Noncopyable {
   void Abort() noexcept;
 
   IndexFeatures _wand_features{};  // Set of features required for wand
-  ScorersView _wand_scorers;
+  ScorerPtr _wand_scorer;
   FeatureInfoProvider _feature_info;
   ColumnInfoProvider _column_info;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments

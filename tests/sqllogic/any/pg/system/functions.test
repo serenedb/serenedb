@@ -260,10 +260,12 @@ true
 # qualified with the current DB show as bare schema names. These tests assume
 # the connection's current_database is `postgres` (the default in both PG
 # and our test harness).
+onlyif serenedb
 statement ok
 SET search_path TO postgres.public;
 
 
+onlyif serenedb
 query
 SHOW search_path;
 ----
@@ -280,10 +282,12 @@ true
 
 
 # Catalog-qualified with a quoted schema containing a comma -> one entry.
+onlyif serenedb
 statement ok
 SET search_path TO postgres."a,b";
 
 
+onlyif serenedb
 query
 SHOW search_path;
 ----
@@ -300,10 +304,12 @@ true
 
 
 # Two catalog-qualified quoted-comma entries -> two entries.
+onlyif serenedb
 statement ok
 SET search_path TO postgres."a,b", postgres."c,d";
 
 
+onlyif serenedb
 query
 SHOW search_path;
 ----
@@ -320,10 +326,12 @@ true
 
 
 # Mix: qualified-with-comma, bare, qualified -> three entries.
+onlyif serenedb
 statement ok
 SET search_path TO postgres."a,b", z, postgres.public;
 
 
+onlyif serenedb
 query
 SHOW search_path;
 ----

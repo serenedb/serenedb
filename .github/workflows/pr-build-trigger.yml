@@ -1,8 +1,6 @@
 name: auto | pr trigger
 
 on:
-  pull_request:
-    types: [opened, labeled]
   pull_request_target:
     types: [opened, labeled]
   issue_comment:
@@ -13,21 +11,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  post-checkboxes:
-    if: >-
-      (
-        (github.event_name == 'pull_request'        && github.event.pull_request.head.repo.full_name == github.repository) ||
-        (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository)
-      ) && (
-        github.event.action == 'opened' ||
-        (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
-      )
+  handle:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
+      actions: write
       contents: read
+      pull-requests: write
+      statuses: write
     steps:
       - name: Post build triggers comment
+        if: >-
+          github.event_name == 'pull_request_target' && (
+            github.event.action == 'opened' ||
+            (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
+          )
         uses: actions/github-script@v8
         with:
           script: |
@@ -62,23 +59,14 @@ jobs:
               }).catch(() => {});
             }
 
-  trigger-build:
-    if: >-
-      github.event_name == 'issue_comment' &&
-      github.event.action == 'edited' &&
-      github.event.issue.pull_request &&
-      github.event.comment.user.login == 'github-actions[bot]' &&
-      contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
-      contains(github.event.comment.body, '- [x] **Trigger Jobs**')
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: write
-      statuses: write
-    steps:
       - name: Get PR info
         id: pr-info
+        if: >-
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          github.event.comment.user.login == 'github-actions[bot]' &&
+          contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
+          contains(github.event.comment.body, '- [x] **Trigger Jobs**')
         uses: actions/github-script@v8
         with:
           script: |
@@ -93,6 +81,7 @@ jobs:
             core.setOutput('is_fork', (pr.head.repo.full_name !== pr.base.repo.full_name).toString());
 
       - name: Parse options and trigger build
+        if: steps.pr-info.conclusion == 'success'
         env:
           PR_BRANCH: ${{ steps.pr-info.outputs.branch }}
           PR_SHA: ${{ steps.pr-info.outputs.sha }}

@@ -32,8 +32,6 @@ SereneUI exists to make that workflow feel direct. If you are working with Postg
 
 **Connection-independent workspace.** Connections and databases live in a single explorer, giving you a constant overview of your environments. A dedicated connection selector lets you run queries against the right connection or database without opening a separate query window for each one.
 
-<img alt="SereneUI connections explorer." src="https://github.com/user-attachments/assets/serene-ui-connections">
-
 **Editor-like tab system.** Tabs are independent workspaces with their own query and result state. They can be moved between panes, split vertically or horizontally and organized like a modern IDE, making side-by-side query comparison and parallel exploration comfortable.
 
 **Unified sidebar.** Saved queries, entities and frequently used items are organized in one structured sidebar. Collapsible sections preserve context, pinned items keep important work nearby and the active connection is always visible.

@@ -34,7 +34,7 @@ CREATE INDEX clickclack_facts_2 ON clickclack USING inverted(fact test_english);
 query
 SELECT * FROM clickclack_facts_2 WHERE PHRASE(fact, 'team member');
 ----
-100000 values hashing to f85730e11890d68361fb30599c42d727
+100000 values hashing to bb6ff2754819408ef9bd04dec00816a6
 
 statement ok
 SET sdb_faults = '-segment_1000_docs_max';

@@ -745,12 +745,21 @@ set(ENABLE_UBSAN FALSE CACHE BOOL "" FORCE)
 set(ENABLE_THREAD_SANITIZER FALSE CACHE BOOL "" FORCE)
 set(EXPORT_DLL_SYMBOLS FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_SKIP_INSTALL TRUE CACHE BOOL "" FORCE)
-set(BUILD_EXTENSIONS
-    "core_functions;jemalloc;parquet;tpch;tpcds;json;httpfs"
-    CACHE STRING
-    ""
-    FORCE
-)
+if(FOLLY_USE_JEMALLOC)
+    set(BUILD_EXTENSIONS
+        "core_functions;jemalloc;parquet;tpch;tpcds;json;httpfs"
+        CACHE STRING
+        ""
+        FORCE
+    )
+else()
+    set(BUILD_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs"
+        CACHE STRING
+        ""
+        FORCE
+    )
+endif()
 
 # DON'T CHANGE THIS sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
@@ -772,13 +781,16 @@ target_link_libraries(
     PUBLIC
         duckdb_generated_extension_loader
         core_functions_extension
-        jemalloc_extension
         parquet_extension
         tpch_extension
         tpcds_extension
         json_extension
         httpfs_extension
 )
+
+if(FOLLY_USE_JEMALLOC)
+    target_link_libraries(duckdb_static PUBLIC jemalloc_extension)
+endif()
 
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at

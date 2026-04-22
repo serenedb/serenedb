@@ -1,0 +1,43 @@
+statement ok
+CREATE TABLE vecs (id INT, emb FLOAT[8]);
+
+
+statement ok
+INSERT INTO vecs
+SELECT
+  s AS id,
+  [
+    sin(s * 0.001)::FLOAT,
+    cos(s * 0.001)::FLOAT,
+    sin(s * 0.003)::FLOAT,
+    cos(s * 0.003)::FLOAT,
+    sin(s * 0.007)::FLOAT,
+    cos(s * 0.007)::FLOAT,
+    sin(s * 0.013)::FLOAT,
+    cos(s * 0.013)::FLOAT
+  ]::FLOAT[8] AS emb
+FROM generate_series(1, 50000) AS s;
+
+
+statement ok
+CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vecs;
+
+
+query
+SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+----
+id
+31416
+37699
+25133
+43982
+18850
+18849
+43983
+25132
+37700
+31415

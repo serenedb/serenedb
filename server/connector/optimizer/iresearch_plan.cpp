@@ -157,7 +157,28 @@ std::string MakeHnswFieldName(catalog::Column::Id col_id) {
 // ---------------------------------------------------------------------------
 
 bool IsDistanceFunction(std::string_view name) {
-  return name == connector::kL2Distance;
+  return name == connector::kL2Distance || name == connector::kL2DistanceOp ||
+         name == connector::kL1Distance || name == connector::kL1DistanceOp ||
+         name == connector::kCosineDistance ||
+         name == connector::kCosineDistanceOp;
+}
+
+std::optional<irs::HNSWMetric> DistanceMetricForFunction(
+  std::string_view name) {
+  if (name == connector::kL2Distance || name == connector::kL2DistanceOp) {
+    return irs::HNSWMetric::L2;
+  }
+  if (name == connector::kL2SqrDistance) {
+    return irs::HNSWMetric::L2Sqr;
+  }
+  if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
+    return irs::HNSWMetric::L1;
+  }
+  if (name == connector::kCosineDistance ||
+      name == connector::kCosineDistanceOp) {
+    return irs::HNSWMetric::Cosine;
+  }
+  return std::nullopt;
 }
 
 // Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
@@ -291,6 +312,13 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
+  auto expected_metric = DistanceMetricForFunction(func_expr.function.name);
+  auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
+  if (!expected_metric || !hnsw_info || hnsw_info->metric != *expected_metric ||
+      static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
+    return false;
+  }
+
   auto ann = std::make_unique<connector::ANNScan>();
   ann->index_id = resolved->index->GetId();
   ann->field_name = MakeHnswFieldName(col_id);
@@ -419,6 +447,14 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
   auto resolved = ResolveIresearch(bind_data, *snapshot);
   if (!resolved) {
+    return false;
+  }
+
+  auto expected_metric =
+    DistanceMetricForFunction(func_expr_ptr->function.name);
+  auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
+  if (!expected_metric || !hnsw_info || hnsw_info->metric != *expected_metric ||
+      static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
     return false;
   }
 

@@ -207,6 +207,7 @@ db error: ERROR: column "grade" can only be updated to DEFAULT
 DETAIL: Column "grade" is a generated column.
 
 
+onlyif serenedb
 statement ok
 CREATE TABLE vedernikoff (
   z INT PRIMARY KEY,
@@ -215,10 +216,12 @@ CREATE TABLE vedernikoff (
 );
 
 
+onlyif serenedb
 statement count 2
 INSERT INTO vedernikoff (z) VALUES (5), (10);
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff ORDER BY z;
 ----
@@ -227,10 +230,12 @@ z	y	x
 10	20	21
 
 
+onlyif serenedb
 statement ok
 UPDATE vedernikoff SET z = 7 WHERE z = 5;
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff ORDER BY z;
 ----
@@ -250,6 +255,7 @@ statement error
 INSERT INTO vedernikoff (z, y) VALUES (99, 999);
 
 
+onlyif serenedb
 statement ok
 CREATE TABLE vedernikoff_mixed (
   a INT PRIMARY KEY,
@@ -262,10 +268,12 @@ CREATE TABLE vedernikoff_mixed (
 );
 
 
+onlyif serenedb
 statement count 1
 INSERT INTO vedernikoff_mixed (a, b, c) VALUES (6, 4, 2);
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff_mixed;
 ----
@@ -273,10 +281,12 @@ a	b	c	sum_ab	sum_bc	total	avg_virt
 6	4	2	10	6	18	4
 
 
+onlyif serenedb
 statement ok
 UPDATE vedernikoff_mixed SET b = 10 WHERE a = 6;
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff_mixed;
 ----
@@ -284,10 +294,12 @@ a	b	c	sum_ab	sum_bc	total	avg_virt
 6	10	2	16	12	30	6
 
 
+onlyif serenedb
 statement ok
 UPDATE vedernikoff_mixed SET c = 50 WHERE a = 6;
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff_mixed;
 ----
@@ -295,10 +307,12 @@ a	b	c	sum_ab	sum_bc	total	avg_virt
 6	10	50	16	60	126	22
 
 
+onlyif serenedb
 statement ok
 UPDATE vedernikoff_mixed SET a = 100 WHERE a = 6;
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff_mixed;
 ----
@@ -306,6 +320,7 @@ a	b	c	sum_ab	sum_bc	total	avg_virt
 100	10	50	110	60	220	53
 
 
+onlyif serenedb
 statement ok
 CREATE TABLE vedernikoff_vsv (
   r INT PRIMARY KEY,
@@ -315,10 +330,12 @@ CREATE TABLE vedernikoff_vsv (
 );
 
 
+onlyif serenedb
 statement count 1
 INSERT INTO vedernikoff_vsv (r) VALUES (5);
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff_vsv;
 ----
@@ -326,10 +343,12 @@ r	bottom	mid	top
 5	15	30	31
 
 
+onlyif serenedb
 statement ok
 UPDATE vedernikoff_vsv SET r = 10 WHERE r = 5;
 
 
+onlyif serenedb
 query
 SELECT * FROM vedernikoff_vsv;
 ----

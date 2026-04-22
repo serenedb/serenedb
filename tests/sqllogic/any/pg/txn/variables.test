@@ -625,10 +625,12 @@ statement ok
 BEGIN;
 
 
+skipif postgres # TODO(gnusi) Maybe disable in duckdb grammar?
 statement ok
 RESET LOCAL ALL;
 
 
+skipif postgres # TODO(gnusi) Different default in postgres, fix?
 query
 SHOW extra_float_digits;
 ----
@@ -652,6 +654,7 @@ statement ok
 BEGIN;
 
 
+onlyif serenedb # TODO(gnusi) PG doesn't support such syntax
 statement ok
 RESET LOCAL ALL;
 

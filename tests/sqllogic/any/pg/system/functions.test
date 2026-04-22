@@ -42,6 +42,7 @@ current_schemas
 
 
 # search_path_canonical() exposes the catalog-qualified form
+onlyif serenedb
 query
 SELECT (search_path_canonical() = current_database() || '.public, ' || current_database() || '.some_schema')::text AS r;
 ----
@@ -58,6 +59,7 @@ public, some_schema
 
 
 # in_search_path validates schema existence (only true for schemas that exist)
+onlyif serenedb
 query
 SELECT in_search_path(current_database(), 'public')::text;
 ----
@@ -65,6 +67,7 @@ in_search_path
 true
 
 
+onlyif serenedb
 query
 SELECT in_search_path(current_database(), 'some_schema')::text;
 ----
@@ -78,6 +81,7 @@ SET search_path TO nonexistent;
 
 
 # But the schema is reported as not in path because it doesn't exist
+onlyif serenedb
 query
 SELECT in_search_path(current_database(), 'nonexistent')::text;
 ----
@@ -124,6 +128,7 @@ statement ok
 SET search_path TO 'public,some_schema';
 
 
+skipif postgres # TODO(gnusi) PG format is different
 query
 SHOW search_path;
 ----
@@ -151,6 +156,7 @@ current_schemas
 
 
 # search_path_canonical shows raw form including invalid entries
+onlyif serenedb
 query
 SELECT (search_path_canonical() = current_database() || '.bogus, ' || current_database() || '.public')::text AS r;
 ----
@@ -160,6 +166,7 @@ true
 
 # Explicit catalog.schema with unknown catalog still errors (avoids
 # the lookup short-circuit bug for unqualified names)
+skipif postgres # TODO(gnusi) PG is works!
 statement error
 SET search_path TO 'badcat.public';
 ----

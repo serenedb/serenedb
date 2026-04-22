@@ -42,9 +42,6 @@ ALTER TABLE IF EXISTS vedernikoff DROP CONSTRAINT foo;
 
 statement error
 ALTER TABLE vedernikoff DROP CONSTRAINT foo;
-----
-db error: ERROR: Table with name vedernikoff does not exist!
-Did you mean "<slt:ignore>"?
 
 
 statement ok

@@ -47,6 +47,7 @@ array
 {5.00,3.61}
 
 
+skipif postgres # TODO(Pasha)
 query
 SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
 ----
@@ -55,6 +56,7 @@ A+      5.0000
 B-      3.6100
 
 
+skipif postgres # TODO(Pasha)
 query
 SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 1)];
 ----

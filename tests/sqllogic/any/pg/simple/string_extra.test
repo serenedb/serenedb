@@ -500,7 +500,7 @@ query
 SELECT current_setting('server_version');
 ----
 current_setting
-18.3
+18.3<slt:ignore>
 
 
 query

@@ -149,12 +149,16 @@ launch_s3() {
 
 launch_external() {
 	shopt -s globstar
-	local test_files
-	test_files=$(compgen -G "$test" 2>/dev/null || true)
+	local pattern test_files
+	for pattern in "${tests[@]}"; do
+		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
+		if echo "$test_files" | grep -q '_s3\.'; then
+			shopt -u globstar
+			launch_s3
+			return
+		fi
+	done
 	shopt -u globstar
-	if echo "$test_files" | grep -q '_s3\.'; then
-		launch_s3
-	fi
 }
 
 # Main parsing function
@@ -207,7 +211,13 @@ parse_options() {
 				;;
 			esac
 
-			declare -g "$var_name"="$value"
+			# --test is repeatable: accumulate into the `tests` array. Every
+			# other option is scalar.
+			if [[ "$key" == "test" ]]; then
+				tests+=("$value")
+			else
+				declare -g "$var_name"="$value"
+			fi
 			;;
 		*)
 			echo "Unknown option: --$key" >&2
@@ -218,15 +228,25 @@ parse_options() {
 	done
 }
 
+# --test is repeatable; collect into array and fall back to the single default
+# glob when none are provided.
+tests=()
+
 # Example usage:
 parse_options "$@" || exit 1
 
 # Apply defaults for any options not provided
 for var_name in "${!defaults[@]}"; do
+	# `test` is handled as an array (`tests`); skip the scalar default here.
+	[[ "$var_name" == "test" ]] && continue
 	if [[ -z "${!var_name}" ]]; then
 		declare -g "$var_name"="${defaults[$var_name]}"
 	fi
 done
+
+if [[ ${#tests[@]} -eq 0 ]]; then
+	tests=("${defaults[test]}")
+fi
 
 # Display the values (for demonstration)
 IFS=',' read -ra engines_list <<<"$engines"
@@ -243,7 +263,7 @@ echo "Single Port: $single_port"
 echo "Single Port SSL: $single_port_ssl"
 echo "Cluster Port: $cluster_port"
 echo "Engines: $engines"
-echo "Test Path: $test"
+echo "Test Paths: ${tests[*]}"
 echo "JUnit Path: $junit"
 echo "Runner: $runner"
 echo "Jobs: $jobs"
@@ -260,7 +280,9 @@ echo "Cancellation: $cancellation"
 
 if [[ "$fast" == "true" ]]; then
 	# Strip trailing * to exclude .test_slow files (*.test* -> *.test)
-	test="${test%\*}"
+	for i in "${!tests[@]}"; do
+		tests[i]="${tests[i]%\*}"
+	done
 fi
 
 launch_external
@@ -312,7 +334,7 @@ run_tests() {
 		skip_opt="--skip $skip"
 	fi
 
-	sqllogictest "$test" \
+	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
 		--label "$database" \

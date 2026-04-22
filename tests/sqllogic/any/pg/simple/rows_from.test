@@ -49,6 +49,7 @@ generate_series	vedernikoff
 422	1338
 
 
+skipif postgres
 query
 SELECT * FROM UNNEST(generate_series(1, 3), generate_series(1, 10));
 ----

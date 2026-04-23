@@ -24,6 +24,7 @@
 #include <absl/container/flat_hash_set.h>
 
 #include <cassert>
+#include <compare>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -287,9 +288,9 @@ class KeyBounds {
 // Used after filter extraction -- no expression metadata, no names.
 using ResolvedPoint = std::vector<duckdb::Value>;
 
-// Converts specific (fully constrained) Points to Resolved, ordered by
-// pk_ids column order.
-std::vector<ResolvedPoint> ToResolvedPoints(
+// Converts specific (fully constrained) Points to Resolved, values ordered by
+// pk_ids column order; output is sorted lexicographically and deduplicated.
+[[nodiscard]] std::vector<ResolvedPoint> ToSortedResolvedPoints(
   const std::vector<KeyBounds>& points,
   std::span<const catalog::Column::Id> column_ids);
 
@@ -314,14 +315,20 @@ struct ResolvedRange {
   // have different prefix depths but share the common prefix, the shorter
   // range's range_col is compared against the exact prefix value of the longer
   // range at that position.
-  bool operator<(const ResolvedRange& other) const {
+  std::weak_ordering operator<=>(const ResolvedRange& other) const {
     if (IsEmpty() || other.IsEmpty()) {
-      return IsEmpty() && !other.IsEmpty();
+      if (IsEmpty() && other.IsEmpty()) {
+        return std::weak_ordering::equivalent;
+      }
+      return IsEmpty() ? std::weak_ordering::less : std::weak_ordering::greater;
     }
     const auto min_depth = std::min(prefix.size(), other.prefix.size());
     for (size_t i = 0; i < min_depth; ++i) {
-      if (prefix[i] != other.prefix[i]) {
-        return prefix[i] < other.prefix[i];
+      if (prefix[i] < other.prefix[i]) {
+        return std::weak_ordering::less;
+      }
+      if (other.prefix[i] < prefix[i]) {
+        return std::weak_ordering::greater;
       }
     }
 
@@ -331,7 +338,17 @@ struct ResolvedRange {
     const auto right_at_split = (other.prefix.size() == min_depth)
                                   ? other.range_column
                                   : ColumnRange::Point(other.prefix[min_depth]);
-    return left_at_split.LeftBoundLessThan(right_at_split);
+    if (left_at_split.LeftBoundLessThan(right_at_split)) {
+      return std::weak_ordering::less;
+    }
+    if (right_at_split.LeftBoundLessThan(left_at_split)) {
+      return std::weak_ordering::greater;
+    }
+    return std::weak_ordering::equivalent;
+  }
+
+  bool operator==(const ResolvedRange& other) const {
+    return prefix == other.prefix && range_column == other.range_column;
   }
 };
 
@@ -354,19 +371,22 @@ struct ColumnResolver {
     const duckdb::BoundColumnRefExpression& ref) const;
 };
 
-// Converts range KeyConstraints to ResolvedRange, ordered by pk_ids column
-// order. Each constraint must have PrefixSize() >= 1.
-[[nodiscard]] std::vector<ResolvedRange> ToDisjointRanges(
+// Converts range KeyConstraints to ResolvedRange (values in pk_ids column
+// order). Each constraint must have PrefixSize() >= 1. Output is sorted by
+// leftmost covered key (see ResolvedRange::operator<=>) and deduplicated.
+[[nodiscard]] std::vector<ResolvedRange> ToSortedDisjointRanges(
   const std::vector<KeyBounds>& ranges,
   std::span<const catalog::Column::Id> pk_ids);
 
+// Values are assigned so that higher = better scan (point lookup beats range
+// scan beats full scan). Callers can compare kinds directly with <, > etc.
 enum class ConstraintKind {
-  // All constraints are fully-specified equality points; use point lookup.
-  Points,
-  // At least one constraint is a range; use range scan on the range prefix.
-  Ranges,
   // No constraints, use full scan.
-  None,
+  None = 0,
+  // At least one constraint is a range; use range scan on the range prefix.
+  Ranges = 1,
+  // All constraints are fully-specified equality points; use point lookup.
+  Points = 2,
 };
 
 struct ExtractAndRewriteResult {
@@ -380,9 +400,5 @@ struct ExtractAndRewriteResult {
 [[nodiscard]] ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   const duckdb::Expression& expr, std::span<const catalog::Column::Id> pk_ids,
   const ColumnResolver& resolver, bool is_primary_key, bool is_unique);
-
-// Sorts and deduplicates points in-place by key order. Column order matches
-// the pk_ids used during ToResolvedPoints.
-void SortAndDedupPoints(std::vector<ResolvedPoint>& points);
 
 }  // namespace sdb::connector

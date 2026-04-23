@@ -3487,7 +3487,7 @@ QUERY PLAN
 
 # ── 3-D: disjoint specific-point prefixes ────────────────────────────────────
 # (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2) → 2 point lookups
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2)
   ORDER BY a, b, c;
@@ -3532,7 +3532,7 @@ QUERY PLAN
 
 
 # ── 3-D: same point duplicated → exactly 1 lookup, 1 row ─────────────────────
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=3 AND b=3 AND c=3) OR (a=3 AND b=3 AND c=3)
   ORDER BY a, b, c;
@@ -3617,7 +3617,7 @@ QUERY PLAN
 # ── 3-D: b adjacent then c fuses to a-level range ────────────────────────────
 # (a=2 AND b<=2 AND c=1) OR (a=2 AND b>2 AND c=1)  →  all b for a=2, c=1
 # c=1 is a trailing constraint → post-filter, scan covers a=[2,2]
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=2 AND b <= 2 AND c = 1) OR (a=2 AND b > 2 AND c = 1)
   ORDER BY a, b, c;
@@ -3718,7 +3718,7 @@ QUERY PLAN
 
 # ── 3-D: two ranges sharing a prefix, disjoint on c ──────────────────────────
 # (a=1 AND b=2 AND c<2) OR (a=1 AND b=2 AND c>2) → c=2 row excluded
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=2 AND c < 2) OR (a=1 AND b=2 AND c > 2)
   ORDER BY a, b, c;
@@ -3763,7 +3763,7 @@ QUERY PLAN
 
 
 # ── 3-D: three-way triple point OR deduplicated ───────────────────────────────
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1)
      OR (a=2 AND b=2 AND c=2)

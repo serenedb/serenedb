@@ -1362,7 +1362,7 @@ std::optional<KeyBounds> KeyBounds::TryIntersect(const KeyBounds& lhs,
   return result;
 }
 
-std::vector<ResolvedPoint> ToResolvedPoints(
+std::vector<ResolvedPoint> ToSortedResolvedPoints(
   const std::vector<KeyBounds>& points,
   std::span<const catalog::Column::Id> column_ids) {
   std::vector<ResolvedPoint> result;
@@ -1378,10 +1378,20 @@ std::vector<ResolvedPoint> ToResolvedPoints(
     }
     result.push_back(std::move(sp));
   }
+  absl::c_sort(result, [](const ResolvedPoint& lhs, const ResolvedPoint& rhs) {
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (lhs[i] != rhs[i]) {
+        return lhs[i] < rhs[i];
+      }
+    }
+    return false;
+  });
+  auto [first, last] = std::ranges::unique(result);
+  result.erase(first, last);
   return result;
 }
 
-std::vector<ResolvedRange> ToDisjointRanges(
+std::vector<ResolvedRange> ToSortedDisjointRanges(
   const std::vector<KeyBounds>& ranges,
   std::span<const catalog::Column::Id> key_ids) {
   if (ranges.empty()) {
@@ -1394,7 +1404,6 @@ std::vector<ResolvedRange> ToDisjointRanges(
                  "Resolved ranges must be non-overlapping");
     }
   }
-
 #endif
 
   std::vector<ResolvedRange> result;
@@ -1427,6 +1436,9 @@ std::vector<ResolvedRange> ToDisjointRanges(
     result.push_back(std::move(resolved_range));
   }
 
+  absl::c_sort(result);
+  auto [first, last] = std::ranges::unique(result);
+  result.erase(first, last);
   return result;
 }
 
@@ -1607,19 +1619,6 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
 
   auto remaining = RewriteExpr(expr, sources);
   return {ConstraintKind::Ranges, std::move(constraints), std::move(remaining)};
-}
-
-void SortAndDedupPoints(std::vector<ResolvedPoint>& points) {
-  absl::c_sort(points, [](const ResolvedPoint& lhs, const ResolvedPoint& rhs) {
-    for (size_t i = 0; i < lhs.size(); ++i) {
-      if (lhs[i] != rhs[i]) {
-        return lhs[i] < rhs[i];
-      }
-    }
-    return false;
-  });
-  auto [first, last] = std::ranges::unique(points);
-  points.erase(first, last);
 }
 
 }  // namespace sdb::connector

@@ -144,10 +144,10 @@ struct IndexCandidate {
       }
       const auto& sk = basics::downCast<const catalog::SecondaryIndex>(*index);
       auto cols = sk.GetColumnIds();
-      out.push_back({IndexCandidate::Kind::Sk,
-                     {cols.begin(), cols.end()},
-                     shard_id,
-                     sk.IsUnique()});
+      out.emplace_back(
+        IndexCandidate::Kind::Sk,
+        std::vector<catalog::Column::Id>(cols.begin(), cols.end()), shard_id,
+        sk.IsUnique());
       break;
     }
     return out;
@@ -156,7 +156,9 @@ struct IndexCandidate {
   // FROM table_name: PK + all rocksdb-backed secondary indexes.
   auto pk_cols = bind_data.table->PKColumns();
   if (!pk_cols.empty()) {
-    out.push_back({IndexCandidate::Kind::Pk, {pk_cols.begin(), pk_cols.end()}});
+    out.emplace_back(
+      IndexCandidate::Kind::Pk,
+      std::vector<catalog::Column::Id>(pk_cols.begin(), pk_cols.end()));
   }
 
   for (auto& index : snapshot->GetIndexesByTable(table_id)) {
@@ -169,10 +171,9 @@ struct IndexCandidate {
     }
     const auto& sk = basics::downCast<const catalog::SecondaryIndex>(*index);
     auto cols = sk.GetColumnIds();
-    out.push_back({IndexCandidate::Kind::Sk,
-                   {cols.begin(), cols.end()},
-                   shard_id,
-                   sk.IsUnique()});
+    out.emplace_back(IndexCandidate::Kind::Sk,
+                     std::vector<catalog::Column::Id>(cols.begin(), cols.end()),
+                     shard_id, sk.IsUnique());
   }
   return out;
 }
@@ -190,19 +191,10 @@ struct PhysicalScanCandidate {
 // Final tiebreaker: PK beats SK (no extra materialization needed).
 [[nodiscard]] bool StrictlyBetter(const PhysicalScanCandidate& lhs,
                                   const PhysicalScanCandidate& rhs) {
-  static constexpr auto kScanRank = [](connector::ConstraintKind kind) {
-    switch (kind) {
-      case connector::ConstraintKind::Points:
-        return 2;
-      case connector::ConstraintKind::Ranges:
-        return 1;
-      case connector::ConstraintKind::None:
-        return 0;
-    }
-    SDB_UNREACHABLE();
-  };
+  // ConstraintKind values are ordered so higher = better: Points > Ranges >
+  // None.
   if (lhs.result.kind != rhs.result.kind) {
-    return kScanRank(lhs.result.kind) > kScanRank(rhs.result.kind);
+    return lhs.result.kind > rhs.result.kind;
   }
 
   auto effective_cols = [](const PhysicalScanCandidate& c) {
@@ -327,10 +319,9 @@ class RocksDBPlanOptimizer : public duckdb::OptimizerExtension {
     std::vector<connector::ResolvedPoint> points;
     std::vector<connector::ResolvedRange> ranges;
     if (best.result.kind == connector::ConstraintKind::Points) {
-      points = connector::ToResolvedPoints(best.result.constraints, cols);
-      connector::SortAndDedupPoints(points);
+      points = connector::ToSortedResolvedPoints(best.result.constraints, cols);
     } else {
-      ranges = connector::ToDisjointRanges(best.result.constraints, cols);
+      ranges = connector::ToSortedDisjointRanges(best.result.constraints, cols);
     }
 
     auto remove_extra_filter = [&]() {

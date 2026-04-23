@@ -83,6 +83,99 @@ a	b	c
 4	quick brown fox jumps over big dog	value b
 
 statement ok
+INSERT INTO foo values (5, 'quick brown lazy fox runs over big dog', 'value c');
+
+statement ok
+INSERT INTO foo values (6, 'quick fox over big dog', 'value c');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+# Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+# Exact gap: 2 words between 'quick' and 'fox' -- matches only row 5 ('quick brown lazy fox')
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 2, 'fox') ORDER BY a;
+----
+a	b
+5	quick brown lazy fox runs over big dog
+
+# Exact gap: 0 words between (adjacent) -- matches only row 6 ('quick fox')
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 0, 'fox') ORDER BY a;
+----
+a	b
+6	quick fox over big dog
+
+# Range gap [0,1]: 0 or 1 words between 'quick' and 'fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[0,1], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+6	quick fox over big dog
+
+# Range gap [1,2]: 1 or 2 words between 'quick' and 'fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[1,2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Multi-token pattern with gap: 'quick brown' then 1 word then 'fox' -- only row 5 has 'brown lazy fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick brown', 1, 'fox') ORDER BY a;
+----
+a	b
+5	quick brown lazy fox runs over big dog
+
+# Multiple gaps: 'quick' +1 word+ 'fox' +3 words+ 'dog'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox', 3, 'dog') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+# Error: gap at end with no following text pattern
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1);
+----
+db error: ERROR: PHRASE ends with a gap; a text pattern must follow each gap
+
+
+# Error: two consecutive gaps
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1, 2, 'fox');
+----
+db error: ERROR: PHRASE has consecutive gaps at argument 3
+
+
+# Error: range gap with min > max
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[3,1], 'fox');
+----
+db error: ERROR: PHRASE gap array at argument 2 min (3) must not exceed max (1)
+
+
+statement ok
 DROP TABLE foo;
 
 control substitution on

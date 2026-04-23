@@ -95,7 +95,7 @@ TEST(by_regexp_test, boost) {
   counter.Reset();
 }
 
-TEST(by_regexp_test, test_type_of_prepared_query) {
+TEST(by_regexp_test, type_of_prepared_query) {
   MaxMemoryCounter counter;
   {
     auto lhs =
@@ -136,7 +136,7 @@ TEST(by_regexp_test, test_type_of_prepared_query) {
 // Parametrized tests
 class RegexpFilterTestCase : public tests::FilterTestCaseBase {};
 
-//   Basic patterns
+// Basic patterns
 
 TEST_P(RegexpFilterTestCase, by_regexp_foo_dot_star_bar) {
   {
@@ -183,7 +183,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_prefix) {
              rdr);
 }
 
-//   Optional ?
+// Optional ?
 
 TEST_P(RegexpFilterTestCase, by_regexp_optional_colou_r) {
   {
@@ -215,7 +215,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_optional_multiple) {
   CheckQuery(MakeFilter("opt", "a?bb?"), Docs{18}, Costs{1}, rdr);
 }
 
-//   Plus +
+// Plus +
 
 TEST_P(RegexpFilterTestCase, by_regexp_plus_fo_bar) {
   {
@@ -237,7 +237,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_plus_f_bar) {
   CheckQuery(MakeFilter("plus", "f+bar"), Docs{4, 11, 15}, Costs{3}, rdr);
 }
 
-//   Alternation |
+// Alternation |
 
 TEST_P(RegexpFilterTestCase, by_regexp_alternation_two) {
   {
@@ -272,7 +272,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_alternation_single) {
   CheckQuery(MakeFilter("alt", "mouse"), Docs{9}, Costs{1}, rdr);
 }
 
-//   Char classes [...]
+// Char classes [...]
 
 TEST_P(RegexpFilterTestCase, by_regexp_char_class_lower_digits) {
   {
@@ -317,7 +317,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_negation_char_class) {
              Docs{3, 7, 9, 11, 13, 15, 17, 19}, Costs{8}, rdr);
 }
 
-//   Dot
+// Dot
 
 TEST_P(RegexpFilterTestCase, by_regexp_dot_single) {
   {
@@ -340,7 +340,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_dot_multiple) {
              rdr);
 }
 
-//   Combined
+// Combined
 
 TEST_P(RegexpFilterTestCase, by_regexp_combined_group_quantifier) {
   {
@@ -364,7 +364,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_combined_optional_star) {
              Docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 20}, Costs{12}, rdr);
 }
 
-//   Edge cases
+// Edge cases
 
 TEST_P(RegexpFilterTestCase, by_regexp_empty_filter) {
   {
@@ -399,7 +399,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_exact_match) {
   CheckQuery(MakeFilter("term", "foo"), Docs{9}, Costs{1}, rdr);
 }
 
-//   Scoring
+// Scoring
 
 TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
   {
@@ -459,7 +459,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_frequency_sort) {
   }
 }
 
-//   Scoring with Complex patterns (goes through FromRegexp)
+// Scoring with Complex patterns (goes through FromRegexp)
 
 TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
   {
@@ -507,7 +507,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_frequency_sort) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  // ".*c.*" is Complex → exercises RE2 parser + scoring pipeline
+  // ".*c.*" is Complex -> exercises RE2 parser + scoring pipeline
   {
     Docs docs{31, 32, 1, 4, 9, 21, 26};
     Costs costs{docs.size()};
@@ -544,7 +544,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  // scored_terms_limit = 1 → only 1 term gets scored
+  // scored_terms_limit = 1 -> only 1 term gets scored
   {
     irs::ByRegexp q;
     *q.mutable_field() = "prefix";
@@ -579,7 +579,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scored_terms_limit) {
   }
 }
 
-//   Match all / match nothing
+// Match all / match nothing
 
 TEST_P(RegexpFilterTestCase, by_regexp_match_all) {
   {
@@ -607,7 +607,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_match_all) {
   CheckQuery(MakeFilter("duplicated", ""), Docs{}, Costs{0}, rdr);
 }
 
-//   Wildcard-equivalent
+// Wildcard-equivalent
 
 TEST_P(RegexpFilterTestCase, by_regexp_wildcard_equivalent_patterns) {
   {
@@ -638,7 +638,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_wildcard_equivalent_patterns) {
   CheckQuery(MakeFilter("name", "!.*"), Docs{28}, Costs{1}, rdr);
 }
 
-//   UTF-8
+// UTF-8
 
 TEST_P(RegexpFilterTestCase, by_regexp_utf8_execution) {
   {
@@ -661,7 +661,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_utf8_execution) {
   CheckQuery(MakeFilter("utf8", "\xD1\x8F.*"), Docs{}, Costs{0}, rdr);
 }
 
-//   Cross-validation vs ByTerm/ByPrefix
+// Cross-validation vs ByTerm/ByPrefix
 
 TEST_P(RegexpFilterTestCase, by_regexp_cross_validation) {
   {
@@ -685,7 +685,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_cross_validation) {
              rdr);
 }
 
-//   Invalid patterns
+// Invalid patterns
 
 TEST_P(RegexpFilterTestCase, by_regexp_invalid_pattern_execution) {
   {
@@ -698,7 +698,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_invalid_pattern_execution) {
   CheckQuery(MakeFilter("term", "[abc"), Docs{}, Costs{0}, rdr);
 }
 
-//   Filter reuse
+// Filter reuse
 
 TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
   MaxMemoryCounter counter;
@@ -725,7 +725,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
   }
 }
 
-//   Anchoring
+// Anchoring
 
 TEST_P(RegexpFilterTestCase, by_regexp_anchoring) {
   {
@@ -752,7 +752,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_anchoring) {
   }
 }
 
-//   Case sensitivity
+// Case sensitivity
 
 TEST_P(RegexpFilterTestCase, by_regexp_case_sensitivity) {
   {
@@ -767,7 +767,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_case_sensitivity) {
   CheckQuery(MakeFilter("class", "ABC123"), Docs{3}, Costs{1}, rdr);
 }
 
-//   Greedy quantifiers
+// Greedy quantifiers
 
 TEST_P(RegexpFilterTestCase, by_regexp_greedy_quantifiers) {
   {
@@ -783,7 +783,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_greedy_quantifiers) {
     Costs{18}, rdr);
 }
 
-//   ReDoS resistance
+// ReDoS resistance
 
 TEST_P(RegexpFilterTestCase, by_regexp_redos_resistance) {
   {
@@ -818,7 +818,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_redos_resistance) {
   }
 }
 
-//   Metacharacters in data
+// Metacharacters in data
 
 TEST_P(RegexpFilterTestCase, by_regexp_metacharacters_in_data) {
   {
@@ -840,7 +840,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_metacharacters_in_data) {
   CheckQuery(MakeFilter("meta", "a..b"), Docs{12}, Costs{1}, rdr);
 }
 
-//   Whitespace
+// Whitespace
 
 TEST_P(RegexpFilterTestCase, by_regexp_whitespace_in_terms) {
   {
@@ -857,7 +857,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_whitespace_in_terms) {
   CheckQuery(MakeFilter("ws", "a b"), Docs{3}, Costs{1}, rdr);
 }
 
-//   Long terms
+// Long terms
 
 TEST_P(RegexpFilterTestCase, by_regexp_long_terms) {
   {
@@ -875,7 +875,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_long_terms) {
   CheckQuery(MakeFilter("long", "a.*"), Docs{1, 7, 10}, Costs{3}, rdr);
 }
 
-//   Boolean queries
+// Boolean queries
 
 TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
   {
@@ -934,7 +934,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_boolean_queries) {
   }
 }
 
-//   Determinism
+// Determinism
 
 TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
   {
@@ -967,7 +967,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_determinism) {
   ASSERT_FALSE(run1.empty());
 }
 
-//   Two segments
+// Two segments
 
 TEST_P(RegexpFilterTestCase, by_regexp_two_segments) {
   auto writer = open_writer();
@@ -993,7 +993,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_two_segments) {
   CheckQuery(MakeFilter("nonexistent", ".*"), Docs{}, rdr);
 }
 
-//   Consolidation
+// Consolidation
 
 TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
   auto writer = open_writer();
@@ -1035,7 +1035,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_consolidation) {
   }
 }
 
-//   Concurrent readers
+// Concurrent readers
 
 TEST_P(RegexpFilterTestCase, by_regexp_concurrent_readers) {
   {
@@ -1050,9 +1050,9 @@ TEST_P(RegexpFilterTestCase, by_regexp_concurrent_readers) {
   CheckQuery(MakeFilter("term", "foo.*"), expected, Costs{15}, rdr2);
 }
 
-//   Visitor API
+// Visitor API
 
-TEST_P(RegexpFilterTestCase, visit_literal) {
+TEST_P(RegexpFilterTestCase, by_regexp_visit_literal) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1073,7 +1073,7 @@ TEST_P(RegexpFilterTestCase, visit_literal) {
   }
 }
 
-TEST_P(RegexpFilterTestCase, visit_prefix) {
+TEST_P(RegexpFilterTestCase, by_regexp_visit_prefix) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1092,7 +1092,7 @@ TEST_P(RegexpFilterTestCase, visit_prefix) {
   }
 }
 
-TEST_P(RegexpFilterTestCase, visit_wildcard_like) {
+TEST_P(RegexpFilterTestCase, by_regexp_visit_wildcard_like) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1112,7 +1112,7 @@ TEST_P(RegexpFilterTestCase, visit_wildcard_like) {
   }
 }
 
-TEST_P(RegexpFilterTestCase, visit_invalid_pattern) {
+TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1452,10 +1452,207 @@ TEST_P(RegexpFilterTestCase, by_regexp_very_long_pattern) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+// Syntax dialect - POSIX ERE vs Perl
 
-INSTANTIATE_TEST_SUITE_P(regexp_filter_test, RegexpFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
-                         RegexpFilterTestCase::to_string);
+TEST(by_regexp_test, options_syntax_default) {
+  irs::ByRegexpOptions opts;
+  ASSERT_EQ(irs::RegexpSyntax::Perl, opts.syntax);
+}
+
+TEST(by_regexp_test, equal_syntax_differs) {
+  irs::ByRegexp q = MakeFilter("field", "bar.*");
+  irs::ByRegexp q1 = MakeFilter("field", "bar.*");
+  // Identical in every field except syntax -> must compare unequal.
+  q1.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  ASSERT_NE(q, q1);
+  // Changing back restores equality.
+  q1.mutable_options()->syntax = irs::RegexpSyntax::Perl;
+  ASSERT_EQ(q, q1);
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_syntax_perl_accepts_perl_class) {
+  // Baseline counterpart to by_regexp_syntax_posix_rejects_perl_class:
+  // with the default Perl syntax \w+ matches every indexed term.  The
+  // existing by_regexp_perl_classes already covers this, but keeping a
+  // paired test next to the POSIX reject case makes the contrast
+  // explicit for reviewers.
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  Docs expected;
+  for (irs::doc_id_t i = 1; i <= 20; ++i) {
+    expected.push_back(i);
+  }
+  CheckQuery(MakeFilter("class", "\\w+"), expected, Costs{20}, rdr);
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_rejects_perl_class) {
+  // Same pattern, POSIX mode: \w is not recognized by the POSIX parser,
+  // so the resulting query matches nothing.
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  auto q = MakeFilter("class", "\\w+");
+  q.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  CheckQuery(q, Docs{}, Costs{0}, rdr);
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
+  // POSIX mode must handle the POSIX bracket class [[:alpha:]].  Two
+  // cross-checks:
+  //   (a) [[:alpha:]]+[[:digit:]]+ in POSIX matches the same set as its
+  //       Perl-syntax equivalent [a-zA-Z]+[0-9]+ - proves POSIX accepts
+  //       the POSIX class at all.
+  //   (b) The same [[:alpha:]]+[[:digit:]]+ pattern in POSIX and in
+  //       Perl matches the same set - guards against a future
+  //       regression where POSIX parses but builds a different
+  //       automaton than Perl for a pattern both accept.
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  auto collect = [&](const irs::ByRegexp& q) {
+    Docs out;
+    auto prepared =
+      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
+    for (auto& s : rdr) {
+      auto d = prepared->execute({.segment = s});
+      while (d->advance() != irs::doc_limits::eof()) {
+        out.push_back(d->value());
+      }
+    }
+    return out;
+  };
+
+  auto q_posix = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+");
+  q_posix.mutable_options()->syntax = irs::RegexpSyntax::PosixEre;
+  auto q_perl_equiv = MakeFilter("class", "[a-zA-Z]+[0-9]+");
+  auto q_perl_same = MakeFilter("class", "[[:alpha:]]+[[:digit:]]+");
+
+  auto posix_docs = collect(q_posix);
+  auto perl_equiv_docs = collect(q_perl_equiv);
+  auto perl_same_docs = collect(q_perl_same);
+  ASSERT_EQ(perl_equiv_docs, posix_docs);  // (a)
+  ASSERT_EQ(perl_same_docs, posix_docs);   // (b)
+  ASSERT_FALSE(posix_docs.empty());
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
+  // Literal and Prefix patterns take the ByTerm / ByPrefix fast paths
+  // in ComputeRegexpType, which operate on raw bytes and do not consult
+  // the RegexpSyntax at all.  The two modes must therefore produce
+  // identical results for such patterns.  This test guards against a
+  // future refactor that accidentally threads syntax into the fast
+  // path and breaks the invariant.
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  auto run = [&](std::string_view field, std::string_view pattern,
+                 irs::RegexpSyntax syntax) {
+    auto q = MakeFilter(field, pattern);
+    q.mutable_options()->syntax = syntax;
+    Docs out;
+    auto prepared =
+      q.prepare({.index = rdr, .memory = irs::IResourceManager::gNoop});
+    for (auto& s : rdr) {
+      auto d = prepared->execute({.segment = s});
+      while (d->advance() != irs::doc_limits::eof()) {
+        out.push_back(d->value());
+      }
+    }
+    return out;
+  };
+
+  // Literal pattern -> ByTerm fast path
+  {
+    auto perl = run("term", "foobar", irs::RegexpSyntax::Perl);
+    auto posix = run("term", "foobar", irs::RegexpSyntax::PosixEre);
+    ASSERT_EQ(perl, posix);
+    ASSERT_FALSE(perl.empty());
+  }
+  // Prefix pattern -> ByPrefix fast path
+  {
+    auto perl = run("term", "foo.*", irs::RegexpSyntax::Perl);
+    auto posix = run("term", "foo.*", irs::RegexpSyntax::PosixEre);
+    ASSERT_EQ(perl, posix);
+    ASSERT_FALSE(perl.empty());
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_prepare_with_syntax) {
+  // Exercise the static ByRegexp::prepare overload with an explicit
+  // syntax argument, covering the path used by phrase_filter and any
+  // other direct callers.
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+  auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(?:foo)bar"));
+  // Perl: non-capturing group parses, prepared query is non-null.
+  {
+    auto prepared = irs::ByRegexp::prepare(
+      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
+      /*scored_terms_limit=*/1024, irs::RegexpSyntax::Perl);
+    ASSERT_NE(nullptr, prepared);
+  }
+  // POSIX: (?:...) is a Perl extension - prepare still returns a valid
+  // non-null pointer (empty query), but matches nothing.  The empty-
+  // match case is anchored end-to-end by
+  // by_regexp_syntax_posix_rejects_perl_class above.
+  {
+    auto prepared = irs::ByRegexp::prepare(
+      {.index = rdr, .memory = irs::IResourceManager::gNoop}, "term", pattern,
+      /*scored_terms_limit=*/1024, irs::RegexpSyntax::PosixEre);
+    ASSERT_NE(nullptr, prepared);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
+  // Exercise the static ByRegexp::visitor overload with an explicit
+  // syntax argument.  A Perl-only pattern in POSIX mode must produce
+  // a visitor that never calls Prepare on the underlying
+  // FilterVisitor (the parse failed).
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto index = open_reader();
+  auto& segment = index[0];
+  const auto* reader = segment.field("prefix");
+  ASSERT_NE(nullptr, reader);
+
+  auto p = irs::ViewCast<irs::byte_type>(std::string_view("\\d+"));
+  // Perl: \d parses; the visitor is non-null and callable.  We do not
+  // assert a specific visit count because the "prefix" field may or
+  // may not contain digit-only terms in the fixture.
+  {
+    auto fv = irs::ByRegexp::visitor(p, irs::RegexpSyntax::Perl);
+    ASSERT_TRUE(fv);
+    tests::EmptyFilterVisitor v;
+    fv(segment, *reader, v);
+  }
+  // POSIX: \d is a parse error -> visitor is a no-op.
+  {
+    auto fv = irs::ByRegexp::visitor(p, irs::RegexpSyntax::PosixEre);
+    ASSERT_TRUE(fv);
+    tests::EmptyFilterVisitor v;
+    fv(segment, *reader, v);
+    ASSERT_EQ(0, v.prepare_calls_counter());
+  }
+}

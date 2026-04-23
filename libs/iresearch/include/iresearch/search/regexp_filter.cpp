@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////////////
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 
 namespace irs {
 
-field_visitor ByRegexp::visitor(bytes_view pattern) {
+field_visitor ByRegexp::visitor(bytes_view pattern, RegexpSyntax syntax) {
   const auto type = ComputeRegexpType(pattern);
 
   switch (type) {
@@ -71,7 +71,7 @@ field_visitor ByRegexp::visitor(bytes_view pattern) {
     }
 
     case RegexpType::Complex: {
-      auto acceptor = FromRegexp(pattern);
+      auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
 
       if (!Validate(acceptor)) {
         // Invalid pattern or too complex - return visitor that matches nothing
@@ -101,7 +101,8 @@ field_visitor ByRegexp::visitor(bytes_view pattern) {
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
                                      std::string_view field, bytes_view pattern,
-                                     size_t scored_terms_limit) {
+                                     size_t scored_terms_limit,
+                                     RegexpSyntax syntax) {
   bstring buf;
   const auto type = ComputeRegexpType(pattern);
 
@@ -130,7 +131,7 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
       break;
   }
 
-  auto acceptor = FromRegexp(pattern);
+  auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
 
   if (!Validate(acceptor)) {
     return Query::empty();

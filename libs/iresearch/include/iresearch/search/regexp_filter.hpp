@@ -19,6 +19,7 @@
 #pragma once
 
 #include "iresearch/search/filter.hpp"
+#include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -37,23 +38,26 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   using filter_options = ByRegexpFilterOptions;
 
   size_t scored_terms_limit{1024};
+  RegexpSyntax syntax{RegexpSyntax::Perl};
 
   bool operator==(const ByRegexpOptions& rhs) const noexcept {
     return filter_options::operator==(rhs) &&
-           scored_terms_limit == rhs.scored_terms_limit;
+           scored_terms_limit == rhs.scored_terms_limit && syntax == rhs.syntax;
   }
 };
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {
  public:
   static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
-                            bytes_view pattern, size_t scored_terms_limit);
+                            bytes_view pattern, size_t scored_terms_limit,
+                            RegexpSyntax syntax = RegexpSyntax::Perl);
 
-  static field_visitor visitor(bytes_view pattern);
+  static field_visitor visitor(bytes_view pattern,
+                               RegexpSyntax syntax = RegexpSyntax::Perl);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
     return prepare(ctx.Boost(Boost()), field(), options().pattern,
-                   options().scored_terms_limit);
+                   options().scored_terms_limit, options().syntax);
   }
 };
 

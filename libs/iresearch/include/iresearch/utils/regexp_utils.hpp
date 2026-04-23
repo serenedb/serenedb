@@ -33,6 +33,23 @@ enum class RegexpType {
   Complex,         // everything else - requires full automaton
 };
 
+// Regexp syntax dialect.  Controls how the pattern is parsed by RE2.
+// Only affects the Complex path - Literal/Prefix classification and
+// fast-path matching are syntax-agnostic (both dialects share the same
+// interpretation of literal characters and .*).
+enum class RegexpSyntax {
+  // Perl-compatible dialect.  The default.  Supports the full RE2
+  // feature set: \d \w \s, \b \B, (?:...), (?i:...), \Q...\E,
+  // \p{...}, (?P<name>...), \C, hex escapes \x{...}, etc.
+  Perl,
+
+  // POSIX Extended Regular Expression dialect.  Restricted to the
+  // POSIX ERE feature set: literals, . * + ? | () [] {n,m}, anchors
+  // ^ $, character classes including POSIX classes [[:alpha:]] etc.
+  // Perl extensions are rejected at parse time (empty automaton).
+  PosixEre,
+};
+
 enum RegexpMeta : byte_type {
   kDot = '.',
   kStar = '*',
@@ -84,7 +101,7 @@ constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
 // Patterns that produce a larger DFA are rejected (return empty automaton).
 // 10 000 is generous for real-world patterns (most produce < 1 000)
 // while guarding against exponential blowup from pathological input
-// (e.g. [ab]{20} → up to 2^20 states).
+// (e.g. [ab]{20} -> up to 2^20 states).
 // 0 means no limit.
 inline constexpr int64_t kDefaultMaxDfaStates = 10'000;
 
@@ -95,11 +112,13 @@ bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 bytes_view UnescapeRegexp(bytes_view in, bstring& out);
 
 automaton FromRegexp(bytes_view pattern,
-                     int64_t max_dfa_states = kDefaultMaxDfaStates);
+                     int64_t max_dfa_states = kDefaultMaxDfaStates,
+                     RegexpSyntax syntax = RegexpSyntax::Perl);
 
 inline automaton FromRegexp(std::string_view pattern,
-                            int64_t max_dfa_states = kDefaultMaxDfaStates) {
-  return FromRegexp(ViewCast<byte_type>(pattern), max_dfa_states);
+                            int64_t max_dfa_states = kDefaultMaxDfaStates,
+                            RegexpSyntax syntax = RegexpSyntax::Perl) {
+  return FromRegexp(ViewCast<byte_type>(pattern), max_dfa_states, syntax);
 }
 
 }  // namespace irs

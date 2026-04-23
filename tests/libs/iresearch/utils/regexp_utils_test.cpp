@@ -122,7 +122,7 @@ TEST_F(RegexpUtilsTest, extract_prefix) {
 
 TEST_F(RegexpUtilsTest, match_empty) {
   // Empty pattern is routed to ByTerm by ComputeRegexpType,
-  // never reaches FromRegexp.  Verify classification only.
+  // never reaches FromRegexp. Verify classification only.
   ASSERT_EQ(irs::RegexpType::Literal, irs::ComputeRegexpType(ToBytesView("")));
 }
 
@@ -1309,7 +1309,7 @@ TEST_F(RegexpUtilsTest, re2_word_boundary) {
 
 TEST_F(RegexpUtilsTest, re2_no_word_boundary_matches_nothing) {
   // \B is a documented limitation - any pattern containing it should
-  // match nothing.  The empty automaton has no final states, so
+  // match nothing. The empty automaton has no final states, so
   // concatenating it into a larger pattern leaves the result unable
   // to accept any input, even though NumStates() may be non-zero.
   auto a = irs::FromRegexp("foo\\Bbar");
@@ -1372,7 +1372,7 @@ TEST_F(RegexpUtilsTest, re2_dfa_size_limit_zero_unlimited) {
 // The bug we just fixed: CycleFoldRune emitted arcs in fold-cycle order
 // (a then A, i.e. 0x61 then 0x41), leaving the NFA not ilabel-sorted.
 // Downstream matchers rely on sortedness for binary search -> Accepts("ABC")
-// returned false.  These tests cover every fold-cycle shape that's likely
+// returned false. These tests cover every fold-cycle shape that's likely
 // to regress.
 
 TEST_F(RegexpUtilsTest, fold_case_single_ascii_lower) {
@@ -1387,7 +1387,7 @@ TEST_F(RegexpUtilsTest, fold_case_single_ascii_lower) {
 
 TEST_F(RegexpUtilsTest, fold_case_single_ascii_upper) {
   // Pattern is uppercase - fold cycle is the same {a, A}, but emits
-  // starting from 'A' (0x41).  Must still produce sorted arcs.
+  // starting from 'A' (0x41). Must still produce sorted arcs.
   auto a = irs::FromRegexp("(?i:A)");
   AssertProperties(a);
   EXPECT_TRUE(Accepts(a, "a"));
@@ -1576,15 +1576,15 @@ TEST_F(RegexpUtilsTest, regexp_type_two_literal_backslashes) {
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_trailing_backslash) {
-  // "foo\" on wire - trailing lone backslash.  HasMetacharacters sees
+  // "foo\" on wire - trailing lone backslash. HasMetacharacters sees
   // the \, sets escaped=true, loop ends - no unescaped metacharacter
-  // was returned as true.  HasEscapes returns true -> LiteralEscaped.
+  // was returned as true. HasEscapes returns true -> LiteralEscaped.
   EXPECT_EQ(irs::RegexpType::LiteralEscaped,
             irs::ComputeRegexpType(ToBytesView("foo\\")));
 }
 
 TEST_F(RegexpUtilsTest, regexp_type_escaped_dot_then_star) {
-  // "\.*" on wire = literal dot, then unescaped *.  The * is a
+  // "\.*" on wire = literal dot, then unescaped *. The * is a
   // metacharacter but not part of a .* tail (no preceding unescaped
   // dot) -> Complex.
   EXPECT_EQ(irs::RegexpType::Complex,
@@ -1622,7 +1622,7 @@ TEST_F(RegexpUtilsTest, regexp_type_perl_escape_sequences) {
 // UTF-8 range boundary-crossing
 //
 // BuildUtf8RangeAutomaton splits at byte-length boundaries (0x80,
-// 0x800, 0x10000) and unions the parts.  The splitting logic is
+// 0x800, 0x10000) and unions the parts. The splitting logic is
 // non-trivial - thin coverage up to now.
 
 TEST_F(RegexpUtilsTest, utf8_range_crossing_1_to_2_byte) {
@@ -1789,7 +1789,7 @@ TEST_F(RegexpUtilsTest, invariant_properties_broad_coverage) {
 //
 // The existing re2_perl_classes test only calls .prepare() on \D, \W etc.
 // That proves they parse, but doesn't catch a regression that made them
-// match the wrong thing.  These verify accept/reject semantics.
+// match the wrong thing. These verify accept/reject semantics.
 
 TEST_F(RegexpUtilsTest, perl_class_non_digit) {
   auto a = irs::FromRegexp("\\D+");
@@ -1839,7 +1839,7 @@ TEST_F(RegexpUtilsTest, perl_class_combined) {
 // Non-ASCII case folding
 //
 // Our fix uses RE2's LookupCaseFold + ApplyFold, which covers the full
-// Unicode fold map.  ASCII tests prove the mechanism works; these verify
+// Unicode fold map. ASCII tests prove the mechanism works; these verify
 // it holds for multi-byte alphabets.
 
 TEST_F(RegexpUtilsTest, fold_case_cyrillic) {
@@ -2005,8 +2005,8 @@ TEST_F(RegexpUtilsTest, classify_prefix_empty_prefix_dotstar) {
 }
 
 TEST_F(RegexpUtilsTest, classify_prefix_escaped_dotstar_in_middle) {
-  // "a\.*" - escaped dot, then *.  The * is applied to the literal dot,
-  // so the pattern is "a, then zero-or-more dots".  -> Complex.
+  // "a\.*" - escaped dot, then *. The * is applied to the literal dot,
+  // so the pattern is "a, then zero-or-more dots". -> Complex.
   EXPECT_EQ(irs::RegexpType::Complex,
             irs::ComputeRegexpType(ToBytesView("a\\.*")));
 }
@@ -2063,7 +2063,7 @@ TEST_F(RegexpUtilsTest, negated_char_class_all_four_tiers) {
 
 // Simplify() stress - large counted quantifiers
 //
-// RE2's Simplify() expands {n,m} into Concat/Quest sequences.  Large
+// RE2's Simplify() expands {n,m} into Concat/Quest sequences. Large
 // counts stress both the AST expansion and downstream DeterminizeStar.
 // These shouldn't crash or time out.
 
@@ -2091,7 +2091,7 @@ TEST_F(RegexpUtilsTest, simplify_large_bounded_range) {
 }
 
 TEST_F(RegexpUtilsTest, simplify_large_open_range) {
-  // a{50,} - 50 or more a's.  This produces a Plus after the first 50.
+  // a{50,} - 50 or more a's. This produces a Plus after the first 50.
   auto a = irs::FromRegexp("a{50,}");
   if (a.NumStates() > 0) {
     AssertProperties(a);
@@ -2197,7 +2197,7 @@ TEST_F(RegexpUtilsTest, posix_class_combined_with_range) {
 // C-style escapes in patterns
 //
 // \n, \t, \r, \f, \v are not regexp metacharacters - RE2 parses them as
-// literal control characters.  ComputeRegexpType routes them to Complex
+// literal control characters. ComputeRegexpType routes them to Complex
 // (because \n is not a "simple escape" in our sense).
 
 TEST_F(RegexpUtilsTest, escape_newline) {
@@ -2287,7 +2287,7 @@ TEST_F(RegexpUtilsTest, hex_escape_braced_emoji) {
 // Full-class detection (cc->full() branch in BuildCharClass)
 //
 // Patterns like [\d\D], [\w\W], [\s\S] are equivalent to "any character"
-// and RE2 collapses them into a full CharClass.  This hits the
+// and RE2 collapses them into a full CharClass. This hits the
 // `if (cc->full()) return MakeAny();` branch that's otherwise untested.
 
 TEST_F(RegexpUtilsTest, full_class_digit_nondigit) {
@@ -2323,8 +2323,8 @@ TEST_F(RegexpUtilsTest, full_class_space_nonspace) {
 
 // Flag negation and DotNL
 //
-// (?-i:...) turns off FoldCase locally.  (?s:...) turns on DotNL so that
-// . matches newlines.  These verify flag propagation through AST nodes,
+// (?-i:...) turns off FoldCase locally. (?s:...) turns on DotNL so that
+// . matches newlines. These verify flag propagation through AST nodes,
 // not just top-level application.
 
 TEST_F(RegexpUtilsTest, flag_negate_case_insensitive) {
@@ -2376,7 +2376,7 @@ TEST_F(RegexpUtilsTest, flag_dot_nl_disabled_by_default) {
 // UTF-8 literal prefix classification
 //
 // Practical case: pattern like "привет.*" must classify as Prefix so the
-// filter routes to ByPrefix fast-path.  If it regresses to Complex, UTF-8
+// filter routes to ByPrefix fast-path. If it regresses to Complex, UTF-8
 // prefix searches silently lose the fast path.
 
 TEST_F(RegexpUtilsTest, classify_utf8_cyrillic_prefix) {
@@ -2420,7 +2420,7 @@ TEST_F(RegexpUtilsTest, extract_utf8_prefix) {
 // Escapes inside character classes
 //
 // Perl-class escapes like \d, \w, \s work both as standalone and inside
-// [...].  Inside a class, they combine with other elements via union,
+// [...]. Inside a class, they combine with other elements via union,
 // exercising a different Simplify path.
 
 TEST_F(RegexpUtilsTest, escape_digit_in_class) {
@@ -2472,4 +2472,338 @@ TEST_F(RegexpUtilsTest, escape_unicode_property_in_class) {
   EXPECT_TRUE(Accepts(a, "__"));
   EXPECT_TRUE(Accepts(a, "а_б"));
   EXPECT_FALSE(Accepts(a, "abc"));
+}
+
+// POSIX ERE syntax
+//
+// FromRegexp with syntax = PosixEre parses without PerlX / PerlB /
+// PerlClasses / UnicodeGroups.  Core POSIX ERE features work; Perl
+// extensions (\d, (?:...), etc.) produce an empty automaton.
+
+TEST_F(RegexpUtilsTest, posix_ere_literal) {
+  auto a = irs::FromRegexp("foo", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "foo"));
+  EXPECT_FALSE(Accepts(a, "bar"));
+  EXPECT_FALSE(Accepts(a, ""));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_basic_metacharacters) {
+  {
+    auto a =
+      irs::FromRegexp("a.b", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "axb"));
+    EXPECT_FALSE(Accepts(a, "ab"));
+  }
+  {
+    auto a =
+      irs::FromRegexp("ab*c", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "ac"));
+    EXPECT_TRUE(Accepts(a, "abbbc"));
+  }
+  {
+    auto a =
+      irs::FromRegexp("ab+c", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_FALSE(Accepts(a, "ac"));
+    EXPECT_TRUE(Accepts(a, "abc"));
+    EXPECT_TRUE(Accepts(a, "abbbc"));
+  }
+  {
+    auto a =
+      irs::FromRegexp("ab?c", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "ac"));
+    EXPECT_TRUE(Accepts(a, "abc"));
+    EXPECT_FALSE(Accepts(a, "abbc"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_char_class_range) {
+  auto a = irs::FromRegexp("[a-z]+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "abc"));
+  EXPECT_TRUE(Accepts(a, "z"));
+  EXPECT_FALSE(Accepts(a, "ABC"));
+  EXPECT_FALSE(Accepts(a, ""));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_char_class_negated) {
+  auto a = irs::FromRegexp("[^0-9]+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "abc"));
+  EXPECT_FALSE(Accepts(a, "123"));
+  EXPECT_FALSE(Accepts(a, "a1b"));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_bracket_class_alpha_digit) {
+  // POSIX bracket classes [[:alpha:]] / [[:digit:]] are the canonical
+  // POSIX way to get the equivalent of Perl's \d / \w.  Renamed from
+  // posix_class_alpha_digit to avoid collision with the existing
+  // posix_class_* tests (which cover the same syntax in Perl mode).
+  {
+    auto a = irs::FromRegexp("[[:alpha:]]+",
+                             /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                             irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "abc"));
+    EXPECT_TRUE(Accepts(a, "ABC"));
+    EXPECT_FALSE(Accepts(a, "123"));
+    EXPECT_FALSE(Accepts(a, "abc1"));
+  }
+  {
+    auto a = irs::FromRegexp("[[:digit:]]+",
+                             /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                             irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "123"));
+    EXPECT_FALSE(Accepts(a, "abc"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_alternation_grouping) {
+  auto a = irs::FromRegexp("(cat|dog)+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "cat"));
+  EXPECT_TRUE(Accepts(a, "dog"));
+  EXPECT_TRUE(Accepts(a, "catdog"));
+  EXPECT_TRUE(Accepts(a, "catcatdog"));
+  EXPECT_FALSE(Accepts(a, ""));
+  EXPECT_FALSE(Accepts(a, "bird"));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_counted_quantifier) {
+  // {n,m} is standard POSIX ERE, not a Perl extension.
+  {
+    auto a =
+      irs::FromRegexp("a{3}", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "aaa"));
+    EXPECT_FALSE(Accepts(a, "aa"));
+    EXPECT_FALSE(Accepts(a, "aaaa"));
+  }
+  {
+    auto a =
+      irs::FromRegexp("a{2,4}", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "aa"));
+    EXPECT_TRUE(Accepts(a, "aaaa"));
+    EXPECT_FALSE(Accepts(a, "a"));
+    EXPECT_FALSE(Accepts(a, "aaaaa"));
+  }
+  {
+    // Open-ended range {n,} mirrors the re2_counted_quantifiers test.
+    auto a =
+      irs::FromRegexp("a{2,}", /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                      irs::RegexpSyntax::PosixEre);
+    AssertProperties(a);
+    EXPECT_FALSE(Accepts(a, "a"));
+    EXPECT_TRUE(Accepts(a, "aa"));
+    EXPECT_TRUE(Accepts(a, "aaaaaaaaa"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_anchors) {
+  // ^ and $ are standard POSIX anchors and are no-ops for whole-term
+  // matching, same as in Perl mode.
+  auto a = irs::FromRegexp("^foo$",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "foo"));
+  EXPECT_FALSE(Accepts(a, "foobar"));
+  EXPECT_FALSE(Accepts(a, "barfoo"));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_dot_star_prefix) {
+  // The .* prefix pattern.  Note that ComputeRegexpType classifies this
+  // as Prefix (fast path, syntax-independent), so it never reaches
+  // FromRegexp - but the pattern is still valid POSIX syntax if it does.
+  auto a = irs::FromRegexp("foo.*",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "foo"));
+  EXPECT_TRUE(Accepts(a, "foobar"));
+  EXPECT_FALSE(Accepts(a, "fo"));
+  EXPECT_FALSE(Accepts(a, "barfoo"));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_utf8_literal) {
+  // UTF-8 literal characters pass through StringViewToRune regardless
+  // of parse flags - only \p{...} group names are gated on UnicodeGroups.
+  // Verify UTF-8 patterns still work in POSIX so the feature is not
+  // silently lost at index time.
+  auto a = irs::FromRegexp("\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82"));
+  EXPECT_FALSE(Accepts(a, ""));
+  EXPECT_FALSE(Accepts(a, "hello"));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_stacked_quantifier_allowed) {
+  // Stacked quantifiers like a** are a POSIX feature: RE2's parser
+  // rejects them only when the PerlX flag is set.  Without PerlX
+  // (POSIX mode) they parse successfully and squash to a single *.
+  // The inverse - stacked quantifier rejected in Perl - is anchored
+  // by invalid_double_quantifier.
+  auto a = irs::FromRegexp("a**",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, ""));
+  EXPECT_TRUE(Accepts(a, "a"));
+  EXPECT_TRUE(Accepts(a, "aaa"));
+  EXPECT_FALSE(Accepts(a, "b"));
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_perl_equivalence_core_features) {
+  // Patterns valid in both dialects must produce semantically equivalent
+  // automata.  Without this cross-check, a regression that shifted the
+  // Perl-mode automaton (e.g. due to a future flag tweak in LikePerl)
+  // would not surface from the standalone accept/reject tests above,
+  // because they exercise each mode in isolation.
+  constexpr std::string_view kPatterns[] = {
+    "abc",      "a.b",          "ab*c",         "ab+c",         "ab?c",
+    "a{2,4}",   "(a|b)+",       "[a-z]+",       "[^0-9]+",      "^foo$",
+    "foo.*bar", "[[:alpha:]]+", "[[:digit:]]+", "cat|dog|bird",
+  };
+  constexpr std::string_view kInputs[] = {
+    "",    "a",           "abc", "aaa", "foo", "foobar",
+    "123", "hello world", "cat", "dog", "ac",
+  };
+
+  for (auto pat : kPatterns) {
+    SCOPED_TRACE(testing::Message() << "pattern: " << pat);
+    auto perl = irs::FromRegexp(pat,
+                                /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                                irs::RegexpSyntax::Perl);
+    auto posix = irs::FromRegexp(pat,
+                                 /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                                 irs::RegexpSyntax::PosixEre);
+    ASSERT_GT(perl.NumStates(), 0);
+    ASSERT_GT(posix.NumStates(), 0);
+    AssertProperties(perl);
+    AssertProperties(posix);
+    for (auto in : kInputs) {
+      EXPECT_EQ(Accepts(perl, in), Accepts(posix, in))
+        << "pattern: " << pat << " input: " << in;
+    }
+  }
+}
+
+// POSIX rejects Perl extensions - empty automaton returned
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_perl_digit_class) {
+  // \d is enabled by PerlClasses, which POSIX mode omits.
+  auto a = irs::FromRegexp("\\d+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_perl_word_class) {
+  auto a = irs::FromRegexp("\\w+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_word_boundary) {
+  // \b and \B are enabled by PerlB.
+  EXPECT_EQ(0, irs::FromRegexp("\\bfoo",
+                               /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                               irs::RegexpSyntax::PosixEre)
+                 .NumStates());
+  EXPECT_EQ(0, irs::FromRegexp("foo\\B",
+                               /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                               irs::RegexpSyntax::PosixEre)
+                 .NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_non_capturing_group) {
+  // (?:...) is enabled by PerlX.
+  auto a = irs::FromRegexp("(?:ab)+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_inline_flag) {
+  // (?i:...) is enabled by PerlX.
+  auto a = irs::FromRegexp("(?i:abc)",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_literal_quoting) {
+  // \Q...\E is enabled by PerlX.
+  auto a = irs::FromRegexp("\\Q.*\\E",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_unicode_property) {
+  // \p{...} is enabled by UnicodeGroups.
+  auto a = irs::FromRegexp("\\p{Cyrillic}+",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_named_capture) {
+  // (?P<n>...) is enabled by PerlX.
+  auto a = irs::FromRegexp("(?P<w>foo)",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+TEST_F(RegexpUtilsTest, posix_ere_rejects_any_byte) {
+  // \C is enabled by PerlX.
+  auto a = irs::FromRegexp("a\\Cb",
+                           /*max_dfa_states=*/irs::kDefaultMaxDfaStates,
+                           irs::RegexpSyntax::PosixEre);
+  EXPECT_EQ(0, a.NumStates());
+}
+
+// Default is Perl
+
+TEST_F(RegexpUtilsTest, posix_ere_default_is_perl) {
+  // Without an explicit syntax argument the default is Perl - all the
+  // Perl-specific features rejected by PosixEre above must work.
+  {
+    auto a = irs::FromRegexp("\\d+");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "123"));
+  }
+  {
+    auto a = irs::FromRegexp("(?i:abc)");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "ABC"));
+  }
+  {
+    auto a = irs::FromRegexp("(?:ab)+c");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "ababc"));
+  }
 }

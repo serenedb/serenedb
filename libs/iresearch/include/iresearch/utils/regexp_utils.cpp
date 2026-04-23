@@ -571,7 +571,8 @@ bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
 
 // RE2-based regexp -> automaton
 
-automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
+automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
+                     RegexpSyntax syntax) {
   // ComputeRegexpType routes empty patterns to ByTerm (Literal path),
   // so FromRegexp should never be called with an empty pattern.
   SDB_ASSERT(!pattern.empty());
@@ -584,7 +585,7 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
 
   // Parse pattern -> AST.
   //
-  // We use LikePerl which is the most permissive built-in mode:
+  // Perl mode: LikePerl is the most permissive built-in mode:
   //   LikePerl = ClassNL | OneLine | PerlB | PerlX | UnicodeGroups
   //
   // Why LikePerl and not individual flags:
@@ -601,9 +602,20 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
   //   - ClassNL: [^a] can match \n.  Irrelevant - indexed terms
   //     typically don't contain newlines.
   //
-  // Flags we intentionally do NOT set:
+  // POSIX ERE mode: ClassNL | OneLine only.  Deliberately omits every
+  // Perl extension flag so that \d, \w, \b, (?:...), (?i:...), \Q...\E,
+  // \p{...}, (?P<>), \C all produce parse errors (empty automaton via
+  // the !re branch below).  Users get strict POSIX ERE semantics:
+  // literals, . * + ? | () [] {n,m}, anchors ^ $, POSIX char classes
+  // like [[:alpha:]].  ClassNL and OneLine are kept because they don't
+  // enable Perl features - they only pin down whether ^/$ and [^...]
+  // treat \n specially, and the POSIX-consistent choice is to treat \n
+  // as just another byte.
+  //
+  // Flags we intentionally do NOT set in either mode:
   //   - FoldCase: case folding is handled by the analyzer at index time,
-  //     not by the regexp engine.  Users can still use (?i:...) inline.
+  //     not by the regexp engine.  Users can still use (?i:...) inline
+  //     in Perl mode.
   //   - DotNL: let . match \n - irrelevant, terms don't contain \n.
   //   - NonGreedy: greedy vs non-greedy doesn't affect DFA acceptance
   //     (only matters for capturing, which we don't do).
@@ -612,12 +624,13 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states) {
   //     captures.
   //   - Literal: redundant - ComputeRegexpType already fast-paths literals.
   //   - Latin1: exotic, UTF-8 is the standard.
-  //
-  // TODO: consider adding POSIX ERE mode as an alternative syntax for
-  //   users who need standards compliance (different grouping rules,
-  //   no \d/\w/\p extensions, leftmost-longest semantics).
+  const auto flags = (syntax == RegexpSyntax::Perl)
+                       ? re2::Regexp::LikePerl
+
+                       : (re2::Regexp::ClassNL | re2::Regexp::OneLine);
+
   re2::RegexpStatus status;
-  RegexpPtr re{re2::Regexp::Parse(sv, re2::Regexp::LikePerl, &status)};
+  RegexpPtr re{re2::Regexp::Parse(sv, flags, &status)};
   if (!re) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               absl::StrCat("RE2 regexp parse error: ", status.Text()));

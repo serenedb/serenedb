@@ -387,7 +387,8 @@ static bool IsSearchFamilyFunction(std::string_view name) {
   return name == kPhrase || name == kTermEq || name == kTermLt ||
          name == kTermLe || name == kTermGe || name == kTermGt ||
          name == kTermIn || name == kTermLike || name == kBoost ||
-         name == kBm25 || name == kTfidf || name == kOffsets;
+         name == kBm25 || name == kTfidf || name == kRawTf || name == kLmJm ||
+         name == kLmDirichlet || name == kOffsets;
 }
 
 static bool ExpressionReferencesSearchFamily(const duckdb::Expression& expr) {

@@ -137,6 +137,19 @@ a	b
 4	quick brown fox jumps over big dog
 5	quick brown lazy fox runs over big dog
 
+# Range gap with explicit fixed-size ARRAY cast -- exercises the ARRAY
+# branch of FromPhrase (unadorned ARRAY[..] binds to LIST, only an
+# explicit INTEGER[n] cast produces a fixed-size ARRAY value).
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2]::INTEGER[2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
 # Multi-token pattern with gap: 'quick brown' then 1 word then 'fox' -- only row 5 has 'brown lazy fox'
 query
 SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick brown', 1, 'fox') ORDER BY a;

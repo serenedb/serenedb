@@ -50,8 +50,6 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
 
   bool reset(std::string_view data) final;
 
-  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
-
   bool next() final;
 
   auto& ngram() const noexcept {
@@ -68,6 +66,7 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
   std::unique_ptr<Ngram> _ngram;
   const TermAttr* _term{};
   TermAttr* _ngram_term{};
+  StoreAttr _store;
   std::string _terms;
   const byte_type* _terms_begin{};
   const byte_type* _terms_end{};

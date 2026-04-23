@@ -128,12 +128,223 @@ statement ok
 SET search_path TO 'public,some_schema';
 
 
-skipif postgres # TODO(gnusi) PG format is different
 query
 SHOW search_path;
 ----
 search_path
-public, some_schema
+"public,some_schema"
+
+
+# Single double-quoted identifier with a comma — one atomic entry.
+statement ok
+SET search_path TO "a,b";
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b"')::text AS r;
+----
+r
+true
+
+
+# Multi-arg of quoted identifiers, each with a comma — two atomic entries.
+statement ok
+SET search_path TO "a,b", "c,d";
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b", "c,d"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '."c,d"')::text AS r;
+----
+r
+true
+
+
+# Mix of quoted-with-comma and bare — three entries.
+statement ok
+SET search_path TO "a,b", z, "c,d";
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b", z, "c,d"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '.z, ' || current_database() || '."c,d"')::text AS r;
+----
+r
+true
+
+
+# Empty string literal -> empty search_path (no entries).
+statement ok
+SET search_path TO '';
+
+
+query
+SELECT current_schemas(false);
+----
+current_schemas
+{}
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = '')::text AS r;
+----
+r
+true
+
+
+# SET ... TO DEFAULT maps to RESET, restoring the connection default.
+statement ok
+SET search_path TO DEFAULT;
+
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() LIKE current_database() || '.%, ' || current_database() || '.public'
+   AND search_path_canonical() NOT LIKE '%$user%')::text AS r;
+----
+r
+true
+
+
+# Single bare identifier with uppercase needs quoting on display.
+statement ok
+SET search_path TO "A,b";
+
+
+query
+SHOW search_path;
+----
+search_path
+"A,b"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."A,b"')::text AS r;
+----
+r
+true
+
+
+# Catalog-qualified entries: SHOW strips the current DB prefix, so entries
+# qualified with the current DB show as bare schema names. These tests assume
+# the connection's current_database is `postgres` (the default in both PG
+# and our test harness).
+onlyif serenedb
+statement ok
+SET search_path TO postgres.public;
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '.public')::text AS r;
+----
+r
+true
+
+
+# Catalog-qualified with a quoted schema containing a comma -> one entry.
+onlyif serenedb
+statement ok
+SET search_path TO postgres."a,b";
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+"a,b"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b"')::text AS r;
+----
+r
+true
+
+
+# Two catalog-qualified quoted-comma entries -> two entries.
+onlyif serenedb
+statement ok
+SET search_path TO postgres."a,b", postgres."c,d";
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+"a,b", "c,d"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '."c,d"')::text AS r;
+----
+r
+true
+
+
+# Mix: qualified-with-comma, bare, qualified -> three entries.
+onlyif serenedb
+statement ok
+SET search_path TO postgres."a,b", z, postgres.public;
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+"a,b", z, public
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '.z, ' || current_database() || '.public')::text AS r;
+----
+r
+true
 
 
 # Mix of valid and invalid: only valid reported, but invalid kept in path
@@ -166,11 +377,8 @@ true
 
 # Explicit catalog.schema with unknown catalog still errors (avoids
 # the lookup short-circuit bug for unqualified names)
-skipif postgres # TODO(gnusi) PG is works!
-statement error
+statement ok
 SET search_path TO 'badcat.public';
-----
-db error: ERROR: SET search_path: No catalog + schema named "badcat.public" found.
 
 
 # Reset for cleanup
@@ -241,3 +449,96 @@ SELECT current_schema = 'public';
 ----
 ?column?
 t
+
+
+# ----------------------------------------------------------------------
+# $user combined with explicit database qualification
+# ----------------------------------------------------------------------
+
+# Explicit DB on the $user entry only.
+skipif postgres
+statement ok
+SET search_path TO postgres."$user", public;
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+# Canonical expands $user for the postgres-qualified entry too; still no
+# "$user" literal in the resolved form, public remains current-DB qualified.
+skipif postgres
+query
+SELECT (search_path_canonical() LIKE current_database() || '.%, ' || current_database() || '.public'
+   AND search_path_canonical() NOT LIKE '%$user%')::text AS r;
+----
+r
+true
+
+
+# Explicit DB on both entries — SHOW strips current-DB prefix consistently.
+skipif postgres
+statement ok
+SET search_path TO postgres."$user", postgres.public;
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+# Sole entry is DB-qualified $user.
+skipif postgres
+statement ok
+SET search_path TO postgres."$user";
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user"
+
+
+skipif postgres
+query
+SELECT (search_path_canonical() LIKE current_database() || '.%'
+   AND search_path_canonical() NOT LIKE '%$user%')::text AS r;
+----
+r
+true
+
+
+# Schema named after the session user (created under explicit DB) is
+# picked up by current_schema via $user resolution.
+skipif postgres
+statement ok
+CREATE SCHEMA some_user_schema;
+
+
+skipif postgres
+statement ok
+SET search_path TO postgres."$user", some_user_schema;
+
+
+# $user doesn't match any real schema (no schema named after the session
+# user) -> current_schema falls through to the next entry.
+skipif postgres
+query
+SELECT current_schema = 'some_user_schema';
+----
+?column?
+t
+
+
+skipif postgres
+statement ok
+DROP SCHEMA some_user_schema;

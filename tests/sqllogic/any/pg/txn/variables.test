@@ -5,7 +5,6 @@
 #         SHOW transaction_isolation, SHOW default_transaction_isolation
 ###############################################################################
 
-skipif serenedb
 statement ok
 SET default_transaction_isolation = "repeatable read";
 
@@ -625,12 +624,17 @@ statement ok
 BEGIN;
 
 
-skipif postgres # TODO(gnusi) Maybe disable in duckdb grammar?
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+3
+
+
 statement ok
-RESET LOCAL ALL;
+RESET ALL;
 
 
-skipif postgres # TODO(gnusi) Different default in postgres, fix?
 query
 SHOW extra_float_digits;
 ----
@@ -639,10 +643,11 @@ extra_float_digits
 
 
 statement ok
-COMMIT;
+ROLLBACK;
 
 
-# Session value restored even after COMMIT (SET LOCAL semantics)
+# ROLLBACK reverts the RESET ALL along with the rest of the transaction,
+# so the pre-txn session value (3) comes back.
 query
 SHOW extra_float_digits;
 ----
@@ -654,9 +659,21 @@ statement ok
 BEGIN;
 
 
-onlyif serenedb # TODO(gnusi) PG doesn't support such syntax
+statement ok
+SET extra_float_digits = 2;
+
+
+onlyif serenedb # PG doesn't support RESET LOCAL
 statement ok
 RESET LOCAL ALL;
+
+
+onlyif serenedb # PG doesn't support RESET LOCAL
+query
+SHOW extra_float_digits;
+----
+extra_float_digits
+1
 
 
 statement ok

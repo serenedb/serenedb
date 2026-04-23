@@ -200,11 +200,17 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  // phrase(field, target) -> bool
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kPhrase},
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BOOLEAN, SearchStubFn));
+  // phrase(field, target[, gap, target, ...]) -> bool
+  // Variadic tail accepts text patterns, exact-gap integers, and
+  // [min, max] gap-range arrays (see FromPhrase for the full grammar).
+  {
+    duckdb::ScalarFunction fn(
+      std::string{kPhrase},
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::BOOLEAN, SearchStubFn);
+    fn.varargs = duckdb::LogicalType::ANY;
+    loader.RegisterFunction(std::move(fn));
+  }
 
   // term_eq/lt/lte/gte/gt/like(field, target) -> bool
   for (auto name : {kTermEq, kTermLt, kTermLe, kTermGe, kTermGt, kTermLike}) {

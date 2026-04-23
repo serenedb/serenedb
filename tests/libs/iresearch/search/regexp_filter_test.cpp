@@ -493,7 +493,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_custom_sort) {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
     };
     CheckQuery(MakeFilter("prefix", ".*c.*"), order, docs, rdr);
-    // Verify collectors were called (terms were scored via RE2 automaton path)
+    // Verify collectors were called (terms were scored via automaton path)
     ASSERT_GT(collect_field_count, 0);
     ASSERT_GT(collect_term_count, 0);
     ASSERT_GT(finish_count, 0);
@@ -507,7 +507,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_scoring_complex_frequency_sort) {
     add_segment(gen);
   }
   auto rdr = open_reader();
-  // ".*c.*" is Complex -> exercises RE2 parser + scoring pipeline
+  // ".*c.*" is Complex -> exercises the full parser + scoring pipeline
   {
     Docs docs{31, 32, 1, 4, 9, 21, 26};
     Costs costs{docs.size()};
@@ -1138,7 +1138,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_invalid_pattern) {
   }
 }
 
-// RE2-specific: counted quantifiers {n}, {n,}, {n,m}
+// Perl-extension: counted quantifiers {n}, {n,}, {n,m}
 
 TEST_P(RegexpFilterTestCase, by_regexp_counted_quantifiers) {
   {
@@ -1157,7 +1157,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_counted_quantifiers) {
   }
 }
 
-// RE2-specific: non-capturing groups (?:...)
+// Perl-extension: non-capturing groups (?:...)
 
 TEST_P(RegexpFilterTestCase, by_regexp_non_capturing_group) {
   {
@@ -1178,7 +1178,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_non_capturing_group) {
   }
 }
 
-// RE2-specific: Perl classes \d \w \s \D \W \S
+// Perl-extension: Perl classes \d \w \s \D \W \S
 
 TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   {
@@ -1223,7 +1223,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_perl_classes) {
   }
 }
 
-// RE2-specific: word boundary \b \B
+// Perl-extension: word boundary \b \B
 
 TEST_P(RegexpFilterTestCase, by_regexp_word_boundary) {
   {
@@ -1240,7 +1240,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_word_boundary) {
   }
 }
 
-// RE2-specific: case-insensitive (?i:...)
+// Perl-extension: case-insensitive (?i:...)
 
 TEST_P(RegexpFilterTestCase, by_regexp_case_insensitive_flag) {
   {
@@ -1261,7 +1261,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_case_insensitive_flag) {
   }
 }
 
-// RE2-specific: Unicode property \p{...} \P{...}
+// Perl-extension: Unicode property \p{...} \P{...}
 
 TEST_P(RegexpFilterTestCase, by_regexp_unicode_property_classes) {
   {
@@ -1282,7 +1282,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_unicode_property_classes) {
   }
 }
 
-// RE2-specific: literal quoting \Q...\E
+// Perl-extension: literal quoting \Q...\E
 
 TEST_P(RegexpFilterTestCase, by_regexp_literal_quoting) {
   {
@@ -1296,7 +1296,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_literal_quoting) {
   CheckQuery(MakeFilter("meta", "\\Qa*b\\E"), Docs{2}, Costs{1}, rdr);
 }
 
-// RE2-specific: named captures (?P<n>...)
+// Perl-extension: named captures (?P<n>...)
 
 TEST_P(RegexpFilterTestCase, by_regexp_named_captures) {
   {
@@ -1310,7 +1310,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_named_captures) {
              Docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 20}, Costs{12}, rdr);
 }
 
-// RE2-specific: empty alternation branch
+// Perl-extension: empty alternation branch
 
 TEST_P(RegexpFilterTestCase, by_regexp_empty_alternation_branch) {
   {
@@ -1470,7 +1470,8 @@ TEST(by_regexp_test, equal_syntax_differs) {
   ASSERT_EQ(q, q1);
 }
 
-TEST_P(RegexpFilterTestCase, by_regexp_syntax_perl_accepts_perl_class) {
+TEST_P(RegexpFilterTestCase,
+       by_regexp_syntax_perl_accepts_perl_class_baseline) {
   // Baseline counterpart to by_regexp_syntax_posix_rejects_perl_class:
   // with the default Perl syntax \w+ matches every indexed term.  The
   // existing by_regexp_perl_classes already covers this, but keeping a

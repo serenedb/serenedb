@@ -60,9 +60,8 @@ TEST(lm_test, jm_load_default) {
 }
 
 TEST(lm_test, jm_load_object) {
-  auto scorer =
-    irs::scorers::Get("lm_jm", irs::Type<irs::text_format::Json>::get(),
-                      "{ \"lambda\": 0.7 }");
+  auto scorer = irs::scorers::Get(
+    "lm_jm", irs::Type<irs::text_format::Json>::get(), "{ \"lambda\": 0.7 }");
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMJelinekMercer&>(*scorer);
   ASSERT_FLOAT_EQ(0.7f, lm.lambda());
@@ -106,9 +105,9 @@ TEST(lm_test, dirichlet_consts) {
 }
 
 TEST(lm_test, dirichlet_load_default) {
-  auto scorer = irs::scorers::Get("lm_dirichlet",
-                                  irs::Type<irs::text_format::Json>::get(),
-                                  std::string_view{});
+  auto scorer =
+    irs::scorers::Get("lm_dirichlet", irs::Type<irs::text_format::Json>::get(),
+                      std::string_view{});
   ASSERT_NE(nullptr, scorer);
   ASSERT_EQ(irs::Type<irs::LMDirichlet>::id(), scorer->type());
   auto& lm = dynamic_cast<irs::LMDirichlet&>(*scorer);
@@ -118,9 +117,9 @@ TEST(lm_test, dirichlet_load_default) {
 }
 
 TEST(lm_test, dirichlet_load_object) {
-  auto scorer = irs::scorers::Get("lm_dirichlet",
-                                  irs::Type<irs::text_format::Json>::get(),
-                                  "{ \"mu\": 500.0 }");
+  auto scorer =
+    irs::scorers::Get("lm_dirichlet", irs::Type<irs::text_format::Json>::get(),
+                      "{ \"mu\": 500.0 }");
   ASSERT_NE(nullptr, scorer);
   auto& lm = dynamic_cast<irs::LMDirichlet&>(*scorer);
   ASSERT_FLOAT_EQ(500.f, lm.mu());

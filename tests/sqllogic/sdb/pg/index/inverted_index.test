@@ -154,6 +154,23 @@ a	b
 3	quick red fox jumps over big dog
 4	quick brown fox jumps over big dog
 
+# Error: leading text pattern tokenizes to nothing (empty string) so the
+# following integer gap has no preceding text -- covers the opts->empty()
+# check in the integer gap branch of FromPhrase.
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, '', 1, 'fox');
+----
+db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+
+
+# Same as above but via a range gap -- covers the opts->empty() check
+# in the LIST/ARRAY gap branch of FromPhrase.
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, '', ARRAY[1,2], 'fox');
+----
+db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+
+
 # Error: gap at end with no following text pattern
 query error
 SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1);

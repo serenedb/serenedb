@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <duckdb/common/exception.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -51,6 +50,8 @@
 #include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
 
 namespace sdb::connector {
@@ -827,82 +828,81 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
           }
           has_gap = false;
         }
-        break;
-      }
+      } break;
       case duckdb::LogicalTypeId::LIST:
       case duckdb::LogicalTypeId::ARRAY: {
         if (opts->empty()) {
-          throw duckdb::InvalidInputException(
-            "PHRASE gap at argument %llu must be preceded by a text pattern",
-            static_cast<uint64_t>(i));
+          THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG("PHRASE gap at argument ", i,
+                                  " must be preceded by a text pattern"));
         }
         if (has_gap) {
-          throw duckdb::InvalidInputException(
-            "PHRASE has consecutive gaps at argument %llu",
-            static_cast<uint64_t>(i));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE has consecutive gaps at argument ", i));
         }
         const auto& elements =
           const_val->type().id() == duckdb::LogicalTypeId::ARRAY
             ? duckdb::ArrayValue::GetChildren(*const_val)
             : duckdb::ListValue::GetChildren(*const_val);
         if (elements.size() != 2) {
-          throw duckdb::InvalidInputException(
-            "PHRASE gap array at argument %llu must have exactly 2 elements "
-            "[min, max], got %llu",
-            static_cast<uint64_t>(i), static_cast<uint64_t>(elements.size()));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE gap array at argument ", i,
+                    " must have exactly 2 elements [min, max], got ",
+                    elements.size()));
         }
         const auto min_val = ReadGapValue(elements[0]);
         const auto max_val = ReadGapValue(elements[1]);
         if (!min_val || !max_val) {
-          throw duckdb::InvalidInputException(
-            "PHRASE gap array at argument %llu elements must be non-negative "
-            "integers",
-            static_cast<uint64_t>(i));
+          THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG("PHRASE gap array at argument ", i,
+                                  " elements must be non-negative integers"));
         }
         if (*min_val > *max_val) {
-          throw duckdb::InvalidInputException(
-            "PHRASE gap array at argument %llu min (%llu) must not exceed max "
-            "(%llu)",
-            static_cast<uint64_t>(i), static_cast<uint64_t>(*min_val),
-            static_cast<uint64_t>(*max_val));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE gap array at argument ", i, " min (", *min_val,
+                    ") must not exceed max (", *max_val, ")"));
         }
         gap_min = *min_val;
         gap_max = *max_val;
         has_gap = true;
-        break;
-      }
+      } break;
       default: {
         const auto gap = ReadGapValue(*const_val);
         if (!gap) {
-          throw duckdb::InvalidInputException(
-            "PHRASE argument %llu has unsupported type; expected text, "
-            "non-negative integer, or non-negative integer array",
-            static_cast<uint64_t>(i));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE argument ", i,
+                    " has unsupported type; expected text, non-negative "
+                    "integer, or non-negative integer array"));
         }
         if (opts->empty()) {
-          throw duckdb::InvalidInputException(
-            "PHRASE gap at argument %llu must be preceded by a text pattern",
-            static_cast<uint64_t>(i));
+          THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG("PHRASE gap at argument ", i,
+                                  " must be preceded by a text pattern"));
         }
         if (has_gap) {
-          throw duckdb::InvalidInputException(
-            "PHRASE has consecutive gaps at argument %llu",
-            static_cast<uint64_t>(i));
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE has consecutive gaps at argument ", i));
         }
         gap_min = gap_max = gap.value();
         has_gap = true;
-        break;
-      }
+      } break;
     }
   }
 
   if (has_gap) {
-    throw duckdb::InvalidInputException(
-      "PHRASE ends with a gap; a text pattern must follow each gap");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERROR_BAD_PARAMETER),
+      ERR_MSG("PHRASE ends with a gap; a text pattern must follow each gap"));
   }
   if (opts->empty()) {
-    throw duckdb::InvalidInputException(
-      "PHRASE text arguments produced no searchable terms");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERROR_BAD_PARAMETER),
+      ERR_MSG("PHRASE text arguments produced no searchable terms"));
   }
   return {};
 }

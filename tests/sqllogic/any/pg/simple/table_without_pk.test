@@ -160,27 +160,25 @@ SELECT * FROM collision ORDER BY a;
 a	sdb_generated_pk
 
 
-# Table without columns
-skipif serenedb
-# TODO(mbkkt) : HE WILL DO THIS VELARICH PLEASE DO SOMETHING
+skipif serenedb # TODO(Pasha) Support tables without columns
 statement ok
 CREATE TABLE no_columns ();
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support tables without columns
 query
 SELECT * FROM no_columns;
 ----
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support tables without columns
 query
 SELECT count(*) FROM no_columns;
 ----
 count
 0
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support tables without columns
 query error
 SELECT field FROM no_columns;
 ----

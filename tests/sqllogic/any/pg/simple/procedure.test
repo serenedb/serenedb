@@ -33,7 +33,7 @@ db error: ERROR: typical_review() is a procedure
 HINT: To call a procedure, use CALL.
 
 
-skipif serenedb
+skipif serenedb # TODO(mbkkt) Fix procedure call not in CALL
 query error
 SELECT WHERE typical_review() > 1
 ----
@@ -235,28 +235,28 @@ CREATE PROCEDURE ddl_proc() AS $$ CREATE TABLE test_from_proc (x INTEGER) $$ LAN
 db error: ERROR: Unsupported statement type in SQL function/procedure body:  CREATE TABLE test_from_proc (x INTEGER)
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support DDL procedures
 statement ok
 CREATE PROCEDURE ddl_proc() AS $$ CREATE TABLE test_from_proc (x INTEGER) $$ LANGUAGE sql;
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support DDL procedures
 statement ok
 CALL ddl_proc();
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support DDL procedures
 query
 SELECT * FROM test_from_proc;
 ----
 x
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support DDL procedures
 statement ok
 DROP TABLE test_from_proc;
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Support DDL procedures
 statement ok
 DROP PROCEDURE ddl_proc();

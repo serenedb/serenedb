@@ -790,9 +790,9 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   const irs::TermAttr* token =
     irs::get<irs::TermAttr>(*column_info->analyzer.analyzer);
 
-  bool has_pending_gap = false;
-  size_t pending_gap_min = 0;
-  size_t pending_gap_max = 0;
+  bool has_gap = false;
+  size_t gap_min = 0;
+  size_t gap_max = 0;
 
   // A non-constant argument is an index-only restriction -- a future
   // full-scan PHRASE executor could handle it -- so we return Result
@@ -813,21 +813,19 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
         auto text = const_val->GetValue<std::string>();
         column_info->analyzer.analyzer->reset(std::string_view{text});
         while (column_info->analyzer.analyzer->next()) {
-          if (has_pending_gap) {
+          if (has_gap) {
             // First token of a new text pattern: apply pending gap.
             // push_back(offs_min, offs_max) has no implicit +1 unlike
             // push_back(offs), so add 1 to convert "N words between" to
             // "N+1 position offset".
-            opts
-              ->push_back<irs::ByTermOptions>(pending_gap_min + 1,
-                                              pending_gap_max + 1)
+            opts->push_back<irs::ByTermOptions>(gap_min + 1, gap_max + 1)
               .term.assign(token->value);
           } else {
             // No pending gap: first term or adjacent token within same
             // pattern.
             opts->push_back<irs::ByTermOptions>().term.assign(token->value);
           }
-          has_pending_gap = false;
+          has_gap = false;
         }
         break;
       }
@@ -838,7 +836,7 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
             "PHRASE gap at argument %llu must be preceded by a text pattern",
             static_cast<uint64_t>(i));
         }
-        if (has_pending_gap) {
+        if (has_gap) {
           throw duckdb::InvalidInputException(
             "PHRASE has consecutive gaps at argument %llu",
             static_cast<uint64_t>(i));
@@ -868,9 +866,9 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
             static_cast<uint64_t>(i), static_cast<uint64_t>(*min_val),
             static_cast<uint64_t>(*max_val));
         }
-        pending_gap_min = *min_val;
-        pending_gap_max = *max_val;
-        has_pending_gap = true;
+        gap_min = *min_val;
+        gap_max = *max_val;
+        has_gap = true;
         break;
       }
       default: {
@@ -886,19 +884,19 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
             "PHRASE gap at argument %llu must be preceded by a text pattern",
             static_cast<uint64_t>(i));
         }
-        if (has_pending_gap) {
+        if (has_gap) {
           throw duckdb::InvalidInputException(
             "PHRASE has consecutive gaps at argument %llu",
             static_cast<uint64_t>(i));
         }
-        pending_gap_min = pending_gap_max = gap.value();
-        has_pending_gap = true;
+        gap_min = gap_max = gap.value();
+        has_gap = true;
         break;
       }
     }
   }
 
-  if (has_pending_gap) {
+  if (has_gap) {
     throw duckdb::InvalidInputException(
       "PHRASE ends with a gap; a text pattern must follow each gap");
   }

@@ -22,7 +22,6 @@
 
 #include <duckdb/common/types/value.hpp>
 #include <string>
-#include <unordered_map>
 
 #include "catalog/object.h"
 #include "catalog/table_options.h"

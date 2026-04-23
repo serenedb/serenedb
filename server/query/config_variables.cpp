@@ -161,9 +161,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::INTEGER,
         "Per-session override for the HNSW search-time neighbourhood size "
-        "(efSearch). 0 (default) uses faiss' built-in default. Higher "
-        "values trade latency for recall, especially under pushed-down "
-        "WHERE filters.",
+        "(efSearch). 0 (default) uses Top-K value instead.",
         [] { return duckdb::Value::INTEGER(0); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
           auto n = value.GetValue<int32_t>();

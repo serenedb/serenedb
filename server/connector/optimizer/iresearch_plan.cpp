@@ -2023,6 +2023,27 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     return false;
   }
 
+  static bool TopDownAnnPass(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                             bool in_mutation, int ef_search_override) {
+    const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
+    bool changed = false;
+    if (!subtree_in_mutation) {
+      if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
+        if (TryAnnTopk(plan, ef_search_override)) {
+          changed = true;
+        }
+      } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+        if (TryAnnRange(plan)) {
+          changed = true;
+        }
+      }
+    }
+    for (auto& child : plan->children) {
+      changed |= TopDownAnnPass(child, subtree_in_mutation, ef_search_override);
+    }
+    return changed;
+  }
+
   // Bottom-up walk. `root` is the plan root (for FindSearchScanByTableIndex),
   // `plan` is the current node being visited.
   static bool Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
@@ -2084,6 +2105,8 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       }
     }
     bool changed =
+      TopDownAnnPass(plan, /*in_mutation=*/false, ef_search_override);
+    changed |=
       Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, ef_search_override);
     changed |=
       Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, ef_search_override);

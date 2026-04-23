@@ -75,11 +75,10 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
   scratch_.Reset();
   std::array<std::string_view, 1> pks{pk};
   materializer_->Materialize(pks, scratch_);
-  if (scratch_.size() == 0) {
-    return false;
-  }
+  scratch_.SetCardinality(1);
 
   bool_out_.Reset();
+  bool_out_.SetCardinality(1);
   executor_.Execute(scratch_, bool_out_);
 
   for (duckdb::idx_t i = 0; i < bool_out_.ColumnCount(); ++i) {

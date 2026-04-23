@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_search_ann_scan.hpp"
 
+#include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
@@ -28,11 +29,13 @@
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
+#include "connector/ann_filter.hpp"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
 #include "connector/rocksdb_row_materializer.h"
+#include "connector/row_materializer.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -64,6 +67,46 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
       .query = reinterpret_cast<const irs::byte_type*>(ann.query_vector.data()),
       .top_k = top_k,
     };
+    info.params.efSearch = std::max<size_t>(top_k, ann.ef_search);
+
+    std::unique_ptr<ANNFilter> selector;
+    if (!ann.filter_expressions.empty()) {
+      std::vector<duckdb::idx_t> filter_projection(
+        ann.filter_column_ids.size());
+      std::vector<duckdb::LogicalType> filter_types(
+        ann.filter_column_ids.size());
+      for (size_t i = 0; i < ann.filter_column_ids.size(); ++i) {
+        filter_projection[i] = i;
+        const auto cat_id = ann.filter_column_ids[i];
+        const auto it = std::find(bind_data.column_ids.begin(),
+                                  bind_data.column_ids.end(), cat_id);
+        if (it == bind_data.column_ids.end()) {
+          filter_projection.clear();
+          break;
+        }
+        filter_types[i] =
+          bind_data.column_types[it - bind_data.column_ids.begin()];
+      }
+      if (!filter_projection.empty()) {
+        auto filter_mat = MakeRowMaterializer(
+          context, bind_data, state->snapshot, /*all_pks=*/{},
+          filter_projection, filter_types, ann.filter_column_ids, nullptr);
+
+        // Deep-copy the stashed expressions so the bind_data copy survives
+        // subsequent query invocations that share this plan.
+        std::vector<duckdb::unique_ptr<duckdb::Expression>> expr_copies;
+        expr_copies.reserve(ann.filter_expressions.size());
+        for (const auto& e : ann.filter_expressions) {
+          expr_copies.push_back(e->Copy());
+        }
+
+        selector = std::make_unique<ANNFilter>(
+          context, snapshot.reader, std::move(filter_mat),
+          std::move(expr_copies), std::move(filter_types));
+        info.params.sel = selector.get();
+      }
+    }
+
     snapshot.reader.Search(ann.field_name, info, dis.data(), ids.data());
 
     state->ann_pk_bytes.reserve(top_k);

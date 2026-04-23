@@ -20,7 +20,15 @@ FROM generate_series(1, 50000) AS s;
 
 
 statement ok
-CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw);
+CREATE TABLE correct(id INT);
+
+
+statement ok
+INSERT INTO correct SELECT id FROM vecs ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw (m = 64, ef_construction = 256));
 
 
 statement ok
@@ -28,16 +36,29 @@ VACUUM (UPDATE_INDEXES) vecs;
 
 
 query
-SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+EXPLAIN SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
-id
-31416
-37699
-25133
-43982
-18850
-18849
-43983
-25132
-37700
-31415
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│        Table: vecs        │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 10         │
+│          Dims: 8          │
+│      Projections: id      │
+│                           │
+│        ~50,000 rows       │
+└───────────────────────────┘
+
+
+query count 5
+WITH
+  result AS (SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9  FROM result WHERE id IN (SELECT id FROM correct);
+----
+?column?
+t

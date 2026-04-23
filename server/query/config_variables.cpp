@@ -157,6 +157,25 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_ef_search",
+      {
+        LogicalTypeId::INTEGER,
+        "Per-session override for the HNSW search-time neighbourhood size "
+        "(efSearch). 0 (default) uses faiss' built-in default. Higher "
+        "values trade latency for recall, especially under pushed-down "
+        "WHERE filters.",
+        [] { return duckdb::Value::INTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 0) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"sdb_ef_search\": \"%s\"",
+              value.ToString()};
+          }
+        },
+      },
+    },
+    {
       "extra_float_digits",
       {
         LogicalTypeId::INTEGER,

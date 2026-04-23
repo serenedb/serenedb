@@ -239,6 +239,10 @@ struct ANNScan : ScanSource {
   std::string field_name;
   std::vector<float> query_vector;
   size_t top_k = 0;
+  int ef_search = 0;
+
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> filter_expressions;
+  std::vector<catalog::Column::Id> filter_column_ids;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

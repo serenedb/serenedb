@@ -160,14 +160,42 @@ struct SearchScan : ScanSource {
   // extracts the scorer kind + parameters from the projection's
   // bm25(...) / tfidf(...) call and stores them here so the runtime
   // executor can build an irs::Scorer without re-parsing expressions.
-  enum class ScorerKind : uint8_t { None, Bm25, Tfidf };
+  enum class ScorerKind : uint8_t {
+    None,
+    Bm25,
+    Tfidf,
+    RawTf,
+    LmJm,
+    LmDirichlet,
+  };
+  // Scorer parameters are tagged by `kind`: only the matching union arm is
+  // live. All variants are trivial types so the union is trivially
+  // constructible; one arm (RawTf -- empty) carries the default-member
+  // initializer so ScorerParams is itself default-constructible.
+  // Writers set `kind` and assign into the matching arm; readers switch on
+  // `kind` before accessing any arm.
   struct ScorerParams {
+    struct Bm25 {
+      double k1 = 1.2;
+      double b = 0.75;
+    };
+    struct Tfidf {
+      bool with_norms = false;
+    };
+    struct LmJm {
+      double lambda = 0.1;
+    };
+    struct LmDirichlet {
+      double mu = 2000.0;
+    };
+
     ScorerKind kind = ScorerKind::None;
-    // bm25(k1, b) -- iresearch defaults per Bm25.
-    double bm25_k1 = 1.2;
-    double bm25_b = 0.75;
-    // tfidf(with_norms) -- default false = no length normalisation.
-    bool tfidf_with_norms = false;
+    union {
+      Bm25 bm25{};
+      Tfidf tfidf;
+      LmJm lm_jm;
+      LmDirichlet lm_dirichlet;
+    };
   };
   ScorerParams scorer;
   std::optional<size_t> score_top_k;

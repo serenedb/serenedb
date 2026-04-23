@@ -54,6 +54,9 @@ inline constexpr std::string_view kBoost = "boost";
 // is enough -- no separate anchor needed).
 inline constexpr std::string_view kBm25 = "bm25";
 inline constexpr std::string_view kTfidf = "tfidf";
+inline constexpr std::string_view kRawTf = "raw_tf";
+inline constexpr std::string_view kLmJm = "lm_jm";
+inline constexpr std::string_view kLmDirichlet = "lm_dirichlet";
 inline constexpr std::string_view kOffsets = "offsets";
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);

@@ -135,6 +135,10 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
+    ./search/raw_tf.cpp
+    ./search/lm_similarity.cpp
+    ./search/lm_jelinek_mercer.cpp
+    ./search/lm_dirichlet.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp

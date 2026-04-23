@@ -943,7 +943,6 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
 }
 
-// Forward declaration (defined after TrySetScorer).
 bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name);
@@ -1039,6 +1038,8 @@ void RewriteScoreCallInChildren(duckdb::unique_ptr<duckdb::Expression>& expr,
   }
 }
 
+bool IsScorerFunctionName(std::string_view name);
+
 duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
   duckdb::unique_ptr<duckdb::Expression>& expr, duckdb::LogicalOperator& root,
   bool& changed, bool set_scorer) {
@@ -1059,7 +1060,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
   }
   auto& func = expr->Cast<duckdb::BoundFunctionExpression>();
   const auto& name = func.function.name;
-  if (name != connector::kBm25 && name != connector::kTfidf) {
+  if (!IsScorerFunctionName(name)) {
     RewriteScoreCallInChildren(expr, root, changed, set_scorer);
     return nullptr;
   }
@@ -1166,51 +1167,115 @@ catalog::Column::Id ResolveColumnId(
   return bind_data.column_ids[phys];
 }
 
-// Parse bm25/tfidf parameters from `func` into `scorer`. Returns false if
-// the parameters are non-constant (rule refuses to claim; stub raises).
+// True iff `name` is one of the supported scorer function names.
+bool IsScorerFunctionName(std::string_view name) {
+  return name == connector::kBm25 || name == connector::kTfidf ||
+         name == connector::kRawTf || name == connector::kLmJm ||
+         name == connector::kLmDirichlet;
+}
+
+// Parse scorer parameters from `func` into `scorer`. Returns false if the
+// parameters are non-constant (rule refuses to claim; stub raises).
 // Also validates scorer kind conflicts: same kind+params is idempotent,
 // different kind/params throws.
 bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
+  using ScorerParams = connector::SearchScan::ScorerParams;
   using ScorerKind = connector::SearchScan::ScorerKind;
-  ScorerKind new_kind;
-  double new_k1 = 1.2, new_b = 0.75;
-  bool new_with_norms = false;
+  ScorerParams candidate;
 
   if (name == connector::kBm25) {
-    new_kind = ScorerKind::Bm25;
+    candidate.kind = ScorerKind::Bm25;
+    candidate.bm25 = ScorerParams::Bm25{};
     if (func.children.size() == 3) {
       auto* k1v = TryGetConstantValue(*func.children[1]);
       auto* bv = TryGetConstantValue(*func.children[2]);
       if (!k1v || !bv) {
-        return false;  // Non-constant params -- don't claim.
+        return false;
       }
-      new_k1 = k1v->GetValue<double>();
-      new_b = bv->GetValue<double>();
+      candidate.bm25.k1 = k1v->GetValue<double>();
+      candidate.bm25.b = bv->GetValue<double>();
     }
-  } else {
-    new_kind = ScorerKind::Tfidf;
+  } else if (name == connector::kTfidf) {
+    candidate.kind = ScorerKind::Tfidf;
+    candidate.tfidf = ScorerParams::Tfidf{};
     if (func.children.size() == 2) {
       auto* cv = TryGetConstantValue(*func.children[1]);
       if (!cv) {
         return false;
       }
-      new_with_norms = cv->GetValue<bool>();
+      candidate.tfidf.with_norms = cv->GetValue<bool>();
     }
+  } else if (name == connector::kRawTf) {
+    candidate.kind = ScorerKind::RawTf;
+    // raw_tf has no parameters; `raw_tf` arm already default-constructed.
+  } else if (name == connector::kLmJm) {
+    candidate.kind = ScorerKind::LmJm;
+    candidate.lm_jm = ScorerParams::LmJm{};
+    if (func.children.size() == 2) {
+      auto* lv = TryGetConstantValue(*func.children[1]);
+      if (!lv) {
+        return false;
+      }
+      candidate.lm_jm.lambda = lv->GetValue<double>();
+      if (!(candidate.lm_jm.lambda > 0.0 && candidate.lm_jm.lambda <= 1.0)) {
+        throw duckdb::InvalidInputException(
+          "lm_jm lambda must be in (0, 1], got " +
+          std::to_string(candidate.lm_jm.lambda));
+      }
+    }
+  } else if (name == connector::kLmDirichlet) {
+    candidate.kind = ScorerKind::LmDirichlet;
+    candidate.lm_dirichlet = ScorerParams::LmDirichlet{};
+    if (func.children.size() == 2) {
+      auto* mv = TryGetConstantValue(*func.children[1]);
+      if (!mv) {
+        return false;
+      }
+      candidate.lm_dirichlet.mu = mv->GetValue<double>();
+      if (candidate.lm_dirichlet.mu < 0.0 ||
+          !std::isfinite(candidate.lm_dirichlet.mu)) {
+        throw duckdb::InvalidInputException(
+          "lm_dirichlet mu must be a non-negative finite value, got " +
+          std::to_string(candidate.lm_dirichlet.mu));
+      }
+    }
+  } else {
+    return false;  // Unreachable -- caller filters on IsScorerFunctionName.
   }
 
   if (scorer.kind == ScorerKind::None) {
-    scorer.kind = new_kind;
-    scorer.bm25_k1 = new_k1;
-    scorer.bm25_b = new_b;
-    scorer.tfidf_with_norms = new_with_norms;
+    scorer = candidate;
     return true;
   }
-  // Already set -- check for conflict.
-  if (scorer.kind == new_kind && scorer.bm25_k1 == new_k1 &&
-      scorer.bm25_b == new_b && scorer.tfidf_with_norms == new_with_norms) {
-    return true;  // Idempotent (same scorer in multiple expressions).
+  // Already set -- check for conflict. Compare only the live arm; other
+  // arms of the union may be uninitialized.
+  if (scorer.kind == candidate.kind) {
+    bool same = false;
+    switch (scorer.kind) {
+      case ScorerKind::Bm25:
+        same = scorer.bm25.k1 == candidate.bm25.k1 &&
+               scorer.bm25.b == candidate.bm25.b;
+        break;
+      case ScorerKind::Tfidf:
+        same = scorer.tfidf.with_norms == candidate.tfidf.with_norms;
+        break;
+      case ScorerKind::RawTf:
+        same = true;
+        break;
+      case ScorerKind::LmJm:
+        same = scorer.lm_jm.lambda == candidate.lm_jm.lambda;
+        break;
+      case ScorerKind::LmDirichlet:
+        same = scorer.lm_dirichlet.mu == candidate.lm_dirichlet.mu;
+        break;
+      case ScorerKind::None:
+        break;  // unreachable -- covered by outer if above
+    }
+    if (same) {
+      return true;  // Idempotent.
+    }
   }
   throw duckdb::InvalidInputException(
     "Only one scorer function is allowed per inverted index\n"
@@ -1227,7 +1292,7 @@ bool IsScorerCallAnchoredOnSearchScan(duckdb::LogicalOperator& root,
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
   const auto& name = func.function.name;
-  if (name != connector::kBm25 && name != connector::kTfidf) {
+  if (!IsScorerFunctionName(name)) {
     return false;
   }
   if (func.children.empty() || func.children[0]->expression_class !=

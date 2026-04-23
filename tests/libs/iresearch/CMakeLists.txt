@@ -58,6 +58,8 @@ set(iresearch-tests_sources
     ./search/tfidf_test.cpp
     ./search/wand_test.cpp
     ./search/bm25_test.cpp
+    ./search/raw_tf_test.cpp
+    ./search/lm_test.cpp
     ./search/cost_attribute_test.cpp
     ./search/boost_attribute_test.cpp
     ./search/filter_test_case_base.cpp

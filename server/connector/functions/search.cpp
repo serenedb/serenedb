@@ -61,6 +61,26 @@ void TfidfStubFn(duckdb::DataChunk& /*args*/,
     "tfidf() requires an inverted index scan in the same sub-query");
 }
 
+void RawTfStubFn(duckdb::DataChunk& /*args*/,
+                 duckdb::ExpressionState& /*state*/,
+                 duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "raw_tf() requires an inverted index scan in the same sub-query");
+}
+
+void LmJmStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& /*state*/,
+                duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "lm_jm() requires an inverted index scan in the same sub-query");
+}
+
+void LmDirichletStubFn(duckdb::DataChunk& /*args*/,
+                       duckdb::ExpressionState& /*state*/,
+                       duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "lm_dirichlet() requires an inverted index scan in the same sub-query");
+}
+
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
 // Runs `token` through the named text search dictionary and returns
 // the resulting lexemes as a VARCHAR array. Mirrors pg_catalog.ts_lexize().
@@ -258,6 +278,43 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::FLOAT, TfidfStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
+  // Shape mirrors bm25/tfidf: anchor is tableoid; the iresearch_plan rule
+  // claims the call at compile time and threads the scorer into bind_data.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kRawTf}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, RawTfStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // lm_jm(tableoid) / lm_jm(tableoid, lambda) -> FLOAT.
+  // Language model with Jelinek-Mercer (linear interpolation) smoothing.
+  // lambda in (0, 1]; iresearch default is 0.1.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kLmJm}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, LmJmStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, LmJmStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // lm_dirichlet(tableoid) / lm_dirichlet(tableoid, mu) -> FLOAT.
+  // Language model with Bayesian (Dirichlet) smoothing. mu >= 0;
+  // iresearch default is 2000.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kLmDirichlet}};
+    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::BIGINT},
+                                           duckdb::LogicalType::FLOAT,
+                                           LmDirichletStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, LmDirichletStubFn));
     loader.RegisterFunction(std::move(set));
   }
 

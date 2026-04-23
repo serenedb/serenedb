@@ -14656,6 +14656,9 @@ class VectorSearchTestBase
       name += fmt.codec;
     }
     switch (feat.metric) {
+      case irs::HNSWMetric::L2Sqr:
+        name += "_L2Sqr";
+        break;
       case irs::HNSWMetric::L2:
         name += "_L2";
         break;

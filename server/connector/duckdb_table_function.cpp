@@ -338,13 +338,24 @@ void SearchScan::AppendSummary(
   }
   switch (scorer.kind) {
     case SearchScan::ScorerKind::Bm25:
-      out.insert("Score", absl::StrCat("bm25(k1=", scorer.bm25_k1,
-                                       ", b=", scorer.bm25_b, ")"));
+      out.insert("Score", absl::StrCat("bm25(k1=", scorer.bm25.k1,
+                                       ", b=", scorer.bm25.b, ")"));
       break;
     case SearchScan::ScorerKind::Tfidf:
       out.insert("Score",
                  absl::StrCat("tfidf(with_norms=",
-                              scorer.tfidf_with_norms ? "true" : "false", ")"));
+                              scorer.tfidf.with_norms ? "true" : "false", ")"));
+      break;
+    case SearchScan::ScorerKind::RawTf:
+      out.insert("Score", "raw_tf()");
+      break;
+    case SearchScan::ScorerKind::LmJm:
+      out.insert("Score",
+                 absl::StrCat("lm_jm(lambda=", scorer.lm_jm.lambda, ")"));
+      break;
+    case SearchScan::ScorerKind::LmDirichlet:
+      out.insert("Score",
+                 absl::StrCat("lm_dirichlet(mu=", scorer.lm_dirichlet.mu, ")"));
       break;
     case SearchScan::ScorerKind::None:
       break;

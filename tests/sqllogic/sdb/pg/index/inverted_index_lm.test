@@ -1,0 +1,149 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# LM Jelinek-Mercer with default lambda (0.1): strictly positive for matches.
+query
+SELECT id, lm_jm(docs_idx.tableoid) > 0 AS has_score
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+4	t
+5	t
+
+
+# LM Jelinek-Mercer with explicit lambda (must be in (0, 1]).
+query
+SELECT id, lm_jm(docs_idx.tableoid, 0.7) > 0 AS has_score
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+4	t
+5	t
+
+
+# LM Dirichlet with default mu (2000) -- on a tiny corpus this typically floors
+# to 0 because log(mu / (dl + mu)) dominates. Use a small mu to get positive
+# scores and verify the floor never goes below zero.
+query
+SELECT id, lm_dirichlet(docs_idx.tableoid, 5.0) >= 0 AS nonneg
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	nonneg
+1	t
+2	t
+4	t
+5	t
+
+
+# LM JM ordering: 'lazy' appears in doc 1 (dl=9) and doc 3 (dl=3).
+# Higher tf/dl ratio -> higher score, so doc 3 must outrank doc 1.
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy')
+  ORDER BY lm_jm(docs_idx.tableoid) DESC, id;
+----
+id
+3
+1
+
+
+# Invalid params should raise. lambda must be in (0, 1].
+statement error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY lm_jm(docs_idx.tableoid, 0) DESC, id;
+
+
+statement error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY lm_jm(docs_idx.tableoid, 1.5) DESC, id;
+
+
+# mu must be non-negative.
+statement error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY lm_dirichlet(docs_idx.tableoid, -1.0) DESC, id;
+
+
+# Mixing scorers on the same scan -- the optimizer should reject it.
+statement error
+SELECT id, bm25(docs_idx.tableoid) AS a, lm_jm(docs_idx.tableoid) AS b
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+
+
+# Calling LM scorers without an inverted-index scan should surface stub errors.
+statement error
+SELECT lm_jm(42::BIGINT);
+
+
+statement error
+SELECT lm_dirichlet(42::BIGINT);
+
+
+# Second segment: reinvoke after more data to exercise multi-segment scoring.
+statement count 1
+INSERT INTO docs VALUES (6, 'another fox entered the room');
+
+
+statement count 1
+INSERT INTO docs VALUES (7, 'fox runs fast fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# LM JM across segments: positive for every match, doc 7 (higher tf) strictly
+# outranks its siblings with tf=1 on comparable dl.
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY lm_jm(docs_idx.tableoid) DESC, id LIMIT 1;
+----
+id
+7

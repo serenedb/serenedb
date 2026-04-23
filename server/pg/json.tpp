@@ -25,6 +25,7 @@
 
 #include <duckdb/common/types/string_type.hpp>
 
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 

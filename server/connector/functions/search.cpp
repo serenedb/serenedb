@@ -81,6 +81,19 @@ void LmDirichletStubFn(duckdb::DataChunk& /*args*/,
     "lm_dirichlet() requires an inverted index scan in the same sub-query");
 }
 
+void IndriDirichletStubFn(duckdb::DataChunk& /*args*/,
+                          duckdb::ExpressionState& /*state*/,
+                          duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "indri_dirichlet() requires an inverted index scan in the same sub-query");
+}
+
+void DfiStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& /*state*/,
+               duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "dfi() requires an inverted index scan in the same sub-query");
+}
+
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
 // Runs `token` through the named text search dictionary and returns
 // the resulting lexemes as a VARCHAR array. Mirrors pg_catalog.ts_lexize().
@@ -315,6 +328,33 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
       duckdb::LogicalType::FLOAT, LmDirichletStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // indri_dirichlet(tableoid) / indri_dirichlet(tableoid, mu) -> FLOAT.
+  // Indri-style Dirichlet: same smoothing as lm_dirichlet but without the
+  // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
+  {
+    duckdb::ScalarFunctionSet set{std::string{kIndriDirichlet}};
+    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::BIGINT},
+                                           duckdb::LogicalType::FLOAT,
+                                           IndriDirichletStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, IndriDirichletStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // dfi(tableoid) / dfi(tableoid, measure) -> FLOAT.
+  // Divergence-From-Independence. `measure` selects the independence
+  // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kDfi}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, DfiStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::FLOAT, DfiStubFn));
     loader.RegisterFunction(std::move(set));
   }
 

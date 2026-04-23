@@ -167,6 +167,14 @@ struct SearchScan : ScanSource {
     RawTf,
     LmJm,
     LmDirichlet,
+    IndriDirichlet,
+    Dfi,
+  };
+  // DFI independence measure. Must stay in sync with irs::DFIMeasure.
+  enum class DfiMeasure : uint8_t {
+    Standardized,
+    Saturated,
+    ChiSquared,
   };
   // Scorer parameters are tagged by `kind`: only the matching union arm is
   // live. All variants are trivial types so the union is trivially
@@ -188,6 +196,12 @@ struct SearchScan : ScanSource {
     struct LmDirichlet {
       double mu = 2000.0;
     };
+    struct IndriDirichlet {
+      double mu = 2000.0;
+    };
+    struct Dfi {
+      DfiMeasure measure = DfiMeasure::Standardized;
+    };
 
     ScorerKind kind = ScorerKind::None;
     union {
@@ -195,6 +209,8 @@ struct SearchScan : ScanSource {
       Tfidf tfidf;
       LmJm lm_jm;
       LmDirichlet lm_dirichlet;
+      IndriDirichlet indri_dirichlet;
+      Dfi dfi;
     };
   };
   ScorerParams scorer;

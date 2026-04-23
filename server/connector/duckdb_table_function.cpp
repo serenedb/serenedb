@@ -347,6 +347,27 @@ void SearchScan::AppendSummary(
       out.insert("Score",
                  absl::StrCat("lm_dirichlet(mu=", scorer.lm_dirichlet.mu, ")"));
       break;
+    case SearchScan::ScorerKind::IndriDirichlet:
+      out.insert(
+        "Score",
+        absl::StrCat("indri_dirichlet(mu=", scorer.indri_dirichlet.mu, ")"));
+      break;
+    case SearchScan::ScorerKind::Dfi: {
+      const char* m = "standardized";
+      switch (scorer.dfi.measure) {
+        case SearchScan::DfiMeasure::Standardized:
+          m = "standardized";
+          break;
+        case SearchScan::DfiMeasure::Saturated:
+          m = "saturated";
+          break;
+        case SearchScan::DfiMeasure::ChiSquared:
+          m = "chi_squared";
+          break;
+      }
+      out.insert("Score", absl::StrCat("dfi(measure=", m, ")"));
+      break;
+    }
     case SearchScan::ScorerKind::None:
       break;
   }

@@ -411,6 +411,8 @@ WHERE (name, sername) = (
     SELECT 'pavel', 'ivanoff'
 );
 ----
+name	sername	title
+pavel	ivanoff	slave
 
 
 query

@@ -42,74 +42,6 @@ struct RegexpDeleter {
 
 using RegexpPtr = std::unique_ptr<re2::Regexp, RegexpDeleter>;
 
-// Pattern analysis helpers
-
-// Checks if pattern contains any unescaped metacharacters or RE2 escape
-// sequences that change matching semantics (e.g. \d, \w, \b, \p).
-bool HasMetacharacters(bytes_view pattern) noexcept {
-  bool escaped = false;
-  for (byte_type c : pattern) {
-    if (escaped) {
-      escaped = false;
-      // After \, only actual regexp metacharacters are "simple escapes"
-      // (e.g. \. \* \( \{ - just remove special meaning).
-      // Everything else (\d, \w, \s, \b, \p, \Q, etc.) is an RE2
-      // feature that changes matching semantics.
-      if (!IsSimpleEscape(c)) {
-        return true;
-      }
-      continue;
-    }
-    if (c == RegexpMeta::kEscape) {
-      escaped = true;
-      continue;
-    }
-    if (IsRegexpMeta(c)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool HasEscapes(bytes_view pattern) noexcept {
-  for (byte_type c : pattern) {
-    if (c == RegexpMeta::kEscape) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Checks if pattern is a literal prefix followed by .* at the very end,
-// with no RE2 special escape sequences in the prefix part.
-bool IsLiteralPrefixDotStar(bytes_view pattern) noexcept {
-  if (pattern.size() < 2) {
-    return false;
-  }
-
-  bool escaped = false;
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    if (escaped) {
-      escaped = false;
-      if (!IsSimpleEscape(pattern[i])) {
-        return false;
-      }
-      continue;
-    }
-    if (pattern[i] == RegexpMeta::kEscape) {
-      escaped = true;
-      continue;
-    }
-    // First unescaped metacharacter must be '.' followed by '*' at the very end
-    if (IsRegexpMeta(pattern[i])) {
-      return pattern[i] == RegexpMeta::kDot && i + 1 == pattern.size() - 1 &&
-             pattern[i + 1] == RegexpMeta::kStar;
-    }
-  }
-
-  return false;
-}
-
 // Automaton building primitives
 
 automaton MakeEpsilon() {
@@ -260,10 +192,18 @@ automaton BuildUtf8RangeAutomaton(uint32_t lo, uint32_t hi) {
   if (parts.empty()) {
     return {};
   }
+
   auto result = std::move(parts[0]);
+  size_t total_states = result.NumStates();
+  for (size_t i = 1; i < parts.size(); ++i) {
+    total_states += parts[i].NumStates();
+  }
+  result.ReserveStates(total_states);
+
   for (size_t i = 1; i < parts.size(); ++i) {
     fst::Union(&result, parts[i]);
   }
+
   return result;
 }
 
@@ -315,6 +255,12 @@ automaton BuildCharClass(re2::CharClass* cc) {
   }
 
   auto result = std::move(parts[0]);
+  size_t total_states = result.NumStates();
+  for (size_t i = 1; i < parts.size(); ++i) {
+    total_states += parts[i].NumStates();
+  }
+  result.ReserveStates(total_states);
+
   for (size_t i = 1; i < parts.size(); ++i) {
     fst::Union(&result, parts[i]);
   }
@@ -386,7 +332,6 @@ class RegexpToAutomatonWalker : public re2::Regexp::Walker<automaton> {
         // the appending alternative (which would need to rewire growing
         // final states on each step).
         automaton result = std::move(child_args[nchild_args - 1]);
-
         size_t total_states = result.NumStates();
         for (int i = 0; i < nchild_args - 1; ++i) {
           total_states += child_args[i].NumStates();
@@ -407,6 +352,12 @@ class RegexpToAutomatonWalker : public re2::Regexp::Walker<automaton> {
           return std::move(child_args[0]);
         }
         auto result = std::move(child_args[0]);
+        size_t total_states = result.NumStates();
+        for (int i = 1; i < nchild_args; ++i) {
+          total_states += child_args[i].NumStates();
+        }
+        result.ReserveStates(total_states);
+
         for (int i = 1; i < nchild_args; ++i) {
           fst::Union(&result, child_args[i]);
         }
@@ -551,17 +502,37 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
     return RegexpType::Literal;
   }
 
-  if (!HasMetacharacters(pattern)) {
-    return HasEscapes(pattern) ? RegexpType::LiteralEscaped
-                               : RegexpType::Literal;
+  bool has_escapes = false;
+  bool escaped = false;
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    if (escaped) {
+      escaped = false;
+      if (!IsSimpleEscape(pattern[i])) {
+        return RegexpType::Complex;
+      }
+      has_escapes = true;
+      continue;
+    }
+    if (pattern[i] == RegexpMeta::kEscape) {
+      escaped = true;
+      continue;
+    }
+    if (!IsRegexpMeta(pattern[i])) {
+      continue;
+    }
+    // First unescaped metacharacter: only .* at end is Prefix
+    if (pattern[i] == RegexpMeta::kDot && i + 1 == pattern.size() - 1 &&
+        pattern[i + 1] == RegexpMeta::kStar) {
+      return has_escapes ? RegexpType::PrefixEscaped : RegexpType::Prefix;
+    }
+    return RegexpType::Complex;
   }
 
-  if (IsLiteralPrefixDotStar(pattern)) {
-    bytes_view prefix{pattern.data(), pattern.size() - 2};
-    return HasEscapes(prefix) ? RegexpType::PrefixEscaped : RegexpType::Prefix;
+  if (escaped) {
+    has_escapes = true;
   }
 
-  return RegexpType::Complex;
+  return has_escapes ? RegexpType::LiteralEscaped : RegexpType::Literal;
 }
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
@@ -657,6 +628,7 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
   }
 
   // Determinize NFA -> DFA.
+  SDB_ASSERT(nfa.Properties(fst::kILabelSorted, true) & fst::kILabelSorted);
   nfa.SetProperties(fst::kILabelSorted, fst::kILabelSorted);
 
   automaton dfa;

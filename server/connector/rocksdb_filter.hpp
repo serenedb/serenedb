@@ -216,9 +216,9 @@ class KeyBounds {
   [[nodiscard]] const ColumnRange* FindColumnRange(
     catalog::Column::Id col_id) const;
 
-  [[nodiscard]] std::span<const catalog::Column::Id> PKColumns()
+  [[nodiscard]] std::span<const catalog::Column::Id> KeyColumns()
     const noexcept {
-    return _pk_ids;
+    return _key_ids;
   }
 
   using SourceExprsMap =
@@ -273,10 +273,10 @@ class KeyBounds {
     SourceExprsMap source_exprs);
 
  private:
-  explicit KeyBounds(std::span<const catalog::Column::Id> pk_ids)
-    : _pk_ids{pk_ids} {}
+  explicit KeyBounds(std::span<const catalog::Column::Id> key_ids)
+    : _key_ids{key_ids} {}
 
-  std::span<const catalog::Column::Id> _pk_ids;
+  std::span<const catalog::Column::Id> _key_ids;
   // true -> contradictory predicate, matches no rows
   bool _is_empty = false;
 

@@ -887,7 +887,7 @@ std::vector<KeyBounds> MergeKeyConstraints(std::vector<KeyBounds> constraints) {
   if (constraints.empty()) {
     return {};
   }
-  const auto key_ids = constraints[0].PKColumns();
+  const auto key_ids = constraints[0].KeyColumns();
 
   for (const auto& c : constraints) {
     if (c.IsUnconstrained()) {
@@ -1092,7 +1092,7 @@ std::string KeyBounds::toString() const {
   }
   std::string result = "{";
   bool first = true;
-  for (auto col_id : _pk_ids) {
+  for (auto col_id : _key_ids) {
     auto it = _column_ranges.find(col_id);
     if (it == _column_ranges.end()) {
       continue;
@@ -1108,8 +1108,8 @@ std::string KeyBounds::toString() const {
 }
 
 size_t KeyBounds::RangePrefixSize() const noexcept {
-  for (size_t k = 0; k < _pk_ids.size(); ++k) {
-    const ColumnRange* column_range = FindColumnRange(_pk_ids[k]);
+  for (size_t k = 0; k < _key_ids.size(); ++k) {
+    const ColumnRange* column_range = FindColumnRange(_key_ids[k]);
     if (!column_range) {
       return k;
     }
@@ -1120,11 +1120,11 @@ size_t KeyBounds::RangePrefixSize() const noexcept {
     }
   }
 
-  return _pk_ids.size();
+  return _key_ids.size();
 }
 
 bool KeyBounds::IsResolvedNonNullPoint() const {
-  return absl::c_all_of(_pk_ids, [&](catalog::Column::Id col_id) {
+  return absl::c_all_of(_key_ids, [&](catalog::Column::Id col_id) {
     auto it = _column_ranges.find(col_id);
     if (it == _column_ranges.end()) {
       return false;
@@ -1334,9 +1334,9 @@ void KeyBounds::AddNotNullFilter(catalog::Column::Id col_id,
 
 std::optional<KeyBounds> KeyBounds::TryIntersect(const KeyBounds& lhs,
                                                  const KeyBounds& rhs) {
-  SDB_ASSERT(lhs._pk_ids.data() == rhs._pk_ids.data());
-  auto result = KeyBounds::MakeAny(lhs._pk_ids);
-  for (auto pk_id : lhs._pk_ids) {
+  SDB_ASSERT(lhs._key_ids.data() == rhs._key_ids.data());
+  auto result = KeyBounds::MakeAny(lhs._key_ids);
+  for (auto pk_id : lhs._key_ids) {
     const auto* lhs_f = lhs.FindColumnRange(pk_id);
     const auto* rhs_f = rhs.FindColumnRange(pk_id);
     if (!lhs_f && !rhs_f) {
@@ -1442,22 +1442,25 @@ std::vector<ResolvedRange> ToSortedDisjointRanges(
   return result;
 }
 
-// Thin reference wrapper for scan-equivalence dedup. Holds only a pointer to a
-// KeyBounds and the shared key_ids span -- no per-entry heap allocation.
+// Thin reference wrapper for scan-equivalence dedup. Holds only a reference
+// to a KeyBounds -- no per-entry heap allocation. Key ids are read from the
+// bound KeyBounds itself.
 // Two ScanKeyRefs are equal iff their prefix_size matches and every prefix
 // column range compares equal (via ColumnRange::operator==).
 struct ScanKeyRef {
-  const KeyBounds* key_bounds;
-  std::span<const catalog::Column::Id> key_ids;
+  const KeyBounds& key_bounds;
 
   bool operator==(const ScanKeyRef& other) const noexcept {
-    const size_t prefix_size = key_bounds->RangePrefixSize();
-    if (prefix_size != other.key_bounds->RangePrefixSize()) {
+    const auto key_ids = key_bounds.KeyColumns();
+    SDB_ASSERT(std::ranges::equal(key_ids, other.key_bounds.KeyColumns()),
+               "ScanKeyRefs must share the same key schema");
+    const size_t prefix_size = key_bounds.RangePrefixSize();
+    if (prefix_size != other.key_bounds.RangePrefixSize()) {
       return false;
     }
     for (size_t i = 0; i < prefix_size; ++i) {
-      const auto* l = key_bounds->FindColumnRange(key_ids[i]);
-      const auto* r = other.key_bounds->FindColumnRange(other.key_ids[i]);
+      const auto* l = key_bounds.FindColumnRange(key_ids[i]);
+      const auto* r = other.key_bounds.FindColumnRange(key_ids[i]);
       if (l != r && (!l || !r || *l != *r)) {
         return false;
       }
@@ -1467,11 +1470,12 @@ struct ScanKeyRef {
 
   template<typename H>
   friend H AbslHashValue(H h, const ScanKeyRef& self) {
-    const size_t prefix_size = self.key_bounds->RangePrefixSize();
+    const auto key_ids = self.key_bounds.KeyColumns();
+    const size_t prefix_size = self.key_bounds.RangePrefixSize();
     h = H::combine(std::move(h), prefix_size);
     for (size_t i = 0; i < prefix_size; ++i) {
       if (const auto* range_column =
-            self.key_bounds->FindColumnRange(self.key_ids[i])) {
+            self.key_bounds.FindColumnRange(key_ids[i])) {
         h = H::combine(std::move(h), *range_column);
       }
     }
@@ -1532,12 +1536,12 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   // equivalent pieces non-adjacently (one block per trailing-col value),
   // so O(n) hash-set dedup on a prefix key beats std::unique.
   {
-    absl::flat_hash_set<ScanKeyRef> seen;
+    containers::FlatHashSet<ScanKeyRef> seen;
     seen.reserve(constraints.size());
     std::vector<size_t> kept;
     kept.reserve(constraints.size());
     for (size_t i = 0; i < constraints.size(); ++i) {
-      if (seen.insert({&constraints[i], key_ids}).second) {
+      if (seen.insert(ScanKeyRef{constraints[i]}).second) {
         kept.push_back(i);
       }
     }

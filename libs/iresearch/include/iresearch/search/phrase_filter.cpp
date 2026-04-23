@@ -435,7 +435,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
 
   return memory::make_tracked<VariadicPhraseQuery>(
     ctx.memory, std::move(phrase_states), std::move(positions),
-    std::move(stats), ctx.boost);
+    std::move(stats), ctx.boost, options.slop());
 }
 
 }  // namespace

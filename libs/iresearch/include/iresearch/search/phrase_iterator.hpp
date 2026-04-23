@@ -524,8 +524,8 @@ class FixedPhraseFrequency {
   uint32_t _phrase_freq = 0;
 };
 
-inline PosAttr::value_t ComputeSlopDistance(
-  const PosAttr::value_t* positions, size_t count) noexcept {
+inline PosAttr::value_t ComputeSlopDistance(const PosAttr::value_t* positions,
+                                            size_t count) noexcept {
   SDB_ASSERT(count >= 2);
   PosAttr::value_t distance = 0;
   for (size_t i = 1; i < count; ++i) {
@@ -539,83 +539,83 @@ inline PosAttr::value_t ComputeSlopDistance(
   }
   return distance;
 }
- 
+
 template<bool Offs>
 class SlopPhraseFrequency {
  public:
   using TermPosition = FixedTermPosition<Offs>;
   using Positions = std::vector<TermPosition>;
- 
+
   static constexpr bool kHasBoost = true;
   static constexpr bool kHasFreq = true;
- 
+
   SlopPhraseFrequency(std::vector<TermPosition>&& pos,
                       PosAttr::value_t max_slop) noexcept
     : _pos{std::move(pos)}, _max_slop{max_slop} {
     SDB_ASSERT(_pos.size() >= 2);
     SDB_ASSERT(_max_slop > 0);
   }
- 
+
   IRS_FORCE_INLINE bool Match() {
     _phrase_freq = 0;
     _best_distance = _max_slop + 1;
     MatchImpl();
     return _phrase_freq != 0;
   }
- 
+
   uint32_t GetFreq() const noexcept { return _phrase_freq; }
- 
+
   score_t GetBoost() const noexcept {
     if (_best_distance == 0) {
       return kNoBoost;
     }
     return 1.f / (1.f + static_cast<score_t>(_best_distance));
   }
- 
+
  private:
   void MatchImpl() {
     const auto count = _pos.size();
- 
+
     for (size_t i = 0; i < count; ++i) {
       if (!_pos[i].first->next()) {
         return;
       }
     }
- 
+
     while (true) {
       size_t min_idx = 0;
       auto min_pos = _pos[0].first->value();
- 
+
       PosAttr::value_t distance = 0;
       for (size_t i = 1; i < count; ++i) {
         auto prev = _pos[i - 1].first->value();
         auto curr = _pos[i].first->value();
- 
+
         if (curr > prev + 1) {
           distance += curr - prev - 1;
         } else if (curr < prev) {
           distance += prev - curr + 1;
         }
- 
+
         if (curr < min_pos) {
           min_pos = curr;
           min_idx = i;
         }
       }
- 
+
       if (distance <= _max_slop) {
         ++_phrase_freq;
         if (distance < _best_distance) {
           _best_distance = distance;
         }
       }
- 
+
       if (!_pos[min_idx].first->next()) {
         return;
       }
     }
   }
- 
+
   Positions _pos;
   PosAttr::value_t _max_slop;
   uint32_t _phrase_freq = 0;
@@ -653,6 +653,122 @@ template<typename Adapter>
 using VariadicTermPosition =
   std::pair<CompoundDocIterator<Adapter>*, TermInterval>;
 // desired offset in the phrase
+
+template<typename Adapter>
+class SlopVariadicPhraseFrequency {
+ public:
+  using TermPosition = VariadicTermPosition<Adapter>;
+  using Positions = std::vector<TermPosition>;
+
+  static constexpr bool kHasBoost = true;
+  static constexpr bool kHasFreq = true;
+
+  SlopVariadicPhraseFrequency(std::vector<TermPosition>&& pos,
+                              PosAttr::value_t max_slop) noexcept
+    : _pos{std::move(pos)}, _max_slop{max_slop} {
+    SDB_ASSERT(_pos.size() >= 2);
+    SDB_ASSERT(_max_slop > 0);
+  }
+
+  IRS_FORCE_INLINE bool Match() {
+    _phrase_freq = 0;
+    _best_distance = _max_slop + 1;
+    MatchImpl();
+    return _phrase_freq != 0;
+  }
+
+  uint32_t GetFreq() const noexcept { return _phrase_freq; }
+
+  score_t GetBoost() const noexcept {
+    if (_best_distance == 0) {
+      return kNoBoost;
+    }
+    return 1.f / (1.f + static_cast<score_t>(_best_distance));
+  }
+
+ private:
+  // Visitor that collects all positions from all sub-iterators
+  // in a disjunction into a flat vector.
+  static bool CollectPositions(void* ctx, Adapter& adapter) {
+    SDB_ASSERT(ctx);
+    auto& out = *reinterpret_cast<std::vector<PosAttr::value_t>*>(ctx);
+    auto* p = adapter.position;
+    if (!p) {
+      return true;
+    }
+    p->reset();
+    while (p->next()) {
+      auto val = p->value();
+      if (pos_limits::eof(val)) {
+        break;
+      }
+      out.push_back(val);
+    }
+    return true;
+  }
+
+  void MatchImpl() {
+    const auto count = _pos.size();
+
+    // Materialize positions per phrase slot.
+    // Each slot may have multiple sub-iterators (disjunction),
+    // collect all positions, sort, deduplicate.
+    std::vector<std::vector<PosAttr::value_t>> slot_positions(count);
+    for (size_t i = 0; i < count; ++i) {
+      _pos[i].first->visit(&slot_positions[i], CollectPositions);
+      absl::c_sort(slot_positions[i]);
+      auto last =
+        std::unique(slot_positions[i].begin(), slot_positions[i].end());
+      slot_positions[i].erase(last, slot_positions[i].end());
+      if (slot_positions[i].empty()) {
+        return;
+      }
+    }
+
+    // Min-window algorithm over materialized positions.
+    // Same logic as SlopPhraseFrequency but on vectors instead
+    // of position iterators.
+    std::vector<size_t> idx(count, 0);
+    while (true) {
+      size_t min_slot = 0;
+      auto min_pos = slot_positions[0][idx[0]];
+
+      PosAttr::value_t distance = 0;
+      for (size_t i = 1; i < count; ++i) {
+        auto prev = slot_positions[i - 1][idx[i - 1]];
+        auto curr = slot_positions[i][idx[i]];
+
+        if (curr > prev + 1) {
+          distance += curr - prev - 1;
+        } else if (curr < prev) {
+          distance += prev - curr + 1;
+        }
+
+        if (curr < min_pos) {
+          min_pos = curr;
+          min_slot = i;
+        }
+      }
+
+      if (distance <= _max_slop) {
+        ++_phrase_freq;
+        if (distance < _best_distance) {
+          _best_distance = distance;
+        }
+      }
+
+      ++idx[min_slot];
+      if (idx[min_slot] >= slot_positions[min_slot].size()) {
+        return;
+      }
+    }
+  }
+
+  Positions _pos;
+  PosAttr::value_t _max_slop;
+  uint32_t _phrase_freq = 0;
+  PosAttr::value_t _best_distance = 0;
+};
 
 // Helper for variadic phrase frequency evaluation for cases when
 // only one term may be at a single position in a phrase (e.g. synonyms)
@@ -1072,7 +1188,7 @@ class PhraseIterator : public DocIterator {
     _field = field;
   }
 
-   template<typename Adapters>
+  template<typename Adapters>
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
                  std::vector<TermPosition>&& pos, PosAttr::value_t max_slop)
     : _approx{ScoreMergeType::Noop, docs_count,
@@ -1093,14 +1209,14 @@ class PhraseIterator : public DocIterator {
       _collected_freqs.value = std::allocator<uint32_t>{}.allocate(kScoreBlock);
     }
   }
- 
+
   template<typename Adapters>
   PhraseIterator(doc_id_t docs_count, Adapters&& itrs,
                  std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
                  const FieldProperties& field, const byte_type* stats,
                  score_t boost)
-    : PhraseIterator{docs_count, std::forward<Adapters>(itrs),
-                     std::move(pos), max_slop} {
+    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
+                     max_slop} {
     _stats = stats;
     _boost = boost;
     _field = field;

@@ -7528,9 +7528,9 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_one_extra_word) {
                                 &tests::AnalyzedJsonFieldFactory);
     add_segment(gen);
   }
- 
+
   auto rdr = open_reader();
- 
+
   // "quick brown fox" with slop=1 should match:
   // - A,G,I: exact "quick brown fox" (distance=0)
   // - S: "quick quilt brown fox" (distance=1)
@@ -7544,7 +7544,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_one_extra_word) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->set_slop(1);
- 
+
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
     auto column = sub->column("name");
@@ -7553,31 +7553,31 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_one_extra_word) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
- 
+
     auto docs = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 }
- 
+
 TEST_P(PhraseFilterTestCase, sloppy_phrase_skip_word) {
   // add segment
   {
@@ -7585,9 +7585,9 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_skip_word) {
                                 &tests::AnalyzedJsonFieldFactory);
     add_segment(gen);
   }
- 
+
   auto rdr = open_reader();
- 
+
   // "quick fox" with slop=1 matches docs where quick and fox
   // are separated by at most 1 extra word (in correct order).
   // - A: "quick brown fox" (distance=1)
@@ -7603,7 +7603,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_skip_word) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("fox"));
     q.mutable_options()->set_slop(1);
- 
+
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
     auto column = sub->column("name");
@@ -7612,35 +7612,35 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_skip_word) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
- 
+
     auto docs = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 }
- 
+
 TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
   // add segment
   {
@@ -7648,9 +7648,9 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
                                 &tests::AnalyzedJsonFieldFactory);
     add_segment(gen);
   }
- 
+
   auto rdr = open_reader();
- 
+
   // "fox brown" with slop=2 tests term reversal.
   // Swapping adjacent terms costs distance=2.
   // - A: fox=3, brown=2 -> reversed, distance=2
@@ -7658,7 +7658,8 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
   // - I: fox=3, brown=2 -> reversed, distance=2
   // - L: "fox brown quick" -> fox=1, brown=2 -> correct order, distance=0
   // - S: "quick quilt brown fox" -> fox=4, brown=3 -> reversed, distance=2
-  // - T: "quick brother fox brown" -> fox=3, brown=4 -> correct order, distance=0
+  // - T: "quick brother fox brown" -> fox=3, brown=4 -> correct order,
+  // distance=0
   {
     irs::ByPhrase q;
     *q.mutable_field() = "phrase_anl";
@@ -7667,7 +7668,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     q.mutable_options()->set_slop(2);
- 
+
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
     auto column = sub->column("name");
@@ -7676,38 +7677,38 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
- 
+
     auto docs = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
- 
+
   // same query with slop=1 should NOT match reversed pairs (cost=2)
   // only L (distance=0) and T (distance=0) match
   {
@@ -7718,7 +7719,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
     q.mutable_options()->push_back<irs::ByTermOptions>().term =
       irs::ViewCast<irs::byte_type>(std::string_view("brown"));
     q.mutable_options()->set_slop(1);
- 
+
     auto prepared = q.prepare({.index = rdr});
     auto sub = rdr.begin();
     auto column = sub->column("name");
@@ -7727,18 +7728,416 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
- 
+
     auto docs = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
- 
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
+// Add to phrase_filter_test.cpp after existing slop tests.
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_no_match) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "brown dog" slop=1: documents with both "brown" and "dog":
+  // - A: "quick brown fox jumps over the lazy dog"
+  //   brown=2, dog=8, distance=5. No match.
+  // No other document has both "brown" and "dog".
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("dog"));
+    q.mutable_options()->set_slop(1);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_larger_slop) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "quick moved" slop=3: documents with both quick and moved:
+  // - I: "quick brown fox moved forward"
+  //   quick=1, moved=4, distance=2. Match.
+  // - S: "quick quilt brown fox moved"
+  //   quick=1, moved=5, distance=3. Match.
+  // - T: "quick brother fox brown moved"
+  //   quick=1, moved=5, distance=3. Match.
+  // - U: "quick brown forward brother moved"
+  //   quick=1, moved=5, distance=3. Match.
+  // - W: "quilt brown forward quick brother moved"
+  //   quick=4, moved=6, distance=1. Match.
+  // - X: "quilt quick brother forward brother moved"
+  //   quick=2, moved=6, distance=3. Match.
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("moved"));
+    q.mutable_options()->set_slop(3);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("U", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("W", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("X", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+
+  // same query with slop=2: I (distance=2) and W (distance=1)
+  // S,T,U,X have distance >= 3
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("moved"));
+    q.mutable_options()->set_slop(2);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("W", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_two_term_reversal) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "fox quick" slop=2: reversed pair costs distance=2 for adjacent,
+  // more for non-adjacent.
+  // - L: "fox brown quick" -> fox=1, quick=3,
+  //   query order: fox(1) quick(3), forward gap, distance=1. Match.
+  // - N: "fox fox fox quick quick quick quick fox quick"
+  //   fox=1, quick=4: distance=2. Match.
+  //   (and other combos with distance <= 2)
+  // - A,G,I: fox=3, quick=1 -> distance = 3-1+1 = 3. No match.
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->set_slop(2);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
+// Tests below require variadic slop support
+// (SlopVariadicPhraseFrequency in phrase_iterator.hpp)
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_prefix) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "qui* fox" slop=1: qui* matches quick and quilt.
+  // Merged positions per slot, then min-window with slop.
+  // - A: quick=1, fox=3 -> distance=1. Match.
+  // - G: quick=5, fox=7 -> distance=1. Match.
+  // - I: quick=1, fox=3 -> distance=1. Match.
+  // - N: best combo quick=7,fox=8 -> distance=0. Match.
+  // - S: "quick quilt brown fox" -> qui*=[1,2], fox=[4].
+  //   best: quilt=2, fox=4, distance=1. Match.
+  // - T: quick=1, fox=3 -> distance=1. Match.
+  // - V: "quilt brother fox" -> quilt=1, fox=3, distance=1. Match.
+  // - L: "fox brown quick" -> qui*=[3], fox=[1].
+  //   fox=1 < qui*=3 -> distance=3-1+1=3. No match.
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
+    pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.mutable_options()->set_slop(1);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_wildcard) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "fo% bro%" slop=2
+  // fo% matches: fox, forward, forward
+  // bro% matches: brown, brother
+  //
+  // Documents with both fo% and bro% terms, checking all combos:
+  //
+  // A: "quick brown fox jumps over the lazy dog"
+  //   fo*: fox=3. bro*: brown=2.
+  //   fo%(3) bro%(2): 3-2+1=2. Match.
+  //
+  // G: "we do not see quick brown fox"
+  //   fo*: fox=7. bro*: brown=6.
+  //   fo%(7) bro%(6): 7-6+1=2. Match.
+  //
+  // I: "quick brown fox moved forward"
+  //   fo*: fox=3, forward=5. bro*: brown=2.
+  //   fox(3) brown(2): 3-2+1=2. Match.
+  //
+  // L: "fox brown quick"
+  //   fo*: fox=1. bro*: brown=2.
+  //   fo%(1) bro%(2): 2-1-1=0. Match.
+  //
+  // S: "quick quilt brown fox moved"
+  //   fo*: fox=4. bro*: brown=3.
+  //   fo%(4) bro%(3): 4-3+1=2. Match.
+  //
+  // T: "quick brother fox brown moved"
+  //   fo*: fox=3. bro*: brother=2, brown=4.
+  //   fox(3) brother(2): 3-2+1=2. Match.
+  //
+  // U: "quick brown forward brother moved"
+  //   fo*: forward=3. bro*: brown=2, brother=4.
+  //   forward(3) brown(2): 3-2+1=2. Or forward(3) brother(4): 4-3-1=0. Match.
+  //
+  // V: "quilt brother fox moved"
+  //   fo*: fox=3. bro*: brother=2.
+  //   fo%(3) bro%(2): 3-2+1=2. Match.
+  //
+  // W: "quilt brown forward quick brother moved"
+  //   fo*: forward=3. bro*: brown=2, brother=5.
+  //   forward(3) brown(2): 3-2+1=2. Match.
+  //
+  // X: "quilt quick brother forward brother moved"
+  //   fo*: forward=4. bro*: brother=3, brother=5.
+  //   forward(4) brother(3): 4-3+1=2. Match.
+  //
+  // Y: "quilt brother forward moved"
+  //   fo*: forward=3. bro*: brother=2.
+  //   forward(3) brother(2): 3-2+1=2. Match.
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    auto& wt1 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    wt1.term = irs::ViewCast<irs::byte_type>(std::string_view("fo%"));
+    auto& wt2 = q.mutable_options()->push_back<irs::ByWildcardOptions>();
+    wt2.term = irs::ViewCast<irs::byte_type>(std::string_view("bro%"));
+    q.mutable_options()->set_slop(2);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto sub = rdr.begin();
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    auto docs = prepared->execute({.segment = *sub});
+    ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("U", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("W", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("X", irs::ToString<std::string_view>(actual_value->value.data()));
+
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("Y", irs::ToString<std::string_view>(actual_value->value.data()));
+
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }

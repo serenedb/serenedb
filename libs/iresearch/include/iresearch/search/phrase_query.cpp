@@ -288,6 +288,21 @@ DocIterator::ptr VariadicPhraseQuery::execute(
   }
   SDB_ASSERT(term_state == std::end(phrase_state->terms));
 
+  if (this->slop > 0) {
+    using SlopIterator =
+      PhraseIterator<Conjunction<ScoreAdapter>,
+                     SlopVariadicPhraseFrequency<VariadicPhraseAdapter>>;
+    if (!ctx.scorer) {
+      return memory::make_managed<SlopIterator>(
+        static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
+        std::move(positions), this->slop);
+    }
+    return memory::make_managed<SlopIterator>(
+      static_cast<doc_id_t>(rdr.docs_count()), std::move(conj_itrs),
+      std::move(positions), this->slop, phrase_state->reader->meta(),
+      stats.c_str(), boost);
+  }
+
   const bool has_intervals = absl::c_any_of(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });

@@ -94,9 +94,10 @@ class FixedPhraseQuery : public PhraseQuery<FixedPhraseState> {
 class VariadicPhraseQuery : public PhraseQuery<VariadicPhraseState> {
  public:
   VariadicPhraseQuery(states_t&& states, positions_t&& positions,
-                      bstring&& stats, score_t boost) noexcept
+                      bstring&& stats, score_t boost,
+                      PosAttr::value_t slop = 0) noexcept
     : PhraseQuery{std::move(states), std::move(positions), std::move(stats),
-                  boost} {}
+                  boost, slop} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final;
 

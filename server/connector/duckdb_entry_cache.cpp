@@ -22,12 +22,15 @@
 
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 
@@ -37,6 +40,7 @@
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
+#include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_index_entry.h"
 #include "connector/duckdb_index_scan_entry.h"
@@ -334,6 +338,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> DuckDBEntryCache::EnsureEntry(
         return sc.tables;
       case duckdb::CatalogType::INDEX_ENTRY:
         return sc.indexes;
+      case duckdb::CatalogType::TYPE_ENTRY:
+        return sc.types;
       default:
         return sc.functions;
     }
@@ -446,6 +452,11 @@ void DuckDBEntryCache::ScanEntries(
       case TABLE_FUNCTION_ENTRY:
       case TABLE_MACRO_ENTRY:
         for (const auto& o : snapshot.GetFunctions(database, schema)) {
+          emit(*o);
+        }
+        break;
+      case TYPE_ENTRY:
+        for (const auto& o : snapshot.GetTypes(database, schema)) {
           emit(*o);
         }
         break;
@@ -567,6 +578,20 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
     case TABLE_FUNCTION_ENTRY: {
       if (auto f = FindTableFunction(database, schema, name, snapshot)) {
         return MakeMacroEntry(catalog, entry, schema, name, system, *f);
+      }
+    } break;
+    case TYPE_ENTRY: {
+      if (!system) {
+        auto sdb_type = snapshot.GetType(database, schema, name);
+        if (sdb_type) {
+          auto type_info =
+            duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
+              sdb_type->GetInfo().Copy());
+          type_info->schema = schema;
+          type_info->type = sdb_type->GetLogicalType();
+          return duckdb::make_uniq<duckdb::TypeCatalogEntry>(catalog, entry,
+                                                             *type_info);
+        }
       }
     } break;
     default:

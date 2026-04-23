@@ -578,6 +578,25 @@ void DuckDBColumnSerializer::WriteColumn(
       WriteFlatColumn<Writer, duckdb::hugeint_t>(writer, vec, num_rows,
                                                  row_keys, index_writers);
       break;
+    case duckdb::LogicalTypeId::ENUM:
+      // ENUM stored as ordinals matching the physical type.
+      switch (duckdb::EnumType::GetPhysicalType(type)) {
+        case duckdb::PhysicalType::UINT8:
+          WriteFlatColumn<Writer, uint8_t>(writer, vec, num_rows, row_keys,
+                                           index_writers);
+          break;
+        case duckdb::PhysicalType::UINT16:
+          WriteFlatColumn<Writer, uint16_t>(writer, vec, num_rows, row_keys,
+                                            index_writers);
+          break;
+        case duckdb::PhysicalType::UINT32:
+          WriteFlatColumn<Writer, uint32_t>(writer, vec, num_rows, row_keys,
+                                            index_writers);
+          break;
+        default:
+          SDB_ASSERT(false, "Unsupported ENUM physical type");
+      }
+      break;
     default:
       SDB_ASSERT(false, "Unsupported column type for RocksDB serialization");
   }

@@ -103,6 +103,7 @@ class DuckDBEntryCache {
     EntryMap tables;     // TABLE_ENTRY, VIEW_ENTRY
     EntryMap indexes;    // INDEX_ENTRY
     EntryMap functions;  // MACRO_ENTRY, TABLE_MACRO_ENTRY, *_FUNCTION_ENTRY
+    EntryMap types;      // TYPE_ENTRY
   };
 
   struct DatabaseCache {

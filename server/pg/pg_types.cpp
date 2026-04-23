@@ -25,11 +25,14 @@
 #include <absl/strings/numbers.h>
 #include <absl/time/civil_time.h>
 
+#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
 #include "basics/containers/trivial_map.h"
+#include "basics/down_cast.h"
 #include "catalog/catalog.h"
+#include "catalog/user_type.h"
 #include "catalog/virtual_table.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
@@ -159,6 +162,13 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? kVarbitArray : kVarbit;
     case UUID:
       return in_array ? kUuidArray : kUuid;
+    case ENUM: {
+      auto ext = type.GetExtensionInfo();
+      SDB_ASSERT(ext);
+      auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+      SDB_ASSERT(it != ext->properties.end());
+      return it->second.GetValue<uint64_t>();
+    }
     case STRUCT:
     case MAP:
       return in_array ? kRecordArray : kRecord;
@@ -182,7 +192,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
   }
 }
 
-duckdb::LogicalType Oid2Type(int32_t oid) {
+duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
   switch (oid) {
     using enum PgTypeOID;
     using duckdb::LogicalType;
@@ -222,9 +232,14 @@ duckdb::LogicalType Oid2Type(int32_t oid) {
     SDB_OID2TYPE(kUuid, LogicalType::UUID)
     SDB_OID2TYPE(kRegconfig, REGCONFIG())
     SDB_OID2TYPE(kRegdictionary, REGDICTIONARY())
-    default:
+    default: {
+      if (auto obj = snapshot.GetObject(ObjectId{static_cast<uint64_t>(oid)});
+          obj && obj->GetType() == catalog::ObjectType::PgSqlType) {
+        return basics::downCast<catalog::PgSqlType>(obj)->GetLogicalType();
+      }
       SDB_ASSERT(false);
       return {};
+    }
   }
 }
 
@@ -558,7 +573,8 @@ std::unexpected<DeserializeError> MakeInvalid() {
 }
 
 std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
-  const duckdb::LogicalType& type, std::string_view data) {
+  const duckdb::LogicalType& type, std::string_view data,
+  const catalog::Snapshot& snapshot) {
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case BOOLEAN: {
@@ -726,7 +742,7 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       const auto ndims = absl::big_endian::Load<int32_t>(data.data());
       // flags at +4 (ignored)
       const auto elem_oid = absl::big_endian::Load<int32_t>(data.data() + 8);
-      auto elem_type = Oid2Type(elem_oid);
+      auto elem_type = Oid2Type(elem_oid, snapshot);
       if (ndims == 0) {
         return duckdb::Value::LIST(elem_type, {});
       }
@@ -750,8 +766,8 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
           if (static_cast<size_t>(len) > data.size() - offset) {
             return MakeInvalid();
           }
-          auto elem =
-            DeserializeBinaryParameter(elem_type, data.substr(offset, len));
+          auto elem = DeserializeBinaryParameter(
+            elem_type, data.substr(offset, len), snapshot);
           if (!elem) {
             return std::unexpected{elem.error()};
           }
@@ -769,7 +785,8 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
 }
 
 std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
-  const duckdb::LogicalType& type, std::string_view data) {
+  const duckdb::LogicalType& type, std::string_view data,
+  const catalog::Snapshot& snapshot) {
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case BOOLEAN: {
@@ -890,7 +907,7 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
             values.emplace_back(elem_type);
             return;
           }
-          auto res = DeserializeTextParameter(elem_type, token);
+          auto res = DeserializeTextParameter(elem_type, token, snapshot);
           if (!res) {
             error = res.error();
           } else {
@@ -914,9 +931,11 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
 }  // namespace
 
 std::expected<duckdb::Value, DeserializeError> DeserializeParameter(
-  const duckdb::LogicalType& type, VarFormat format, std::string_view data) {
-  return format == VarFormat::Text ? DeserializeTextParameter(type, data)
-                                   : DeserializeBinaryParameter(type, data);
+  const duckdb::LogicalType& type, VarFormat format, std::string_view data,
+  const catalog::Snapshot& snapshot) {
+  return format == VarFormat::Text
+           ? DeserializeTextParameter(type, data, snapshot)
+           : DeserializeBinaryParameter(type, data, snapshot);
 }
 
 std::string RegclassOut(const catalog::Snapshot& snapshot, uint64_t oid) {

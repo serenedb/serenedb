@@ -1,0 +1,63 @@
+statement ok
+CREATE TYPE address AS STRUCT (
+  street VARCHAR,
+  city VARCHAR,
+  zip INTEGER
+);
+
+
+query error
+CREATE TYPE address AS STRUCT (x INTEGER);
+----
+db error: ERROR: type "address" already exists
+
+
+statement ok
+CREATE TYPE coordinates AS STRUCT (
+  lat DOUBLE,
+  lon DOUBLE
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_locations (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  addr address
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (1, 'psycho_hospital', ROW('ulica pushkina', 'moscow', 101010));
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (2, 'reabilitacia', ROW('dom kolotushkina', 'spb', 202020));
+
+
+query
+SELECT id, name FROM vedernikoff_locations ORDER BY id;
+----
+id	name
+1	psycho_hospital
+2	reabilitacia
+
+
+statement ok
+DROP TABLE vedernikoff_locations;
+
+statement ok
+DROP TYPE coordinates;
+
+statement ok
+DROP TYPE address;
+
+
+query error
+DROP TYPE address;
+----
+db error: ERROR: Type with name address does not exist!
+Did you mean "regclass"?
+
+
+statement ok
+DROP TYPE IF EXISTS address;

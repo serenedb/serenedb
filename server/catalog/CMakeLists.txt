@@ -18,6 +18,7 @@ target_sources(
         index.cpp
         view.cpp
         function.cpp
+        user_type.cpp
         sharding_strategy.cpp
         replication_common.cpp
         role.cpp

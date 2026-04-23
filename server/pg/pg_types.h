@@ -244,7 +244,7 @@ enum PgTypeOID : int32_t {
 };
 
 int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
-duckdb::LogicalType Oid2Type(int32_t oid);
+duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot);
 
 std::string RegtypeOut(uint64_t oid);
 uint64_t RegtypeIn(std::string_view name);
@@ -262,8 +262,11 @@ enum class VarFormat : int16_t;
 enum class DeserializeError { InvalidRepresentation };
 
 // Deserialize a PG wire protocol parameter value into a DuckDB Value.
+// Snapshot is consulted for inner Oid2Type calls on nested types (e.g. the
+// element OID inside a binary-format array).
 std::expected<duckdb::Value, DeserializeError> DeserializeParameter(
-  const duckdb::LogicalType& type, VarFormat format, std::string_view data);
+  const duckdb::LogicalType& type, VarFormat format, std::string_view data,
+  const catalog::Snapshot& snapshot);
 
 }  // namespace pg
 }  // namespace sdb

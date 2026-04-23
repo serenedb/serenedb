@@ -837,13 +837,15 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
           type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
         param_type = type_it->second;
       } else if (i < stmt.param_oids.size() && stmt.param_oids[i] != 0) {
-        param_type = Oid2Type(stmt.param_oids[i]);
+        param_type = Oid2Type(stmt.param_oids[i],
+                              *_connection_ctx->EnsureCatalogSnapshot());
       } else {
         param_type = duckdb::LogicalType::VARCHAR;
       }
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
-      auto param_value = DeserializeParameter(param_type, format, param);
+      auto param_value = DeserializeParameter(
+        param_type, format, param, *_connection_ctx->EnsureCatalogSnapshot());
       if (!param_value) {
         switch (param_value.error()) {
           case DeserializeError::InvalidRepresentation:

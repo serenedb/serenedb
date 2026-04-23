@@ -45,6 +45,7 @@
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/analysis/union_tokenizer.hpp"
+#include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -276,6 +277,7 @@ void Init() {
   TextTokenizer::init();
   MultiDelimitedTokenizer::init();
   GeoAnalyzer::init();
+  WildcardAnalyzer::init();
 }
 
 }  // namespace analyzers

@@ -42,6 +42,7 @@ class WildcardAnalyzer final : public TypedAnalyzer<WildcardAnalyzer>,
   static constexpr std::string_view type_name() noexcept { return "wildcard"; }
   static bool normalize(std::string_view args, std::string& definition);
   static Analyzer::ptr make(std::string_view args);
+  static void init();
 
   explicit WildcardAnalyzer(Options&& options) noexcept;
 

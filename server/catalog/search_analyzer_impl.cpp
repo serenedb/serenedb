@@ -27,6 +27,7 @@
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
 #include "app/name_validator.h"
@@ -34,7 +35,6 @@
 #include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
-#include "catalog/analyzer.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/mangling.h"
@@ -60,9 +60,9 @@ GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
             &irs::analysis::GeoPointAnalyzer::store, mangling::kAnalyzer};
   }
 
-  if (type == irs::Type<wildcard::Analyzer>::id()) {
+  if (type == irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     return {FunctionValueType::String, FunctionValueType::String,
-            &wildcard::Analyzer::store, mangling::kString};
+            &irs::analysis::WildcardAnalyzer::store, mangling::kString};
   }
 
 #ifdef SDB_GTEST
@@ -187,7 +187,7 @@ Result Features::Validate(std::string_view type) const {
   }
 
   const auto supported_features = [&] {
-    if (type == wildcard::Analyzer::type_name()) {
+    if (type == irs::analysis::WildcardAnalyzer::type_name()) {
       // maybe we should disable norm for wildcard analyzer?
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;

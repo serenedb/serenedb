@@ -198,6 +198,11 @@ bool WildcardAnalyzer::next() {
   return true;
 }
 
+void WildcardAnalyzer::init() {
+  REGISTER_ANALYZER_VPACK(WildcardAnalyzer, WildcardAnalyzer::make,
+                          WildcardAnalyzer::normalize);
+}
+
 WildcardAnalyzer::WildcardAnalyzer(Options&& options) noexcept
   : _analyzer{std::move(options.base_analyzer)} {
   if (!_analyzer) {

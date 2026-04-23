@@ -30,6 +30,17 @@
 #include <duckdb/execution/executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/parser/parsed_data/alter_info.hpp>
+#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <duckdb/parser/sql_statement.hpp>
+#include <duckdb/parser/statement/alter_statement.hpp>
+#include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/drop_statement.hpp>
+#include <duckdb/parser/statement/execute_statement.hpp>
+#include <duckdb/parser/statement/transaction_statement.hpp>
 #include <string_view>
 
 #include "app/app_server.h"
@@ -445,12 +456,10 @@ void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
 // Send RowDescription for a DuckDB prepared statement.
 // Skips for DML/DDL (returns NoData instead).
 void PgSQLCommTaskBase::DescribeAnalyzedQuery(
-  const DuckDBStatement& statement, const std::vector<VarFormat>& formats,
-  bool extended) {
-  SDB_ASSERT(statement.prepared);
-  auto& prepared = *statement.prepared;
-  auto return_type = prepared.GetStatementProperties().return_type;
-
+  duckdb::StatementReturnType return_type,
+  const std::vector<duckdb::LogicalType>& types,
+  const std::vector<std::string>& full_names,
+  const std::vector<VarFormat>& formats, bool extended) {
   // DML/DDL don't return data rows
   if (return_type != duckdb::StatementReturnType::QUERY_RESULT) {
     if (extended) {
@@ -459,8 +468,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
     return;
   }
 
-  auto& types = prepared.GetTypes();
-  auto names = query::ToAliases(prepared.GetNames());
+  auto names = query::ToAliases(full_names);
   const uint16_t num_fields = types.size();
 
   if (num_fields == 0) {
@@ -499,10 +507,12 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
 }
 
 void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
-  // Emit (count, [oid]*num). For each positional parameter ("1", "2", ...),
-  // prefer DuckDB's resolved type (set when the planner saw a cast or any
-  // usage that pins the type); fall back to the OID the client sent in the
-  // Parse message for parameters that DuckDB couldn't resolve.
+  // Emit (count, [oid]*num). For each positional parameter, echo the OID
+  // the client sent in the Parse message verbatim when it's non-zero --
+  // that matches PG, which treats a client-supplied OID as an assertion
+  // (e.g. `SELECT $1::int4` with client OID=text reports text here, since
+  // the cast coerces a client-sent text into int4 at Execute). Otherwise
+  // fall back to DuckDB's planner-resolved type, and finally to text.
   const auto& prepared = *stmt.prepared;
   const auto expected_types = prepared.GetExpectedParameterTypes();
   const uint16_t num_fields =
@@ -514,14 +524,14 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
   absl::big_endian::Store16(prefix_data + 5, num_fields);
 
   for (uint16_t i = 1; i <= num_fields; ++i) {
-    auto type_it = expected_types.find(absl::StrCat(i));
     int32_t oid = 0;
-    if (type_it != expected_types.end() &&
-        type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-        type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
-      oid = Type2Oid(type_it->second);
-    } else if (i - 1 < stmt.param_oids.size() && stmt.param_oids[i - 1] != 0) {
+    if (i - 1 < stmt.param_oids.size() && stmt.param_oids[i - 1] != 0) {
       oid = stmt.param_oids[i - 1];
+    } else if (auto type_it = expected_types.find(absl::StrCat(i));
+               type_it != expected_types.end() &&
+               type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
+               type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
+      oid = Type2Oid(type_it->second);
     } else {
       oid = PgTypeOID::kText;
     }
@@ -536,13 +546,63 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
 void PgSQLCommTaskBase::DescribePortal(const DuckDBPortal& portal) {
   SDB_ASSERT(portal.stmt);
   SDB_ASSERT(portal.stmt->prepared);
-  DescribeAnalyzedQuery(*portal.stmt, portal.bind_info.output_formats);
+  SDB_ASSERT(portal.pending);
+  const auto return_type =
+    portal.stmt->prepared->GetStatementProperties().return_type;
+  DescribeAnalyzedQuery(return_type, portal.pending->types,
+                        portal.pending->names, portal.bind_info.output_formats);
 }
 
 void PgSQLCommTaskBase::DescribeStatement(DuckDBStatement& statement) {
   SDB_ASSERT(statement.prepared);
   DescribeParameters(statement, _send);
-  DescribeAnalyzedQuery(statement, {});
+  const auto return_type =
+    statement.prepared->GetStatementProperties().return_type;
+  DescribeAnalyzedQuery(return_type, statement.resolved_types,
+                        statement.resolved_names, {});
+}
+
+void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
+  SDB_ASSERT(stmt.prepared);
+  auto& prepared = *stmt.prepared;
+  stmt.resolved_types = prepared.GetTypes();
+  stmt.resolved_names = prepared.GetNames();
+
+  if (prepared.GetStatementProperties().return_type !=
+      duckdb::StatementReturnType::QUERY_RESULT) {
+    return;
+  }
+  const auto nparams = prepared.named_param_map.size();
+  if (nparams == 0) {
+    return;
+  }
+  const bool all_resolved =
+    absl::c_none_of(stmt.resolved_types, [](const duckdb::LogicalType& t) {
+      return t.id() == duckdb::LogicalTypeId::UNKNOWN ||
+             t.id() == duckdb::LogicalTypeId::INVALID;
+    });
+  if (all_resolved) {
+    return;
+  }
+
+  duckdb::vector<duckdb::Value> dummy;
+  dummy.reserve(nparams);
+  for (size_t i = 0; i < nparams; ++i) {
+    const auto oid =
+      i < stmt.param_oids.size() ? stmt.param_oids[i] : int32_t{0};
+    auto type = oid != 0 ? Oid2Type(oid) : duckdb::LogicalType::VARCHAR;
+    duckdb::Value v{"1"};
+    if (!v.DefaultTryCastAs(type)) {
+      v = duckdb::Value{type};
+    }
+    dummy.emplace_back(std::move(v));
+  }
+  auto pending = prepared.PendingQuery(dummy, true);
+  if (pending->HasError()) {
+    return;
+  }
+  stmt.resolved_types = pending->types;
+  stmt.resolved_names = pending->names;
 }
 
 void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
@@ -666,10 +726,15 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   // Bind (no params for simple protocol)
   DuckDBBindInfo bind_info;
   _anonymous_portal = BindStatement(stmt, std::move(bind_info));
+  if (!_anonymous_portal.pending) {
+    return;  // error was sent
+  }
 
   // Describe (send RowDescription for simple protocol)
-  DescribeAnalyzedQuery(stmt, _anonymous_portal.bind_info.output_formats,
-                        false);
+  DescribeAnalyzedQuery(stmt.prepared->GetStatementProperties().return_type,
+                        _anonymous_portal.pending->types,
+                        _anonymous_portal.pending->names,
+                        _anonymous_portal.bind_info.output_formats, false);
 
   // Execute
   _pop_packet = true;
@@ -699,8 +764,13 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
 
     DuckDBBindInfo next_bind;
     _anonymous_portal = BindStatement(stmt, std::move(next_bind));
-    DescribeAnalyzedQuery(stmt, _anonymous_portal.bind_info.output_formats,
-                          false);
+    if (!_anonymous_portal.pending) {
+      return;  // error was sent
+    }
+    DescribeAnalyzedQuery(stmt.prepared->GetStatementProperties().return_type,
+                          _anonymous_portal.pending->types,
+                          _anonymous_portal.pending->names,
+                          _anonymous_portal.bind_info.output_formats, false);
 
     _anonymous_portal.rows = 0;
     _pop_packet = true;
@@ -927,10 +997,14 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
   if (!bind_info) {
     return;
   }
+  auto portal = BindStatement(*statement, std::move(*bind_info));
+  if (!portal.pending) {
+    return;  // error was sent
+  }
   if (portal_it == _portals.end()) {
-    _anonymous_portal = BindStatement(*statement, std::move(*bind_info));
+    _anonymous_portal = std::move(portal);
   } else {
-    portal_it->second = BindStatement(*statement, std::move(*bind_info));
+    portal_it->second = std::move(portal);
   }
   portal_it = _portals.end();
   _send.Write(ToBuffer(kBindComplete), true);
@@ -1000,6 +1074,7 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   // infer a concrete type for a positional parameter (e.g. the AST doesn't
   // expose a cast that would pin the type).
   stmt.param_oids = std::move(oids);
+  ResolveStatementTypes(stmt);
 
   it = _statements.end();
   _send.Write(ToBuffer(kParseComplete), true);
@@ -1010,15 +1085,8 @@ void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   SDB_ASSERT(_pop_packet);
   SDB_ASSERT(portal.stmt);
   SDB_ASSERT(portal.stmt->prepared);
+  SDB_ASSERT(portal.pending);
   if (IsCancelled()) {
-    return;
-  }
-  // Start async execution via PendingQuery
-  auto& prepared = *portal.stmt->prepared;
-  portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
-  if (portal.pending->HasError()) {
-    SendError(portal.pending->GetErrorObject());
-    portal.pending.reset();
     return;
   }
   {
@@ -1043,6 +1111,15 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
   FillContext(*_connection_ctx, portal.serialization_context);
 
   portal.bind_info = std::move(bind_info);
+
+  auto& prepared = *stmt.prepared;
+  portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
+  if (portal.pending->HasError()) {
+    SendError(portal.pending->GetErrorObject());
+    portal.pending.reset();
+    return portal;
+  }
+
   portal.stmt = &stmt;
   BuildColumnSerializers(portal);
 
@@ -1052,6 +1129,7 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
 void PgSQLCommTaskBase::BuildColumnSerializers(DuckDBPortal& portal) {
   SDB_ASSERT(portal.stmt);
   SDB_ASSERT(portal.stmt->prepared);
+  SDB_ASSERT(portal.pending);
   portal.columns_serializers.clear();
 
   auto& prepared = *portal.stmt->prepared;
@@ -1062,7 +1140,7 @@ void PgSQLCommTaskBase::BuildColumnSerializers(DuckDBPortal& portal) {
     return;
   }
 
-  auto& types = prepared.GetTypes();
+  auto& types = portal.pending->types;
   const auto columns_count = types.size();
   if (columns_count == 0) {
     return;
@@ -1200,18 +1278,253 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   return ProcessState::More;
 }
 
+namespace {
+
+std::string_view CatalogObjectTag(duckdb::CatalogType t) {
+  using duckdb::CatalogType;
+  switch (t) {
+    case CatalogType::TABLE_ENTRY:
+      return "TABLE";
+    case CatalogType::VIEW_ENTRY:
+      return "VIEW";
+    case CatalogType::INDEX_ENTRY:
+      return "INDEX";
+    case CatalogType::SCHEMA_ENTRY:
+      return "SCHEMA";
+    case CatalogType::SEQUENCE_ENTRY:
+      return "SEQUENCE";
+    case CatalogType::TYPE_ENTRY:
+      return "TYPE";
+    case CatalogType::MACRO_ENTRY:
+    case CatalogType::TABLE_MACRO_ENTRY:
+      return "FUNCTION";
+    case CatalogType::DATABASE_ENTRY:
+      return "DATABASE";
+    default:
+      return {};
+  }
+}
+
+struct CommandTag {
+  std::string tag;
+  // The "effective" statement type -- same as `prepared.data->statement_type`
+  // except for EXECUTE, where it's the underlying prepared's type. Drives the
+  // `INSERT 0 N` / `UPDATE N` / etc. row-count formatting.
+  duckdb::StatementType effective_type;
+};
+
+CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared);
+
+// `EXECUTE name` reports the underlying statement's tag in PG (e.g. a
+// SELECT-backed prepared statement yields "SELECT N"). Look the referenced
+// statement up in DuckDB's client-local prepared-statement catalog.
+CommandTag ExecuteTagForPrepared(const duckdb::PreparedStatement& prepared) {
+  auto* unbound = prepared.data->unbound_statement.get();
+  if (!unbound) {
+    return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
+  }
+  auto& exec_stmt = unbound->Cast<duckdb::ExecuteStatement>();
+  auto& client_data = duckdb::ClientData::Get(*prepared.context);
+  auto it = client_data.prepared_statements.find(exec_stmt.name);
+  if (it == client_data.prepared_statements.end() || !it->second) {
+    return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
+  }
+  using duckdb::StatementType;
+  const auto inner = it->second->statement_type;
+  switch (inner) {
+    case StatementType::SELECT_STATEMENT:
+      return {"SELECT", inner};
+    case StatementType::INSERT_STATEMENT:
+      return {"INSERT", inner};
+    case StatementType::UPDATE_STATEMENT:
+      return {"UPDATE", inner};
+    case StatementType::DELETE_STATEMENT:
+      return {"DELETE", inner};
+    default:
+      return {duckdb::StatementTypeToString(inner), inner};
+  }
+}
+
+// PG-compatible CommandComplete tag. Not all DuckDB statement types exist
+// in PG (e.g. PRAGMA); those fall back to DuckDB's string representation,
+// which is better than nothing.
+CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
+  const auto stmt_type = prepared.data->statement_type;
+  const auto* unbound = prepared.data->unbound_statement.get();
+  auto make = [&](std::string s) -> CommandTag {
+    return {std::move(s), stmt_type};
+  };
+  using duckdb::StatementType;
+  switch (stmt_type) {
+    case StatementType::SELECT_STATEMENT:
+      return make("SELECT");
+    case StatementType::INSERT_STATEMENT:
+      return make("INSERT");
+    case StatementType::UPDATE_STATEMENT:
+      return make("UPDATE");
+    case StatementType::DELETE_STATEMENT:
+      return make("DELETE");
+    case StatementType::COPY_STATEMENT:
+      return make("COPY");
+    case StatementType::MERGE_INTO_STATEMENT:
+      return make("MERGE");
+    case StatementType::PREPARE_STATEMENT:
+      return make("PREPARE");
+    case StatementType::EXECUTE_STATEMENT:
+      return ExecuteTagForPrepared(prepared);
+    case StatementType::EXPLAIN_STATEMENT:
+      return make("EXPLAIN");
+    case StatementType::VACUUM_STATEMENT:
+      return make("VACUUM");
+    case StatementType::ANALYZE_STATEMENT:
+      return make("ANALYZE");
+    case StatementType::ATTACH_STATEMENT:
+      return make("ATTACH");
+    case StatementType::DETACH_STATEMENT:
+      return make("DETACH");
+    case StatementType::SET_STATEMENT:
+    case StatementType::VARIABLE_SET_STATEMENT:
+      return make("SET");
+    case StatementType::LOAD_STATEMENT:
+      return make("LOAD");
+    case StatementType::CALL_STATEMENT:
+      return make("CALL");
+    case StatementType::CREATE_STATEMENT:
+    case StatementType::CREATE_FUNC_STATEMENT: {
+      if (unbound) {
+        const auto& create_stmt = unbound->Cast<duckdb::CreateStatement>();
+        if (create_stmt.info) {
+          auto obj = CatalogObjectTag(create_stmt.info->type);
+          if (!obj.empty()) {
+            return make(absl::StrCat("CREATE ", obj));
+          }
+        }
+      }
+      return make("CREATE");
+    }
+    case StatementType::DROP_STATEMENT: {
+      if (unbound) {
+        const auto& drop_stmt = unbound->Cast<duckdb::DropStatement>();
+        if (drop_stmt.info) {
+          if (drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
+            return make(drop_stmt.info->name.empty() ? "DEALLOCATE ALL"
+                                                     : "DEALLOCATE");
+          }
+          auto obj = CatalogObjectTag(drop_stmt.info->type);
+          if (!obj.empty()) {
+            return make(absl::StrCat("DROP ", obj));
+          }
+        }
+      }
+      return make("DROP");
+    }
+    case StatementType::ALTER_STATEMENT: {
+      if (unbound) {
+        const auto& alter_stmt = unbound->Cast<duckdb::AlterStatement>();
+        if (alter_stmt.info) {
+          switch (alter_stmt.info->type) {
+            case duckdb::AlterType::ALTER_TABLE:
+              return make("ALTER TABLE");
+            case duckdb::AlterType::ALTER_VIEW:
+              return make("ALTER VIEW");
+            case duckdb::AlterType::ALTER_SEQUENCE:
+              return make("ALTER SEQUENCE");
+            case duckdb::AlterType::ALTER_DATABASE:
+              return make("ALTER DATABASE");
+            default:
+              break;
+          }
+        }
+      }
+      return make("ALTER");
+    }
+    case StatementType::TRANSACTION_STATEMENT: {
+      if (unbound) {
+        const auto& tx = unbound->Cast<duckdb::TransactionStatement>();
+        if (tx.info) {
+          switch (tx.info->type) {
+            case duckdb::TransactionType::BEGIN_TRANSACTION:
+              return make("BEGIN");
+            case duckdb::TransactionType::COMMIT:
+              return make("COMMIT");
+            case duckdb::TransactionType::ROLLBACK:
+              return make("ROLLBACK");
+            default:
+              break;
+          }
+        }
+      }
+      return make("TRANSACTION");
+    }
+    default:
+      return make(duckdb::StatementTypeToString(stmt_type));
+  }
+}
+
+}  // namespace
+
+void PgSQLCommTaskBase::DeallocateNamedStatement(std::string_view name) {
+  if (name.empty()) {
+    // DEALLOCATE ALL: clear every named statement and any portal built on
+    // one. Anonymous state stays -- PG's DEALLOCATE only touches named
+    // prepared statements on the session.
+    erase_if(_portals, [&](auto& e) {
+      if (e.second.stmt == nullptr || e.second.stmt == &_anonymous_statement) {
+        return false;
+      }
+      e.second.Reset(*this);
+      return true;
+    });
+    for (auto& [_, stmt] : _statements) {
+      stmt.Reset();
+    }
+    _statements.clear();
+    return;
+  }
+  auto it = _statements.find(name);
+  if (it == _statements.end()) {
+    return;
+  }
+  // Close any portal built on this statement first.
+  if (it->second.prepared && &it->second == _anonymous_portal.stmt) {
+    _anonymous_portal.Reset(*this);
+  }
+  erase_if(_portals, [&](auto& e) {
+    if (&it->second != e.second.stmt) {
+      return false;
+    }
+    e.second.Reset(*this);
+    return true;
+  });
+  it->second.Reset();
+  _statements.erase(it);
+}
+
 void PgSQLCommTaskBase::SendCommandComplete(duckdb::StatementType stmt_type,
                                             uint64_t rows) {
-  auto tag = duckdb::StatementTypeToString(stmt_type);
-  auto return_type =
-    _current_portal->stmt->prepared->GetStatementProperties().return_type;
+  auto& prepared = *_current_portal->stmt->prepared;
+  auto tag = BuildCommandTag(prepared);
+  auto return_type = prepared.GetStatementProperties().return_type;
+
+  // DEALLOCATE target is tracked separately from DuckDB's catalog: our
+  // extended-protocol named statements live in `_statements`. Clean them up
+  // here so the name is no longer reachable.
+  if (stmt_type == duckdb::StatementType::DROP_STATEMENT && prepared.data &&
+      prepared.data->unbound_statement) {
+    auto& drop_stmt =
+      prepared.data->unbound_statement->Cast<duckdb::DropStatement>();
+    if (drop_stmt.info &&
+        drop_stmt.info->type == duckdb::CatalogType::PREPARED_STATEMENT) {
+      DeallocateNamedStatement(drop_stmt.info->name);
+    }
+  }
 
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
-  _send.WriteUncommitted({tag.data(), tag.size()});
+  _send.WriteUncommitted({tag.tag.data(), tag.tag.size()});
 
   if (return_type == duckdb::StatementReturnType::CHANGED_ROWS) {
-    if (stmt_type == duckdb::StatementType::INSERT_STATEMENT) {
+    if (tag.effective_type == duckdb::StatementType::INSERT_STATEMENT) {
       _send.WriteUncommitted({" 0 ", 3});
     } else {
       _send.WriteUncommitted({" ", 1});

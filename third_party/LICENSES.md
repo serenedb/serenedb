@@ -6,15 +6,22 @@
 
 * [Abseil - C++ Common Libraries](https://abseil.io)
 * [RocksDB](https://github.com/facebook/rocksdb)
-* [S2 Geometry Library](https://s2geometry.io/)
+* [S2 Geometry Library](https://s2geometry.io)
 * [OpenFST](https://www.openfst.org/)
 * [frozen](https://github.com/serge-sans-paille/frozen)
 * [Kaldi](https://github.com/kaldi-asr/kaldi)
 * [LLVM](https://github.com/llvm/llvm-project)
+* [Google Benchmark](https://github.com/google/benchmark)
+* [folly](https://github.com/facebook/folly)
+* [OpenSSL](https://github.com/openssl/openssl)
+* [simdjson](https://github.com/simdjson/simdjson)
+* [streamvbyte](https://github.com/lemire/streamvbyte)
+* [tcmalloc](https://github.com/google/tcmalloc)
+* [fast_float](https://github.com/fastfloat/fast_float)
 
 ### [Boost Software License, Version 1.0](http://www.boost.org/LICENSE_1_0.txt)
 
-* [Boost](http://www.boost.org/)
+* [Boost](http://www.boost.org)
 * [function2](https://github.com/Naios/function2)
 * [immer](https://github.com/arximboldi/immer)
 * [Boost::Text](https://github.com/tzlaine/text)
@@ -22,20 +29,19 @@
 ### [MIT license](https://opensource.org/licenses/MIT)
 
 * [date](https://github.com/HowardHinnant/date)
-* [fakeit](https://github.com/eranpeer/FakeIt)
-* [fpconv_dtoa](https://github.com/night-shift/fpconv/)
-* [GeographicLib](https://geographiclib.sourceforge.io/)
-* [wcwidth](https://github.com/termux/wcwidth)
+* [FakeIt](https://github.com/eranpeer/FakeIt)
 * [llhttp](https://github.com/nodejs/llhttp)
 * [nghttp2](https://github.com/nghttp2/nghttp2)
-* [RapidJSON](https://github.com/Tencent/rapidjson)
 * [FastText](https://github.com/facebookresearch/fastText)
-* [yaclib](https://github.com/YACLib/YACLib)
-* [OpenSSL](https://github.com/openssl/openssl)
+* [YACLib](https://github.com/YACLib/YACLib)
 * [magic_enum](https://github.com/Neargye/magic_enum)
 * [sse2neon](https://github.com/DLTcollab/sse2neon)
 * [geographiclib-c](https://github.com/geographiclib/geographiclib-c)
-* [liburing](https://github.com/axboe/liburing.git)
+* [liburing](https://github.com/axboe/liburing)
+* [DuckDB](https://github.com/duckdb/duckdb)
+* [curl](https://github.com/curl/curl)
+* [faiss](https://github.com/facebookresearch/faiss)
+* [fmt](https://github.com/fmtlib/fmt)
 
 ### [BSD 2-clauses](https://opensource.org/licenses/bsd-license.php)
 
@@ -44,14 +50,13 @@
 
 ### [BSD 3-clause](https://opensource.org/license/bsd-3-clause)
 
-* [snowball](https://github.com/snowballstem/snowball)
-* [simdcomp](https://github.com/fast-pack/simdcomp)
-* [cmdline](https://github.com/tanakh/cmdline)
+* [double-conversion](https://github.com/google/double-conversion)
 * [Google Test](https://github.com/google/googletest)
 * [libpg_query](https://github.com/pganalyze/libpg_query)
 * [re2](https://github.com/google/re2)
-* [protobuf](https://github.com/protocolbuffers/protobuf)
+* [simdcomp](https://github.com/fast-pack/simdcomp)
 * [snappy](https://github.com/google/snappy)
+* [snowball](https://github.com/snowballstem/snowball)
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
 
 ### Other licenses
@@ -69,9 +74,10 @@
       program.  This Exception is an additional permission under section 7
       of the GNU General Public License, version 3 ("GPLv3").
 
-* [wyhash](https://github.com/wangyi-fudan/wyhash/), Unlicense
 * [zlib-ng](https://github.com/zlib-ng/zlib-ng/blob/develop/LICENSE.md)
 * [minizip-ng](https://github.com/zlib-ng/minizip-ng/blob/develop/LICENSE)
+* [tzdata](https://www.iana.org/time-zones), public domain (a few files under BSD 3-clause)
+* [wyhash](https://github.com/wangyi-fudan/wyhash), Unlicense (vendored in `libs/vpack`)
 
 ## Programs
 
@@ -103,4 +109,11 @@
 * License: BSD 3-clause "New" or "Revised" License
 
 ## Tests
+
+Libraries used only by the test suite, not shipped in the distribution.
+
+* [cmdline](https://github.com/tanakh/cmdline)
+* [RapidJSON](https://github.com/Tencent/rapidjson)
+* [utfcpp](https://github.com/nemtrif/utfcpp)
+* [sqllogictest-rs](https://github.com/risinglightdb/sqllogictest-rs)
 * [sqlite sqllogictest](https://github.com/gregrahn/sqllogictest/blob/master/COPYRIGHT.md)

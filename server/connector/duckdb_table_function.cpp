@@ -348,9 +348,9 @@ void SearchScan::AppendSummary(
                  absl::StrCat("lm_dirichlet(mu=", scorer.lm_dirichlet.mu, ")"));
       break;
     case SearchScan::ScorerKind::IndriDirichlet:
-      out.insert("Score",
-                 absl::StrCat("indri_dirichlet(mu=",
-                              scorer.indri_dirichlet.mu, ")"));
+      out.insert(
+        "Score",
+        absl::StrCat("indri_dirichlet(mu=", scorer.indri_dirichlet.mu, ")"));
       break;
     case SearchScan::ScorerKind::Dfi: {
       const char* m = "standardized";

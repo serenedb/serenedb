@@ -203,7 +203,8 @@ Scorer::ptr MakeJson(std::string_view args) {
 
 // Independence measure kernels; inlined by the templated scorer.
 template<DFIMeasure M>
-IRS_FORCE_INLINE score_t MeasureKernel(score_t diff, score_t expected) noexcept {
+IRS_FORCE_INLINE score_t MeasureKernel(score_t diff,
+                                       score_t expected) noexcept {
   if constexpr (M == DFIMeasure::Standardized) {
     return diff / std::sqrt(expected);
   } else if constexpr (M == DFIMeasure::Saturated) {
@@ -218,12 +219,11 @@ IRS_FORCE_INLINE score_t MeasureKernel(score_t diff, score_t expected) noexcept 
 // score = boost * log2(measure(tf, expected) + 1) for tf > expected, else 0.
 //   expected = ratio * dl,  where ratio = (ttf_t + 1) / (ttf_field + 1)
 template<ScoreMergeType MergeType, DFIMeasure M, bool HasBoost>
-IRS_FORCE_INLINE void DFIImpl(score_t* IRS_RESTRICT res, scores_size_t n,
-                              const uint32_t* IRS_RESTRICT freq,
-                              const uint32_t* IRS_RESTRICT norm,
-                              [[maybe_unused]] const score_t* IRS_RESTRICT
-                                boost,
-                              score_t ratio, score_t const_boost) noexcept {
+IRS_FORCE_INLINE void DFIImpl(
+  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
+  const uint32_t* IRS_RESTRICT norm,
+  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t ratio,
+  score_t const_boost) noexcept {
   // 1 / ln(2) -- log2(x) = ln(x) * kInvLn2
   constexpr score_t kInvLn2 = 1.4426950408889634f;
   for (scores_size_t i = 0; i != n; ++i) {
@@ -257,9 +257,8 @@ struct DFIScore : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    DFIImpl<MergeType, M, HasFilterBoost>(res, n, freq->value, norm,
-                                          TryGetValue(filter_boost), ratio,
-                                          boost);
+    DFIImpl<MergeType, M, HasFilterBoost>(
+      res, n, freq->value, norm, TryGetValue(filter_boost), ratio, boost);
   }
 
   score_t Score() const noexcept final {
@@ -367,8 +366,8 @@ ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
 
   switch (_measure) {
     case DFIMeasure::Standardized:
-      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq,
-                                                        norm, filter_boost);
+      return MakeScoreMeasure<DFIMeasure::Standardized>(ctx, *stats, freq, norm,
+                                                        filter_boost);
     case DFIMeasure::Saturated:
       return MakeScoreMeasure<DFIMeasure::Saturated>(ctx, *stats, freq, norm,
                                                      filter_boost);

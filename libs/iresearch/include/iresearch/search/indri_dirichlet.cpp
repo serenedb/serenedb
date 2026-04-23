@@ -139,8 +139,8 @@ template<ScoreMergeType MergeType, bool HasBoost>
 IRS_FORCE_INLINE void IndriImpl(
   score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
   const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p,
-  score_t mu, score_t const_boost) noexcept {
+  [[maybe_unused]] const score_t* IRS_RESTRICT boost, score_t mu_p, score_t mu,
+  score_t const_boost) noexcept {
   // mu_p = mu * collection_prob
   for (scores_size_t i = 0; i != n; ++i) {
     const score_t tf = static_cast<score_t>(freq[i]);
@@ -170,9 +170,8 @@ struct IndriScore : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    IndriImpl<MergeType, HasFilterBoost>(res, n, freq->value, norm,
-                                         TryGetValue(filter_boost), mu_p, mu,
-                                         boost);
+    IndriImpl<MergeType, HasFilterBoost>(
+      res, n, freq->value, norm, TryGetValue(filter_boost), mu_p, mu, boost);
   }
 
   score_t Score() const noexcept final {
@@ -216,8 +215,7 @@ struct IndriScore : public ScoreOperator {
 
 }  // namespace
 
-void IndriDirichlet::collect(byte_type* stats_buf,
-                             const FieldCollector* field,
+void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
                              const TermCollector* term) const {
   auto* stats = stats_cast(stats_buf);
 

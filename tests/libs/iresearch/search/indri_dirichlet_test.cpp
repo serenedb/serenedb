@@ -88,9 +88,9 @@ void IndriDirichletIndexTest::BuildFixture() {
                                           false, extra),
               true, false);
   tests::Document doc2;
-  doc2.insert(std::make_shared<TextField>("body", std::string{"fox cat"},
-                                          false, extra),
-              true, false);
+  doc2.insert(
+    std::make_shared<TextField>("body", std::string{"fox cat"}, false, extra),
+    true, false);
   tests::Document doc3;
   doc3.insert(std::make_shared<TextField>("body", std::string{"dog rabbit fox"},
                                           false, extra),

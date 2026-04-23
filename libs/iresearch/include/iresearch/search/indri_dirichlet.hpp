@@ -37,8 +37,7 @@ namespace irs {
 // returns the raw log ratio -- documents where the observed tf is below
 // the collection prior get a negative score, which matters when Indri
 // combines scores across query terms via sum.
-class IndriDirichlet final
-  : public irs::ScorerBase<IndriDirichlet, LMStats> {
+class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
  public:
   static constexpr std::string_view type_name() noexcept {
     return "indri_dirichlet";

@@ -1026,12 +1026,12 @@ CREATE TABLE babsky(
 db error: ERROR: generated columns are not supported for external tables
 
 
-# TODO: re-enable when HELP output is stabilised. The refactor dropped the
+# TODO(Pasha): re-enable when HELP output is stabilised. The refactor dropped the
 # per-option / per-format tree for WITH(HELP) in favour of a short pointer to
 # DuckDB's reader docs; the assertion below still reflects the new message
 # shape so flipping the skipif off should not require further edits.
+skipif serenedb # TODO(Pasha) better options support
 skipif pg-wire-simple
-skipif serenedb # TODO(Pasha)
 statement error
 CREATE TABLE babsky(
   iq INT8,

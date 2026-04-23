@@ -106,8 +106,8 @@ babsky	babsky
 babsky	vedernikoff
 
 
-skipif serenedb
-query error
+skipif postgres # Postges isn't cool enough to do such query
+query
 SELECT DISTINCT iq
 FROM
 (
@@ -117,11 +117,17 @@ FROM
 ) as clickclack(name, grade, iq)
 ORDER BY grade DESC;
 ----
-db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+iq
+-5
+-4
+-3
+6
+87
+4
 
 
-skipif serenedb
-query error
+skipif postgres # Postges isn't cool enough to do such query
+query
 SELECT DISTINCT name
 FROM
 (
@@ -131,11 +137,12 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY grade, name DESC;
 ----
-db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+name
+vedernikoff
+babsky
 
 
-skipif postgres
-skipif serenedb # error is distinguished by grade / clickclack.grade
+skipif postgres # Postges different error message
 query error
 SELECT DISTINCT grade
 FROM
@@ -146,7 +153,8 @@ FROM
 ) as clickclack(name, grade)
 GROUP BY name;
 ----
-db error: ERROR: column "grade" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "grade" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(grade)" if the exact value of "grade" is not important.
 
 
 query

@@ -295,9 +295,8 @@ deadinside	Sad Guy	200
 
 
 skipif postgres
-skipif serenedb
 query
-EXPLAIN (LOGICAL, INITIAL_QUERY_GRAPH, FINAL_QUERY_GRAPH, PHYSICAL, EXECUTION, REGISTERS)
+EXPLAIN
 WITH m(name, total) AS (
   VALUES
     ('pudge', 150),
@@ -315,73 +314,65 @@ WHERE total = (
 );
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- Filter: presto_eq(CAST(total:4 AS BIGINT), subquery(- Aggregate() -> ROW<"sum:8":BIGINT>     sum:8 := presto_sum(total:7)   - Filter: presto_eq(name:6, name:3) -> ROW<"name:6":VARCHAR,"total:7":INTEGER>     - Project: -> ROW<"name:6":VARCHAR,"total:7":INTEGER>         name:6 := column1:5         total:7 := column2:5       - Values: 6 rows -> ROW<"column1:5":VARCHAR,"column2:5":INTEGER> )) -> ROW<"name:3":VARCHAR,"total:4":INTEGER>
-  - Project: -> ROW<"name:3":VARCHAR,"total:4":INTEGER>
-      name:3 := column1:2
-      total:4 := column2:2
-    - Values: 6 rows -> ROW<"column1:2":VARCHAR,"column2:2":INTEGER>
-INITIAL QUERY GRAPH:
-dt1: name:3, total:4
-  output:
-    name:3 := vt2.column1:2
-    total:4 := vt2.column2:2
-  tables: vt2, dt3
-  joins:
-    vt2 LEFT dt3 ON vt2.column1:2 = dt3.column1:5
-  syntactic join order: 1, 4
-  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2 AS BIGINT))
-vt2: column1:2, column2:2
-dt3: column1:5, sum:8
-  output:
-    column1:5 := vt4.column1:5
-    sum:8 := dt3.sum:8
-  tables: vt4
-  aggregates: presto_sum(vt4.column2:5) AS sum:8
-  grouping keys: vt4.column1:5
-vt4: column1:5, column2:5
-FINAL QUERY GRAPH:
-dt1: name:3, total:4
-  output:
-    name:3 := vt2.column1:2
-    total:4 := vt2.column2:2
-  tables: vt2, dt3
-  joins:
-    vt2 LEFT dt3 ON vt2.column1:2 = dt3.column1:5
-  syntactic join order: 1, 4
-  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2 AS BIGINT))
-vt2: column1:2, column2:2
-dt3: column1:5, sum:8
-  output:
-    column1:5 := vt4.column1:5
-    sum:8 := dt3.sum:8
-  tables: vt4
-  aggregates: presto_sum(vt4.column2:5) AS sum:8
-  grouping keys: vt4.column1:5
-vt4: column1:5, column2:5
-PHYSICAL PLAN:
-Project -> dt1.name:3, dt1.total:4
-    dt1.name:3 := vt2.column1:2
-    dt1.total:4 := vt2.column2:2
-  Filter -> vt2.column1:2, vt2.column2:2, dt3.sum:8
-      presto_eq(dt3.sum:8, __cast(vt2.column2:2 AS BIGINT))
-    Join LEFT Hash -> vt2.column1:2, vt2.column2:2, dt3.sum:8
-        vt2.column1:2 = dt3.column1:5
-      Values -> vt2.column1:2, vt2.column2:2
-      Project (redundant) -> dt3.column1:5, dt3.sum:8
-          dt3.column1:5 := vt4.column1:5
-          dt3.sum:8 := dt3.sum:8
-        Aggregation (vt4.column1:5) -> vt4.column1:5, dt3.sum:8
-            dt3.sum:8 := presto_sum(vt4.column2:5)
-          Values -> vt4.column1:5, vt4.column2:5
-EXECUTION PLAN:
-Fragment 0:  numWorkers=1:
--- Project[5][expressions: (name:3:VARCHAR, "column1:2"), (total:4:INTEGER, "column2:2")] -> "name:3":VARCHAR, "total:4":INTEGER
-  -- Filter[0][expression: presto_eq("sum:8",cast("column2:2" as BIGINT))] -> "column1:2":VARCHAR, "column2:2":INTEGER, "sum:8":BIGINT
-    -- HashJoin[4][LEFT column1:2=column1:5] -> "column1:2":VARCHAR, "column2:2":INTEGER, "sum:8":BIGINT
-      -- Values[1][6 rows in 6 vectors] -> "column1:2":VARCHAR, "column2:2":INTEGER
-      -- Aggregation[3][SINGLE [column1:5] sum:8 := presto_sum("column2:5")] -> "column1:5":VARCHAR, "sum:8":BIGINT
-        -- Values[2][6 rows in 6 vectors] -> "column1:5":VARCHAR, "column2:5":INTEGER
+┌───────────────────────────┐
+│            CTE            │
+│    ────────────────────   │
+│        CTE Name: m        │
+│       Table Index: 0      ├──────────────┐
+│                           │              │
+│          ~3 rows          │              │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│      COLUMN_DATA_SCAN     ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│                           ││             #0            │
+│                           ││             #1            │
+│                           ││                           │
+│          ~6 rows          ││          ~3 rows          │
+└───────────────────────────┘└─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │         HASH_JOIN         │
+                             │    ────────────────────   │
+                             │      Join Type: INNER     │
+                             │                           │
+                             │        Conditions:        │
+                             │  CAST(total AS HUGEINT) = ├──────────────┐
+                             │          SUBQUERY         │              │
+                             │ name IS NOT DISTINCT FROM │              │
+                             │            name           │              │
+                             │                           │              │
+                             │          ~3 rows          │              │
+                             └─────────────┬─────────────┘              │
+                             ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                             │          CTE_SCAN         ││       HASH_GROUP_BY       │
+                             │    ────────────────────   ││    ────────────────────   │
+                             │        CTE Index: 0       ││         Groups: #0        │
+                             │                           ││    Aggregates: sum(#1)    │
+                             │                           ││                           │
+                             │          ~6 rows          ││          ~3 rows          │
+                             └───────────────────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │         PROJECTION        │
+                                                          │    ────────────────────   │
+                                                          │            name           │
+                                                          │           total           │
+                                                          │                           │
+                                                          │          ~6 rows          │
+                                                          └─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │           FILTER          │
+                                                          │    ────────────────────   │
+                                                          │     (name IS NOT NULL)    │
+                                                          │                           │
+                                                          │          ~6 rows          │
+                                                          └─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │          CTE_SCAN         │
+                                                          │    ────────────────────   │
+                                                          │        CTE Index: 0       │
+                                                          │                           │
+                                                          │          ~6 rows          │
+                                                          └───────────────────────────┘
 
 
 query
@@ -404,20 +395,24 @@ WHERE total = (
 name	total
 pudge	150
 
-# query -- there's no node in axiom
-# SELECT *
-# FROM
-# (
-#   VALUES
-#     ('android', 'abramoff', 'nachalnika'),
-#     ('arelav', 'oksimironoff', 'developer'),
-#     ('pavel', 'ivanoff', 'slave'),
-#     ('pavel', 'velivov', 'bo$$')
-# ) AS serenedb(name, sername, title)
-# WHERE (name, sername) = (
-#     SELECT 'pavel', 'ivanoff'
-# );
-# ----
+
+skipif serenedb # TODO(Pasha) Support for row returning subqueries
+query
+SELECT *
+FROM
+(
+  VALUES
+    ('android', 'abramoff', 'nachalnika'),
+    ('arelav', 'oksimironoff', 'developer'),
+    ('pavel', 'ivanoff', 'slave'),
+    ('pavel', 'velivov', 'bo$$')
+) AS serenedb(name, sername, title)
+WHERE (name, sername) = (
+    SELECT 'pavel', 'ivanoff'
+);
+----
+name	sername	title
+pavel	ivanoff	slave
 
 
 query
@@ -525,48 +520,133 @@ SELECT (SELECT 1 FROM t1 t2 WHERE t1.a = t2.a)
 
 
 skipif postgres
-skipif serenedb
 query
-EXPLAIN(LOGICAL, EXECUTION, REGISTERS) SELECT 1+a
+EXPLAIN SELECT 1+a
   FROM t1
  ORDER BY 1
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- Project: -> ROW<"?column?:4":INTEGER>
-    ?column?:4 := presto_plus(1, a:1)
-  - Sort: presto_plus(1, a:1) ASC NULLS LAST -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
-    - TableScan: t1 -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[3][expressions: (?column?:4:INTEGER, "dt1.__p7")] -> "?column?:4":INTEGER
-  -- OrderBy[2][dt1.__p7 ASC NULLS LAST] -> "dt1.__p7":INTEGER
-    -- Project[1][expressions: (dt1.__p7:INTEGER, presto_plus("a:1",1))] -> "dt1.__p7":INTEGER
-      -- TableScan[0][t1, type=<slt:ignore>] -> "a:1":INTEGER
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│        ?column? ASC       │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│          (1 + a)          │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│         Table: t1         │
+│       Projections: a      │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 skipif postgres
-skipif serenedb
 query
-EXPLAIN(LOGICAL, EXECUTION, REGISTERS) SELECT CASE WHEN c>(SELECT avg(c) FROM t1) THEN a*2 ELSE b*10 END
+EXPLAIN SELECT CASE WHEN c>(SELECT avg(c) FROM t1) THEN a*2 ELSE b*10 END
   FROM t1
  ORDER BY 1, a
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- Project: -> ROW<"case:9":INTEGER>
-    case:9 := SWITCH(presto_gt(CAST(c:3 AS DOUBLE), subquery(- Aggregate() -> ROW<"avg:7":DOUBLE>     avg:7 := presto_avg(c:6)   - TableScan: t1 -> ROW<"a:4":INTEGER,"b:5":INTEGER,"c:6":INTEGER> )), presto_multiply(a:1, 2), presto_multiply(b:2, 10))
-  - Sort: SWITCH(presto_gt(CAST(c:3 AS DOUBLE), subquery(- Aggregate() -> ROW<"avg:7":DOUBLE>     avg:7 := presto_avg(c:6)   - TableScan: t1 -> ROW<"a:4":INTEGER,"b:5":INTEGER,"c:6":INTEGER> )), presto_multiply(a:1, 2), presto_multiply(b:2, 10)) ASC NULLS LAST, a:1 ASC NULLS LAST -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
-    - TableScan: t1 -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[6][expressions: (case:9:INTEGER, "dt1.__p21")] -> "case:9":INTEGER
-  -- OrderBy[5][dt1.__p21 ASC NULLS LAST, a:1 ASC NULLS LAST] -> "dt1.__p21":INTEGER, "a:1":INTEGER
-    -- Project[4][expressions: (dt1.__p21:INTEGER, switch(presto_lt("avg:7",cast("c:3" as DOUBLE)),presto_multiply("a:1",2),presto_multiply("b:2",10))), (a:1:INTEGER, "a:1")] -> "dt1.__p21":INTEGER, "a:1":INTEGER
-      -- NestedLoopJoin[3][INNER] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER, "avg:7":DOUBLE
-        -- TableScan[0][t1, type=<slt:ignore>] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER
-        -- Aggregation[2][SINGLE avg:7 := presto_avg("c:6")] -> "avg:7":DOUBLE
-          -- TableScan[1][t1, type=<slt:ignore>] -> "c:6":INTEGER
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│          case ASC         │
+│           #1 ASC          │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│   CASE  WHEN ((CAST(c AS  │
+│  DOUBLE) > SUBQUERY)) THEN│
+│   ((a * 2)) ELSE (b * 10) │
+│             END           │
+│             a             │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       CROSS_PRODUCT       ├──────────────┐
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│         Table: t1         ││ CASE  WHEN ((#1 > 1)) THEN│
+│                           ││   ("error"('More than one │
+│        Projections:       ││      row returned by a    │
+│             c             ││     subquery used as an   │
+│             a             ││     expression - scalar   │
+│             b             ││     subqueries can only   │
+│                           ││    return a single row.   │
+│                           ││          Use "SET         │
+│                           ││ scalar_subquery_error_on_m│
+│                           ││   ultiple_rows=false" to  │
+│                           ││     revert to previous    │
+│                           ││   behavior of returning a │
+│                           ││ random row.')) ELSE #0 END│
+│                           ││                           │
+│          ~3 rows          ││           ~1 row          │
+└───────────────────────────┘└─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │    UNGROUPED_AGGREGATE    │
+                             │    ────────────────────   │
+                             │        Aggregates:        │
+                             │        "first"(#0)        │
+                             │        count_star()       │
+                             │                           │
+                             │           ~1 row          │
+                             └─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │         PROJECTION        │
+                             │    ────────────────────   │
+                             │             #0            │
+                             │                           │
+                             │           ~1 row          │
+                             └─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │         PROJECTION        │
+                             │    ────────────────────   │
+                             │  "/"(CAST(#0 AS DOUBLE),  │
+                             │     CAST(#1 AS DOUBLE))   │
+                             │                           │
+                             │           ~1 row          │
+                             └─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │    UNGROUPED_AGGREGATE    │
+                             │    ────────────────────   │
+                             │        Aggregates:        │
+                             │          sum(#0)          │
+                             │         count(#1)         │
+                             │                           │
+                             │           ~1 row          │
+                             └─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │         PROJECTION        │
+                             │    ────────────────────   │
+                             │             c             │
+                             │             c             │
+                             │                           │
+                             │          ~3 rows          │
+                             └─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │   ROCKSDB_TABLE_FULLSCAN  │
+                             │    ────────────────────   │
+                             │         Table: t1         │
+                             │       Projections: c      │
+                             │                           │
+                             │          ~3 rows          │
+                             └───────────────────────────┘
 
 
 query

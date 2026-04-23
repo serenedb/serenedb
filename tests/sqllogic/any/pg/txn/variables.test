@@ -515,7 +515,7 @@ SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ABOBA;
 db error: ERROR: syntax error at or near "ABOBA"
 
 
-skipif serenedb
+skipif serenedb # TODO(gnusi) explain or fix
 statement error
 SET default_transaction_isolation = "aboba";
 ----

@@ -28,6 +28,8 @@
 #include "basics/register.hpp"
 #include "bm25.hpp"
 #include "boost_scorer.hpp"
+#include "dfi.hpp"
+#include "indri_dirichlet.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "lm_dirichlet.hpp"
 #include "lm_jelinek_mercer.hpp"
@@ -88,6 +90,8 @@ void scorers::Init() {
   RawTF::init();
   LMJelinekMercer::init();
   LMDirichlet::init();
+  IndriDirichlet::init();
+  DFI::init();
 }
 
 void scorers::LoadAll(std::string_view path) {

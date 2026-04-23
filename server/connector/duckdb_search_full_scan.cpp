@@ -25,7 +25,9 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/bm25.hpp>
+#include <iresearch/search/dfi.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/indri_dirichlet.hpp>
 #include <iresearch/search/lm_dirichlet.hpp>
 #include <iresearch/search/lm_jelinek_mercer.hpp>
 #include <iresearch/search/raw_tf.hpp>
@@ -281,6 +283,26 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
       state->scorer_obj = std::make_unique<irs::LMDirichlet>(
         static_cast<float>(ss.scorer.lm_dirichlet.mu));
       break;
+    case SK::IndriDirichlet:
+      state->scorer_obj = std::make_unique<irs::IndriDirichlet>(
+        static_cast<float>(ss.scorer.indri_dirichlet.mu));
+      break;
+    case SK::Dfi: {
+      irs::DFIMeasure m;
+      switch (ss.scorer.dfi.measure) {
+        case SearchScan::DfiMeasure::Standardized:
+          m = irs::DFIMeasure::Standardized;
+          break;
+        case SearchScan::DfiMeasure::Saturated:
+          m = irs::DFIMeasure::Saturated;
+          break;
+        case SearchScan::DfiMeasure::ChiSquared:
+          m = irs::DFIMeasure::ChiSquared;
+          break;
+      }
+      state->scorer_obj = std::make_unique<irs::DFI>(m);
+      break;
+    }
     case SK::None:
       break;
   }

@@ -1171,7 +1171,8 @@ catalog::Column::Id ResolveColumnId(
 bool IsScorerFunctionName(std::string_view name) {
   return name == connector::kBm25 || name == connector::kTfidf ||
          name == connector::kRawTf || name == connector::kLmJm ||
-         name == connector::kLmDirichlet;
+         name == connector::kLmDirichlet ||
+         name == connector::kIndriDirichlet || name == connector::kDfi;
 }
 
 // Parse scorer parameters from `func` into `scorer`. Returns false if the
@@ -1241,6 +1242,44 @@ bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
           std::to_string(candidate.lm_dirichlet.mu));
       }
     }
+  } else if (name == connector::kIndriDirichlet) {
+    candidate.kind = ScorerKind::IndriDirichlet;
+    candidate.indri_dirichlet = ScorerParams::IndriDirichlet{};
+    if (func.children.size() == 2) {
+      auto* mv = TryGetConstantValue(*func.children[1]);
+      if (!mv) {
+        return false;
+      }
+      candidate.indri_dirichlet.mu = mv->GetValue<double>();
+      if (candidate.indri_dirichlet.mu < 0.0 ||
+          !std::isfinite(candidate.indri_dirichlet.mu)) {
+        throw duckdb::InvalidInputException(
+          "indri_dirichlet mu must be a non-negative finite value, got " +
+          std::to_string(candidate.indri_dirichlet.mu));
+      }
+    }
+  } else if (name == connector::kDfi) {
+    candidate.kind = ScorerKind::Dfi;
+    candidate.dfi = ScorerParams::Dfi{};
+    if (func.children.size() == 2) {
+      auto* mv = TryGetConstantValue(*func.children[1]);
+      if (!mv) {
+        return false;
+      }
+      auto s = mv->GetValue<std::string>();
+      if (s == "standardized") {
+        candidate.dfi.measure = connector::SearchScan::DfiMeasure::Standardized;
+      } else if (s == "saturated") {
+        candidate.dfi.measure = connector::SearchScan::DfiMeasure::Saturated;
+      } else if (s == "chi_squared" || s == "chisquared") {
+        candidate.dfi.measure = connector::SearchScan::DfiMeasure::ChiSquared;
+      } else {
+        throw duckdb::InvalidInputException(
+          "dfi measure must be one of: standardized, saturated, chi_squared; "
+          "got '" +
+          s + "'");
+      }
+    }
   } else {
     return false;  // Unreachable -- caller filters on IsScorerFunctionName.
   }
@@ -1269,6 +1308,12 @@ bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
         break;
       case ScorerKind::LmDirichlet:
         same = scorer.lm_dirichlet.mu == candidate.lm_dirichlet.mu;
+        break;
+      case ScorerKind::IndriDirichlet:
+        same = scorer.indri_dirichlet.mu == candidate.indri_dirichlet.mu;
+        break;
+      case ScorerKind::Dfi:
+        same = scorer.dfi.measure == candidate.dfi.measure;
         break;
       case ScorerKind::None:
         break;  // unreachable -- covered by outer if above

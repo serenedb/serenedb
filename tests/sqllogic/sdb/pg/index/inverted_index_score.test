@@ -1252,14 +1252,13 @@ QUERY PLAN
 └───────────────────────────┘└───────────────────────────┘└───────────────────────────┘└───────────────────────────┘
 
 
-skipif serenedb
 query error
-EXPLAIN (REGISTERS, LOGICAL) 
+EXPLAIN
 select * from (select * from docs_idx)
-order by bm25(docs_idx.tableoid) desc
+order by bm25(tableoid) desc
 ----
-db error: ERROR: bm25() requires an inverted index scan in the same sub-query
-
+db error: ERROR: Referenced column "tableoid" not found in FROM clause!
+Candidate bindings: "body"
 
 
 query

@@ -91,72 +91,70 @@ COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 
 skipif postgres
-skipif serenedb
 query
-COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN LOGICAL, EXPLAIN EXECUTION, FORMAT CSV, HEADER TRUE);
+EXPLAIN COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    id := id
-    name := name
-  - Sort: name ASC NULLS FIRST -> ROW<"id":INTEGER,"name":VARCHAR>
-    - Filter: IF(spark_isnotnull(name), true, CAST(pg_error(33575106, 0, null value in column "name" of relation "reversed" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(name AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"id":INTEGER,"name":VARCHAR>
-      - Project: -> ROW<"id":INTEGER,"name":VARCHAR>
-          id := id
-          name := name
-        - TableScan: <slt:ignore> -> ROW<"id":INTEGER,"name":VARCHAR>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- TableWrite[4][serenedb(table=reversed, kind=INSERT)] -> rows:BIGINT
-  -- Project[3][expressions: (id:INTEGER, "id"), (name:VARCHAR, "name")] -> "id":INTEGER, "name":VARCHAR
-    -- OrderBy[2][name ASC NULLS FIRST] -> "id":INTEGER, "name":VARCHAR
-      -- Filter[1][expression: if(spark_isnotnull("name"),true,cast(pg_error(33575106,0,null value in column "name" of relation "reversed" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("id" as VARCHAR),null),, ,coalesce("name",null),).)) as BOOLEAN))] -> "id":INTEGER, "name":VARCHAR
-        -- TableScan[0][File(text)] -> "id":INTEGER, "name":VARCHAR
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│             #0            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          READ_CSV         │
+│    ────────────────────   │
+│     Function: READ_CSV    │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 
 skipif postgres
-skipif serenedb
 query
-COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'execution', FORMAT CSV, HEADER TRUE);
+EXPLAIN COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- TableWrite[1][filewrite()] -> rows:BIGINT
-  -- TableScan[0][tindex, type=rocksdb_full_scan] -> "id":INTEGER, "name":VARCHAR
-
+┌───────────────────────────┐
+│        COPY_TO_FILE       │
+│    ────────────────────   │
+│        FORMAT: CSV        │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│       Table: tindex       │
+│                           │
+│        Projections:       │
+│             id            │
+│            name           │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
 
 
 skipif postgres
-skipif serenedb
-query
-COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'physical', FORMAT CSV, HEADER TRUE);
-----
-QUERY PLAN
-PHYSICAL PLAN:
-TableWrite ->
-  Project (redundant) -> dt2.id, dt2.name
-      dt2.id := t3.id
-      dt2.name := t3.name
-    TableScan -> t3.id, t3.name
-      table: tindex
-
-
-
-skipif postgres
-skipif serenedb
+skipif serenedb # TODO(Pasha) support options better
 statement error
-COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'blahblah');
+EXPLAIN COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'blahblah');
 ----
 db error: ERROR: option "blahblah" not recognized
 HINT: Use WITH (HELP) to see available options
 
 
 skipif postgres
-skipif serenedb
+skipif serenedb # TODO(Pasha) support options better
 statement error
-COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'logikal');
+EXPLAIN COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN 'logikal');
 ----
 db error: ERROR: option "logikal" not recognized, did you mean "logical"?
 HINT: Use WITH (HELP) to see available options
@@ -238,7 +236,7 @@ COPY varus(iamdegenereted) FROM '/tmp/${__DATABASE__}_lmao';
 
 
 skipif postgres
-skipif serenedb
+skipif serenedb # TODO(Pasha) support options better
 statement error
 COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (LABUDABUDABDAB rick);
 ----
@@ -247,7 +245,7 @@ HINT: Use WITH (HELP) to see available options
 
 
 skipif postgres
-skipif serenedb
+skipif serenedb # TODO(Pasha) support options better
 statement error
 COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (HELL true);
 ----
@@ -369,12 +367,12 @@ statement count 1
 COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WITH (HEADER 1)
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) copy option to disable sniffer? explicit say about header?
 statement count 2
 COPY header_eater FROM '/tmp/${__DATABASE__}_headers.tsv';
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) copy option to disable sniffer? explicit say about header?
 query
 SELECT * FROM header_eater;
 ----
@@ -453,7 +451,7 @@ statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) support options better
 skipif postgres
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
@@ -568,40 +566,76 @@ eater
 
 
 skipif postgres
-skipif serenedb
 query
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (EXPLAIN 'ANALYZE');
+EXPLAIN ANALYZE COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv';
 ----
 QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=0:
--- TableWrite[2][serenedb(table=arelav_consumer, kind=INSERT)] -> rows:BIGINT
-   <slt:ignore>
-  -- Project[1][expressions: (eater:VARCHAR, "eater"), (dt1.__p8:BIGINT, null)] -> "eater":VARCHAR, "dt1.__p8":BIGINT
-     <slt:ignore>
-    -- TableScan[0][File(text)] -> "eater":VARCHAR
-       <slt:ignore>
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE COPY arelav_consumer FROM '<slt:ignore>_arelav_consuma.csv';
+┌────────────────────────────────────────────────┐
+│┌──────────────────────────────────────────────┐│
+││              Total Time: <slt:ignore>        ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+┌───────────────────────────┐
+│           QUERY           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         EXTENSION         │
+│    ────────────────────   │
+│                           │
+│           1 row           │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         TABLE_SCAN        │
+│    ────────────────────   │
+│     Function: READ_CSV    │
+│     Projections: eater    │
+│    Total Files Read: 1    │
+│                           │
+│        Filename(s):       │
+<slt:ignore>
+<slt:ignore>
+<slt:ignore>
+│                           │
+│                           │
+│                           │
+│          10 rows          │
+│           <slt:ignore>    │
+└───────────────────────────┘
+
 
 skipif postgres
-skipif serenedb
 query
-SELECT * FROM arelav_consumer;
+SELECT eater FROM arelav_consumer;
 ----
 eater
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
-imarelav
+imarelav,1
+imarelav,2
+imarelav,3
+imarelav,4
+imarelav,5
+imarelav,6
+imarelav,7
+imarelav,8
+imarelav,9
+imarelav,10
 
 
 skipif postgres
-skipif serenedb
+skipif serenedb # TODO(Pasha) support options better
 statement error
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (HELP);
 ----

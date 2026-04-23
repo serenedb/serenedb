@@ -15,23 +15,26 @@ CREATE TABLE iamkay
 );
 
 
-# check that there's only one not null check for every column
-skipif serenedb
 skipif postgres
 query
-EXPLAIN (LOGICAL)
+EXPLAIN
 INSERT INTO iamkay DEFAULT VALUES;
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    id := id
-    lmao := lmao
-  - Filter: AND(IF(spark_isnotnull(id), true, CAST(pg_error(33575106, 0, null value in column "id" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN)), IF(spark_isnotnull(lmao), true, CAST(pg_error(33575106, 0, null value in column "lmao" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN))) -> ROW<"id":INTEGER,"lmao":INTEGER>
-    - Project: -> ROW<"id":INTEGER,"lmao":INTEGER>
-        id := null
-        lmao := null
-      - Values: 1 rows -> ROW<>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            NULL           │
+│            NULL           │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         DUMMY_SCAN        │
+└───────────────────────────┘
 
 
 statement ok

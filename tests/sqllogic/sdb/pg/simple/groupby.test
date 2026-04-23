@@ -1,4 +1,3 @@
-skipif serenedb
 query ?? rowsort
 SELECT
   COUNT(forr)
@@ -7,7 +6,7 @@ FROM
   VALUES
     (13, 'ssvor', 55), (13, 'ssvor', 55), (13, 'krivda', 43)
 ) AS arelav(asked, forr, test)
-GROUP BY presto_plus(asked, test)
+GROUP BY asked + test
 ----
 count
 1

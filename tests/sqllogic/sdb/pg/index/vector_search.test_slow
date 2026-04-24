@@ -64,7 +64,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-query ????? 50
+query
 WITH
   result AS (SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct WHERE id IN (SELECT id FROM result);

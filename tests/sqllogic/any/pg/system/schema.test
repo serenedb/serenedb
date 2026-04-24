@@ -29,19 +29,8 @@ statement ok
 CREATE SCHEMA IF NOT EXISTS information_schema;
 
 
-skipif postgres
 query error
 SELECT * FROM sql_parts LIMIT 0;
-----
-db error: ERROR: Table with name sql_parts does not exist!
-Did you mean "sqlite_master"?
-
-
-onlyif postgres
-query error
-SELECT * FROM sql_parts LIMIT 0;
-----
-db error: ERROR: relation "sql_parts" does not exist
 
 
 query

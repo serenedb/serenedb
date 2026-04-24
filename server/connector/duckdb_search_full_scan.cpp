@@ -25,7 +25,12 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/bm25.hpp>
+#include <iresearch/search/dfi.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/indri_dirichlet.hpp>
+#include <iresearch/search/lm_dirichlet.hpp>
+#include <iresearch/search/lm_jelinek_mercer.hpp>
+#include <iresearch/search/raw_tf.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
@@ -260,13 +265,44 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   switch (ss.scorer.kind) {
     case SK::Bm25:
       state->scorer_obj =
-        std::make_unique<irs::BM25>(static_cast<float>(ss.scorer.bm25_k1),
-                                    static_cast<float>(ss.scorer.bm25_b));
+        std::make_unique<irs::BM25>(static_cast<float>(ss.scorer.bm25.k1),
+                                    static_cast<float>(ss.scorer.bm25.b));
       break;
     case SK::Tfidf:
       state->scorer_obj =
-        std::make_unique<irs::TFIDF>(ss.scorer.tfidf_with_norms);
+        std::make_unique<irs::TFIDF>(ss.scorer.tfidf.with_norms);
       break;
+    case SK::RawTf:
+      state->scorer_obj = std::make_unique<irs::RawTF>();
+      break;
+    case SK::LmJm:
+      state->scorer_obj = std::make_unique<irs::LMJelinekMercer>(
+        static_cast<float>(ss.scorer.lm_jm.lambda));
+      break;
+    case SK::LmDirichlet:
+      state->scorer_obj = std::make_unique<irs::LMDirichlet>(
+        static_cast<float>(ss.scorer.lm_dirichlet.mu));
+      break;
+    case SK::IndriDirichlet:
+      state->scorer_obj = std::make_unique<irs::IndriDirichlet>(
+        static_cast<float>(ss.scorer.indri_dirichlet.mu));
+      break;
+    case SK::Dfi: {
+      irs::DFIMeasure m;
+      switch (ss.scorer.dfi.measure) {
+        case SearchScan::DfiMeasure::Standardized:
+          m = irs::DFIMeasure::Standardized;
+          break;
+        case SearchScan::DfiMeasure::Saturated:
+          m = irs::DFIMeasure::Saturated;
+          break;
+        case SearchScan::DfiMeasure::ChiSquared:
+          m = irs::DFIMeasure::ChiSquared;
+          break;
+      }
+      state->scorer_obj = std::make_unique<irs::DFI>(m);
+      break;
+    }
     case SK::None:
       break;
   }

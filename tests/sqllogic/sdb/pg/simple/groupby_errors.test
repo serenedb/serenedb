@@ -284,7 +284,7 @@ db error: ERROR: No function matches the given name and argument types 'sum(BIGI
 
 
 query error
-SELECT AVG(presto_plus(SUM(babsky_magic), deadinside_level))
+SELECT AVG(SUM(babsky_magic) + deadinside_level)
 FROM
 (
   VALUES
@@ -292,8 +292,7 @@ FROM
     (1, 2, 5, 6), (3, 4, 3, 4)
 ) AS pudge_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
 ----
-db error: ERROR: Scalar Function with name presto_plus does not exist!
-Did you mean "first_value"?
+db error: ERROR: aggregate function calls cannot be nested
 
 
 query error

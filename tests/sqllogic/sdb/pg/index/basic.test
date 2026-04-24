@@ -425,7 +425,7 @@ statement ok
 CREATE TABLE help_test(r text);
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) make options better
 statement error
 CREATE INDEX help_idx ON help_test USING inverted(r) WITH (HELP);
 ----

@@ -57,6 +57,21 @@
         "SDB_GTEST": "Off",
         "SDB_ALLOC": "JE"
       }
+    },
+    {
+      "name": "perf",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "On",
+        "USE_IPO": "Off",
+        "SDB_DEV": "Off",
+        "SDB_FAULT_INJECTION": "Off",
+        "SDB_GTEST": "Off",
+        "SDB_ALLOC": "JE"
+      }
     }
   ]
 }

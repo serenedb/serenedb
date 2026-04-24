@@ -39,6 +39,7 @@
 * [geographiclib-c](https://github.com/geographiclib/geographiclib-c)
 * [liburing](https://github.com/axboe/liburing)
 * [DuckDB](https://github.com/duckdb/duckdb)
+* [duckdb-httpfs](https://github.com/duckdb/duckdb-httpfs)
 * [curl](https://github.com/curl/curl)
 * [faiss](https://github.com/facebookresearch/faiss)
 * [fmt](https://github.com/fmtlib/fmt)

@@ -47,25 +47,20 @@ void VisitPgCatalogTables(
   absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
 void VisitPgCatalogViews(
   absl::FunctionRef<void(const catalog::PgSqlView&)> visitor);
-void VisitPgCatalogScalarFunctions(
-  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
-void VisitPgCatalogTableFunctions(
+void VisitPgCatalogFunctions(
   absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
 void VisitInfoSchemaTables(
   absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
 void VisitInfoSchemaViews(
   absl::FunctionRef<void(const catalog::PgSqlView&)> visitor);
-void VisitInfoSchemaScalarFunctions(
-  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
-void VisitInfoSchemaTableFunctions(
+void VisitInfoSchemaFunctions(
   absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
 
-std::shared_ptr<catalog::PgSqlFunction> GetScalarFunction(
+// Returns the unified PgSqlFunction for `name` (with all scalar and table
+// overloads in its macros vector), or nullptr if absent.
+std::shared_ptr<catalog::PgSqlFunction> GetPgCatalogFunction(
   std::string_view name);
-std::shared_ptr<catalog::PgSqlFunction> GetTableFunction(std::string_view name);
-std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaScalarFunction(
-  std::string_view name);
-std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaTableFunction(
+std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
   std::string_view name);
 
 std::shared_ptr<catalog::PgSqlView> GetView(std::string_view name);

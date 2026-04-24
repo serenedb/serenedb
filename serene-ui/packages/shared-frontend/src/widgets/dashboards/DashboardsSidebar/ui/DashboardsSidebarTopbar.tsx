@@ -1,6 +1,6 @@
 export const DashboardsSidebarTopbar = () => {
     return (
-        <div className="min-h-[48.5px] pl-4 pr-2.5 py-2.5 justify-between items-center flex border-b-[0.5px]">
+        <div className="electron-drag-region flex min-h-[48.5px] items-center justify-between border-b-[0.5px] py-2.5 pl-4 pr-2.5">
             <p className="uppercase dark:text-secondary-foreground font-black text-xs">
                 Dashboards
             </p>

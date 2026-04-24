@@ -590,7 +590,8 @@ void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
   for (size_t i = 0; i < nparams; ++i) {
     const auto oid =
       i < stmt.param_oids.size() ? stmt.param_oids[i] : int32_t{0};
-    auto type = oid != 0 ? Oid2Type(oid) : duckdb::LogicalType::VARCHAR;
+    auto type = oid != 0 ? Oid2Type(oid, *_connection_ctx->EnsureCatalogSnapshot())
+                         : duckdb::LogicalType::VARCHAR;
     duckdb::Value v{"1"};
     if (!v.DefaultTryCastAs(type)) {
       v = duckdb::Value{type};

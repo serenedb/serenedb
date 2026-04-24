@@ -143,11 +143,15 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void ExecuteClose(std::string_view packet);
   void DescribePortal(const DuckDBPortal& portal);
   void DescribeStatement(DuckDBStatement& statement);
-  void DescribeAnalyzedQuery(const DuckDBStatement& statement,
+  void DescribeAnalyzedQuery(duckdb::StatementReturnType return_type,
+                             const std::vector<duckdb::LogicalType>& types,
+                             const std::vector<std::string>& names,
                              const std::vector<VarFormat>& formats,
                              bool extended = true);
   DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
   void BuildColumnSerializers(DuckDBPortal& portal);
+  void ResolveStatementTypes(DuckDBStatement& stmt);
+  void DeallocateNamedStatement(std::string_view name);
   void ExecutePortal(DuckDBPortal& portal);
   void ExecuteNextSimpleStatement();
   void ReleaseResult(DuckDBPortal& portal);

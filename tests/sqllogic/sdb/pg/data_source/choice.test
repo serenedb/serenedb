@@ -137,8 +137,8 @@ QUERY PLAN
 │      Table: t_choice      │
 │                           │
 │          Filter:          │
-│ {id=(-inf, 8)}, {id=[10,  │
-│           +inf)}          │
+│       {id=(-inf, 8)}      │
+│      {id=[10, +inf)}      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -281,7 +281,8 @@ QUERY PLAN
 │    Table: t_choice_cpk    │
 │                           │
 │          Filter:          │
-│   (a=1, b=2), (a=3, b=4)  │
+│         (a=1, b=2)        │
+│         (a=3, b=4)        │
 │                           │
 │        Projections:       │
 │             a             │
@@ -317,7 +318,8 @@ QUERY PLAN
 │    Table: t_choice_cpk    │
 │                           │
 │          Filter:          │
-│   (a=1, b=2), (a=1, b=4)  │
+│         (a=1, b=2)        │
+│         (a=1, b=4)        │
 │                           │
 │        Projections:       │
 │             a             │
@@ -360,7 +362,8 @@ QUERY PLAN
 │    Table: t_choice_cpk    │
 │                           │
 │          Filter:          │
-│   (a=1, b=4), (a=2, b=2)  │
+│         (a=1, b=4)        │
+│         (a=2, b=2)        │
 │                           │
 │        Projections:       │
 │             a             │
@@ -503,8 +506,10 @@ QUERY PLAN
 │    Table: t_choice_cpk    │
 │                           │
 │          Filter:          │
-│ (a=1, b=2), (a=1, b=6), (a│
-│    =3, b=2), (a=3, b=6)   │
+│         (a=1, b=2)        │
+│         (a=1, b=6)        │
+│         (a=3, b=2)        │
+│         (a=3, b=6)        │
 │                           │
 │        Projections:       │
 │             a             │
@@ -804,7 +809,8 @@ QUERY PLAN
 │   Table: t_choice_nulls   │
 │                           │
 │          Filter:          │
-│       (id=2), (id=3)      │
+│           (id=2)          │
+│           (id=3)          │
 │                           │
 │        Projections:       │
 │             id            │
@@ -857,8 +863,8 @@ QUERY PLAN
 │        Table: t_neq       │
 │                           │
 │          Filter:          │
-│  {id=(-inf, 4)}, {id=(4,  │
-│           +inf)}          │
+│       {id=(-inf, 4)}      │
+│       {id=(4, +inf)}      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -888,8 +894,8 @@ QUERY PLAN
 │        Table: t_neq       │
 │                           │
 │          Filter:          │
-│  {id=(-inf, 4)}, {id=(4,  │
-│           +inf)}          │
+│       {id=(-inf, 4)}      │
+│       {id=(4, +inf)}      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -918,8 +924,9 @@ QUERY PLAN
 │        Table: t_neq       │
 │                           │
 │          Filter:          │
-│ {id=(-inf, 2)}, {id=(2, 4 │
-│     )}, {id=(4, +inf)}    │
+│       {id=(-inf, 2)}      │
+│        {id=(2, 4)}        │
+│       {id=(4, +inf)}      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1004,8 +1011,8 @@ QUERY PLAN
 │      Table: t_range1      │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 2)}, {a=(8, +inf│
-│             )}            │
+│       {a=(-inf, 2)}       │
+│       {a=(8, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1387,8 +1394,8 @@ QUERY PLAN
 │       Table: t_range      │
 │                           │
 │          Filter:          │
-│ {a=1, b=(-inf, 3)}, {a=1, │
-│        b=(7, +inf)}       │
+│     {a=1, b=(-inf, 3)}    │
+│     {a=1, b=(7, +inf)}    │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1465,8 +1472,8 @@ QUERY PLAN
 │       Table: t_range      │
 │                           │
 │          Filter:          │
-│ {a=1, b=(7, +inf)}, {a=2, │
-│        b=(5, +inf)}       │
+│     {a=1, b=(7, +inf)}    │
+│     {a=2, b=(5, +inf)}    │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1550,8 +1557,8 @@ QUERY PLAN
 │       Table: t_range      │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 1]}, {a=(2, +inf│
-│             )}            │
+│       {a=(-inf, 1]}       │
+│       {a=(2, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2048,8 +2055,8 @@ QUERY PLAN
 │      Table: t_range3      │
 │                           │
 │          Filter:          │
-│  {a=1, b=2, c=(5, +inf)}, │
-│   {a=2, b=2, c=(-inf, 5)} │
+│  {a=1, b=2, c=(5, +inf)}  │
+│  {a=2, b=2, c=(-inf, 5)}  │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2316,8 +2323,8 @@ QUERY PLAN
 │        Table: t_not       │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 3]}, {a=[7, +inf│
-│             )}            │
+│       {a=(-inf, 3]}       │
+│       {a=[7, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2388,8 +2395,8 @@ QUERY PLAN
 │        Table: t_not       │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 5)}, {a=(5, +inf│
-│             )}            │
+│       {a=(-inf, 5)}       │
+│       {a=(5, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2425,8 +2432,9 @@ QUERY PLAN
 │        Table: t_not       │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 3)}, {a=(3, 7)},│
-│        {a=(7, +inf)}      │
+│       {a=(-inf, 3)}       │
+│         {a=(3, 7)}        │
+│       {a=(7, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2582,8 +2590,8 @@ QUERY PLAN
 │       Table: t_not2       │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 1]}, {a=[5, +inf│
-│             )}            │
+│       {a=(-inf, 1]}       │
+│       {a=[5, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -2800,7 +2808,7 @@ QUERY PLAN
 │      Table: t_complex     │
 │                           │
 │          Filter:          │
-│    {region=(-inf, 1]},    │
+│     {region=(-inf, 1]}    │
 │     {region=[3, +inf)}    │
 │                           │
 │        Projections:       │
@@ -2972,8 +2980,9 @@ QUERY PLAN
 │                           │
 │          Filter:          │
 │ {region=1, priority=(-inf,│
-│  10]}, {region=3, priority│
-│        =(-inf, 10]}       │
+│            10]}           │
+│ {region=3, priority=(-inf,│
+│            10]}           │
 │                           │
 │        Projections:       │
 │           region          │
@@ -3159,8 +3168,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 2)}, {a=(2, +inf│
-│             )}            │
+│       {a=(-inf, 2)}       │
+│       {a=(2, +inf)}       │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3337,8 +3346,9 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 1)}, {a=(1, 3)},│
-│        {a=(3, +inf)}      │
+│       {a=(-inf, 1)}       │
+│         {a=(1, 3)}        │
+│       {a=(3, +inf)}       │
 │                           │
 │          ~27 rows         │
 └───────────────────────────┘
@@ -3477,7 +3487,7 @@ QUERY PLAN
 
 # ── 3-D: disjoint specific-point prefixes ────────────────────────────────────
 # (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2) → 2 point lookups
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1) OR (a=2 AND b=2 AND c=2)
   ORDER BY a, b, c;
@@ -3508,8 +3518,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ (a=1, b=1, c=1), (a=2, b=2│
-│           , c=2)          │
+│      (a=1, b=1, c=1)      │
+│      (a=2, b=2, c=2)      │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3522,7 +3532,7 @@ QUERY PLAN
 
 
 # ── 3-D: same point duplicated → exactly 1 lookup, 1 row ─────────────────────
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=3 AND b=3 AND c=3) OR (a=3 AND b=3 AND c=3)
   ORDER BY a, b, c;
@@ -3607,7 +3617,7 @@ QUERY PLAN
 # ── 3-D: b adjacent then c fuses to a-level range ────────────────────────────
 # (a=2 AND b<=2 AND c=1) OR (a=2 AND b>2 AND c=1)  →  all b for a=2, c=1
 # c=1 is a trailing constraint → post-filter, scan covers a=[2,2]
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=2 AND b <= 2 AND c = 1) OR (a=2 AND b > 2 AND c = 1)
   ORDER BY a, b, c;
@@ -3708,7 +3718,7 @@ QUERY PLAN
 
 # ── 3-D: two ranges sharing a prefix, disjoint on c ──────────────────────────
 # (a=1 AND b=2 AND c<2) OR (a=1 AND b=2 AND c>2) → c=2 row excluded
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=2 AND c < 2) OR (a=1 AND b=2 AND c > 2)
   ORDER BY a, b, c;
@@ -3739,8 +3749,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│  {a=1, b=2, c=(-inf, 2)}, │
-│   {a=1, b=2, c=(2, +inf)} │
+│  {a=1, b=2, c=(-inf, 2)}  │
+│  {a=1, b=2, c=(2, +inf)}  │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3753,7 +3763,7 @@ QUERY PLAN
 
 
 # ── 3-D: three-way triple point OR deduplicated ───────────────────────────────
-query ???????
+query
 SELECT a, b, c, val FROM t_sweep3
   WHERE (a=1 AND b=1 AND c=1)
      OR (a=2 AND b=2 AND c=2)
@@ -3788,8 +3798,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ (a=1, b=1, c=1), (a=2, b=2│
-│           , c=2)          │
+│      (a=1, b=1, c=1)      │
+│      (a=2, b=2, c=2)      │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3850,8 +3860,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 2)}, {a=(2, +inf│
-│             )}            │
+│       {a=(-inf, 2)}       │
+│       {a=(2, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3908,8 +3918,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=(-inf, 2)}, {a=(2, +inf│
-│             )}            │
+│       {a=(-inf, 2)}       │
+│       {a=(2, +inf)}       │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3965,8 +3975,8 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=1, b=(-inf, 2)}, {a=3, │
-│        b=(2, +inf)}       │
+│     {a=1, b=(-inf, 2)}    │
+│     {a=3, b=(2, +inf)}    │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4027,9 +4037,9 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=1, b=(-inf, 2)}, {a=2, │
-│   b=[1, 2]}, {a=3, b=(2,  │
-│           +inf)}          │
+│     {a=1, b=(-inf, 2)}    │
+│      {a=2, b=[1, 2]}      │
+│     {a=3, b=(2, +inf)}    │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4083,9 +4093,9 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│  {a=1, b=1, c=(-inf, 3)}, │
-│  {a=2, b=2, c=(1, +inf)}, │
-│       {a=3, b=3, c=2}     │
+│  {a=1, b=1, c=(-inf, 3)}  │
+│  {a=2, b=2, c=(1, +inf)}  │
+│      {a=3, b=3, c=2}      │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4179,8 +4189,9 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ (a=1, b=1, c=2), (a=1, b=3│
-│ , c=2), (a=3, b=1, c=2),  │
+│      (a=1, b=1, c=2)      │
+│      (a=1, b=3, c=2)      │
+│      (a=3, b=1, c=2)      │
 │      (a=3, b=3, c=2)      │
 │                           │
 │        Projections:       │
@@ -4294,10 +4305,10 @@ QUERY PLAN
 │      Table: t_sweep3      │
 │                           │
 │          Filter:          │
-│ {a=1, b=(-inf, 2)}, {a=1, │
-│   b=(2, +inf)}, {a=2, b=( │
-│  -inf, 2)}, {a=2, b=(2,   │
-│           +inf)}          │
+│     {a=1, b=(-inf, 2)}    │
+│     {a=1, b=(2, +inf)}    │
+│     {a=2, b=(-inf, 2)}    │
+│     {a=2, b=(2, +inf)}    │
 │                           │
 │        Projections:       │
 │             a             │
@@ -4647,7 +4658,8 @@ QUERY PLAN
 │     Table: t_dml_point    │
 │                           │
 │          Filter:          │
-│       (id=2), (id=4)      │
+│           (id=2)          │
+│           (id=4)          │
 │                           │
 │      Projections: id      │
 │                           │
@@ -5260,8 +5272,8 @@ QUERY PLAN
 │    Table: t_dml_corner    │
 │                           │
 │          Filter:          │
-│  {id=(-inf, 3)}, {id=(3,  │
-│           +inf)}          │
+│       {id=(-inf, 3)}      │
+│       {id=(3, +inf)}      │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -5315,7 +5327,10 @@ QUERY PLAN
 │    Table: choices_array   │
 │                           │
 │          Filter:          │
-│ (a=1), (a=3), (a=4), (a=5)│
+│           (a=1)           │
+│           (a=3)           │
+│           (a=4)           │
+│           (a=5)           │
 │                           │
 │        Projections:       │
 │             a             │

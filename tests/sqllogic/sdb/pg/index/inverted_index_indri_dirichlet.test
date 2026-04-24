@@ -1,0 +1,81 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# Indri Dirichlet with small mu: log((tf + mu*P(t|C)) / (dl + mu)) is finite
+# for every matching doc. It can be negative, unlike lm_dirichlet.
+query
+SELECT id, indri_dirichlet(docs_idx.tableoid, 5.0) IS NOT NULL AS ok
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	ok
+1	t
+2	t
+4	t
+5	t
+
+
+# Default mu (2000) -- same call succeeds with no arg.
+query
+SELECT id, indri_dirichlet(docs_idx.tableoid) IS NOT NULL AS ok
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	ok
+1	t
+2	t
+4	t
+5	t
+
+
+# mu must be non-negative.
+statement error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY indri_dirichlet(docs_idx.tableoid, -1.0) DESC, id;
+
+
+# Outside an inverted index scan: stub error.
+statement error
+SELECT indri_dirichlet(42::BIGINT);

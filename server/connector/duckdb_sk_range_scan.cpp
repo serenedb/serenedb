@@ -65,10 +65,10 @@ void BuildSkRangeBounds(ObjectId shard_id, const ResolvedRange& range,
   upper = lower;  // upper shares the same prefix
 
   const auto& range_column = range.range_column;
-  SDB_ASSERT(!range_column.MaybeNull() || range_column.IsNullOnly(),
-             "range column invariant violated: MaybeNull implies IsNullOnly");
+  // kIsNull is exclusive (enforced in ColumnRange::Make), so no separate
+  // invariant check is needed here.
 
-  if (range_column.IsNullOnly()) {
+  if (range_column.IsNull()) {
     // col IS NULL -> scan the null bucket only.
     secondary_key::AppendNullMarker(lower);     // start at 0x01
     secondary_key::AppendNotNullMarker(upper);  // exclusive end at 0x02

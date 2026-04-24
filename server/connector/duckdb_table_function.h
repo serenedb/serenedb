@@ -81,9 +81,15 @@ struct ScanSource {
 
   // Covers SearchScan / CountScan / ANNScan / RangeSearchScan -- the four
   // that need stricter transaction isolation in duckdb_scan_base.
-  bool IsSearchLike() const {
+  bool IsSearchLike() const noexcept {
     return _kind == ScanSourceKind::Search || _kind == ScanSourceKind::Count ||
            _kind == ScanSourceKind::Ann || _kind == ScanSourceKind::RangeSearch;
+  }
+
+  // Covers SecondaryIndexScan / SkPointScan / SkRangeScan.
+  bool IsSkLike() const noexcept {
+    return _kind == ScanSourceKind::SecondaryIndex ||
+           _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
   }
 
   template<class T>
@@ -167,6 +173,14 @@ struct SearchScan : ScanSource {
     RawTf,
     LmJm,
     LmDirichlet,
+    IndriDirichlet,
+    Dfi,
+  };
+  // DFI independence measure. Must stay in sync with irs::DFIMeasure.
+  enum class DfiMeasure : uint8_t {
+    Standardized,
+    Saturated,
+    ChiSquared,
   };
   // Scorer parameters are tagged by `kind`: only the matching union arm is
   // live. All variants are trivial types so the union is trivially
@@ -188,6 +202,12 @@ struct SearchScan : ScanSource {
     struct LmDirichlet {
       double mu = 2000.0;
     };
+    struct IndriDirichlet {
+      double mu = 2000.0;
+    };
+    struct Dfi {
+      DfiMeasure measure = DfiMeasure::Standardized;
+    };
 
     ScorerKind kind = ScorerKind::None;
     union {
@@ -195,6 +215,8 @@ struct SearchScan : ScanSource {
       Tfidf tfidf;
       LmJm lm_jm;
       LmDirichlet lm_dirichlet;
+      IndriDirichlet indri_dirichlet;
+      Dfi dfi;
     };
   };
   ScorerParams scorer;

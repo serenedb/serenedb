@@ -139,6 +139,8 @@ set(IResearch_core_sources
     ./search/lm_similarity.cpp
     ./search/lm_jelinek_mercer.cpp
     ./search/lm_dirichlet.cpp
+    ./search/indri_dirichlet.cpp
+    ./search/dfi.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp

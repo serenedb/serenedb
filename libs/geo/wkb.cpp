@@ -195,6 +195,12 @@ Result ReadLineStringVertices(WkbReader& r, std::vector<S2LatLng>& cache) {
 // Polygon = ring count + (ring = vertex count + vertices). First ring is
 // outer; remaining rings are holes. S2Loop expects open rings (no duplicate
 // closing vertex) -- WKB always includes it, so we drop the last vertex.
+//
+// Orientation strategy mirrors libs/geo/geo_json.cpp ParseLoopImpl so WKB and
+// GeoJSON ingest produce the same S2Polygon for equivalent coordinates:
+// the outer loop is left as-given (so polygons whose intended interior covers
+// more than half the earth survive), and subsequent loops are inverted only
+// when they aren't already contained in the outer.
 Result ReadPolygonLoops(WkbReader& r, std::vector<std::unique_ptr<S2Loop>>& out,
                         std::vector<S2LatLng>& cache) {
   uint32_t ring_count;
@@ -203,6 +209,7 @@ Result ReadPolygonLoops(WkbReader& r, std::vector<std::unique_ptr<S2Loop>>& out,
   }
   out.clear();
   out.reserve(ring_count);
+  S2Loop* first = nullptr;
   for (uint32_t i = 0; i < ring_count; ++i) {
     uint32_t vcount;
     if (!r.ReadU32(vcount)) {
@@ -228,16 +235,23 @@ Result ReadPolygonLoops(WkbReader& r, std::vector<std::unique_ptr<S2Loop>>& out,
       }
     }
     auto loop = std::make_unique<S2Loop>(pts, S2Debug::DISABLE);
-    // First ring (outer) is counter-clockwise per OGC; subsequent rings
-    // (holes) are clockwise. S2 wants all loops oriented such that the
-    // interior lies on the left; S2Polygon::InitNested does the right thing
-    // if we Normalize each loop to be CCW.
-    loop->Normalize();
     if (!loop->IsValid()) {
       return {ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i, " is not a valid ",
               "S2 loop"};
     }
+    auto* current = loop.get();
     out.push_back(std::move(loop));
+    if (first == nullptr) {
+      first = current;
+      continue;
+    }
+    if (!first->Contains(*current)) {
+      current->Invert();
+      if (!first->Contains(*current)) {
+        return {ERROR_BAD_PARAMETER, "WKB: Polygon ring-", i,
+                " is not a hole in the outer ring"};
+      }
+    }
   }
   return {};
 }

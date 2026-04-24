@@ -54,6 +54,11 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
   // Use this directly when the caller holds a native VPack type (zero-copy).
   virtual bool reset(vpack::Slice slice) = 0;
 
+  // Resets the analyzer state from a pre-parsed S2 shape. Used by GEOMETRY
+  // columns where WKB is parsed to ShapeContainer database-side before the
+  // value reaches the analyzer -- no JSON/VPack intermediate.
+  virtual bool reset(sdb::geo::ShapeContainer&& shape) = 0;
+
   virtual void prepare(GeoFilterOptionsBase& options) const = 0;
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -108,6 +113,7 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
 
   using GeoAnalyzer::reset;
   bool reset(vpack::Slice slice) final;
+  bool reset(sdb::geo::ShapeContainer&& shape) final;
 
   void prepare(GeoFilterOptionsBase& options) const final;
 
@@ -172,6 +178,11 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
 
   bool ResetImpl(vpack::Slice data, sdb::geo::coding::Options options,
                  Encoder* encoder);
+
+  // Shared epilogue: given _shape already populated, compute geo terms and
+  // publish them via GeoAnalyzer::reset(terms). Used by both the vpack and
+  // ShapeContainer reset paths.
+  void ComputeAndPublishTerms();
 
   virtual void StoreImpl(vpack::Slice slice) = 0;
 

@@ -200,6 +200,47 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
     return true;
   }
 
+  bool reset(sdb::geo::ShapeContainer&& shape) final {
+    if constexpr (kIsS2) {
+      // Shape-based reset supports only S2 codings (S2Point /
+      // S2PointShapeCompact / S2PointRegionCompact). LatLng codings
+      // (S2LatLngF64, S2LatLngU32) need a per-shape-type walker that emits
+      // LatLng-encoded bytes from the already-built S2 objects; S2LatLngU32
+      // additionally needs pre-quantization (see geo_json.cpp vpack path).
+      // Callers must configure S2 coding before reaching here.
+      SDB_ASSERT(geo::coding::IsOptionsS2(_data.coding) &&
+                 "LatLng coding is not supported by reset(ShapeContainer); "
+                 "use S2Point / S2PointShapeCompact / S2PointRegionCompact");
+      if (_type == Type::Point &&
+          shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
+        return false;
+      }
+      _shape = std::move(shape);
+      _data.encoder.clear();
+      // Match what ResetImpl's ParseShape path writes into _data.encoder.
+      // Centroid over a non-point shape skips serialization here; StoreImpl
+      // then encodes the centroid into _data.encoder itself.
+      const bool without_serialization =
+        _type == Type::Centroid &&
+        _shape.type() != sdb::geo::ShapeContainer::Type::S2Point;
+      if (!without_serialization) {
+        _shape.Encode(_data.encoder, _data.coding);
+      }
+      ComputeAndPublishTerms();
+      StoreImpl({});
+      return true;
+    } else {
+      // VPack coding keeps the original GeoJSON bytes as the stored value
+      // (see GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl). A ShapeContainer
+      // carries no JSON, so there's nothing to store -- callers must not
+      // combine VPack coding with this reset.
+      SDB_ASSERT(false &&
+                 "VPack coding is not supported by reset(ShapeContainer); "
+                 "no original JSON available to store");
+      return false;
+    }
+  }
+
   void prepare(GeoFilterOptionsBase& options) const final {
     options.options = _indexer.options();
     if constexpr (kIsS2) {
@@ -293,6 +334,23 @@ bool GeoPointAnalyzer::reset(vpack::Slice slice) {
   return true;
 }
 
+bool GeoPointAnalyzer::reset(sdb::geo::ShapeContainer&& shape) {
+  // GeoPointAnalyzer accepts points only.
+  if (shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
+    return false;
+  }
+  _point = S2LatLng{shape.centroid()};
+
+  _builder.clear();
+  sdb::geo::PointToVPack(_builder, _point);
+  auto* store = irs::GetMutable<StoreAttr>(this);
+  SDB_ASSERT(store);
+  store->value = irs::slice_to_view<irs::byte_type>(_builder.slice());
+
+  GeoAnalyzer::reset(_indexer.GetIndexTerms(_point.ToPoint(), {}));
+  return true;
+}
+
 void GeoPointAnalyzer::prepare(GeoFilterOptionsBase& options) const {
   options.options = _indexer.options();
   options.stored = StoredType::VPack;
@@ -361,6 +419,11 @@ bool GeoJsonAnalyzer::ResetImpl(vpack::Slice data, geo::coding::Options options,
     return false;
   }
 
+  ComputeAndPublishTerms();
+  return true;
+}
+
+void GeoJsonAnalyzer::ComputeAndPublishTerms() {
   // TODO(mbkkt) try to avoid allocations in append
   _centroid = _shape.centroid();
   std::vector<std::string> geo_terms;
@@ -377,7 +440,6 @@ bool GeoJsonAnalyzer::ResetImpl(vpack::Slice data, geo::coding::Options options,
     }
   }
   GeoAnalyzer::reset(std::move(geo_terms));
-  return true;
 }
 
 template<>

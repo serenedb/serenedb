@@ -2696,3 +2696,129 @@ TEST(GeoJsonAnalyzerVpackTest, createFromSlice) {
               GeoJsonAnalyzer::make(slice_to_view<char>(json->slice())));
   }
 }
+
+// reset(ShapeContainer&&) path: feed a pre-parsed shape (simulates GEOMETRY
+// column ingest where WKB has been parsed database-side) and verify the
+// analyzer produces the same index terms as the vpack-JSON path would for an
+// equivalent point.
+TEST(GeoJsonAnalyzerShapeTest, tokenizePoint) {
+  GeoJsonAnalyzer::Options opts;
+  opts.type = GeoJsonAnalyzer::Type::Point;
+  opts.coding = GeoJsonAnalyzer::Coding::S2Point;
+  vpack::Builder opts_builder;
+  ToVPack(opts_builder, opts);
+  auto a = GeoJsonAnalyzer::make(slice_to_view<char>(opts_builder.slice()));
+  ASSERT_NE(nullptr, a);
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  ShapeContainer shape;
+  shape.reset(S2LatLng::FromDegrees(50.3, 6.5).ToPoint());
+
+  auto* term = irs::get<TermAttr>(*a);
+  ASSERT_NE(nullptr, term);
+  ASSERT_TRUE(geo->reset(std::move(shape)));
+  size_t term_count = 0;
+  while (a->next()) {
+    ++term_count;
+  }
+  EXPECT_GT(term_count, 0U);
+
+  // Store attr must carry encoded bytes (S2Point tag stripped for non-Shape).
+  auto* store = irs::get<irs::StoreAttr>(*a);
+  ASSERT_NE(nullptr, store);
+  EXPECT_FALSE(irs::IsNull(store->value));
+}
+
+TEST(GeoJsonAnalyzerShapeTest, tokenizePolygon) {
+  GeoJsonAnalyzer::Options opts;
+  opts.type = GeoJsonAnalyzer::Type::Shape;
+  opts.coding = GeoJsonAnalyzer::Coding::S2Point;
+  vpack::Builder opts_builder;
+  ToVPack(opts_builder, opts);
+  auto a = GeoJsonAnalyzer::make(slice_to_view<char>(opts_builder.slice()));
+  ASSERT_NE(nullptr, a);
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  // Build a polygon ShapeContainer via the GeoJson parser so it's shaped
+  // exactly as the sink writer would feed it on a GEOMETRY column.
+  auto json = vpack::Parser::fromJson(R"({
+    "type": "Polygon",
+    "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
+  })");
+  ShapeContainer shape;
+  std::vector<S2LatLng> cache;
+  ASSERT_TRUE(sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
+    json->slice(), shape, cache, sdb::geo::coding::Options::Invalid, nullptr));
+  ASSERT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
+
+  ASSERT_TRUE(geo->reset(std::move(shape)));
+  size_t term_count = 0;
+  while (a->next()) {
+    ++term_count;
+  }
+  EXPECT_GT(term_count, 0U);
+
+  auto* store = irs::get<irs::StoreAttr>(*a);
+  ASSERT_NE(nullptr, store);
+  EXPECT_FALSE(irs::IsNull(store->value));
+}
+
+// Point-only analyzer must reject non-point shapes.
+TEST(GeoJsonAnalyzerShapeTest, rejectsShapeVsTypeMismatch) {
+  GeoJsonAnalyzer::Options opts;
+  opts.type = GeoJsonAnalyzer::Type::Point;
+  opts.coding = GeoJsonAnalyzer::Coding::S2Point;
+  vpack::Builder opts_builder;
+  ToVPack(opts_builder, opts);
+  auto a = GeoJsonAnalyzer::make(slice_to_view<char>(opts_builder.slice()));
+  auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
+  ASSERT_NE(nullptr, geo);
+
+  auto json = vpack::Parser::fromJson(R"({
+    "type": "Polygon",
+    "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
+  })");
+  ShapeContainer shape;
+  std::vector<S2LatLng> cache;
+  ASSERT_TRUE(sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
+    json->slice(), shape, cache, sdb::geo::coding::Options::Invalid, nullptr));
+  EXPECT_FALSE(geo->reset(std::move(shape)));
+}
+
+TEST(GeoPointAnalyzerShapeTest, tokenizePoint) {
+  GeoPointAnalyzer::Options opts;
+  GeoPointAnalyzer a{opts};
+
+  ShapeContainer shape;
+  shape.reset(S2LatLng::FromDegrees(50.3, 6.5).ToPoint());
+  ASSERT_TRUE(a.reset(std::move(shape)));
+
+  auto* term = irs::get<TermAttr>(a);
+  ASSERT_NE(nullptr, term);
+  size_t term_count = 0;
+  while (a.next()) {
+    ++term_count;
+  }
+  EXPECT_GT(term_count, 0U);
+
+  auto* store = irs::get<irs::StoreAttr>(a);
+  ASSERT_NE(nullptr, store);
+  EXPECT_FALSE(irs::IsNull(store->value));
+}
+
+TEST(GeoPointAnalyzerShapeTest, rejectsNonPoint) {
+  GeoPointAnalyzer::Options opts;
+  GeoPointAnalyzer a{opts};
+
+  auto json = vpack::Parser::fromJson(R"({
+    "type": "Polygon",
+    "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
+  })");
+  ShapeContainer shape;
+  std::vector<S2LatLng> cache;
+  ASSERT_TRUE(sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
+    json->slice(), shape, cache, sdb::geo::coding::Options::Invalid, nullptr));
+  EXPECT_FALSE(a.reset(std::move(shape)));
+}

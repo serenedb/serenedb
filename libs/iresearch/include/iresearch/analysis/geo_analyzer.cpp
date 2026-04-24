@@ -399,7 +399,8 @@ irs::analysis::Analyzer::ptr GeoJsonAnalyzer::make(std::string_view args) {
 
 GeoJsonAnalyzer::GeoJsonAnalyzer(const Options& options)
   : GeoAnalyzer{S2Options(options.options, options.type != Type::Shape)},
-    _type{options.type} {}
+    _type{options.type},
+    _coding{options.coding} {}
 
 bool GeoJsonAnalyzer::ResetImpl(vpack::Slice data, geo::coding::Options options,
                                 Encoder* encoder) {

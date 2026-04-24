@@ -22,12 +22,16 @@
 
 #include <vpack/serializer.h>
 
+#include <duckdb/common/types/geometry_crs.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
+
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
+#include "catalog/tokenizer.h"
 #include "catalog/types.h"
 
 namespace sdb::catalog {
@@ -41,6 +45,89 @@ Result ValidateInvertedIndexColumns(
         c.catalog_column->type.id() == duckdb::LogicalTypeId::HUGEINT) {
       return {ERROR_BAD_PARAMETER, "Column ", c.name,
               " has unsupported kind and can not be indexed"};
+    }
+  }
+  return {};
+}
+
+// The geo analyzer + sink writer pipeline assumes CRS84 (WGS84, lng/lat in
+// degrees). Column-level CRS is the contract; we accept the common aliases
+// by identifier rather than attempting semantic CRS equivalence (which
+// would need a PROJ-style library). PROJJSON / WKT2 CRS84 definitions that
+// don't hand us a matching identifier are rejected -- users should declare
+// with the short form.
+bool IsCRS84Identifier(std::string_view id) noexcept {
+  return id == "OGC:CRS84" || id == "EPSG:4326" || id == "4326";
+}
+
+// Validate that a geo-family analyzer (GeoJsonAnalyzer / GeoPointAnalyzer) is
+// compatible with the column it's bound to. Runs once per column at CREATE
+// INDEX time.
+//
+// Rules:
+//   - Column must be VARCHAR (GeoJSON text -- validated by the JSON parser at
+//     insert time) or GEOMETRY (strongly typed, CRS declared at the column
+//     level). BLOB is rejected: we have no way to confirm its bytes are WKB.
+//   - For GEOMETRY columns, the declared CRS must be CRS84 (EPSG:4326 /
+//     OGC:CRS84 / SRID 4326). The sink-writer path does no per-row SRID
+//     check, so the column declaration is the contract.
+//   - For GEOMETRY + GeoJsonAnalyzer: coding must be S2Point. VPack coding
+//     stores the original GeoJSON text (not available for WKB); LatLng
+//     codings would require a shape -> LatLng-bytes encoder that
+//     ShapeContainer doesn't implement yet -- reject to avoid silent data
+//     loss at read time.
+Result ValidateGeoAnalyzerColumn(std::string_view column_name,
+                                 const duckdb::LogicalType& col_type,
+                                 const irs::analysis::Analyzer& analyzer) {
+  const auto type_id = analyzer.type();
+  const bool is_geojson =
+    type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
+  const bool is_geopoint =
+    type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id();
+  if (!is_geojson && !is_geopoint) {
+    return {};
+  }
+
+  const auto col_id = col_type.id();
+  if (col_id != duckdb::LogicalTypeId::VARCHAR &&
+      col_id != duckdb::LogicalTypeId::GEOMETRY) {
+    return {ERROR_BAD_PARAMETER, "Column '", column_name,
+            "' uses a geo analyzer; must be VARCHAR (GeoJSON) or GEOMETRY"};
+  }
+
+  if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
+    if (!duckdb::GeoType::HasCRS(col_type)) {
+      return {ERROR_BAD_PARAMETER, "Column '", column_name,
+              "' is GEOMETRY without a CRS; declare it with CRS84 to index"};
+    }
+    const auto& crs = duckdb::GeoType::GetCRS(col_type);
+    if (!IsCRS84Identifier(crs.GetIdentifier())) {
+      return {ERROR_BAD_PARAMETER,
+              "Column '",
+              column_name,
+              "' is GEOMETRY with CRS '",
+              crs.GetIdentifier(),
+              "'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)"};
+    }
+    if (is_geojson) {
+      const auto& geojson =
+        basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
+      using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
+      switch (geojson.coding()) {
+        case Coding::S2Point:
+          break;
+        case Coding::VPack:
+          return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                  "' is GEOMETRY but the geo analyzer uses VPack coding; ",
+                  "VPack stores the original GeoJSON text which GEOMETRY "
+                  "columns do not carry -- use S2Point coding"};
+        case Coding::S2LatLngF64:
+        case Coding::S2LatLngU32:
+          return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                  "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
+                  "not yet supported for GEOMETRY columns -- use S2Point "
+                  "coding"};
+      }
     }
   }
   return {};
@@ -139,6 +226,20 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                          " Required by column '",
                                          c.name,
                                          "'"};
+        }
+        auto analyzer = dict->GetTokenizer();
+        if (!analyzer) {
+          return std::unexpected<Result>{std::in_place,
+                                         ERROR_BAD_PARAMETER,
+                                         "Text search dictionary '",
+                                         c.opclass,
+                                         "' failed to instantiate: ",
+                                         analyzer.error().errorMessage()};
+        }
+        if (auto res = ValidateGeoAnalyzerColumn(c.name, c.catalog_column->type,
+                                                 **analyzer);
+            res.fail()) {
+          return std::unexpected<Result>(std::move(res));
         }
         index_col.text_dictionary = dict->GetId();
         index_col.features = dict->GetFeatures();

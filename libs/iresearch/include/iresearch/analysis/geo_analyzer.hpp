@@ -169,6 +169,11 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
     return irs::Type<GeoJsonAnalyzer>::id();
   }
 
+  // Effective coding this analyzer was configured with. Lets callers (e.g.
+  // CREATE INDEX validation) decide whether the coding is compatible with a
+  // given column type without constructing the vpack options.
+  Coding coding() const noexcept { return _coding; }
+
 #ifdef SDB_GTEST
   auto shapeType() const noexcept { return _type; }
 #endif
@@ -190,6 +195,7 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   S2Point _centroid;
   std::vector<S2LatLng> _cache;
   Type _type;
+  Coding _coding;
 };
 
 }  // namespace irs::analysis

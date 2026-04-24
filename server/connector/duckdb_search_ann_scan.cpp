@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_search_ann_scan.hpp"
+#include "connector/duckdb_search_ann_scan.h"
 
 #include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -44,6 +44,32 @@
 
 namespace sdb::connector {
 namespace {
+
+std::optional<irs::bytes_view> LookupSegmentValue(
+  int64_t id, const irs::IndexReader& reader) {
+  auto [seg_id, doc_id] = irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
+  if (seg_id >= reader.size()) {
+    return std::nullopt;
+  }
+  const auto& segment = reader[seg_id];
+  const auto* pk_col = segment.column(kPkFieldName);
+  if (!pk_col) {
+    return std::nullopt;
+  }
+  auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+  if (!pk_iter) {
+    return std::nullopt;
+  }
+  const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
+  if (!pk_val) {
+    return std::nullopt;
+  }
+  if (pk_iter->seek(doc_id) != doc_id) {
+    return std::nullopt;
+  }
+  auto val = pk_val->value;
+  return val;
+}
 
 void SetupANNFilter(std::unique_ptr<ANNFilter>& filter,
                     duckdb::ClientContext& context, const ANNScan& scan,
@@ -113,30 +139,12 @@ void ANNSearchImpl(SearchAnnScanGlobalState& state,
     if (ids[i] == -1) {
       continue;
     }
-    auto [seg_id, doc_id] =
-      irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
-    if (seg_id >= reader.size()) {
+    auto val = LookupSegmentValue(static_cast<int64_t>(ids[i]), reader);
+    if (!val) {
       continue;
     }
-    const auto& segment = reader[seg_id];
-    const auto* pk_col = segment.column(kPkFieldName);
-    if (!pk_col) {
-      continue;
-    }
-    auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-    if (!pk_iter) {
-      continue;
-    }
-    const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-    if (!pk_val) {
-      continue;
-    }
-    if (pk_iter->seek(doc_id) != doc_id) {
-      continue;
-    }
-    auto val = pk_val->value;
-    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val.data()),
-                                val.size());
+    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val->data()),
+                                val->size());
   }
 }
 
@@ -164,28 +172,12 @@ ANNFilter::ANNFilter(duckdb::ClientContext& context,
 }
 
 bool ANNFilter::is_member(faiss::idx_t id) const {
-  auto [seg_id, doc_id] = irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
-  if (seg_id >= _reader.size()) {
+  auto val = LookupSegmentValue(static_cast<int64_t>(id), _reader);
+
+  if (!val) {
     return false;
   }
-  const auto& segment = _reader[seg_id];
-  const auto* pk_col = segment.column(kPkFieldName);
-  if (!pk_col) {
-    return false;
-  }
-  auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-  if (!pk_iter) {
-    return false;
-  }
-  const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-  if (!pk_val) {
-    return false;
-  }
-  if (pk_iter->seek(doc_id) != doc_id) {
-    return false;
-  }
-  auto val = pk_val->value;
-  std::string_view pk{reinterpret_cast<const char*>(val.data()), val.size()};
+  std::string_view pk{reinterpret_cast<const char*>(val->data()), val->size()};
 
   _scratch.Reset();
   std::array<std::string_view, 1> pks{pk};

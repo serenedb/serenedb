@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_search_range_scan.hpp"
+#include "connector/duckdb_search_range_scan.h"
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -64,7 +64,7 @@ void RangeSearchImpl(SearchRangeScanGlobalState& state,
   for (auto id : ids) {
     auto [seg_id, doc_id] =
       irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
-    if (seg_id >= reader.size()) {
+    if (irs::doc_limits::eof(doc_id) || seg_id >= reader.size()) {
       continue;
     }
     const auto& segment = reader[seg_id];
@@ -73,14 +73,9 @@ void RangeSearchImpl(SearchRangeScanGlobalState& state,
       continue;
     }
     auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-    if (!pk_iter) {
-      continue;
-    }
+    SDB_ASSERT(pk_iter);
     const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-    if (!pk_val) {
-      continue;
-    }
-    if (pk_iter->seek(doc_id) != doc_id) {
+    if (!pk_val || irs::doc_limits::eof(pk_iter->seek(doc_id))) {
       continue;
     }
     auto val = pk_val->value;

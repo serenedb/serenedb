@@ -20,8 +20,11 @@
 
 #pragma once
 
+#include <s2/s2latlng.h>
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <vector>
 
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
@@ -182,6 +185,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   Field _null_field;
   std::string _name_buffer;
   std::string _null_name_buffer;
+  // Reusable vertex scratch for ParseShapeWKB on GEOMETRY columns.
+  std::vector<S2LatLng> _geo_shape_cache;
   irs::IndexWriter::Transaction& _trx;
   std::optional<irs::IndexWriter::Document> _document;
 

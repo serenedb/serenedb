@@ -227,6 +227,14 @@ void DuckDBColumnSerializer::WritePrimitive<bool>(const bool& value) {
   _row_slices.emplace_back(value ? kTrueValue : kFalseValue);
 }
 
+void DuckDBColumnSerializer::WriteGeometryRaw(const duckdb::string_t& value) {
+  // Unlike VARCHAR/BLOB this emits no disambiguating prefix byte -- WKB has
+  // a fixed layout (byte-order + type + body, minimum 5 bytes), so an empty
+  // serialized value is unambiguously NULL (the reader treats empty values
+  // as NULL via validity).
+  _row_slices.emplace_back(value.GetData(), value.GetSize());
+}
+
 template<>
 void DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
   const duckdb::string_t& value) {
@@ -376,6 +384,10 @@ void DuckDBColumnSerializer::WriteConstantColumn(
              type.id() == duckdb::LogicalTypeId::BLOB) {
     auto& str = *reinterpret_cast<const duckdb::string_t*>(const_data);
     WritePrimitive(str);
+  } else if (type.id() == duckdb::LogicalTypeId::GEOMETRY) {
+    SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+    auto& wkb = *reinterpret_cast<const duckdb::string_t*>(const_data);
+    WriteGeometryRaw(wkb);
   } else {
     // Complex types (LIST/MAP/STRUCT) -- WriteSingleValue handles them
     // via dispatch to WriteListValue/WriteMapValue/WriteStructValue
@@ -457,6 +469,24 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
     case duckdb::LogicalTypeId::BLOB:
       write_scalar(static_cast<const duckdb::string_t*>(nullptr));
       return;
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      auto* data = vdata.GetData<duckdb::string_t>();
+      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+        if (row_keys[row].empty()) {
+          continue;
+        }
+        auto idx = vdata.sel->get_index(row);
+        if (!vdata.validity.RowIsValid(idx)) {
+          write_null(row);
+          continue;
+        }
+        ResetForNewRow();
+        WriteGeometryRaw(data[idx]);
+        WriteRowSlices(writer, row_keys[row], index_writers);
+      }
+      return;
+    }
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       write_scalar(static_cast<const duckdb::timestamp_t*>(nullptr));
@@ -565,6 +595,28 @@ void DuckDBColumnSerializer::WriteColumn(
       WriteFlatColumn<Writer, duckdb::string_t>(writer, vec, num_rows, row_keys,
                                                 index_writers);
       break;
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      auto* raw = duckdb::FlatVector::GetData<duckdb::string_t>(vec);
+      auto& validity = duckdb::FlatVector::Validity(vec);
+      bool may_have_nulls = !validity.CannotHaveNull();
+      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+        if (row_keys[row].empty()) {
+          continue;
+        }
+        if (may_have_nulls && !validity.RowIsValid(row)) {
+          writer.WriteNull(row_keys[row]);
+          for (auto* iw : index_writers) {
+            iw->Write({}, row_keys[row]);
+          }
+          continue;
+        }
+        ResetForNewRow();
+        WriteGeometryRaw(raw[row]);
+        WriteRowSlices(writer, row_keys[row], index_writers);
+      }
+      break;
+    }
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       WriteFlatColumn<Writer, duckdb::timestamp_t>(writer, vec, num_rows,
@@ -896,6 +948,11 @@ void DuckDBColumnSerializer::WriteSubVector(const duckdb::Vector& vec,
       break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
+    case duckdb::LogicalTypeId::GEOMETRY:
+      // GEOMETRY: same string_t layout; sub-vector format already uses a
+      // length array so no prefix disambiguation is needed.
+      SDB_ASSERT(type.id() != duckdb::LogicalTypeId::GEOMETRY ||
+                 type.InternalType() == duckdb::PhysicalType::VARCHAR);
       WriteFlatSubVectorVarchar(vec, offset, count);
       break;
     case duckdb::LogicalTypeId::LIST:
@@ -1143,6 +1200,25 @@ void DuckDBColumnSerializer::WriteSingleValue(const duckdb::Vector& vec,
       }
       break;
     }
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      if (vec.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
+        WriteGeometryRaw(
+          duckdb::FlatVector::GetData<duckdb::string_t>(vec)[idx]);
+      } else {
+        // Non-flat: copy raw WKB to arena so the slice stays stable.
+        auto val = vec.GetValue(idx);
+        auto& str = duckdb::StringValue::Get(val);
+        if (str.empty()) {
+          _row_slices.emplace_back();
+        } else {
+          auto* buf = Allocate(str.size());
+          std::memcpy(buf, str.data(), str.size());
+          _row_slices.emplace_back(buf, str.size());
+        }
+      }
+      break;
+    }
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       WriteScalarField<duckdb::timestamp_t>(vec, idx);
@@ -1336,6 +1412,12 @@ void DuckDBColumnSerializer::WriteConstantSubVector(
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
       WritePrimitive(*reinterpret_cast<const duckdb::string_t*>(val));
+      break;
+    case duckdb::LogicalTypeId::GEOMETRY:
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      // Raw WKB bytes, consistent with WriteFlatSubVectorVarchar (the length
+      // array in the sub-vector header disambiguates empty from null).
+      WriteGeometryRaw(*reinterpret_cast<const duckdb::string_t*>(val));
       break;
     default:
       // For complex constant, serialize as single element then replicate
@@ -1593,6 +1675,9 @@ void DuckDBColumnSerializer::WriteDictionarySubVector(
       return;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
+    case duckdb::LogicalTypeId::GEOMETRY:
+      SDB_ASSERT(type.id() != duckdb::LogicalTypeId::GEOMETRY ||
+                 type.InternalType() == duckdb::PhysicalType::VARCHAR);
       WriteDictionarySubVectorVarchar(vdata, offset, count);
       return;
     default:

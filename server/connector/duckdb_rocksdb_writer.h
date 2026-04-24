@@ -131,6 +131,12 @@ class DuckDBColumnSerializer {
   template<typename T>
   void WritePrimitive(const T& value);
 
+  // GEOMETRY write path: raw WKB bytes, no kStringPrefix disambiguation --
+  // empty value means NULL (valid WKB is at least 5 bytes: byte-order + type).
+  // value must be in stable memory (vector buffer, arena, or ConstantVector
+  // data). NOT a stack temporary.
+  void WriteGeometryRaw(const duckdb::string_t& value);
+
   // Per-element write for WriteSingleValue (struct fields, map keys/values).
   // For FLAT_VECTOR: zero-copy pointer into the vector's stable heap buffer.
   // For non-flat (dict, constant): copies to arena, since GetVectorValue<T>

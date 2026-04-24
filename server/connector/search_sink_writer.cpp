@@ -21,14 +21,18 @@
 #include "search_sink_writer.hpp"
 
 #include <duckdb/common/enum_util.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/endian.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
+#include "geo/shape_container.h"
+#include "geo/wkb.h"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -182,6 +186,10 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
       SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
       break;
     }
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      SetupColumnWriter<duckdb::LogicalTypeId::GEOMETRY>(column_id, have_nulls);
+      break;
+    }
     default:
       // Unsupported type for inverted index (e.g. INTEGER without opclass).
       // Skip this column rather than crashing in WriteImpl.
@@ -290,6 +298,42 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
         MakeStoreWriter(make_nullable_writer_func(&WriteVectorValue));
     } else {
       _current_writer = MakeStoreWriter(&WriteVectorValue);
+    }
+  } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
+    // GEOMETRY column: WKB bytes arrive in cell_slices, are parsed to an
+    // S2 ShapeContainer database-side, then handed to the geo analyzer via
+    // reset(ShapeContainer&&). This avoids the JSON-text path and skips the
+    // vpack parse that VARCHAR/JSON columns need.
+    search::mangling::MangleString(_name_buffer);
+    _field.PrepareForStringValue(_analyzer_provider(column_id));
+    const bool has_store = _field.store_attr != nullptr;
+    auto geo_writer = [this](std::string_view,
+                             std::span<const rocksdb::Slice> cell_slices,
+                             Field& field) -> Field& {
+      SDB_ASSERT(!cell_slices.empty());
+      // Raw WKB: last slice (row-prefix serialization may prepend other
+      // slices, so use back()).
+      std::string_view wkb{cell_slices.back().data(),
+                           cell_slices.back().size()};
+      sdb::geo::ShapeContainer shape;
+      // Parse failure and reset failure are treated silently (option A from
+      // the port plan): the analyzer keeps whatever state it had, which at
+      // worst means this row contributes no new terms. Matches the existing
+      // VARCHAR path behavior on bad input.
+      (void)sdb::geo::ParseShapeWKB(wkb, shape, _geo_shape_cache);
+      auto& geo =
+        basics::downCast<irs::analysis::GeoAnalyzer>(**field.string_analyzer);
+      (void)geo.reset(std::move(shape));
+      return field;
+    };
+    if (has_store) {
+      _current_writer =
+        have_nulls ? MakeIndexStoreWriter(make_nullable_writer_func(geo_writer))
+                   : MakeIndexStoreWriter(geo_writer);
+    } else {
+      _current_writer =
+        have_nulls ? MakeIndexWriter(make_nullable_writer_func(geo_writer))
+                   : MakeIndexWriter(geo_writer);
     }
   } else {
     // Defensive: SwitchColumnImpl only calls this for Kinds handled above.

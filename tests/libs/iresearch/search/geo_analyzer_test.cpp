@@ -74,60 +74,40 @@ TEST(GeoBench, sizes) {
   vpack_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   s2_analyzer->reset(irs::slice_to_view<char>(builder->slice()));
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Point",
       "coordinates": [ 6.537, 50.332 ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPoint",
         "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPoint",
         "coordinates": [ [ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ],[ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "LineString",
         "coordinates": [ [ 6.537, 50.332 ], [ 6.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiLineString",
@@ -135,24 +115,16 @@ TEST(GeoBench, sizes) {
                          [ [ 6.621, 50.332 ], [ 6.621, 50.376 ] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,52.1], [6.1,51.1], [6.1,50.1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "MultiPolygon",
@@ -161,70 +133,46 @@ TEST(GeoBench, sizes) {
                          [ [ [6.1,50.1], [6.5,50.1], [6.5,51.1], [6.1,51.1], [6.1,50.1] ] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [6.1,50.1], [7.5,50.1], [7.5,51.1], [6.1,51.1], [6.1,50.1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "LineString",
         "coordinates": [ [ 5.437, 50.332 ], [ 7.537, 50.376 ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [1,1], [4,1], [4,4], [1,4], [1,1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(R"=(
       { "type": "Polygon",
         "coordinates": [ [ [1.1,1.1], [4.1,1.1], [4.1,4.1], [1.1,4.1], [1.1,1.1] ] ]
       })=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 
   builder = vpack::Parser::fromJson(
     R"=({"type": "Polygon","coordinates": [[[100.318391,13.535502],[100.318391,14.214848],[101.407575,14.214848],[101.407575,13.535502],[100.318391,13.535502]]]})=");
   std::cerr << builder->toString() << std::endl;
-  std::cerr
-    << store_size(*vpack_analyzer, builder->slice())
-    << std::endl;
-  std::cerr
-    << store_size(*s2_analyzer, builder->slice())
-    << std::endl;
+  std::cerr << store_size(*vpack_analyzer, builder->slice()) << std::endl;
+  std::cerr << store_size(*s2_analyzer, builder->slice()) << std::endl;
 }
 
 TEST(GeoPointAnalyzerTest, constants) {

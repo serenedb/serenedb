@@ -21,7 +21,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/escaping.h>
-#include <absl/strings/internal/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <fuerte/helper.h>
 #include <fuerte/jwt.h>
@@ -86,22 +85,9 @@ std::string jwt::GenerateRawJwt(std::string_view secret,
     header_builder.add("typ", "JWT");
   }
 
-  // https://tools.ietf.org/html/rfc7515#section-2 requires
-  // JWT to use base64-encoding without trailing padding `=` chars
-  // TODO: Maybe I wrong but it looks like we **should** use only base64url
-  //  Which is by default without padding.
-
-  auto header = header_builder.toJson();
-  auto body = body_slice.toJson();
-  std::string header_base64;
-  std::string body_base64;
-
-  absl::strings_internal::Base64EscapeInternal(
-    reinterpret_cast<const unsigned char*>(header.data()), header.size(),
-    &header_base64, false, absl::strings_internal::kBase64Chars);
-  absl::strings_internal::Base64EscapeInternal(
-    reinterpret_cast<const unsigned char*>(body.data()), body.size(),
-    &body_base64, false, absl::strings_internal::kBase64Chars);
+  // https://tools.ietf.org/html/rfc7515
+  auto header_base64 = absl::WebSafeBase64Escape(header_builder.toJson());
+  auto body_base64 = absl::WebSafeBase64Escape(body_slice.toJson());
 
   auto full_message = absl::StrCat(header_base64, ".", body_base64);
 

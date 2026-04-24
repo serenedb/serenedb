@@ -40,83 +40,89 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
+namespace {
+
+void RangeSearchImpl(SearchRangeScanGlobalState& state,
+                     duckdb::ClientContext& context) {
+  auto& snapshot =
+    GetSereneDBContext(context).EnsureSearchSnapshot(state.scan->index_id);
+  auto& reader = snapshot.reader;
+
+  if (reader.size() == 0) {
+    state.finished = true;
+    return;
+  }
+  std::vector<float> dis;
+  std::vector<int64_t> ids;
+  irs::HNSWRangeSearchInfo info{
+    .query =
+      reinterpret_cast<const irs::byte_type*>(state.scan->query_vector.data()),
+    .radius = state.scan->radius,
+  };
+  reader.RangeSearch(state.scan->field_name, info, dis, ids);
+  state.pk_bytes.reserve(ids.size());
+  for (auto id : ids) {
+    auto [seg_id, doc_id] =
+      irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
+    if (seg_id >= reader.size()) {
+      continue;
+    }
+    const auto& segment = reader[seg_id];
+    const auto* pk_col = segment.column(kPkFieldName);
+    if (!pk_col) {
+      continue;
+    }
+    auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
+    if (!pk_iter) {
+      continue;
+    }
+    const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
+    if (!pk_val) {
+      continue;
+    }
+    if (pk_iter->seek(doc_id) != doc_id) {
+      continue;
+    }
+    auto val = pk_val->value;
+    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val.data()),
+                                val.size());
+  }
+}
+
+}  // namespace
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto state = duckdb::make_uniq<SearchRangeScanGlobalState>();
   InitCommonState(*state, context, bind_data, input);
+  state->scan = &bind_data.scan_source->Cast<RangeSearchScan>();
 
-  // Eager: run HNSW range search + collect pks + build materializer
-  // here so the function() loop is just hash-lookups per batch.
-  auto& rss = bind_data.scan_source->Cast<RangeSearchScan>();
-  auto& snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(rss.index_id);
-
-  if (snapshot.reader.size() > 0) {
-    std::vector<float> dis;
-    std::vector<int64_t> ids;
-
-    irs::HNSWRangeSearchInfo info{
-      .query = reinterpret_cast<const irs::byte_type*>(rss.query_vector.data()),
-      .radius = rss.radius,
-    };
-    snapshot.reader.RangeSearch(rss.field_name, info, dis, ids);
-
-    auto& reader = snapshot.reader;
-    state->ann_pk_bytes.reserve(ids.size());
-    for (size_t i = 0; i < ids.size(); ++i) {
-      auto [seg_id, doc_id] =
-        irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
-      if (seg_id >= reader.size()) {
-        continue;
-      }
-      const auto& segment = reader[seg_id];
-      const auto* pk_col = segment.column(kPkFieldName);
-      if (!pk_col) {
-        continue;
-      }
-      auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-      if (!pk_iter) {
-        continue;
-      }
-      const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-      if (!pk_val) {
-        continue;
-      }
-      if (pk_iter->seek(doc_id) != doc_id) {
-        continue;
-      }
-      auto val = pk_val->value;
-      state->ann_pk_bytes.emplace_back(
-        reinterpret_cast<const char*>(val.data()), val.size());
-    }
-  }
-
-  if (!state->ann_pk_bytes.empty()) {
-    state->materializer = MakeRowMaterializer(
-      context, bind_data, state->snapshot, state->ann_pk_bytes,
-      state->projected_columns, state->projected_types, bind_data.column_ids,
-      nullptr);
-  }
+  state->materializer = MakeRowMaterializer(
+    context, bind_data, state->snapshot, {}, state->projected_columns,
+    state->projected_types, bind_data.column_ids, nullptr);
   return duckdb::unique_ptr_cast<SearchRangeScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(
     std::move(state));
 }
 
-void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
+void SearchRangeScanFunction(duckdb::ClientContext& context,
                              duckdb::TableFunctionInput& data,
                              duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchRangeScanGlobalState>();
 
-  if (gstate.finished || gstate.ann_pk_bytes.empty()) {
-    gstate.finished = true;
+  if (gstate.finished) {
     output.SetCardinality(0);
     return;
   }
 
-  const size_t total = gstate.ann_pk_bytes.size();
-  const size_t batch_start = gstate.ann_current_idx;
+  SDB_ASSERT(gstate.scan);
+  if (gstate.pk_bytes.empty()) {
+    RangeSearchImpl(gstate, context);
+  }
+
+  const size_t total = gstate.pk_bytes.size();
+  const size_t batch_start = gstate.current_idx;
 
   if (batch_start >= total) {
     gstate.finished = true;
@@ -127,7 +133,6 @@ void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
   const size_t batch_size =
     std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
 
-  // Virtual-column slots (rowid / tableoid): handled inline here.
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     if (gstate.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
       continue;
@@ -143,24 +148,18 @@ void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
     }
   }
 
-  // Real columns: stream from the materializer constructed during
-  // InitGlobal-after-iresearch.
   std::vector<std::string_view> pk_batch;
   pk_batch.reserve(batch_size);
   for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-    pk_batch.emplace_back(gstate.ann_pk_bytes[batch_start + i]);
+    pk_batch.emplace_back(gstate.pk_bytes[batch_start + i]);
   }
   gstate.materializer->Materialize(pk_batch, output);
 
-  gstate.ann_current_idx += batch_size;
+  gstate.current_idx += batch_size;
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
-  if (batch_size > 0) {
-    gstate.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
-  }
-
-  if (gstate.ann_current_idx >= total) {
-    gstate.finished = true;
-  }
+  SDB_ASSERT(batch_size > 0);
+  gstate.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
+  gstate.finished = gstate.current_idx >= total;
 }
 
 }  // namespace sdb::connector

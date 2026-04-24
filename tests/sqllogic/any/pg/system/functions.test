@@ -1,5 +1,5 @@
 statement ok
-SET search_path TO public, some_schema;
+SET search_path TO public,some_schema;
 
 
 query
@@ -39,3 +39,506 @@ SELECT current_schemas(true);
 ----
 current_schemas
 {pg_catalog,public,some_schema}
+
+
+# search_path_canonical() exposes the catalog-qualified form
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '.public, ' || current_database() || '.some_schema')::text AS r;
+----
+r
+true
+
+
+# SHOW search_path strips catalog prefix and only shows current-DB entries
+query
+SHOW search_path;
+----
+search_path
+public, some_schema
+
+
+# in_search_path validates schema existence (only true for schemas that exist)
+onlyif serenedb
+query
+SELECT in_search_path(current_database(), 'public')::text;
+----
+in_search_path
+true
+
+
+onlyif serenedb
+query
+SELECT in_search_path(current_database(), 'some_schema')::text;
+----
+in_search_path
+true
+
+
+# SET unknown bare schema is accepted silently (PG-compliant)
+statement ok
+SET search_path TO nonexistent;
+
+
+# But the schema is reported as not in path because it doesn't exist
+onlyif serenedb
+query
+SELECT in_search_path(current_database(), 'nonexistent')::text;
+----
+in_search_path
+false
+
+
+# current_schema returns NULL when no valid schema is in the path
+query
+SELECT (current_schema IS NULL)::text AS r;
+----
+r
+true
+
+
+# current_schemas filters out invalid entries
+query
+SELECT current_schemas(false);
+----
+current_schemas
+{}
+
+
+query
+SELECT current_schemas(true);
+----
+current_schemas
+{pg_catalog}
+
+
+# Multiple bare names in SET (PG list syntax — comma + optional whitespace)
+statement ok
+SET search_path TO public,some_schema;
+
+
+query
+SHOW search_path;
+----
+search_path
+public, some_schema
+
+
+statement ok
+SET search_path TO 'public,some_schema';
+
+
+query
+SHOW search_path;
+----
+search_path
+"public,some_schema"
+
+
+# Single double-quoted identifier with a comma — one atomic entry.
+statement ok
+SET search_path TO "a,b";
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b"')::text AS r;
+----
+r
+true
+
+
+# Multi-arg of quoted identifiers, each with a comma — two atomic entries.
+statement ok
+SET search_path TO "a,b", "c,d";
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b", "c,d"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '."c,d"')::text AS r;
+----
+r
+true
+
+
+# Mix of quoted-with-comma and bare — three entries.
+statement ok
+SET search_path TO "a,b", z, "c,d";
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b", z, "c,d"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '.z, ' || current_database() || '."c,d"')::text AS r;
+----
+r
+true
+
+
+# Empty string literal -> empty search_path (no entries).
+statement ok
+SET search_path TO '';
+
+
+query
+SELECT current_schemas(false);
+----
+current_schemas
+{}
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = '')::text AS r;
+----
+r
+true
+
+
+# SET ... TO DEFAULT maps to RESET, restoring the connection default.
+statement ok
+SET search_path TO DEFAULT;
+
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() LIKE current_database() || '.%, ' || current_database() || '.public'
+   AND search_path_canonical() NOT LIKE '%$user%')::text AS r;
+----
+r
+true
+
+
+# Single bare identifier with uppercase needs quoting on display.
+statement ok
+SET search_path TO "A,b";
+
+
+query
+SHOW search_path;
+----
+search_path
+"A,b"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."A,b"')::text AS r;
+----
+r
+true
+
+
+# Catalog-qualified entries: SHOW strips the current DB prefix, so entries
+# qualified with the current DB show as bare schema names. These tests assume
+# the connection's current_database is `postgres` (the default in both PG
+# and our test harness).
+onlyif serenedb
+statement ok
+SET search_path TO postgres.public;
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '.public')::text AS r;
+----
+r
+true
+
+
+# Catalog-qualified with a quoted schema containing a comma -> one entry.
+onlyif serenedb
+statement ok
+SET search_path TO postgres."a,b";
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+"a,b"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b"')::text AS r;
+----
+r
+true
+
+
+# Two catalog-qualified quoted-comma entries -> two entries.
+onlyif serenedb
+statement ok
+SET search_path TO postgres."a,b", postgres."c,d";
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+"a,b", "c,d"
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '."c,d"')::text AS r;
+----
+r
+true
+
+
+# Mix: qualified-with-comma, bare, qualified -> three entries.
+onlyif serenedb
+statement ok
+SET search_path TO postgres."a,b", z, postgres.public;
+
+
+onlyif serenedb
+query
+SHOW search_path;
+----
+search_path
+"a,b", z, public
+
+
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '."a,b", ' || current_database() || '.z, ' || current_database() || '.public')::text AS r;
+----
+r
+true
+
+
+# Mix of valid and invalid: only valid reported, but invalid kept in path
+statement ok
+SET search_path TO bogus, public;
+
+
+query
+SELECT current_schema;
+----
+current_schema
+public
+
+
+query
+SELECT current_schemas(false);
+----
+current_schemas
+{public}
+
+
+# search_path_canonical shows raw form including invalid entries
+onlyif serenedb
+query
+SELECT (search_path_canonical() = current_database() || '.bogus, ' || current_database() || '.public')::text AS r;
+----
+r
+true
+
+
+# Explicit catalog.schema with unknown catalog still errors (avoids
+# the lookup short-circuit bug for unqualified names)
+statement ok
+SET search_path TO 'badcat.public';
+
+
+# Reset for cleanup
+statement ok
+SET search_path TO public,some_schema;
+
+
+# ----------------------------------------------------------------------
+# $user resolution in search_path
+# ----------------------------------------------------------------------
+
+# $user resolves to session user in search_path_canonical
+skipif postgres
+statement ok
+SET search_path TO "$user", public;
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+# search_path_canonical expands "$user" (no longer shows "$user" literal) and
+# ends with the public entry qualified by the current DB.
+skipif postgres
+query
+SELECT search_path_canonical() LIKE current_database() || '.%, ' || current_database() || '.public'
+   AND search_path_canonical() NOT LIKE '%$user%';
+----
+?column?
+t
+
+
+# current_schema falls through to public when no schema named after the user exists
+query
+SELECT current_schema = 'public';
+----
+?column?
+t
+
+
+# Creating a schema named after the session user shifts current_schema to it
+statement ok
+CREATE SCHEMA some_user_schema;
+
+
+statement ok
+SET search_path TO some_user_schema, public;
+
+
+query
+SELECT current_schema = 'some_user_schema';
+----
+?column?
+t
+
+
+# Dropping the matched schema falls current_schema back to the next entry
+statement ok
+DROP SCHEMA some_user_schema;
+
+
+query
+SELECT current_schema = 'public';
+----
+?column?
+t
+
+
+# ----------------------------------------------------------------------
+# $user combined with explicit database qualification
+# ----------------------------------------------------------------------
+
+# Explicit DB on the $user entry only.
+skipif postgres
+statement ok
+SET search_path TO postgres."$user", public;
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+# Canonical expands $user for the postgres-qualified entry too; still no
+# "$user" literal in the resolved form, public remains current-DB qualified.
+skipif postgres
+query
+SELECT (search_path_canonical() LIKE current_database() || '.%, ' || current_database() || '.public'
+   AND search_path_canonical() NOT LIKE '%$user%')::text AS r;
+----
+r
+true
+
+
+# Explicit DB on both entries — SHOW strips current-DB prefix consistently.
+skipif postgres
+statement ok
+SET search_path TO postgres."$user", postgres.public;
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+# Sole entry is DB-qualified $user.
+skipif postgres
+statement ok
+SET search_path TO postgres."$user";
+
+
+skipif postgres
+query
+SHOW search_path;
+----
+search_path
+"$user"
+
+
+skipif postgres
+query
+SELECT (search_path_canonical() LIKE current_database() || '.%'
+   AND search_path_canonical() NOT LIKE '%$user%')::text AS r;
+----
+r
+true
+
+
+# Schema named after the session user (created under explicit DB) is
+# picked up by current_schema via $user resolution.
+skipif postgres
+statement ok
+CREATE SCHEMA some_user_schema;
+
+
+skipif postgres
+statement ok
+SET search_path TO postgres."$user", some_user_schema;
+
+
+# $user doesn't match any real schema (no schema named after the session
+# user) -> current_schema falls through to the next entry.
+skipif postgres
+query
+SELECT current_schema = 'some_user_schema';
+----
+?column?
+t
+
+
+skipif postgres
+statement ok
+DROP SCHEMA some_user_schema;

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
@@ -28,84 +27,33 @@
 #include <string>
 #include <utility>
 
-#include "basics/fwd.h"
+#include "catalog/storage_options.h"
 #include "catalog/types.h"
-#include "connector/file_table.hpp"
 
 namespace sdb {
 
+// Bag of name -> value WITH-options for an external table. Forwarded
+// verbatim to DuckDB's file reader (read_parquet / read_csv_auto /
+// read_json_auto) at scan time. DuckDB decides which names it accepts.
+//
+// The catalog stores everything as strings; DuckDB's reader does its own
+// type coercion when it consumes the named_parameter_map_t.
 class FormatOptions {
  public:
-  virtual ~FormatOptions() = default;
-  virtual connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const = 0;
-  virtual connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const = 0;
-  virtual void toVPack(vpack::Builder&) const = 0;
+  FormatOptions() = default;
+  explicit FormatOptions(std::vector<std::pair<std::string, std::string>> pairs)
+    : _pairs{std::move(pairs)} {}
 
-  FileFormat format() const noexcept { return _format; }
+  const std::vector<std::pair<std::string, std::string>>& Options()
+    const noexcept {
+    return _pairs;
+  }
 
+  void toVPack(vpack::Builder& b) const;
   static std::shared_ptr<FormatOptions> fromVPack(vpack::Slice slice);
 
- protected:
-  FormatOptions(FileFormat format) : _format{format} {}
-  FileFormat _format;
-};
-
-class TextFormatOptions : public FormatOptions {
- public:
-  TextFormatOptions(uint8_t delim, uint8_t escape, std::string null_string,
-                    uint8_t header)
-    : FormatOptions{FileFormat::Text},
-      _delim{delim},
-      _escape{escape},
-      _null_string{std::move(null_string)},
-      _header{header} {}
-
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
-  void toVPack(vpack::Builder& b) const final;
-
  private:
-  uint8_t _delim;
-  uint8_t _escape;
-  std::string _null_string;
-  uint8_t _header;
-};
-
-class ParquetFormatOptions : public FormatOptions {
- public:
-  ParquetFormatOptions() : FormatOptions{FileFormat::Parquet} {}
-
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
-  void toVPack(vpack::Builder& b) const final;
-};
-
-class DwrfFormatOptions : public FormatOptions {
- public:
-  DwrfFormatOptions() : FormatOptions{FileFormat::Dwrf} {}
-
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
-  void toVPack(vpack::Builder& b) const final;
-};
-
-class OrcFormatOptions : public FormatOptions {
- public:
-  OrcFormatOptions() : FormatOptions{FileFormat::Orc} {}
-
-  connector::DwioWriterOptions createWriterOptions(
-    velox::RowTypePtr schema) const final;
-  connector::DwioReaderOptions createReaderOptions(
-    velox::RowTypePtr schema) const final;
-  void toVPack(vpack::Builder& b) const final;
+  std::vector<std::pair<std::string, std::string>> _pairs;
 };
 
 template<typename Context>

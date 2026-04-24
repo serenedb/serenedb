@@ -24,11 +24,8 @@
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::tokenizer_options {
 

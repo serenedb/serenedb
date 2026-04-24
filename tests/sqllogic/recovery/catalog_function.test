@@ -13,7 +13,7 @@ BEGIN ATOMIC
 END;
 
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 statement error connection closed
 SELECT 1;

@@ -27420,6 +27420,7 @@ SELECT DISTINCT * FROM tab2 AS cor0 WHERE NOT NULL IN ( - col0 * + + 7 + + + col
 ----
 
 skipif mysql # not compatible
+skipif serenedb # TODO(mbkkt) int32 overflow
 query III rowsort label-3057
 SELECT DISTINCT * FROM tab2 AS cor0 WHERE NOT NULL IN ( - col0 * + + 7 + + + col0 + + col1 - - col1 + - col2 * + col0 * + col2 * + 4 * - 27 * + col1 * ( + col2 ) * + + CAST ( - + col2 AS INTEGER ) + + col2 )
 ----

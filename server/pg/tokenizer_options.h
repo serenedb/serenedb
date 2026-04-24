@@ -36,6 +36,7 @@
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
@@ -234,9 +235,18 @@ inline constexpr OptionInfo kPathHierarchyOptions[] = {
 // Groups
 
 inline constexpr OptionGroup kEdgeNGramGroup{
-  "edgengram", kEdgeNGramOptions, {}};
-inline constexpr OptionGroup kTextSubgroups[] = {kEdgeNGramGroup};
-inline constexpr OptionGroup kFeaturesGroup{"features", kFeaturesOptions, {}};
+  "edgengram",
+  kEdgeNGramOptions,
+  {},
+};
+inline constexpr OptionGroup kTextSubgroups[] = {
+  kEdgeNGramGroup,
+};
+inline constexpr OptionGroup kFeaturesGroup{
+  "features",
+  kFeaturesOptions,
+  {},
+};
 inline constexpr OptionGroup kTextGroup{
   irs::analysis::TextTokenizer::type_name(),
   kTextOptions,
@@ -282,7 +292,11 @@ inline constexpr OptionGroup kMultiDelimiterGroup{
   kMultiDelimiterOptions,
   {},
 };
-inline constexpr OptionGroup kCopyFromGroup{"copy_from", kCopyFromOptions, {}};
+inline constexpr OptionGroup kCopyFromGroup{
+  "copy_from",
+  kCopyFromOptions,
+  {},
+};
 inline constexpr OptionGroup kMinHashGroup{
   irs::analysis::MinHashTokenizer::type_name(),
   kMinHashOptions,
@@ -313,6 +327,11 @@ inline constexpr OptionGroup kPathHierarchyGroup{
   kPathHierarchyOptions,
   {},
 };
+inline constexpr OptionGroup kUnionGroup{
+  irs::analysis::UnionTokenizer::type_name(),
+  {},
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,
@@ -320,6 +339,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kClassificationGroup,   kCollationGroup, kDelimiterGroup,
   kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
   kSegmentationGroup,     kPipelineGroup,  kPatternGroup,
-  kPathHierarchyGroup,    kCopyFromGroup};
+  kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup,
+};
 
 }  // namespace sdb::pg::tokenizer_options

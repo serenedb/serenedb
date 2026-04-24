@@ -511,6 +511,14 @@ class IndexWriter : private util::Noncopyable {
   // Returns overall number of buffered documents in a writer
   uint64_t BufferedDocs() const;
 
+  // Returns true if there are segments currently in use by the writer
+  // (i.e., alive ActiveSegmentContext instances from live Transactions).
+  // Used to detect outstanding search transactions that would trip the
+  // ~IndexWriter assertion on destruction.
+  bool HasActiveSegments() const noexcept {
+    return _segments_active.load(std::memory_order_acquire) != 0;
+  }
+
   // Clears the existing index repository by staring an empty index.
   // Previously opened readers still remain valid.
   // truncate transaction tick
@@ -951,7 +959,7 @@ class IndexWriter : private util::Noncopyable {
   void Abort() noexcept;
 
   IndexFeatures _wand_features{};  // Set of features required for wand
-  ScorersView _wand_scorers;
+  ScorerPtr _wand_scorer;
   FeatureInfoProvider _feature_info;
   ColumnInfoProvider _column_info;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments

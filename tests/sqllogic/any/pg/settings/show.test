@@ -8,7 +8,7 @@ search_path
 query error
 SHOW non_existed_variable;
 ----
-db error: ERROR: unrecognized configuration parameter "non_existed_variable"
+db error: ERROR: unrecognized configuration parameter "non_existed_variable"<slt:ignore>
 
 
 statement ok

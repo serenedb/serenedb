@@ -42,7 +42,6 @@ class VirtualTableSnapshot;
 namespace sdb {
 
 class TableShard;
-class ValidatorBase;
 class KeyGenerator;
 struct ShardingStrategy;
 struct TableOptions;

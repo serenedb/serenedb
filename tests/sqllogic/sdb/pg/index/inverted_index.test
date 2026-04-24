@@ -83,6 +83,141 @@ a	b	c
 4	quick brown fox jumps over big dog	value b
 
 statement ok
+INSERT INTO foo values (5, 'quick brown lazy fox runs over big dog', 'value c');
+
+statement ok
+INSERT INTO foo values (6, 'quick fox over big dog', 'value c');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+# Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+# Exact gap: 2 words between 'quick' and 'fox' -- matches only row 5 ('quick brown lazy fox')
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 2, 'fox') ORDER BY a;
+----
+a	b
+5	quick brown lazy fox runs over big dog
+
+# Exact gap: 0 words between (adjacent) -- matches only row 6 ('quick fox')
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 0, 'fox') ORDER BY a;
+----
+a	b
+6	quick fox over big dog
+
+# Range gap [0,1]: 0 or 1 words between 'quick' and 'fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[0,1], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+6	quick fox over big dog
+
+# Range gap [1,2]: 1 or 2 words between 'quick' and 'fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[1,2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Range gap with bracket-literal syntax [1,2] -- also binds to LIST,
+# same as ARRAY[1,2] above.
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Range gap with explicit fixed-size ARRAY cast -- exercises the ARRAY
+# branch of FromPhrase (unadorned ARRAY[..] / [..] bind to LIST, only an
+# explicit INTEGER[n] cast produces a fixed-size ARRAY value).
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2]::INTEGER[2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Multi-token pattern with gap: 'quick brown' then 1 word then 'fox' -- only row 5 has 'brown lazy fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick brown', 1, 'fox') ORDER BY a;
+----
+a	b
+5	quick brown lazy fox runs over big dog
+
+# Multiple gaps: 'quick' +1 word+ 'fox' +3 words+ 'dog'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox', 3, 'dog') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+# Error: leading text pattern tokenizes to nothing (empty string) so the
+# following integer gap has no preceding text -- covers the opts->empty()
+# check in the integer gap branch of FromPhrase.
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, '', 1, 'fox');
+----
+db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+
+
+# Same as above but via a range gap -- covers the opts->empty() check
+# in the LIST/ARRAY gap branch of FromPhrase.
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, '', ARRAY[1,2], 'fox');
+----
+db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+
+
+# Error: gap at end with no following text pattern
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1);
+----
+db error: ERROR: PHRASE ends with a gap; a text pattern must follow each gap
+
+
+# Error: two consecutive gaps
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1, 2, 'fox');
+----
+db error: ERROR: PHRASE has consecutive gaps at argument 3
+
+
+# Error: range gap with min > max
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[3,1], 'fox');
+----
+db error: ERROR: PHRASE gap array at argument 2 min (3) must not exceed max (1)
+
+
+statement ok
 DROP TABLE foo;
 
 control substitution on
@@ -114,13 +249,36 @@ count
 
 
 query
-EXPLAIN (EXECUTION) SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+EXPLAIN SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Aggregation[1][SINGLE count := presto_count()] -> "count":BIGINT
-  -- TableScan[0][vedernikoff, type=search_lookup, filter=AND[PHRASE[b(string) = <Term:pudge(0, 0); >] && PHRASE[b(string) = <Term:game(0, 0); >]]] ->
+┌───────────────────────────┐
+│    UNGROUPED_AGGREGATE    │
+│    ────────────────────   │
+│        Aggregates:        │
+│        count_star()       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      IRESEARCH_COUNT      │
+│    ────────────────────   │
+│     Table: vedernikoff    │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│  <Term:pudge(0, 0); >] && │
+│  PHRASE[b(string) = <Term │
+│      :game(0, 0); >]]     │
+│                           │
+│          Output:          │
+│       row-count only      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 
 query
@@ -132,6 +290,7 @@ a	b
 3	anchin-chan watches anime at night
 4	pudge goes bot every game
 
+
 query
 SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR a = 2 ORDER BY a;
 ----
@@ -139,6 +298,7 @@ a	b
 1	pudge goes mid every game
 2	anchin-chan reads manga all day
 4	pudge goes bot every game
+
 
 query
 SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'gayazov') AND PHRASE(b, 'every game');
@@ -150,8 +310,10 @@ a	b	c
 statement ok
 UPDATE vedernikoff SET c = 'deadinside' WHERE a = 3;
 
+
 statement ok
 VACUUM (UPDATE_INDEXES) vedernikoff;
+
 
 query
 SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'deadinside') AND PHRASE(b, 'watches anime');
@@ -159,11 +321,14 @@ SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'deadinside') AND PHRASE(b, 
 a	b	c
 3	anchin-chan watches anime at night	deadinside
 
+
 statement ok
 DROP TABLE vedernikoff;
 
+
 statement ok
 CREATE TABLE biksalen_memes (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
 
 statement ok
 INSERT INTO biksalen_memes VALUES
@@ -171,51 +336,118 @@ INSERT INTO biksalen_memes VALUES
   (2, 'anchin-chan reads manga all day', 'clickclack university'),
   (3, 'vedernikoff carries team again', 'deadinside academy');
 
-query
-CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical');
-----
-QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    a := a
-    b := b
-    c := c
-  - TableScan: biksalen_memes -> ROW<"a":INTEGER,"b":VARCHAR,"c":VARCHAR>
 
 query
-CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'execution');
+EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
 
 query
-CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c) WITH (EXPLAIN = 'logical', EXPLAIN = 'execution');
+EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    a := a
-    b := b
-    c := c
-  - TableScan: biksalen_memes -> ROW<"a":INTEGER,"b":VARCHAR,"c":VARCHAR>
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
 
 query
-CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english) WITH (EXPLAIN = analyze);
+EXPLAIN CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b, c);
 ----
 QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=0:
--- TableWrite[1][serenedb(table=biksalen_memes, kind=INSERT)] -> rows:BIGINT
-   Output: 1 rows (8B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, Threads: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
-  -- TableScan[0][biksalen_memes, type=rocksdb_full_scan] -> "a":INTEGER, "b":VARCHAR, "c":VARCHAR
-     Input: 3 rows (<slt:ignore>, 1 batches), Output: 3 rows (<slt:ignore>, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: 1, Splits: 1, CPU breakdown: B/I/O/F (<slt:ignore>)
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
+----
+QUERY PLAN
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b test_english, c test_english);
+┌────────────────────────────────────────────────┐
+│┌──────────────────────────────────────────────┐│
+││              Total Time: <slt:ignore>        ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+┌───────────────────────────┐
+│           QUERY           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         EXTENSION         │
+│    ────────────────────   │
+│                           │
+│           1 row           │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         TABLE_SCAN        │
+│    ────────────────────   │
+│   Table: biksalen_memes   │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│                           │
+│                           │
+│           3 rows          │
+│           <slt:ignore>    │
+└───────────────────────────┘
+
 
 # EXPLAIN ANALYZE must actually create the index
 query
@@ -274,7 +506,7 @@ CREATE TABLE babsky_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_babsky_memes.parquet'
 );
@@ -353,7 +585,7 @@ CREATE TABLE text_idx_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_text_idx_memes.csv'
 );
@@ -429,7 +661,7 @@ statement ok
 CREATE TABLE score_parquet_ext(
   a INT8,
   b TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_score_parquet.parquet'
 );
@@ -449,19 +681,63 @@ CREATE TEXT SEARCH DICTIONARY score_en(
 statement ok
 CREATE INDEX score_parquet_idx ON score_parquet_ext USING inverted(a, b score_en);
 
+onlyif serenedb
 query
-SELECT a, BM25() > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│  score_parquet_idx.a ASC  │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             a             │
+│         has_score         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Table:          │
+│     score_parquet_ext     │
+│                           │
+│       Materializer:       │
+│ parquet (file_row_number) │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             a             │
+│  sdb_inverted_index_score │
+│                           │
+│          ~0 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
 a	has_score
 1	t
 2	t
 
 query
-SELECT a FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+SELECT a FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(score_parquet_idx.tableoid) DESC, a;
 ----
 a
-1
 2
+1
 
 statement ok
 DROP TABLE score_parquet_ext;
@@ -488,7 +764,7 @@ statement ok
 CREATE TABLE score_text_ext(
   a INT8,
   b TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_score_text.csv'
 );
@@ -497,18 +773,18 @@ statement ok
 CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
 
 query
-SELECT a, BM25() > 0 AS has_score FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(score_text_idx.tableoid) > 0 AS has_score FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
 a	has_score
 1	t
 2	t
 
 query
-SELECT a FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+SELECT a FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(score_text_idx.tableoid) DESC, a;
 ----
 a
-1
 2
+1
 
 statement ok
 DROP TABLE score_text_ext;
@@ -538,7 +814,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) multi_seg;
 
 query
-SELECT a, BM25() > 0 AS has_score FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -547,7 +823,7 @@ a	has_score
 4	t
 
 query
-SELECT a FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY BM25() DESC, a;
+SELECT a FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(multi_seg_idx.tableoid) DESC, a;
 ----
 a
 1
@@ -581,7 +857,7 @@ CREATE TABLE dense_pq_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_dense_pq.parquet'
 );
@@ -673,7 +949,7 @@ a	b
 8	common word theta here
 
 query
-SELECT a, BM25() > 0 AS has_score FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+SELECT a, BM25(dense_pq_idx.tableoid) > 0 AS has_score FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -711,13 +987,76 @@ CREATE TABLE dense_csv_ext(
   a INT8,
   b TEXT,
   c TEXT
-) USING EXTERNAL
+) 
 WITH (
   PATH = '/tmp/${__DATABASE__}_dense_csv.csv'
 );
 
+
+query
+EXPLAIN CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       READ_CSV_AUTO       │
+│    ────────────────────   │
+│         Function:         │
+│       READ_CSV_AUTO       │
+│                           │
+│        Projections:       │
+│             a             │
+│             b             │
+│             c             │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
+
+
 statement ok
 CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
+
+query
+EXPLAIN SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│    dense_csv_idx.a ASC    │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             a             │
+│             b             │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Table: dense_csv_ext   │
+│                           │
+│       Materializer:       │
+│     counter (re-scan)     │
+│                           │
+│          Filter:          │
+│  AND[PHRASE[b(string) =   │
+│  <Term:shared(0, 0); Term │
+│      :term(1, 1); >]]     │
+│                           │
+│        Projections:       │
+│             b             │
+│             a             │
+│                           │
+│          ~13 rows         │
+└───────────────────────────┘
+
 
 query
 SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
@@ -808,7 +1147,7 @@ a	b
 7	universal token eta
 
 query
-SELECT a, BM25() > 0 AS has_score FROM dense_multi_idx WHERE PHRASE(b, 'universal') ORDER BY a;
+SELECT a, BM25(dense_multi_idx.tableoid) > 0 AS has_score FROM dense_multi_idx WHERE PHRASE(b, 'universal') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -903,3 +1242,27 @@ a	nums	labels
 
 statement ok
 DROP TABLE arr_idx_tbl;
+
+
+statement ok
+CREATE TABLE no_pk_table AS
+SELECT
+  CASE
+    WHEN ids.value % 2 = 0 THEN
+      'word is good: ' || (ids.value)::text
+    ELSE
+      'word is bad: ' || (ids.value)::text
+  END AS word
+FROM
+  generate_series(1, 1000) as ids(value)
+
+
+statement ok
+CREATE INDEX no_pk_index ON no_pk_table USING INVERTED(word test_english);
+
+
+query
+SELECT * FROM no_pk_index WHERE PHRASE(word, 'bad') LIMIT 1;
+----
+word
+word is bad: 1

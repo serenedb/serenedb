@@ -35,11 +35,70 @@ Common options:
 - `--debug`: Enable debug mode (disables timeout)
 - `--jobs N`: Set parallelism level (default: CPU cores)
 - `--override`: Rewrite test file (Note: doesn't create empty database)
+- `--runner ../../third_party/sqllogictest-rs`: Required for native execution
+  (the built-in default is relative to the repo root and only works inside Docker).
 
 Example:
 ```bash
 ./tests/sqllogic/run.sh --single-port 7777 --test 'tests/sqllogic/sdb/pg/simple_any/setop.test' --debug true
 ```
+
+## Recovery Tests
+
+Recovery tests intentionally crash serened (via `SET sdb_faults = '...'`) and
+verify the server recovers correctly on restart. **Each test runs against its
+own fresh serened + fresh datadir** in both parallel and sequential mode, so
+a broken test cannot cascade-fail the rest. `run_serened_loop.sh` auto-restarts
+the process when a test crashes it mid-run.
+
+Requires a local build at `build/bin/serened`.
+
+### Run all recovery tests in parallel
+
+```bash
+./tests/sqllogic/run_recovery_tests.sh --runner ../../third_party/sqllogictest-rs
+```
+
+### Run sequentially (recommended for debugging)
+
+```bash
+./tests/sqllogic/run_recovery_tests.sh --jobs 1 --runner ../../third_party/sqllogictest-rs
+```
+
+Same isolation (fresh serened per test), just one at a time -- easier to watch
+output go by and correlate failures with serened behavior.
+
+### Output format
+
+Each test prints:
+- A banner (`========  [worker N] RUN test/path  ========`).
+- Test runner output prefixed `[test]`.
+- On failure: the exact slice of serened's stdout/stderr produced during that
+  test, prefixed `[srvd]`.
+
+A summary at the end lists all failed tests and the directory containing the
+full per-worker serened logs (retained after the run for post-mortem, but
+serened datadirs are cleaned up).
+
+### Run a single recovery test
+
+Start serened in one terminal:
+
+```bash
+PORT=7777 ./tests/sqllogic/run_serened_loop.sh /tmp/recdata
+```
+
+Run one test in another:
+
+```bash
+cd tests/sqllogic
+./run.sh --host localhost --single-port 7777 \
+         --test recovery/alter_rename.test \
+         --engines pg-wire-simple \
+         --runner ../../third_party/sqllogictest-rs
+```
+
+Terminal 1 shows serened's output live -- easier than tailing a log file.
 
 ## Customizing Docker Execution
 

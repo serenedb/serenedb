@@ -1,22 +1,46 @@
 statement ok
-CREATE DATABASE db;
+CREATE DATABASE my_test_unique_db_name;
 
 
 query error
-CREATE DATABASE db;
+CREATE DATABASE my_test_unique_db_name;
 ----
-db error: ERROR: database "db" already exists
+db error: ERROR: database "my_test_unique_db_name" already exists
 
 
 statement ok
-DROP DATABASE db;
+DROP DATABASE my_test_unique_db_name;
 
 
 query error
-DROP DATABASE db;
+DROP DATABASE my_test_unique_db_name;
 ----
-db error: ERROR: database "db" does not exist
+db error: ERROR: database "my_test_unique_db_name" does not exist
 
 
 statement ok
-DROP DATABASE IF EXISTS db;
+DROP DATABASE IF EXISTS my_test_unique_db_name;
+
+
+statement ok
+CREATE DATABASE my_test_unique_db_name;
+
+
+query error
+CREATE DATABASE my_test_unique_db_name;
+----
+db error: ERROR: database "my_test_unique_db_name" already exists
+
+
+statement ok
+DROP DATABASE my_test_unique_db_name;
+
+
+query error
+DROP DATABASE my_test_unique_db_name;
+----
+db error: ERROR: database "my_test_unique_db_name" does not exist
+
+
+statement ok
+DROP DATABASE IF EXISTS my_test_unique_db_name;

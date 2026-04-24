@@ -8,7 +8,7 @@ FROM
 ) AS university(mark, student)
 WHERE ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark) = 1;
 ----
-db error: ERROR: window function calls are not allowed in WHERE
+db error: ERROR: WHERE clause cannot contain window functions!
 
 
 query error
@@ -22,7 +22,7 @@ FROM
 ) AS university(mark, student)
 GROUP BY row_num;
 ----
-db error: ERROR: column "student" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: GROUP BY clause cannot contain window functions!
 
 
 query error
@@ -36,7 +36,7 @@ FROM
 ) AS university(mark, student)
 GROUP BY ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark);
 ----
-db error: ERROR: window function calls are not allowed in GROUP BY
+db error: ERROR: GROUP BY clause cannot contain window functions!
 
 
 query error
@@ -50,7 +50,7 @@ FROM
 GROUP BY student
 HAVING ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark) > 1;
 ----
-db error: ERROR: window function calls are not allowed in HAVING
+db error: ERROR: HAVING clause cannot contain window functions!
 
 
 query error
@@ -63,7 +63,7 @@ FROM
     (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
 ) AS university(mark, student);
 ----
-db error: ERROR: window function calls are not allowed in window definitions
+db error: ERROR: window functions are not allowed in window definitions
 
 
 query error
@@ -76,7 +76,7 @@ FROM
     (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
 ) AS university(mark, student);
 ----
-db error: ERROR: window function calls are not allowed in window definitions
+db error: ERROR: window functions are not allowed in window definitions
 
 
 query error
@@ -89,7 +89,7 @@ FROM
     (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
 ) AS university(mark, student);
 ----
-db error: ERROR: window function calls are not allowed in window definitions
+db error: ERROR: window functions are not allowed in window definitions
 
 
 query error
@@ -106,4 +106,5 @@ FROM
 GROUP BY 2 * mark + 228
 ORDER BY 2 * mark + 228, ROW_NUMBER() OVER (PARTITION BY 2 * mark + 228);
 ----
-db error: ERROR: column "mark" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "mark" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(mark)" if the exact value of "mark" is not important.

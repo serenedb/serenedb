@@ -10,7 +10,7 @@ statement ok
 INSERT INTO kostya.pudge VALUES (322);
 
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 statement error connection closed
 SELECT 1;

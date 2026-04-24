@@ -1,0 +1,196 @@
+statement ok
+CREATE TABLE t (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX l2_index ON t USING inverted(id, emb hnsw);
+
+
+statement ok
+INSERT INTO t VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance([0, 0, 0]::FLOAT[3], emb) LIMIT 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 10         │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Shouldn't be optimized for ANN
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY emb <=> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 5          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│ (emb <=> [0.0, 0.0, 0.0]) │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│     IRESEARCH_FULLSCAN    │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│        Projections:       │
+│             id            │
+│            emb            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query error db error: ERROR: Array dimensions must be equal: left has 3, right has 2
+SELECT id FROM l2_index ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 1;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+query
+SELECT id FROM l2_index ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+2
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <-> emb < 0.7;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│      Radius: 0.700000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <#> emb < 0.7;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (([0.0, 0.0, 0.0] <#> emb)│
+│           < 0.7)          │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│     IRESEARCH_FULLSCAN    │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│        Projections:       │
+│            emb            │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE 1 > l2_distance(emb, [1, 1, 1]::FLOAT[3]) ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│      l2_index.id ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│      Radius: 1.000000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100;
+----
+id
+2
+3

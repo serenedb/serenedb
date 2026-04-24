@@ -20,6 +20,7 @@
 
 #include "catalog/inverted_index.h"
 
+#include <faiss/MetricType.h>
 #include <vpack/serializer.h>
 
 #include <iresearch/analysis/analyzers.hpp>
@@ -97,6 +98,22 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
   return {.analyzer = *std::move(tokenizer),
           .features = it->second.features.GetIndexFeatures()};
+}
+
+std::optional<irs::HNSWInfo> InvertedIndex::GetColumnHNSWInfo(
+  catalog::Column::Id column_id) const {
+  auto it = _columns.find(column_id);
+  if (it == _columns.end() || !it->second.hnsw_config) {
+    return std::nullopt;
+  }
+  const auto& cfg = *it->second.hnsw_config;
+  return irs::HNSWInfo{
+    .max_doc = 0,
+    .d = cfg.d,
+    .m = cfg.m,
+    .metric = cfg.metric,
+    .ef_construction = cfg.ef_construction,
+  };
 }
 
 containers::FlatHashSet<ObjectId> InvertedIndex::GetTokenizers() const {

@@ -115,21 +115,22 @@ class LocalCatalog final : public LogicalCatalog,
 
   Result DropDatabase(std::string_view name) final;
   Result DropRole(std::string_view role) final;
-  Result DropSchema(ObjectId database_id, std::string_view name,
+  Result DropSchema(std::string_view database, std::string_view name,
                     bool cascade) final;
-  Result DropView(ObjectId database_id, std::string_view schema,
+  Result DropView(std::string_view database, std::string_view schema,
                   std::string_view name) final;
-  Result DropFunction(ObjectId database_id, std::string_view schema,
+  Result DropFunction(std::string_view database, std::string_view schema,
                       std::string_view name) final;
-  Result DropTokenizer(ObjectId database_id, std::string_view schema,
+  Result DropTokenizer(std::string_view database, std::string_view schema,
                        std::string_view name) final;
-  Result DropTable(ObjectId database_id, std::string_view schema,
+  Result DropTable(std::string_view database, std::string_view schema,
                    std::string_view name) final;
-  Result DropIndex(ObjectId database_id, std::string_view schema,
+  Result DropIndex(std::string_view database, std::string_view schema,
                    std::string_view name) final;
 
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;
+
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {

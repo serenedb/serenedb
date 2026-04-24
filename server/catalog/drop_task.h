@@ -23,10 +23,12 @@
 #include <absl/strings/substitute.h>
 
 #include <chrono>
+#include <duckdb/main/database_manager.hpp>
 #include <exception>
 #include <limits>
 #include <memory>
 #include <yaclib/async/future.hpp>
+#include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -40,10 +42,9 @@
 #include "catalog/types.h"
 #include "general_server/scheduler.h"
 #include "rest_server/serened_single.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"
-#include "yaclib/async/make.hpp"
-
 namespace sdb::catalog {
 
 using AsyncResult = yaclib::Future<Result>;
@@ -78,7 +79,7 @@ class DropTask {
     return task->Execute();
   }
 
-  bool AllowToDrop() const noexcept {
+  virtual bool AllowToDrop() const noexcept {
     return _object.expired() && AllowToDropDependencies();
   }
 
@@ -138,6 +139,18 @@ struct IndexShardDrop final : public DropTask,
   AsyncResult Execute() final { SDB_UNREACHABLE(); }
 
   bool AllowToDropDependencies() const noexcept final { return true; }
+
+  bool AllowToDrop() const noexcept final {
+    auto obj = _object.lock();
+    if (obj && obj->GetType() == ObjectType::InvertedIndexShard) {
+      const auto& shard =
+        basics::downCast<search::InvertedIndexShard>(*obj.get());
+      if (shard.HasActiveSegments()) {
+        return false;
+      }
+    }
+    return DropTask::AllowToDrop();
+  }
 };
 
 struct IndexDrop final : public DropTask,
@@ -262,6 +275,18 @@ struct SchemaDrop final : public DropTask,
 
  private:
   std::vector<std::shared_ptr<TableDrop>> _tables;
+};
+
+// Waits for an Object's weak_ptr to expire (zero snapshot references).
+// Uses the same Schedule/backoff mechanism as other DropTasks.
+struct WaitForExpired final : public DropTask {
+  explicit WaitForExpired(const std::shared_ptr<Object>& object)
+    : DropTask{object, id::kInstance} {}
+
+  AsyncResult Execute() final { co_return Result{}; }
+  std::string_view GetName() const noexcept final { return "wait for expired"; }
+  std::string GetContext() const noexcept final { return "WaitForExpired"; }
+  bool AllowToDropDependencies() const noexcept final { return true; }
 };
 
 struct DatabaseDrop final : public DropTask,

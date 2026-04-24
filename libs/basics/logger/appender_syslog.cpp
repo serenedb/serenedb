@@ -109,7 +109,7 @@ void AppenderSyslog::logMessage(const Message& message) {
     case LogLevel::INFO:
       priority = LOG_NOTICE;
       break;
-    case LogLevel::DEBUG:
+    case LogLevel::DEB:
       priority = LOG_INFO;
       break;
     case LogLevel::TRACE:

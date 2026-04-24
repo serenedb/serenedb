@@ -46,19 +46,12 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<SqlParts>::GetTableData(
-  velox::memory::MemoryPool& pool) {
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<SqlParts>);
-  boost::pfr::for_each_field(
-    SqlParts{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(kSampleData.size(), &pool);
-      result.push_back(std::move(column));
-    });
+catalog::MaterializedData SystemTableSnapshot<SqlParts>::GetTableData() {
+  auto result = CreateColumns<SqlParts>(kSampleData.size());
   for (size_t row = 0; row < kSampleData.size(); ++row) {
-    WriteData(result, kSampleData[row], kNullMask, row, &pool);
+    WriteData(result, kSampleData[row], kNullMask, row);
   }
-  return result;
+  return {std::move(result), kSampleData.size()};
 }
 
 }  // namespace sdb::pg

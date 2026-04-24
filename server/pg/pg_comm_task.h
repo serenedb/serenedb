@@ -21,6 +21,7 @@
 #pragma once
 
 #include <atomic>
+#include <duckdb.hpp>
 #include <mutex>
 #include <queue>
 
@@ -34,17 +35,10 @@
 #include "general_server/generic_comm_task.h"
 #include "pg/connection_context.h"
 #include "pg/copy_messages_queue.h"
+#include "pg/duckdb_sql_statement.h"
 #include "pg/hba.h"
-#include "pg/serialize.h"
-#include "pg/sql_analyzer_velox.h"
-#include "pg/sql_collector.h"
 #include "pg/sql_error.h"
-#include "pg/sql_parser.h"
-#include "pg/sql_statement.h"
-#include "pg/sql_utils.h"
-#include "query/query.h"
 #include "utils/exec_context.h"
-#include "utils/query_string.h"
 
 namespace sdb::pg {
 
@@ -98,17 +92,18 @@ class PgSQLCommTaskBase : public rest::CommTask {
   std::string_view UserName() const noexcept;
 
  protected:
-  // Binded Query
-  struct SqlPortal {
+  // Bound Query Portal (DuckDB-based)
+  struct DuckDBPortal {
     void Reset(PgSQLCommTaskBase& task) {
-      task.ReleaseCursor(*this);
+      task.ReleaseResult(*this);
       stmt = nullptr;
       rows = 0;
     }
-    SqlStatement* stmt{nullptr};
+    DuckDBStatement* stmt{nullptr};
     uint64_t rows{0};
-    std::unique_ptr<query::Cursor> cursor;
-    BindInfo bind_info;
+    duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+    duckdb::unique_ptr<duckdb::QueryResult> result;
+    DuckDBBindInfo bind_info;
     SerializationContext serialization_context;
     std::vector<SerializationFunction> columns_serializers;
   };
@@ -116,8 +111,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
   virtual void SetIOTimeoutImpl() = 0;
 
   std::string_view StartPacket() noexcept;
-  // It's called when everything is done:
-  // 1. after success way done or exception catched and sent related message
   void FinishPacket() noexcept;
 
   void HandleClientPacket(std::string_view packet);
@@ -126,6 +119,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void SendParameterStatus(std::string_view name, std::string_view value);
 
   void SendNotices();
+  void SendError(const duckdb::ErrorData& error);
   void SendError(std::string_view message, int errcode);
   void SendNotice(char type, const pg::SqlErrorData& error);
   void SendNotice(char type, std::string_view message,
@@ -134,29 +128,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
                   std::string_view context = {}, std::string_view query = {},
                   int cursor_pos = -1);
 
-  void RunSimpleQuery(std::string_view query_string);
-  void ParseQuery(std::string_view packet);
-  void BindQuery(std::string_view packet);
-  void DescribeQuery(std::string_view packet);
-  void ExecuteQuery(std::string_view packet);
-  void ExecuteClose(std::string_view packet);
-  SqlStatement MakeStatement(std::string_view query_string);
-  SqlPortal BindStatement(SqlStatement& stmt, BindInfo bind_info);
-  void DescribePortal(const SqlPortal& portal);
-  void DescribeStatement(SqlStatement& statement);
-  void DescribeAnalyzedQuery(const SqlStatement& statement,
-                             const std::vector<VarFormat>& formats,
-                             bool extended = true);
-  std::optional<BindInfo> ParseBindVars(
-    std::string_view packet, const std::string_view statement_name,
-    const std::vector<velox::TypePtr>& param_types);
-  std::optional<std::vector<VarFormat>> ParseBindFormats(
-    std::string_view& packet);
-  void BuildColumnSerializers(SqlPortal& portal);
-  void ExecutePortal(SqlPortal& portal);
-  bool RegisterCursor(std::unique_ptr<query::Cursor> cursor, SqlPortal& portal);
-  void ReleaseCursor(SqlPortal& portal);
-
   enum class ProcessState : uint8_t {
     More,
     Wait,
@@ -164,10 +135,34 @@ class PgSQLCommTaskBase : public rest::CommTask {
     DonePacket,
   };
 
+  void RunSimpleQuery(std::string_view query_string);
+  void ParseQuery(std::string_view packet);
+  void BindQuery(std::string_view packet);
+  void DescribeQuery(std::string_view packet);
+  void ExecuteQuery(std::string_view packet);
+  void ExecuteClose(std::string_view packet);
+  void DescribePortal(const DuckDBPortal& portal);
+  void DescribeStatement(DuckDBStatement& statement);
+  void DescribeAnalyzedQuery(duckdb::StatementReturnType return_type,
+                             const std::vector<duckdb::LogicalType>& types,
+                             const std::vector<std::string>& names,
+                             const std::vector<VarFormat>& formats,
+                             bool extended = true);
+  DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
+  void BuildColumnSerializers(DuckDBPortal& portal);
+  void ResolveStatementTypes(DuckDBStatement& stmt);
+  void DeallocateNamedStatement(std::string_view name);
+  void ExecutePortal(DuckDBPortal& portal);
+  void ExecuteNextSimpleStatement();
+  void ReleaseResult(DuckDBPortal& portal);
   ProcessState ProcessQueryResult();
-  void SendBatch(const velox::RowVectorPtr& batch);
-  void SendCommandComplete(const SqlTree& tree, uint64_t rows,
-                           const query::QueryPtr& query);
+  void SendBatch(const duckdb::DataChunk& chunk);
+  void SendCommandComplete(duckdb::StatementType stmt_type, uint64_t rows);
+  std::optional<DuckDBBindInfo> ParseBindVars(std::string_view packet,
+                                              std::string_view statement_name,
+                                              const DuckDBStatement& stmt);
+  std::optional<std::vector<VarFormat>> ParseBindFormats(
+    std::string_view& packet);
 
   template<typename Func>
   void SafeCall(Func&& func) noexcept;
@@ -179,13 +174,13 @@ class PgSQLCommTaskBase : public rest::CommTask {
   mutable absl::Mutex _queue_mutex;
   absl::Mutex _execution_mutex;
   containers::FlatHashMap<std::string, std::string> _client_parameters;
-  SqlPortal* _current_portal{nullptr};
+  DuckDBPortal* _current_portal{nullptr};
   std::string_view _current_query;
-  containers::NodeHashMap<std::string, SqlStatement> _statements;
   // TODO: optimize portal layout
-  containers::NodeHashMap<std::string, SqlPortal> _portals;
-  SqlStatement _anonymous_statement;
-  SqlPortal _anonymous_portal;
+  containers::NodeHashMap<std::string, DuckDBStatement> _statements;
+  containers::NodeHashMap<std::string, DuckDBPortal> _portals;
+  DuckDBStatement _anonymous_statement;
+  DuckDBPortal _anonymous_portal;
   uint64_t _key{0};
   bool _pop_packet{false};
   bool _success_packet{false};
@@ -194,6 +189,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  duckdb::unique_ptr<duckdb::Connection> _duckdb_conn;
   message::Buffer _send;
 };
 

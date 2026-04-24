@@ -42,7 +42,21 @@ class CopyMessagesQueue {
  public:
   CopyMessagesQueue(absl::Mutex& mtx) : _mtx(mtx) {}
 
-  void AppendCopyDataMsg(std::string data) { AppendImpl(std::move(data)); }
+  void AppendCopyDataMsg(std::string data) {
+    // Strip PostgreSQL end-of-copy marker (\.\n or \.\r\n) from the end
+    // of the payload. psql sends \. as part of CopyData; the PG backend
+    // strips it in CopyReadLineText(). We do the same.
+    // Data layout: [msg_type(1)][length(4)][payload...]
+    if (data.size() >= 8) {  // 5 header + at least 3 for \.\n
+      auto payload = std::string_view{data}.substr(5);
+      if (payload.ends_with("\\.\n")) {
+        data.resize(data.size() - 3);
+      } else if (payload.ends_with("\\.\r\n")) {
+        data.resize(data.size() - 4);
+      }
+    }
+    AppendImpl(std::move(data));
+  }
 
   void AppendCopyDoneMsg() { AppendImpl({}); }
 

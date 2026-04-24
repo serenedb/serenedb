@@ -60,6 +60,14 @@ class PostgresFeature final : public SerenedFeature {
     });
   }
 
+  void ScheduleProcessWakeup(std::weak_ptr<rest::CommTask> weak) {
+    GetScheduler()->queue(RequestLane::ClientAql, [weak = std::move(weak)] {
+      if (auto self = weak.lock()) {
+        basics::downCast<PgSQLCommTaskBase>(*self).ProcessWakeup({});
+      }
+    });
+  }
+
  private:
   absl::Mutex _mutex;
   containers::FlatHashMap<uint64_t, std::weak_ptr<rest::CommTask>> _tasks;

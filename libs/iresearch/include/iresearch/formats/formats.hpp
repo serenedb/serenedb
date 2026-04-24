@@ -65,7 +65,7 @@ struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;
   const FeatureInfoProvider& feature_info;
   const IndexFeatures scorers_features;
-  ScorersView scorers;
+  ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
   IResourceManager& resource_manager{IResourceManager::gNoop};
@@ -91,7 +91,7 @@ struct PostingsWriter {
   using ptr = std::unique_ptr<PostingsWriter>;
 
   struct FieldStats {
-    uint64_t wand_mask;
+    bool has_wand;
     doc_id_t docs_count;
   };
 
@@ -130,16 +130,16 @@ struct FieldWriter {
 };
 
 struct IteratorFieldOptions : IteratorOptions {
-  IteratorFieldOptions(uint8_t count) : count{count} {}
+  explicit IteratorFieldOptions(bool has_wand) : has_wand{has_wand} {}
 
-  IteratorFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
-                       uint8_t count)
-    : IteratorOptions{options}, mapped_index{mapped_index}, count{count} {}
+  IteratorFieldOptions(const IteratorOptions& options, bool enabled,
+                       bool has_wand)
+    : IteratorOptions{options}, enabled{enabled}, has_wand{has_wand} {}
 
-  bool Enabled() const noexcept { return mapped_index != kDisable; }
+  bool Enabled() const noexcept { return enabled; }
 
-  uint8_t mapped_index = kDisable;
-  uint8_t count = 0;
+  bool enabled = false;
+  bool has_wand;
 };
 
 struct PostingCookie {
@@ -176,7 +176,7 @@ struct PostingsReader {
   // This API is experimental.
   virtual size_t BitUnion(IndexFeatures field_features,
                           const term_provider_f& provider, size_t* set,
-                          uint8_t wand_count) = 0;
+                          bool has_wand) = 0;
 
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
@@ -455,7 +455,7 @@ struct FlushState {
   const DocMap* docmap{};
   const ColumnProvider* columns{};
   const std::string_view name;  // segment name
-  ScorersView scorers;
+  ScorerPtr scorer = nullptr;
   const size_t doc_count;
   // Accumulated segment index features
   IndexFeatures index_features{IndexFeatures::None};
@@ -464,7 +464,7 @@ struct FlushState {
 struct ReaderState {
   const Directory* dir;
   const SegmentMeta* meta;
-  ScorersView scorers;
+  ScorerPtr scorer = nullptr;
 };
 
 void FormatBlock128Init();

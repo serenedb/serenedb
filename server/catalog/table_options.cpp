@@ -26,6 +26,8 @@
 #include <vpack/collection.h>
 #include <vpack/slice.h>
 
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/operator_expression.hpp>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -41,15 +43,8 @@
 #include "catalog/sharding_strategy.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/nodeFuncs.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 namespace {
@@ -106,29 +101,34 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
 
 std::string Column::GenerateScoreName(
   std::span<const std::string> column_names) {
-  return GenerateUniqueName("sdb_inverted_index_score", column_names);
+  return GenerateUniqueName(Column::kScoreName, column_names);
 }
 
-std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
+std::optional<size_t> CheckConstraint::IsNotNull(
+  std::span<const Column> columns) const noexcept {
   SDB_ASSERT(expr);
-
-  const auto* node = expr->GetExpr();
-  if (!IsA(node, NullTest)) {
-    return {false, ""};
+  if (!expr->HasExpr()) {
+    return std::nullopt;
   }
-  const auto& null_test = *castNode(NullTest, node);
-  if (null_test.nulltesttype != IS_NOT_NULL) {
-    return {false, ""};
+  // NOT NULL stored as OPERATOR_IS_NOT_NULL(ColumnRefExpression(col_name)).
+  auto& parsed = expr->GetExpr();
+  if (parsed.GetExpressionType() !=
+      duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) {
+    return std::nullopt;
   }
-  const auto* arg = null_test.arg;
-  if (!IsA(arg, ColumnRef)) {
-    return {false, ""};
+  auto& op = parsed.Cast<duckdb::OperatorExpression>();
+  if (op.children.size() != 1 || op.children[0]->GetExpressionType() !=
+                                   duckdb::ExpressionType::COLUMN_REF) {
+    return std::nullopt;
   }
-  const auto& col_ref = *castNode(ColumnRef, arg);
-  if (list_length(col_ref.fields) != 1) {
-    return {false, ""};
+  auto name =
+    op.children[0]->Cast<duckdb::ColumnRefExpression>().GetColumnName();
+  for (size_t i = 0; i < columns.size(); ++i) {
+    if (columns[i].name == name) {
+      return i;
+    }
   }
-  return {true, strVal(linitial(col_ref.fields))};
+  return std::nullopt;
 }
 
 Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
@@ -344,11 +344,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     return {ERROR_BAD_PARAMETER, "numberOfShards cannot be 0"};
   }
 
-  if (auto r = ValidatorJsonSchema::buildInstance(request.schema); r) {
-    options.schema = std::move(*r);
-  } else {
-    return std::move(r).error();
-  }
   if (auto r = basics::SafeCall([&] {
         options.keyOptions = KeyGeneratorHelper::createKeyGenerator(
           *request.numberOfShards, request.keyOptions);

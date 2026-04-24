@@ -1,0 +1,37 @@
+statement ok
+CREATE TABLE multi_test (id INT PRIMARY KEY, name TEXT);
+
+statement count 3
+INSERT INTO multi_test VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+query
+SELECT * FROM multi_test ORDER BY id;
+----
+id	name
+1	a
+2	b
+3	c
+
+statement count 1
+UPDATE multi_test SET name = 'updated' WHERE id = 2;
+
+query
+SELECT * FROM multi_test ORDER BY id;
+----
+id	name
+1	a
+2	updated
+3	c
+
+statement count 1
+DELETE FROM multi_test WHERE id = 3;
+
+query
+SELECT * FROM multi_test ORDER BY id;
+----
+id	name
+1	a
+2	updated
+
+statement ok
+DROP TABLE multi_test;

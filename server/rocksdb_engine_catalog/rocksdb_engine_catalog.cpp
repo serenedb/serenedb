@@ -83,8 +83,8 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
+#include "connector/common.h"
 #include "connector/key_utils.hpp"
-#include "connector/sst_sink_writer.hpp"
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
@@ -562,7 +562,7 @@ void RocksDBEngineCatalog::start() {
   {
     std::error_code ec;
     auto bulk_insert_dir =
-      std::filesystem::path(_path) / connector::kBulkInsertDirName;
+      std::filesystem::path(_path) / connector::kBulkInsertDir;
     auto removed = std::filesystem::remove_all(bulk_insert_dir, ec);
     SDB_INFO_IF("xxxxx", Logger::ENGINES, removed != 0 && !ec,
                 "removed bulk insert directory '", bulk_insert_dir.c_str(),

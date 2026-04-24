@@ -68,17 +68,40 @@ id	bo
 
 
 query
-EXPLAIN (EXECUTION) SELECT id, OFFSETS(offsets_test_idx.body) AS bo
+EXPLAIN SELECT id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 WHERE PHRASE(body, 'fox')
 ORDER BY id;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[2][expressions: (id:INTEGER, "id"), (bo:ARRAY<BIGINT>, "sdb_inverted_index_offsets$<slt:ignore>")] -> "id":INTEGER, "bo":ARRAY<BIGINT>
-  -- OrderBy[1][id ASC NULLS LAST] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
-    -- TableScan[0][offsets_test, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│  offsets_test_idx.id ASC  │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│    Table: offsets_test    │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 
 query
@@ -182,7 +205,7 @@ id	bo
 4	{0,3}
 
 query
-SELECT id, array_length(OFFSETS(body, 0), 1) AS num_offsets
+SELECT id, length(OFFSETS(body, 0)) AS num_offsets
 FROM offsets_test_idx
 WHERE PHRASE(body, 'fox') AND id = 4;
 ----
@@ -287,7 +310,7 @@ id	lim	body_offs
 
 
 query
-EXPLAIN (EXECUTION) SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
+EXPLAIN SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
 FROM offsets_test_idx
 WHERE PHRASE(body, 'fox')
 UNION ALL
@@ -297,35 +320,97 @@ WHERE PHRASE(body, 'fox')
 ORDER BY id, lim;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- OrderBy[5][id ASC NULLS LAST, lim ASC NULLS LAST] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
-  -- LocalPartition[4][REPARTITION ROUND ROBIN] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
-    -- Project[1][expressions: (id:INTEGER, "id"), (lim:INTEGER, 2), (body_offs:ARRAY<BIGINT>, "sdb_inverted_index_offsets$<slt:ignore>")] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
-      -- TableScan[0][offsets_test, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
-    -- Project[3][expressions: (id:INTEGER, "id"), (lim:INTEGER, 4), (body_offs:ARRAY<BIGINT>, "sdb_inverted_index_offsets$<slt:ignore>")] -> "id":INTEGER, "lim":INTEGER, "body_offs":ARRAY<BIGINT>
-      -- TableScan[2][offsets_test, type=search_lookup, filter=AND[PHRASE[body(string) = <Term:fox(0, 0); >]]] -> "id":INTEGER, "sdb_inverted_index_offsets$<slt:ignore>":ARRAY<BIGINT>
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│__internal_decompress_integ│
+│     ral_integer(#1, 2)    │
+│             #2            │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│           id ASC          │
+│          lim ASC          │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│__internal_compress_integra│
+│     l_utinyint(#1, 2)     │
+│             #2            │
+│                           │
+│          ~2 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           UNION           ├──────────────┐
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         PROJECTION        ││         PROJECTION        │
+│    ────────────────────   ││    ────────────────────   │
+│             id            ││             id            │
+│            lim            ││             4             │
+│         body_offs         ││             #1            │
+│                           ││                           │
+│           ~1 row          ││           ~1 row          │
+└─────────────┬─────────────┘└─────────────┬─────────────┘
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
+│    ────────────────────   ││    ────────────────────   │
+│    Table: offsets_test    ││    Table: offsets_test    │
+│                           ││                           │
+│       Materializer:       ││       Materializer:       │
+│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│                           ││                           │
+│          Filter:          ││          Filter:          │
+│ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   ││    <Term:fox(0, 0); >]]   │
+│                           ││                           │
+│       Offsets: body       ││       Offsets: body       │
+│                           ││                           │
+│        Projections:       ││        Projections:       │
+│             id            ││             id            │
+│ sdb_inverted_index_offsets││ sdb_inverted_index_offsets│
+│             $2            ││             $2            │
+│                           ││                           │
+│          ~4 rows          ││          ~4 rows          │
+└───────────────────────────┘└───────────────────────────┘
 
 
-query error
+query
 SELECT offsets_test_idx.id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
-WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox');
+WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox')
+ORDER BY offsets_test_idx.id;
 ----
-db error: ERROR: Only one inverted index scan can produce offsets per sub-query
+id	bo
+1	{6,9}
+
+
+query
+SELECT offsets_test_idx.id, OFFSETS(offsets_test2_idx.body) AS bo
+FROM offsets_test_idx
+JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
+WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox')
+ORDER BY offsets_test_idx.id;
+----
+id	bo
+1	{0,3}
 
 
 query error
 SELECT OFFSETS() FROM offsets_test_idx WHERE PHRASE(body, 'fox');
-----
-db error: ERROR: OFFSETS() requires one or two arguments
 
 
 query error
 SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
-----
-db error: ERROR: OFFSETS() requires one or two arguments
 
 
 query error
@@ -363,7 +448,8 @@ db error: ERROR: OFFSETS() called multiple times for field 'body' with different
 query error
 SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
 ----
-db error: ERROR: OFFSETS(): column 'nonexistent' not found in table
+db error: ERROR: Referenced column "nonexistent" not found in FROM clause!
+Candidate bindings: "body"
 
 
 query error

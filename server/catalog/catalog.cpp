@@ -28,6 +28,7 @@
 #include <vpack/slice.h>
 
 #include <expected>
+#include <iostream>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 
@@ -61,6 +62,7 @@
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
 #include "general_server/state.h"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
@@ -352,8 +354,8 @@ Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlFunction,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto function =
-        catalog::PgSqlFunction::ReadInternal(slice, {.database_id = db_id});
+      auto function = catalog::PgSqlFunction::ReadInternal(
+        slice, {.id = key.GetObjectId(), .database_id = db_id});
       if (!function) {
         return ErrorMeta(ERROR_INTERNAL, "function",
                          "Failed to read function definition", slice);
@@ -379,8 +381,9 @@ Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlView,
-    [&](DefinitionKey, vpack::Slice slice) -> Result {
-      auto view = PgSqlView::ReadInternal(slice, {.database_id = db_id});
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto view = PgSqlView::ReadInternal(
+        slice, {.id = key.GetObjectId(), .database_id = db_id});
       if (!view) {
         return ErrorMeta(ERROR_INTERNAL, "view",
                          "Failed to read view definition", slice);
@@ -668,6 +671,21 @@ Result CatalogFeature::Open() {
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
     SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
+  }
+
+  // Attach all existing databases into DuckDB
+  {
+    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    for (auto& db : snapshot->GetDatabases()) {
+      auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
+                                db->GetName(), "\" (TYPE serenedb)");
+      auto result = conn->Query(query);
+      if (result->HasError()) {
+        SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
+                  db->GetName(), ": ", result->GetError());
+      }
+    }
   }
 
   return r;

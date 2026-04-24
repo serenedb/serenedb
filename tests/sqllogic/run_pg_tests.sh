@@ -13,28 +13,27 @@ if [[ "${SKIP_SLOW_TESTS:-false}" == "true" ]]; then
 	FAST_FLAG="--fast"
 fi
 
-# When PG_CHANGED_TESTS is set (PR diff-only mode), run only the changed
-# files.  run.sh --test accepts a single glob, so we loop over the files.
-# Otherwise run the full pg test suite.
+# When PG_CHANGED_TESTS is set (PR diff-only mode), forward each changed file
+# as a separate --test so run.sh invokes sqllogictest once per engine with the
+# full file list. Otherwise run the full pg test suite.
+test_args=()
 if [[ -n "${PG_CHANGED_TESTS:-}" ]]; then
-	exit_code=0
 	while IFS= read -r test_file; do
 		[[ -z "$test_file" ]] && continue
-		./run.sh \
-			--test "$test_file" \
-			--junit "tests-pg" \
-			--engines "pg-wire-simple,pg-wire-extended" \
-			--database postgres \
-			$FAST_FLAG \
-			"$@" || exit_code=$?
+		test_args+=(--test "$test_file")
 	done <<<"$PG_CHANGED_TESTS"
-	exit "$exit_code"
+	if [[ ${#test_args[@]} -eq 0 ]]; then
+		echo "PG_CHANGED_TESTS is set but contained no files; nothing to do." >&2
+		exit 0
+	fi
 else
-	exec ./run.sh \
-		--test "pg/**/*.test*" \
-		--junit "tests-pg" \
-		--engines "pg-wire-simple,pg-wire-extended" \
-		--database postgres \
-		$FAST_FLAG \
-		"$@"
+	test_args=(--test "pg/**/*.test*")
 fi
+
+exec ./run.sh \
+	"${test_args[@]}" \
+	--junit "tests-pg" \
+	--engines "pg-wire-simple,pg-wire-extended" \
+	--database postgres \
+	$FAST_FLAG \
+	"$@"

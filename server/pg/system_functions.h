@@ -20,16 +20,21 @@
 
 #pragma once
 
-#include <array>
+#include <duckdb/common/constants.hpp>
 #include <string_view>
 
 namespace sdb::pg {
 
-// TODO(mkornaukhov) write queries in separate sql file
-inline constexpr auto kSystemFunctionsQueries = std::to_array<
-  std::string_view>({
+struct SystemMacro {
+  std::string_view schema;
+  std::string_view name;
+  std::string_view macro_definition;
+};
+
+inline constexpr SystemMacro kExternalMacros[] = {
   // clang-format off
-  R"(CREATE FUNCTION pg_show_all_settings()
+  {"pg_catalog", "pg_show_all_settings",
+   R"(()
   RETURNS TABLE( name TEXT,
                  setting TEXT,
                  unit TEXT,
@@ -67,10 +72,11 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
         NULL::TEXT as sourcefile,
         NULL::INT as sourceline,
         NULL::BOOL as pending_restart
-      FROM sdb_show_all_settings;
-  END;)",
+      FROM duckdb_settings();
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_progress_info(cmd TEXT)
+  {"pg_catalog", "pg_stat_get_progress_info",
+   R"((cmd TEXT)
   RETURNS TABLE( pid BIGINT,
                  datid OID,
                  relid OID,
@@ -104,47 +110,51 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
         param16, param17, param18, param19, param20
       FROM sdb_stat_progress
       WHERE command = cmd;
-  END;)",
+  END;)"},
 
   // A few supporting functions first ...
 
-  // TODO(mbkkt) Enable when implement proper SETOF functions support.
-
   // Expand any 1-D array into a set with integers 1..N
-  // R"(CREATE FUNCTION _pg_expandarray(IN anyarray, OUT x anyelement, OUT n int)
-  //     RETURNS SETOF RECORD
-  //     LANGUAGE sql STRICT IMMUTABLE PARALLEL SAFE
-  //     ROWS 100 SUPPORT pg_catalog.array_unnest_support
-  //     AS 'SELECT * FROM pg_catalog.unnest($1) WITH ORDINALITY';)",
+
+  // TODO(mbkkt): rewrite once parser supports PG-style OUT params
+  {"information_schema", "_pg_expandarray",
+   R"((arr) AS TABLE SELECT unnest AS x, ordinality AS n FROM unnest(arr) WITH ORDINALITY)"},
 
   // Given an index's OID and an underlying-table column number, return the
   // column's position in the index (NULL if not there)
-  // R"(CREATE FUNCTION _pg_index_position(oid, smallint) RETURNS int
-  //     LANGUAGE sql STRICT STABLE
-  // BEGIN ATOMIC
-  // SELECT (ss.a).n FROM
-  //   (SELECT information_schema._pg_expandarray(indkey) AS a
-  //    FROM pg_catalog.pg_index WHERE indexrelid = $1) ss
-  //   WHERE (ss.a).x = $2;
-  // END;)",
 
-  R"(CREATE FUNCTION _pg_truetypid(pg_attribute, pg_type) RETURNS oid
+  // Rewritten: PG (ss.a).n / (ss.a).x -> DuckDB table macro columns directly
+  {"information_schema", "_pg_index_position",
+   R"((oid, smallint) RETURNS int
+      LANGUAGE sql STRICT STABLE
+  BEGIN ATOMIC
+  SELECT ss.n FROM
+    (SELECT ea.x, ea.n
+     FROM pg_catalog.pg_index, information_schema._pg_expandarray(indkey) AS ea
+     WHERE indexrelid = $1) ss
+    WHERE ss.x = $2;
+  END;)"},
+
+  {"information_schema", "_pg_truetypid",
+   R"((pg_attribute, pg_type) RETURNS oid
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
       RETURNS NULL ON NULL INPUT
-  RETURN CASE WHEN $2.typtype = 'd' THEN $2.typbasetype ELSE $1.atttypid END;)",
+  RETURN CASE WHEN $2.typtype = 'd' THEN $2.typbasetype ELSE $1.atttypid END;)"},
 
-  R"(CREATE FUNCTION _pg_truetypmod(pg_attribute, pg_type) RETURNS int4
+  {"information_schema", "_pg_truetypmod",
+   R"((pg_attribute, pg_type) RETURNS int4
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
       RETURNS NULL ON NULL INPUT
-  RETURN CASE WHEN $2.typtype = 'd' THEN $2.typtypmod ELSE $1.atttypmod END;)",
+  RETURN CASE WHEN $2.typtype = 'd' THEN $2.typtypmod ELSE $1.atttypmod END;)"},
 
   // these functions encapsulate knowledge about the encoding of typmod:
 
-  R"(CREATE FUNCTION _pg_char_max_length(typid oid, typmod int4) RETURNS integer
+  {"information_schema", "_pg_char_max_length",
+   R"((typid oid, typmod int4) RETURNS integer
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
@@ -157,9 +167,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
          WHEN $1 IN (1560, 1562) /* bit, varbit */
          THEN $2
          ELSE null
-    END;)",
+    END;)"},
 
-  R"(CREATE FUNCTION _pg_char_octet_length(typid oid, typmod int4) RETURNS integer
+  {"information_schema", "_pg_char_octet_length",
+   R"((typid oid, typmod int4) RETURNS integer
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
@@ -172,9 +183,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
                         pg_catalog.pg_encoding_max_length((SELECT encoding FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()))
               END
          ELSE null
-    END;)",
+    END;)"},
 
-  R"(CREATE FUNCTION _pg_numeric_precision(typid oid, typmod int4) RETURNS integer
+  {"information_schema", "_pg_numeric_precision",
+   R"((typid oid, typmod int4) RETURNS integer
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
@@ -192,9 +204,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
            WHEN 700 /*float4*/ THEN 24 /*FLT_MANT_DIG*/
            WHEN 701 /*float8*/ THEN 53 /*DBL_MANT_DIG*/
            ELSE null
-    END;)",
+    END;)"},
 
-  R"(CREATE FUNCTION _pg_numeric_precision_radix(typid oid, typmod int4) RETURNS integer
+  {"information_schema", "_pg_numeric_precision_radix",
+   R"((typid oid, typmod int4) RETURNS integer
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
@@ -203,9 +216,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
     CASE WHEN $1 IN (21, 23, 20, 700, 701) THEN 2
          WHEN $1 IN (1700) THEN 10
          ELSE null
-    END;)",
+    END;)"},
 
-  R"(CREATE FUNCTION _pg_numeric_scale(typid oid, typmod int4) RETURNS integer
+  {"information_schema", "_pg_numeric_scale",
+   R"((typid oid, typmod int4) RETURNS integer
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
@@ -218,9 +232,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
                    ELSE ($2 - 4) & 0xFFFF
                    END
          ELSE null
-    END;)",
+    END;)"},
 
-  R"(CREATE FUNCTION _pg_datetime_precision(typid oid, typmod int4) RETURNS integer
+  {"information_schema", "_pg_datetime_precision",
+   R"((typid oid, typmod int4) RETURNS integer
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
@@ -233,23 +248,26 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
          WHEN $1 IN (1186) /* interval */
              THEN CASE WHEN $2 < 0 OR $2 & 0xFFFF = 0xFFFF THEN 6 ELSE $2 & 0xFFFF END
          ELSE null
-    END;)",
+    END;)"},
 
-  R"(CREATE FUNCTION _pg_interval_type(typid oid, mod int4) RETURNS text
+  {"information_schema", "_pg_interval_type",
+   R"((typid oid, mod int4) RETURNS text
       LANGUAGE sql
       IMMUTABLE
       PARALLEL SAFE
       RETURNS NULL ON NULL INPUT
   RETURN
     CASE WHEN $1 IN (1186) /* interval */
-             THEN pg_catalog.upper(substring(pg_catalog.format_type($1, $2) similar 'interval[()0-9]* #"%#"' escape '#'))
+             -- upper and format_type is in system.main, not pg_catalog
+             THEN upper(substring(format_type($1, $2) similar 'interval[()0-9]* #"%#"' escape '#'))
          ELSE null
-    END;)",
+    END;)"},
 
   // Stub set-returning functions (return empty tables)
   // Used by pg_catalog system views that reference these functions.
 
-  R"(CREATE FUNCTION pg_lock_status()
+  {"pg_catalog", "pg_lock_status",
+   R"(()
   RETURNS TABLE( locktype TEXT,
                  database BIGINT,
                  relation BIGINT,
@@ -274,9 +292,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::TEXT, NULL::INTEGER, NULL::TEXT,
              NULL::BOOLEAN, NULL::BOOLEAN, NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_cursor()
+  {"pg_catalog", "pg_cursor",
+   R"(()
   RETURNS TABLE( name TEXT,
                  statement TEXT,
                  is_holdable BOOLEAN,
@@ -289,9 +308,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BOOLEAN, NULL::BOOLEAN, NULL::BOOLEAN,
              NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_available_extensions()
+  {"pg_catalog", "pg_available_extensions",
+   R"(()
   RETURNS TABLE( name TEXT,
                  default_version TEXT,
                  comment TEXT)
@@ -299,9 +319,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::TEXT, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_available_extension_versions()
+  {"pg_catalog", "pg_available_extension_versions",
+   R"(()
   RETURNS TABLE( name TEXT,
                  version TEXT,
                  superuser BOOLEAN,
@@ -316,9 +337,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BOOLEAN, NULL::BOOLEAN, NULL::BOOLEAN,
              NULL::TEXT, NULL::TEXT[], NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_prepared_xact()
+  {"pg_catalog", "pg_prepared_xact",
+   R"(()
   RETURNS TABLE( transaction BIGINT,
                  gid TEXT,
                  prepared TIMESTAMP,
@@ -329,9 +351,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
       SELECT NULL::BIGINT, NULL::TEXT, NULL::TIMESTAMP,
              NULL::BIGINT, NULL::BIGINT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_prepared_statement()
+  {"pg_catalog", "pg_prepared_statement",
+   R"(()
   RETURNS TABLE( name TEXT,
                  statement TEXT,
                  prepare_time TIMESTAMP,
@@ -346,9 +369,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT[], NULL::BIGINT[],
              NULL::BOOLEAN, NULL::BIGINT, NULL::BIGINT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_show_all_file_settings()
+  {"pg_catalog", "pg_show_all_file_settings",
+   R"(()
   RETURNS TABLE( sourcefile TEXT,
                  sourceline INTEGER,
                  seqno INTEGER,
@@ -361,9 +385,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
       SELECT NULL::TEXT, NULL::INTEGER, NULL::INTEGER,
              NULL::TEXT, NULL::TEXT, NULL::BOOLEAN, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_hba_file_rules()
+  {"pg_catalog", "pg_hba_file_rules",
+   R"(()
   RETURNS TABLE( rule_number INTEGER,
                  file_name TEXT,
                  line_number INTEGER,
@@ -382,9 +407,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::TEXT, NULL::TEXT, NULL::TEXT,
              NULL::TEXT[], NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_ident_file_mappings()
+  {"pg_catalog", "pg_ident_file_mappings",
+   R"(()
   RETURNS TABLE( map_number INTEGER,
                  file_name TEXT,
                  line_number INTEGER,
@@ -397,9 +423,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
       SELECT NULL::INTEGER, NULL::TEXT, NULL::INTEGER,
              NULL::TEXT, NULL::TEXT, NULL::TEXT, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_timezone_abbrevs_zone()
+  {"pg_catalog", "pg_timezone_abbrevs_zone",
+   R"(()
   RETURNS TABLE( abbrev TEXT,
                  utc_offset TEXT,
                  is_dst BOOLEAN)
@@ -407,9 +434,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::TEXT, NULL::BOOLEAN
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_timezone_abbrevs_abbrevs()
+  {"pg_catalog", "pg_timezone_abbrevs_abbrevs",
+   R"(()
   RETURNS TABLE( abbrev TEXT,
                  utc_offset TEXT,
                  is_dst BOOLEAN)
@@ -417,9 +445,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::TEXT, NULL::BOOLEAN
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_timezone_names()
+  {"pg_catalog", "pg_timezone_names",
+   R"(()
   RETURNS TABLE( name TEXT,
                  abbrev TEXT,
                  utc_offset TEXT,
@@ -428,18 +457,20 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::TEXT, NULL::TEXT, NULL::BOOLEAN
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_config()
+  {"pg_catalog", "pg_config",
+   R"(()
   RETURNS TABLE( name TEXT,
                  setting TEXT)
   LANGUAGE SQL
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_get_shmem_allocations()
+  {"pg_catalog", "pg_get_shmem_allocations",
+   R"(()
   RETURNS TABLE( name TEXT,
                  off BIGINT,
                  size BIGINT,
@@ -448,9 +479,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::BIGINT, NULL::BIGINT, NULL::BIGINT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_get_shmem_allocations_numa()
+  {"pg_catalog", "pg_get_shmem_allocations_numa",
+   R"(()
   RETURNS TABLE( name TEXT,
                  numa_node INTEGER,
                  size BIGINT)
@@ -458,9 +490,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::INTEGER, NULL::BIGINT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_get_backend_memory_contexts()
+  {"pg_catalog", "pg_get_backend_memory_contexts",
+   R"(()
   RETURNS TABLE( name TEXT,
                  ident TEXT,
                  type TEXT,
@@ -477,9 +510,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::INTEGER, NULL::TEXT, NULL::BIGINT, NULL::BIGINT,
              NULL::BIGINT, NULL::BIGINT, NULL::BIGINT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_activity(pid INTEGER)
+  {"pg_catalog", "pg_stat_get_activity",
+   R"((pid INTEGER)
   RETURNS TABLE( datid BIGINT,
                  pid BIGINT,
                  usesysid BIGINT,
@@ -523,9 +557,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BOOLEAN, NULL::TEXT, NULL::BOOLEAN, NULL::BOOLEAN,
              NULL::BIGINT, NULL::BIGINT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_wal_senders()
+  {"pg_catalog", "pg_stat_get_wal_senders",
+   R"(()
   RETURNS TABLE( pid INTEGER,
                  state TEXT,
                  sent_lsn TEXT,
@@ -544,9 +579,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::TEXT, NULL::TEXT, NULL::TEXT, NULL::TEXT,
              NULL::TEXT, NULL::INTEGER, NULL::TEXT, NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_slru()
+  {"pg_catalog", "pg_stat_get_slru",
+   R"(()
   RETURNS TABLE( name TEXT,
                  blks_zeroed BIGINT,
                  blks_hit BIGINT,
@@ -562,9 +598,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
              NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_wal_receiver()
+  {"pg_catalog", "pg_stat_get_wal_receiver",
+   R"(()
   RETURNS TABLE( pid INTEGER,
                  status TEXT,
                  receive_start_lsn TEXT,
@@ -588,9 +625,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::TEXT, NULL::TIMESTAMP,
              NULL::TEXT, NULL::TEXT, NULL::INTEGER, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_recovery_prefetch()
+  {"pg_catalog", "pg_stat_get_recovery_prefetch",
+   R"(()
   RETURNS TABLE( stats_reset TIMESTAMP,
                  prefetch BIGINT,
                  hit BIGINT,
@@ -607,9 +645,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
              NULL::INTEGER, NULL::INTEGER, NULL::INTEGER
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_subscription(subid OID)
+  {"pg_catalog", "pg_stat_get_subscription",
+   R"((subid OID)
   RETURNS TABLE( subid BIGINT,
                  relid BIGINT,
                  pid INTEGER,
@@ -626,9 +665,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::TEXT, NULL::TIMESTAMP, NULL::TIMESTAMP,
              NULL::TEXT, NULL::TIMESTAMP, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_get_replication_slots()
+  {"pg_catalog", "pg_get_replication_slots",
+   R"(()
   RETURNS TABLE( slot_name TEXT,
                  plugin TEXT,
                  slot_type TEXT,
@@ -658,9 +698,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::TIMESTAMP, NULL::BOOLEAN, NULL::TEXT,
              NULL::BOOLEAN, NULL::BOOLEAN
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_replication_slot(slot_name TEXT)
+  {"pg_catalog", "pg_stat_get_replication_slot",
+   R"((slot_name TEXT)
   RETURNS TABLE( slot_name TEXT,
                  spill_txns BIGINT,
                  spill_count BIGINT,
@@ -677,9 +718,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
              NULL::BIGINT, NULL::BIGINT, NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_archiver()
+  {"pg_catalog", "pg_stat_get_archiver",
+   R"(()
   RETURNS TABLE( archived_count BIGINT,
                  last_archived_wal TEXT,
                  last_archived_time TIMESTAMP,
@@ -693,9 +735,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::TEXT, NULL::TIMESTAMP,
              NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_io()
+  {"pg_catalog", "pg_stat_get_io",
+   R"(()
   RETURNS TABLE( backend_type TEXT,
                  object TEXT,
                  context TEXT,
@@ -726,9 +769,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
              NULL::BIGINT, NULL::DOUBLE PRECISION, NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_wal()
+  {"pg_catalog", "pg_stat_get_wal",
+   R"(()
   RETURNS TABLE( wal_records BIGINT,
                  wal_fpi BIGINT,
                  wal_bytes BIGINT,
@@ -739,9 +783,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
       SELECT NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
              NULL::BIGINT, NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_show_replication_origin_status()
+  {"pg_catalog", "pg_show_replication_origin_status",
+   R"(()
   RETURNS TABLE( local_id BIGINT,
                  external_id TEXT,
                  remote_lsn TEXT,
@@ -750,9 +795,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::BIGINT, NULL::TEXT, NULL::TEXT, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_stat_get_subscription_stats(subid OID)
+  {"pg_catalog", "pg_stat_get_subscription_stats",
+   R"((subid OID)
   RETURNS TABLE( subid BIGINT,
                  apply_error_count BIGINT,
                  sync_error_count BIGINT,
@@ -771,9 +817,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
              NULL::TIMESTAMP
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_get_wait_events()
+  {"pg_catalog", "pg_get_wait_events",
+   R"(()
   RETURNS TABLE( type TEXT,
                  name TEXT,
                  description TEXT)
@@ -781,9 +828,10 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
   BEGIN ATOMIC
       SELECT NULL::TEXT, NULL::TEXT, NULL::TEXT
       WHERE false;
-  END;)",
+  END;)"},
 
-  R"(CREATE FUNCTION pg_get_aios()
+  {"pg_catalog", "pg_get_aios",
+   R"(()
   RETURNS TABLE( pid INTEGER,
                  io_id BIGINT,
                  io_generation BIGINT,
@@ -807,8 +855,262 @@ inline constexpr auto kSystemFunctionsQueries = std::to_array<
              NULL::BIGINT, NULL::BIGINT, NULL::TEXT,
              NULL::BOOLEAN, NULL::BOOLEAN, NULL::BOOLEAN
       WHERE false;
-  END;)",
+  END;)"},
+  // PG regexp functions wrapping DuckDB builtins
+
+  {DEFAULT_SCHEMA, "regexp_count",
+   R"((text, pattern) AS len(regexp_extract_all(text, pattern)),
+      (text, pattern, start) AS len(regexp_extract_all(text[start:], pattern)))"},
+
+  {DEFAULT_SCHEMA, "regexp_substr",
+   R"((text, pattern) AS CASE WHEN regexp_matches(text, pattern) THEN regexp_extract(text, pattern) END,
+      (text, pattern, start) AS CASE WHEN regexp_matches(text[start:], pattern) THEN regexp_extract(text[start:], pattern) END)"},
+
+  // PG array functions missing from DuckDB
+
+  {DEFAULT_SCHEMA, "array_remove",
+   R"((arr, elem) AS list_filter(arr, x -> x IS DISTINCT FROM elem))"},
+
+  {DEFAULT_SCHEMA, "trim_array",
+   R"((arr, n) AS arr[:len(arr) - n])"},
+
+  {DEFAULT_SCHEMA, "array_positions",
+   R"((arr, elem) AS list_filter(list_transform(arr, (x, i) -> CASE WHEN x IS NOT DISTINCT FROM elem THEN i ELSE NULL END), x -> x IS NOT NULL))"},
+
+  {DEFAULT_SCHEMA, "array_replace",
+   R"((arr, old_elem, new_elem) AS list_transform(arr, x -> CASE WHEN x IS NOT DISTINCT FROM old_elem THEN new_elem ELSE x END))"},
+
+  {DEFAULT_SCHEMA, "array_lower",
+   R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE 1 END)"},
+
+  {DEFAULT_SCHEMA, "array_upper",
+   R"((arr, dim) AS CASE WHEN arr IS NULL OR len(arr) = 0 THEN NULL ELSE len(arr) END)"},
+
+  // regexp_like: alias registered in duckdb functions.json -> regexp_matches
+
+  // overlay(string placing string from int for int) -> string
+  // Parser transforms: overlay(s PLACING r FROM p FOR n) -> overlay(s, r, p, n)
+  {DEFAULT_SCHEMA, "overlay",
+   R"((s, repl, start, count) AS substr(s, 1, start - 1) || repl || substr(s, start + count))"},
+  // 3-arg form: overlay(string placing string from int) -- count defaults to length of replacement
+  {DEFAULT_SCHEMA, "overlay",
+   R"((s, repl, start) AS substr(s, 1, start - 1) || repl || substr(s, start + length(repl)))"},
+
+  // PG datetime functions missing from DuckDB
+  // clock_timestamp: real wall-clock time (not statement time).
+  // DuckDB's now() is transaction-scoped, but close enough for most uses.
+  {DEFAULT_SCHEMA, "clock_timestamp", R"(() AS now())"},
+  // timeofday: wall clock as formatted text
+  {DEFAULT_SCHEMA, "timeofday",
+   R"(() AS strftime(now()::timestamp, '%a %b %d %H:%M:%S %Y UTC'))"},
+
+  // PG math functions missing from DuckDB
+
+  // div: registered as C++ function in connector/functions/math.cpp
+
+  // Degree-based trigonometric functions
+  {DEFAULT_SCHEMA, "sind",
+   R"((x) AS sin(radians(x)))"},
+
+  {DEFAULT_SCHEMA, "cosd",
+   R"((x) AS cos(radians(x)))"},
+
+  {DEFAULT_SCHEMA, "tand",
+   R"((x) AS tan(radians(x)))"},
+
+  // cotd is registered as a scalar function in RegisterPgMathFunctions
+  // with PG-compatible division-by-zero error handling.
+
+  {DEFAULT_SCHEMA, "asind",
+   R"((x) AS degrees(asin(x)))"},
+
+  {DEFAULT_SCHEMA, "acosd",
+   R"((x) AS degrees(acos(x)))"},
+
+  {DEFAULT_SCHEMA, "atand",
+   R"((x) AS degrees(atan(x)))"},
+
+  {DEFAULT_SCHEMA, "atan2d",
+   R"((y, x) AS degrees(atan2(y, x)))"},
+
+  // set_config: registered as C++ function in connector/functions/system.cpp
+
+  // ACL functions -- SereneDB doesn't implement RBAC yet, so every user
+  // behaves as superuser: all privileges granted with grant option.
+  {"pg_catalog", "aclexplode",
+   R"((acl)
+  RETURNS TABLE( grantor INTEGER,
+                 grantee INTEGER,
+                 privilege_type TEXT,
+                 is_grantable BOOLEAN)
+  LANGUAGE SQL
+  BEGIN ATOMIC
+      SELECT a.oid::INTEGER, a.oid::INTEGER,
+             UNNEST(['INSERT','SELECT','UPDATE','DELETE','TRUNCATE',
+                     'REFERENCES','TRIGGER','EXECUTE','USAGE','CREATE']),
+             true
+      FROM pg_catalog.pg_authid a;
+  END;)"},
+
+  {"pg_catalog", "acldefault",
+   R"((type, owner) AS CAST(NULL AS TEXT[]))"},
+
+  // Stubs for PG C built-in functions from ruleutils.c / misc.
+  // These take OIDs and return text representations of database objects.
+  // TODO(mbkkt): implement properly -- currently return NULL.
+  {"pg_catalog", "pg_get_ruledef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_ruledef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_viewdef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_viewdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_viewdef", "(oid, wrap_column) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_indexdef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_indexdef", "(oid, col, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_triggerdef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_triggerdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_constraintdef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_constraintdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_expr", "(node_text, rel_oid, pretty_bool) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_userbyid", "(oid) AS 'postgres'::name"},
+  {"pg_catalog", "pg_get_function_arguments", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_function_arg_default", "(oid, n) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_functiondef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_statisticsobjdef_expressions", "(oid) AS CAST(NULL AS TEXT[])"},
+  {"pg_catalog", "pg_get_partkeydef", "(oid) AS CAST(NULL AS TEXT)"},
+  {"pg_catalog", "pg_get_serial_sequence", "(tbl, col) AS CAST(NULL AS TEXT)"},
+
+  // Stub scalar functions returning 0/NULL -- PG C built-ins not yet implemented.
+  // TODO(mbkkt): implement properly.
+  {"pg_catalog", "pg_column_is_updatable", "(a, b, c) AS true"},
+  {"pg_catalog", "pg_relation_is_updatable", "(a, b) AS 0"},
+  {"pg_catalog", "pg_sequence_last_value", "(a) AS CAST(NULL AS BIGINT)"},
+  {"pg_catalog", "pg_indexam_progress_phasename", "(a, b) AS CAST(NULL AS TEXT)"},
+
+  // Table-returning function stubs (return empty)
+  {"pg_catalog", "pg_options_to_table",
+   R"((opts) AS TABLE SELECT NULL::TEXT AS option_name, NULL::TEXT AS option_value WHERE false)"},
+  {"pg_catalog", "pg_mcv_list_items",
+   R"((mcv) AS TABLE SELECT NULL::INTEGER AS index, NULL::TEXT AS values, NULL::DOUBLE AS nulls, NULL::DOUBLE AS frequency, NULL::DOUBLE AS base_frequency WHERE false)"},
+  {"pg_catalog", "pg_get_publication_tables",
+   R"((pubname) AS TABLE SELECT NULL::INTEGER AS relid, NULL::TEXT AS attrs, NULL::TEXT AS qual WHERE false)"},
+
+  // pg_stat_get_* stubs -- statistics functions, all return 0 or NULL
+  {"pg_catalog", "pg_stat_get_analyze_count", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_autoanalyze_count", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_autovacuum_count", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_bgwriter_buf_written_clean", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_bgwriter_maxwritten_clean", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_bgwriter_stat_reset_time", "() AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_blocks_fetched", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_blocks_hit", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_buf_alloc", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_buffers_written", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_num_performed", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_num_requested", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_num_timed", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_restartpoints_performed", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_restartpoints_requested", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_restartpoints_timed", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_slru_written", "() AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_stat_reset_time", "() AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_sync_time", "() AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_checkpointer_write_time", "() AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_db_active_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_db_blk_read_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_db_blk_write_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_db_blocks_fetched", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_blocks_hit", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_checksum_failures", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_checksum_last_failure", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_all", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_bufferpin", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_lock", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_logicalslot", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_snapshot", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_startup_deadlock", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_conflict_tablespace", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_deadlocks", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_idle_in_transaction_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_db_numbackends", "(a) AS CAST(0 AS INTEGER)"},
+  {"pg_catalog", "pg_stat_get_db_parallel_workers_launched", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_parallel_workers_to_launch", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_session_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_db_sessions", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_sessions_abandoned", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_sessions_fatal", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_sessions_killed", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_stat_reset_time", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_db_temp_bytes", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_temp_files", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_tuples_deleted", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_tuples_fetched", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_tuples_inserted", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_tuples_returned", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_tuples_updated", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_xact_commit", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_db_xact_rollback", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_dead_tuples", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_function_calls", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_function_self_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_function_total_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_ins_since_vacuum", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_last_analyze_time", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_last_autoanalyze_time", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_last_autovacuum_time", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_last_vacuum_time", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_lastscan", "(a) AS CAST(NULL AS TIMESTAMP)"},
+  {"pg_catalog", "pg_stat_get_live_tuples", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_mod_since_analyze", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_numscans", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_total_analyze_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_total_autoanalyze_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_total_autovacuum_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_total_vacuum_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_tuples_deleted", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_tuples_fetched", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_tuples_hot_updated", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_tuples_inserted", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_tuples_newpage_updated", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_tuples_returned", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_tuples_updated", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_vacuum_count", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_function_calls", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_function_self_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_xact_function_total_time", "(a) AS CAST(0 AS DOUBLE)"},
+  {"pg_catalog", "pg_stat_get_xact_numscans", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_deleted", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_fetched", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_hot_updated", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_inserted", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_newpage_updated", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_returned", "(a) AS CAST(0 AS BIGINT)"},
+  {"pg_catalog", "pg_stat_get_xact_tuples_updated", "(a) AS CAST(0 AS BIGINT)"},
+
+  // Misc stubs -- superuser behavior (no RBAC)
+  {"pg_catalog", "row_security_active", "(a) AS false"},
+  {"pg_catalog", "has_column_privilege", "(a, b, c) AS true, (a, b, c, d) AS true"},
+  {"pg_catalog", "has_table_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_schema_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_database_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_function_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_type_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_foreign_data_wrapper_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_server_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_sequence_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_language_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "has_tablespace_privilege", "(a, b) AS true, (a, b, c) AS true"},
+  {"pg_catalog", "getdatabaseencoding", "() AS 'UTF8'"},
+  // Always UTF-8 -> max 4 bytes per character. Argument ignored.
+  {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
+  {"pg_catalog", "nameconcatoid", "(a, b) AS CAST(a || '_' || CAST(b AS TEXT) AS TEXT)"},
+  // Always UTF-8 -> encoding 6. Stub: only UTF8 supported.
+  {"pg_catalog", "pg_encoding_to_char", "(encoding int4) AS 'UTF8'::name"},
+  {"pg_catalog", "pg_char_to_encoding", "(enc_name) AS 6::int4"},
+  // No temp schemas supported yet.
+  {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
+  // We do not spawn backends per connection
+  {"pg_catalog", "pg_backend_pid", "() AS CAST(0 AS INTEGER)"},
   // clang-format on
-});
+};
 
 }  // namespace sdb::pg

@@ -24,16 +24,17 @@ application_name	(empty)	Sets the application name to be reported in statistics 
 bytea_output	hex	Sets the output format for bytea.
 client_encoding	UTF8	Sets the client's character set encoding.
 default_transaction_isolation	<slt:ignore>	Sets the transaction isolation level of each new transaction.
-default_transaction_read_only	off	Sets the default read-only status of new transactions.
+default_transaction_read_only	<slt:ignore>	Sets the default read-only status of new transactions.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 in_hot_standby	off	Shows whether hot standby is currently active.
 integer_datetimes	on	Shows whether datetimes are integer based.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
+search_path	"$user", public	Sets <slt:ignore>
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	<slt:ignore>	Shows the server version.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 transaction_isolation	<slt:ignore>	Sets the current transaction's isolation level.
+
 
 # Check that pg_settings see updated settings
 

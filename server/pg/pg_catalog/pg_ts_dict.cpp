@@ -33,8 +33,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgTsDict>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+catalog::MaterializedData SystemTableSnapshot<PgTsDict>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgTsDict> values;
@@ -56,19 +55,11 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgTsDict>::GetTableData(
     }
   }
 
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<PgTsDict>);
-  boost::pfr::for_each_field(
-    PgTsDict{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.push_back(std::move(column));
-    });
-
+  auto result = CreateColumns<PgTsDict>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
-
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

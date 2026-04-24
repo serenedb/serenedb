@@ -78,23 +78,12 @@ else
 	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=Off" "-DSDB_ALLOC=SYS" "-DSDB_IOURING=Off" "-DSDB_SANITIZE=$SANITIZERS")
 fi
 
-JEMALLOC_TARGET=""
-if [[ "$SDB_ALLOC" == "JE" && ("$SANITIZERS" == "None" || -z "$SANITIZERS") ]]; then
-	JEMALLOC_TARGET="jemalloc_build"
-fi
-
 print_banner "CMAKE CONFIGURATION" "${TARGETS[*]}"
 echo "nproc=$(nproc) cmake ${CMAKE_FLAGS[*]} .." | tee /serenedb/cmake_${LOG_SUFFIX}.log
 cmake "${CMAKE_FLAGS[@]}" .. 2>&1 | tee -a /serenedb/cmake_${LOG_SUFFIX}.log || exit 1
 
 export CC=/usr/local/bin/clang
 export CXX=/usr/local/bin/clang++
-
-if [[ -n "$JEMALLOC_TARGET" ]]; then
-	print_banner "BUILDING JEMALLOC" "$JEMALLOC_TARGET"
-	ninja "$JEMALLOC_TARGET" 2>&1 | tee /serenedb/make_${LOG_SUFFIX}.log || exit 1
-	ccache -s | tee /serenedb/ccache_${LOG_SUFFIX}.log
-fi
 
 print_banner "BUILDING TARGETS" "${TARGETS[*]}"
 ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/make_${LOG_SUFFIX}.log || exit 1

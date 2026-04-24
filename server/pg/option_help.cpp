@@ -25,12 +25,6 @@
 
 #include <variant>
 
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/nodes.h"
-LIBPG_QUERY_INCLUDES_END
-
 namespace sdb::pg {
 namespace {
 

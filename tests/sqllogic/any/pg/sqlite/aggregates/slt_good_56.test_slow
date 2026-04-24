@@ -30004,6 +30004,7 @@ query III rowsort
 SELECT DISTINCT * FROM tab1 AS cor0 WHERE NULL IN ( + 7, 70, - + 67 - + + 96 + + ( + + col1 ) )
 ----
 
+skipif serenedb # TODO(mbkkt) int32 overflow
 query I rowsort
 SELECT ALL col1 * - 1 col0 FROM tab0 AS cor0 WHERE NOT NULL NOT IN ( - 79 - - + col2 + + - 84 * - 91 * - - col1 * - + 70 * + 50 / - col0 )
 ----

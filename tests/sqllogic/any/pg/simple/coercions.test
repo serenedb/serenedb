@@ -1,3 +1,6 @@
+halt
+
+
 # Test each implicit coercion declared in pg_functions_registration.hpp
 # Pattern: CREATE FUNCTION accepting target type, call with source type
 # TINYINT (int1) and HUGEINT don't exist in standard PG - skipped

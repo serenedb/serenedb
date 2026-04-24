@@ -151,8 +151,8 @@ class BlockScoringTestCase : public IndexTestBase {
  protected:
   // Helper to check if doc ID is valid
   static bool IsValidDoc(auto& doc) {
-    return !irs::doc_limits::eof(std::get<irs::doc_id_t>(doc)) &&
-           std::get<irs::doc_id_t>(doc) != irs::doc_limits::invalid();
+    return !irs::doc_limits::eof(doc.doc) &&
+           doc.doc != irs::doc_limits::invalid();
   }
 
   // Helper to read string column value for a document
@@ -173,8 +173,7 @@ class BlockScoringTestCase : public IndexTestBase {
     if (!payload) {
       return {};
     }
-    if (std::get<irs::doc_id_t>(doc) !=
-        values->seek(std::get<irs::doc_id_t>(doc))) {
+    if (doc.doc != values->seek(doc.doc)) {
       return {};
     }
     return irs::ToString<std::string>(payload->value.data());
@@ -227,15 +226,15 @@ class BlockScoringTestCase : public IndexTestBase {
   // Helper to verify scores are positive, descending, and doc IDs are valid
   void VerifyScoresAndDocs(auto docs, size_t result_count) {
     for (size_t i = 0; i < result_count; ++i) {
-      EXPECT_GT(std::get<irs::score_t>(docs[i]), 0)
+      EXPECT_GT(docs[i].score, 0)
         << "Score at position " << i << " should be positive";
       if (i > 0) {
-        EXPECT_GE(std::get<irs::score_t>(docs[i - 1]),
-                  std::get<irs::score_t>(docs[i]))
+        EXPECT_GE(docs[i - 1].score, docs[i].score)
           << "Scores should be in descending order at position " << i;
       }
       ASSERT_TRUE(IsValidDoc(docs[i]))
-        << "Doc ID at position " << i << " should be valid, got " << docs[i];
+        << "Doc ID at position " << i << " should be valid, got "
+        << docs[i].doc;
     }
   }
 
@@ -377,7 +376,7 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("physics", topic)
-      << "Doc " << docs[i] << " should have topic='physics'";
+      << "Doc " << docs[i].doc << " should have topic='physics'";
   }
 }
 
@@ -410,7 +409,7 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("search", topic)
-      << "Doc " << docs[i] << " should have topic='search'";
+      << "Doc " << docs[i].doc << " should have topic='search'";
   }
 }
 
@@ -443,7 +442,7 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("chemistry", topic)
-      << "Doc " << docs[i] << " should have topic='chemistry'";
+      << "Doc " << docs[i].doc << " should have topic='chemistry'";
   }
 }
 
@@ -478,9 +477,9 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
     auto category = ReadColumnValue(segment, "category", docs[i]);
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("tech", category)
-      << "Doc " << docs[i] << " should have category='tech'";
+      << "Doc " << docs[i].doc << " should have category='tech'";
     EXPECT_EQ("database", topic)
-      << "Doc " << docs[i] << " should have topic='database'";
+      << "Doc " << docs[i].doc << " should have topic='database'";
   }
 }
 
@@ -514,9 +513,9 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
     auto category = ReadColumnValue(segment, "category", docs[i]);
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("science", category)
-      << "Doc " << docs[i] << " should have category='science'";
+      << "Doc " << docs[i].doc << " should have category='science'";
     EXPECT_EQ("physics", topic)
-      << "Doc " << docs[i] << " should have topic='physics'";
+      << "Doc " << docs[i].doc << " should have topic='physics'";
   }
 }
 
@@ -552,7 +551,7 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   for (size_t i = 0; i < result_count; ++i) {
     auto category = ReadColumnValue(segment, "category", docs[i]);
     EXPECT_EQ("tech", category)
-      << "Doc " << docs[i] << " should have category='tech'";
+      << "Doc " << docs[i].doc << " should have category='tech'";
   }
 }
 
@@ -585,7 +584,7 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   for (size_t i = 0; i < result_count; ++i) {
     auto category = ReadColumnValue(segment, "category", docs[i]);
     EXPECT_EQ("science", category)
-      << "Doc " << docs[i] << " should have category='science'";
+      << "Doc " << docs[i].doc << " should have category='science'";
   }
 }
 
@@ -629,12 +628,12 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", tfidf_docs[i]);
     EXPECT_EQ("search", topic)
-      << "TFIDF doc " << tfidf_docs[i] << " should have topic='search'";
+      << "TFIDF doc " << tfidf_docs[i].doc << " should have topic='search'";
   }
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", bm25_docs[i]);
     EXPECT_EQ("search", topic)
-      << "BM25 doc " << bm25_docs[i] << " should have topic='search'";
+      << "BM25 doc " << bm25_docs[i].doc << " should have topic='search'";
   }
 }
 
@@ -668,7 +667,7 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("chemistry", topic)
-      << "Doc " << docs[i] << " should have topic='chemistry'";
+      << "Doc " << docs[i].doc << " should have topic='chemistry'";
   }
 }
 
@@ -727,11 +726,11 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     auto tags = ReadColumnValue(segment, "tags", docs[i]);
     EXPECT_EQ("tech", category)
-      << "Doc " << docs[i] << " should have category='tech'";
+      << "Doc " << docs[i].doc << " should have category='tech'";
     EXPECT_EQ("database", topic)
-      << "Doc " << docs[i] << " should have topic='database'";
+      << "Doc " << docs[i].doc << " should have topic='database'";
     EXPECT_EQ("search,index", tags)
-      << "Doc " << docs[i] << " should have tags='search,index'";
+      << "Doc " << docs[i].doc << " should have tags='search,index'";
   }
 }
 
@@ -767,7 +766,7 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
     for (size_t i = 0; i < result_count; ++i) {
       auto topic = ReadColumnValue(segment, "topic", docs[i]);
       EXPECT_EQ("database", topic)
-        << "Doc " << docs[i] << " should have topic='database'";
+        << "Doc " << docs[i].doc << " should have topic='database'";
     }
   }
 
@@ -789,7 +788,7 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
     for (size_t i = 0; i < result_count; ++i) {
       auto topic = ReadColumnValue(segment, "topic", docs[i]);
       EXPECT_EQ("database", topic)
-        << "Doc " << docs[i] << " should have topic='database'";
+        << "Doc " << docs[i].doc << " should have topic='database'";
     }
   }
 
@@ -811,7 +810,7 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
     for (size_t i = 0; i < result_count; ++i) {
       auto topic = ReadColumnValue(segment, "topic", docs[i]);
       EXPECT_EQ("database", topic)
-        << "Doc " << docs[i] << " should have topic='database'";
+        << "Doc " << docs[i].doc << " should have topic='database'";
     }
   }
 }
@@ -848,7 +847,7 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
     for (size_t i = 0; i < result_count; ++i) {
       auto topic = ReadColumnValue(segment, "topic", docs_with_norms[i]);
       EXPECT_EQ("search", topic)
-        << "Doc " << docs_with_norms[i] << " should have topic='search'";
+        << "Doc " << docs_with_norms[i].doc << " should have topic='search'";
     }
   }
 
@@ -870,7 +869,7 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
     for (size_t i = 0; i < result_count; ++i) {
       auto topic = ReadColumnValue(segment, "topic", docs_without_norms[i]);
       EXPECT_EQ("search", topic)
-        << "Doc " << docs_without_norms[i] << " should have topic='search'";
+        << "Doc " << docs_without_norms[i].doc << " should have topic='search'";
     }
   }
 }
@@ -910,7 +909,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   for (size_t i = 0; i < result_count; ++i) {
     EXPECT_TRUE(
       VerifyDocValueInAnySegment(reader, docs[i], "topic", "database"))
-      << "Doc " << docs[i] << " should have topic='database'";
+      << "Doc " << docs[i].doc << " should have topic='database'";
   }
 }
 
@@ -940,7 +939,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
 
   for (size_t i = 0; i < result_count; ++i) {
     EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "search"))
-      << "Doc " << docs[i] << " should have topic='search'";
+      << "Doc " << docs[i].doc << " should have topic='search'";
   }
 }
 
@@ -970,10 +969,10 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
 
   for (size_t i = 0; i < result_count; ++i) {
     EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "category", "tech"))
-      << "Doc " << docs[i] << " should have category='tech'";
+      << "Doc " << docs[i].doc << " should have category='tech'";
     EXPECT_TRUE(
       VerifyDocValueInAnySegment(reader, docs[i], "topic", "database"))
-      << "Doc " << docs[i] << " should have topic='database'";
+      << "Doc " << docs[i].doc << " should have topic='database'";
   }
 }
 
@@ -1004,9 +1003,9 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   for (size_t i = 0; i < result_count; ++i) {
     EXPECT_TRUE(
       VerifyDocValueInAnySegment(reader, docs[i], "category", "science"))
-      << "Doc " << docs[i] << " should have category='science'";
+      << "Doc " << docs[i].doc << " should have category='science'";
     EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "physics"))
-      << "Doc " << docs[i] << " should have topic='physics'";
+      << "Doc " << docs[i].doc << " should have topic='physics'";
   }
 }
 
@@ -1037,7 +1036,7 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
 
   for (size_t i = 0; i < result_count; ++i) {
     EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "category", "tech"))
-      << "Doc " << docs[i] << " should have category='tech'";
+      << "Doc " << docs[i].doc << " should have category='tech'";
   }
 }
 
@@ -1067,7 +1066,7 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
 
   for (size_t i = 0; i < result_count; ++i) {
     EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "physics"))
-      << "Doc " << docs[i] << " should have topic='physics'";
+      << "Doc " << docs[i].doc << " should have topic='physics'";
   }
 }
 
@@ -1100,8 +1099,8 @@ TEST_P(BlockScoringTestCase, TfidfDisjunctionTwoTerms) {
   for (size_t i = 0; i < result_count; ++i) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_TRUE(topic == "database" || topic == "search")
-      << "Doc " << docs[i] << " should have topic='database' or 'search', got '"
-      << topic << "'";
+      << "Doc " << docs[i].doc
+      << " should have topic='database' or 'search', got '" << topic << "'";
   }
 }
 
@@ -1134,8 +1133,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionTwoTerms) {
   for (size_t i = 0; i < result_count; ++i) {
     auto category = ReadColumnValue(segment, "category", docs[i]);
     EXPECT_TRUE(category == "tech" || category == "science")
-      << "Doc " << docs[i] << " should have category='tech' or 'science', got '"
-      << category << "'";
+      << "Doc " << docs[i].doc
+      << " should have category='tech' or 'science', got '" << category << "'";
   }
 }
 
@@ -1170,7 +1169,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunction) {
     bool has_chemistry =
       VerifyDocValueInAnySegment(reader, docs[i], "topic", "chemistry");
     EXPECT_TRUE(has_physics || has_chemistry)
-      << "Doc " << docs[i] << " should have topic='physics' or 'chemistry'";
+      << "Doc " << docs[i].doc << " should have topic='physics' or 'chemistry'";
   }
 }
 
@@ -1205,7 +1204,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25Disjunction) {
     bool has_science =
       VerifyDocValueInAnySegment(reader, docs[i], "category", "science");
     EXPECT_TRUE(has_tech || has_science)
-      << "Doc " << docs[i] << " should have category='tech' or 'science'";
+      << "Doc " << docs[i].doc << " should have category='tech' or 'science'";
   }
 }
 
@@ -1240,8 +1239,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionFourTerms) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_TRUE(topic == "database" || topic == "search" ||
                 topic == "physics" || topic == "chemistry")
-      << "Doc " << docs[i] << " should have one of the queried topics, got '"
-      << topic << "'";
+      << "Doc " << docs[i].doc
+      << " should have one of the queried topics, got '" << topic << "'";
   }
 }
 
@@ -1284,7 +1283,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunctionFiveTerms) {
       VerifyDocValueInAnySegment(reader, docs[i], "topic", "biology");
     EXPECT_TRUE(has_database || has_search || has_physics || has_chemistry ||
                 has_biology)
-      << "Doc " << docs[i] << " should have one of the queried topics";
+      << "Doc " << docs[i].doc << " should have one of the queried topics";
   }
 }
 
@@ -1318,8 +1317,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_TRUE(topic == "database" || topic == "physics" ||
                 topic == "chemistry")
-      << "Doc " << docs[i] << " should have one of the queried topics, got '"
-      << topic << "'";
+      << "Doc " << docs[i].doc
+      << " should have one of the queried topics, got '" << topic << "'";
   }
 }
 

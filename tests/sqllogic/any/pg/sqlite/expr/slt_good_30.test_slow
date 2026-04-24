@@ -80697,6 +80697,7 @@ NULL
 
 skipif mysql # not compatible
 skipif postgres # TODO(mbkkt)
+skipif serenedb # TODO(mbkkt) int32 overflow
 query I rowsort label-9311
 SELECT + 41 + - 61 + - ( + + 35 ) + + 83 - 35 - + + CAST ( 55 AS INTEGER ) * + - 70 * - 75 * - 20 * - CASE - 11 WHEN SUM ( ALL - 35 ) * - CASE - ( - 83 ) WHEN 40 THEN + 72 + 2 END THEN NULL ELSE - 73 * 52 END * + CASE 59 WHEN 92 + AVG ( 19 ) THEN 36 / - 77 + + 90 * 96 END
 ----

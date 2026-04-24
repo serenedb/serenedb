@@ -43,9 +43,13 @@ class InvertedIndexShard;
 
 struct InvertedIndexShardOptions : public IndexShardOptions {
   struct Base {
-    size_t commit_interval_ms;
-    size_t consolidation_interval_ms;
-    size_t cleanup_interval_step;
+    // Default 1000 ms for both intervals so newly created indexes are
+    // searchable promptly without requiring explicit WITH (commit_interval)
+    // / WITH (consolidation_interval) on CREATE INDEX. Setting to 0
+    // disables the background task (see CommitTask).
+    size_t commit_interval_ms = 1000;
+    size_t consolidation_interval_ms = 1000;
+    size_t cleanup_interval_step = 1;
   };
 
   Base base;
@@ -185,6 +189,10 @@ class InvertedIndexShard final
 
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
+
+  bool HasActiveSegments() const noexcept {
+    return _writer && _writer->HasActiveSegments();
+  }
 
   void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;

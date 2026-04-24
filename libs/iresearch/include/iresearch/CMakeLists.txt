@@ -58,6 +58,7 @@ set(IResearch_core_sources
     ./analysis/stopwords_tokenizer.cpp
     ./analysis/ngram_tokenizer.cpp
     ./analysis/pipeline_tokenizer.cpp
+    ./analysis/union_tokenizer.cpp
     ./analysis/segmentation_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp
@@ -134,6 +135,12 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
+    ./search/raw_tf.cpp
+    ./search/lm_similarity.cpp
+    ./search/lm_jelinek_mercer.cpp
+    ./search/lm_dirichlet.cpp
+    ./search/indri_dirichlet.cpp
+    ./search/dfi.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp
@@ -207,7 +214,9 @@ add_library(iresearch-static STATIC ${IResearch_core_sources})
 set_source_files_properties(
     search/bm25.cpp
     search/tfidf.cpp
-    PROPERTIES COMPILE_OPTIONS "-ffast-math"
+    PROPERTIES
+        COMPILE_OPTIONS
+            "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
 )
 
 target_include_directories(

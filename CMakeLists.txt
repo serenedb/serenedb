@@ -368,6 +368,7 @@ option(
 
 if(SDB_DEV)
     add_definitions("-DSDB_DEV=1")
+    add_definitions("-DDEBUG")
 
     # TODO(mbkkt) add_definitions("-D_FORTIFY_SOURCE=3")
 else()

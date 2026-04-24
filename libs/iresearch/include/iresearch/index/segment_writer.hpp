@@ -344,7 +344,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   void FlushFields(FlushState& state);
 
   TrackingDirectory _dir;
-  ScorersView _scorers;
+  ScorerPtr _scorer;
   std::deque<CachedColumn, ManagedTypedAllocator<CachedColumn>>
     _cached_columns;  // pointers remain valid
   absl::flat_hash_map<field_id, CachedColumn*> _column_ids;

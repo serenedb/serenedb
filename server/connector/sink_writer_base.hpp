@@ -20,45 +20,10 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
-
 #include "catalog/table_options.h"
 #include "rocksdb/slice.h"
 
 namespace sdb::connector {
-
-// Interface for all index writers used in DataSink
-class SinkIndexWriter {
- public:
-  SinkIndexWriter() = default;
-  virtual ~SinkIndexWriter() = default;
-
-  virtual void Init(size_t batch_size, const velox::RowVectorPtr& input) {}
-
-  virtual void Finish() = 0;
-  virtual void Abort() = 0;
-
-  // returns true if writer is interested in this column
-  virtual bool SwitchColumn(const velox::Type& type, bool have_nulls,
-                            catalog::Column::Id column_id) {
-    SDB_ASSERT(false, "SwitchColumn call not implemented");
-    return false;
-  }
-
-  // Writes a value of cell in column switched to by previous call to
-  // SwitchColumn. Particular writer would not be called for cell values if
-  // returned false from SwitchColumn.
-  virtual void Write(std::span<const rocksdb::Slice> cell_slices,
-                     std::string_view full_key) {
-    SDB_ASSERT(false, "Write call not implemented");
-  }
-
-  // deletes row denoted by row_key. It is up to concrete writer to perform all
-  // necessary deletes.
-  virtual void DeleteRow(std::string_view row_key) {
-    SDB_ASSERT(false, "DeleteRow call not implemented");
-  }
-};
 
 // Base implementation of column centric index writers
 class ColumnSinkWriterImplBase {

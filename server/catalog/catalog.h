@@ -50,6 +50,11 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/index_shard.h"
 
+namespace sdb::connector {
+
+class DuckDBEntryCache;
+}
+
 namespace sdb::catalog {
 
 template<typename T>
@@ -93,6 +98,8 @@ constexpr ObjectType GetObjectType() noexcept {
 
 struct Snapshot {
   virtual ~Snapshot() = default;
+
+  virtual connector::DuckDBEntryCache& GetDuckDBEntryCache() const = 0;
   virtual std::vector<std::shared_ptr<Role>> GetRoles() const = 0;
   virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
   virtual std::vector<std::shared_ptr<Schema>> GetSchemas(
@@ -258,20 +265,23 @@ struct LogicalCatalog {
 
   virtual Result DropDatabase(std::string_view name) = 0;
   virtual Result DropRole(std::string_view name) = 0;
-  virtual Result DropSchema(ObjectId database, std::string_view name,
+  virtual Result DropSchema(std::string_view database, std::string_view name,
                             bool cascade) = 0;
-  virtual Result DropFunction(ObjectId database, std::string_view schema,
+  virtual Result DropFunction(std::string_view database,
+                              std::string_view schema,
                               std::string_view name) = 0;
-  virtual Result DropTokenizer(ObjectId database, std::string_view schema,
+  virtual Result DropTokenizer(std::string_view database,
+                               std::string_view schema,
                                std::string_view name) = 0;
-  virtual Result DropView(ObjectId database, std::string_view schema,
+  virtual Result DropView(std::string_view database, std::string_view schema,
                           std::string_view name) = 0;
-  virtual Result DropTable(ObjectId database, std::string_view schema,
+  virtual Result DropTable(std::string_view database, std::string_view schema,
                            std::string_view name) = 0;
-  virtual Result RemoveTombstone(ObjectId database, std::string_view schema,
+  virtual Result DropIndex(std::string_view database, std::string_view schema,
+                           std::string_view name) = 0;
+
+  virtual Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                                  std::string_view name) = 0;
-  virtual Result DropIndex(ObjectId database_id, std::string_view schema,
-                           std::string_view name) = 0;
 
   virtual std::shared_ptr<const Snapshot> GetCatalogSnapshot() const = 0;
 };

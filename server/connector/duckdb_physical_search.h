@@ -30,6 +30,7 @@
 
 #include "catalog/index.h"
 #include "catalog/table.h"
+#include "connector/search_pk_lookup.h"
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
@@ -121,8 +122,7 @@ class SereneDBPhysicalRangeSearch final
 struct FTSearchGlobalSourceState : public duckdb::GlobalSourceState {
   size_t segment_idx = 0;
   irs::DocIterator::ptr doc;
-  irs::DocIterator::ptr pk_iter;
-  const irs::PayAttr* pk_value = nullptr;
+  SegmentPkIterator segment_pk;
 };
 
 // Full-text search (IResearch boolean filter) physical operator.

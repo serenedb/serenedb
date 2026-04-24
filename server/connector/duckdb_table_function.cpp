@@ -317,6 +317,16 @@ void RangeSearchScan::AppendSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("Radius", std::to_string(radius));
   out.insert("Dims", std::to_string(query_vector.size()));
+  if (!filter_expressions.empty()) {
+    std::string summary;
+    for (const auto& expr : filter_expressions) {
+      if (!summary.empty()) {
+        summary += " AND ";
+      }
+      summary += expr->ToString();
+    }
+    out.insert("Filter", summary);
+  }
 }
 
 void CountScan::AppendSummary(

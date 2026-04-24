@@ -27,11 +27,13 @@
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
+#include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
 #include "connector/rocksdb_row_materializer.h"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -59,28 +61,16 @@ void RangeSearchImpl(SearchRangeScanGlobalState& state,
       reinterpret_cast<const irs::byte_type*>(state.scan->query_vector.data()),
     .radius = state.scan->radius,
   };
+  info.params.sel = state.filter.get();
   reader.RangeSearch(state.scan->field_name, info, dis, ids);
   state.pk_bytes.reserve(ids.size());
   for (auto id : ids) {
-    auto [seg_id, doc_id] =
-      irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
-    if (irs::doc_limits::eof(doc_id) || seg_id >= reader.size()) {
+    auto val = LookupPkForPackedId(reader, static_cast<uint64_t>(id));
+    if (!val) {
       continue;
     }
-    const auto& segment = reader[seg_id];
-    const auto* pk_col = segment.column(kPkFieldName);
-    if (!pk_col) {
-      continue;
-    }
-    auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-    SDB_ASSERT(pk_iter);
-    const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-    if (!pk_val || irs::doc_limits::eof(pk_iter->seek(doc_id))) {
-      continue;
-    }
-    auto val = pk_val->value;
-    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val.data()),
-                                val.size());
+    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val->data()),
+                                val->size());
   }
 }
 
@@ -92,6 +82,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   auto state = duckdb::make_uniq<SearchRangeScanGlobalState>();
   InitCommonState(*state, context, bind_data, input);
   state->scan = &bind_data.scan_source->Cast<RangeSearchScan>();
+  InitAnnFilter(state->filter, context, state->scan->filter_expressions,
+                state->scan->filter_column_ids, state->scan->index_id,
+                state->snapshot, bind_data);
 
   state->materializer = MakeRowMaterializer(
     context, bind_data, state->snapshot, {}, state->projected_columns,

@@ -25,28 +25,11 @@
 #include <string>
 #include <vector>
 
+#include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
 
 namespace sdb::connector {
-
-class ANNFilter final : public faiss::IDSelector {
- public:
-  ANNFilter(duckdb::ClientContext& context, const irs::IndexReader& reader,
-            std::unique_ptr<RowMaterializer> materializer,
-            std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs,
-            std::vector<duckdb::LogicalType> filter_types);
-
-  bool is_member(faiss::idx_t id) const override;
-
- private:
-  const irs::IndexReader& _reader;
-  std::unique_ptr<RowMaterializer> _materializer;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> _exprs;
-  mutable duckdb::ExpressionExecutor _executor;
-  mutable duckdb::DataChunk _scratch;
-  mutable duckdb::DataChunk _bool_out;
-};
 
 // Global state for SearchAnnScan (HNSW top-k).
 // HNSW search is lazy: all results are collected on the first scan call and

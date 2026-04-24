@@ -196,6 +196,65 @@ id
 3
 
 
+query
+EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│          Table: t         │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│     Radius: 100.000000    │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│       ((#0 % 2) = 0)      │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
+----
+id
+2
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id = 3;
+----
+id
+3
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id > 2;
+----
+id
+3
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id = 999;
+----
+id
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND (id = 2 OR id = 3);
+----
+id
+2
+3
+
 
 statement ok
 CREATE TABLE t_l2 (id INT, emb FLOAT[3]);

@@ -30,6 +30,7 @@
 #include "basics/assert.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -46,29 +47,12 @@ struct SearchGlobalSourceState : public duckdb::GlobalSourceState {
 
 void CollectHit(const irs::IndexReader& reader, uint64_t packed_id, float dis,
                 SearchResults& results) {
-  auto [seg_id, doc_id] = irs::UnpackSegmentWithDoc(packed_id);
-  if (seg_id >= reader.size()) {
+  auto val = LookupPkForPackedId(reader, packed_id);
+  if (!val) {
     return;
   }
-  const auto& segment = reader[seg_id];
-  const auto* pk_col = segment.column(kPkFieldName);
-  if (!pk_col) {
-    return;
-  }
-  auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-  if (!pk_iter) {
-    return;
-  }
-  const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-  if (!pk_val) {
-    return;
-  }
-  if (pk_iter->seek(doc_id) != doc_id) {
-    return;
-  }
-  auto val = pk_val->value;
-  results.pk_keys.emplace_back(reinterpret_cast<const char*>(val.data()),
-                               val.size());
+  results.pk_keys.emplace_back(reinterpret_cast<const char*>(val->data()),
+                               val->size());
   results.distances.push_back(dis);
 }
 
@@ -259,18 +243,7 @@ duckdb::SourceResultType SereneDBPhysicalFTSearch::GetDataInternal(
       }
       auto& segment = reader[state.segment_idx++];
       state.doc = segment.mask(_query->execute({.segment = segment}));
-      const auto* pk_col = segment.column(kPkFieldName);
-      if (!pk_col) {
-        state.doc.reset();
-        continue;
-      }
-      state.pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-      if (!state.pk_iter) {
-        state.doc.reset();
-        continue;
-      }
-      state.pk_value = irs::get<irs::PayAttr>(*state.pk_iter);
-      if (!state.pk_value) {
+      if (!OpenSegmentPkIterator(segment, state.segment_pk)) {
         state.doc.reset();
         continue;
       }
@@ -281,8 +254,8 @@ duckdb::SourceResultType SereneDBPhysicalFTSearch::GetDataInternal(
       state.doc.reset();
       continue;
     }
-    SDB_ASSERT(doc_id == state.pk_iter->seek(doc_id));
-    const auto pk_view = state.pk_value->value;
+    SDB_ASSERT(doc_id == state.segment_pk.iter->seek(doc_id));
+    const auto pk_view = state.segment_pk.value->value;
     pk_bytes.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
                           pk_view.size());
   }

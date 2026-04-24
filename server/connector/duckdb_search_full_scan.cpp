@@ -396,20 +396,13 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         if (irs::doc_limits::eof(sd.doc) || sd.segment_idx >= reader.size()) {
           break;
         }
-        auto& seg = reader[sd.segment_idx];
-        const auto* pk_col = seg.column(kPkFieldName);
-        if (!pk_col) {
+        auto pk_view = LookupPkForDoc(reader[sd.segment_idx], sd.doc);
+        if (!pk_view) {
           continue;
         }
-        auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-        auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-        if (!pk_val || irs::doc_limits::eof(pk_iter->seek(sd.doc))) {
-          continue;
-        }
-        auto pk_view = pk_val->value;
         gstate.topk_hits.emplace_back(
-          sd.score, std::string(reinterpret_cast<const char*>(pk_view.data()),
-                                pk_view.size()));
+          sd.score, std::string(reinterpret_cast<const char*>(pk_view->data()),
+                                pk_view->size()));
       }
       gstate.topk_executed = true;
     }
@@ -489,13 +482,10 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         .segment = segment,
         .scorer = gstate.scorer_obj.get(),
       }));
-      const auto* pk_column = segment.column(kPkFieldName);
-      if (!pk_column) {
+      if (!OpenSegmentPkIterator(segment, gstate.search_segment_pk)) {
         gstate.search_doc.reset();
         continue;
       }
-      gstate.search_pk_iter = pk_column->iterator(irs::ColumnHint::Normal);
-      gstate.search_pk_value = irs::get<irs::PayAttr>(*gstate.search_pk_iter);
 
       if (gstate.scan_score) {
         gstate.score_fetcher.Clear();
@@ -534,8 +524,8 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       }
     }
 
-    SDB_ASSERT(doc_id == gstate.search_pk_iter->seek(doc_id));
-    auto pk_view = gstate.search_pk_value->value;
+    SDB_ASSERT(doc_id == gstate.search_segment_pk.iter->seek(doc_id));
+    auto pk_view = gstate.search_segment_pk.value->value;
     pk_storage.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
                             pk_view.size());
     if (search.emit_offsets()) {

@@ -561,10 +561,29 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->field_name = MakeHnswFieldName(col_id);
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
+
+  filter.expressions.erase(filter.expressions.begin() + match_idx);
+
+  bool pushdown_filter = true;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
+  std::vector<catalog::Column::Id> filter_col_ids;
+  for (auto& e : filter.expressions) {
+    auto copy = e->Copy();
+    if (!RewriteFilterColumnRefs(*copy, get, bind_data, filter_col_ids)) {
+      pushdown_filter = false;
+      break;
+    }
+    rewritten_exprs.push_back(std::move(copy));
+  }
+  if (pushdown_filter) {
+    rss->filter_expressions = std::move(rewritten_exprs);
+    rss->filter_column_ids = std::move(filter_col_ids);
+    filter.expressions.clear();
+  }
+
   bind_data.scan_source = std::move(rss);
   get.function = connector::CreateIResearchANNRangeScanFunction();
 
-  filter.expressions.erase(filter.expressions.begin() + match_idx);
   if (filter.expressions.empty()) {
     plan = std::move(filter.children[0]);
   }
@@ -2143,10 +2162,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       duckdb::Value v;
       if (input.context.TryGetCurrentSetting("sdb_ef_search", v) &&
           !v.IsNull()) {
-        const auto n = v.GetValue<int32_t>();
-        if (n > 0) {
-          ef_search_override = n;
-        }
+        ef_search_override = v.GetValue<int32_t>();
       }
     }
     bool changed =

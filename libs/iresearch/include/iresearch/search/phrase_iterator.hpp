@@ -524,6 +524,10 @@ class FixedPhraseFrequency {
   uint32_t _phrase_freq = 0;
 };
 
+// Positional distance for sloppy phrase matching.
+// Forward gap (curr > prev+1): costs (curr - prev - 1).
+// Reversal (curr < prev): costs (prev - curr + 1).
+// Adjacent or same position: costs 0.
 inline PosAttr::value_t ComputeSlopDistance(const PosAttr::value_t* positions,
                                             size_t count) noexcept {
   SDB_ASSERT(count >= 2);
@@ -540,6 +544,11 @@ inline PosAttr::value_t ComputeSlopDistance(const PosAttr::value_t* positions,
   return distance;
 }
 
+// Sloppy phrase frequency for fixed phrases (all parts are exact terms).
+// Uses min-window algorithm: holds one current position per term,
+// computes distance, advances the term with smallest position.
+// Supports term reordering. Rejects duplicate positions.
+// Scoring: boost = 1/(1+best_distance).
 template<bool Offs>
 class SlopPhraseFrequency {
  public:
@@ -667,6 +676,10 @@ using VariadicTermPosition =
   std::pair<CompoundDocIterator<Adapter>*, TermInterval>;
 // desired offset in the phrase
 
+// Sloppy phrase frequency for variadic phrases (parts may be
+// wildcard, prefix, levenshtein, range, etc.).
+// Materializes positions from all sub-iterators via visit(),
+// then runs the same min-window algorithm on vectors.
 template<typename Adapter>
 class SlopVariadicPhraseFrequency {
  public:

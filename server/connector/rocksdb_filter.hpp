@@ -53,9 +53,11 @@ struct ColumnRange {
     kRightInclusive = 0x08,
     // The range is empty (no value satisfies it, e.g. pk > 5 AND pk < 3),
     // matching absolutely no rows -- not even NULL.
-    // Invariant: kEmptyRange and kMaybeNull are never both set.
     kEmptyRange = 0x10,
-    kMaybeNull = 0x20,
+    // The range matches only the NULL sentinel bucket.
+    // Invariant: kIsNull is mutually exclusive with every other flag; when
+    // set, _flags == kIsNull exactly.
+    kIsNull = 0x20,
   };
 
   [[nodiscard]] bool HasLeft() const noexcept { return _flags & kLeftBounded; }
@@ -71,13 +73,9 @@ struct ColumnRange {
   // kEmptyRange matches nothing, not even NULL.
   [[nodiscard]] bool IsEmpty() const noexcept { return _flags & kEmptyRange; }
 
-  [[nodiscard]] bool MaybeNull() const noexcept { return _flags & kMaybeNull; }
-
-  // True iff this is exactly the null sentinel bucket with no value interval
-  // (i.e. kMaybeNull is set and no bound flags are present).
-  [[nodiscard]] bool IsNullOnly() const noexcept {
-    return MaybeNull() && !HasLeft() && !HasRight();
-  }
+  // True iff this is exactly the null sentinel bucket (kIsNull is exclusive,
+  // so IsNull() implies the range has no value interval).
+  [[nodiscard]] bool IsNull() const noexcept { return _flags & kIsNull; }
 
   [[nodiscard]] const duckdb::Value& LeftValue() const noexcept {
     return _left_value;
@@ -110,9 +108,9 @@ struct ColumnRange {
   }
 
   // Matches only the NULL sentinel bucket (0x01 prefix): col IS NULL.
-  // kMaybeNull set, no bound flags -- no value interval.
-  [[nodiscard]] static ColumnRange NullOnly() {
-    return Make(kMaybeNull, duckdb::Value{}, duckdb::Value{});
+  // kIsNull set, no other flags -- no value interval.
+  [[nodiscard]] static ColumnRange Null() {
+    return Make(kIsNull, duckdb::Value{}, duckdb::Value{});
   }
 
   // Unbounded non-null range: any non-NULL value. Same encoding as a default
@@ -130,15 +128,22 @@ struct ColumnRange {
   }
 
   // Returns true when the range is a closed non-null singleton [v, v].
-  // Returns false for NullOnly() and Empty().
+  // Returns false for Null() and Empty().
   [[nodiscard]] bool IsNonNullPoint() const noexcept {
-    return !(_flags & (kEmptyRange | kMaybeNull)) && HasLeft() && HasRight() &&
+    return !(_flags & (kEmptyRange | kIsNull)) && HasLeft() && HasRight() &&
            IsLeftInclusive() && IsRightInclusive() &&
            _left_value == _right_value;
   }
 
   // True iff both ranges represent the exact same interval.
   [[nodiscard]] bool operator==(const ColumnRange& other) const;
+
+  // Total ordering: Empty < Null < value ranges (sorted by left then right
+  // bound). Unbounded left sorts before any bounded left (-inf); unbounded
+  // right sorts after any bounded right (+inf); inclusive vs exclusive
+  // endpoints break ties.
+  [[nodiscard]] std::strong_ordering operator<=>(
+    const ColumnRange& other) const noexcept;
 
   // Tightest interval covering only keys in both ranges.
   // Returns nullopt when the result is empty (e.g. [1,1] /\ [2,2]).
@@ -148,10 +153,6 @@ struct ColumnRange {
   // True iff the two ranges share at least one point.
   [[nodiscard]] bool OverlapsWith(const ColumnRange& other) const;
 
-  // True iff *this starts strictly before other by left bound.
-  // Unbounded left (-inf) sorts first; ties broken by inclusive < exclusive.
-  [[nodiscard]] bool LeftBoundLessThan(const ColumnRange& other) const noexcept;
-
   // e.g. "[1, 5)", "(-inf, +inf)", "[3, +inf)"
   // NOLINTNEXTLINE(readability-identifier-naming)
   [[nodiscard]] std::string toString() const;
@@ -160,10 +161,10 @@ struct ColumnRange {
   friend H AbslHashValue(H h, const ColumnRange& cr) {
     h = H::combine(std::move(h), cr._flags);
     if (cr.HasLeft()) {
-      h = H::combine(std::move(h), cr._left_value.Hash());
+      h = H::combine(std::move(h), cr._left_value);
     }
     if (cr.HasRight()) {
-      h = H::combine(std::move(h), cr._right_value.Hash());
+      h = H::combine(std::move(h), cr._right_value);
     }
     return h;
   }
@@ -171,6 +172,8 @@ struct ColumnRange {
  private:
   [[nodiscard]] static ColumnRange Make(uint8_t f, duckdb::Value l,
                                         duckdb::Value r) {
+    // kIsNull is mutually exclusive with every other flag.
+    SDB_ASSERT((f & kIsNull) == 0 || f == kIsNull);
     ColumnRange cr;
     cr._flags = f;
     cr._left_value = std::move(l);
@@ -308,27 +311,28 @@ struct ResolvedRange {
 
   [[nodiscard]] bool IsEmpty() const noexcept { return range_column.IsEmpty(); }
 
-  // Ordering: compare the leftmost key covered by each range.
-  // Contradictory ranges sort before all real ranges.
-  // Walk column by column; a prefix value is exact (inclusive point), and at
-  // the range column we compare the range_col left bound.  When the two ranges
-  // have different prefix depths but share the common prefix, the shorter
-  // range's range_col is compared against the exact prefix value of the longer
-  // range at that position.
-  std::weak_ordering operator<=>(const ResolvedRange& other) const {
+  // Total ordering: compare prefix column by column (exact values are
+  // inclusive points), then compare the range column at the split point.
+  // When the two ranges have different prefix depths but share the common
+  // prefix, the shorter range's range_column is compared against the exact
+  // prefix value of the longer range at that position. Contradictory ranges
+  // sort before all real ranges (via ColumnRange::operator<=>, where Empty
+  // sorts first).
+  std::strong_ordering operator<=>(const ResolvedRange& other) const {
     if (IsEmpty() || other.IsEmpty()) {
       if (IsEmpty() && other.IsEmpty()) {
-        return std::weak_ordering::equivalent;
+        return std::strong_ordering::equal;
       }
-      return IsEmpty() ? std::weak_ordering::less : std::weak_ordering::greater;
+      return IsEmpty() ? std::strong_ordering::less
+                       : std::strong_ordering::greater;
     }
     const auto min_depth = std::min(prefix.size(), other.prefix.size());
     for (size_t i = 0; i < min_depth; ++i) {
       if (prefix[i] < other.prefix[i]) {
-        return std::weak_ordering::less;
+        return std::strong_ordering::less;
       }
       if (other.prefix[i] < prefix[i]) {
-        return std::weak_ordering::greater;
+        return std::strong_ordering::greater;
       }
     }
 
@@ -338,13 +342,7 @@ struct ResolvedRange {
     const auto right_at_split = (other.prefix.size() == min_depth)
                                   ? other.range_column
                                   : ColumnRange::Point(other.prefix[min_depth]);
-    if (left_at_split.LeftBoundLessThan(right_at_split)) {
-      return std::weak_ordering::less;
-    }
-    if (right_at_split.LeftBoundLessThan(left_at_split)) {
-      return std::weak_ordering::greater;
-    }
-    return std::weak_ordering::equivalent;
+    return left_at_split <=> right_at_split;
   }
 
   bool operator==(const ResolvedRange& other) const {

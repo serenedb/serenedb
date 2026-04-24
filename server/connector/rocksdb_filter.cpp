@@ -617,7 +617,7 @@ std::vector<Atom> BuildAtoms(const std::vector<duckdb::Value>& pts,
                              bool has_null_ranges) {
   std::vector<Atom> atoms;
   if (has_null_ranges) {
-    atoms.push_back(ColumnRange::NullOnly());
+    atoms.push_back(ColumnRange::Null());
   }
   if (pts.empty()) {
     atoms.push_back(ColumnRange{});  // unconstrained (-inf, +inf)
@@ -643,9 +643,9 @@ bool AtomContainedBy(const Atom& atom, const ColumnRange& column_range) {
   bool fully_contained;
   if (column_range.IsEmpty()) {
     fully_contained = false;
-  } else if (atom.IsNullOnly()) {
-    fully_contained = column_range.MaybeNull();
-  } else if (column_range.IsNullOnly()) {
+  } else if (atom.IsNull()) {
+    fully_contained = column_range.IsNull();
+  } else if (column_range.IsNull()) {
     // Non-null atom cannot be contained in a null-only range.
     fully_contained = false;
   } else if (atom.IsNonNullPoint()) {
@@ -818,7 +818,7 @@ std::vector<SweepRegion> FuseAdjacentAtoms(
     SweepRegion out = atom_results[run_start].second;
     const ColumnRange fused = UniteAtomsRange(atom_results[run_start].first,
                                               atom_results[run_end - 1].first);
-    if (fused.HasLeft() || fused.HasRight() || fused.MaybeNull()) {
+    if (fused.HasLeft() || fused.HasRight() || fused.IsNull()) {
       out.column_ranges[dim_col] = fused;
     } else {
       out.column_ranges.erase(dim_col);
@@ -851,7 +851,7 @@ std::vector<SweepRegion> SweepDimensions(
   const bool has_null_ranges =
     absl::c_any_of(ranges, [&](const SweepRegion& sr) {
       auto it = sr.column_ranges.find(dim_col);
-      return it != sr.column_ranges.end() && it->second.MaybeNull();
+      return it != sr.column_ranges.end() && it->second.IsNull();
     });
   const auto atoms = BuildAtoms(events, has_null_ranges);
 
@@ -1062,12 +1062,11 @@ std::string ColumnRange::toString() const {
   if (IsEmpty()) {
     return "empty";
   }
-  if (IsNullOnly()) {
+  if (IsNull()) {
     return "null";
   }
-  const std::string null_prefix = (_flags & kMaybeNull) ? "null | " : "";
   if (IsNonNullPoint()) {
-    return null_prefix + _left_value.ToString();
+    return _left_value.ToString();
   }
   std::string result;
   if (!HasLeft()) {
@@ -1083,7 +1082,7 @@ std::string ColumnRange::toString() const {
     absl::StrAppend(&result, _right_value.ToString(),
                     IsRightInclusive() ? "]" : ")");
   }
-  return null_prefix + result;
+  return result;
 }
 
 std::string KeyBounds::toString() const {
@@ -1146,25 +1145,14 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
   const ColumnRange& other) const {
   // kEmptyRange means "nothing at all, not even null". Either side being empty
   // makes the intersection contradictory.
-  if ((_flags & kEmptyRange) || (other._flags & kEmptyRange)) {
+  if (IsEmpty() || other.IsEmpty()) {
     return std::nullopt;
   }
-
-  // Null bucket survives only when both sides include it.
-  const bool result_null = MaybeNull() && other.MaybeNull();
-
-  // A range has no value interval when kMaybeNull is set and no bound flags
-  // are present (IsNullOnly). An unconstrained range (no flags at all) still
-  // has a value interval: (-inf, +inf).
-  const bool this_has_values = HasLeft() || HasRight() || !MaybeNull();
-  const bool other_has_values =
-    other.HasLeft() || other.HasRight() || !other.MaybeNull();
-
-  if (!this_has_values || !other_has_values) {
-    // At least one side has no value interval -- no value intersection.
-    // The result is NullOnly if both carry the null bucket, else empty.
-    if (result_null) {
-      return NullOnly();
+  // kIsNull is exclusive -- a null-only range only overlaps with another
+  // null-only range. A null-only and a value range are disjoint.
+  if (IsNull() || other.IsNull()) {
+    if (IsNull() && other.IsNull()) {
+      return Null();
     }
     return std::nullopt;
   }
@@ -1212,16 +1200,10 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
 
   if (ls.HasLeft() && rs.HasRight()) {
     if (rs._right_value < ls._left_value) {
-      if (result_null) {
-        return NullOnly();
-      }
       return std::nullopt;
     }
     if (ls._left_value == rs._right_value &&
         (!ls.IsLeftInclusive() || !rs.IsRightInclusive())) {
-      if (result_null) {
-        return NullOnly();
-      }
       return std::nullopt;
     }
   }
@@ -1232,9 +1214,6 @@ std::optional<ColumnRange> ColumnRange::IntersectWith(
   ColumnRange result;
   result._flags |= ls._flags & (kLeftBounded | kLeftInclusive);
   result._flags |= rs._flags & (kRightBounded | kRightInclusive);
-  if (result_null) {
-    result._flags |= kMaybeNull;
-  }
   result._left_value = ls._left_value;
   result._right_value = rs._right_value;
   return result;
@@ -1244,32 +1223,62 @@ bool ColumnRange::OverlapsWith(const ColumnRange& other) const {
   return IntersectWith(other).has_value();
 }
 
-bool ColumnRange::LeftBoundLessThan(const ColumnRange& other) const noexcept {
-  // NullOnly sorts before all value ranges (including -inf).
-  const bool this_null_only = (_flags & kMaybeNull) && (_flags & kEmptyRange);
-  const bool other_null_only =
-    (other._flags & kMaybeNull) && (other._flags & kEmptyRange);
-  if (this_null_only != other_null_only) {
-    return this_null_only;
+std::strong_ordering ColumnRange::operator<=>(
+  const ColumnRange& other) const noexcept {
+  // Empty sorts first.
+  if (IsEmpty() != other.IsEmpty()) {
+    return IsEmpty() ? std::strong_ordering::less
+                     : std::strong_ordering::greater;
   }
-  if (this_null_only) {
-    return false;  // NullOnly == NullOnly, not strictly less
+  if (IsEmpty()) {
+    return std::strong_ordering::equal;
+  }
+  // Null sorts before any value range.
+  if (IsNull() != other.IsNull()) {
+    return IsNull() ? std::strong_ordering::less
+                    : std::strong_ordering::greater;
+  }
+  if (IsNull()) {
+    return std::strong_ordering::equal;
   }
 
-  if (!HasLeft()) {
-    return other.HasLeft();  // -inf < bounded, -inf == -inf
+  // Note: (0, +inf) < [0, +inf) for integers
+  // Left bound: unbounded = -inf < any finite value; inclusive < exclusive.
+  if (HasLeft() != other.HasLeft()) {
+    return HasLeft() ? std::strong_ordering::greater
+                     : std::strong_ordering::less;
   }
-  if (!other.HasLeft()) {
-    return false;  // bounded >= -inf
+  if (HasLeft()) {
+    if (_left_value < other._left_value) {
+      return std::strong_ordering::less;
+    }
+    if (other._left_value < _left_value) {
+      return std::strong_ordering::greater;
+    }
+    if (IsLeftInclusive() != other.IsLeftInclusive()) {
+      return IsLeftInclusive() ? std::strong_ordering::less
+                               : std::strong_ordering::greater;
+    }
   }
-  if (_left_value < other._left_value) {
-    return true;
+
+  // Right bound: unbounded = +inf > any finite value; exclusive < inclusive.
+  if (HasRight() != other.HasRight()) {
+    return HasRight() ? std::strong_ordering::less
+                      : std::strong_ordering::greater;
   }
-  if (other._left_value < _left_value) {
-    return false;
+  if (HasRight()) {
+    if (_right_value < other._right_value) {
+      return std::strong_ordering::less;
+    }
+    if (other._right_value < _right_value) {
+      return std::strong_ordering::greater;
+    }
+    if (IsRightInclusive() != other.IsRightInclusive()) {
+      return IsRightInclusive() ? std::strong_ordering::greater
+                                : std::strong_ordering::less;
+    }
   }
-  // Same value: inclusive (starts earlier) sorts before exclusive.
-  return IsLeftInclusive() && !other.IsLeftInclusive();
+  return std::strong_ordering::equal;
 }
 
 const containers::FlatHashSet<const duckdb::Expression*>&
@@ -1321,7 +1330,7 @@ void KeyBounds::AddComparisonFilter(catalog::Column::Id col_id,
 void KeyBounds::AddNullFilter(catalog::Column::Id col_id,
                               const duckdb::Expression* source_expr) {
   SDB_ASSERT(!_column_ranges.contains(col_id));
-  _column_ranges.emplace(col_id, ColumnRange::NullOnly());
+  _column_ranges.emplace(col_id, ColumnRange::Null());
   _source_exprs[col_id].insert(source_expr);
 }
 
@@ -1422,15 +1431,9 @@ std::vector<ResolvedRange> ToSortedDisjointRanges(
       resolved_range.prefix.push_back(column_range->LeftValue());
     }
 
-    // Column range_column_index is the range column.
     const auto* column_range =
       key_contraint.FindColumnRange(key_ids[range_column_index]);
     SDB_ASSERT(column_range);
-    // Invariant: after MergeKeyConstraints the sweep separates null and value
-    // atoms, so MaybeNull and bounds never coexist in a resolved range column.
-    SDB_ASSERT(
-      !column_range->MaybeNull() || column_range->IsNullOnly(),
-      "range column after sweep must be NullOnly or a pure value range");
     resolved_range.range_column = *column_range;
 
     result.push_back(std::move(resolved_range));
@@ -1538,52 +1541,60 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
   {
     containers::FlatHashSet<ScanKeyRef> seen;
     seen.reserve(constraints.size());
-    std::vector<size_t> kept;
-    kept.reserve(constraints.size());
-    for (size_t i = 0; i < constraints.size(); ++i) {
+
+    for (size_t i = 0; i < constraints.size();) {
       if (seen.insert(ScanKeyRef{constraints[i]}).second) {
-        kept.push_back(i);
+        ++i;
+        continue;
       }
-    }
-    size_t write = 0;
-    for (const size_t idx : kept) {
-      if (write != idx) {
-        constraints[write] = std::move(constraints[idx]);
+      if (i + 1 != constraints.size()) {
+        constraints[i] = std::move(constraints.back());
       }
-      ++write;
+      constraints.pop_back();
     }
-    constraints.erase(constraints.begin() + static_cast<ptrdiff_t>(write),
-                      constraints.end());
   }
 
-  // If the prefix ranges together cover (-inf, +inf) with no gaps,
-  // the scan reads every row -- just do a full scan instead.
-  std::vector<const ColumnRange*> first_column_ranges;
-  first_column_ranges.reserve(constraints.size());
-  for (const auto& constraint : constraints) {
-    first_column_ranges.push_back(constraint.FindColumnRange(key_ids[0]));
-  }
-
-  const bool first_unbounded = !first_column_ranges.front() ||
-                               (!first_column_ranges.front()->HasLeft() &&
-                                !first_column_ranges.front()->IsNullOnly());
-  const bool last_unbounded =
-    !first_column_ranges.back() || (!first_column_ranges.back()->HasRight() &&
-                                    !first_column_ranges.back()->IsNullOnly());
-  bool contiguous = first_unbounded && last_unbounded;
-  for (size_t i = 1; contiguous && i < first_column_ranges.size(); ++i) {
-    const auto* prev = first_column_ranges[i - 1];
-    const auto* curr = first_column_ranges[i];
-    // Adjacent ranges must meet at the same value with no gap
-    // (at least one endpoint must include the shared point).
-    if (!prev || !prev->HasRight() || !curr || !curr->HasLeft() ||
-        prev->RightValue() != curr->LeftValue() ||
-        (!prev->IsRightInclusive() && !curr->IsLeftInclusive())) {
-      contiguous = false;
+  // If the prefix ranges together cover (-inf, +inf) with no gaps, the scan
+  // reads every row -- just do a full scan instead. Only meaningful for PK:
+  // PK columns are non-null.
+  if (is_primary_key) {
+    std::vector<const ColumnRange*> first_column_ranges;
+    first_column_ranges.reserve(constraints.size());
+    for (const auto& constraint : constraints) {
+      first_column_ranges.push_back(constraint.FindColumnRange(key_ids[0]));
     }
-  }
-  if (contiguous) {
-    return {ConstraintKind::None, {}, expr.Copy()};
+    // A nullptr means the constraint doesn't restrict key_ids[0] -- treat it
+    // as fully unbounded (sorts first).
+    std::ranges::sort(first_column_ranges,
+                      [](const ColumnRange* a, const ColumnRange* b) {
+                        if (a == b) {
+                          return false;
+                        }
+                        if (!a || !b) {
+                          return !a;
+                        }
+                        return *a < *b;
+                      });
+
+    const bool first_unbounded =
+      !first_column_ranges.front() || !first_column_ranges.front()->HasLeft();
+    const bool last_unbounded =
+      !first_column_ranges.back() || !first_column_ranges.back()->HasRight();
+    bool contiguous = first_unbounded && last_unbounded;
+    for (size_t i = 1; contiguous && i < first_column_ranges.size(); ++i) {
+      const auto* prev = first_column_ranges[i - 1];
+      const auto* curr = first_column_ranges[i];
+      // Adjacent ranges must meet at the same value with no gap (at least
+      // one endpoint must include the shared point).
+      if (!prev || !prev->HasRight() || !curr || !curr->HasLeft() ||
+          prev->RightValue() != curr->LeftValue() ||
+          (!prev->IsRightInclusive() && !curr->IsLeftInclusive())) {
+        contiguous = false;
+      }
+    }
+    if (contiguous) {
+      return {ConstraintKind::None, {}, expr.Copy()};
+    }
   }
 
   // Collect source expressions from prefix columns so they can be stripped

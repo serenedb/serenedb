@@ -1,0 +1,386 @@
+# Tests that the optimizer picks the best access path when multiple indexes are eligible.
+#
+# Strategy (from rocksdb_plan.cpp):
+#   Scan type priority: Points > Ranges > Full
+#   For equal scan types, lower cost wins:
+#     points: num_points * (num_columns + sk_extra) is lower
+#     ranges: num_columns + sk_extra is lower
+#             (sk_extra=1 for secondary indexes, 0 for primary key)
+#   PK beats SK on a tie (no extra MultiGet needed).
+#   For SK vs SK range ties: wider index (more key columns) wins —
+#     more filter predicates are pushed into the scan.
+
+
+statement ok
+CREATE TABLE t_choice (pid INTEGER PRIMARY KEY, cat INTEGER, code INTEGER, score INTEGER);
+
+statement ok
+CREATE UNIQUE INDEX t_choice_cat_idx ON t_choice(cat);
+
+statement ok
+CREATE UNIQUE INDEX t_choice_code_idx ON t_choice(code);
+
+statement ok
+CREATE INDEX t_choice_score_idx ON t_choice(score);
+
+statement ok
+CREATE INDEX t_choice_score_cat_idx ON t_choice(score, cat);
+
+statement ok
+INSERT INTO t_choice VALUES (1, 10, 100, 50), (2, 20, 200, 150), (3, 30, 300, 250), (4, 40, 400, 350);
+
+
+# --- Case 1: Point beats range ---
+#
+# cat = 20 yields a point lookup via the unique SK; score > 50 yields a range
+# scan via the non-unique SK. The point lookup wins.
+
+query
+SELECT * FROM t_choice WHERE cat = 20 AND score > 50;
+----
+pid	cat	code	score
+2	20	200	150
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE cat = 20 AND score > 50;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (score > 50)       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│      Filter: (cat=20)     │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            cat            │
+│           score           │
+│            pid            │
+│            code           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# --- Case 2: For point lookups, choose the index with fewer points ---
+#
+# cat IN (10, 20, 30) yields 3 points via the cat unique SK.
+# code = 200 yields 1 point via the code unique SK.
+# cost(cat) = 3 * (projected + 1) > cost(code) = 1 * (projected + 1),
+# so the code index wins.
+
+query
+SELECT * FROM t_choice WHERE cat IN (10, 20, 30) AND code = 200;
+----
+pid	cat	code	score
+2	20	200	150
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE cat IN (10, 20, 30) AND code = 200;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((cat = 10) OR (cat = 20) │
+│       OR (cat = 30))      │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│     Filter: (code=200)    │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            cat            │
+│            code           │
+│            pid            │
+│           score           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# --- Case 3: For range lookups, PK beats SK (fewer effective columns) ---
+#
+# pid > 2 yields a PK range scan; score > 100 yields an SK range scan.
+# Range cost = projected + sk_extra: PK has sk_extra=0, SK has sk_extra=1,
+# so the PK range scan has strictly lower cost.
+
+query
+SELECT * FROM t_choice WHERE pid > 2 AND score > 100 ORDER BY pid;
+----
+pid	cat	code	score
+3	30	300	250
+4	40	400	350
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE pid > 2 AND score > 100;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│       (score > 100)       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_PK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│          Filter:          │
+│      {pid=(2, +inf)}      │
+│                           │
+│        Projections:       │
+│            pid            │
+│           score           │
+│            cat            │
+│            code           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# --- Case 4: When both PK and SK give a point lookup, PK wins ---
+#
+# pid = 1 yields a PK point; cat = 10 yields a unique SK point.
+# cost(PK) = 1 * (projected + 0) < cost(SK) = 1 * (projected + 1),
+# so the PK wins.
+
+query
+SELECT * FROM t_choice WHERE pid = 1 AND cat = 10;
+----
+pid	cat	code	score
+1	10	100	50
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE pid = 1 AND cat = 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│         (cat = 10)        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_PK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│      Filter: (pid=1)      │
+│                           │
+│        Projections:       │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# --- Case 5: SK unique point beats PK with more points ---
+#
+# pid IN (1, 2, 3) yields 3 PK points; code = 200 yields 1 unique SK point.
+# cost(PK) = 3 * projected > cost(SK) = 1 * (projected + 1) when projected >= 2,
+# so the SK wins.
+
+query
+SELECT * FROM t_choice WHERE pid IN (1, 2, 3) AND code = 200;
+----
+pid	cat	code	score
+2	20	200	150
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE pid IN (1, 2, 3) AND code = 200;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ ((pid = 1) OR (pid = 2) OR│
+│         (pid = 3))        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│     Filter: (code=200)    │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│            code           │
+│            cat            │
+│           score           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# --- Case 6: SK point beats PK range (scan type wins over index type) ---
+#
+# pid > 2 yields a PK range scan; cat = 30 yields a unique SK point.
+# Points always beat ranges regardless of index type, so the SK wins.
+
+query
+SELECT * FROM t_choice WHERE pid > 2 AND cat = 30;
+----
+pid	cat	code	score
+3	30	300	250
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE pid > 2 AND cat = 30;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│         (pid > 2)         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│      Filter: (cat=30)     │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# --- Case 7: For range lookups, wider SK beats narrower SK ---
+#
+# score = 150 AND cat > 5 is eligible for multiple SK range scans:
+#   t_choice_score_cat_idx (score, cat): uses both columns → {score=150, cat=(5, +inf)}
+#   t_choice_score_idx     (score):      uses one column  → {score=150}
+#   t_choice_cat_idx       (cat):        uses one column  → {cat=(5, +inf)}
+# All are SK range scans with the same effective_cols, so the wider index
+# (more key columns) wins: score_cat_idx (2 cols) beats both 1-col SKs.
+# The wider index pushes more filter predicates into the scan itself.
+
+query
+SELECT * FROM t_choice WHERE score = 150 AND cat > 5;
+----
+pid	cat	code	score
+2	20	200	150
+
+onlyif serenedb
+query
+EXPLAIN SELECT * FROM t_choice WHERE score = 150 AND cat > 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            cat            │
+│            code           │
+│           score           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│      Table: t_choice      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          Filter:          │
+│ {score=150, cat=(5, +inf)}│
+│                           │
+│        Projections:       │
+│           score           │
+│            cat            │
+│            pid            │
+│            code           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘

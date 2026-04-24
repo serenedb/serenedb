@@ -212,9 +212,11 @@ struct PhysicalScanCandidate {
   } else if (lhs.result.kind == connector::ConstraintKind::Ranges &&
              lhs.index->kind == IndexCandidate::Kind::Sk &&
              rhs.index->kind == IndexCandidate::Kind::Sk) {
+    SDB_ASSERT(cols_l == cols_r);
     // Two SK range scans with equal effective cols: prefer the wider index.
-    // More index key columns means more filter predicates are pushed into the
-    // scan, leaving fewer rows for the post-scan filter.
+    // We choose wider index as best effort, it's not generally better.
+    // TODO(mkornaukhov) look at column projections in the remaining filters and
+    // statistics for better choice.
     auto idx_cols_l = lhs.index->column_ids.size();
     auto idx_cols_r = rhs.index->column_ids.size();
     return idx_cols_l > idx_cols_r;

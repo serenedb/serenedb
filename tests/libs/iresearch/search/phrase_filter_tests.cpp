@@ -9253,3 +9253,111 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_two_segments) {
     ASSERT_EQ(4, total);
   }
 }
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_scoring) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "qui* fox" slop=1 with scorer: qui* matches quick, quilt.
+  // A,G,I,T,V: freq=1. N: freq>1 (multiple combos). S: freq=2 (quick+quilt).
+  {
+    tests::sort::CustomSort sort;
+    sort.scorer_score = [](const irs::ScoreOperator*, irs::score_t* score,
+                           size_t) { *score = 1.f; };
+    sort.prepare_field_collector = [&sort]() -> irs::FieldCollector::ptr {
+      return std::make_unique<tests::sort::CustomSort::FieldCollector>(sort);
+    };
+    sort.prepare_term_collector = [&sort]() -> irs::TermCollector::ptr {
+      return std::make_unique<tests::sort::CustomSort::TermCollector>(sort);
+    };
+
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
+    pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.mutable_options()->set_slop(1);
+
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorer = &sort,
+    });
+    auto sub = rdr.begin();
+
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorer = &sort,
+    });
+    auto* freq = irs::get<irs::FreqBlockAttr>(*docs);
+    ASSERT_TRUE(freq);
+    auto* boost_attr = irs::get<irs::BoostBlockAttr>(*docs);
+    ASSERT_TRUE(boost_attr);
+
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    // A: qui*=1(quick), fox=3, d=1, freq=1
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ(1, freq->value[0]);
+
+    // G: qui*=5(quick), fox=7, d=1, freq=1
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ(1, freq->value[0]);
+
+    // I: qui*=1(quick), fox=3, d=1, freq=1
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ(1, freq->value[0]);
+
+    // N: multiple combos, best d=0, boost=1.0
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_GT(freq->value[0], 1);
+    ASSERT_FLOAT_EQ(1.f, boost_attr->value[0]);
+
+    // S: qui*=[1,2](quick,quilt), fox=[4].
+    // quilt=2,fox=4 d=1. quick=1,fox=4 d=2>1. freq=1.
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ(1, freq->value[0]);
+
+    // T: qui*=1(quick), fox=3, d=1, freq=1
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ(1, freq->value[0]);
+
+    // V: qui*=1(quilt), fox=3, d=1, freq=1
+    ASSERT_TRUE(docs->next());
+    docs->FetchScoreArgs(0);
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ(1, freq->value[0]);
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}

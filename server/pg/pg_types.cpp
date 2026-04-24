@@ -181,6 +181,9 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       if (IsName(type)) {
         return in_array ? kNameArray : kName;
       }
+      if (IsChar(type)) {
+        return in_array ? kCharArray : kChar;
+      }
       return in_array ? kTextArray : kText;
     }
     case UBIGINT:

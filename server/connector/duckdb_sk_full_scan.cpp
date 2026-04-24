@@ -124,7 +124,7 @@ void SKFullScanFunction(duckdb::ClientContext& context,
   const auto num_rows = pk_bytes.size();
   std::vector<std::string_view> views(pk_bytes.begin(), pk_bytes.end());
   auto materializer = MakeRowMaterializer(
-    context, bind_data, gstate.snapshot, pk_bytes, gstate.projected_columns,
+    context, bind_data, gstate.snapshot, gstate.projected_columns,
     gstate.projected_types, bind_data.column_ids, gstate.txn);
   materializer->Materialize(views, output);
 

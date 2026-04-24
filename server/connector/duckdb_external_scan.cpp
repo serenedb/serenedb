@@ -207,9 +207,14 @@ duckdb::BindInfo ExternalScanGetBindInfo(
 
 duckdb::TableFunctionInitInput MakeDelegatedInitInput(
   const ExternalScanBindData& bd, duckdb::TableFunctionInitInput& input) {
-  return duckdb::TableFunctionInitInput(
-    bd.underlying_bind_data.get(), input.column_indexes, input.projection_ids,
-    input.filters, input.sample_options, input.op);
+  duckdb::TableFunctionInitInput delegated(bd.underlying_bind_data.get(),
+                                           input.column_indexes,
+                                           input.projection_ids, input.filters,
+                                           input.sample_options, input.op);
+  // Forward the FileMaterializer's exact-offset side channel through the
+  // wrapper so the underlying reader (CSV, etc.) sees it.
+  delegated.pk_lookups = input.pk_lookups;
+  return delegated;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> ExternalScanInitGlobal(
@@ -447,21 +452,6 @@ bool ExternalScanPushdownExpression(duckdb::ClientContext& context,
 }
 
 }  // namespace
-
-bool IsParquetExternalTable(const catalog::Table& table) {
-  if (table.GetTableType() != TableType::File) {
-    return false;
-  }
-  const auto& fi = table.GetFileInfo();
-  if (!fi.storage_options) {
-    return false;
-  }
-  std::string_view path = fi.storage_options->Path();
-  constexpr std::string_view suffix{".parquet"};
-  return path.size() >= suffix.size() &&
-         absl::EqualsIgnoreCase(path.substr(path.size() - suffix.size()),
-                                suffix);
-}
 
 duckdb::unique_ptr<duckdb::FunctionData> ExternalScanBindData::Copy() const {
   auto result = duckdb::make_uniq<ExternalScanBindData>();

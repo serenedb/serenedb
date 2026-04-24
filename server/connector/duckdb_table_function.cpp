@@ -412,8 +412,32 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table) {
     result.insert("Table", std::string{bind.table->GetName()});
   }
-  if (bind.scan_source->IsSearchLike() || bind.scan_source->IsSkLike()) {
-    result.insert("Materializer", std::string{RowMaterializerName(bind)});
+  // Surface which RowMaterializer the search-scan path will use to
+  // resolve PKs from the iresearch index. Only emit for strategies
+  // that actually run the iresearch pk -> row pipeline.
+  if (bind.scan_source->IsSearchLike()) {
+    const auto& table = *bind.table;
+    auto name = [&]() -> std::string {
+      switch (table.GetTableType()) {
+        using enum TableType;
+        case File: {
+          const auto& fi = table.GetFileInfo();
+          SDB_ASSERT(fi.storage_options);
+          std::string_view path = fi.storage_options->Path();
+          auto dot = path.rfind('.');
+          if (dot == std::string_view::npos) {
+            return "file";
+          }
+          return absl::StrCat("file (", path.substr(dot + 1), ")");
+        }
+        case RocksDB:
+          return "rocksdb";
+        case Unknown:
+          SDB_UNREACHABLE();
+      }
+    }();
+
+    result.insert("Materializer", std::move(name));
   }
   bind.scan_source->AppendSummary(bind, result);
   return result;

@@ -34,8 +34,7 @@ add_library(
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
     rocksdb_row_materializer.cpp
-    parquet_row_materializer.cpp
-    counter_row_materializer.cpp
+    file_materializer.cpp
     row_materializer.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp

@@ -123,9 +123,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
                 state->scan->filter_column_ids, state->scan->index_id,
                 state->snapshot, bind_data);
 
-  state->materializer = MakeRowMaterializer(
-    context, bind_data, state->snapshot, {}, state->projected_columns,
-    state->projected_types, bind_data.column_ids, nullptr);
   return duckdb::unique_ptr_cast<SearchAnnScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(
     std::move(state));

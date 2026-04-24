@@ -68,10 +68,4 @@ duckdb::TableFunction MakeExternalScanFunction(
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
-// True if `table` is an external file-backed table whose reader exposes a
-// native row-number mechanism usable as the physical PK. Today that's
-// parquet (via `file_row_number` virtual column) only; CSV / JSON get a
-// monotonic counter synthesized by the Sink / materializer instead.
-bool IsParquetExternalTable(const catalog::Table& table);
-
 }  // namespace sdb::connector

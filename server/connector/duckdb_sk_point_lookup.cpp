@@ -124,10 +124,9 @@ void SKPointLookupFunction(duckdb::ClientContext& context,
     views.emplace_back(pk);
   }
 
-  auto materializer =
-    MakeRowMaterializer(context, bind_data, gstate.snapshot, batch_pk_bytes,
-                        gstate.projected_columns, gstate.projected_types,
-                        bind_data.column_ids, gstate.txn);
+  auto materializer = MakeRowMaterializer(
+    context, bind_data, gstate.snapshot, gstate.projected_columns,
+    gstate.projected_types, bind_data.column_ids, gstate.txn);
   materializer->Materialize(views, output);
 
   if (gstate.scan_rowid) {

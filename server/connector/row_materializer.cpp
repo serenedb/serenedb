@@ -20,47 +20,35 @@
 
 #include "connector/row_materializer.h"
 
-#include "connector/counter_row_materializer.h"
+#include <absl/strings/match.h>
+
 #include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/parquet_row_materializer.h"
+#include "connector/file_materializer.h"
 #include "connector/rocksdb_row_materializer.h"
 
 namespace sdb::connector {
 
 std::unique_ptr<RowMaterializer> MakeRowMaterializer(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind_data,
-  const rocksdb::Snapshot* snapshot, std::span<const std::string> all_pks,
+  const rocksdb::Snapshot* snapshot,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
   std::span<const catalog::Column::Id> bind_column_ids,
   rocksdb::Transaction* txn) {
   if (bind_data.table && bind_data.table->GetTableType() == TableType::File) {
-    if (IsParquetExternalTable(*bind_data.table)) {
-      return std::make_unique<ParquetRowMaterializer>(
-        context, bind_data.table, all_pks, projected_columns, projected_types,
-        bind_column_ids);
-    }
-    // CSV / JSON (and anything else without a native row_number virtual
-    // column): fall back to counter + re-scan.
-    // TODO: instead make a separate TextMaterializer and make PK of CSV =
-    // offset into file
-    return std::make_unique<CounterRowMaterializer>(
-      context, bind_data.table, projected_columns, projected_types,
-      bind_column_ids);
+    // All supported external readers (parquet, csv, json) expose
+    // `file_row_number` via their multi-file reader; the same materializer
+    // works for all of them. The value is an int64 PK:
+    //  - parquet: row index in the file
+    //  - csv / json: byte offset of the row/record start in the file
+    return std::make_unique<FileMaterializer>(context, bind_data.table,
+                                              projected_columns,
+                                              projected_types, bind_column_ids);
   }
   return std::make_unique<RocksDBRowMaterializer>(
     bind_data.table ? bind_data.table->GetId() : ObjectId{}, snapshot,
     projected_columns, projected_types, bind_column_ids, txn);
-}
-
-std::string_view RowMaterializerName(const SereneDBScanBindData& bind_data) {
-  if (bind_data.table && bind_data.table->GetTableType() == TableType::File) {
-    return IsParquetExternalTable(*bind_data.table)
-             ? "parquet (file_row_number)"
-             : "counter (re-scan)";
-  }
-  return "rocksdb (point Get)";
 }
 
 }  // namespace sdb::connector

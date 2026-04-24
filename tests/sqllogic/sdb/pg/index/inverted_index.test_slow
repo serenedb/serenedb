@@ -296,6 +296,70 @@ statement ok
 DROP TABLE dense_csv_slow_src;
 
 
+# index backfill from external (json) table with large dataset
+# exercises the JSON offset-seek path (ReadJSONFunctionPkLookup) at scale.
+
+statement count 10000
+CREATE TABLE json_idx_src AS
+SELECT
+  CASE
+    WHEN s.n % 2 = 0 THEN
+      'team member vedernikoff has ' || s.n::text || ' stocks'
+    ELSE
+      'team member cutelooked has ' || s.n::text || ' stocks'
+  END AS fact,
+  CASE
+    WHEN s.n % 3 = 0 THEN 'department alpha'
+    ELSE 'department beta'
+  END AS dept
+FROM generate_series(1, 10000) AS s(n);
+
+statement count 10000
+COPY json_idx_src TO '/tmp/${__DATABASE__}_json_idx_slow.jsonl' (FORMAT json);
+
+statement ok
+CREATE TABLE json_idx_ext(
+  fact TEXT,
+  dept TEXT
+) WITH (
+  PATH = '/tmp/${__DATABASE__}_json_idx_slow.jsonl'
+);
+
+statement ok
+CREATE INDEX json_idx_ext_facts ON json_idx_ext USING inverted(fact test_english, dept test_english);
+
+query
+SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'team member');
+----
+20000 values hashing to 8fcf7aa336da10e363eea7acf9f4f3b1
+
+query
+SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff has');
+----
+10000 values hashing to 47f855c12594ddca09fc89564abb3814
+
+query
+SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'cutelooked has');
+----
+10000 values hashing to 815290c41155518b4b8d9a888682c5c2
+
+query
+SELECT fact FROM json_idx_ext_facts WHERE PHRASE(dept, 'department alpha');
+----
+3333 values hashing to e940816b15ca4420dabd32a26194d1df
+
+query
+SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff') AND PHRASE(dept, 'department alpha');
+----
+3332 values hashing to f6161bae08ed6f91eef7373d3ed74e51
+
+statement ok
+DROP TABLE json_idx_ext;
+
+statement ok
+DROP TABLE json_idx_src;
+
+
 statement ok
 CREATE TABLE dense_pk_slow (a INTEGER PRIMARY KEY, b TEXT);
 

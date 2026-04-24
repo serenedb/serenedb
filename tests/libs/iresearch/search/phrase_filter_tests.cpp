@@ -8419,9 +8419,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_repeated_term) {
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 
-  // "fox fox" slop=4: both slots iterate the same posting list, so both
-  // land on the same position in any doc with fox -> distance=0. Matches
-  // every doc that contains fox: A, G, I, K, L, N, S, T, V.
+  // "fox fox" slop=4: only N has multiple foxes (after duplicate fix).
   {
     irs::ByPhrase q;
     *q.mutable_field() = "phrase_anl";
@@ -8445,39 +8443,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_repeated_term) {
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("I", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("K", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("L", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
     ASSERT_EQ("N", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("S", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("T", irs::ToString<std::string_view>(actual_value->value.data()));
-
-    ASSERT_TRUE(docs->next());
-    ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("V", irs::ToString<std::string_view>(actual_value->value.data()));
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));

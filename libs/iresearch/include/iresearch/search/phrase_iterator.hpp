@@ -604,9 +604,22 @@ class SlopPhraseFrequency {
       }
 
       if (distance <= _max_slop) {
-        ++_phrase_freq;
-        if (distance < _best_distance) {
-          _best_distance = distance;
+        // verify all positions are distinct - each query slot
+        // must match a different token occurrence
+        bool all_unique = true;
+        for (size_t i = 0; i < count && all_unique; ++i) {
+          for (size_t j = i + 1; j < count; ++j) {
+            if (_pos[i].first->value() == _pos[j].first->value()) {
+              all_unique = false;
+              break;
+            }
+          }
+        }
+        if (all_unique) {
+          ++_phrase_freq;
+          if (distance < _best_distance) {
+            _best_distance = distance;
+          }
         }
       }
 
@@ -751,9 +764,20 @@ class SlopVariadicPhraseFrequency {
       }
 
       if (distance <= _max_slop) {
-        ++_phrase_freq;
-        if (distance < _best_distance) {
-          _best_distance = distance;
+        bool all_unique = true;
+        for (size_t i = 0; i < count && all_unique; ++i) {
+          for (size_t j = i + 1; j < count; ++j) {
+            if (slot_positions[i][idx[i]] == slot_positions[j][idx[j]]) {
+              all_unique = false;
+              break;
+            }
+          }
+        }
+        if (all_unique) {
+          ++_phrase_freq;
+          if (distance < _best_distance) {
+            _best_distance = distance;
+          }
         }
       }
 

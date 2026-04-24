@@ -37,13 +37,8 @@ std::string_view CommandToString(ProgressCommand cmd) {
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SdbStatProgress>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+catalog::MaterializedData SystemTableSnapshot<SdbStatProgress>::GetTableData() {
   auto snapshots = ProgressTracker::Instance().GetSnapshots();
-
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<SdbStatProgress>);
 
   std::vector<SdbStatProgress> values;
   values.reserve(snapshots.size());
@@ -77,12 +72,6 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData(
     });
   }
 
-  boost::pfr::for_each_field(
-    SdbStatProgress{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(values.size(), &pool);
-      result.emplace_back(std::move(column));
-    });
-
   static constexpr uint64_t kNullMask = MaskFromNonNulls({
     GetIndex(&SdbStatProgress::pid),     GetIndex(&SdbStatProgress::datid),
     GetIndex(&SdbStatProgress::relid),   GetIndex(&SdbStatProgress::command),
@@ -98,11 +87,11 @@ SystemTableSnapshot<SdbStatProgress>::GetTableData(
     GetIndex(&SdbStatProgress::param19), GetIndex(&SdbStatProgress::param20),
   });
 
+  auto result = CreateColumns<SdbStatProgress>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
-
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

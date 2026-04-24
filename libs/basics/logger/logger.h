@@ -254,7 +254,7 @@ constexpr bool TranslateLogLevel(std::string_view l, bool is_general,
   } else if (l == "info") {
     level = LogLevel::INFO;
   } else if (l == "debug") {
-    level = LogLevel::DEBUG;
+    level = LogLevel::DEB;
   } else if (l == "trace") {
     level = LogLevel::TRACE;
   } else if (!is_general && (l.empty() || l == "default")) {
@@ -274,7 +274,7 @@ constexpr std::string_view TranslateLogLevel(LogLevel level) noexcept {
       return "WARNING";
     case LogLevel::INFO:
       return "INFO";
-    case LogLevel::DEBUG:
+    case LogLevel::DEB:
       return "DEBUG";
     case LogLevel::TRACE:
       return "TRACE";
@@ -307,7 +307,7 @@ void Log(std::source_location location, const char* id, LogLevel level,
   SDB_LOG_IF(id, level, topic, true, __VA_ARGS__)
 
 #define SDB_TRACE(id, topic, ...) SDB_LOG(id, TRACE, topic, __VA_ARGS__)
-#define SDB_DEBUG(id, topic, ...) SDB_LOG(id, DEBUG, topic, __VA_ARGS__)
+#define SDB_DEBUG(id, topic, ...) SDB_LOG(id, DEB, topic, __VA_ARGS__)
 #define SDB_INFO(id, topic, ...) SDB_LOG(id, INFO, topic, __VA_ARGS__)
 #define SDB_WARN(id, topic, ...) SDB_LOG(id, WARN, topic, __VA_ARGS__)
 #define SDB_ERROR(id, topic, ...) SDB_LOG(id, ERR, topic, __VA_ARGS__)
@@ -321,7 +321,7 @@ void Log(std::source_location location, const char* id, LogLevel level,
 #define SDB_TRACE_IF(id, topic, cond, ...) \
   SDB_LOG_IF(id, TRACE, topic, cond, __VA_ARGS__)
 #define SDB_DEBUG_IF(id, topic, cond, ...) \
-  SDB_LOG_IF(id, DEBUG, topic, cond, __VA_ARGS__)
+  SDB_LOG_IF(id, DEB, topic, cond, __VA_ARGS__)
 #define SDB_INFO_IF(id, topic, cond, ...) \
   SDB_LOG_IF(id, INFO, topic, cond, __VA_ARGS__)
 #define SDB_WARN_IF(id, topic, cond, ...) \

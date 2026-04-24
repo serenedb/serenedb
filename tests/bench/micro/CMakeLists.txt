@@ -27,6 +27,7 @@ add_bench(uuid_print)
 add_bench(json_functions)
 add_bench(config_var_lookup)
 add_bench(norm_gather)
+add_bench(path_hierarchy_tokenizer)
 
 # vector distances
 add_executable(vector-distances-bench vector_distances.cpp)
@@ -34,14 +35,10 @@ target_compile_options(
     vector-distances-bench
     PRIVATE
         -fno-lto # no faiss inlined
-        -fapprox-func
-        -fno-math-errno
         -fassociative-math
-        -freciprocal-math
         -fno-signed-zeros
-        -fno-trapping-math
-        -fno-rounding-math
-        -ffp-contract=fast
+        -g
+        -fno-omit-frame-pointer
 )
 target_link_options(vector-distances-bench PRIVATE -fno-lto)
 

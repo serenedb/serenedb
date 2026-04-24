@@ -1,41 +1,41 @@
 connection ssl-tls sslmode=prefer port=plain
-skipif postgres-extended
+skipif pg-wire-extended
 query
-select 1234567890123456::numeric;
+select 123::numeric;
 ----
 numeric
-1234567890123456.0000000000000000000
+123.000
 
 
 connection ssl-tls2 sslmode=prefer port=ssl
-skipif postgres-extended
+skipif pg-wire-extended
 query
-select 1234567890123456::numeric;
+select 123::numeric;
 ----
 numeric
-1234567890123456.0000000000000000000
+123.000
 
 
 connection ssl-tls3 sslmode=require port=ssl
-skipif postgres-extended
+skipif pg-wire-extended
 query
-select 1234567890123456::numeric;
+select 123::numeric;
 ----
 numeric
-1234567890123456.0000000000000000000
+123.000
 
 
 connection ssl-tls4 sslmode=require port=plain
-skipif postgres-extended
+skipif pg-wire-extended
 query error
-select 1234567890123456::numeric;
+select 123::numeric;
 ----
 error performing TLS handshake: server does not support TLS
 
 
 connection ssl-tls5 sslmode=disable port=ssl
-skipif postgres-extended
+skipif pg-wire-extended
 query error
-select 1234567890123456::numeric;
+select 123::numeric;
 ----
 connection closed

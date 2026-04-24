@@ -20,72 +20,12 @@
 
 #include "catalog/storage_options.h"
 
-#include <velox/common/config/Config.h>
-#include <velox/common/file/FileSystems.h>
-#include <velox/connectors/hive/storage_adapters/s3fs/S3Config.h>
-
 #include <unordered_map>
 
 namespace sdb {
 
-std::unique_ptr<velox::WriteFile> LocalStorageOptions::CreateFileSink(
-  const velox::filesystems::FileOptions& options) {
-  return std::make_unique<velox::LocalWriteFile>(_path, false, false, true,
-                                                 true);
-}
-
-std::shared_ptr<velox::ReadFile> LocalStorageOptions::CreateFileSource(
-  const velox::filesystems::FileOptions& options) {
-  return std::make_shared<velox::LocalReadFile>(_path);
-}
-
 void LocalStorageOptions::toVPack(vpack::Builder& b) const {
   StorageOptions::ToVPackBase(b);
-}
-
-velox::config::ConfigPtr S3StorageOptions::BuildConfig() const {
-  using S3Key = velox::filesystems::S3Config::Keys;
-  auto key = [](S3Key k) {
-    return velox::filesystems::S3Config::baseConfigKey(k);
-  };
-
-  std::unordered_map<std::string, std::string> config;
-
-  auto set_str = [&](std::string k, const std::string& value) {
-    if (!value.empty()) {
-      config.emplace(std::move(k), value);
-    }
-  };
-
-  auto set_bool = [&](std::string k, bool value) {
-    config.emplace(std::move(k), value ? "true" : "false");
-  };
-
-  set_str(key(S3Key::kAccessKey), _access_key);
-  set_str(key(S3Key::kSecretKey), _secret_key);
-  set_str(key(S3Key::kEndpoint), _endpoint);
-  set_str(key(S3Key::kEndpointRegion), _region);
-  set_str(key(S3Key::kIamRole), _iam_role);
-  set_bool(key(S3Key::kPathStyleAccess), _path_style_access);
-  set_bool(key(S3Key::kSSLEnabled), _ssl_enabled);
-  set_bool(key(S3Key::kUseInstanceCredentials), _use_instance_credentials);
-
-  set_str(velox::filesystems::S3Config::kS3LogLevel, "OFF");
-
-  return std::make_shared<velox::config::ConfigBase>(std::move(config));
-}
-
-std::unique_ptr<velox::WriteFile> S3StorageOptions::CreateFileSink(
-  const velox::filesystems::FileOptions& options) {
-  auto fs = velox::filesystems::getFileSystem(_path, BuildConfig());
-  return fs->openFileForWrite(_path, options);
-}
-
-std::shared_ptr<velox::ReadFile> S3StorageOptions::CreateFileSource(
-  const velox::filesystems::FileOptions& options) {
-  auto fs = velox::filesystems::getFileSystem(_path, BuildConfig());
-  auto file = fs->openFileForRead(_path, options);
-  return std::shared_ptr<velox::ReadFile>(std::move(file));
 }
 
 void S3StorageOptions::toVPack(vpack::Builder& b) const {

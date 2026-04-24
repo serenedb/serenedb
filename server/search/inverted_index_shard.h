@@ -43,9 +43,13 @@ class InvertedIndexShard;
 
 struct InvertedIndexShardOptions : public IndexShardOptions {
   struct Base {
-    size_t commit_interval_ms;
-    size_t consolidation_interval_ms;
-    size_t cleanup_interval_step;
+    // Default 1000 ms for both intervals so newly created indexes are
+    // searchable promptly without requiring explicit WITH (commit_interval)
+    // / WITH (consolidation_interval) on CREATE INDEX. Setting to 0
+    // disables the background task (see CommitTask).
+    size_t commit_interval_ms = 1000;
+    size_t consolidation_interval_ms = 1000;
+    size_t cleanup_interval_step = 1;
   };
 
   Base base;
@@ -186,11 +190,14 @@ class InvertedIndexShard final
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
 
+  bool HasActiveSegments() const noexcept {
+    return _writer && _writer->HasActiveSegments();
+  }
+
   void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
 
   auto& GetMutex() { return _mutex; }
-  Snapshot GetSnapshot() const;
 
   InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
@@ -216,12 +223,6 @@ class InvertedIndexShard final
   void RecoveryCommit(Tick tick);
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
-
-  void MarkDeleted() { _is_deleted.store(true, std::memory_order_release); }
-
-  bool IsDeleted() const noexcept {
-    return _is_deleted.load(std::memory_order_acquire);
-  }
 
  private:
   Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
@@ -249,8 +250,6 @@ class InvertedIndexShard final
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
   bool _is_creation{true};
-
-  std::atomic_bool _is_deleted{false};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

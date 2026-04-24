@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/main/database_manager.hpp>
+
 #include "catalog/database.h"
 #include "utils/exec_context.h"
 

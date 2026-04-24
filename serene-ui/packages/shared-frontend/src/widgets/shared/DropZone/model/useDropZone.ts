@@ -1,9 +1,13 @@
 import React, { useMemo, useState } from "react";
 
+export type DropZoneDragKind = "none" | "files" | "custom";
+
 export interface UseDropZoneOptions {
     supportedExtensions: readonly string[];
     onFilesDrop: (files: File[]) => void;
     onRejectedFiles?: (files: File[]) => void;
+    isCustomDragEvent?: (event: React.DragEvent<HTMLDivElement>) => boolean;
+    onCustomDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
 }
 
 interface SplitFilesResult {
@@ -63,8 +67,11 @@ export const useDropZone = ({
     supportedExtensions,
     onFilesDrop,
     onRejectedFiles,
+    isCustomDragEvent,
+    onCustomDrop,
 }: UseDropZoneOptions) => {
     const [dragDepth, setDragDepth] = useState(0);
+    const [activeDragKind, setActiveDragKind] = useState<DropZoneDragKind>("none");
 
     const normalizedExtensions = useMemo(
         () =>
@@ -81,7 +88,9 @@ export const useDropZone = ({
 
     const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
         if (!isFileDragEvent(event)) {
-            return;
+            if (!isCustomDragEvent?.(event)) {
+                return;
+            }
         }
 
         event.preventDefault();
@@ -89,16 +98,26 @@ export const useDropZone = ({
     };
 
     const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
-        if (!isFileDragEvent(event)) {
+        const isFileDrag = isFileDragEvent(event);
+        const isCustomDrag = !isFileDrag && Boolean(isCustomDragEvent?.(event));
+
+        if (!isFileDrag && !isCustomDrag) {
             return;
         }
 
         event.preventDefault();
+        setActiveDragKind((currentKind) => {
+            if (currentKind === "files" || isFileDrag) {
+                return "files";
+            }
+
+            return "custom";
+        });
         setDragDepth((currentDepth) => currentDepth + 1);
     };
 
     const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-        if (!isFileDragEvent(event)) {
+        if (dragDepth === 0) {
             return;
         }
 
@@ -106,19 +125,39 @@ export const useDropZone = ({
 
         if (event.relatedTarget === null) {
             setDragDepth(0);
+            setActiveDragKind("none");
             return;
         }
 
-        setDragDepth((currentDepth) => Math.max(currentDepth - 1, 0));
+        setDragDepth((currentDepth) => {
+            const nextDepth = Math.max(currentDepth - 1, 0);
+
+            if (nextDepth === 0) {
+                setActiveDragKind("none");
+            }
+
+            return nextDepth;
+        });
     };
 
     const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
-        if (!isFileDragEvent(event)) {
+        const isFileDrag = isFileDragEvent(event);
+        const isCustomDrag =
+            !isFileDrag &&
+            (Boolean(isCustomDragEvent?.(event)) || activeDragKind === "custom");
+
+        if (!isFileDrag && !isCustomDrag && activeDragKind === "none") {
             return;
         }
 
         event.preventDefault();
         setDragDepth(0);
+        setActiveDragKind("none");
+
+        if (isCustomDrag) {
+            onCustomDrop?.(event);
+            return;
+        }
 
         const { allowedFiles, rejectedFiles } = splitFilesByExtension(
             event.dataTransfer.files,
@@ -136,6 +175,7 @@ export const useDropZone = ({
 
     return {
         isDragging: dragDepth > 0,
+        activeDragKind,
         normalizedExtensions,
         rootProps: {
             onDragEnter: handleDragEnter,

@@ -1,6 +1,33 @@
 name: task | serenedb make & test package
 
 on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      RTA:
+        description: "RTA mode: off, test (ignore failures), required (block on failure)"
+        type: string
+        required: false
+        default: "off"
+      UPLOAD_ARTIFACTS:
+        description: "Upload tarball + deb for release"
+        type: boolean
+        required: false
+        default: false
+      SERENEDB_VERSION_PATCH:
+        description: "Version patch number"
+        type: string
+        required: false
+        default: ""
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:
@@ -8,11 +35,11 @@ on:
         type: string
         required: false
         default: "linux"
-      RUN_RTA:
-        description: "Run RTA tests after packaging"
-        type: boolean
+      RTA:
+        description: "RTA mode: off, test (ignore failures), required (block on failure)"
+        type: string
         required: false
-        default: false
+        default: "off"
       UPLOAD_ARTIFACTS:
         description: "Upload tarball + deb for release"
         type: boolean
@@ -37,13 +64,10 @@ on:
       packages_ok:
         description: "Whether packaging succeeded"
         value: ${{ jobs.package.outputs.packages_ok }}
-    secrets:
-      PAT_TOKEN:
-        required: true
-
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+  CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
 
 jobs:
   package:
@@ -69,7 +93,6 @@ jobs:
           echo "SANITIZERS=" >> $GITHUB_ENV
           echo "SDB_ALLOC=JE" >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
-          echo "SDB_CLUSTER=" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
           echo "STRIP_TARBALL=true" >> $GITHUB_ENV
           echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
@@ -93,8 +116,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          repository: serenedb/serenedb
-          token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
           clean: true
@@ -102,7 +123,6 @@ jobs:
       - name: Build Docker environment file
         run: ./scripts/ci/steps/02-ci-build-docker-env-file.bash
 
-      # ==================== BUILD ====================
       - name: Build release
         id: build
         run: |
@@ -124,53 +144,49 @@ jobs:
             -e USE_COVERAGE= \
             -e ENSURE_VTUNE_SYMBOLS=Off \
             -e BUILD_DIR=build \
-            ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+            -e EXTRA_CMAKE_FLAGS="-DCMAKE_INSTALL_PREFIX=/usr${EXTRA_FLAGS:+ $EXTRA_FLAGS}" \
             -v "${WORKSPACE}:/serenedb" \
             -v /mnt/data/.ccache:/.ccache \
             "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
 
-      # ==================== PACKAGE ====================
       - name: Package
         id: package
         if: steps.build.outcome == 'success'
         run: ./scripts/ci/steps/05-ci-in-docker-package.bash
 
-      # ==================== RTA ====================
-      - name: Release Test Automation (RTA)
-        id: rta
-        if: inputs.RUN_RTA && steps.package.outcome == 'success'
-        run: ./scripts/ci/steps/08-ci-rta.bash
+      - name: Deb RTA
+        id: deb_rta
+        if: inputs.RTA != 'off' && steps.package.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        run: ./scripts/ci/steps/08-ci-deb-rta.bash
 
-      # ==================== UPLOAD ====================
-      - name: Upload release tarball
-        if: inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarball-${{ inputs.LOCATION }}
-          path: packages/tarball/install-*.tar.gz
-          retention-days: 1
+      - name: Tarball RTA
+        id: tarball_rta
+        if: inputs.RTA != 'off' && steps.package.outcome == 'success'
+        continue-on-error: ${{ inputs.RTA == 'test' }}
+        run: ./scripts/ci/steps/08-ci-tarball-rta.bash
 
       - name: Upload packages
-        if: inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        if: always() && inputs.UPLOAD_ARTIFACTS && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v7
         with:
-          name: packages-${{ inputs.LOCATION }}-${{ github.run_number }}
+          name: packages-${{ inputs.LOCATION }}
           path: |
-            *.deb
-            *.tar.gz
+            serenedb-*.tar.gz
+            serenedb*.deb
           if-no-files-found: ignore
+          retention-days: 1
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-artifacts-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
-            cmake*.log
-            make*.log
-            ccache*.log
+            cmake_*.log
+            make_*.log
+            ccache_*.log
             install.log
-            rta-tests.log
-            logs/*
+            logs/
           if-no-files-found: ignore
           retention-days: 30

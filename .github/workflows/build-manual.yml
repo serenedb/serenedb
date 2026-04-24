@@ -35,6 +35,11 @@ on:
         description: 'Validate tests with Postgres'
         type: boolean
         default: true
+      PR_SHA:
+        description: 'Exact commit SHA to build (fork PR support; empty = workflow ref)'
+        type: string
+        required: false
+        default: ''
       BUILD_CONFIG:
         description: 'Internal: PR metadata (set by trigger bot)'
         type: string
@@ -45,8 +50,11 @@ permissions:
   statuses: write
   contents: write
 
+concurrency:
+  group: build-manual-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # ==================== TESTS ====================
   test-unit:
     name: unit ${{ matrix.instrumentation }} (${{ matrix.location }})
     strategy:
@@ -60,6 +68,7 @@ jobs:
       KIND: unit
       DEV: true
       INSTRUMENTATION: ${{ matrix.instrumentation }}
+      PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   test-functional:
@@ -75,6 +84,7 @@ jobs:
       KIND: ${{ matrix.instrumentation == 'none' && 'functional' || (inputs.FULL_SANITIZER_TESTS && 'functional' || 'functional_fast') }}
       DEV: true
       INSTRUMENTATION: ${{ matrix.instrumentation }}
+      PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   compile-check:
@@ -89,6 +99,7 @@ jobs:
       KIND: none
       DEV: false
       INSTRUMENTATION: none
+      PR_SHA: ${{ inputs.PR_SHA }}
     secrets: inherit
 
   validate-pg:
@@ -97,10 +108,10 @@ jobs:
     uses: ./.github/workflows/validate-pg-tests.yml
     with:
       LOCATION: linux
+      PR_SHA: ${{ inputs.PR_SHA }}
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
     secrets: inherit
 
-  # ==================== REPORT ====================
   report:
     name: Report Status
     needs: [test-unit, test-functional, compile-check, validate-pg]
@@ -110,27 +121,30 @@ jobs:
       - name: Checkout (for notify script)
         uses: actions/checkout@v6
         with:
+          fetch-depth: 1
+          submodules: false
+          clean: false
           sparse-checkout: scripts
           sparse-checkout-cone-mode: true
 
-      - name: Send Telegram notification
+      - name: Send notification
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID_MAIN: "51"
           TG_THREAD_ID_BUILD: "53"
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-          BRANCH: ${{ github.ref_name }}
+          BRANCH: ${{ contains(inputs.BUILD_CONFIG, 'PR_BRANCH') && fromJSON(inputs.BUILD_CONFIG).PR_BRANCH || github.ref_name }}
           JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
           ACTOR: ${{ contains(inputs.BUILD_CONFIG, 'TRIGGERED_BY') && fromJSON(inputs.BUILD_CONFIG).TRIGGERED_BY || github.actor }}
           RUN_NAME: "serenedb | build & test [${{ inputs.LOCATION }}]"
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: ./scripts/notify_telegram.bash
+        run: ./scripts/send_notification.bash
 
       - name: Update PR commit status
         if: contains(inputs.BUILD_CONFIG, 'PR_SHA')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const config = JSON.parse(process.env.BUILD_CONFIG);

@@ -21,9 +21,6 @@
 #pragma once
 
 #include <absl/base/internal/endian.h>
-#include <velox/vector/BaseVector.h>
-#include <velox/vector/ComplexVector.h>
-#include <velox/vector/FlatVector.h>
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
@@ -31,6 +28,10 @@
 #include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector::key_utils {
+
+inline constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+inline constexpr size_t kKeyPrefixSize =
+  kTablePrefixSize + sizeof(catalog::Column::Id);
 
 // Constructs common part of table row. Result could be used with AppendXXX
 // methods to construct full keys.
@@ -44,40 +45,6 @@ void AppendTableKey(std::string& key, ObjectId id);
 
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
-
-// Prepare buffer for column key and call 'row_key_handle' on row_key
-template<bool GenerateNew = true, typename Func>
-void MakeColumnKey(const velox::RowVectorPtr& input,
-                   const std::vector<velox::column_index_t>& pk_columns,
-                   velox::vector_size_t row_idx, std::string_view object_id,
-                   Func&& row_key_handle, std::string& key_buffer) {
-  SDB_ASSERT(object_id.size() == sizeof(ObjectId));
-  basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
-  std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
-              sizeof(ObjectId));
-
-  if (!pk_columns.empty()) {
-    primary_key::Create(*input, pk_columns, row_idx, key_buffer);
-  } else {
-    // TODO: make unsigned when such types will be supported in Velox
-    int64_t generated_pk;
-    if constexpr (GenerateNew) {
-      generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
-    } else {
-      SDB_ASSERT(input->childrenSize() != 0);
-      const auto pk_idx = input->childrenSize() - 1;
-      const auto& cols = input->children();
-      const auto& pk_column =
-        cols[pk_idx]->asUnchecked<velox::SimpleVector<int64_t>>();
-      generated_pk = pk_column->valueAt(row_idx);
-    }
-    primary_key::AppendSigned(key_buffer, generated_pk);
-  }
-
-  row_key_handle(std::string_view{
-    key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
-  std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
-}
 
 // Takes buffer in format
 // 'object_id | reserved for column_id | pk'

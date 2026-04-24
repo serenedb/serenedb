@@ -182,7 +182,9 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
       auto back = std::prev(std::end(phrase_state->terms));
 
       while (term_state != back) {
-        if (!add_iterator(kRequiredFeatures)) {
+        // TODO(Dronplane) Make Adapter accept itarators without offs
+        // We will not need ones from middle iterators.
+        if (!add_iterator(kRequireOffs)) {
           return DocIterator::empty();
         }
       }

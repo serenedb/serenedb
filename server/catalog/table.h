@@ -21,16 +21,15 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
 #include <vpack/slice.h>
 
-#include "basics/fwd.h"
+#include <duckdb/common/types.hpp>
+
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "general_server/state.h"
 
 namespace sdb {
@@ -43,7 +42,6 @@ namespace sdb::catalog {
 
 struct NewOptions {
   std::string_view name;
-  std::shared_ptr<ValidatorBase> schema;
   uint32_t number_of_shards = 1;
   uint32_t replication_factor = 1;
   uint32_t write_concern = 1;
@@ -57,15 +55,15 @@ class Table : public SchemaObject {
   Table(TableOptions&& options, ObjectId database_id);
   Table(const catalog::Table& other, NewOptions options);
 
-  void WriteProperties(vpack::Builder& build) const final;
-
-  void WriteInternal(vpack::Builder& build) const final;
+  static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
+                                             ReadContext ctx);
+  void WriteInternal(vpack::Builder&) const final;
+  std::shared_ptr<Object> Clone() const final;
 
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
   auto GetTableType() const noexcept { return _type; }
-  auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
   bool waitForSync() const noexcept { return _wait_for_sync; }
   auto& keyGenerator() const noexcept {
@@ -89,6 +87,15 @@ class Table : public SchemaObject {
     return *_sharding_strategy;
   }
   const auto& GetFileInfo() const noexcept { return _file_info; }
+
+  Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
+                      std::string_view new_name) const;
+  Result RenameConstraint(std::shared_ptr<Table>& result,
+                          std::string_view old_name,
+                          std::string_view new_name) const;
+  Result DropConstraint(std::shared_ptr<Table>& result,
+                        std::string_view constraint_name) const;
+
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {
@@ -113,10 +120,12 @@ class Table : public SchemaObject {
 
   const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
 
-  velox::RowTypePtr MakeTypeFromColIds(
+  duckdb::LogicalType MakeTypeFromColIds(
     std::span<const catalog::Column::Id> ids) const;
 
  private:
+  NewOptions MakeNewOptions() const;
+
   struct TableOutput;
   TableOutput MakeTableOptions() const;
 
@@ -124,13 +133,13 @@ class Table : public SchemaObject {
     LookupCache(std::span<const catalog::Column> columns,
                 std::span<const catalog::Column::Id> pk_columns);
 
-    velox::RowTypePtr MakeTypeFromColIds(
+    duckdb::LogicalType MakeTypeFromColIds(
       std::span<const catalog::Column::Id> ids) const;
 
     NameToColumnMap name2column;
     IdToColumnMap id2column;
-    velox::RowTypePtr pk_type;
-    velox::RowTypePtr row_type;
+    duckdb::LogicalType pk_type;
+    duckdb::LogicalType row_type;
   };
 
   const TableType _type = TableType::Unknown;
@@ -146,7 +155,6 @@ class Table : public SchemaObject {
   ObjectId _to;
   std::shared_ptr<KeyGenerator> _key_generator;
   std::shared_ptr<ShardingStrategy> _sharding_strategy;
-  std::shared_ptr<ValidatorBase> _schema;
   // name of other table this table's shards should be distributed like
   std::shared_ptr<ShardMap> _shard_ids = std::make_shared<ShardMap>();
   uint32_t _number_of_shards = 1;

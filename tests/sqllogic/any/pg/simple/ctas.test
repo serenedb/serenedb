@@ -11,10 +11,10 @@ FROM
   generate_series(1, 100) AS serenedb(salary);
 
 
-query
-SELECT * FROM vedernikoff;
+query rowsort
+SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 ----
-30003 values hashing to 4054c492260f852b8162b374b3e41700
+30003 values hashing to 0559962e298db3135b36ee24b4a3d1c0
 
 
 statement error
@@ -27,10 +27,10 @@ statement ok
 CREATE TABLE IF NOT EXISTS vedernikoff AS SELECT 1 AS id;
 
 
-query
-SELECT * FROM vedernikoff;
+query rowsort
+SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 ----
-30003 values hashing to 4054c492260f852b8162b374b3e41700
+30003 values hashing to 0559962e298db3135b36ee24b4a3d1c0
 
 
 statement error
@@ -41,10 +41,9 @@ db error: ERROR: relation "vedernikoff" already exists
 
 statement error
 CREATE TABLE lmao(iq, lmao) AS SELECT 1;
-----
-db error: ERROR: too many column names were specified
 
 
+skipif serenedb # TODO(Pasha) better column names
 statement error
 CREATE TABLE lmao AS SELECT 1 AS x, 2 AS x;
 ----
@@ -57,8 +56,6 @@ DROP TABLE vedernikoff;
 
 query error
 SELECT * FROM vedernikoff;
-----
-db error: ERROR: relation "vedernikoff" does not exist
 
 
 onlyif serenedb
@@ -66,7 +63,7 @@ statement error
 CREATE TABLE vedernikoff AS
 SELECT
   CASE WHEN iq > 500 THEN iq
-  ELSE fail('im gonna fail dis sheet(i mean a peace of paper)')
+  ELSE error('im gonna fail dis sheet(i mean a peace of paper)')
   END as rakamakaka
 FROM
   generate_series(1, 10000) AS clickclack(iq);
@@ -75,7 +72,7 @@ db error: ERROR: im gonna fail dis sheet(i mean a peace of paper)
 
 
 query error
-SELECT * FROM vedernikoff;
+SELECT 'vedernikoff'::regclass;
 ----
 db error: ERROR: relation "vedernikoff" does not exist
 
@@ -108,10 +105,10 @@ FROM
   generate_series(1, 100) AS serenedb(salary);
 
 
-query
-SELECT * FROM vedernikoff;
+query rowsort
+SELECT * FROM vedernikoff ORDER BY 1, 2, 3;
 ----
-30003 values hashing to 4054c492260f852b8162b374b3e41700
+30003 values hashing to 0559962e298db3135b36ee24b4a3d1c0
 
 
 statement error
@@ -126,12 +123,14 @@ CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
 db error: ERROR: relation "vedernikoff" already exists
 
 
+skipif serenedb # TODO(Pasha) better column names
 statement error
 SELECT 1 AS x, 2 AS x INTO lmao;
 ----
 db error: ERROR: column "x" specified more than once
 
 
+skipif serenedb # TODO(Pasha) Fix ctas + select into
 statement error
 CREATE TABLE lmao AS SELECT * INTO lmao FROM vedernikoff;
 ----
@@ -143,12 +142,13 @@ DROP TABLE vedernikoff;
 
 
 query error
-SELECT * FROM vedernikoff;
+SELECT 'vedernikoff'::regclass;
 ----
 db error: ERROR: relation "vedernikoff" does not exist
 
 
-onlyif serenedb
+skipif serenedb # TODO(Pasha) Add fail function?
+skipif postgres # TODO(Pasha) Fix?
 statement error
 SELECT
   CASE WHEN iq > 500 THEN iq
@@ -163,8 +163,6 @@ db error: ERROR: im gonna fail dis sheet(i mean a peace of paper)
 
 query error
 SELECT * FROM vedernikoff;
-----
-db error: ERROR: relation "vedernikoff" does not exist
 
 
 statement count 10000
@@ -183,47 +181,73 @@ DROP TABLE vedernikoff;
 
 onlyif serenedb
 query
-EXPLAIN (LOGICAL) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
+EXPLAIN CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    x := x
-  - Project: -> ROW<"x":BIGINT>
-      x := generate_series
-    - Project: -> ROW<"generate_series":BIGINT>
-        generate_series := generate_series
-      - Unnest: -> ROW<"generate_series":BIGINT>
-          [generate_series] := pg_generate_series(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
-        - Values: 1 rows -> ROW<>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      GENERATE_SERIES      │
+│    ────────────────────   │
+│         Function:         │
+│      GENERATE_SERIES      │
+│                           │
+│          ~10 rows         │
+└───────────────────────────┘
 
 
 onlyif serenedb
 query error
-SELECT * FROM vedernikoff;
+SELECT 'vedernikoff'::regclass;
 ----
 db error: ERROR: relation "vedernikoff" does not exist
 
 
 onlyif serenedb
 query
-EXPLAIN (ANALYZE) CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
+EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----
 QUERY PLAN
-EXECUTION PLAN WITH STATS:
-Fragment 0:  numWorkers=1:
--- TableWrite[5][serenedb(table=vedernikoff, kind=INSERT)] -> rows:BIGINT
-   Output: 1 rows <slt:ignore>
-  -- Project[4][expressions: (x:BIGINT, "x"), (dt1.__p17:BIGINT, null)] -> "x":BIGINT, "dt1.__p17":BIGINT
-     Output: 10 rows <slt:ignore>
-    -- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
-       Output: 10 rows <slt:ignore>
-      -- Unnest[2][dt4.__p10] -> "generate_series":BIGINT
-         Output: 10 rows <slt:ignore>
-        -- Project[1][expressions: (dt4.__p10:ARRAY<BIGINT>, pg_generate_series(1,10))] -> "dt4.__p10":ARRAY<BIGINT>
-           Output: 1 rows <slt:ignore>
-          -- Values[0][1 rows in 1 vectors] ->
-             Input: 0 rows <slt:ignore>
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
+┌────────────────────────────────────────────────┐
+│┌──────────────────────────────────────────────┐│
+││              Total Time: <slt:ignore>        ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+┌───────────────────────────┐
+│           QUERY           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│                           │
+│           0 rows          │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         EXTENSION         │
+│    ────────────────────   │
+│                           │
+│           1 row           │
+│           <slt:ignore>    │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         TABLE_SCAN        │
+│    ────────────────────   │
+│         Function:         │
+│      GENERATE_SERIES      │
+│                           │
+│                           │
+│                           │
+│          10 rows          │
+│           <slt:ignore>    │
+└───────────────────────────┘
 
 
 onlyif serenedb

@@ -3,7 +3,7 @@ control substitution on
 # crash before tombstone removal, table should be gone
 
 statement ok
-SET sdb_fault_crash_before_remove_tombstone TO DEFAULT;
+SET sdb_faults = 'crash_before_remove_tombstone';
 
 statement error connection closed
 CREATE TABLE vedernikoff AS
@@ -24,7 +24,7 @@ RESET sdb_faults;
 
 connection ctas_after_1
 statement ok
-SET sdb_fault_crash_sst_sink_after_ingest TO DEFAULT;
+SET sdb_faults = 'crash_sst_sink_after_ingest';
 
 connection ctas_after_1
 statement error connection closed
@@ -53,7 +53,7 @@ FROM generate_series(1, 100) AS clickclack(iq),
 
 connection ctas_after_2
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 connection ctas_after_2
 query error connection closed
@@ -75,7 +75,7 @@ DROP TABLE vedernikoff;
 
 connection ctas_final
 statement ok
-SET sdb_fault_crash_before_remove_tombstone TO DEFAULT;
+SET sdb_faults = 'crash_before_remove_tombstone';
 
 connection ctas_final
 statement error connection closed
@@ -97,7 +97,7 @@ RESET sdb_faults;
 
 connection select_into_after_1
 statement ok
-SET sdb_fault_crash_sst_sink_after_ingest TO DEFAULT;
+SET sdb_faults = 'crash_sst_sink_after_ingest';
 
 connection select_into_after_1
 statement error connection closed
@@ -126,7 +126,7 @@ FROM generate_series(1, 100) AS clickclack(iq),
 
 connection select_into_after_2
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 connection select_into_after_2
 query error connection closed

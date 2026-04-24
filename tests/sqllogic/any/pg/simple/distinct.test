@@ -106,7 +106,8 @@ babsky	babsky
 babsky	vedernikoff
 
 
-query error
+skipif postgres # Postges isn't cool enough to do such query
+query
 SELECT DISTINCT iq
 FROM
 (
@@ -116,11 +117,17 @@ FROM
 ) as clickclack(name, grade, iq)
 ORDER BY grade DESC;
 ----
-db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+iq
+-5
+-4
+-3
+6
+87
+4
 
 
-
-query error
+skipif postgres # Postges isn't cool enough to do such query
+query
 SELECT DISTINCT name
 FROM
 (
@@ -130,10 +137,12 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY grade, name DESC;
 ----
-db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+name
+vedernikoff
+babsky
 
 
-onlyif serenedb # error is distinguished by grade / clickclack.grade
+skipif postgres # Postges different error message
 query error
 SELECT DISTINCT grade
 FROM
@@ -144,7 +153,8 @@ FROM
 ) as clickclack(name, grade)
 GROUP BY name;
 ----
-db error: ERROR: column "grade" must appear in the GROUP BY clause or be used in an aggregate function
+db error: ERROR: column "grade" must appear in the GROUP BY clause or must be part of an aggregate function.
+Either add it to the GROUP BY list, or use "ANY_VALUE(grade)" if the exact value of "grade" is not important.
 
 
 query
@@ -197,8 +207,7 @@ kek
 17
 
 
-onlyif serenedb
-query error
+query
 SELECT DISTINCT ON(ROW_NUMBER() OVER(PARTITION BY name ORDER BY grade DESC)) name
 FROM
 (
@@ -207,8 +216,10 @@ FROM
     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
 ) as clickclack(name, grade, iq)
 ----
-db error: ERROR: window function calls are not supported in DISTINCT ON
-
+name
+babsky
+vedernikoff
+vedernikoff
 
 # TODO: make error like in PG
 # query error

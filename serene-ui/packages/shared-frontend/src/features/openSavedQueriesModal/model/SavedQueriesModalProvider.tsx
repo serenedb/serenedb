@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { SavedQueriesModal } from "../ui";
-import { useQuerySubscription } from "../../executeQuery";
 import {
     syncBindVars,
     useAddSavedQuery,
-    useDeleteSavedQuery,
     useUpdateSavedQuery,
 } from "@serene-ui/shared-frontend/entities";
 import { SavedQueriesModalContext } from "./SavedQueriesModalContext";
@@ -21,17 +19,13 @@ export const SavedQueriesModalProvider = ({
     children: React.ReactNode;
 }) => {
     const { mutateAsync: addSavedQuery } = useAddSavedQuery();
-    const { mutateAsync: deleteSavedQuery } = useDeleteSavedQuery();
     const { mutateAsync: updateSavedQuery } = useUpdateSavedQuery();
 
     const [open, setOpen] = useState(false);
+    const [modalMode, setModalMode] = useState<"create" | "edit">("create");
     const [currentSavedQuery, setCurrentSavedQuery] = useState<
         SavedQuerySchema | undefined
     >();
-    const [jobId, setJobId] = useState<number | undefined>();
-    const [isQueryRunning, setIsQueryRunning] = useState(false);
-
-    const result = useQuerySubscription(jobId);
 
     const memoizedBindVars = useMemo(
         () => currentSavedQuery?.bind_vars ?? [],
@@ -39,15 +33,9 @@ export const SavedQueriesModalProvider = ({
     );
 
     useEffect(() => {
-        if (result) {
-            setIsQueryRunning(false);
-        }
-    }, [result]);
-
-    useEffect(() => {
         if (!open) {
             setCurrentSavedQuery(undefined);
-            setJobId(undefined);
+            setModalMode("create");
         }
     }, [open]);
 
@@ -67,39 +55,40 @@ export const SavedQueriesModalProvider = ({
         if (!currentSavedQuery) return;
 
         try {
+            const trimmedName = currentSavedQuery.name.trim();
+            if (!trimmedName) {
+                toast.error("Query name is required");
+                return;
+            }
+
             const payload: SavedQueryState = {
                 ...currentSavedQuery,
+                name: trimmedName,
                 bind_vars: currentSavedQuery.bind_vars ?? [],
             };
 
-            const isNew = currentSavedQuery.id === -1;
+            const isNew = modalMode === "create" || currentSavedQuery.id === -1;
             const savedData = await saveQuery(payload, isNew);
 
             setCurrentSavedQuery((prev) =>
                 prev
-                    ? { ...prev, id: savedData.id, bind_vars: prev.bind_vars }
+                    ? {
+                          ...prev,
+                          id: savedData.id,
+                          name: savedData.name,
+                          query: savedData.query,
+                          bind_vars: savedData.bind_vars ?? prev.bind_vars,
+                      }
                     : prev,
             );
 
             toast.success("Query saved successfully");
+            setOpen(false);
         } catch (error) {
             console.error(error);
             toast.error("Failed to save query");
         }
-    }, [currentSavedQuery]);
-
-    const handleDeleteSavedQuery = useCallback(async () => {
-        if (!currentSavedQuery) return;
-
-        try {
-            await deleteSavedQuery({ id: currentSavedQuery.id });
-            setCurrentSavedQuery(undefined);
-            toast.success("Query deleted");
-        } catch (error) {
-            console.error(error);
-            toast.error("Failed to delete query");
-        }
-    }, [currentSavedQuery, deleteSavedQuery]);
+    }, [currentSavedQuery, modalMode]);
 
     useEffect(() => {
         if (!currentSavedQuery) return;
@@ -124,19 +113,38 @@ export const SavedQueriesModalProvider = ({
         }
     }, [currentSavedQuery?.query, memoizedBindVars]);
 
+    const openCreateModal = useCallback(
+        (payload?: { query?: string; bindVars?: BindVarSchema[] }) => {
+            setModalMode("create");
+            setCurrentSavedQuery({
+                id: -1,
+                name: "Untitled",
+                query: payload?.query ?? "",
+                bind_vars: payload?.bindVars ?? [],
+                usage_count: 0,
+            });
+            setOpen(true);
+        },
+        [],
+    );
+
+    const openEditModal = useCallback((savedQuery: SavedQuerySchema) => {
+        setModalMode("edit");
+        setCurrentSavedQuery(savedQuery);
+        setOpen(true);
+    }, []);
+
     return (
         <SavedQueriesModalContext.Provider
             value={{
                 open,
                 setOpen,
+                modalMode,
                 currentSavedQuery,
                 setCurrentSavedQuery,
-                setJobId,
-                result,
+                openCreateModal,
+                openEditModal,
                 handleSaveQuery,
-                handleDeleteSavedQuery,
-                isQueryRunning,
-                setIsQueryRunning,
             }}>
             {children}
             <SavedQueriesModal />

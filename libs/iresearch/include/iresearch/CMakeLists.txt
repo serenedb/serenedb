@@ -58,6 +58,7 @@ set(IResearch_core_sources
     ./analysis/stopwords_tokenizer.cpp
     ./analysis/ngram_tokenizer.cpp
     ./analysis/pipeline_tokenizer.cpp
+    ./analysis/union_tokenizer.cpp
     ./analysis/segmentation_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp
@@ -67,6 +68,7 @@ set(IResearch_core_sources
     ./analysis/text_tokenizer.cpp
     ./analysis/multi_delimited_tokenizer.cpp
     ./analysis/delimited_tokenizer.cpp
+    ./analysis/path_hierarchy_tokenizer.cpp
     ./analysis/solr_synonyms_tokenizer.cpp
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
@@ -134,6 +136,12 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
+    ./search/raw_tf.cpp
+    ./search/lm_similarity.cpp
+    ./search/lm_jelinek_mercer.cpp
+    ./search/lm_dirichlet.cpp
+    ./search/indri_dirichlet.cpp
+    ./search/dfi.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp
@@ -173,7 +181,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${CMAKE_SOURCE_DIR}/scripts/generate-c.sh ${FLEX_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${FLEX_EXECUTABLE}
         libs/iresearch/include/iresearch/parser/lucene_lexer.cpp
         libs/iresearch/include/iresearch/parser/lucene_lexer.l
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
@@ -184,7 +192,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${CMAKE_SOURCE_DIR}/scripts/generate-c.sh ${BISON_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${BISON_EXECUTABLE}
         libs/iresearch/include/iresearch/parser/lucene_parser.cpp
         libs/iresearch/include/iresearch/parser/lucene_parser.y
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
@@ -208,7 +216,9 @@ add_library(iresearch-static STATIC ${IResearch_core_sources})
 set_source_files_properties(
     search/bm25.cpp
     search/tfidf.cpp
-    PROPERTIES COMPILE_OPTIONS "-ffast-math"
+    PROPERTIES
+        COMPILE_OPTIONS
+            "-fapprox-func -fno-math-errno -fassociative-math -freciprocal-math -fno-signed-zeros -fno-trapping-math -fno-rounding-math -ffp-contract=fast"
 )
 
 target_include_directories(

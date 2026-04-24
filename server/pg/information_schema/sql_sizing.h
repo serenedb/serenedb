@@ -38,7 +38,6 @@ struct SqlSizing {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<SqlSizing>::GetTableData(
-  velox::memory::MemoryPool& pool);
+catalog::MaterializedData SystemTableSnapshot<SqlSizing>::GetTableData();
 
 }  // namespace sdb::pg

@@ -1,21 +1,26 @@
-import {
-    Button,
-    PostgresIcon,
-    SmallLogoIcon,
-    Tooltip,
-    TooltipContent,
-    TooltipTrigger,
-} from "@serene-ui/shared-frontend/shared";
+import { PostgresIcon, SmallLogoIcon } from "@serene-ui/shared-frontend/shared";
+import { useState } from "react";
 import { ConnectionTypeButton } from "../buttons";
-import { ConnectionSchema } from "@serene-ui/shared-core";
+import { useConnectionsModal } from "../../model/ConnectionsModalContext";
+
+type ConnectionUiType = "serenedb" | "postgres";
 
 type TypeButton = {
-    type: ConnectionSchema["type"];
+    type: ConnectionUiType;
     tooltip: React.ReactNode;
     icon: React.ReactNode;
 };
 
 const TYPE_BUTTONS: TypeButton[] = [
+    {
+        type: "serenedb",
+        tooltip: (
+            <>
+                <p>SereneDB</p>
+            </>
+        ),
+        icon: <SmallLogoIcon />,
+    },
     {
         type: "postgres",
         tooltip: (
@@ -28,33 +33,22 @@ const TYPE_BUTTONS: TypeButton[] = [
 ];
 
 export const ConnectionTypeSelector = () => {
+    const { handleSelectChange } = useConnectionsModal();
+    const [selectedType, setSelectedType] = useState<ConnectionUiType>("serenedb");
+
+    const handleTypeSelect = (type: ConnectionUiType) => {
+        setSelectedType(type);
+        handleSelectChange("type", "postgres");
+    };
+
     return (
         <div className="flex gap-2 p-4 pb-0 ">
-            <Tooltip>
-                <TooltipTrigger asChild>
-                    <Button
-                        className="opacity-50 bg-primary/30 hover:bg-primary/30"
-                        size="icon"
-                        aria-label="More connection types coming soon">
-                        <SmallLogoIcon />
-                    </Button>
-                </TooltipTrigger>
-                <TooltipContent
-                    className="flex flex-col items-center "
-                    side="top"
-                    align="center">
-                    <span className="text-sm">We're working on it!</span>
-                    <a
-                        href="https://github.com/serenedb/serenedb"
-                        target="_blank">
-                        <p className="text-sm underline">Stay tuned</p>
-                    </a>
-                </TooltipContent>
-            </Tooltip>
             {TYPE_BUTTONS.map((button) => (
                 <ConnectionTypeButton
                     key={button.type}
                     type={button.type}
+                    isActive={selectedType === button.type}
+                    onSelect={handleTypeSelect}
                     tooltipContent={button.tooltip}
                     icon={button.icon}
                 />

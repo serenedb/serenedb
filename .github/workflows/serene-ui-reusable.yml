@@ -1,6 +1,52 @@
 name: task | sereneui build & test
 
 on:
+    workflow_dispatch:
+        inputs:
+            VERSION:
+                description: "Version [xx.xx.x] (used as a tag)"
+                required: true
+                type: string
+            EXTRA_DOCKER_TAGS:
+                description: "Extra Docker tags [IFS= ,] (opt)"
+                required: false
+                type: string
+                default: ""
+            RUN_TESTS:
+                description: "Run SereneUI screenshot tests"
+                required: false
+                type: boolean
+                default: true
+            BUILD_IMAGE:
+                description: "Build SereneUI Docker image"
+                required: false
+                type: boolean
+                default: false
+            PUSH_IMAGE_TO_REGISTRY:
+                description: "Push SereneUI image to Registry"
+                required: false
+                type: boolean
+                default: false
+            BUILD_LINUX_APP:
+                description: "Build SereneUI Linux desktop app"
+                required: false
+                type: boolean
+                default: false
+            BUILD_WINDOWS_APP:
+                description: "Build SereneUI Windows desktop app"
+                required: false
+                type: boolean
+                default: false
+            BUILD_MACOS_APP:
+                description: "Build SereneUI macOS desktop app"
+                required: false
+                type: boolean
+                default: false
+            PUSH_RELEASE:
+                description: "Publish a GitHub Release"
+                required: false
+                type: boolean
+                default: false
     workflow_call:
         inputs:
             VERSION:
@@ -48,9 +94,6 @@ on:
                 type: boolean
                 default: false
         secrets:
-            PAT_TOKEN:
-                required: true
-                description: "Personal Access Token with repo access"
             TG_TOKEN:
                 required: true
             APPLE_ID:
@@ -94,27 +137,21 @@ jobs:
             - name: Checkout SereneUI
               uses: actions/checkout@v6
               with:
-                  repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
-                  token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      serene-ui
-                  sparse-checkout-cone-mode: true
+                  fetch-depth: 1
+                  submodules: false
+                  clean: true
 
             - name: Run tests
               if: inputs.RUN_TESTS
               run: |
                   mkdir -p logs
+                  export DOCKER_USER="$(id -u):$(id -g)"
                   ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
-
-            - name: Update file ownership
-              if: always()
-              run: bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-test-artifacts-docker
                   path: |
@@ -137,7 +174,7 @@ jobs:
     build-linux-app:
         name: Build Linux App
         if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
-        runs-on: ubuntu-latest # TODO: move to X64 when Node available on self-hosted
+        runs-on: ubuntu-latest # TODO: move to linux-amd64 when Node available on self-hosted
         permissions:
             contents: read
         timeout-minutes: 30
@@ -152,16 +189,15 @@ jobs:
             - name: Checkout SereneUI
               uses: actions/checkout@v6
               with:
-                  repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
-                  token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      serene-ui
+                  fetch-depth: 1
+                  submodules: false
+                  clean: false
+                  sparse-checkout: serene-ui
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v6
               with:
                   node-version: 22
 
@@ -183,7 +219,7 @@ jobs:
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-test-artifacts-linux
                   path: |
@@ -201,7 +237,7 @@ jobs:
 
             - name: Upload Linux artifacts
               if: inputs.BUILD_LINUX_APP
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-linux
                   path: serene-ui/apps/electron/out/make/**/*
@@ -227,16 +263,15 @@ jobs:
             - name: Checkout SereneUI
               uses: actions/checkout@v6
               with:
-                  repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
-                  token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      serene-ui
+                  fetch-depth: 1
+                  submodules: false
+                  clean: false
+                  sparse-checkout: serene-ui
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v6
               with:
                   node-version: 22
 
@@ -258,7 +293,7 @@ jobs:
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-test-artifacts-windows
                   path: |
@@ -276,7 +311,7 @@ jobs:
 
             - name: Upload Windows artifacts
               if: inputs.BUILD_WINDOWS_APP
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-windows
                   path: serene-ui/apps/electron/out/make/**/*
@@ -286,7 +321,7 @@ jobs:
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-        runs-on: macos
+        runs-on: macOS
         permissions:
             contents: read
         timeout-minutes: 240
@@ -301,16 +336,13 @@ jobs:
             - name: Checkout SereneUI
               uses: actions/checkout@v6
               with:
-                  repository: serenedb/serenedb
                   ref: ${{ env.BRANCH }}
-                  token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      serene-ui
-                  sparse-checkout-cone-mode: true
+                  fetch-depth: 1
+                  submodules: false
+                  clean: true
 
             - name: Setup Node.js
-              uses: actions/setup-node@v4
+              uses: actions/setup-node@v6
               with:
                   node-version: 22
 
@@ -332,7 +364,7 @@ jobs:
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-test-artifacts-macos
                   path: |
@@ -354,7 +386,7 @@ jobs:
 
             - name: Upload macOS artifacts
               if: inputs.BUILD_MACOS_APP
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: serene-ui-macos
                   path: serene-ui/apps/electron/out/make/**/*
@@ -363,14 +395,14 @@ jobs:
 
     release-and-notify:
         name: Release & Notify
-        needs: [build-docker, build-linux-app, build-windows-app, build-macos-app]
+        needs:
+            [build-docker, build-linux-app, build-windows-app, build-macos-app]
         if: always()
         runs-on: ubuntu-latest
         permissions:
             contents: write
         timeout-minutes: 10
         steps:
-            # ==================== RELEASE (conditional) ====================
             - name: Validate release inputs
               if: inputs.PUSH_RELEASE && inputs.VERSION == ''
               run: |
@@ -379,21 +411,21 @@ jobs:
 
             - name: Download Linux artifacts
               if: inputs.PUSH_RELEASE && inputs.BUILD_LINUX_APP && !contains(needs.*.result, 'failure')
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v8
               with:
                   name: serene-ui-linux
                   path: release-assets/linux
 
             - name: Download Windows artifacts
               if: inputs.PUSH_RELEASE && inputs.BUILD_WINDOWS_APP && !contains(needs.*.result, 'failure')
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v8
               with:
                   name: serene-ui-windows
                   path: release-assets/windows
 
             - name: Download macOS artifacts
               if: inputs.PUSH_RELEASE && inputs.BUILD_MACOS_APP && !contains(needs.*.result, 'failure')
-              uses: actions/download-artifact@v4
+              uses: actions/download-artifact@v8
               with:
                   name: serene-ui-macos
                   path: release-assets/macos
@@ -411,16 +443,16 @@ jobs:
                   token: ${{ secrets.GITHUB_TOKEN }}
                   files: release-assets/**/*
 
-            # ==================== NOTIFY (always) ====================
             - name: Checkout (for notify script)
               uses: actions/checkout@v6
               with:
-                  repository: serenedb/serenedb
-                  token: ${{ secrets.PAT_TOKEN }}
+                  fetch-depth: 1
+                  submodules: false
+                  clean: false
                   sparse-checkout: scripts
                   sparse-checkout-cone-mode: true
 
-            - name: Send Telegram notification
+            - name: Send notification
               env:
                   TG_TOKEN: ${{ secrets.TG_TOKEN }}
                   TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -430,11 +462,11 @@ jobs:
                   BRANCH: ${{ github.ref_name }}
                   JOB_STATUS: ${{ contains(needs.*.result, 'failure') && 'failure' || 'success' }}
                   ACTOR: ${{ github.actor }}
-                  WORKFLOW: "sereneui | build & test"
+                  RUN_NAME: "sereneui | build & test"
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
                   JOB_STATUS_DOCKER: ${{ needs.build-docker.result }}
                   JOB_STATUS_LINUX: ${{ needs.build-linux-app.result }}
                   JOB_STATUS_WINDOWS: ${{ needs.build-windows-app.result }}
                   JOB_STATUS_MACOS: ${{ needs.build-macos-app.result }}
-              run: ./scripts/notify_telegram_serene-ui.bash
+              run: ./scripts/send_notification.bash

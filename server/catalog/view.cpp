@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,62 +15,69 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "view.h"
+#include "catalog/view.h"
 
-#include <vpack/serializer.h>
+#include <vpack/vpack_helper.h>
 
-#include "basics/errors.h"
-#include "catalog/catalog.h"
-#include "catalog/sql_query_view.h"
-#include "general_server/state.h"
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+
+#include "basics/static_strings.h"
 
 namespace sdb::catalog {
 
-ViewMeta ViewMeta::Make(const View& view) {
-  return {
-    .id = Identifier{view.GetId().id()},
-    .name = std::string{view.GetName()},
-    .type = view.GetViewType(),
-  };
+PgSqlView::PgSqlView(ObjectId database_id, ObjectId id, std::string_view name,
+                     duckdb::unique_ptr<duckdb::CreateViewInfo> info)
+  : SchemaObject{{}, database_id,       {},
+                 id, std::string{name}, ObjectType::PgSqlView},
+    _info{std::move(info)} {}
+
+std::shared_ptr<PgSqlView> PgSqlView::ReadInternal(vpack::Slice slice,
+                                                   ReadContext ctx) {
+  auto name =
+    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
+
+  auto info_slice = slice.get("info");
+  SDB_ASSERT(info_slice.isString());
+  auto str = info_slice.stringViewUnchecked();
+  duckdb::MemoryStream stream(
+    const_cast<duckdb::data_t*>(
+      reinterpret_cast<const duckdb::data_t*>(str.data())),
+    str.size());
+  duckdb::BinaryDeserializer deserializer(stream);
+  auto create_info = duckdb::CreateInfo::Deserialize(deserializer);
+  auto view_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+      std::move(create_info));
+  return std::make_shared<PgSqlView>(ctx.database_id, ctx.id, name,
+                                     std::move(view_info));
 }
 
-Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
-  auto r = vpack::ReadObjectNothrow(slice, options.meta,
-                                    {.skip_unknown = true, .strict = true});
-  if (!r.ok()) {
-    return r;
-  }
+void PgSqlView::WriteInternal(vpack::Builder& builder) const {
+  builder.openObject();
+  builder.add(StaticStrings::kDataSourceName, GetName());
 
-  options.properties = slice;
-  return {};
+  // Serialize CreateViewInfo via DuckDB BinarySerializer
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(*_info, stream);
+  auto data = stream.GetData();
+  auto size = stream.GetPosition();
+  builder.add("info",
+              std::string_view{reinterpret_cast<const char*>(data), size});
+
+  builder.close();
 }
 
-View::View(ViewMeta&& options, ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 *options.id,
-                 std::move(options.name),
-                 ObjectType::View},
-    _type{options.type} {}
-
-Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx) {
-  SDB_ASSERT(ServerState::instance()->IsClientNode());
-
-  switch (options.meta.type) {
-    case ViewType::ViewSqlQuery:
-      SDB_ASSERT(ctx != ViewContext::User);
-      return SqlQueryView::Make(view, database_id, std::move(options), ctx,
-                                nullptr);
-    case ViewType::ViewSearch:
-      break;
-  }
-  return {};
+std::shared_ptr<Object> PgSqlView::Clone() const {
+  auto cloned_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateViewInfo>(
+      _info->Copy());
+  return std::make_shared<PgSqlView>(GetDatabaseId(), GetId(), GetName(),
+                                     std::move(cloned_info));
 }
 
 }  // namespace sdb::catalog

@@ -167,7 +167,12 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                 });
             });
         },
-        [addDashboardCard, blocks, currentDashboard, runWithCardMutationResizePlaceholder],
+        [
+            addDashboardCard,
+            blocks,
+            currentDashboard,
+            runWithCardMutationResizePlaceholder,
+        ],
     );
 
     const handleDeleteBlock = React.useCallback(
@@ -202,7 +207,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
                 className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
                 data-testid="dashboardGrid-emptyState">
                 <div className="rounded-xs border bg-background px-6 py-5 shadow-sm">
-                    <p className="text-sm text-primary-foreground/70">
+                    <p className="text-sm dark:text-primary-foreground/70">
                         select dashboard
                     </p>
                 </div>
@@ -213,7 +218,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     return (
         <div
             data-testid="dashboardGrid-root"
-            className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+            className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden h-full">
             <div className="absolute bottom-4 left-4 z-20">
                 <DashboardScaleButton scale={scale} onScaleChange={setScale} />
             </div>

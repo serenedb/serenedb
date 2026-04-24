@@ -40,14 +40,10 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 }
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<SdbLog>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+catalog::MaterializedData SystemTableSnapshot<SdbLog>::GetTableData() {
   if (!SerenedServer::Instance().getFeature<LoggerFeature>().isAPIEnabled()) {
-    return std::vector<velox::VectorPtr>(boost::pfr::tuple_size_v<SdbLog>);
+    return {CreateColumns<SdbLog>(0), 0};
   }
-
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<SdbLog>);
 
   auto entries =
     SerenedServer::Instance().getFeature<LogBufferFeature>().entries(
@@ -66,16 +62,11 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<SdbLog>::GetTableData(
     values.push_back(std::move(row));
   }
 
-  boost::pfr::for_each_field(SdbLog{}, [&]<typename Field>(const Field& field) {
-    auto column = CreateColumn<Field>(values.size(), &pool);
-    result.push_back(std::move(column));
-  });
-
+  auto result = CreateColumns<SdbLog>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
-
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

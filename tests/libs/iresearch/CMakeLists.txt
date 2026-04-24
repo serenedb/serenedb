@@ -8,12 +8,14 @@ set(iresearch-tests_sources
     ./analysis/minhash_tokenizer_test.cpp
     ./analysis/multi_delimited_tokenizer_tests.cpp
     ./analysis/pipeline_tokenizer_tests.cpp
+    ./analysis/union_tokenizer_tests.cpp
     ./analysis/segmentation_tokenizer_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
     ./analysis/stemming_tokenizer_tests.cpp
     ./analysis/stopwords_tokenizer_tests.cpp
     ./analysis/solr_synonyms_tokenizer_tests.cpp
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
+    ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
@@ -58,6 +60,10 @@ set(iresearch-tests_sources
     ./search/tfidf_test.cpp
     ./search/wand_test.cpp
     ./search/bm25_test.cpp
+    ./search/raw_tf_test.cpp
+    ./search/lm_test.cpp
+    ./search/indri_dirichlet_test.cpp
+    ./search/dfi_test.cpp
     ./search/cost_attribute_test.cpp
     ./search/boost_attribute_test.cpp
     ./search/filter_test_case_base.cpp

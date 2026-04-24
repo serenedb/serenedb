@@ -23,18 +23,19 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <velox/type/Type.h>
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
 #include <cstdint>
+#include <duckdb/common/types.hpp>
 #include <limits>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/fwd.h"
 #include "basics/reboot_id.h"
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"
@@ -46,7 +47,6 @@
 #include "catalog/key_generator.h"
 #include "catalog/storage_options.h"
 #include "catalog/types.h"
-#include "catalog/validators.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
 #include "query/utils.h"
@@ -87,7 +87,12 @@ struct AgencyIsBuildingFlags {
 };
 
 struct Column {
-  enum GeneratedType : uint8_t { kNone = 0, kStored = 1, kVirtual = 2 };
+  enum GeneratedType : uint8_t {
+    kNone = 0,
+    // TODO(mbkkt) swap these, to make it more like duckdb values?
+    kStored = 1,
+    kVirtual = 2,
+  };
 
   bool IsGenerated() const noexcept {
     return generated_type != GeneratedType::kNone;
@@ -99,6 +104,7 @@ struct Column {
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
   static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
+  static constexpr Id kInvertedIndexOffsetsId = kMaxRealId + 3;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
     static constexpr std::string_view kUpdatePrefix = "upd$";
@@ -135,11 +141,40 @@ struct Column {
 
   static std::string GeneratePKName(std::span<const std::string> column_names);
 
+  static constexpr std::string_view kScoreName = "sdb_inverted_index_score";
+
   static std::string GenerateScoreName(
     std::span<const std::string> column_names);
 
+  // Prefix used in virtual offsets column names. Ends with kReservedSymbol so
+  // it can never collide with a user-defined column name.
+  static constexpr std::string_view kOffsetsNamePrefix =
+    "sdb_inverted_index_offsets$";
+
+  // Encodes the searched column's catalog ID into the virtual column name.
+  static std::string MakeOffsetsName(Id column_id) {
+    static_assert(kOffsetsNamePrefix.ends_with(query::kReservedSymbol));
+    return absl::StrCat(kOffsetsNamePrefix, column_id);
+  }
+
+  // LIST(BIGINT) -- flat offsets column: interleaved start,end pairs.
+  static duckdb::LogicalType MakeOffsetsType() {
+    return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  }
+
+  // Request for a single OFFSETS() column: which catalog column to extract
+  // offsets for, and how many offset pairs to return per document at most.
+  // column_name is the mangled output column name produced by NextColumnName;
+  // it is globally unique across all sub-queries and used to match this request
+  // to the correct DataSource during SearchDataSource construction.
+  struct OffsetsFieldRequest {
+    Id column_id;
+    size_t limit = pg::Objects::kDefaultOffsetsLimit;
+    std::string column_name;
+  };
+
   Id id;
-  velox::TypePtr type;
+  duckdb::LogicalType type;
   std::string name;
   // if generated type is not kNone, expr = generated expression
   // else expr = default value expression (if any)
@@ -152,9 +187,10 @@ struct CheckConstraint {
   std::string name;
   std::shared_ptr<ColumnExpr> expr;
 
-  // returns whether this is a NOT NULL constraint; if so, the second value is
-  // the column name
-  std::pair<bool, std::string_view> IsNotNull() const noexcept;
+  // If this constraint is just `NOT NULL` on a single column of `columns`,
+  // returns that column's index. Otherwise returns std::nullopt.
+  std::optional<size_t> IsNotNull(
+    std::span<const Column> columns) const noexcept;
 };
 
 struct FileInfo {
@@ -204,7 +240,6 @@ struct TableOptions {
   std::vector<CheckConstraint> checkConstraints;
   std::string shardingStrategy = std::string{kDefaultSharding};
   std::string name;
-  std::shared_ptr<ValidatorBase> schema;
   std::shared_ptr<KeyGenerator> keyOptions;
   std::shared_ptr<ShardMap> shards = std::make_shared<ShardMap>();
   Identifier id;
@@ -224,26 +259,6 @@ struct TableOptions {
 
 struct CreateTableOptions : TableOptions {
   std::vector<std::string> avoidServers;
-};
-
-struct TableMeta {
-  ObjectId database;
-  ObjectId schema;
-  ObjectId id;
-  ObjectId plan_id;
-  ObjectId plan_db;
-  ObjectId from;
-  ObjectId to;
-  std::string name;  // TODO(gnusi): remove
-
-  auto GetTarget(EdgeDirection dir) const noexcept {
-    SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
-    return dir == EdgeDirection::Out ? to : from;
-  }
-  auto GetSource(EdgeDirection dir) const noexcept {
-    SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);
-    return dir == EdgeDirection::Out ? from : to;
-  }
 };
 // NOLINTEND
 

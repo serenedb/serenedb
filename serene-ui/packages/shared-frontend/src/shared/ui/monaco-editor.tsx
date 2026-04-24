@@ -70,19 +70,21 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
         forwardedRef,
     ) => {
         const { theme: globalTheme } = useChangeTheme();
-        const { ref: resizeRef } = useResizeObserver();
+        const { ref: resizeRef, size } = useResizeObserver<HTMLDivElement>();
         const containerRef = useRef<HTMLDivElement | null>(null);
         const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(
             null,
         );
         const isUpdatingFromPropRef = useRef(false);
+        const onChangeRef = useRef(onChange);
         const onExecuteRef = useRef(onExecute);
         const onExecuteInNewTabRef = useRef(onExecuteInNewTab);
 
         useEffect(() => {
+            onChangeRef.current = onChange;
             onExecuteRef.current = onExecute;
             onExecuteInNewTabRef.current = onExecuteInNewTab;
-        }, [onExecute, onExecuteInNewTab]);
+        }, [onChange, onExecute, onExecuteInNewTab]);
 
         useEffect(() => {
             if (!containerRef.current) return;
@@ -171,7 +173,8 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                         e.key === "j" ||
                         e.key === "t" ||
                         e.key === "w" ||
-                        e.key === "e")
+                        e.key === "e" ||
+                        e.key === "k")
                 ) {
                     e.stopImmediatePropagation();
                     const newEvent = new KeyboardEvent("keydown", {
@@ -191,7 +194,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
 
             const sub = editor.onDidChangeModelContent(() => {
                 if (!isUpdatingFromPropRef.current) {
-                    onChange?.(editor.getValue());
+                    onChangeRef.current?.(editor.getValue());
                 }
             });
 
@@ -199,6 +202,7 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                 domNode?.removeEventListener("keydown", handleKeyDown, true);
                 sub.dispose();
                 editor.dispose();
+                editorRef.current = null;
             };
         }, []);
 
@@ -276,6 +280,18 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
                 editor.updateOptions(options);
             }
         }, [options]);
+
+        useEffect(() => {
+            const editor = editorRef.current;
+            if (!editor || size.width <= 0 || size.height <= 0) {
+                return;
+            }
+
+            editor.layout({
+                width: size.width,
+                height: size.height,
+            });
+        }, [size.width, size.height]);
 
         return (
             <div

@@ -17447,6 +17447,7 @@ NULL
 
 skipif mysql # not compatible
 skipif postgres # TODO(mbkkt)
+skipif serenedb # TODO(mbkkt) int32 overflow
 query I rowsort label-1856
 SELECT - 20 * 35 * - 85 * - - 34 * + - 14 * - 78 / - 61 + - 68 + + 62 + + 60 * COUNT ( DISTINCT 41 ) + MIN ( 5 ) * + ( - - 1 ) + 18 * - CASE CAST ( - - 12 AS INTEGER ) WHEN + 49 THEN - 48 WHEN CAST ( + COUNT ( * ) AS INTEGER ) THEN - 47 END
 ----

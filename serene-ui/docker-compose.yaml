@@ -3,7 +3,13 @@ services:
         build:
             context: .
             dockerfile: Dockerfile
+            args:
+                DEFAULT_CONNECTION_STRING: ${DEFAULT_CONNECTION_STRING:-}
+                DEFAULT_CONNECTION_NAME: ${DEFAULT_CONNECTION_NAME:-}
         container_name: serene-ui
+        environment:
+            DEFAULT_CONNECTION_STRING: ${DEFAULT_CONNECTION_STRING:-}
+            DEFAULT_CONNECTION_NAME: ${DEFAULT_CONNECTION_NAME:-}
         ports:
             - "3000:3000"
             - "6543:6543"

@@ -1,5 +1,5 @@
 import { Explorer, ExplorerNodeData } from "@serene-ui/shared-frontend/widgets";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 export interface DashboardExplorerProps {
     initialData: ExplorerNodeData[];
@@ -12,10 +12,8 @@ export const DashboardExplorer: React.FC<DashboardExplorerProps> = ({
     isDataFetched = true,
     emptyState,
 }) => {
-    const [searchTerm, setSearchTerm] = useState<string>();
+    const [searchTerm] = useState<string>();
     const hasData = initialData.length > 0;
-
-    const editorRef = useRef<HTMLElement | null>(null);
 
     return (
         <div className="flex h-full min-h-0 flex-col">

@@ -5,7 +5,7 @@
 
 // as it is not const this var has external linkage
 // it is assigned a value in main
-std::string gMyEndpoint = "tcp://localhost:8529";
+std::string gMyEndpoint = "tcp://localhost:7890";
 std::string gMyAuthentication = "basic:root:";
 
 int main(int argc, char** argv) {

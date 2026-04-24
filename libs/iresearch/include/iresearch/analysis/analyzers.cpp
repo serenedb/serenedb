@@ -36,6 +36,7 @@
 #include "iresearch/analysis/nearest_neighbors_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
+#include "iresearch/analysis/path_hierarchy_tokenizer.hpp"
 #include "iresearch/analysis/pattern_tokenizer.hpp"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
@@ -43,6 +44,7 @@
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/union_tokenizer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -262,10 +264,12 @@ void Init() {
   DelimitedTokenizer::init();
   MinHashTokenizer::init();
   NearestNeighborsTokenizer::init();
+  PathHierarchyTokenizer::init();
   StopwordsTokenizer::init();
   NGramTokenizerBase::init();
   PatternTokenizer::init();
   PipelineTokenizer::init();
+  UnionTokenizer::init();
   SegmentationTokenizer::init();
   NormalizingTokenizer::init();
   StemmingTokenizer::init();

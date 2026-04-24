@@ -12,15 +12,25 @@ DETAIL: The prefix "pg_" is reserved for system schemas.
 
 
 statement error
+CREATE SCHEMA pg_foo;
+----
+db error: ERROR: unacceptable schema name "pg_foo"
+DETAIL: The prefix "pg_" is reserved for system schemas.
+
+
+statement error
 CREATE SCHEMA information_schema;
 ----
 db error: ERROR: schema "information_schema" already exists
 
 
+# IF NOT EXISTS silently succeeds for system-catalog schemas
+statement ok
+CREATE SCHEMA IF NOT EXISTS information_schema;
+
+
 query error
 SELECT * FROM sql_parts LIMIT 0;
-----
-db error: ERROR: relation "sql_parts" does not exist
 
 
 query

@@ -1,156 +1,128 @@
 [submodule "third_party/icu"]
 	path = third_party/icu
-	url = git@github.com:serenedb/icu.git
+	url = https://github.com/serenedb/icu.git
+	shallow = true
 [submodule "third_party/boost"]
 	path = third_party/boost
-	url = git@github.com:serenedb/boost.git
-[submodule "third_party/velox"]
-	path = third_party/velox
-	url = git@github.com:serenedb/velox.git
+	url = https://github.com/serenedb/boost.git
+	shallow = true
 [submodule "third_party/openssl"]
 	path = third_party/openssl
-	url = git@github.com:serenedb/openssl.git
+	url = https://github.com/serenedb/openssl.git
+	shallow = true
 [submodule "third_party/llvm-project"]
 	path = third_party/llvm-project
-	url = git@github.com:serenedb/llvm-project.git
+	url = https://github.com/serenedb/llvm-project.git
+	shallow = true
 [submodule "third_party/rocksdb"]
 	path = third_party/rocksdb
-	url = git@github.com:serenedb/rocksdb.git
-[submodule "third_party/libpg_query"]
-	path = third_party/libpg_query
-	url = git@github.com:serenedb/libpg_query.git
+	url = https://github.com/serenedb/rocksdb.git
+	shallow = true
 [submodule "third_party/folly"]
 	path = third_party/folly
-	url = git@github.com:serenedb/folly.git
+	url = https://github.com/serenedb/folly.git
+	shallow = true
 [submodule "third_party/simdjson"]
 	path = third_party/simdjson
-	url = git@github.com:serenedb/simdjson.git
+	url = https://github.com/serenedb/simdjson.git
+	shallow = true
 [submodule "third_party/double-conversion"]
 	path = third_party/double-conversion
-	url = git@github.com:serenedb/double-conversion.git
+	url = https://github.com/serenedb/double-conversion.git
+	shallow = true
 [submodule "third_party/abseil-cpp"]
 	path = third_party/abseil-cpp
-	url = git@github.com:serenedb/abseil-cpp.git
+	url = https://github.com/serenedb/abseil-cpp.git
+	shallow = true
 [submodule "third_party/s2geometry"]
 	path = third_party/s2geometry
-	url = git@github.com:serenedb/s2geometry.git
+	url = https://github.com/serenedb/s2geometry.git
+	shallow = true
 [submodule "third_party/zlib-ng"]
 	path = third_party/zlib-ng
-	url = git@github.com:serenedb/zlib-ng.git
+	url = https://github.com/serenedb/zlib-ng.git
+	shallow = true
 [submodule "third_party/nghttp2/nghttp2-lib"]
 	path = third_party/nghttp2/nghttp2-lib
-	url = git@github.com:serenedb/nghttp2.git
+	url = https://github.com/serenedb/nghttp2.git
+	shallow = true
 [submodule "third_party/immer"]
 	path = third_party/immer
-	url = git@github.com:serenedb/immer.git
+	url = https://github.com/serenedb/immer.git
+	shallow = true
 [submodule "third_party/tcmalloc"]
 	path = third_party/tcmalloc
-	url = git@github.com:serenedb/tcmalloc.git
+	url = https://github.com/serenedb/tcmalloc.git
+	shallow = true
 [submodule "third_party/googletest"]
 	path = third_party/googletest
-	url = git@github.com:serenedb/googletest.git
-[submodule "third_party/axiom"]
-	path = third_party/axiom
-	url = git@github.com:serenedb/axiom.git
+	url = https://github.com/serenedb/googletest.git
+	shallow = true
 [submodule "third_party/fmt"]
 	path = third_party/fmt
-	url = git@github.com:serenedb/fmt.git
+	url = https://github.com/serenedb/fmt.git
+	shallow = true
 [submodule "third_party/liburing"]
 	path = third_party/liburing
-	url = git@github.com:serenedb/liburing.git
+	url = https://github.com/serenedb/liburing.git
+	shallow = true
 [submodule "third_party/tests/rapidjson"]
 	path = third_party/tests/rapidjson
-	url = git@github.com:serenedb/rapidjson.git
-[submodule "third_party/xsimd"]
-	path = third_party/xsimd
-	url = git@github.com:serenedb/xsimd.git
+	url = https://github.com/serenedb/rapidjson.git
+	shallow = true
 [submodule "third_party/minizip-ng"]
 	path = third_party/minizip-ng
-	url = git@github.com:serenedb/minizip-ng.git
+	url = https://github.com/serenedb/minizip-ng.git
+	shallow = true
 [submodule "third_party/lz4"]
 	path = third_party/lz4
-	url = git@github.com:serenedb/lz4.git
+	url = https://github.com/serenedb/lz4.git
+	shallow = true
 [submodule "third_party/date"]
 	path = third_party/date
-	url = git@github.com:serenedb/date.git
+	url = https://github.com/serenedb/date.git
+	shallow = true
 [submodule "third_party/re2"]
 	path = third_party/re2
-	url = git@github.com:serenedb/re2.git
-[submodule "third_party/nuraft"]
-	path = third_party/nuraft
-	url = git@github.com:serenedb/nuraft.git
+	url = https://github.com/serenedb/re2.git
+	shallow = true
 [submodule "third_party/benchmark"]
 	path = third_party/benchmark
-	url = git@github.com:serenedb/benchmark.git
+	url = https://github.com/serenedb/benchmark.git
+	shallow = true
 [submodule "third_party/fast_float"]
 	path = third_party/fast_float
-	url = git@github.com:serenedb/fast_float.git
+	url = https://github.com/serenedb/fast_float.git
+	shallow = true
 [submodule "third_party/sqllogictest-rs"]
 	path = third_party/sqllogictest-rs
-	url = git@github.com:serenedb/sqllogictest-rs.git
+	url = https://github.com/serenedb/sqllogictest-rs.git
+	shallow = true
 [submodule "third_party/zstd"]
 	path = third_party/zstd
-	url = git@github.com:serenedb/zstd.git
-[submodule "third_party/protobuf"]
-	path = third_party/protobuf
-	url = git@github.com:serenedb/protobuf.git
-[submodule "third_party/arrow"]
-	path = third_party/arrow
-	url = git@github.com:serenedb/arrow.git
-[submodule "third_party/thrift"]
-	path = third_party/thrift
-	url = git@github.com:serenedb/thrift.git
-[submodule "third_party/flatbuffers"]
-	path = third_party/flatbuffers
-	url = git@github.com:serenedb/flatbuffers.git
+	url = https://github.com/serenedb/zstd.git
+	shallow = true
 [submodule "third_party/streamvbyte"]
 	path = third_party/streamvbyte
-	url = git@github.com:serenedb/streamvbyte.git
-[submodule "third_party/aws-c-auth"]
-	path = third_party/aws-c-auth
-	url = git@github.com:serenedb/aws-c-auth.git
-[submodule "third_party/aws-c-cal"]
-	path = third_party/aws-c-cal
-	url = git@github.com:serenedb/aws-c-cal.git
-[submodule "third_party/aws-c-common"]
-	path = third_party/aws-c-common
-	url = git@github.com:serenedb/aws-c-common.git
-[submodule "third_party/aws-c-compression"]
-	path = third_party/aws-c-compression
-	url = git@github.com:serenedb/aws-c-compression.git
-[submodule "third_party/aws-c-event-stream"]
-	path = third_party/aws-c-event-stream
-	url = git@github.com:serenedb/aws-c-event-stream.git
-[submodule "third_party/aws-c-http"]
-	path = third_party/aws-c-http
-	url = git@github.com:serenedb/aws-c-http.git
-[submodule "third_party/aws-c-io"]
-	path = third_party/aws-c-io
-	url = git@github.com:serenedb/aws-c-io.git
-[submodule "third_party/aws-c-mqtt"]
-	path = third_party/aws-c-mqtt
-	url = git@github.com:serenedb/aws-c-mqtt.git
-[submodule "third_party/aws-c-s3"]
-	path = third_party/aws-c-s3
-	url = git@github.com:serenedb/aws-c-s3.git
-[submodule "third_party/aws-c-sdkutils"]
-	path = third_party/aws-c-sdkutils
-	url = git@github.com:serenedb/aws-c-sdkutils.git
-[submodule "third_party/aws-checksums"]
-	path = third_party/aws-checksums
-	url = git@github.com:serenedb/aws-checksums.git
-[submodule "third_party/aws-crt-cpp"]
-	path = third_party/aws-crt-cpp
-	url = git@github.com:serenedb/aws-crt-cpp.git
-[submodule "third_party/aws-sdk-cpp"]
-	path = third_party/aws-sdk-cpp
-	url = git@github.com:serenedb/aws-sdk-cpp.git
+	url = https://github.com/serenedb/streamvbyte.git
+	shallow = true
 [submodule "third_party/faiss"]
 	path = third_party/faiss
-	url = git@github.com:serenedb/faiss.git
+	url = https://github.com/serenedb/faiss.git
+	shallow = true
 [submodule "third_party/yaclib"]
 	path = third_party/yaclib
-	url = git@github.com:YACLib/YACLib.git
+	url = https://github.com/YACLib/YACLib.git
+	shallow = true
 [submodule "third_party/snappy"]
 	path = third_party/snappy
-	url = git@github.com:serenedb/snappy.git
+	url = https://github.com/serenedb/snappy.git
+	shallow = true
+[submodule "third_party/duckdb"]
+	path = third_party/duckdb
+	url = https://github.com/serenedb/duckdb.git
+	shallow = true
+[submodule "third_party/curl"]
+	path = third_party/curl
+	url = https://github.com/serenedb/curl.git
+	shallow = true

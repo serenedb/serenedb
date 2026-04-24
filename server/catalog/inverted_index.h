@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
 
 #include "basics/object_pool.hpp"
@@ -30,21 +31,18 @@
 
 namespace sdb::catalog {
 
+struct HNSWColumnConfig {
+  int d = 0;
+  int m = 32;
+  int ef_construction = 40;
+  irs::HNSWMetric metric = irs::HNSWMetric::L2;
+};
+
 struct InvertedIndexColumnInfo {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
   search::Features features;
-};
-
-struct InvertedIndexOptionsImpl {
-  containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo> columns;
-};
-
-struct InvertedIndexOptionsWrapper : public IndexImplOptionsBaseWrapper {
-  InvertedIndexOptionsWrapper(IndexBaseOptions&& options)
-    : IndexImplOptionsBaseWrapper{std::move(options)} {}
-
-  InvertedIndexOptionsImpl impl;
+  std::optional<HNSWColumnConfig> hnsw_config;
 };
 
 struct ColumnAnalyzer {
@@ -54,12 +52,25 @@ struct ColumnAnalyzer {
 
 class InvertedIndex final : public Index {
  public:
-  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                ObjectId relation_id, InvertedIndexOptionsWrapper options)
-    : Index{database_id, schema_id, id, relation_id, std::move(options.base)},
-      _options{std::move(options.impl)} {}
+  using ColumnOptions =
+    containers::FlatHashMap<Column::Id, InvertedIndexColumnInfo>;
 
+  InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
+                ObjectId relation_id, std::string name,
+                std::vector<Column::Id> column_ids, ColumnOptions columns)
+    : Index{database_id,
+            schema_id,
+            id,
+            relation_id,
+            std::move(name),
+            std::move(column_ids),
+            ObjectType::InvertedIndex},
+      _columns{std::move(columns)} {}
+
+  static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
+                                                     ReadContext ctx);
   void WriteInternal(vpack::Builder& builder) const final;
+  std::shared_ptr<Object> Clone() const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 
@@ -67,11 +78,13 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 
+  std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
+    catalog::Column::Id column_id) const;
+
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
-  // TODO(codeworse): Add inverted index specific options
-  InvertedIndexOptionsImpl _options;
+  ColumnOptions _columns;
 };
 
 }  // namespace sdb::catalog

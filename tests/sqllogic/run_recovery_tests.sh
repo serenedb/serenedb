@@ -1,21 +1,56 @@
 #!/bin/bash
 
-# Runs recovery tests against a running serened instance.
-# Expects serened to auto-restart on crash (e.g. via run_serened_loop.sh).
+# Runs recovery tests in parallel, each test file against its own serened instance.
 #
-# Usage (local dev, from another terminal):
-#   ./run_recovery_tests.sh
+# By default, spawns one serened per test file (capped by nproc). Each instance
+# auto-restarts on crash via run_serened_loop.sh.
+#
+# Usage (local dev):
+#   ./run_recovery_tests.sh                              # auto-parallel
+#   ./run_recovery_tests.sh --jobs 4                     # 4 workers
+#
+# Usage (Docker, new compose):
+#   ./run_recovery_tests.sh --runner /sqllogictest-rs    # auto-parallel in container
+#
+# Usage (legacy external serened -- sequential fallback):
 #   SERVICE_HOST=serenedb-recovery SERVICE_PORT=7777 ./run_recovery_tests.sh
+
+set -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 : "${SERVICE_HOST:=localhost}"
 : "${SERVICE_PORT:=7777}"
+: "${BASE_PORT:=${SERVICE_PORT}}"
+: "${JOBS:=0}"
 
 cd "$SCRIPT_DIR"
 
 export RETRY_ATTEMPTS=10
 export BACKOFF_DURATION=500ms
+
+# --- Parse arguments ---
+
+RUNNER_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--jobs)
+		JOBS="$2"
+		shift 2
+		;;
+	--runner)
+		RUNNER_ARGS=(--runner "$2")
+		shift 2
+		;;
+	*)
+		echo "Unknown option: $1" >&2
+		exit 1
+		;;
+	esac
+done
+
+# --- Discover test files ---
 
 declare -a test_files=()
 while IFS= read -r -d '' file; do
@@ -29,29 +64,282 @@ fi
 
 echo "Found ${#test_files[@]} recovery test(s)"
 
+# --- Determine mode and parallelism ---
+
+if [[ "$SERVICE_HOST" != "localhost" && "$SERVICE_HOST" != "127.0.0.1" ]]; then
+	EXTERNAL_MODE=true
+	JOBS=1
+	echo "External mode: connecting to $SERVICE_HOST:$SERVICE_PORT (sequential)"
+else
+	EXTERNAL_MODE=false
+	if [[ "$JOBS" -eq 0 ]]; then
+		JOBS=${#test_files[@]}
+		max_jobs=$(nproc 2>/dev/null || echo 4)
+		((JOBS > max_jobs)) && JOBS=$max_jobs
+	fi
+fi
+
+((JOBS > ${#test_files[@]})) && JOBS=${#test_files[@]}
+echo "Parallelism: $JOBS worker(s) for ${#test_files[@]} test(s)"
+
+# --- Serened instance management (local mode only) ---
+
+LOOP_PIDS=()
+DATADIRS=()
+
+# Kill any leftover recovery serenedds from previous runs. The "recovery-worker-"
+# datadir pattern is unique to this script, so we can safely pkill on it.
+# Without this, orphans from prior aborted runs hold test ports and cascade-fail.
+kill_recovery_orphans() {
+	local pids
+	pids=$(ps -eo pid,args --no-headers | grep -E "recovery-worker-|run_serened_loop\.sh" | grep -v grep | awk '{print $1}')
+	if [[ -n "$pids" ]]; then
+		echo "Killing leftover recovery processes: $(echo $pids | tr '\n' ' ')"
+		echo "$pids" | xargs -r kill -9 2>/dev/null
+		sleep 1
+	fi
+}
+
+cleanup() {
+	echo "Cleaning up serened instances..."
+	# Kill children (serened) before parents (bash loop) to avoid orphaning.
+	for pid in "${LOOP_PIDS[@]}"; do
+		pkill -KILL -P "$pid" 2>/dev/null
+		kill -KILL "$pid" 2>/dev/null
+		wait "$pid" 2>/dev/null
+	done
+	# Catch anything we missed (e.g. script was SIGKILLed before trap ran).
+	kill_recovery_orphans
+	for dir in "${DATADIRS[@]}"; do
+		rm -rf "$dir"
+	done
+}
+
+kill_recovery_orphans
+
+if [[ "$EXTERNAL_MODE" == "false" ]]; then
+	: "${BUILD_DIR:=build}"
+	: "${WORKSPACE:=$(realpath "$SCRIPT_DIR/../../")}"
+
+	SERENED="$WORKSPACE/$BUILD_DIR/bin/serened"
+	if [[ ! -x "$SERENED" ]]; then
+		echo "ERROR: serened not found at $SERENED"
+		exit 1
+	fi
+
+	trap cleanup EXIT INT TERM
+
+	# Use tmpfs for serened logs -- always writable, per-run isolation.
+	# Not added to DATADIRS: logs are kept after the run for post-mortem.
+	SERENED_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serened-logs-XXXXXX")
+fi
+
+# Start a fresh serened instance (restart loop + empty datadir) and wait for
+# the port to accept connections. Each test gets its own, so one test's crash
+# cannot cascade into the next. Writes to: $log_file, tracks pid in $pid_var,
+# tracks datadir in $dir_var.
+start_fresh_serened() {
+	local worker_id=$1 port=$2 log_file=$3 pid_var=$4 dir_var=$5
+
+	local datadir
+	datadir=$(mktemp -d "${TMPDIR:-/tmp}/recovery-worker-${worker_id}-XXXXXX")
+	DATADIRS+=("$datadir")
+	printf -v "$dir_var" '%s' "$datadir"
+
+	PORT=$port "$SCRIPT_DIR/run_serened_loop.sh" "$datadir" >"$log_file" 2>&1 &
+	local pid=$!
+	LOOP_PIDS+=("$pid")
+	printf -v "$pid_var" '%s' "$pid"
+
+	local attempt
+	for ((attempt = 0; attempt < 60; attempt++)); do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			echo "  ERROR: worker $worker_id loop (pid $pid) died before port was up"
+			return 1
+		fi
+		if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); s.connect(('localhost',$port)); s.close()" 2>/dev/null; then
+			return 0
+		fi
+		sleep 1
+	done
+	echo "  ERROR: worker $worker_id not ready after 60s"
+	return 1
+}
+
+stop_serened() {
+	local pid=$1
+	[[ -z "$pid" ]] && return
+	# Kill children FIRST (serened) -- once the parent bash dies, its children
+	# are reparented to init and pkill -P can no longer find them, leaving
+	# orphaned serened processes holding the port. Since each test uses a
+	# unique port + datadir, we don't need to wait for graceful shutdown.
+	pkill -KILL -P "$pid" 2>/dev/null
+	kill -KILL "$pid" 2>/dev/null
+	wait "$pid" 2>/dev/null
+}
+
+# --- Distribute tests across workers (round-robin) ---
+
+declare -a worker_tests
+for ((i = 0; i < JOBS; i++)); do
+	worker_tests[$i]=""
+done
+
+for ((t = 0; t < ${#test_files[@]}; t++)); do
+	w=$((t % JOBS))
+	if [[ -n "${worker_tests[$w]}" ]]; then
+		worker_tests[$w]+=$'\n'
+	fi
+	worker_tests[$w]+="${test_files[$t]}"
+done
+
+# --- Run test workers in parallel ---
+
+run_worker() {
+	local worker_id=$1
+	local host=$2
+	local port=$3
+	local tests="$4"
+	local worker_exit=0
+	local failures_file="$SERENED_LOG_DIR/failures-w${worker_id}.txt"
+	: >"$failures_file"
+
+	local test_idx=0
+	while IFS= read -r test_file; do
+		[[ -z "$test_file" ]] && continue
+
+		# One serened per test: fresh datadir, fresh port, fresh process.
+		# Ask the kernel for a free port each time. Fixed port schemes collide
+		# with other developers' docker containers, IDE servers, etc.
+		local test_port
+		test_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		local serened_log="$SERENED_LOG_DIR/worker-${worker_id}-test-${test_idx}.log"
+		echo "$test_file" >"$serened_log.test"
+		local pid="" datadir=""
+
+		echo
+		echo "========================================================================"
+		echo "[worker $worker_id] RUN  $test_file  (port $test_port, log $serened_log)"
+		echo "========================================================================"
+
+		local run_port=$test_port
+		if [[ "$EXTERNAL_MODE" == "true" ]]; then
+			run_port=$port
+		else
+			if ! start_fresh_serened "$worker_id" "$test_port" "$serened_log" pid datadir; then
+				echo "[worker $worker_id] FAIL $test_file (serened did not start)"
+				echo "--- serened log ---"
+				sed "s/^/[srvd] /" "$serened_log"
+				echo "--- end serened log ---"
+				echo "$test_file" >>"$failures_file"
+				worker_exit=1
+				test_idx=$((test_idx + 1))
+				continue
+			fi
+		fi
+
+		./run.sh \
+			--host "$host" \
+			--single-port "$run_port" \
+			--test "$test_file" \
+			--junit "tests-serenedb-recovery-w${worker_id}" \
+			--engines pg-wire-simple \
+			"${RUNNER_ARGS[@]}" 2>&1 | sed "s/^/[test] /"
+
+		local exit_code=${PIPESTATUS[0]}
+
+		if [[ "$EXTERNAL_MODE" == "false" ]]; then
+			stop_serened "$pid"
+			[[ -n "$datadir" ]] && rm -rf "$datadir"
+		fi
+
+		if [[ $exit_code != 0 ]]; then
+			echo "------------------------------------------------------------------------"
+			echo "[worker $worker_id] FAIL $test_file (exit $exit_code)"
+			if [[ -f "$serened_log" ]]; then
+				echo "--- serened log ---"
+				sed "s/^/[srvd] /" "$serened_log"
+				echo "--- end serened log ---"
+			fi
+			echo "$test_file" >>"$failures_file"
+			worker_exit=$exit_code
+		else
+			echo "[worker $worker_id] PASS $test_file"
+			# Keep logs only on failure to avoid clutter
+			rm -f "$serened_log" "$serened_log.test"
+		fi
+
+		test_idx=$((test_idx + 1))
+	done <<<"$tests"
+
+	return $worker_exit
+}
+
+declare -a worker_pids=()
+
+for ((i = 0; i < JOBS; i++)); do
+	if [[ "$EXTERNAL_MODE" == "true" ]]; then
+		host=$SERVICE_HOST
+		port=$SERVICE_PORT
+	else
+		host=localhost
+		port=$((BASE_PORT + i))
+	fi
+
+	run_worker "$i" "$host" "$port" "${worker_tests[$i]}" &
+	worker_pids+=($!)
+done
+
+# --- Collect results ---
+
 final_exit_code=0
 
-for test_file in "${test_files[@]}"; do
-	echo "Running recovery test: $test_file"
-
-	./run.sh \
-		--host "$SERVICE_HOST" \
-		--single-port "$SERVICE_PORT" \
-		--test "$test_file" \
-		--junit "tests-serenedb-recovery" \
-		--protocol simple \
-		--runner=/sqllogictest-rs
-
+for ((i = 0; i < ${#worker_pids[@]}; i++)); do
+	wait "${worker_pids[$i]}"
 	exit_code=$?
-
 	if [[ $exit_code != 0 ]]; then
-		echo "SereneDB recovery test failed: $test_file"
+		echo "Worker $i failed (exit $exit_code)"
 		final_exit_code=$exit_code
 	fi
 done
 
+# --- Summary ---
+
+declare -a all_failures=()
+if [[ -n "${SERENED_LOG_DIR:-}" ]]; then
+	for f in "$SERENED_LOG_DIR"/failures-w*.txt; do
+		[[ -f "$f" ]] || continue
+		while IFS= read -r line; do
+			[[ -n "$line" ]] && all_failures+=("$line")
+		done <"$f"
+	done
+fi
+
+total=${#test_files[@]}
+failed=${#all_failures[@]}
+passed=$((total - failed))
+
+echo
+echo "========================================================================"
+echo "Summary: $passed/$total passed, $failed failed"
+echo "========================================================================"
+if [[ $failed -gt 0 ]]; then
+	echo "Failed tests:"
+	for t in "${all_failures[@]}"; do
+		echo "  - $t"
+	done
+	echo
+	echo "Serened logs: $SERENED_LOG_DIR (per-worker worker-N.log)"
+fi
+
+# Copy retained per-test logs into LOG_DIR so CI can collect them as artifacts.
+if [[ -n "${LOG_DIR:-}" && -d "$LOG_DIR" && -n "${SERENED_LOG_DIR:-}" ]]; then
+	cp "$SERENED_LOG_DIR"/worker-*.log "$LOG_DIR/" 2>/dev/null || true
+	cp "$SERENED_LOG_DIR"/failures-w*.txt "$LOG_DIR/" 2>/dev/null || true
+fi
+
 if [[ $final_exit_code != 0 ]]; then
-	echo "SereneDB recovery tests failed"
+	echo "Recovery tests FAILED"
 	exit $final_exit_code
 fi
 

@@ -15,22 +15,26 @@ CREATE TABLE iamkay
 );
 
 
-# check that there's only one not null check for every column
-onlyif serenedb
+skipif postgres
 query
-EXPLAIN (LOGICAL)
+EXPLAIN
 INSERT INTO iamkay DEFAULT VALUES;
 ----
 QUERY PLAN
-LOGICAL PLAN:
-- TableWrite INSERT: -> ROW<rows:BIGINT>
-    id := id
-    lmao := lmao
-  - Filter: AND(IF(spark_isnotnull(id), true, CAST(pg_error(33575106, 0, null value in column "id" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN)), IF(spark_isnotnull(lmao), true, CAST(pg_error(33575106, 0, null value in column "lmao" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN))) -> ROW<"id":INTEGER,"lmao":INTEGER>
-    - Project: -> ROW<"id":INTEGER,"lmao":INTEGER>
-        id := null
-        lmao := null
-      - Values: 1 rows -> ROW<>
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            NULL           │
+│            NULL           │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         DUMMY_SCAN        │
+└───────────────────────────┘
 
 
 statement ok
@@ -194,7 +198,7 @@ statement error
 UPDATE clickclack SET name = 'babsky' WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check"
-DETAIL: Failing row contains (9, babsky, 70).
+DETAIL: Failing row contains (9, babsky, 140, 420).
 
 
 onlyif serenedb
@@ -202,7 +206,7 @@ statement error
 UPDATE clickclack SET name = 'arelav' WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check1"
-DETAIL: Failing row contains (9, arelav, 70).
+DETAIL: Failing row contains (9, arelav, 140, 420).
 
 
 onlyif serenedb
@@ -210,7 +214,7 @@ statement error
 UPDATE clickclack SET age = 54 WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_check"
-DETAIL: Failing row contains (9, 54, 33).
+DETAIL: Failing row contains (9, deadinside, 140, 54, 33).
 
 
 onlyif serenedb
@@ -218,7 +222,7 @@ statement error
 UPDATE clickclack SET age = 21 WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "chk_only_skuf"
-DETAIL: Failing row contains (9, 21, 30).
+DETAIL: Failing row contains (9, deadinside, 140, 21, 30).
 
 
 onlyif serenedb
@@ -226,7 +230,7 @@ statement error
 UPDATE clickclack SET weight = 50 WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "chk_only_skuf"
-DETAIL: Failing row contains (9, 50, 52).
+DETAIL: Failing row contains (9, deadinside, 50, 420, 52).
 
 
 onlyif serenedb
@@ -234,7 +238,7 @@ statement error
 UPDATE clickclack SET weight = 91, age = 31 WHERE name = 'deadinside';
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
-DETAIL: Failing row contains (9, 91, 31, 21).
+DETAIL: Failing row contains (9, deadinside, 91, 31, 21).
 
 
 onlyif serenedb
@@ -242,7 +246,7 @@ statement error
 UPDATE clickclack SET age = NULL WHERE name = 'deadinside';
 ----
 db error: ERROR: null value in column "age" of relation "clickclack" violates not-null constraint
-DETAIL: Failing row contains (9, null, null).
+DETAIL: Failing row contains (9, deadinside, 140, null, null).
 
 
 onlyif serenedb

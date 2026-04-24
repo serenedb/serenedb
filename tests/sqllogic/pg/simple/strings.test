@@ -204,7 +204,7 @@ statement count 0
 SET bytea_output TO escape;
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT E'\\xDeAdBeEf'::bytea;
 ----
@@ -212,7 +212,7 @@ bytea
 \\336\\255\\276\\357
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT E'\\x De Ad Be Ef '::bytea;
 ----
@@ -220,7 +220,7 @@ bytea
 \\336\\255\\276\\357
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT E'\\xDe00BeEf'::bytea;
 ----
@@ -228,7 +228,7 @@ bytea
 \\336\\000\\276\\357
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT E'DeAdBeEf'::bytea;
 ----
@@ -236,7 +236,7 @@ bytea
 DeAdBeEf
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT E'De\\000dBeEf'::bytea;
 ----
@@ -244,7 +244,7 @@ bytea
 De\\000dBeEf
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT E'De\\123dBeEf'::bytea;
 ----
@@ -1435,7 +1435,7 @@ insert into toasttest values(decode(repeat('1234567890',10000),'escape'));
 
 # If the starting position is zero or less, then return from the start of the string
 # adjusting the length to be consistent with the "negative start" per SQL.
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT substr(f1, -1, 5) from toasttest;
 ----
@@ -1455,7 +1455,7 @@ db error: ERROR: negative substring length not allowed
 
 # If no third argument (length) is provided, the length to the end of the
 # string is assumed.
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT substr(f1, 99995) from toasttest;
 ----
@@ -1468,7 +1468,7 @@ substr
 
 # If start plus length is > string length, the result is truncated to
 # string length
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT substr(f1, 99995, 10) from toasttest;
 ----
@@ -1943,7 +1943,7 @@ repeat
 (empty)
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT trim(E'\\000'::bytea from E'\\000Tom\\000'::bytea);
 ----
@@ -1951,7 +1951,7 @@ btrim
 Tom
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT btrim(E'\\000trim\\000'::bytea, E'\\000'::bytea);
 ----
@@ -1959,7 +1959,7 @@ btrim
 trim
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT btrim(''::bytea, E'\\000'::bytea);
 ----
@@ -1967,7 +1967,7 @@ btrim
 (empty)
 
 
-skipif postgres-extended-protocol
+skipif pg-wire-extended
 query
 SELECT btrim(E'\\000trim\\000'::bytea, ''::bytea);
 ----

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState } from "react";
 import type { TreeApi } from "react-arborist";
-import type { ExplorerNodeData } from "./types";
+import type { ExplorerNodeData, ExplorerPinningOptions } from "./types";
 
 interface ExplorerContextType {
     currentTree: ExplorerNodeData[];
@@ -17,17 +17,26 @@ interface ExplorerContextType {
         nodeId: string,
         updates: Partial<ExplorerNodeData>,
     ) => void;
+    enablePinning: boolean;
+    isNodePinned: (node: ExplorerNodeData) => boolean;
+    togglePinnedNode: (node: ExplorerNodeData) => void;
 }
 
 const ExplorerContext = createContext<ExplorerContextType | undefined>(
     undefined,
 );
 
+const getNodeIdentity = (node: Pick<ExplorerNodeData, "type" | "name">) =>
+    `${node.type}:${node.name}`;
+
 export const ExplorerProvider = ({
     children,
+    enablePinning = false,
+    isNodePinned,
+    onTogglePinned,
 }: {
     children: React.ReactNode;
-}) => {
+} & ExplorerPinningOptions) => {
     const [tree, setTree] = useState<ExplorerNodeData[]>([]);
     const treeRef = React.useRef<TreeApi<ExplorerNodeData> | null>(null);
 
@@ -38,7 +47,10 @@ export const ExplorerProvider = ({
     ) => {
         const parentNode = treeRef.current?.get(parentId);
         let maxId = 1;
-        const oldNames: string[] = [];
+        const existingChildrenByIdentity = new Map<
+            string,
+            ExplorerNodeData
+        >();
 
         for (const child of parentNode?.children || []) {
             const childIdParts = child.id.split("/");
@@ -46,43 +58,44 @@ export const ExplorerProvider = ({
             const childIndex = parseInt(childId.split("-")[1]);
 
             if (maxId < childIndex) maxId = childIndex;
-
-            oldNames.push(child.data.name);
+            existingChildrenByIdentity.set(
+                getNodeIdentity(child.data),
+                child.data,
+            );
         }
 
-        let newNodes: ExplorerNodeData[] = [];
+        const nextNodes = newChildren.map((child) => {
+            const existingChild = existingChildrenByIdentity.get(
+                getNodeIdentity(child),
+            );
 
-        const newNames: string[] = [];
-
-        for (const child of newChildren) {
-            newNames.push(child.name);
-            const nameIndex = oldNames?.indexOf(child.name);
-
-            if (nameIndex === -1 || forceReplace) {
+            if (!existingChild) {
                 const childIdParts = child.id.split("/");
                 const childId = childIdParts[childIdParts.length - 1];
                 const path = childIdParts
                     .slice(0, childIdParts.length - 1)
                     .join("/");
                 const childPrefix = parseInt(childId.split("-")[0]);
+                const nextId = path + "/" + childPrefix + "-" + (maxId + 1);
 
-                newNodes.push({
-                    ...child,
-                    id: path + "/" + childPrefix + "-" + (maxId + 1),
-                });
                 maxId++;
-            }
-        }
 
-        if (!forceReplace) {
-            const onlyExistingNodes =
-                parentNode?.children
-                    ?.filter((c) => newNames.includes(c.data.name))
-                    .map((c) => {
-                        return c.data;
-                    }) || [];
-            newNodes = [...newNodes, ...onlyExistingNodes];
-        }
+                return {
+                    ...child,
+                    id: nextId,
+                };
+            }
+
+            return {
+                ...existingChild,
+                ...child,
+                id: existingChild.id,
+                children:
+                    forceReplace || child.children
+                        ? child.children ?? existingChild.children
+                        : existingChild.children,
+            };
+        });
 
         setTree((prevTree) => {
             const pathParts = parentId.split("/");
@@ -96,7 +109,7 @@ export const ExplorerProvider = ({
                         if (depth === pathParts.length - 1) {
                             return {
                                 ...node,
-                                children: newNodes,
+                                children: nextNodes,
                             };
                         }
                         return {
@@ -198,6 +211,9 @@ export const ExplorerProvider = ({
                 removeNode,
                 refreshNode,
                 updateNodeData,
+                enablePinning,
+                isNodePinned: isNodePinned || (() => false),
+                togglePinnedNode: onTogglePinned || (() => {}),
             }}>
             {children}
         </ExplorerContext.Provider>

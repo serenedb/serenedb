@@ -56,7 +56,6 @@ CMAKE_FLAGS=(
 	"-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld"
 	"-DAUTO_UPDATE_MODULES=Off"
 	"-DSDB_DEV=$SDB_DEV"
-	"-DSDB_CLUSTER=$SDB_CLUSTER"
 	"-DSDB_FAULT_INJECTION=$SDB_FAULT_INJECTION"
 	"-DSDB_GTEST=$SDB_GTEST"
 	"-DUSE_IPO=$USE_IPO"
@@ -68,15 +67,15 @@ if [[ -n "${SERENEDB_VERSION_PATCH:-}" && "${SERENEDB_VERSION_PATCH}" != "0" ]];
 	CMAKE_FLAGS+=("-DSERENEDB_VERSION_PATCH=${SERENEDB_VERSION_PATCH}")
 fi
 
+if [[ -n "${EXTRA_CMAKE_FLAGS:-}" ]]; then
+	read -ra EXTRA_FLAGS <<<"$EXTRA_CMAKE_FLAGS"
+	CMAKE_FLAGS+=("${EXTRA_FLAGS[@]}")
+fi
+
 if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
 	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=$STATIC_EXECUTABLES" "-DSDB_ALLOC=$SDB_ALLOC")
 else
 	CMAKE_FLAGS+=("-DSTATIC_EXECUTABLES=Off" "-DSDB_ALLOC=SYS" "-DSDB_IOURING=Off" "-DSDB_SANITIZE=$SANITIZERS")
-fi
-
-JEMALLOC_TARGET=""
-if [[ "$SDB_ALLOC" == "JE" && ("$SANITIZERS" == "None" || -z "$SANITIZERS") ]]; then
-	JEMALLOC_TARGET="jemalloc_build"
 fi
 
 print_banner "CMAKE CONFIGURATION" "${TARGETS[*]}"
@@ -85,12 +84,6 @@ cmake "${CMAKE_FLAGS[@]}" .. 2>&1 | tee -a /serenedb/cmake_${LOG_SUFFIX}.log || 
 
 export CC=/usr/local/bin/clang
 export CXX=/usr/local/bin/clang++
-
-if [[ -n "$JEMALLOC_TARGET" ]]; then
-	print_banner "BUILDING JEMALLOC" "$JEMALLOC_TARGET"
-	ninja "$JEMALLOC_TARGET" 2>&1 | tee /serenedb/make_${LOG_SUFFIX}.log || exit 1
-	ccache -s | tee /serenedb/ccache_${LOG_SUFFIX}.log
-fi
 
 print_banner "BUILDING TARGETS" "${TARGETS[*]}"
 ninja "${TARGETS[@]}" 2>&1 | tee -a /serenedb/make_${LOG_SUFFIX}.log || exit 1

@@ -1,6 +1,50 @@
 name: task | serenedb build & test
 
 on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      KIND:
+        description: "What to test"
+        type: choice
+        required: true
+        options:
+          - both
+          - unit
+          - functional
+          - functional_fast
+          - none
+      DEV:
+        description: "Enable assertions (SDB_DEV)"
+        type: boolean
+        required: false
+        default: true
+      INSTRUMENTATION:
+        description: "Sanitizer or coverage"
+        type: choice
+        required: false
+        default: "none"
+        options:
+          - none
+          - coverage
+          - asan
+          - msan
+          - tsan
+          - ubsan
+      EXTRA_CMAKE_FLAGS:
+        description: "Additional cmake flags (rare overrides)"
+        type: string
+        required: false
+        default: ""
+      PR_SHA:
+        description: "Commit SHA to checkout (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:
@@ -33,13 +77,15 @@ on:
         type: string
         required: false
         default: ""
-    secrets:
-      PAT_TOKEN:
-        required: true
-
+      PR_SHA:
+        description: "Commit SHA to checkout (fork PR support; empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+  CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
 
 jobs:
   test:
@@ -52,7 +98,7 @@ jobs:
     steps:
       - name: Derive build flags
         run: |
-          # KIND → build targets and test scripts
+          # KIND -> build targets and test scripts
           case "${{ inputs.KIND }}" in
             none)
               echo "SDB_GTEST=Off" >> $GITHUB_ENV
@@ -91,10 +137,10 @@ jobs:
               ;;
           esac
 
-          # DEV → assertions
+          # DEV -> assertions
           echo "SDB_DEV=${{ inputs.DEV && 'On' || 'Off' }}" >> $GITHUB_ENV
 
-          # INSTRUMENTATION → sanitizer/coverage
+          # INSTRUMENTATION -> sanitizer/coverage
           case "${{ inputs.INSTRUMENTATION }}" in
             none)
               echo "SANITIZERS=" >> $GITHUB_ENV
@@ -128,7 +174,6 @@ jobs:
           echo "USE_IPO=Off" >> $GITHUB_ENV
           echo "SDB_ALLOC=JE" >> $GITHUB_ENV
           echo "ENSURE_VTUNE_SYMBOLS=Off" >> $GITHUB_ENV
-          echo "SDB_CLUSTER=" >> $GITHUB_ENV
           echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
           echo "STRIP_TARBALL=false" >> $GITHUB_ENV
           echo "DEBUG_SYMBOLS=false" >> $GITHUB_ENV
@@ -138,8 +183,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          repository: serenedb/serenedb
-          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
           submodules: true
           clean: true
@@ -160,138 +204,74 @@ jobs:
         run: |
           mkdir -p /mnt/data/.gtest-parallel-cache/${{ inputs.INSTRUMENTATION }}
           echo "GTEST_PARALLEL_CACHE_DIR=/mnt/data/.gtest-parallel-cache/${{ inputs.INSTRUMENTATION }}" >> $GITHUB_ENV
-          echo "CARGO_TARGET_CACHE=/mnt/data/.cargo-target-sqllogic" >> $GITHUB_ENV
 
-      # ==================== BUILD ====================
       - name: Build
         id: build
         run: |
           DOCKER_USER="$(id -u):$(id -g)"
           EXTRA_FLAGS="${{ inputs.EXTRA_CMAKE_FLAGS }}"
 
-          # Build gtest targets
-          if [[ "$SDB_GTEST" == "On" ]]; then
-            docker run --rm \
-              --user "$DOCKER_USER" \
-              -e HOME=/serenedb \
-              -e CCACHE_DIR=/.ccache \
-              --cap-add=SYS_PTRACE \
-              --security-opt seccomp=unconfined \
-              --env-file ./docker.env \
-              -e SDB_GTEST=On \
-              -e BUILDMODE="$BUILDMODE" \
-              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
-              -e SDB_DEV="$SDB_DEV" \
-              -e SDB_FAULT_INJECTION=Off \
-              -e USE_IPO=Off \
-              -e USE_COVERAGE="$USE_COVERAGE" \
-              -e ENSURE_VTUNE_SYMBOLS=Off \
-              -e BUILD_DIR=build_gtest \
-              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
-              -v "${WORKSPACE}:/serenedb" \
-              -v /mnt/data/.ccache:/.ccache \
-              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests
-          fi
+          TARGETS=()
+          [[ "$SDB_GTEST" == "On" ]] && TARGETS+=(vpack-tests serenedb-tests_basics serenedb-tests_connector iresearch-tests fuerte-tests)
+          [[ "$SDB_GTEST" != "On" || "$SDB_FAULT_INJECTION" == "On" ]] && TARGETS+=(serenedb tzdata)
 
-          # Build serened for functional tests
-          if [[ "$SDB_FAULT_INJECTION" == "On" ]]; then
-            docker run --rm \
-              --user "$DOCKER_USER" \
-              -e HOME=/serenedb \
-              -e CCACHE_DIR=/.ccache \
-              --cap-add=SYS_PTRACE \
-              --security-opt seccomp=unconfined \
-              --env-file ./docker.env \
-              -e SDB_GTEST=Off \
-              -e BUILDMODE="$BUILDMODE" \
-              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
-              -e SDB_DEV="$SDB_DEV" \
-              -e SDB_FAULT_INJECTION=On \
-              -e USE_IPO=Off \
-              -e USE_COVERAGE="$USE_COVERAGE" \
-              -e ENSURE_VTUNE_SYMBOLS=Off \
-              -e BUILD_DIR=build_tests \
-              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
-              -v "${WORKSPACE}:/serenedb" \
-              -v /mnt/data/.ccache:/.ccache \
-              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
-          fi
-
-          # Build-only compile check (KIND=none)
-          if [[ "$SDB_GTEST" == "Off" && "$SDB_FAULT_INJECTION" == "Off" ]]; then
-            docker run --rm \
-              --user "$DOCKER_USER" \
-              -e HOME=/serenedb \
-              -e CCACHE_DIR=/.ccache \
-              --cap-add=SYS_PTRACE \
-              --security-opt seccomp=unconfined \
-              --env-file ./docker.env \
-              -e SDB_GTEST=Off \
-              -e BUILDMODE="$BUILDMODE" \
-              -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
-              -e SDB_DEV="$SDB_DEV" \
-              -e SDB_FAULT_INJECTION=Off \
-              -e USE_IPO=Off \
-              -e USE_COVERAGE= \
-              -e ENSURE_VTUNE_SYMBOLS=Off \
-              -e BUILD_DIR=build \
-              ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
-              -v "${WORKSPACE}:/serenedb" \
-              -v /mnt/data/.ccache:/.ccache \
-              "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash serenedb tzdata
-          fi
+          docker run --rm \
+            --user "$DOCKER_USER" \
+            -e HOME=/serenedb \
+            -e CCACHE_DIR=/.ccache \
+            --cap-add=SYS_PTRACE \
+            --security-opt seccomp=unconfined \
+            --env-file ./docker.env \
+            -e BUILD_DIR=build \
+            -e SDB_GTEST="$SDB_GTEST" \
+            -e BUILDMODE="$BUILDMODE" \
+            -e USE_DEBUG_INFO="$USE_DEBUG_INFO" \
+            -e SDB_DEV="$SDB_DEV" \
+            -e SDB_FAULT_INJECTION="$SDB_FAULT_INJECTION" \
+            -e USE_IPO="$USE_IPO" \
+            -e USE_COVERAGE="$USE_COVERAGE" \
+            -e ENSURE_VTUNE_SYMBOLS="$ENSURE_VTUNE_SYMBOLS" \
+            ${EXTRA_FLAGS:+-e EXTRA_CMAKE_FLAGS="$EXTRA_FLAGS"} \
+            -v "${WORKSPACE}:/serenedb" \
+            -v /mnt/data/.ccache:/.ccache \
+            "${BUILD_IMAGE}" /serenedb/scripts/ci/build.bash "${TARGETS[@]}"
 
           mkdir -p cores
 
-      # ==================== TESTS ====================
       - name: Run gtest suites
         id: gtest
         if: steps.build.outcome == 'success' && env.RUN_UNIT_TESTS == 'true'
-        run: BUILD_DIR=build_gtest ./scripts/ci/steps/04a-ci-run-gtest-suites.bash
+        run: BUILD_DIR=build ./scripts/ci/steps/04a-ci-run-gtest-suites.bash
 
       - name: Run integration tests
         id: integration
         if: steps.build.outcome == 'success' && env.RUN_INTEGRATION_TESTS == 'true'
-        run: BUILD_DIR=build_tests ./scripts/ci/steps/04b-ci-run-integration-tests.bash
+        run: BUILD_DIR=build ./scripts/ci/steps/04b-ci-run-integration-tests.bash
 
-      # ==================== COVERAGE ====================
       - name: Generate coverage report
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
-        run: ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+        run: BUILD_DIR=build ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
-      # ==================== ARTIFACTS ====================
-      - name: Upload build artifacts
+      - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-artifacts-${{ inputs.KIND }}-${{ inputs.INSTRUMENTATION }}-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |
-            cmake*.log
-            make*.log
-            ccache*.log
+            cmake_*.log
+            make_*.log
+            ccache_*.log
             vpack-tests.log
             iresearch-tests.log
+            serenedb-tests.log
             sqllogic-tests.log
             recovery-tests.log
-            serenedb-tests*.log
-            fuerte-tests.log
-            crashreport-*.tar*
-            sanitizers/**/*
-            build*/coverage/**/*
-            logs/*
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Upload test results
-        if: always() && !cancelled()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ inputs.KIND }}-${{ inputs.INSTRUMENTATION }}-${{ inputs.LOCATION }}-${{ github.run_number }}
-          path: |
-            **/vpack-tests.xml
-            **/iresearch-tests.xml
-            **/serenedb-tests*.xml
-            **/fuerte-testsXml/*.xml
-            **/tests/sqllogic/*.xml
+            vpack-tests.xml
+            iresearch-tests.xml
+            serenedb-tests*.xml
+            tests/sqllogic/*.xml
+            sanitizers/
+            coverage/
+            logs/
           if-no-files-found: ignore
           retention-days: 30

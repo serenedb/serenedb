@@ -1,0 +1,76 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <duckdb.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/filter.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "connector/duckdb_scan_base.hpp"
+#include "connector/offsets_collector.hpp"
+
+namespace irs {
+
+struct PayAttr;
+}
+
+namespace sdb::connector {
+
+struct SearchFullScanGlobalState : public CommonScanGlobalState {
+  // IResearch streaming state
+  size_t search_segment_idx = 0;
+  irs::DocIterator::ptr search_doc;
+  irs::DocIterator::ptr search_pk_iter;
+  const irs::PayAttr* search_pk_value = nullptr;
+
+  // Scorer state
+  std::unique_ptr<irs::Scorer> scorer_obj;
+  irs::Filter::Query::ptr scored_query;
+  irs::ColumnArgsFetcher score_fetcher;
+  irs::ScoreFunction score_function;
+
+  // Top-K precomputed results (score_top_k path only)
+  std::vector<std::pair<float, std::string>> topk_hits;  // (score, pk) DESC
+  size_t topk_offset = 0;
+  bool topk_executed = false;
+
+  // Offsets state (populated only when bind_data carries OFFSETS requests).
+  // offsets_output_idx[i] is the DataChunk slot for SearchScan.offsets[i];
+  // offsets_field_state[i] holds per-segment sub-filter state rebuilt on
+  // every segment transition (position iterators are cached inside).
+  std::vector<duckdb::idx_t> offsets_output_idx;
+  std::vector<PerFieldState> offsets_field_state;
+};
+
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
+
+void SearchFullScanFunction(duckdb::ClientContext& context,
+                            duckdb::TableFunctionInput& data,
+                            duckdb::DataChunk& output);
+
+}  // namespace sdb::connector

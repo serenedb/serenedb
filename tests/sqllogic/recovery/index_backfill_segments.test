@@ -26,7 +26,7 @@ CREATE TEXT SEARCH DICTIONARY test_english(
 );
 
 statement ok
-SET sdb_fault_segment_1000_docs_max TO DEFAULT;
+SET sdb_faults = 'segment_1000_docs_max';
 
 statement ok
 CREATE INDEX clickclack_facts_2 ON clickclack USING inverted(fact test_english);
@@ -34,10 +34,10 @@ CREATE INDEX clickclack_facts_2 ON clickclack USING inverted(fact test_english);
 query
 SELECT * FROM clickclack_facts_2 WHERE PHRASE(fact, 'team member');
 ----
-100000 values hashing to b3b411b881b6ec438b321353df0f649a
+100000 values hashing to bb6ff2754819408ef9bd04dec00816a6
 
 statement ok
-RESET sdb_fault_segment_1000_docs_max;
+SET sdb_faults = '-segment_1000_docs_max';
 
 statement ok
 DROP TABLE clickclack;

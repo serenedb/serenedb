@@ -140,7 +140,12 @@ struct OptionInfo {
   template<typename T>
   constexpr T GetDefaultValue() const {
     SDB_ASSERT(!IsRequired());
-    if constexpr (std::is_enum_v<T>) {
+    if constexpr (std::is_same_v<T, std::string>) {
+      // Default values are stored as string_view (compile-time literals); copy
+      // to string.
+      SDB_ASSERT(std::holds_alternative<std::string_view>(default_value));
+      return std::string{std::get<std::string_view>(default_value)};
+    } else if constexpr (std::is_enum_v<T>) {
       SDB_ASSERT(std::holds_alternative<std::string_view>(default_value));
       const auto& value_str = std::get<std::string_view>(default_value);
       auto value =
@@ -155,7 +160,7 @@ struct OptionInfo {
 
   template<Type V>
   using CppType = std::conditional_t<
-    V == Type::String || V == Type::Enum, std::string_view,
+    V == Type::String || V == Type::Enum, std::string,
     std::conditional_t<
       V == Type::Boolean, bool,
       std::conditional_t<V == Type::Integer, int,

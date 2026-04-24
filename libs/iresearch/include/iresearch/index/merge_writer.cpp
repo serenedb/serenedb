@@ -1573,7 +1573,7 @@ bool MergeWriter::FlushUnsorted(TrackingDirectory& dir, SegmentMeta& segment,
   const FlushState state{.dir = &dir,
                          .columns = &buffered_columns,
                          .name = segment.name,
-                         .scorers = _scorers,
+                         .scorer = _scorer,
                          .doc_count = segment.docs_count,
                          .index_features = index_features};
 
@@ -1805,7 +1805,7 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
   const FlushState state{.dir = &dir,
                          .columns = &buffered_columns,
                          .name = segment.name,
-                         .scorers = _scorers,
+                         .scorer = _scorer,
                          .doc_count = segment.docs_count,
                          .index_features = index_features};
 

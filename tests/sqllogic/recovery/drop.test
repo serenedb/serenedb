@@ -44,7 +44,7 @@ INSERT INTO s1.t VALUES (1, 'foo'), (2, 'bar'), (3, 'bas');
 
 
 statement ok
-SET sdb_fault_crash_on_drop TO DEFAULT;
+SET sdb_faults = 'crash_on_drop';
 
 
 statement error connection closed
@@ -103,7 +103,7 @@ CREATE INDEX i ON s1.t USING inverted(id);
 
 connection after_index_drop
 statement ok
-SET sdb_fault_crash_on_drop TO DEFAULT;
+SET sdb_faults = 'crash_on_drop';
 
 
 connection after_index_drop
@@ -149,7 +149,7 @@ CREATE VIEW s2.v AS SELECT id + 1 FROM s2.t;
 
 connection after_table_drop
 statement ok
-SET sdb_fault_crash_on_drop TO DEFAULT;
+SET sdb_faults = 'crash_on_drop';
 
 
 connection after_table_drop
@@ -185,7 +185,7 @@ CREATE DATABASE db;
 
 connection after_schema_drop
 statement ok
-SET sdb_fault_crash_on_drop TO DEFAULT;
+SET sdb_faults = 'crash_on_drop';
 
 
 connection after_schema_drop

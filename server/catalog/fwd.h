@@ -25,10 +25,10 @@ namespace sdb::catalog {
 struct Snapshot;
 
 class SchemaObject;
-class Function;
+class PgSqlFunction;
 class Table;
 class Role;
-class View;
+class PgSqlView;
 class Index;
 class Schema;
 class Database;
@@ -42,7 +42,6 @@ class VirtualTableSnapshot;
 namespace sdb {
 
 class TableShard;
-class ValidatorBase;
 class KeyGenerator;
 struct ShardingStrategy;
 struct TableOptions;

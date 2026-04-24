@@ -20,8 +20,7 @@
 
 #pragma once
 
-#include <axiom/connectors/ConnectorMetadata.h>
-
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -44,11 +43,6 @@ class Index;
 class Table;
 
 }  // namespace sdb::catalog
-
-struct RawStmt;
-struct List;
-struct Node;
-
 namespace sdb::pg {
 
 class Objects : public irs::memory::Managed {
@@ -83,12 +77,6 @@ class Objects : public irs::memory::Managed {
     std::shared_ptr<void> catalog_data;
     const catalog::Table& CatalogTable() const;
     const std::vector<std::shared_ptr<catalog::Index>>& Indexes() const;
-
-    // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
-    // to implement connector::Table without allocation.
-    // This probably requires changing axiom::connector::Table.
-    void EnsureTable(query::Transaction& transaction) const;
-    mutable std::shared_ptr<axiom::connector::Table> table;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;
@@ -119,6 +107,7 @@ class Objects : public irs::memory::Managed {
   auto& getFunctions(this auto& self) noexcept { return self._functions; }
 
   std::shared_ptr<const irs::Scorer> BeginNode() {
+    _offsets_field_names.clear();
     return std::exchange(_scorer, nullptr);
   }
 
@@ -130,17 +119,52 @@ class Objects : public irs::memory::Managed {
     return true;
   }
 
+  static constexpr size_t kDefaultOffsetsLimit = 10;
+
+  struct OffsetsFieldInfo {
+    std::string name;
+    size_t limit = kDefaultOffsetsLimit;
+  };
+
+  // Adds field_name to the offsets request list.
+  // Returns true if the field was added or already present with the same limit.
+  // Returns false if the field was already requested with a different limit.
+  bool AddOffsetsField(std::string field_name, size_t limit) noexcept {
+    for (const auto& f : _offsets_field_names) {
+      if (f.name == field_name) {
+        return f.limit == limit;
+      }
+    }
+    _offsets_field_names.push_back({std::move(field_name), limit});
+    return true;
+  }
+
   void EndNode(const void* node, std::shared_ptr<const irs::Scorer> outer) {
     SDB_ASSERT(node);
     auto inner = std::exchange(_scorer, std::move(outer));
     if (inner) {
       _node_to_scorer[node] = std::move(inner);
     }
+    if (!_offsets_field_names.empty()) {
+      _node_to_offsets_fields[node] = std::exchange(_offsets_field_names, {});
+    }
   }
 
   std::shared_ptr<const irs::Scorer> GetScorer(const void* node) const {
     auto it = _node_to_scorer.find(node);
     return it != _node_to_scorer.end() ? it->second : nullptr;
+  }
+
+  // Returns the list of offsets field requests for the given SELECT node,
+  // in the order they were encountered.
+  const std::vector<OffsetsFieldInfo>& GetOffsetsFields(
+    const void* node) const {
+    auto it = _node_to_offsets_fields.find(node);
+    if (it != _node_to_offsets_fields.end()) {
+      return it->second;
+    }
+    static const std::vector<OffsetsFieldInfo> kEmpty;
+    return kEmpty;
   }
 
   bool empty() const noexcept {
@@ -152,6 +176,8 @@ class Objects : public irs::memory::Managed {
     _functions.clear();
     _scorer.reset();
     _node_to_scorer.clear();
+    _offsets_field_names.clear();
+    _node_to_offsets_fields.clear();
   }
 
  private:
@@ -170,21 +196,10 @@ class Objects : public irs::memory::Managed {
   std::shared_ptr<const irs::Scorer> _scorer;
   containers::FlatHashMap<const void*, std::shared_ptr<const irs::Scorer>>
     _node_to_scorer;
+  std::vector<OffsetsFieldInfo> _offsets_field_names;
+  containers::FlatHashMap<const void*, std::vector<OffsetsFieldInfo>>
+    _node_to_offsets_fields;
 };
-
-// collect objects to objects
-void Collect(std::string_view database, const RawStmt& node, Objects& objects);
-
-// collect objects to objects
-void CollectExpr(std::string_view database, const Node& expr, Objects& objects);
-
-// collect objects to objects and track max binding param index
-void Collect(std::string_view database, const RawStmt& node, Objects& objects,
-             pg::ParamIndex& max_bind_param_idx);
-
-Objects::ObjectName ParseObjectName(const List* names,
-                                    std::string_view database,
-                                    std::string_view default_schema = {});
 
 Objects::ObjectName ParseObjectName(std::string_view name,
                                     std::string_view default_schema = {});

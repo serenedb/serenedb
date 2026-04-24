@@ -21,7 +21,7 @@ declare -A defaults=(
 	[single_port]=''
 	[single_port_ssl]=''
 	[cluster_port]=''
-	[protocol]='simple' # simple|extended|both TODO(mbkkt) make both
+	[engines]='pg-wire-simple'
 	[test]='./tests/sqllogic/sdb/**/*.test*'
 	[junit]='./out/sqllogic-tests'
 	[runner]='./third_party/sqllogictest-rs'
@@ -54,24 +54,57 @@ validate_boolean() {
 	}
 }
 
+# Trap is armed before launch_external so a MinIO startup failure still cleans
+# up the container. Helpers clear their state var before doing work, so repeat
+# invocations (e.g. INT then EXIT) are no-ops on the second pass.
+MINIO_CONTAINER_NAME=""
+MINIO_LOG_FILE=""
+cancel_pid=""
+
+cleanup_minio() {
+	if [[ -n "$MINIO_CONTAINER_NAME" ]]; then
+		local name="$MINIO_CONTAINER_NAME"
+		MINIO_CONTAINER_NAME=""
+		if [[ -n "$MINIO_LOG_FILE" ]]; then
+			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
+			docker logs "$name" >"${MINIO_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping MinIO container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
+cleanup_cancel_pid() {
+	if [[ -n "$cancel_pid" ]]; then
+		local pid="$cancel_pid"
+		cancel_pid=""
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+}
+
+cleanup_all() {
+	cleanup_cancel_pid
+	cleanup_minio
+}
+
+trap cleanup_all EXIT
+# Signal handlers just exit; EXIT trap then runs cleanup_all. Without these,
+# a default `trap ... INT` would run cleanup but NOT exit -- bash would resume
+# the test loop after Ctrl-C, which is not what we want.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 launch_s3() {
 	PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio-${USER:-$(id -un)}.log"
 	MINIO_CONTAINER_NAME="${PREFIX}-serenedb-test-minio-$$"
-	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio.log"
 	export MINIO_ACCESS_KEY="minioadmin"
 	export MINIO_SECRET_KEY="minioadmin"
 	export MINIO_BUCKET="testbucket"
 	export MINIO_PORT
 	MINIO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-
-	cleanup_minio() {
-		if [[ -n "${MINIO_CONTAINER_NAME:-}" ]]; then
-			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
-			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
-			echo "Stopping MinIO container..."
-			docker rm -fv "$MINIO_CONTAINER_NAME" 2>/dev/null || true
-		fi
-	}
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -116,12 +149,16 @@ launch_s3() {
 
 launch_external() {
 	shopt -s globstar
-	local test_files
-	test_files=$(compgen -G "$test" 2>/dev/null || true)
+	local pattern test_files
+	for pattern in "${tests[@]}"; do
+		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
+		if echo "$test_files" | grep -q '_s3\.'; then
+			shopt -u globstar
+			launch_s3
+			return
+		fi
+	done
 	shopt -u globstar
-	if echo "$test_files" | grep -q '_s3\.'; then
-		launch_s3
-	fi
 }
 
 # Main parsing function
@@ -141,7 +178,7 @@ parse_options() {
 		fi
 
 		case "$key" in
-		single-port | single-port-ssl | cluster-port | jobs | protocol | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
+		single-port | single-port-ssl | cluster-port | jobs | engines | test | junit | runner | debug | override | format | force-override | show-all-errors | fast | skip-failed | skip | database | host | iterations | cancellation)
 			local var_name="${key//-/_}" # Convert dashes to underscores
 
 			# For non-equal format (--option value), get the next argument
@@ -174,7 +211,13 @@ parse_options() {
 				;;
 			esac
 
-			declare -g "$var_name"="$value"
+			# --test is repeatable: accumulate into the `tests` array. Every
+			# other option is scalar.
+			if [[ "$key" == "test" ]]; then
+				tests+=("$value")
+			else
+				declare -g "$var_name"="$value"
+			fi
 			;;
 		*)
 			echo "Unknown option: --$key" >&2
@@ -185,24 +228,42 @@ parse_options() {
 	done
 }
 
+# --test is repeatable; collect into array and fall back to the single default
+# glob when none are provided.
+tests=()
+
 # Example usage:
 parse_options "$@" || exit 1
 
 # Apply defaults for any options not provided
 for var_name in "${!defaults[@]}"; do
+	# `test` is handled as an array (`tests`); skip the scalar default here.
+	[[ "$var_name" == "test" ]] && continue
 	if [[ -z "${!var_name}" ]]; then
 		declare -g "$var_name"="${defaults[$var_name]}"
 	fi
 done
 
+if [[ ${#tests[@]} -eq 0 ]]; then
+	tests=("${defaults[test]}")
+fi
+
 # Display the values (for demonstration)
+IFS=',' read -ra engines_list <<<"$engines"
+for engine in "${engines_list[@]}"; do
+	if [[ "$engine" != "pg-wire-simple" && "$engine" != "pg-wire-extended" ]]; then
+		echo "Invalid engine '$engine'. Must be 'pg-wire-simple' or 'pg-wire-extended'" >&2
+		exit 1
+	fi
+done
+
 echo "Database: $database"
 echo "Host: $host"
 echo "Single Port: $single_port"
 echo "Single Port SSL: $single_port_ssl"
 echo "Cluster Port: $cluster_port"
-echo "Protocol: $protocol"
-echo "Test Path: $test"
+echo "Engines: $engines"
+echo "Test Paths: ${tests[*]}"
 echo "JUnit Path: $junit"
 echo "Runner: $runner"
 echo "Jobs: $jobs"
@@ -219,24 +280,25 @@ echo "Cancellation: $cancellation"
 
 if [[ "$fast" == "true" ]]; then
 	# Strip trailing * to exclude .test_slow files (*.test* -> *.test)
-	test="${test%\*}"
+	for i in "${!tests[@]}"; do
+		tests[i]="${tests[i]%\*}"
+	done
 fi
 
 launch_external
 
 # Run tests based on parameters
 run_tests() {
-	local mode=$1
-	local port=$2
-	local engine=$3
+	local port=$1
+	local engine=$2
 
 	echo
-	echo "Running tests for $database database in $mode mode on port $port with $engine engine"
+	echo "Running tests for $database database on port $port with $engine engine"
 
 	local ssl_port_opt=""
-	if [[ -n "$4" ]]; then
-		ssl_port_opt="--ssl-port $4"
-		echo "Using SSL port: $4"
+	if [[ -n "$3" ]]; then
+		ssl_port_opt="--ssl-port $3"
+		echo "Using SSL port: $3"
 	fi
 
 	echo
@@ -272,12 +334,11 @@ run_tests() {
 		skip_opt="--skip $skip"
 	fi
 
-	# Execute the command and capture the exit code
-	sqllogictest "$test" \
+	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
-		--label "$database" --label "$mode" --label "$engine-protocol" \
-		--junit "$junit-$mode-$engine" \
+		--label "$database" \
+		--junit "$junit-$engine" \
 		$options \
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
 		$skip_opt \
@@ -285,27 +346,9 @@ run_tests() {
 	return $?
 }
 
-# Determine mode based on port settings
-if [[ -n "$single_port" && -n "$cluster_port" ]]; then
-	mode="both"
-	if [[ "$single_port" == "$cluster_port" ]]; then
-		echo "ERROR: single-port and cluster-port must be different when both are specified"
-		exit 1
-	fi
-elif [[ -n "$single_port" ]]; then
-	mode="single"
-elif [[ -n "$cluster_port" ]]; then
-	mode="cluster"
-else
-	# Default case when neither is specified
-	mode="single"
+# Default port when none specified
+if [[ -z "$single_port" ]]; then
 	single_port=5432
-fi
-
-# Validate protocol
-if [[ "$protocol" != "simple" && "$protocol" != "extended" && "$protocol" != "both" ]]; then
-	echo "Invalid protocol. Must be 'simple', 'extended', or 'both'"
-	exit 1
 fi
 
 # Variable to track the highest exit code encountered
@@ -329,11 +372,17 @@ echo "sqllogictest build: $(($(date +%s) - build_start))s"
 export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
-cancel_pid=""
-trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT TERM
 if [[ "$cancellation" == "true" ]]; then
+	# TODO: move this cancellation driver into the sqllogictest-rs runner.
+	# Doing it there is more native -- we can cancel queries at the protocol
+	# level instead of spraying SIGINTs across our own process group and
+	# relying on `trap '' INT` to shield the parent shell. Known issues here:
+	#   * `trap '' INT` is never restored, so INT stays ignored for the rest
+	#     of the script (including the health check below).
+	#   * `kill -INT 0` hits every process in our pgid; children inherit
+	#     SIG_IGN from the parent's `trap '' INT`, so the runner only sees
+	#     SIGINT because tokio reinstalls its own handler on startup.
 	trap '' INT
-	# One background process that keeps sending SIGINT at random intervals
 	(
 		while true; do
 			sleep "$(awk "BEGIN{srand(); printf \"%.3f\", 0.05 + rand() * 2.0}")"
@@ -344,38 +393,16 @@ if [[ "$cancellation" == "true" ]]; then
 fi
 
 for iter in $(seq 1 "$iterations"); do
-	if [[ "$protocol" == "simple" || "$protocol" == "both" ]]; then
-		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres" "$single_port_ssl"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-		if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
-			run_tests "cluster" "$cluster_port" "postgres"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-	fi
-
-	if [[ "$protocol" == "extended" || "$protocol" == "both" ]]; then
-		if [[ "$mode" == "single" || "$mode" == "both" ]]; then
-			run_tests "single" "$single_port" "postgres-extended" "$single_port_ssl"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-		if [[ "$mode" == "cluster" || "$mode" == "both" ]]; then
-			run_tests "cluster" "$cluster_port" "postgres-extended"
-			test_exit_code=$?
-			[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
-		fi
-	fi
+	for engine in "${engines_list[@]}"; do
+		run_tests "$single_port" "$engine" "$single_port_ssl"
+		test_exit_code=$?
+		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
+	done
 done
 
 if [[ "$cancellation" == "true" ]]; then
 	# Stop the SIGINT sender before the health check so pg_isready isn't killed
-	kill "$cancel_pid" 2>/dev/null || true
-	wait "$cancel_pid" 2>/dev/null || true
-	cancel_pid=""
+	cleanup_cancel_pid
 
 	local_port="${single_port:-$cluster_port}"
 	# TODO: pg_isready -h "$host" -p "$local_port" returns "no attempt" (exit 3)

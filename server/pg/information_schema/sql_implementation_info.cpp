@@ -60,21 +60,14 @@ constexpr Row kRows[] = {
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr>
-SystemTableSnapshot<SqlImplementationInfo>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+catalog::MaterializedData
+SystemTableSnapshot<SqlImplementationInfo>::GetTableData() {
   constexpr auto kNumRows = std::size(kRows);
-  std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<SqlImplementationInfo>);
-  boost::pfr::for_each_field(
-    SqlImplementationInfo{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(kNumRows, &pool);
-      result.push_back(std::move(column));
-    });
+  auto result = CreateColumns<SqlImplementationInfo>(kNumRows);
   for (size_t row = 0; row < kNumRows; ++row) {
-    WriteData(result, kRows[row].data, kRows[row].nulls, row, &pool);
+    WriteData(result, kRows[row].data, kRows[row].nulls, row);
   }
-  return result;
+  return {std::move(result), kNumRows};
 }
 
 }  // namespace sdb::pg

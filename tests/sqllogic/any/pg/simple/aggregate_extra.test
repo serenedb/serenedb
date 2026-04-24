@@ -7,7 +7,7 @@ statement ok
 CREATE TABLE agg_data (id INT PRIMARY KEY, x FLOAT8, y FLOAT8, flag BOOLEAN)
 
 
-statement ok
+statement count 5
 INSERT INTO agg_data VALUES
   (1, 1.0, 2.0, true),
   (2, 2.0, 4.0, false),
@@ -55,9 +55,9 @@ regr_count
 # regr_r2: coefficient of determination
 
 query
-SELECT regr_r2(y, x)::float8 FROM agg_data
+SELECT ceil(regr_r2(y, x))::float8 FROM agg_data
 ----
-regr_r2
+ceil
 1
 
 

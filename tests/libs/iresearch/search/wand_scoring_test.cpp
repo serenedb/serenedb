@@ -93,9 +93,8 @@ class WandScoringTestCase : public IndexTestBase {
   // Single segment with multiplier * 420 docs.
   irs::DirectoryReader CreateLargeIndex(const irs::Scorer& scorer,
                                         size_t multiplier = 1) {
-    const irs::Scorer* scorers[] = {&scorer};
     irs::IndexWriterOptions opts;
-    opts.reader_options.scorers = scorers;
+    opts.reader_options.scorer = &scorer;
     opts.features = [](irs::IndexFeatures id) {
       irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
       if (id == irs::IndexFeatures::Norm) {
@@ -124,9 +123,8 @@ class WandScoringTestCase : public IndexTestBase {
   // 3 segments, each with multiplier * 140 docs.
   irs::DirectoryReader CreateMultiSegmentIndex(const irs::Scorer& scorer,
                                                size_t multiplier = 1) {
-    const irs::Scorer* scorers[] = {&scorer};
     irs::IndexWriterOptions opts;
-    opts.reader_options.scorers = scorers;
+    opts.reader_options.scorer = &scorer;
     opts.features = [](irs::IndexFeatures id) {
       irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
       if (id == irs::IndexFeatures::Norm) {
@@ -178,9 +176,9 @@ class WandScoringTestCase : public IndexTestBase {
 
     size_t baseline_count = irs::ExecuteTopKWithCount(reader, filter, scorer, k,
                                                       std::span{baseline_hits});
-    size_t wand_count =
-      irs::ExecuteTopK(reader, filter, scorer, k, {.index = 0, .strict = true},
-                       std::span{wand_hits});
+    size_t wand_count = irs::ExecuteTopK(reader, filter, scorer, k,
+                                         {.wand_enabled = true, .strict = true},
+                                         std::span{wand_hits});
 
     auto baseline_k = std::min(baseline_count, k);
     auto wand_k = std::min(wand_count, k);
@@ -197,28 +195,25 @@ class WandScoringTestCase : public IndexTestBase {
 
     // Compare actual top-K docs and scores
     for (size_t i = 0; i < baseline_k; ++i) {
-      EXPECT_EQ(std::get<irs::doc_id_t>(baseline_hits[i]),
-                std::get<irs::doc_id_t>(wand_hits[i]))
+      EXPECT_EQ(baseline_hits[i].doc, wand_hits[i].doc)
         << "Doc ID mismatch at position " << i;
-      EXPECT_FLOAT_EQ(std::get<irs::score_t>(baseline_hits[i]),
-                      std::get<irs::score_t>(wand_hits[i]))
+      EXPECT_FLOAT_EQ(baseline_hits[i].score, wand_hits[i].score)
         << "Score mismatch at position " << i;
     }
   }
 
   void VerifyScoresAndDocs(auto docs, size_t result_count) {
     for (size_t i = 0; i < result_count; ++i) {
-      EXPECT_GT(std::get<irs::score_t>(docs[i]), 0)
+      EXPECT_GT(docs[i].score, 0)
         << "Score at position " << i << " should be positive";
       if (i > 0) {
-        EXPECT_GE(std::get<irs::score_t>(docs[i - 1]),
-                  std::get<irs::score_t>(docs[i]))
+        EXPECT_GE(docs[i - 1].score, docs[i].score)
           << "Scores should be in descending order at position " << i;
       }
-      ASSERT_TRUE(!irs::doc_limits::eof(std::get<irs::doc_id_t>(docs[i])) &&
-                  std::get<irs::doc_id_t>(docs[i]) !=
-                    irs::doc_limits::invalid())
-        << "Doc ID at position " << i << " should be valid, got " << docs[i];
+      ASSERT_TRUE(!irs::doc_limits::eof(docs[i].doc) &&
+                  docs[i].doc != irs::doc_limits::invalid())
+        << "Doc ID at position " << i << " should be valid, got "
+        << docs[i].doc;
     }
   }
 
@@ -328,7 +323,7 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
-                     {.index = 0, .strict = true}, std::span{hits});
+                     {.wand_enabled = true, .strict = true}, std::span{hits});
   ASSERT_EQ(0, count);
 }
 
@@ -346,7 +341,7 @@ TEST_P(WandScoringTestCase, WandResultValues) {
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
-                     {.index = 0, .strict = true}, std::span{hits});
+                     {.wand_enabled = true, .strict = true}, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
@@ -367,7 +362,7 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
-                     {.index = 0, .strict = true}, std::span{hits});
+                     {.wand_enabled = true, .strict = true}, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 

@@ -59,6 +59,13 @@ bool ParseVPackOptions(const vpack::Slice slice,
     return false;
   }
 
+  re2::RE2 re(options.pattern, re2::RE2::Quiet);
+  if (!re.ok()) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Invalid regex pattern while constructing pattern_token_stream");
+    return false;
+  }
+
   return true;
 }
 

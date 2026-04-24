@@ -33,8 +33,8 @@ struct IndexShardOptions;
 
 namespace catalog {
 
-inline constexpr std::string_view kIndexBaseOptions = "base";
-inline constexpr std::string_view kIndexImplOptions = "impl";
+class SecondaryIndex;
+class InvertedIndex;
 
 // Aggregated info about column for index creation.
 // Filled on different levels during creaton to gather all
@@ -49,26 +49,8 @@ struct CreateIndexColumn {
   // how to implement "help".
 };
 
-struct IndexBaseOptions {
-  std::string name;
-  IndexType type = IndexType::Unknown;
-  std::vector<Column::Id> column_ids;
-};
-
-// polymorfic wrapper for concrete index wrappers
-// so we can make generic parsing/creating code.
-struct IndexImplOptionsBaseWrapper {
-  IndexImplOptionsBaseWrapper(IndexBaseOptions&& options) : base{options} {}
-  virtual ~IndexImplOptionsBaseWrapper() = default;
-
-  IndexBaseOptions base;
-};
-
-using ImplOptsPtr = std::unique_ptr<IndexImplOptionsBaseWrapper>;
-
 class Index : public SchemaObject {
  public:
-  auto GetIndexType() const noexcept { return _type; }
   auto GetRelationId() const noexcept { return _relation_id; }
   std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
@@ -83,51 +65,24 @@ class Index : public SchemaObject {
   virtual ~Index() = default;
 
  protected:
-  void WriteInternalImpl(vpack::Builder& builder,
-                         absl::FunctionRef<void()> impl_write) const;
-
-  struct IndexOutput;
-  IndexOutput MakeIndexOutput() const;
-
   Index(ObjectId database_id, ObjectId schema_id, ObjectId id,
-        ObjectId relation_id, IndexBaseOptions options);
+        ObjectId relation_id, std::string name,
+        std::vector<Column::Id> column_ids, ObjectType type);
 
   ObjectId _relation_id;
-  IndexType _type;
   std::vector<Column::Id> _column_ids;
 };
 
-ResultOr<ImplOptsPtr> ParseImplSlice(IndexBaseOptions&& options,
-                                     vpack::Slice impl_options_slice);
-
-ResultOr<std::shared_ptr<Index>> MakeIndex(
+ResultOr<std::shared_ptr<SecondaryIndex>> CreateSecondaryIndex(
   ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-  IndexImplOptionsBaseWrapper&& impl_options);
+  std::string name, std::vector<catalog::CreateIndexColumn> columns,
+  bool unique);
 
-ResultOr<std::shared_ptr<Index>> MakeIndex(
+ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
-  ObjectId id, ObjectId relation_id, IndexBaseOptions options,
+  ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot,
-  IndexShardOptions& shard_options);
+  const std::shared_ptr<const Snapshot>& snapshot);
 
 }  // namespace catalog
 }  // namespace sdb
-namespace magic_enum {
-
-template<>
-constexpr customize::customize_t customize::enum_name<sdb::IndexType>(
-  sdb::IndexType type) noexcept {
-  switch (type) {
-    case sdb::IndexType::Unknown:
-      return "unknown";
-    case sdb::IndexType::Secondary:
-      return "secondary";
-    case sdb::IndexType::Inverted:
-      return "inverted";
-    default:
-      return invalid_tag;
-  }
-}
-
-}  // namespace magic_enum

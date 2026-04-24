@@ -1,7 +1,7 @@
 name: auto | pr trigger
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, labeled]
   issue_comment:
     types: [edited]
@@ -11,19 +11,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  post-checkboxes:
-    if: >-
-      github.event_name == 'pull_request' && (
-        github.event.action == 'opened' ||
-        (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
-      )
+  handle:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
+      actions: write
       contents: read
+      pull-requests: write
+      statuses: write
     steps:
       - name: Post build triggers comment
-        uses: actions/github-script@v7
+        if: >-
+          github.event_name == 'pull_request_target' && (
+            github.event.action == 'opened' ||
+            (github.event.action == 'labeled' && github.event.label.name == 'spawn-build-bot')
+          )
+        uses: actions/github-script@v8
         with:
           script: |
             const body = [
@@ -32,7 +34,7 @@ jobs:
               '_Check **Trigger Jobs** to start. Optionally enable extra checks below._',
               '',
               '#### Extra (optional)',
-              '- [ ] All architectures (x86_64 + aarch64)',
+              '- [ ] All architectures (amd64 + arm64)',
               '- [ ] ASAN',
               '- [ ] TSAN',
               '- [ ] MSAN',
@@ -57,23 +59,15 @@ jobs:
               }).catch(() => {});
             }
 
-  trigger-build:
-    if: >-
-      github.event_name == 'issue_comment' &&
-      github.event.action == 'edited' &&
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
-      contains(github.event.comment.body, '- [x] **Trigger Jobs**')
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: write
-      statuses: write
-    steps:
       - name: Get PR info
         id: pr-info
-        uses: actions/github-script@v7
+        if: >-
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          github.event.comment.user.login == 'github-actions[bot]' &&
+          contains(github.event.comment.body, '<!-- serenedb-ci-trigger -->') &&
+          contains(github.event.comment.body, '- [x] **Trigger Jobs**')
+        uses: actions/github-script@v8
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -83,18 +77,26 @@ jobs:
             });
             core.setOutput('branch', pr.head.ref);
             core.setOutput('sha', pr.head.sha);
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('is_fork', (pr.head.repo.full_name !== pr.base.repo.full_name).toString());
 
       - name: Parse options and trigger build
+        if: steps.pr-info.conclusion == 'success'
         env:
           PR_BRANCH: ${{ steps.pr-info.outputs.branch }}
           PR_SHA: ${{ steps.pr-info.outputs.sha }}
-        uses: actions/github-script@v7
+          BASE_REF: ${{ steps.pr-info.outputs.base_ref }}
+          IS_FORK: ${{ steps.pr-info.outputs.is_fork }}
+        uses: actions/github-script@v8
         with:
           script: |
             const comment = context.payload.comment;
             const body = comment.body || '';
             const branch = process.env.PR_BRANCH;
             const sha = process.env.PR_SHA;
+            const baseRef = process.env.BASE_REF;
+            const isFork = process.env.IS_FORK === 'true';
+            const dispatchRef = isFork ? baseRef : branch;
 
             const isChecked = (label) => body.includes(`- [x] ${label}`);
 
@@ -113,36 +115,57 @@ jobs:
               context: statusContext,
             });
 
+            // Cancel in-progress runs on the dispatch branch
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef,
+              status: 'in_progress', per_page: 10,
+            });
+            for (const run of runs.workflow_runs) {
+              core.info(`Cancelling run #${run.id} (${run.status})`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
+            // Also cancel queued/waiting runs
+            const { data: queued } = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef,
+              status: 'queued', per_page: 10,
+            });
+            for (const run of queued.workflow_runs) {
+              core.info(`Cancelling queued run #${run.id}`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id }).catch(() => {});
+            }
+
             // Snapshot latest run ID before dispatch
             const { data: before } = await github.rest.actions.listWorkflowRuns({
-              owner, repo, workflow_id: 'build-manual.yml', branch, per_page: 1,
+              owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef, per_page: 1,
             });
             const prevId = before.workflow_runs[0]?.id || 0;
 
             await github.rest.actions.createWorkflowDispatch({
               owner, repo,
               workflow_id: 'build-manual.yml',
-              ref: branch,
+              ref: dispatchRef,
               inputs: {
                 LOCATION: allArch ? 'all' : 'linux-amd64',
                 ENABLE_ASAN: enableAsan.toString(),
                 ENABLE_TSAN: enableTsan.toString(),
                 ENABLE_MSAN: enableMsan.toString(),
                 VALIDATE_PG_TESTS: 'true',
+                PR_SHA: sha,
                 BUILD_CONFIG: JSON.stringify({
                   TRIGGERED_BY: context.actor,
                   PR_SHA: sha,
+                  PR_BRANCH: branch,
                   PR_STATUS_CONTEXT: statusContext,
                 }),
               },
             });
 
             // Wait for the new run to appear (up to 30s)
-            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(branch)}`;
+            let runUrl = `${context.serverUrl}/${owner}/${repo}/actions/workflows/build-manual.yml?query=branch%3A${encodeURIComponent(dispatchRef)}`;
             for (let i = 0; i < 6; i++) {
               await new Promise(r => setTimeout(r, 5000));
               const { data: after } = await github.rest.actions.listWorkflowRuns({
-                owner, repo, workflow_id: 'build-manual.yml', branch, per_page: 3,
+                owner, repo, workflow_id: 'build-manual.yml', branch: dispatchRef, per_page: 3,
               });
               const run = after.workflow_runs.find(r => r.id > prevId);
               if (run) {
@@ -150,6 +173,15 @@ jobs:
                 break;
               }
             }
+
+            // Update pending status with run URL so the check is clickable in PR
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'pending',
+              description: 'Build in progress',
+              context: statusContext,
+              target_url: runUrl,
+            });
 
             const opts = [
               enableAsan && 'asan',
@@ -167,15 +199,15 @@ jobs:
             // Results are stored as JSON in a hidden HTML comment for reliable parsing
             const dataRe = /<!-- ci-data:(.*?) -->/;
             const dataMatch = updatedBody.match(dataRe);
-            const runs = dataMatch ? JSON.parse(dataMatch[1]) : [];
-            runs.push({ opts: optsStr, url: runUrl, time: timestamp });
+            const history = dataMatch ? JSON.parse(dataMatch[1]) : [];
+            history.push({ opts: optsStr, url: runUrl, time: timestamp });
 
             // Build visible output
-            const latest = runs[runs.length - 1];
+            const latest = history[history.length - 1];
             let resultsBlock = `\n\n**Latest:** ${latest.opts} · [View Run](${latest.url}) · ${latest.time}`;
 
-            if (runs.length > 1) {
-              const oldRuns = runs.slice(0, -1).reverse().map(r =>
+            if (history.length > 1) {
+              const oldRuns = history.slice(0, -1).reverse().map(r =>
                 `| ${r.opts} | [View Run](${r.url}) | ${r.time} |`
               );
               resultsBlock += [
@@ -193,7 +225,7 @@ jobs:
 
             // Replace or append results section
             const sectionRe = /\n\n<!-- ci-data:.*? -->[\s\S]*$/;
-            const newData = `\n\n<!-- ci-data:${JSON.stringify(runs)} -->${resultsBlock}`;
+            const newData = `\n\n<!-- ci-data:${JSON.stringify(history)} -->${resultsBlock}`;
             if (sectionRe.test(updatedBody)) {
               updatedBody = updatedBody.replace(sectionRe, newData);
             } else {

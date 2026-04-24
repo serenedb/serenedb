@@ -1,0 +1,363 @@
+control substitution on
+
+
+# ERROR CASES
+
+# --- Delimiter option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY path_err1(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    delimiter = '/'
+)
+----
+db error: ERROR: option "delimiter" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Replacement option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY path_err2(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    replacement = '-'
+)
+----
+db error: ERROR: option "replacement" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Reverse option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY path_err3(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    reverse = true
+)
+----
+db error: ERROR: option "reverse" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Skip option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY path_err4(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    skip = 1
+)
+----
+db error: ERROR: option "skip" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- BufferSize option not applicable to other tokenizers ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY path_err5(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    buffersize = 2048
+)
+----
+db error: ERROR: option "buffersize" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# PATH HIERARCHY TOKENIZER
+
+# --- Basic forward hierarchy: default delimiter "/" ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_forward(
+    template = 'path_hierarchy'
+)
+
+
+query
+SELECT ts_lexize('path_forward', '/a/b/c');
+----
+ts_lexize
+{/a,/a/b,/a/b/c}
+
+# --- Forward hierarchy: empty delimiter -> "/" ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_forward_empty_delim(
+    template = 'path_hierarchy',
+    delimiter = ''
+)
+
+query
+SELECT ts_lexize('path_forward_empty_delim', '/a/b/c');
+----
+ts_lexize
+{/a,/a/b,/a/b/c}
+
+# --- Path without leading slash ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_no_leading(
+    template = 'path_hierarchy',
+    delimiter = '/'
+)
+
+
+query
+SELECT ts_lexize('path_no_leading', 'a/b/c');
+----
+ts_lexize
+{a,a/b,a/b/c}
+
+
+# --- Custom delimiter: colon ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_colon(
+    template = 'path_hierarchy',
+    delimiter = ':'
+)
+
+
+query
+SELECT ts_lexize('path_colon', 'a:b:c');
+----
+ts_lexize
+{a,a:b,a:b:c}
+
+
+# --- Custom delimiter: dot (for domain-like paths) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_dot(
+    template = 'path_hierarchy',
+    delimiter = '.'
+)
+
+
+query
+SELECT ts_lexize('path_dot', 'com.example.www');
+----
+ts_lexize
+{com,com.example,com.example.www}
+
+
+# --- Custom delimiter with replacement ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_replace(
+    template = 'path_hierarchy',
+    delimiter = '/',
+    replacement = '-'
+)
+
+
+query
+SELECT ts_lexize('path_replace', '/a/b/c');
+----
+ts_lexize
+{-a,-a-b,-a-b-c}
+
+
+# --- Reverse mode: for domain hierarchies ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_reverse(
+    template = 'path_hierarchy',
+    delimiter = '/',
+    reverse = true
+)
+
+
+query
+SELECT ts_lexize('path_reverse', '/a/b/c');
+----
+ts_lexize
+{/a/b/c,a/b/c,b/c,c}
+
+
+# --- Reverse with custom delimiter: domain names ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_domain(
+    template = 'path_hierarchy',
+    delimiter = '.',
+    reverse = true
+)
+
+
+query
+SELECT ts_lexize('path_domain', 'com.example.www');
+----
+ts_lexize
+{com.example.www,example.www,www}
+
+
+# --- Skip first token: forward hierarchy ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_skip1(
+    template = 'path_hierarchy',
+    delimiter = '/',
+    skip = 1
+)
+
+
+query
+SELECT ts_lexize('path_skip1', '/a/b/c/d');
+----
+ts_lexize
+{/b,/b/c,/b/c/d}
+
+
+# --- Skip multiple tokens: forward hierarchy ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_skip2(
+    template = 'path_hierarchy',
+    delimiter = '/',
+    skip = 2
+)
+
+
+query
+SELECT ts_lexize('path_skip2', '/a/b/c/d');
+----
+ts_lexize
+{/c,/c/d}
+
+
+# --- Skip with reverse mode ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_skip_reverse(
+    template = 'path_hierarchy',
+    delimiter = '.',
+    reverse = true,
+    skip = 1
+)
+
+
+query
+SELECT ts_lexize('path_skip_reverse', 'com.example.www.api');
+----
+ts_lexize
+{com.example.www.,example.www.,www.}
+
+
+# --- Multi-character delimiter ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_multi_delim(
+    template = 'path_hierarchy',
+    delimiter = '::'
+)
+
+
+query
+SELECT ts_lexize('path_multi_delim', 'a::b::c');
+----
+ts_lexize
+{a,a::b,a::b::c}
+
+
+# --- Custom replacement with multi-char delimiter ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_multi_replace(
+    template = 'path_hierarchy',
+    delimiter = '::',
+    replacement = '/'
+)
+
+
+query
+SELECT ts_lexize('path_multi_replace', 'a::b::c');
+----
+ts_lexize
+{a,a/b,a/b/c}
+
+
+# --- Single path element ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_single(
+    template = 'path_hierarchy',
+    delimiter = '/'
+)
+
+
+query
+SELECT ts_lexize('path_single', '/root');
+----
+ts_lexize
+{/root}
+
+
+# --- Empty path ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_empty(
+    template = 'path_hierarchy',
+    delimiter = '/'
+)
+
+
+query
+SELECT ts_lexize('path_empty', '');
+----
+ts_lexize
+{}
+
+
+# --- Path with trailing delimiter ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_trailing(
+    template = 'path_hierarchy',
+    delimiter = '/'
+)
+
+
+query
+SELECT ts_lexize('path_trailing', '/a/b/');
+----
+ts_lexize
+{/a,/a/b,/a/b/}
+
+
+# --- Long path ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_long(
+    template = 'path_hierarchy',
+    delimiter = '/'
+)
+
+
+query
+SELECT ts_lexize('path_long', '/level1/level2/level3/level4/level5');
+----
+ts_lexize
+{/level1,/level1/level2,/level1/level2/level3,/level1/level2/level3/level4,/level1/level2/level3/level4/level5}
+
+
+# --- Buffer size parameter (doesn't affect output, just performance) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY path_buffer(
+    template = 'path_hierarchy',
+    delimiter = '/',
+    buffersize = 2048
+)
+
+
+query
+SELECT ts_lexize('path_buffer', '/a/b/c');
+----
+ts_lexize
+{/a,/a/b,/a/b/c}

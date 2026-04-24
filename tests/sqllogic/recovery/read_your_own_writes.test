@@ -159,7 +159,7 @@ id	value
 
 # Expect RYOW Data Source will not be used
 statement ok
-SET sdb_fault_t_ryow_fail_on_ryow TO DEFAULT;
+SET sdb_faults = 't_ryow_fail_on_ryow';
 
 query
 SELECT * FROM t_ryow ORDER BY id;
@@ -172,7 +172,7 @@ id	value
 5	500
 
 statement ok
-RESET sdb_fault_t_ryow_fail_on_ryow;
+SET sdb_faults = '-t_ryow_fail_on_ryow';
 
 statement ok
 DROP TABLE t_ryow;

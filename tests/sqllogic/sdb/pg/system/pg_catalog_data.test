@@ -676,6 +676,7 @@ SELECT idx.relname AS index_name, i.indisunique, i.indisprimary FROM pg_catalog.
 ----
 index_name	indisunique	indisprimary
 pg_cat_idx1	f	f
+pg_cat_t1_pkey	t	t
 
 
 # Join pg_proc with pg_language

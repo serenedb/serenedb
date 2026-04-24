@@ -18,88 +18,46 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "column_expr.h"
+#include "catalog/column_expr.h"
 
-#include <vpack/builder.h>
-#include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
 
-#include <memory>
-#include <utility>
-
-#include "basics/errors.h"
-#include "basics/result.h"
-#include "catalog/catalog.h"
-#include "catalog/identifiers/object_id.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_parser.h"
-#include "pg/sql_resolver.h"
-#include "pg/sql_utils.h"
-#include "utils/query_string.h"
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 
 namespace sdb {
-namespace {
 
-Result ParseColumnExpr(ObjectId database_id, std::string_view query,
-                       pg::Objects& objects,
-                       pg::MemoryContextPtr& memory_context,
-                       const Node*& expr) {
-  return basics::SafeCall([&] -> Result {
-    const QueryString query_string{query};
-    memory_context = pg::CreateMemoryContext();
-    expr = pg::ParseSingleExpression(*memory_context, query_string);
-    SDB_ASSERT(expr);
-    SDB_ASSERT(objects.empty());
+ColumnExpr::ColumnExpr(duckdb::unique_ptr<duckdb::ParsedExpression> expr)
+  : _expr(std::move(expr)) {}
 
-    auto database = catalog::GetDatabase(database_id);
-    if (!database) {
-      return std::move(database).error();
-    }
-
-    pg::CollectExpr((*database)->GetName(), *expr, objects);
-
-    return {};
-  });
-}
-
-}  // namespace
-
-Result ColumnExpr::Init(ObjectId database, Node* expr) {
-  SDB_ASSERT(expr);
-  auto query = pg::DeparseExpr(expr);
-  return Init(database, std::move(query));
-}
-
-Result ColumnExpr::Init(ObjectId database, std::string query) {
-  auto r = ParseColumnExpr(database, query, _objects, _memory_context, _expr);
-  if (!r.ok()) {
-    return r;
+Result ColumnExpr::FromVPack(vpack::Slice slice, ColumnExpr& column_expr) {
+  auto blob = basics::VPackHelper::getString(slice, "duckdb_expr", {});
+  if (blob.empty()) {
+    return {ERROR_BAD_PARAMETER, "column expression must contain duckdb_expr"};
   }
-  SDB_ASSERT(!query.empty());
-  _query = std::move(query);
-  return r;
-}
-
-Result ColumnExpr::FromVPack(ObjectId database, vpack::Slice slice,
-                             ColumnExpr& column_expr) {
-  auto query_slice = slice.get("query");
-  if (query_slice.isNone()) {
-    return {};
-  }
-  auto query = basics::VPackHelper::getString(slice, "query", {});
-  SDB_ASSERT(!query.empty());
-  auto r = ParseColumnExpr(database, query, column_expr._objects,
-                           column_expr._memory_context, column_expr._expr);
-  if (!r.ok()) {
-    return r;
-  }
-  column_expr._query = std::move(query);
+  duckdb::MemoryStream stream(
+    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
+    blob.size());
+  duckdb::BinaryDeserializer deserializer(stream);
+  deserializer.Begin();
+  column_expr._expr = duckdb::ParsedExpression::Deserialize(deserializer);
+  deserializer.End();
   return {};
 }
 
 void ColumnExpr::ToVPack(vpack::Builder& builder) const {
-  vpack::ObjectBuilder o{&builder};
-  builder.add("query", _query);
+  SDB_ASSERT(_expr);
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer(stream);
+  serializer.Begin();
+  _expr->Serialize(serializer);
+  serializer.End();
+  builder.openObject();
+  builder.add("duckdb_expr",
+              std::string_view(reinterpret_cast<const char*>(stream.GetData()),
+                               stream.GetPosition()));
+  builder.close();
 }
 
 }  // namespace sdb

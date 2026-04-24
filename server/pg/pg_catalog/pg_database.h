@@ -58,7 +58,6 @@ struct PgDatabase {
 // NOLINTEND
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgDatabase>::GetTableData(
-  velox::memory::MemoryPool& pool);
+catalog::MaterializedData SystemTableSnapshot<PgDatabase>::GetTableData();
 
 }  // namespace sdb::pg

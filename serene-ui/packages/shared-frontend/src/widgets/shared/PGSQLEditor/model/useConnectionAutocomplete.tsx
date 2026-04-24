@@ -1,162 +1,357 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import { useQueryResults } from "@serene-ui/shared-frontend/features";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
     useConnection,
+    useExecuteQuery,
     useGetQueryHistory,
     useGetSavedQueries,
 } from "@serene-ui/shared-frontend/entities";
-import { useQuerySubscription } from "@serene-ui/shared-frontend/features";
+import { useSchemaMetadataVersion } from "@serene-ui/shared-frontend/shared";
+import type { QueryExecutionResultSchema } from "@serene-ui/shared-core";
 
 type AutocompleteData = {
     tables: string[];
+    systemTables: string[];
     views: string[];
     indexes: string[];
-    savedQueries: string[];
-    queryHistory: string[];
+    sequences: string[];
+    schemas: string[];
+    columns: string[];
+    savedQueries: Array<{
+        name: string;
+        query: string;
+    }>;
+    queryHistory: Array<{
+        query: string;
+        executedAt: string;
+    }>;
 };
 
-type AutocompleteKey = "tables" | "views" | "indexes";
+type SharedAutocompleteData = Omit<
+    AutocompleteData,
+    "savedQueries" | "queryHistory"
+>;
+
+type AutocompleteKey = keyof SharedAutocompleteData;
+
+type CachedAutocompleteEntry = {
+    data: SharedAutocompleteData;
+    loadedAt: number;
+    version: number;
+    promise?: Promise<SharedAutocompleteData>;
+};
+
+const EMPTY_SHARED_AUTOCOMPLETE: SharedAutocompleteData = {
+    tables: [],
+    systemTables: [],
+    views: [],
+    indexes: [],
+    sequences: [],
+    schemas: [],
+    columns: [],
+};
+
+const EMPTY_AUTOCOMPLETE: AutocompleteData = {
+    ...EMPTY_SHARED_AUTOCOMPLETE,
+    savedQueries: [],
+    queryHistory: [],
+};
+
+const AUTOCOMPLETE_CACHE_TTL_MS = 30_000;
+
+const AUTOCOMPLETE_QUERIES: ReadonlyArray<[AutocompleteKey, string]> = [
+    [
+        "tables",
+        `SELECT c.relname as name
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r', 'p')
+           AND n.nspname NOT LIKE 'pg_%'
+           AND n.nspname <> 'information_schema';`,
+    ],
+    [
+        "systemTables",
+        `SELECT c.relname as name
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r', 'p')
+           AND (
+               n.nspname LIKE 'pg_%'
+               OR n.nspname = 'information_schema'
+           );`,
+    ],
+    [
+        "views",
+        "SELECT relname as name FROM pg_class WHERE relkind = 'v';",
+    ],
+    ["indexes", "SELECT indexname as name FROM pg_indexes;"],
+    [
+        "sequences",
+        "SELECT relname as name FROM pg_class WHERE relkind = 'S';",
+    ],
+    [
+        "schemas",
+        `SELECT nspname as name
+         FROM pg_namespace
+         WHERE nspname NOT LIKE 'pg_%'
+           AND nspname <> 'information_schema';`,
+    ],
+    [
+        "columns",
+        `SELECT DISTINCT a.attname as name
+         FROM pg_attribute a
+         JOIN pg_class c ON c.oid = a.attrelid
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE a.attnum > 0
+           AND NOT a.attisdropped
+           AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+           AND n.nspname NOT LIKE 'pg_%'
+           AND n.nspname <> 'information_schema';`,
+    ],
+];
+
+const AUTOCOMPLETE_QUERY = AUTOCOMPLETE_QUERIES.map(([, query]) =>
+    query.trim(),
+).join("\n\n");
+
+const autocompleteCache = new Map<string, CachedAutocompleteEntry>();
+
+const toAutocompleteCacheKey = (connectionId: number, database: string) =>
+    `${connectionId}:${database}`;
+
+const extractNames = (rows: unknown[] | undefined) =>
+    Array.from(
+        new Set(
+            (rows ?? [])
+                .filter(
+                    (row): row is { name: string } =>
+                        typeof (row as { name?: unknown })?.name === "string",
+                )
+                .map((row) => row.name),
+        ),
+    ).sort();
+
+const parseAutocompleteResults = (
+    results: QueryExecutionResultSchema[] | undefined,
+): SharedAutocompleteData =>
+    AUTOCOMPLETE_QUERIES.reduce<SharedAutocompleteData>(
+        (accumulator, [key], index) => {
+            accumulator[key] = extractNames(results?.[index]?.rows);
+            return accumulator;
+        },
+        {
+            ...EMPTY_SHARED_AUTOCOMPLETE,
+        },
+    );
+
+const isCacheFresh = (entry: CachedAutocompleteEntry) =>
+    Date.now() - entry.loadedAt < AUTOCOMPLETE_CACHE_TTL_MS;
+
+const loadAutocompleteData = async (
+    executeQuery: (
+        input: {
+            connectionId: number;
+            database: string;
+            query: string;
+        },
+    ) => Promise<{
+        results?: QueryExecutionResultSchema[];
+    }>,
+    connectionId: number,
+    database: string,
+) => {
+    const response = await executeQuery({
+        connectionId,
+        database,
+        query: AUTOCOMPLETE_QUERY,
+    });
+
+    return parseAutocompleteResults(response.results);
+};
+
+const getOrLoadAutocompleteData = (
+    cacheKey: string,
+    version: number,
+    executeQuery: (
+        input: {
+            connectionId: number;
+            database: string;
+            query: string;
+        },
+    ) => Promise<{
+        results?: QueryExecutionResultSchema[];
+    }>,
+    connectionId: number,
+    database: string,
+) => {
+    const cachedEntry = autocompleteCache.get(cacheKey);
+    if (
+        cachedEntry &&
+        cachedEntry.version === version &&
+        isCacheFresh(cachedEntry)
+    ) {
+        return Promise.resolve(cachedEntry.data);
+    }
+
+    if (cachedEntry?.promise && cachedEntry.version === version) {
+        return cachedEntry.promise;
+    }
+
+    const promise = loadAutocompleteData(
+        executeQuery,
+        connectionId,
+        database,
+    )
+        .then((data) => {
+            autocompleteCache.set(cacheKey, {
+                data,
+                loadedAt: Date.now(),
+                version,
+            });
+
+            return data;
+        })
+        .catch((error) => {
+            autocompleteCache.delete(cacheKey);
+            throw error;
+        });
+
+    autocompleteCache.set(cacheKey, {
+        data: cachedEntry?.data ?? EMPTY_SHARED_AUTOCOMPLETE,
+        loadedAt: cachedEntry?.loadedAt ?? 0,
+        version,
+        promise,
+    });
+
+    return promise;
+};
 
 export const useConnectionAutocomplete = () => {
     const { currentConnection } = useConnection();
-    const { executeQuery } = useQueryResults();
+    const { mutateAsync: executeQuery } =
+        useExecuteQuery<QueryExecutionResultSchema[]>();
     const { data: savedQueries } = useGetSavedQueries();
     const { data: queryHistory } = useGetQueryHistory();
 
     const executeQueryRef = useRef(executeQuery);
     useEffect(() => {
         executeQueryRef.current = executeQuery;
+    }, [executeQuery]);
+
+    const [sharedAutocomplete, setSharedAutocomplete] =
+        useState<SharedAutocompleteData>(EMPTY_SHARED_AUTOCOMPLETE);
+
+    const connectionId = currentConnection.connectionId;
+    const database = currentConnection.database?.trim();
+    const schemaMetadataVersion = useSchemaMetadataVersion({
+        level: "database",
+        connectionId,
+        database,
     });
-
-    const dataRef = useRef<
-        Omit<AutocompleteData, "savedQueries" | "queryHistory">
-    >({
-        tables: [],
-        views: [],
-        indexes: [],
-    });
-
-    const jobMapRef = useRef<Record<number, AutocompleteKey>>({});
-    const subscribedJobs = useRef<number[]>([]);
-
-    const [autocomplete, setAutocomplete] = useState<AutocompleteData>({
-        tables: [],
-        views: [],
-        indexes: [],
-        savedQueries: [],
-        queryHistory: [],
-    });
-
-    const handleResult = useCallback((jobId: number, result: any) => {
-        if (result?.status !== "success") return;
-
-        const key = jobMapRef.current[jobId];
-        if (!key) return;
-
-        const rows = Array.isArray(result.results?.[0]?.rows)
-            ? result.results[0].rows
-            : [];
-
-        const names = Array.from(
-            new Set(
-                (rows as unknown[])
-                    .filter(
-                        (r): r is { name: string } =>
-                            typeof (r as any)?.name === "string",
-                    )
-                    .map((r) => r.name),
-            ),
-        ).sort();
-
-        if (dataRef.current[key].join("|") === names.join("|")) return;
-
-        dataRef.current[key] = names;
-
-        setAutocomplete((prev) => ({
-            ...prev,
-            [key]: names,
-        }));
-    }, []);
-
-    useQuerySubscription(subscribedJobs.current, handleResult);
-
     useEffect(() => {
-        if (!savedQueries) return;
-
-        const names = Array.from(
-            new Set(savedQueries.map((q) => q.query)),
-        ).sort() as string[];
-
-        setAutocomplete((prev) => ({
-            ...prev,
-            savedQueries: names,
-        }));
-    }, [savedQueries]);
-
-    useEffect(() => {
-        if (!queryHistory) return;
-
-        const names = Array.from(
-            new Set(queryHistory.map((q) => q.query)),
-        ).sort();
-
-        setAutocomplete((prev) => ({
-            ...prev,
-            queryHistory: names,
-        }));
-    }, [queryHistory]);
-
-    useEffect(() => {
-        const { connectionId, database } = currentConnection;
-
-        if (!connectionId || !database) {
-            dataRef.current = { tables: [], views: [], indexes: [] };
-            jobMapRef.current = {};
-            subscribedJobs.current = [];
-            setAutocomplete((prev) => ({
-                ...prev,
-                tables: [],
-                views: [],
-                indexes: [],
-            }));
+        if (!connectionId || connectionId === -1 || !database) {
+            setSharedAutocomplete(EMPTY_SHARED_AUTOCOMPLETE);
             return;
         }
 
-        jobMapRef.current = {};
-        subscribedJobs.current = [];
-        dataRef.current = { tables: [], views: [], indexes: [] };
+        const cacheKey = toAutocompleteCacheKey(connectionId, database);
+        const cachedEntry = autocompleteCache.get(cacheKey);
+        let isCancelled = false;
 
-        setAutocomplete((prev) => ({
-            ...prev,
-            tables: [],
-            views: [],
-            indexes: [],
-        }));
+        if (
+            cachedEntry?.data &&
+            cachedEntry.version === schemaMetadataVersion
+        ) {
+            setSharedAutocomplete(cachedEntry.data);
+        } else {
+            setSharedAutocomplete(EMPTY_SHARED_AUTOCOMPLETE);
+        }
 
-        const load = async () => {
-            const queries: [AutocompleteKey, string][] = [
-                [
-                    "tables",
-                    "SELECT relname as name FROM pg_class WHERE relkind = 'r'",
-                ],
-                [
-                    "views",
-                    "SELECT relname as name FROM pg_class WHERE relkind = 'v'",
-                ],
-                ["indexes", "SELECT indexname as name FROM pg_indexes"],
-            ];
+        getOrLoadAutocompleteData(
+            cacheKey,
+            schemaMetadataVersion,
+            executeQueryRef.current,
+            connectionId,
+            database,
+        )
+            .then((data) => {
+                if (!isCancelled) {
+                    setSharedAutocomplete(data);
+                }
+            })
+            .catch((error) => {
+                if (!isCancelled) {
+                    console.error(
+                        "Failed to load connection autocomplete:",
+                        error,
+                    );
+                    setSharedAutocomplete(EMPTY_SHARED_AUTOCOMPLETE);
+                }
+            });
 
-            for (const [key, sql] of queries) {
-                const res = await executeQueryRef.current(sql);
-                if (!res.success) continue;
-
-                jobMapRef.current[res.jobId] = key;
-                subscribedJobs.current.push(res.jobId);
-            }
+        return () => {
+            isCancelled = true;
         };
+    }, [connectionId, database, schemaMetadataVersion]);
 
-        load();
-    }, [currentConnection.connectionId, currentConnection.database]);
+    const normalizedSavedQueries = useMemo(
+        () =>
+            Array.from(
+                new Map(
+                    (savedQueries ?? [])
+                        .filter(
+                            (query) =>
+                                typeof query.name === "string" &&
+                                query.name.length > 0 &&
+                                typeof query.query === "string" &&
+                                query.query.length > 0,
+                        )
+                        .map((query) => [
+                            `${query.query}\u0000${query.name}`,
+                            {
+                                name: query.name,
+                                query: query.query,
+                            },
+                        ]),
+                ).values(),
+            ).sort(
+                (left, right) =>
+                    left.name.localeCompare(right.name) ||
+                    left.query.localeCompare(right.query),
+            ),
+        [savedQueries],
+    );
 
-    return autocomplete;
+    const normalizedQueryHistory = useMemo(
+        () =>
+            Array.from(
+                new Map(
+                    (queryHistory ?? [])
+                        .filter(
+                            (query) =>
+                                typeof query.query === "string" &&
+                                query.query.length > 0 &&
+                                typeof query.executed_at === "string" &&
+                                query.executed_at.length > 0,
+                        )
+                        .map((query) => [
+                            `${query.query}\u0000${query.executed_at}`,
+                            {
+                                query: query.query,
+                                executedAt: query.executed_at,
+                            },
+                        ]),
+                ).values(),
+            ),
+        [queryHistory],
+    );
+
+    return useMemo(
+        () => ({
+            ...EMPTY_AUTOCOMPLETE,
+            ...sharedAutocomplete,
+            savedQueries: normalizedSavedQueries,
+            queryHistory: normalizedQueryHistory,
+        }),
+        [normalizedQueryHistory, normalizedSavedQueries, sharedAutocomplete],
+    );
 };

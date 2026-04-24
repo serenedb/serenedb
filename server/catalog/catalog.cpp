@@ -28,6 +28,7 @@
 #include <vpack/slice.h>
 
 #include <expected>
+#include <iostream>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 
@@ -48,10 +49,11 @@
 #include "catalog/drop_task.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
+#include "catalog/inverted_index.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
 #include "catalog/schema.h"
-#include "catalog/search_analyzer_impl.h"
+#include "catalog/secondary_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -60,6 +62,7 @@
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
 #include "general_server/state.h"
+#include "query/duckdb_engine.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
@@ -77,22 +80,6 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
                  std::string_view error, vpack::Slice meta) {
   return {code,  "Failed to read ", object_type,  " metadata ', error: ",
           error, " metadata: ",     meta.toJson()};
-}
-
-ResultOr<CreateTableOptions> GetTableOptions(ObjectId db_id,
-                                             vpack::Slice slice) {
-  CreateTableOptions options;
-
-  // TODO(gnusi): .skip_unknown = false, .strict = true
-  if (auto r = vpack::ReadObjectNothrow<TableOptions>(
-        slice, options, {.skip_unknown = true, .strict = false},
-        ObjectInternal{db_id});
-      !r.ok()) {
-    return std::unexpected<Result>{
-      std::in_place,
-      ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice)};
-  }
-  return options;
 }
 
 // In case of recovery the ColumnExpr shouldn't be parsed
@@ -130,17 +117,11 @@ ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, ObjectId index_id, vpack::Slice definition,
+  ObjectId table_id, ObjectId index_id, ObjectType index_type,
   bool is_root = false) {
-  IndexBaseOptions options;
-  SDB_ASSERT(definition.isObject());
-  if (auto r =
-        vpack::ReadTupleNothrow(definition.get(kIndexBaseOptions), options);
-      !r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
-  }
+  auto shard_type = IndexShardType(index_type);
   ObjectId shard_id;
-  auto r = engine.VisitDefinitions(index_id, RocksDBEntryType::IndexShard,
+  auto r = engine.VisitDefinitions(index_id, shard_type,
                                    [&](DefinitionKey key, vpack::Slice) {
                                      SDB_ASSERT(!shard_id.isSet());
                                      shard_id = key.GetObjectId();
@@ -149,8 +130,8 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return std::make_shared<IndexDrop>(index_id, options.type, db_id, schema_id,
-                                     table_id, shard_id, is_root);
+  return std::make_shared<IndexDrop>(index_id, index_type, db_id, schema_id,
+                                     table_id, is_root);
 }
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
@@ -160,7 +141,7 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
   auto r = engine.VisitDefinitions(
-    table_id, RocksDBEntryType::TableShard,
+    table_id, ObjectType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) {
       SDB_ASSERT(!shard_id.isSet());
       shard_id = key.GetObjectId();
@@ -175,17 +156,22 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   std::vector<std::shared_ptr<IndexDrop>> indexes;
-  r = engine.VisitDefinitions(table_id, RocksDBEntryType::Index,
-                              [&](DefinitionKey key, vpack::Slice slice) {
-                                auto index_drop = CreateIndexDrop(
-                                  engine, db_id, schema_id, table_id,
-                                  key.GetObjectId(), slice);
-                                if (!index_drop) {
-                                  return std::move(index_drop.error());
-                                }
-                                indexes.push_back(std::move(*index_drop));
-                                return Result{};
-                              });
+  auto collect_indexes = [&](ObjectType type) {
+    return engine.VisitDefinitions(
+      table_id, type, [&](DefinitionKey key, vpack::Slice) {
+        auto index_drop = CreateIndexDrop(engine, db_id, schema_id, table_id,
+                                          key.GetObjectId(), type);
+        if (!index_drop) {
+          return std::move(index_drop.error());
+        }
+        indexes.push_back(std::move(*index_drop));
+        return Result{};
+      });
+  };
+  r = collect_indexes(ObjectType::SecondaryIndex);
+  if (r.ok()) {
+    r = collect_indexes(ObjectType::InvertedIndex);
+  }
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
@@ -198,7 +184,7 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
   bool is_root = false) {
   std::vector<std::shared_ptr<TableDrop>> tables;
   auto r = engine.VisitDefinitions(
-    schema_id, RocksDBEntryType::Table,
+    schema_id, ObjectType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto options = GetTableOptionsForDrop(slice);
       if (!options) {
@@ -225,7 +211,7 @@ ResultOr<std::shared_ptr<DatabaseDrop>> CreateDatabaseDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id) {
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
   auto r = engine.VisitDefinitions(
-    db_id, RocksDBEntryType::Schema, [&](DefinitionKey key, vpack::Slice) {
+    db_id, ObjectType::Schema, [&](DefinitionKey key, vpack::Slice) {
       auto schema_drop = CreateSchemaDrop(engine, db_id, key.GetObjectId());
       if (!schema_drop) {
         return std::move(schema_drop.error());
@@ -277,9 +263,10 @@ class OpenDatabase {
   Result AddSchema(ObjectId database_id, ObjectId schema_id,
                    vpack::Slice definition);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                  CreateTableOptions options);
+                  std::shared_ptr<Table> table);
   Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
-                  ObjectId index_id, vpack::Slice definition);
+                  ObjectId index_id, ObjectType entry_type,
+                  vpack::Slice definition);
 
   Result AddTableShard(ObjectId table_id, ObjectId shard_id,
                        vpack::Slice definition);
@@ -298,7 +285,7 @@ class OpenDatabase {
     auto& engine = GetServerEngine();
     auto& deleted = _deleted[magic_enum::enum_integer(scope)];
     SDB_ASSERT(deleted.empty());
-    auto r = engine.VisitDefinitions(id, RocksDBEntryType::Tombstone,
+    auto r = engine.VisitDefinitions(id, ObjectType::Tombstone,
                                      [&](DefinitionKey key, vpack::Slice) {
                                        deleted.insert(key.GetObjectId());
                                        return Result{};
@@ -315,11 +302,10 @@ class OpenDatabase {
 
 Result OpenDatabase::AddDatabase(ObjectId database_id,
                                  vpack::Slice definition) {
-  catalog::DatabaseOptions database;
-  if (auto r = vpack::ReadTupleNothrow(definition, database); !r.ok()) {
-    return r;
+  auto db = catalog::Database::ReadInternal(definition, {.id = database_id});
+  if (!db) {
+    return Result{ERROR_INTERNAL, "Failed to read database definition"};
   }
-  auto db = std::make_shared<catalog::Database>(database_id, database);
   if (auto r = _catalog.RegisterDatabase(db); !r.ok()) {
     return r;
   }
@@ -331,7 +317,7 @@ Result OpenDatabase::AddDatabase(ObjectId database_id,
 
 Result OpenDatabase::RegisterDatabases() {
   return GetServerEngine().VisitDefinitions(
-    id::kInstance, RocksDBEntryType::Database,
+    id::kInstance, ObjectType::Database,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       if (!IsDeleted(key.GetObjectId(), DeletedScope::Root)) {
         return AddDatabase(key.GetObjectId(), slice);
@@ -347,7 +333,7 @@ Result OpenDatabase::RegisterDatabases() {
 
 Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
   return GetServerEngine().VisitDefinitions(
-    database_id, RocksDBEntryType::Schema,
+    database_id, ObjectType::Schema,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto schema_id = key.GetObjectId();
       if (!IsDeleted(key.GetObjectId(), DeletedScope::Database)) {
@@ -366,86 +352,77 @@ Result OpenDatabase::RegisterSchemas(ObjectId database_id) {
 
 Result OpenDatabase::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::Function,
+    schema_id, ObjectType::PgSqlFunction,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      std::shared_ptr<catalog::Function> function;
-      auto r = catalog::Function::Instantiate(function, db_id, slice, false);
-      if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
+      auto function = catalog::PgSqlFunction::ReadInternal(
+        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      if (!function) {
+        return ErrorMeta(ERROR_INTERNAL, "function",
+                         "Failed to read function definition", slice);
       }
-      SDB_ASSERT(function);
       return _catalog.RegisterFunction(db_id, schema_id, std::move(function));
     });
 }
 
 Result OpenDatabase::RegisterTokenizers(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::Tokenizer,
+    schema_id, ObjectType::Tokenizer,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto name = slice.get("name");
-      if (!name.isString()) {
+      auto tokenizer =
+        Tokenizer::ReadInternal(slice, {.id = key.GetObjectId()});
+      if (!tokenizer) {
         return ErrorMeta(ERROR_INTERNAL, "tokenizer",
-                         "Cannot parse tokenizer name", slice);
+                         "Failed to read tokenizer definition", slice);
       }
-      auto features_slice = slice.get("features");
-      search::Features features;
-      auto r = features.FromVPack(features_slice);
-      if (!r.ok()) {
-        return r;
-      }
-      auto tokenizer = std::make_shared<Tokenizer>(
-        key.GetObjectId(), name.stringView(), std::move(features),
-        std::string{reinterpret_cast<const char*>(slice.getDataPtr()),
-                    slice.byteSize()});
-      SDB_ASSERT(tokenizer);
       return _catalog.RegisterTokenizer(db_id, schema_id, std::move(tokenizer));
     });
 }
 
 Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::View,
-    [&](DefinitionKey, vpack::Slice slice) -> Result {
-      ViewOptions options;
-      auto r = ViewOptions::Read(options, slice);
-      if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "view", r.errorMessage(), slice);
+    schema_id, ObjectType::PgSqlView,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto view = PgSqlView::ReadInternal(
+        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      if (!view) {
+        return ErrorMeta(ERROR_INTERNAL, "view",
+                         "Failed to read view definition", slice);
       }
-      std::shared_ptr<View> view;
-
-      r = CreateViewInstance(view, db_id, std::move(options),
-                             ViewContext::Restore);
-      if (!r.ok()) {
-        return r;
-      }
-      SDB_ASSERT(view);
       return _catalog.RegisterView(schema_id, std::move(view));
     });
 }
 
 Result OpenDatabase::RegisterIndexes(ObjectId db_id, ObjectId schema_id,
                                      ObjectId table_id) {
-  return GetServerEngine().VisitDefinitions(
-    table_id, RocksDBEntryType::Index,
-    [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      auto index_id = key.GetObjectId();
-      if (!IsDeleted(index_id, DeletedScope::Table)) {
-        return AddIndex(db_id, schema_id, table_id, index_id, slice);
-      }
+  auto visit = [&](ObjectType type) {
+    return GetServerEngine().VisitDefinitions(
+      table_id, type, [&](DefinitionKey key, vpack::Slice slice) -> Result {
+        auto index_id = key.GetObjectId();
+        if (!IsDeleted(index_id, DeletedScope::Table)) {
+          return AddIndex(db_id, schema_id, table_id, index_id, type, slice);
+        }
 
-      auto drop = CreateIndexDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                  key.GetObjectId(), slice, true);
-      if (!drop) {
-        return std::move(drop.error());
-      }
-      DropTask::Schedule(std::move(*drop)).Detach();
-      return {};
-    });
+        auto drop = CreateIndexDrop(GetServerEngine(), db_id, schema_id,
+                                    table_id, key.GetObjectId(), type, true);
+        if (!drop) {
+          return std::move(drop.error());
+        }
+        DropTask::Schedule(std::move(*drop)).Detach();
+        return {};
+      });
+  };
+  if (auto r = visit(ObjectType::SecondaryIndex); !r.ok()) {
+    return r;
+  }
+  if (auto r = visit(ObjectType::InvertedIndex); !r.ok()) {
+    return r;
+  }
+  return {};
 }
 
 Result OpenDatabase::RegisterTableShard(ObjectId table_id) {
   return GetServerEngine().VisitDefinitions(
-    table_id, RocksDBEntryType::TableShard,
+    table_id, ObjectType::TableShard,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
       SDB_ASSERT(!IsDeleted(shard_id, DeletedScope::Table));
@@ -472,32 +449,32 @@ Result OpenDatabase::RegisterIndexShard(const std::shared_ptr<Index>& index) {
     SDB_ASSERT(*shard);
     return _catalog.RegisterIndexShard(std::move(*shard));
   };
+
+  auto is_inverted = index->GetType() == ObjectType::InvertedIndex;
+  auto shard_type = IndexShardType(index->GetType());
+
   return GetServerEngine().VisitDefinitions(
-    index->GetId(), RocksDBEntryType::IndexShard,
+    index->GetId(), shard_type,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
-      switch (index->GetIndexType()) {
-        case IndexType::Inverted:
-          return load_shard.operator()<search::InvertedIndexShardOptions>(
-            key, slice);
-        case IndexType::Secondary:
-          return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
-        case IndexType::Unknown:
-          SDB_UNREACHABLE();
+      if (is_inverted) {
+        return load_shard.operator()<search::InvertedIndexShardOptions>(key,
+                                                                        slice);
       }
+      return load_shard.operator()<SecondaryIndexShardOptions>(key, slice);
     });
 }
 
 Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
-    schema_id, RocksDBEntryType::Table,
+    schema_id, ObjectType::Table,
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
       if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        auto options = GetTableOptions(db_id, slice);
-        if (!options) {
-          return std::move(options.error());
+        auto table = Table::ReadInternal(slice, {.database_id = db_id});
+        if (!table) {
+          return Result{ERROR_INTERNAL, "Failed to read table definition"};
         }
-        return AddTable(db_id, schema_id, table_id, std::move(*options));
+        return AddTable(db_id, schema_id, table_id, std::move(table));
       }
       auto options = GetTableOptionsForDrop(slice);
       if (!options) {
@@ -516,14 +493,14 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
 Result OpenDatabase::AddRoles() {
   auto& engine = GetServerEngine();
   auto r = engine.VisitDefinitions(
-    id::kInstance, RocksDBEntryType::Role,
+    id::kInstance, ObjectType::Role,
     [&](DefinitionKey, vpack::Slice slice) -> Result {
       SDB_ASSERT(!slice.get(StaticStrings::kDataSourceId).isNone());
 
-      std::shared_ptr<catalog::Role> role;
-      auto r = catalog::Role::Instantiate(role, slice, false);
-      if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "role", r.errorMessage(), slice);
+      auto role = catalog::Role::ReadInternal(slice, {});
+      if (!role) {
+        return ErrorMeta(ERROR_INTERNAL, "role",
+                         "Failed to read role definition", slice);
       }
 
       return _catalog.RegisterRole(std::move(role));
@@ -537,8 +514,8 @@ Result OpenDatabase::AddRoles() {
 }
 
 Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
-                              ObjectId table_id, CreateTableOptions options) {
-  auto r = _catalog.RegisterTable(db_id, schema_id, std::move(options));
+                              ObjectId table_id, std::shared_ptr<Table> table) {
+  auto r = _catalog.RegisterTable(db_id, schema_id, std::move(table));
   if (!r.ok()) {
     return r;
   }
@@ -555,29 +532,30 @@ Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
 
 Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
                               ObjectId table_id, ObjectId index_id,
-                              vpack::Slice slice) {
+                              ObjectType entry_type, vpack::Slice slice) {
   SDB_ASSERT(slice.isObject(), "Index definition is not an object");
-  IndexBaseOptions options;
-  if (auto r = vpack::ReadTupleNothrow(slice.get(kIndexBaseOptions), options);
-      !r.ok()) {
-    return r;
+  ReadContext ctx{.id = index_id,
+                  .database_id = database_id,
+                  .schema_id = schema_id,
+                  .relation_id = table_id};
+  std::shared_ptr<Index> index;
+  if (entry_type == ObjectType::SecondaryIndex) {
+    index = SecondaryIndex::ReadInternal(slice, ctx);
+  } else {
+    index = InvertedIndex::ReadInternal(slice, ctx);
   }
-  auto impl_parsed =
-    ParseImplSlice(std::move(options), slice.get(kIndexImplOptions));
-  if (!impl_parsed) {
-    return std::move(impl_parsed.error());
-  }
-  auto index = _catalog.RegisterIndex(database_id, schema_id, index_id,
-                                      table_id, std::move(**impl_parsed));
   if (!index) {
-    return std::move(index.error());
+    return Result{ERROR_INTERNAL, "Failed to read index definition"};
+  }
+  if (auto r = _catalog.RegisterIndex(database_id, schema_id, index); !r.ok()) {
+    return r;
   }
   Result r;
 
 #ifdef SDB_DEV
   // Check there are no tombstones in index scope
   size_t counter = 0;
-  r = GetServerEngine().VisitDefinitions(index_id, RocksDBEntryType::Tombstone,
+  r = GetServerEngine().VisitDefinitions(index_id, ObjectType::Tombstone,
                                          [&](DefinitionKey, vpack::Slice) {
                                            counter++;
                                            return Result{};
@@ -588,18 +566,17 @@ Result OpenDatabase::AddIndex(ObjectId database_id, ObjectId schema_id,
   SDB_ASSERT(counter == 0);
 #endif
 
-  r = RegisterIndexShard(std::move(*index));
+  r = RegisterIndexShard(index);
   return r;
 }
 
 Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
                                vpack::Slice slice) {
-  SchemaOptions options;
-  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-    return ErrorMeta(r.errorNumber(), "schema", r.errorMessage(), slice);
+  auto schema = catalog::Schema::ReadInternal(slice, {.database_id = db_id});
+  if (!schema) {
+    return ErrorMeta(ERROR_INTERNAL, "schema",
+                     "Failed to read schema definition", slice);
   }
-
-  auto schema = std::make_shared<catalog::Schema>(db_id, std::move(options));
 
   if (auto r = _catalog.RegisterSchema(db_id, std::move(schema)); !r.ok()) {
     return r;
@@ -694,6 +671,21 @@ Result CatalogFeature::Open() {
   if (!catalog::GetDatabase(StaticStrings::kDefaultDatabase)) {
     SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kDefaultDatabase,
               " database found in database directory");
+  }
+
+  // Attach all existing databases into DuckDB
+  {
+    auto snapshot = GetCatalog().GetCatalogSnapshot();
+    auto conn = query::DuckDBEngine::Instance().CreateConnection();
+    for (auto& db : snapshot->GetDatabases()) {
+      auto query = absl::StrCat("ATTACH '", db->GetId().id(), "' AS \"",
+                                db->GetName(), "\" (TYPE serenedb)");
+      auto result = conn->Query(query);
+      if (result->HasError()) {
+        SDB_FATAL("xxxxx", Logger::FIXME, "Failed to attach database ",
+                  db->GetName(), ": ", result->GetError());
+      }
+    }
   }
 
   return r;

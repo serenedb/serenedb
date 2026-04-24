@@ -368,6 +368,7 @@ option(
 
 if(SDB_DEV)
     add_definitions("-DSDB_DEV=1")
+    add_definitions("-DDEBUG")
 
     # TODO(mbkkt) add_definitions("-D_FORTIFY_SOURCE=3")
 else()
@@ -781,7 +782,6 @@ endforeach()
 ## PATHS, installation, packages, frontend
 ################################################################################
 
-add_subdirectory(resources)
 include(SereneDBInstall)
 
 ################################################################################
@@ -808,7 +808,7 @@ foreach(m IN LISTS ERROR_FILES)
         OUTPUT ${CMAKE_BINARY_DIR}/${m}
         COMMAND
             ${PYTHON_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/generateErrorfile.py
+            ${CMAKE_SOURCE_DIR}/scripts/generate_error_file.py
             ${CMAKE_SOURCE_DIR}/${ERRORS_DAT}
             ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
         COMMAND
@@ -818,7 +818,7 @@ foreach(m IN LISTS ERROR_FILES)
             ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
         DEPENDS
             ${CMAKE_SOURCE_DIR}/${ERRORS_DAT}
-            ${CMAKE_SOURCE_DIR}/scripts/generateErrorfile.py
+            ${CMAKE_SOURCE_DIR}/scripts/generate_error_file.py
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMENT "Building errors file ${m}"
         VERBATIM
@@ -840,7 +840,7 @@ foreach(m IN LISTS EXIT_CODE_FILES)
         OUTPUT ${CMAKE_BINARY_DIR}/${m}
         COMMAND
             ${PYTHON_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/generateExitCodesFiles.py
+            ${CMAKE_SOURCE_DIR}/scripts/generate_exit_codes.py
             ${CMAKE_SOURCE_DIR}/${EXIT_CODES_DAT}
             ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
         COMMAND
@@ -850,7 +850,7 @@ foreach(m IN LISTS EXIT_CODE_FILES)
             ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/${GEN_BASENAME}.tmp
         DEPENDS
             ${CMAKE_SOURCE_DIR}/${EXIT_CODES_DAT}
-            ${CMAKE_SOURCE_DIR}/scripts/generateExitCodesFiles.py
+            ${CMAKE_SOURCE_DIR}/scripts/generate_exit_codes.py
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMENT "Building exitcode file ${m}"
         VERBATIM

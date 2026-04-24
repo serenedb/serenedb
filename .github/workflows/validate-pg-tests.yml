@@ -1,6 +1,18 @@
 name: task | validate pg tests
 
 on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: "Runner label"
+        type: string
+        required: false
+        default: "linux"
+      PR_SHA:
+        description: "Commit SHA to checkout (empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
   workflow_call:
     inputs:
       LOCATION:
@@ -8,18 +20,20 @@ on:
         type: string
         required: false
         default: "linux"
+      PR_SHA:
+        description: "Commit SHA to checkout (fork PR support; empty = workflow ref)"
+        type: string
+        required: false
+        default: ""
       BUILD_CONFIG:
         description: "Internal: JSON overrides (PR_SHA presence triggers diff-only mode)"
         type: string
         required: false
         default: '{}'
-    secrets:
-      PAT_TOKEN:
-        required: true
-
 env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+  CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
 
 jobs:
   validate:
@@ -33,8 +47,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          repository: serenedb/serenedb
-          token: ${{ secrets.PAT_TOKEN }}
+          ref: ${{ inputs.PR_SHA || github.sha }}
           fetch-depth: 1
           submodules: false
           clean: true
@@ -45,8 +58,8 @@ jobs:
       - name: Check for PG test changes
         id: detect
         run: |
-          # PR bot trigger (has PR_SHA) → only run if pg test files changed
-          # Manual/nightly (no PR_SHA) → run all
+          # PR bot trigger (has PR_SHA) -> only run if pg test files changed
+          # Manual/nightly (no PR_SHA) -> run all
           # TODO: consider using GitHub API (pulls.listFiles) instead of git fetch+diff
           #   for faster detection without needing git history
           BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
@@ -66,8 +79,15 @@ jobs:
             echo "No PG test changes, skipping"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            # Strip the tests/sqllogic/ prefix so paths are relative to the
+            # sqllogic directory (e.g. "sdb/pg/ddl/foo.test"), matching the
+            # glob format that run.sh --test expects.
+            RELATIVE=$(echo "$CHANGED" | sed 's|^tests/sqllogic/||')
+            echo "pg_tests<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$RELATIVE"                >> "$GITHUB_OUTPUT"
+            echo "EOF"                      >> "$GITHUB_OUTPUT"
             echo "PG test files changed:"
-            echo "$CHANGED"
+            echo "$RELATIVE"
           fi
 
       - name: Prepare
@@ -87,7 +107,7 @@ jobs:
           export DOCKER_UID="$(id -u)"
           export DOCKER_GID="$(id -g)"
           export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
-          export CARGO_TARGET_CACHE="/mnt/data/.cargo-target-sqllogic"
+          export PG_CHANGED_TESTS="${{ steps.detect.outputs.pg_tests }}"
 
           cd tests/sqllogic
           PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
@@ -107,7 +127,7 @@ jobs:
 
       - name: Upload test results
         if: always() && !cancelled() && steps.detect.outputs.skip != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: validate-pg-results-${{ inputs.LOCATION }}-${{ github.run_number }}
           path: |

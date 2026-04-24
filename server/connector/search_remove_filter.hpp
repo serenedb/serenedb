@@ -75,8 +75,8 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
-  // TODO(Dronplane) use persistent velox memory pool for proper memory
-  // accounting currently available query velox memory pool is discarded after
+  // TODO(Dronplane) use persistent duckdb memory pool for proper memory
+  // accounting currently available query duckdb memory pool is discarded after
   // query execution but this allocations must survive until IndexWriter Commit.
   // See Issue cluster #37
   mutable std::vector<irs::bstring> _pks;

@@ -1,0 +1,570 @@
+# ----------------------------------------------------------------------
+# Different ways to set config options, different scopes —
+# rollback/commit semantics.
+#
+# Covers: plain SET, SET SESSION, SET LOCAL, SET GLOBAL, set_config(),
+# across both built-in (search_path, default_transaction_read_only)
+# and extension (sdb_write_conflict_policy) options.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE SCHEMA some_schema;
+
+
+statement ok
+SET search_path TO public;
+
+
+# --- plain SET (AUTOMATIC -> SESSION) inside txn ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+statement ok
+ROLLBACK;
+
+
+# Reverts on rollback
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+# Same plain SET, committed
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+COMMIT;
+
+
+# Keeps on commit
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- SET SESSION equivalent — same semantics as plain SET ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET SESSION search_path TO public;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- SET LOCAL reverts on commit AND rollback ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL search_path TO public;
+
+
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+statement ok
+COMMIT;
+
+
+# SET LOCAL reverted on commit — back to pre-txn value
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL search_path TO public;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- set_config(name, value, is_local=false) — plain SET equivalent ---
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT set_config('search_path', 'public', false);
+
+
+statement ok
+ROLLBACK;
+
+
+# is_local=false behaves like plain SET → reverts on rollback
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- set_config(name, value, is_local=true) — SET LOCAL equivalent ---
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT set_config('search_path', 'public', true);
+
+
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+statement ok
+COMMIT;
+
+
+# is_local=true reverts on commit too
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- SET GLOBAL is not rolled back ---
+statement ok
+BEGIN;
+
+
+skipif postgres # SET GLOBAL is not supported syntax in pg
+statement ok
+SET GLOBAL default_transaction_read_only TO true;
+
+
+statement ok
+ROLLBACK;
+
+
+# GLOBAL SET is not tracked for rollback
+onlyif serenedb
+query
+SHOW default_transaction_read_only;
+----
+default_transaction_read_only
+on
+
+
+skipif postgres # SET GLOBAL is not supported syntax in pg
+statement ok
+SET GLOBAL default_transaction_read_only TO false;
+
+
+# --- Extension option (sdb_write_conflict_policy) — plain + local, commit + rollback ---
+onlyif serenedb
+statement ok
+BEGIN;
+
+
+onlyif serenedb
+statement ok
+SET sdb_write_conflict_policy TO 'do_nothing';
+
+
+onlyif serenedb
+statement ok
+ROLLBACK;
+
+
+onlyif serenedb
+query
+SHOW sdb_write_conflict_policy;
+----
+sdb_write_conflict_policy
+emit_error
+
+
+onlyif serenedb
+statement ok
+BEGIN;
+
+
+onlyif serenedb
+statement ok
+SET LOCAL sdb_write_conflict_policy TO 'do_nothing';
+
+
+onlyif serenedb
+statement ok
+COMMIT;
+
+
+# SET LOCAL on extension option reverts on commit too
+onlyif serenedb
+query
+SHOW sdb_write_conflict_policy;
+----
+sdb_write_conflict_policy
+emit_error
+
+
+# ----------------------------------------------------------------------
+# Multi-SET bookkeeping inside a transaction (commit/rollback correctness)
+# ----------------------------------------------------------------------
+
+
+# --- No-op SET (same value) is not tracked: rollback leaves value unchanged ---
+statement ok
+SET search_path TO public;
+
+
+statement ok
+BEGIN;
+
+
+# SET to the already-current value -- must be a no-op for rollback tracking.
+statement ok
+SET search_path TO public;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+# --- Same-value SET inside txn after a real SET: rollback still reverts ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+# Re-set to the same just-committed value -- must not reset the rollback snapshot.
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+# --- Multiple plain SETs in a txn: rollback reverts to the pre-txn value ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+SET search_path TO pg_catalog;
+
+
+statement ok
+SET search_path TO public;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+# --- Multiple plain SETs in a txn, COMMIT: last value wins ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+SET search_path TO pg_catalog;
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW search_path;
+----
+search_path
+pg_catalog
+
+
+# Reset for cleanliness
+statement ok
+SET search_path TO public;
+
+
+# --- SET LOCAL after plain SET: on COMMIT, LOCAL reverts to the plain-SET value ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+SET LOCAL search_path TO pg_catalog;
+
+
+# Inside the txn, LOCAL wins
+query
+SHOW search_path;
+----
+search_path
+pg_catalog
+
+
+statement ok
+COMMIT;
+
+
+# After commit: LOCAL overlay reverted, plain SET persists
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- Plain SET after SET LOCAL overrides the LOCAL overlay ---
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL search_path TO pg_catalog;
+
+
+statement ok
+SET search_path TO public;
+
+
+statement ok
+COMMIT;
+
+
+# Plain SET wins — public persists past commit.
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+# --- Consecutive SET LOCALs: COMMIT reverts to the earliest pre-LOCAL value ---
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL search_path TO pg_catalog;
+
+
+statement ok
+SET LOCAL search_path TO public;
+
+
+statement ok
+COMMIT;
+
+
+# Not pg_catalog nor public — reverted to the value before any SET LOCAL fired.
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+# --- ROLLBACK reverts regardless of mix of plain SET and SET LOCAL ---
+statement ok
+SET search_path TO public;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO some_schema;
+
+
+statement ok
+SET LOCAL search_path TO pg_catalog;
+
+
+statement ok
+SET search_path TO public;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+public
+
+
+# --- Extension option tracking: plain SET rollback ---
+onlyif serenedb
+statement ok
+BEGIN;
+
+
+onlyif serenedb
+statement ok
+SET sdb_write_conflict_policy TO 'do_nothing';
+
+
+onlyif serenedb
+statement ok
+SET sdb_write_conflict_policy TO 'replace';
+
+
+onlyif serenedb
+statement ok
+ROLLBACK;
+
+
+onlyif serenedb
+query
+SHOW sdb_write_conflict_policy;
+----
+sdb_write_conflict_policy
+emit_error
+
+
+# --- Extension option: plain SET + SET LOCAL, COMMIT keeps plain, reverts LOCAL ---
+onlyif serenedb
+statement ok
+BEGIN;
+
+
+onlyif serenedb
+statement ok
+SET sdb_write_conflict_policy TO 'do_nothing';
+
+
+onlyif serenedb
+statement ok
+SET LOCAL sdb_write_conflict_policy TO 'replace';
+
+
+onlyif serenedb
+statement ok
+COMMIT;
+
+
+onlyif serenedb
+query
+SHOW sdb_write_conflict_policy;
+----
+sdb_write_conflict_policy
+do_nothing
+
+
+# Restore default for isolation from subsequent tests
+onlyif serenedb
+statement ok
+SET sdb_write_conflict_policy TO 'emit_error';
+
+
+# --- No tracking outside an explicit transaction ---
+# A plain SET outside BEGIN/COMMIT must persist immediately — no transactional
+# bookkeeping involved. (Implicit check: the following SHOW sees the new value
+# without any commit.)
+statement ok
+SET search_path TO some_schema;
+
+
+query
+SHOW search_path;
+----
+search_path
+some_schema
+
+
+statement ok
+SET search_path TO public;

@@ -1,0 +1,43 @@
+name: Bug Report
+description: Report something that isn't working correctly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Steps, SQL queries, or minimal example to reproduce.
+      placeholder: |
+        1. Start serened with ...
+        2. Run query: SELECT ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: SereneDB version
+      placeholder: "e.g. 26.04.1 or commit hash"
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, OS/platform info, or anything else relevant.
+    validations:
+      required: false

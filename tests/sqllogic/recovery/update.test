@@ -8,7 +8,7 @@ statement ok
 CREATE INDEX index_pk_b  ON idx_update_pk USING inverted(b);
 
 statement ok
-SET sdb_fault_idx_update_pk_connector_must_two_index TO DEFAULT;
+SET sdb_faults = 'idx_update_pk_connector_must_two_index';
 
 statement ok
 INSERT INTO idx_update_pk(a,b) VALUES (1,1), (2,3), (4,5);
@@ -20,10 +20,10 @@ statement ok
 DELETE FROM  idx_update_pk WHERE a = 2;
 
 statement ok
-SET sdb_fault_idx_update_pk_connector_must_one_index TO DEFAULT;
+SET sdb_faults = 'idx_update_pk_connector_must_one_index';
 
 statement ok
-RESET sdb_fault_idx_update_pk_connector_must_two_index;
+SET sdb_faults = '-idx_update_pk_connector_must_two_index';
 
 statement ok
 UPDATE idx_update_pk SET b = 11 WHERE a = 11;
@@ -32,7 +32,7 @@ statement ok
 DROP TABLE idx_update_pk;
 
 statement ok
-RESET sdb_fault_idx_update_pk_connector_must_one_index;
+SET sdb_faults = '-idx_update_pk_connector_must_one_index';
 
 statement ok
 CREATE TABLE idx_update_nopk (a INTEGER, b INTEGER);
@@ -47,7 +47,7 @@ statement ok
 INSERT INTO idx_update_nopk(a,b) VALUES (1,1), (2,3), (4,5);
 
 statement ok
-SET sdb_fault_idx_update_nopk_connector_must_one_index TO DEFAULT;
+SET sdb_faults = 'idx_update_nopk_connector_must_one_index';
 
 statement ok
 UPDATE idx_update_nopk SET b = 11 WHERE a = 1;
@@ -56,10 +56,10 @@ statement ok
 UPDATE idx_update_nopk SET a = 11 WHERE b = 11;
 
 statement ok
-SET sdb_fault_idx_update_nopk_connector_must_two_index TO DEFAULT;
+SET sdb_faults = 'idx_update_nopk_connector_must_two_index';
 
 statement ok
-RESET sdb_fault_idx_update_nopk_connector_must_one_index;
+SET sdb_faults = '-idx_update_nopk_connector_must_one_index';
 
 statement ok
 UPDATE idx_update_nopk SET a = 11, b = 12 WHERE b = 3;
@@ -68,7 +68,7 @@ statement ok
 DELETE FROM idx_update_nopk WHERE b = 12;
 
 statement ok
-RESET sdb_fault_idx_update_nopk_connector_must_two_index;
+SET sdb_faults = '-idx_update_nopk_connector_must_two_index';
 
 statement ok
 DROP TABLE idx_update_nopk;

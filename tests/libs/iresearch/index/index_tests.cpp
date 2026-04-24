@@ -46,6 +46,7 @@
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/lz4compression.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/vector.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 #include "tests_shared.hpp"
 
@@ -14561,19 +14562,172 @@ TEST_P(IndexTestCase14, buffered_column_reopen) {
   ASSERT_EQ(0, memory.transactions.Counter());
 }
 
-TEST_P(IndexTestCase14, hnsw_search_basic) {
-  constexpr size_t kDim = 128;
-  constexpr size_t kValuesPerSegment = 256;
-  constexpr size_t kSegments = 4;
-  constexpr size_t kTopK = 64;
-  constexpr size_t kQueries = 256;
-  constexpr std::string_view kColumnName = "vec"sv;
+struct SearchTestFeatureBase {
+  size_t dim;
+  size_t values_per_segment;
+  size_t segments;
+  size_t queries;
+  irs::HNSWMetric metric = irs::HNSWMetric::L2;
 
-  std::vector<std::pair<uint64_t, std::vector<float>>> all_vectors;
-  all_vectors.reserve(kSegments * kValuesPerSegment);
+  // Pre-generated data (vectors and queries are created at construction time)
+  std::vector<std::pair<uint64_t, std::vector<float>>> vectors;
+  std::vector<std::vector<float>> query_vectors;
+
+  SearchTestFeatureBase(size_t dim, size_t values_per_segment, size_t segments,
+                        size_t queries, irs::HNSWMetric metric)
+    : dim{dim},
+      values_per_segment{values_per_segment},
+      segments{segments},
+      queries{queries},
+      metric{metric} {
+    absl::BitGen bitgen;
+    auto gen = [&](float* v, size_t n) {
+      for (size_t i = 0; i < n; ++i) {
+        v[i] = absl::Uniform(bitgen, -100.0f, 100.0f);
+      }
+    };
+    vectors.reserve(segments * values_per_segment);
+    for (size_t seg = 0; seg < segments; ++seg) {
+      for (size_t i = 0; i < values_per_segment; ++i) {
+        std::vector<float> data(dim);
+        gen(data.data(), dim);
+        vectors.emplace_back(
+          irs::PackSegmentWithDoc(static_cast<uint32_t>(seg),
+                                  static_cast<irs::doc_id_t>(i + 1)),
+          std::move(data));
+      }
+    }
+    query_vectors.reserve(queries);
+    for (size_t i = 0; i < queries; ++i) {
+      std::vector<float> data(dim);
+      gen(data.data(), dim);
+      query_vectors.push_back(std::move(data));
+    }
+  }
+};
+
+struct ANNSearchFeature : public SearchTestFeatureBase {
+  size_t top_k = 10;
+
+  ANNSearchFeature(size_t dim, size_t vps, size_t segs, size_t q,
+                   irs::HNSWMetric metric, size_t top_k)
+    : SearchTestFeatureBase{dim, vps, segs, q, metric}, top_k{top_k} {}
+};
+
+struct RangeSearchFeature : public SearchTestFeatureBase {
+  using SearchTestFeatureBase::SearchTestFeatureBase;
+};
+
+// Compute expected distance matching the HNSW metric.
+static float ComputeExpectedDistance(const float* q, const float* v, size_t dim,
+                                     irs::HNSWMetric metric) {
+  switch (metric) {
+    case irs::HNSWMetric::L2:
+      return faiss::fvec_L2sqr(q, v, dim);
+    case irs::HNSWMetric::InnerProduct:
+      return -faiss::fvec_inner_product(q, v, dim);
+    case irs::HNSWMetric::L1:
+      return faiss::fvec_L1(q, v, dim);
+    case irs::HNSWMetric::Cosine: {
+      const float dot = faiss::fvec_inner_product(q, v, dim);
+      const float denom = std::sqrt(faiss::fvec_norm_L2sqr(q, dim) *
+                                    faiss::fvec_norm_L2sqr(v, dim));
+      return denom == 0.f ? 1.f : 1.f - dot / denom;
+    }
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+// Template test fixture: combines dir/format (from kTestDirs/kTestFormats)
+// with a search Feature struct.
+template<typename Feature>
+class VectorSearchTestBase
+  : public virtual TestParamBase<
+      std::tuple<tests::dir_param_f, tests::FormatInfo, Feature>> {
+ public:
+  using Param = std::tuple<tests::dir_param_f, tests::FormatInfo, Feature>;
+
+  static std::string to_string(const testing::TestParamInfo<Param>& info) {
+    const auto& [dir_f, fmt, feat] = info.param;
+    std::string name = (*dir_f)(nullptr).second;
+    if (fmt.codec) {
+      name += "_";
+      name += fmt.codec;
+    }
+    switch (feat.metric) {
+      case irs::HNSWMetric::L2Sqr:
+        name += "_L2Sqr";
+        break;
+      case irs::HNSWMetric::L2:
+        name += "_L2";
+        break;
+      case irs::HNSWMetric::InnerProduct:
+        name += "_IP";
+        break;
+      case irs::HNSWMetric::Cosine:
+        name += "_Cosine";
+        break;
+      case irs::HNSWMetric::L1:
+        name += "_L1";
+        break;
+    }
+    return name;
+  }
+
+  void SetUp() override {
+    TestBase::SetUp();
+    const auto& p = this->GetParam();
+    auto* factory = std::get<0>(p);
+    ASSERT_NE(nullptr, factory);
+    _dir = (*factory)(this).first;
+    ASSERT_NE(nullptr, _dir);
+    _codec = irs::formats::Get(std::get<1>(p).codec);
+    ASSERT_NE(nullptr, _codec);
+  }
+
+  void TearDown() override {
+    _dir = nullptr;
+    _codec = nullptr;
+    TestBase::TearDown();
+  }
+
+ protected:
+  irs::Directory& dir() const noexcept { return *_dir; }
+  irs::Format::ptr codec() const { return _codec; }
+  Feature& feature() {
+    const Feature& f = std::get<2>(this->GetParam());
+    return *const_cast<Feature*>(&f);
+  }
+
+  irs::IndexWriter::ptr open_writer(
+    irs::OpenMode mode = irs::kOmCreate,
+    const irs::IndexWriterOptions& options = {}) const {
+    return irs::IndexWriter::Make(*_dir, _codec, mode, options);
+  }
+
+  void AssertSnapshotEquality(const irs::IndexWriter& writer) const {
+    tests::AssertSnapshotEquality(writer.GetSnapshot(),
+                                  irs::DirectoryReader{*_dir, _codec, {}});
+  }
+
+ private:
+  std::shared_ptr<irs::Directory> _dir;
+  irs::Format::ptr _codec;
+};
+
+class ANNSearchTest : public VectorSearchTestBase<ANNSearchFeature> {
+ public:
+};
+
+class RangeSearchTest : public VectorSearchTestBase<RangeSearchFeature> {};
+
+TEST_P(ANNSearchTest, hnsw_search_basic) {
+  constexpr std::string_view kColumnName = "vec"sv;
+  auto& f = feature();
 
   irs::IndexWriterOptions writer_options;
-  writer_options.column_info = [&kColumnName](std::string_view name) {
+  writer_options.column_info = [&kColumnName, &f](std::string_view name) {
     if (name == kColumnName) {
       return irs::ColumnInfo{
         .compression = irs::Type<irs::compression::None>::get(),
@@ -14582,7 +14736,8 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
         .value_type = irs::ValueType::VectorF32,
         .hnsw_info =
           irs::HNSWInfo{
-            .d = kDim,
+            .d = static_cast<int>(f.dim),
+            .metric = f.metric,
           },
       };
     }
@@ -14592,21 +14747,14 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
       false,
     };
   };
-  absl::BitGen bitgen;
-  auto gen_vector = [&bitgen](float* vec, size_t size) {
-    for (size_t i = 0; i < size; ++i) {
-      vec[i] = absl::Uniform(bitgen, -100.0f, 100.0f);
-    }
-  };
 
   auto writer = open_writer(irs::kOmCreate, writer_options);
 
   struct VectorField {
     std::string_view name;
-    std::vector<float> data;
+    const std::vector<float>& data;
     std::string_view Name() const { return name; }
     bool Write(irs::DataOutput& out) const {
-      SDB_ASSERT(data.size() == kDim);
       out.WriteBytes(reinterpret_cast<const irs::byte_type*>(data.data()),
                      data.size() * sizeof(float));
       return true;
@@ -14614,19 +14762,14 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
   };
 
   std::vector<irs::IndexWriter::Transaction> trxs;
-  trxs.reserve(kSegments);
+  trxs.reserve(f.segments);
 
-  for (size_t seg = 0; seg < kSegments; ++seg) {
+  for (size_t seg = 0; seg < f.segments; ++seg) {
     auto trx = writer->GetBatch();
-    for (size_t i = 0; i < kValuesPerSegment; ++i) {
+    for (size_t i = 0; i < f.values_per_segment; ++i) {
       auto doc = trx.Insert();
-      std::vector<float> data(kDim);
-      gen_vector(data.data(), kDim);
-      all_vectors.emplace_back(
-        irs::PackSegmentWithDoc(static_cast<uint32_t>(seg),
-                                static_cast<irs::doc_id_t>(i + 1)),
-        data);
-      VectorField vf{kColumnName, std::move(data)};
+      const auto& vec = f.vectors[i + seg * f.values_per_segment];
+      VectorField vf{kColumnName, vec.second};
       ASSERT_TRUE(doc.Insert<irs::Action::STORE>(vf));
     }
     trxs.push_back(std::move(trx));
@@ -14644,61 +14787,201 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
     float recall = .0f;
     faiss::SearchParametersHNSW params;
     params.efSearch = 32;
-    for (size_t i = 0; i < kQueries; ++i) {
-      std::vector<float> query_data(kDim);
-      gen_vector(query_data.data(), kDim);
+    for (const auto& query : f.query_vectors) {
       std::vector<std::pair<float, uint64_t>> expected;
       for (size_t idx = 0; idx < expected_vectors.size(); ++idx) {
-        float distance = faiss::fvec_L2sqr(
-          query_data.data(), expected_vectors[idx].second.data(), kDim);
+        float distance = ComputeExpectedDistance(
+          query.data(), expected_vectors[idx].second.data(), f.dim, f.metric);
         expected.emplace_back(distance, expected_vectors[idx].first);
       }
       std::sort(expected.begin(), expected.end());
-      expected.resize(kTopK);
+      expected.resize(f.top_k);
 
-      std::vector<float> dis(kTopK, 0.0f);
-      std::vector<uint64_t> docs(kTopK);
+      std::vector<float> dis(f.top_k, 0.0f);
+      std::vector<uint64_t> docs(f.top_k);
       irs::HNSWSearchInfo info{
-        reinterpret_cast<const irs::byte_type*>(query_data.data()),
-        kTopK,
+        reinterpret_cast<const irs::byte_type*>(query.data()),
+        f.top_k,
         params,
       };
       reader.Search("vec", info, reinterpret_cast<float*>(dis.data()),
                     reinterpret_cast<int64_t*>(docs.data()));
       size_t correct = 0;
-      for (size_t k = 0; k < kTopK; ++k) {
+      for (size_t k = 0; k < f.top_k; ++k) {
         correct +=
           std::find_if(expected.begin(), expected.end(), [&](const auto& p) {
             return p.second == docs[k];
           }) != expected.end();
       }
-      float current_recall = static_cast<float>(correct) / kTopK;
+      float current_recall = static_cast<float>(correct) / f.top_k;
       recall += current_recall;
     }
-    recall /= kQueries;
-    std::cout << "Recall: " << recall << std::endl;
+    recall /= f.query_vectors.size();
     ASSERT_GT(recall, .9f);
   };
 
+  // Mutable copy for consolidation re-mapping
+  auto& vectors = f.vectors;
+
   irs::IndexReaderOptions reader_opts;
   auto reader = irs::DirectoryReader{dir(), codec(), reader_opts};
-  ASSERT_EQ(kSegments, reader.size());
-  ASSERT_EQ(reader.docs_count(), kValuesPerSegment * kSegments);
-  check_recall(reader, all_vectors);
+  ASSERT_EQ(f.segments, reader.size());
+  ASSERT_EQ(reader.docs_count(), f.values_per_segment * f.segments);
+  check_recall(reader, vectors);
 
   ASSERT_TRUE(writer->Consolidate(
     irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount())));
   writer->Commit();
   reader = irs::DirectoryReader{dir(), codec(), reader_opts};
   ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(reader.docs_count(), kValuesPerSegment * kSegments);
-  std::transform(
-    all_vectors.begin(), all_vectors.end(), all_vectors.begin(), [](auto& p) {
-      auto [seg, doc] = irs::UnpackSegmentWithDoc(p.first);
-      return std::make_pair(
-        irs::PackSegmentWithDoc(0, doc + kValuesPerSegment * seg), p.second);
-    });
-  check_recall(reader, all_vectors);
+  ASSERT_EQ(reader.docs_count(), f.values_per_segment * f.segments);
+  std::transform(vectors.begin(), vectors.end(), vectors.begin(), [&](auto& p) {
+    auto [seg, doc] = irs::UnpackSegmentWithDoc(p.first);
+    return std::make_pair(
+      irs::PackSegmentWithDoc(0, doc + f.values_per_segment * seg), p.second);
+  });
+  check_recall(reader, vectors);
+}
+
+TEST_P(RangeSearchTest, hnsw_range_search_basic) {
+  constexpr std::string_view kColumnName = "vec"sv;
+  auto& f = feature();
+
+  irs::IndexWriterOptions writer_options;
+  writer_options.column_info = [&kColumnName, &f](std::string_view name) {
+    if (name == kColumnName) {
+      return irs::ColumnInfo{
+        .compression = irs::Type<irs::compression::None>::get(),
+        .options = {},
+        .track_prev_doc = false,
+        .value_type = irs::ValueType::VectorF32,
+        .hnsw_info =
+          irs::HNSWInfo{
+            .d = static_cast<int>(f.dim),
+            .metric = f.metric,
+          },
+      };
+    }
+    return irs::ColumnInfo{
+      irs::Type<irs::compression::None>::get(),
+      {},
+      false,
+    };
+  };
+
+  auto writer = open_writer(irs::kOmCreate, writer_options);
+
+  struct VectorField {
+    std::string_view name;
+    const std::vector<float>& data;
+    std::string_view Name() const { return name; }
+    bool Write(irs::DataOutput& out) const {
+      out.WriteBytes(reinterpret_cast<const irs::byte_type*>(data.data()),
+                     data.size() * sizeof(float));
+      return true;
+    }
+  };
+
+  std::vector<irs::IndexWriter::Transaction> trxs;
+  trxs.reserve(f.segments);
+
+  for (size_t seg = 0; seg < f.segments; ++seg) {
+    auto trx = writer->GetBatch();
+    for (size_t i = 0; i < f.values_per_segment; ++i) {
+      auto doc = trx.Insert();
+      const auto& vec = f.vectors[i + seg * f.values_per_segment];
+      VectorField vf{kColumnName, vec.second};
+      ASSERT_TRUE(doc.Insert<irs::Action::STORE>(vf));
+    }
+    trxs.push_back(std::move(trx));
+  }
+  for (auto& trx : trxs) {
+    trx.Commit();
+  }
+
+  ASSERT_TRUE(writer->Begin());
+  writer->Commit();
+  AssertSnapshotEquality(*writer);
+
+  auto check_range_results = [&](irs::DirectoryReader& reader,
+                                 const auto& vectors) {
+    faiss::SearchParametersHNSW params;
+    params.efSearch = 32;
+    float recall = .0f;
+
+    for (const auto& query : f.query_vectors) {
+      using bp = const irs::byte_type*;
+      const uint16_t d = static_cast<uint16_t>(f.dim);
+
+      std::vector<float> all_dists;
+      all_dists.reserve(vectors.size());
+      for (const auto& [packed_id, vec] : vectors) {
+        all_dists.push_back(irs::vector::L2Space<float, float, float>::Dist(
+          reinterpret_cast<bp>(query.data()), reinterpret_cast<bp>(vec.data()),
+          d));
+      }
+      std::sort(all_dists.begin(), all_dists.end());
+      const float radius = all_dists[all_dists.size() / 2];
+
+      std::vector<uint64_t> expected;
+      for (const auto& [packed_id, vec] : vectors) {
+        if (irs::vector::L2Space<float, float, float>::Dist(
+              reinterpret_cast<bp>(query.data()),
+              reinterpret_cast<bp>(vec.data()), d) < radius) {
+          expected.push_back(packed_id);
+        }
+      }
+
+      irs::HNSWRangeSearchInfo info{
+        reinterpret_cast<const irs::byte_type*>(query.data()),
+        radius,
+        params,
+      };
+      std::vector<float> dis;
+      std::vector<int64_t> ids;
+      reader.RangeSearch(kColumnName, info, dis, ids);
+
+      for (auto dist : dis) {
+        EXPECT_LT(dist, radius);
+      }
+
+      if (expected.empty()) {
+        continue;
+      }
+      size_t correct = 0;
+      for (auto id : ids) {
+        correct +=
+          std::find(expected.begin(), expected.end(), id) != expected.end();
+      }
+
+      float current_recall = static_cast<float>(correct) / expected.size();
+      recall += current_recall;
+    }
+
+    EXPECT_GT(recall, .9f);
+  };
+
+  // Mutable copy for consolidation re-mapping
+  auto& vectors = f.vectors;
+
+  irs::IndexReaderOptions reader_opts;
+  auto reader = irs::DirectoryReader{dir(), codec(), reader_opts};
+  ASSERT_EQ(f.segments, reader.size());
+  ASSERT_EQ(reader.docs_count(), f.values_per_segment * f.segments);
+  check_range_results(reader, vectors);
+
+  ASSERT_TRUE(writer->Consolidate(
+    irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount())));
+  writer->Commit();
+  reader = irs::DirectoryReader{dir(), codec(), reader_opts};
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(reader.docs_count(), f.values_per_segment * f.segments);
+  std::transform(vectors.begin(), vectors.end(), vectors.begin(), [&](auto& p) {
+    auto [seg, doc] = irs::UnpackSegmentWithDoc(p.first);
+    return std::make_pair(
+      irs::PackSegmentWithDoc(0, doc + f.values_per_segment * seg), p.second);
+  });
+  check_range_results(reader, vectors);
 }
 
 static const auto kTestFormats =
@@ -14717,3 +15000,27 @@ INSTANTIATE_TEST_SUITE_P(index_test_14, IndexTestCase14, kTestValues,
 
 INSTANTIATE_TEST_SUITE_P(index_test_15, IndexTestCase, kTestValues,
                          IndexTestCase::to_string);
+
+INSTANTIATE_TEST_SUITE_P(
+  BasicANNSearch, ANNSearchTest,
+  ::testing::Combine(
+    kTestDirs, kTestFormats,
+    ::testing::ValuesIn(std::vector<ANNSearchFeature>{
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L2, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::InnerProduct, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::Cosine, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L1, 10},
+    })),
+  ANNSearchTest::to_string);
+
+INSTANTIATE_TEST_SUITE_P(
+  BasicRangeSearch, RangeSearchTest,
+  ::testing::Combine(
+    kTestDirs, kTestFormats,
+    ::testing::ValuesIn(std::vector<RangeSearchFeature>{
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L2},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::InnerProduct},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::Cosine},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L1},
+    })),
+  RangeSearchTest::to_string);

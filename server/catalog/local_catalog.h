@@ -57,38 +57,40 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId schema_id, std::shared_ptr<View> view) final;
+  Result RegisterView(ObjectId schema_id,
+                      std::shared_ptr<PgSqlView> view) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
-                          std::shared_ptr<Function> function) final;
+                          std::shared_ptr<PgSqlFunction> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                            std::shared_ptr<Tokenizer> tokenizer) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
-                       CreateTableOptions table) final;
+                       std::shared_ptr<Table> table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
-
-  ResultOr<std::shared_ptr<Index>> RegisterIndex(
-    ObjectId database_id, ObjectId schema_id, ObjectId id, ObjectId relation_id,
-    IndexImplOptionsBaseWrapper&& impl_options) final;
+  Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                       std::shared_ptr<Index> index) final;
   Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<View> view, bool replace) final;
+                    std::shared_ptr<PgSqlView> view, bool replace) final;
   Result CreateSchema(ObjectId database_id,
                       std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
-                        std::shared_ptr<Function> function, bool replace) final;
+                        std::shared_ptr<PgSqlFunction> function,
+                        bool replace) final;
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
-
-  Result CreateIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view relation,
-                     std::vector<CreateIndexColumn>&& columns,
-                     IndexBaseOptions options, IndexShardOptions& shard_options,
-                     CreateIndexOperationOptions operation_options = {}) final;
-
+  Result CreateSecondaryIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
+    CreateIndexOperationOptions operation_options = {}) final;
+  Result CreateInvertedIndex(
+    ObjectId database_id, std::string_view schema, std::string_view relation,
+    std::string name, std::vector<CreateIndexColumn>&& columns,
+    IndexShardOptions& shard_options,
+    CreateIndexOperationOptions operation_options = {}) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
 
@@ -96,8 +98,16 @@ class LocalCatalog final : public LogicalCatalog,
                     std::string_view name, std::string_view new_name) final;
   Result RenameTable(ObjectId database_id, std::string_view schema,
                      std::string_view name, std::string_view new_name) final;
+  Result RenameIndex(ObjectId database_id, std::string_view schema,
+                     std::string_view name, std::string_view new_name) final;
+  Result RenameRelation(ObjectId database_id, std::string_view schema,
+                        std::string_view name, std::string_view new_name) final;
+  Result RenameFunction(ObjectId database_id, std::string_view schema,
+                        std::string_view name, std::string_view new_name) final;
+
   Result ChangeView(ObjectId database_id, std::string_view schema,
-                    std::string_view name, ChangeCallback<View> callback) final;
+                    std::string_view name,
+                    ChangeCallback<PgSqlView> callback) final;
   Result ChangeTable(ObjectId database_id, std::string_view schema,
                      std::string_view name,
                      ChangeCallback<Table> callback) final;
@@ -105,21 +115,22 @@ class LocalCatalog final : public LogicalCatalog,
 
   Result DropDatabase(std::string_view name) final;
   Result DropRole(std::string_view role) final;
-  Result DropSchema(ObjectId database_id, std::string_view name,
+  Result DropSchema(std::string_view database, std::string_view name,
                     bool cascade) final;
-  Result DropView(ObjectId database_id, std::string_view schema,
+  Result DropView(std::string_view database, std::string_view schema,
                   std::string_view name) final;
-  Result DropFunction(ObjectId database_id, std::string_view schema,
+  Result DropFunction(std::string_view database, std::string_view schema,
                       std::string_view name) final;
-  Result DropTokenizer(ObjectId database_id, std::string_view schema,
+  Result DropTokenizer(std::string_view database, std::string_view schema,
                        std::string_view name) final;
-
-  Result DropTable(ObjectId database_id, std::string_view schema,
+  Result DropTable(std::string_view database, std::string_view schema,
                    std::string_view name) final;
+  Result DropIndex(std::string_view database, std::string_view schema,
+                   std::string_view name) final;
+
   Result RemoveTombstone(ObjectId database_id, std::string_view schema,
                          std::string_view name) final;
-  Result DropIndex(ObjectId database_id, std::string_view schema,
-                   std::string_view name) final;
+
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
   bool GetSkipBackgroundErrors() const noexcept {
@@ -127,6 +138,14 @@ class LocalCatalog final : public LogicalCatalog,
   }
 
  private:
+  Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
+                         IndexShardOptions& shard_options,
+                         CreateIndexOperationOptions operation_options);
+
+  template<typename T>
+  Result RenameObjectImpl(ObjectId database_id, std::string_view schema,
+                          std::string_view name, std::string_view new_name);
+
   mutable absl::Mutex _mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;

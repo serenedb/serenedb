@@ -40,6 +40,7 @@ SELECT DATE '1969-07-14' + INTERVAL '48' month;
 1973-07-14 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' + INTERVAL '48' week;
 ----
@@ -61,12 +62,14 @@ SELECT DATE '1969-07-14' - INTERVAL '666' day;
 1967-09-17 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' + INTERVAL '666' hours;
 ----
 hours
 1969-07-14 00:11:06
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' - INTERVAL '666' hours;
 ----
@@ -74,6 +77,7 @@ hours
 1969-07-13 23:48:54
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' + INTERVAL '666' minutes;
 ----
@@ -81,6 +85,7 @@ minutes
 1969-07-14 00:11:06
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' - INTERVAL '666' minutes;
 ----
@@ -88,12 +93,14 @@ minutes
 1969-07-13 23:48:54
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' + INTERVAL '666' seconds;
 ----
 seconds
 1969-07-14 00:11:06
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' - INTERVAL '666' seconds;
 ----
@@ -101,6 +108,7 @@ seconds
 1969-07-13 23:48:54
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' + INTERVAL '666777' milliseconds;
 ----
@@ -108,6 +116,7 @@ milliseconds
 1969-07-21 17:12:57
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' - INTERVAL '666777' milliseconds;
 ----
@@ -115,12 +124,15 @@ milliseconds
 1969-07-06 06:47:03
 
 
+skipif serenedb
 query
 SELECT DATE '1969-07-14' + INTERVAL '1337666777' microseconds;
 ----
 microseconds
 2011-12-03 06:06:17
 
+
+skipif serenedb
 query
 SELECT DATE '1969-07-14' - INTERVAL '1337666777' microseconds;
 ----
@@ -156,6 +168,7 @@ SELECT DATE '1969-07-14' + INTERVAL '48 day 22 min';
 1969-08-31 00:22:00
 
 
+skipif serenedb
 query
 SELECT str::interval
 FROM (
@@ -577,6 +590,7 @@ kostya_bd
 2003-03-31 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '1-2' as kostya_bd;
 ----
@@ -584,6 +598,7 @@ kostya_bd
 2004-06-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '2-6' as kostya_bd;
 ----
@@ -591,6 +606,7 @@ kostya_bd
 2005-10-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '5-11' as kostya_bd;
 ----
@@ -598,6 +614,7 @@ kostya_bd
 2009-03-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '0-3' as kostya_bd;
 ----
@@ -605,6 +622,7 @@ kostya_bd
 2003-07-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '10-0' as kostya_bd;
 ----
@@ -612,6 +630,7 @@ kostya_bd
 2013-04-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-1-2' as kostya_bd;
 ----
@@ -619,6 +638,7 @@ kostya_bd
 2002-02-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-3-6' as kostya_bd;
 ----
@@ -626,6 +646,7 @@ kostya_bd
 1999-10-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-0-5' as kostya_bd;
 ----
@@ -633,6 +654,7 @@ kostya_bd
 2002-11-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '1 12:30:45' as kostya_bd;
 ----
@@ -640,6 +662,7 @@ kostya_bd
 2003-04-02 12:30:45
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '5 08:15:30' as kostya_bd;
 ----
@@ -647,6 +670,7 @@ kostya_bd
 2003-04-06 08:15:30
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '10 23:59:59' as kostya_bd;
 ----
@@ -654,6 +678,7 @@ kostya_bd
 2003-04-11 23:59:59
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '0 06:30:00' as kostya_bd;
 ----
@@ -661,6 +686,7 @@ kostya_bd
 2003-04-01 06:30:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '100 00:00:00' as kostya_bd;
 ----
@@ -668,6 +694,7 @@ kostya_bd
 2003-07-10 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-1 12:30:45' as kostya_bd;
 ----
@@ -675,6 +702,7 @@ kostya_bd
 2003-03-31 12:30:45
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-5 08:15:30' as kostya_bd;
 ----
@@ -682,6 +710,7 @@ kostya_bd
 2003-03-27 08:15:30
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-10 23:59:59' as kostya_bd;
 ----
@@ -689,6 +718,7 @@ kostya_bd
 2003-03-22 23:59:59
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-0 12:00:00' as kostya_bd;
 ----
@@ -696,6 +726,7 @@ kostya_bd
 2003-04-01 12:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '15 10:30:45.123456' as kostya_bd;
 ----
@@ -703,6 +734,7 @@ kostya_bd
 2003-04-16 10:30:45.123456
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '7 00:00:00.999999' as kostya_bd;
 ----
@@ -710,6 +742,7 @@ kostya_bd
 2003-04-08 00:00:00.999999
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '-3 06:30:15.555' as kostya_bd;
 ----
@@ -717,6 +750,7 @@ kostya_bd
 2003-03-29 06:30:15.555
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '1-6' YEAR TO MONTH as kostya_bd;
 ----
@@ -724,6 +758,7 @@ kostya_bd
 2004-10-01 00:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '3 04:05:06.777' DAY TO SECOND as kostya_bd;
 ----
@@ -731,6 +766,7 @@ kostya_bd
 2003-04-04 04:05:06.777
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '5 10:30:45' DAY TO MINUTE as kostya_bd;
 ----
@@ -738,6 +774,7 @@ kostya_bd
 2003-04-06 10:30:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '2 15:00:00' DAY TO HOUR as kostya_bd;
 ----
@@ -745,6 +782,7 @@ kostya_bd
 2003-04-03 15:00:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '08:30:45' HOUR TO SECOND as kostya_bd;
 ----
@@ -752,6 +790,7 @@ kostya_bd
 2003-04-01 08:30:45
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '12:45:00' HOUR TO MINUTE as kostya_bd;
 ----
@@ -759,6 +798,7 @@ kostya_bd
 2003-04-01 12:45:00
 
 
+skipif serenedb
 query
 SELECT DATE '2003-04-01' + INTERVAL '30:15' MINUTE TO SECOND as kostya_bd;
 ----
@@ -766,6 +806,7 @@ kostya_bd
 2003-04-01 00:30:15
 
 
+skipif serenedb
 query
 SELECT '123 mon 666 day 213312 microseconds'::interval::text;
 ----
@@ -1025,6 +1066,7 @@ minute
 30
 
 
+skipif serenedb
 query
 SELECT ROUND(EXTRACT(SECOND FROM TIMESTAMP '2003-04-01 12:30:45.123456'), 6) as second;
 ----
@@ -1032,6 +1074,7 @@ second
 45.123456
 
 
+skipif serenedb
 query
 SELECT ROUND(EXTRACT(SECOND FROM TIMESTAMP '1969-07-14 08:15:30.54322'), 4) as second;
 ----
@@ -1039,6 +1082,7 @@ second
 30.5432
 
 
+skipif serenedb
 query
 SELECT ROUND(EXTRACT(SECOND FROM INTERVAL '10 minutes 15.7575 seconds'), 4) as second;
 ----
@@ -1046,6 +1090,7 @@ second
 15.7575
 
 
+skipif serenedb
 query
 SELECT EXTRACT(MILLISECONDS FROM TIMESTAMP '2003-04-01 12:30:45.123456') as milliseconds;
 ----
@@ -1200,6 +1245,7 @@ minute
 30
 
 
+skipif serenedb
 query
 SELECT ROUND(EXTRACT(SECOND FROM INTERVAL '1 day 12:30:45.123456'), 5) as second;
 ----

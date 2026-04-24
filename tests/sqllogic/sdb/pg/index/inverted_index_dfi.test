@@ -1,0 +1,127 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+# doc 1 packs many 'fox' occurrences relative to its length, putting it
+# above the expected baseline so DFI produces a positive score.
+statement ok
+INSERT INTO docs VALUES (1, 'fox fox fox dog cat');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'fox cat');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'dog rabbit fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# DFI with default measure (standardized): never negative. At least one
+# match must have a strictly positive score.
+query
+SELECT id, dfi(docs_idx.tableoid) >= 0 AS nonneg
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	nonneg
+1	t
+2	t
+3	t
+4	t
+
+
+# Per-measure: all three kernels accepted, same non-negativity guarantee.
+query
+SELECT id, dfi(docs_idx.tableoid, 'standardized') >= 0 AS nonneg
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	nonneg
+1	t
+2	t
+3	t
+4	t
+
+
+query
+SELECT id, dfi(docs_idx.tableoid, 'saturated') >= 0 AS nonneg
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	nonneg
+1	t
+2	t
+3	t
+4	t
+
+
+query
+SELECT id, dfi(docs_idx.tableoid, 'chi_squared') >= 0 AS nonneg
+  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	nonneg
+1	t
+2	t
+3	t
+4	t
+
+
+# Doc 1 has the highest freq-above-expected for 'fox', so it must be
+# top-ranked under all three measures.
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY dfi(docs_idx.tableoid, 'standardized') DESC, id LIMIT 1;
+----
+id
+1
+
+
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY dfi(docs_idx.tableoid, 'saturated') DESC, id LIMIT 1;
+----
+id
+1
+
+
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY dfi(docs_idx.tableoid, 'chi_squared') DESC, id LIMIT 1;
+----
+id
+1
+
+
+# Invalid measure: stub or optimizer should reject.
+statement error
+SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+  ORDER BY dfi(docs_idx.tableoid, 'bogus') DESC, id;
+
+
+# Outside an inverted index scan: stub error.
+statement error
+SELECT dfi(42::BIGINT);

@@ -506,6 +506,72 @@ class SnapshotImpl : public Snapshot {
       .value_or(std::vector<std::shared_ptr<Index>>{});
   }
 
+  void VisitRelations(
+    ObjectId db_id, std::string_view schema,
+    absl::FunctionRef<void(const SchemaObject&)> visitor) const final {
+    auto schema_id =
+      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+    if (!schema_id) {
+      return;
+    }
+    for (const auto relation_id :
+         _resolution_table.GetRelationIds(*schema_id)) {
+      auto it = _objects.find(relation_id);
+      SDB_ASSERT(it != _objects.end());
+      visitor(basics::downCast<SchemaObject>(**it));
+    }
+  }
+
+  void VisitViews(
+    ObjectId db_id, std::string_view schema,
+    absl::FunctionRef<void(const PgSqlView&)> visitor) const final {
+    auto schema_id =
+      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+    if (!schema_id) {
+      return;
+    }
+    const auto& schema_deps = GetDependency<SchemaDependency>(*schema_id);
+    for (const auto view_id : schema_deps->views) {
+      auto it = _objects.find(view_id);
+      SDB_ASSERT(it != _objects.end());
+      visitor(basics::downCast<PgSqlView>(**it));
+    }
+  }
+
+  void VisitFunctions(
+    ObjectId db_id, std::string_view schema,
+    absl::FunctionRef<void(const PgSqlFunction&)> visitor) const final {
+    auto schema_id =
+      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+    if (!schema_id) {
+      return;
+    }
+    const auto& schema_deps = GetDependency<SchemaDependency>(*schema_id);
+    for (const auto function_id : schema_deps->functions) {
+      auto it = _objects.find(function_id);
+      SDB_ASSERT(it != _objects.end());
+      visitor(basics::downCast<PgSqlFunction>(**it));
+    }
+  }
+
+  void VisitIndexes(ObjectId db_id, std::string_view schema,
+                    absl::FunctionRef<void(const Index&)> visitor) const final {
+    auto schema_id =
+      _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema);
+    if (!schema_id) {
+      return;
+    }
+    const auto& schema_deps = GetDependency<SchemaDependency>(*schema_id);
+    for (const auto table_id : schema_deps->tables) {
+      const auto& table_deps = GetDependency<TableDependency>(table_id);
+      for (const auto index_id : table_deps->indexes) {
+        auto it = _objects.find(index_id);
+        SDB_ASSERT(it != _objects.end());
+        visitor(basics::downCast<Index>(**it));
+      }
+    }
+  }
+
   std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId db_id, std::string_view schema) const final {
     return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)

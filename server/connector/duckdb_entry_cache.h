@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
-#include <shared_mutex>
 
 #include "basics/containers/node_hash_map.h"
 #include "catalog/catalog.h"
@@ -31,7 +30,7 @@ namespace sdb::connector {
 
 // Hierarchical cache of DuckDB CatalogEntry objects.
 // Structure: databases[db_id] -> schemas[name] -> entries[name].
-// Lives on SnapshotImpl. Thread-safe via shared_mutex.
+// Lives on SnapshotImpl. Thread-safe.
 class DuckDBEntryCache {
  public:
   // Called by SereneDBCatalog::LookupSchema
@@ -98,19 +97,33 @@ class DuckDBEntryCache {
     //    (TABLE_ENTRY, the "FROM idx_name" scan wrapper) and a
     //    SereneDBIndexEntry (INDEX_ENTRY, for DROP INDEX / duckdb_indexes).
     using EntryMap =
-      containers::NodeHashMap<std::string,
+      containers::FlatHashMap<std::string,
                               duckdb::unique_ptr<duckdb::CatalogEntry>>;
     EntryMap tables;     // TABLE_ENTRY, VIEW_ENTRY
     EntryMap indexes;    // INDEX_ENTRY
     EntryMap functions;  // MACRO_ENTRY, TABLE_MACRO_ENTRY, *_FUNCTION_ENTRY
     EntryMap types;      // TYPE_ENTRY
+
+    auto& MapForType(this auto& self, duckdb::CatalogType t) {
+      switch (t) {
+        case duckdb::CatalogType::TABLE_ENTRY:
+        case duckdb::CatalogType::VIEW_ENTRY:
+          return self.tables;
+        case duckdb::CatalogType::INDEX_ENTRY:
+          return self.indexes;
+        case duckdb::CatalogType::TYPE_ENTRY:
+          return self.types;
+        default:
+          return self.functions;
+      }
+    }
   };
 
   struct DatabaseCache {
     containers::NodeHashMap<std::string, SchemaCache> schemas;
   };
 
-  mutable std::shared_mutex _lock;
+  mutable absl::Mutex _lock;
   containers::NodeHashMap<ObjectId, DatabaseCache> _databases;
 };
 

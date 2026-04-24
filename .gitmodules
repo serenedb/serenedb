@@ -126,3 +126,7 @@
 	path = third_party/curl
 	url = https://github.com/serenedb/curl.git
 	shallow = true
+[submodule "third_party/duckdb_httpfs"]
+	path = third_party/duckdb_httpfs
+	url = https://github.com/serenedb/duckdb-httpfs.git
+	shallow = true

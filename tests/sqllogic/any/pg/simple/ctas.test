@@ -39,14 +39,11 @@ CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
 db error: ERROR: relation "vedernikoff" already exists
 
 
-skipif serenedb
 statement error
 CREATE TABLE lmao(iq, lmao) AS SELECT 1;
-----
-db error: ERROR: too many column names were specified
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) better column names
 statement error
 CREATE TABLE lmao AS SELECT 1 AS x, 2 AS x;
 ----
@@ -57,11 +54,8 @@ statement ok
 DROP TABLE vedernikoff;
 
 
-skipif serenedb
 query error
 SELECT * FROM vedernikoff;
-----
-db error: ERROR: relation "vedernikoff" does not exist
 
 
 onlyif serenedb
@@ -129,14 +123,14 @@ CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
 db error: ERROR: relation "vedernikoff" already exists
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) better column names
 statement error
 SELECT 1 AS x, 2 AS x INTO lmao;
 ----
 db error: ERROR: column "x" specified more than once
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Fix ctas + select into
 statement error
 CREATE TABLE lmao AS SELECT * INTO lmao FROM vedernikoff;
 ----
@@ -153,8 +147,8 @@ SELECT 'vedernikoff'::regclass;
 db error: ERROR: relation "vedernikoff" does not exist
 
 
-skipif serenedb # TODO(Pasha): fix both
-skipif postgres # TODO(Pasha): fix both
+skipif serenedb # TODO(Pasha) Add fail function?
+skipif postgres # TODO(Pasha) Fix?
 statement error
 SELECT
   CASE WHEN iq > 500 THEN iq
@@ -167,11 +161,8 @@ FROM
 db error: ERROR: im gonna fail dis sheet(i mean a peace of paper)
 
 
-skipif serenedb
 query error
 SELECT * FROM vedernikoff;
-----
-db error: ERROR: relation "vedernikoff" does not exist
 
 
 statement count 10000

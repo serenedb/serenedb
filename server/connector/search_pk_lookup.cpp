@@ -52,7 +52,7 @@ std::optional<irs::bytes_view> LookupPkForPackedId(
 }
 
 bool OpenSegmentPkIterator(const irs::SubReader& segment,
-                                  SegmentPkIterator& out) {
+                           SegmentPkIterator& out) {
   out.reset();
   const auto* pk_col = segment.column(kPkFieldName);
   if (!pk_col) {

@@ -8725,59 +8725,59 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_large_slop) {
 }
 
 TEST(SlopDistanceTest, compute_slop_distance) {
-  { // exact adjacent: 0
+  {  // exact adjacent: 0
     irs::PosAttr::value_t p[] = {1, 2};
     ASSERT_EQ(0, irs::ComputeSlopDistance(p, 2));
   }
-  { // exact adjacent 3 terms: 0
+  {  // exact adjacent 3 terms: 0
     irs::PosAttr::value_t p[] = {1, 2, 3};
     ASSERT_EQ(0, irs::ComputeSlopDistance(p, 3));
   }
-  { // forward gap 1: 1
+  {  // forward gap 1: 1
     irs::PosAttr::value_t p[] = {1, 3};
     ASSERT_EQ(1, irs::ComputeSlopDistance(p, 2));
   }
-  { // forward gap 5: 5
+  {  // forward gap 5: 5
     irs::PosAttr::value_t p[] = {2, 8};
     ASSERT_EQ(5, irs::ComputeSlopDistance(p, 2));
   }
-  { // swap adjacent: 2
+  {  // swap adjacent: 2
     irs::PosAttr::value_t p[] = {2, 1};
     ASSERT_EQ(2, irs::ComputeSlopDistance(p, 2));
   }
-  { // swap with gap: 4
+  {  // swap with gap: 4
     irs::PosAttr::value_t p[] = {4, 1};
     ASSERT_EQ(4, irs::ComputeSlopDistance(p, 2));
   }
-  { // same position: 0
+  {  // same position: 0
     irs::PosAttr::value_t p[] = {3, 3};
     ASSERT_EQ(0, irs::ComputeSlopDistance(p, 2));
   }
-  { // 3 terms, gap first pair: 1
+  {  // 3 terms, gap first pair: 1
     irs::PosAttr::value_t p[] = {1, 3, 4};
     ASSERT_EQ(1, irs::ComputeSlopDistance(p, 3));
   }
-  { // 3 terms, gap second pair: 1
+  {  // 3 terms, gap second pair: 1
     irs::PosAttr::value_t p[] = {1, 2, 4};
     ASSERT_EQ(1, irs::ComputeSlopDistance(p, 3));
   }
-  { // 3 terms, distributed: 2
+  {  // 3 terms, distributed: 2
     irs::PosAttr::value_t p[] = {1, 3, 5};
     ASSERT_EQ(2, irs::ComputeSlopDistance(p, 3));
   }
-  { // 3 terms, full reversal: 4
+  {  // 3 terms, full reversal: 4
     irs::PosAttr::value_t p[] = {3, 2, 1};
     ASSERT_EQ(4, irs::ComputeSlopDistance(p, 3));
   }
-  { // 3 terms, partial reversal: 3
+  {  // 3 terms, partial reversal: 3
     irs::PosAttr::value_t p[] = {2, 1, 3};
     ASSERT_EQ(3, irs::ComputeSlopDistance(p, 3));
   }
-  { // 4 terms, exact: 0
+  {  // 4 terms, exact: 0
     irs::PosAttr::value_t p[] = {5, 6, 7, 8};
     ASSERT_EQ(0, irs::ComputeSlopDistance(p, 4));
   }
-  { // 4 terms, mixed: 6
+  {  // 4 terms, mixed: 6
     irs::PosAttr::value_t p[] = {1, 4, 3, 6};
     ASSERT_EQ(6, irs::ComputeSlopDistance(p, 4));
   }
@@ -9197,11 +9197,13 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_range) {
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("X3", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ("X3",
+              irs::ToString<std::string_view>(actual_value->value.data()));
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
-    ASSERT_EQ("X4", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_EQ("X4",
+              irs::ToString<std::string_view>(actual_value->value.data()));
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
@@ -9276,8 +9278,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_two_segments) {
 
       while (docs->next()) {
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
-        auto name =
-          irs::ToString<std::string_view>(actual_value->value.data());
+        auto name = irs::ToString<std::string_view>(actual_value->value.data());
         ASSERT_TRUE(name == "A" || name == "G" || name == "I" || name == "S")
           << "unexpected doc: " << name;
         ++total;

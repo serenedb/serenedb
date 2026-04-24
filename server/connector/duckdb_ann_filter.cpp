@@ -70,12 +70,22 @@ void InitAnnFilter(
 }
 
 bool ANNFilter::is_member(faiss::idx_t id) const {
-  auto val = LookupPkForPackedId(_reader, static_cast<int64_t>(id));
-
-  if (!val) {
+  auto [seg_id, doc_id] = irs::UnpackSegmentWithDoc(id);
+  if (_it_segment_id != seg_id || !_it.iter) {
+    if (!OpenSegmentPkIterator(_reader[seg_id], _it)) {
+      return false;
+    }
+    _it_segment_id = seg_id;
+  } else if (_it.iter->value() > doc_id) {
+    _it.iter->reset();
+  }
+  if (_it.iter->seek(doc_id) != doc_id) {
     return false;
   }
-  std::string_view pk{reinterpret_cast<const char*>(val->data()), val->size()};
+
+  auto val = _it.value->value;
+
+  std::string_view pk{reinterpret_cast<const char*>(val.data()), val.size()};
 
   _scratch.Reset();
   std::array<std::string_view, 1> pks{pk};

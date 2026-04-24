@@ -22,35 +22,6 @@
 
 namespace sdb::connector {
 
-std::optional<irs::bytes_view> LookupPkForDoc(const irs::SubReader& segment,
-                                              irs::doc_id_t doc_id) {
-  const auto* pk_col = segment.column(kPkFieldName);
-  if (!pk_col) {
-    return std::nullopt;
-  }
-  auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-  if (!pk_iter) {
-    return std::nullopt;
-  }
-  const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-  if (!pk_val) {
-    return std::nullopt;
-  }
-  if (pk_iter->seek(doc_id) != doc_id) {
-    return std::nullopt;
-  }
-  return pk_val->value;
-}
-
-std::optional<irs::bytes_view> LookupPkForPackedId(
-  const irs::IndexReader& reader, uint64_t packed_id) {
-  auto [seg_id, doc_id] = irs::UnpackSegmentWithDoc(packed_id);
-  if (seg_id >= reader.size()) {
-    return std::nullopt;
-  }
-  return LookupPkForDoc(reader[seg_id], doc_id);
-}
-
 bool OpenSegmentPkIterator(const irs::SubReader& segment,
                            SegmentPkIterator& out) {
   out.reset();

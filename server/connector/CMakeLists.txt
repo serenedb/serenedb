@@ -49,7 +49,6 @@ add_library(
     duckdb_vacuum_function.cpp
     duckdb_physical_delete.cpp
     duckdb_physical_update.cpp
-    duckdb_physical_search.cpp
     duckdb_transaction.cpp
 )
 

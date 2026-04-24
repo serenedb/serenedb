@@ -24,8 +24,10 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <limits>
 
 #include "connector/row_materializer.h"
+#include "connector/search_pk_lookup.h"
 
 namespace sdb::connector {
 
@@ -45,6 +47,10 @@ class ANNFilter final : public faiss::IDSelector {
   mutable duckdb::ExpressionExecutor _executor;
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
+  // TODO(codeworse): Will be erased, because filter should be per-segment
+  // using parallel index execution
+  mutable SegmentPkIterator _it;
+  mutable uint32_t _it_segment_id = std::numeric_limits<uint32_t>::max();
 };
 
 void InitAnnFilter(

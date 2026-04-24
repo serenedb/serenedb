@@ -24,6 +24,7 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <ranges>
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
@@ -63,15 +64,19 @@ void RangeSearchImpl(SearchRangeScanGlobalState& state,
   };
   info.params.sel = state.filter.get();
   reader.RangeSearch(state.scan->field_name, info, dis, ids);
-  state.pk_bytes.reserve(ids.size());
-  for (auto id : ids) {
-    auto val = LookupPkForPackedId(reader, static_cast<uint64_t>(id));
-    if (!val) {
-      continue;
-    }
-    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val->data()),
-                                val->size());
-  }
+
+  auto segments =
+    ids | std::views::transform([](int64_t id) {
+      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
+    });
+  auto doc_ids =
+    ids | std::views::transform([](int64_t id) {
+      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
+    });
+
+  state.pk_bytes.assign(ids.size(), std::string{});
+  LookupSegmentsValues(segments, doc_ids, reader, state.pk_bytes);
+  std::erase_if(state.pk_bytes, [](const auto& pk) { return pk.empty(); });
 }
 
 }  // namespace

@@ -26,6 +26,7 @@
 #include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <limits>
+#include <ranges>
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
@@ -71,18 +72,22 @@ void ANNSearchImpl(SearchAnnScanGlobalState& state,
   info.params.sel = state.filter.get();
   reader.Search(state.scan->field_name, info, dis.data(), ids.data());
 
-  state.pk_bytes.reserve(top_k);
-  for (size_t i = 0; i < top_k; ++i) {
-    if (ids[i] == -1) {
-      continue;
-    }
-    auto val = LookupPkForPackedId(reader, static_cast<uint64_t>(ids[i]));
-    if (!val) {
-      continue;
-    }
-    state.pk_bytes.emplace_back(reinterpret_cast<const char*>(val->data()),
-                                val->size());
-  }
+  auto new_end = std::remove(ids.begin(), ids.end(), int64_t{-1});
+  const size_t n = static_cast<size_t>(new_end - ids.begin());
+  ids.resize(n);
+
+  auto segments =
+    ids | std::views::transform([](int64_t id) {
+      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
+    });
+  auto doc_ids =
+    ids | std::views::transform([](int64_t id) {
+      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
+    });
+
+  state.pk_bytes.assign(n, std::string{});
+  LookupSegmentsValues(segments, doc_ids, reader, state.pk_bytes);
+  std::erase_if(state.pk_bytes, [](const auto& pk) { return pk.empty(); });
 }
 
 }  // namespace

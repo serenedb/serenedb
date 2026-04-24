@@ -35,6 +35,8 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <iresearch/utils/string.hpp>
+#include <ranges>
+#include <span>
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
@@ -45,6 +47,7 @@
 #include "connector/key_utils.hpp"
 #include "connector/rocksdb_row_materializer.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -391,19 +394,34 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       }
       collector.Finalize();
 
+      size_t valid = 0;
       for (size_t i = 0; i < k; ++i) {
-        auto& sd = hits[i];
+        const auto& sd = hits[i];
         if (irs::doc_limits::eof(sd.doc) || sd.segment_idx >= reader.size()) {
           break;
         }
-        auto pk_view = LookupPkForDoc(reader[sd.segment_idx], sd.doc);
-        if (!pk_view) {
-          continue;
-        }
-        gstate.topk_hits.emplace_back(
-          sd.score, std::string(reinterpret_cast<const char*>(pk_view->data()),
-                                pk_view->size()));
+        ++valid;
       }
+
+      auto valid_hits = std::span<const irs::ScoreDoc>{hits.data(), valid};
+      auto segments =
+        valid_hits | std::views::transform(
+                       [](const irs::ScoreDoc& sd) { return sd.segment_idx; });
+      auto doc_ids =
+        valid_hits |
+        std::views::transform([](const irs::ScoreDoc& sd) { return sd.doc; });
+
+      gstate.topk_hits.resize(valid);
+      for (size_t i = 0; i < valid; ++i) {
+        gstate.topk_hits[i].first = valid_hits[i].score;
+      }
+      auto pk_view =
+        gstate.topk_hits |
+        std::views::transform([](auto& p) -> std::string& { return p.second; });
+      LookupSegmentsValues(segments, doc_ids, reader, pk_view);
+      std::erase_if(gstate.topk_hits,
+                    [](const auto& p) { return p.second.empty(); });
+
       gstate.topk_executed = true;
     }
 

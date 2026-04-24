@@ -20,6 +20,7 @@ export const ConsoleSidebarPinned: React.FC = () => {
         <Explorer
             initialData={pinnedExplorerNodes}
             isDataFetched={true}
+            sidebarSectionId="pinned"
             enablePinning
             isNodePinned={isNodePinned}
             onTogglePinned={togglePinnedNode}

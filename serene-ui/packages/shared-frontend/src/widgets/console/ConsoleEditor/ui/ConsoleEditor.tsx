@@ -663,7 +663,10 @@ export const ConsoleEditor: FC = () => {
     }, [api, selectRelatedResultOnTabChange]);
 
     return (
-        <div ref={containerRef} className="relative flex h-dvh w-full flex-col">
+        <div
+            ref={containerRef}
+            className="relative flex h-dvh w-full flex-col"
+            data-console-editor-root="true">
             <ConsoleEditorTopbar />
             <div className="flex-1 min-h-0">
                 <DockviewReact

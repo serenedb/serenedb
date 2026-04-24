@@ -5,12 +5,23 @@ import {
     Orientation,
 } from "dockview";
 import { ConsoleSidebar } from "../../ConsoleSidebar";
-import { useDockviewLayoutSync } from "../../../../shared/hooks";
+import {
+    useDockviewLayoutSync,
+    useSidebarFocusController,
+} from "../../../../shared/hooks";
+import {
+    DEFAULT_HOTKEYS,
+    useAppHotkey,
+} from "../../../../shared/hotkeys";
+import { focusAdjacentConsoleEditorGroup } from "../../ConsoleEditor/model";
 import { ConsoleMainArea } from "./ConsoleMainArea";
 import {
+    CONSOLE_EDITOR_ROOT_SELECTOR,
     CONSOLE_MAIN_AREA_MIN_WIDTH,
     CONSOLE_GRID_EDITOR_PANEL_ID,
     CONSOLE_GRID_SIDEBAR_PANEL_ID,
+    CONSOLE_SIDEBAR_ROOT_SELECTOR,
+    CONSOLE_SIDEBAR_SECTION_IDS,
     CONSOLE_SIDEBAR_MIN_SIZE,
     CONSOLE_SIDEBAR_SIZE,
     ConsoleProvider,
@@ -76,10 +87,23 @@ const ensureSidebarPanel = (event: GridviewReadyEvent) => {
 };
 
 const ConsoleLayout: React.FC = () => {
-    const { sidebarCollapsed, setSidebarCollapsed } = useConsole();
+    const { consoleEditorApi, sidebarCollapsed, setSidebarCollapsed } =
+        useConsole();
     const gridEventRef = useRef<GridviewReadyEvent | null>(null);
     const [api, setApi] = React.useState<GridviewReadyEvent["api"]>();
     const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
+    const {
+        focusLastEditor,
+        focusNextSidebarSection,
+        focusPreviousSidebarSection,
+        focusSidebar,
+        isSidebarFocused,
+        restoreSidebarFocusAfterRender,
+    } = useSidebarFocusController({
+        sidebarRootSelector: CONSOLE_SIDEBAR_ROOT_SELECTOR,
+        editorRootSelectors: [CONSOLE_EDITOR_ROOT_SELECTOR],
+        sectionOrder: [...CONSOLE_SIDEBAR_SECTION_IDS],
+    });
     const components = React.useMemo(() => {
         return {
             sidebar: () => {
@@ -150,6 +174,77 @@ const ConsoleLayout: React.FC = () => {
 
         return () => disposable.dispose();
     }, [api, sidebarCollapsed, setSidebarCollapsed]);
+
+    const handleToggleSidebarFocus = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            setSidebarCollapsed(true);
+
+            if (typeof window === "undefined") {
+                focusLastEditor();
+                return;
+            }
+
+            window.requestAnimationFrame(() => {
+                focusLastEditor();
+            });
+            return;
+        }
+
+        if (sidebarCollapsed) {
+            setSidebarCollapsed(false);
+            restoreSidebarFocusAfterRender();
+            return;
+        }
+
+        if (!focusSidebar()) {
+            restoreSidebarFocusAfterRender();
+        }
+    }, [
+        focusLastEditor,
+        focusSidebar,
+        isSidebarFocused,
+        restoreSidebarFocusAfterRender,
+        setSidebarCollapsed,
+        sidebarCollapsed,
+    ]);
+
+    const handleFocusDown = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            focusNextSidebarSection();
+            return;
+        }
+
+        if (consoleEditorApi) {
+            focusAdjacentConsoleEditorGroup(consoleEditorApi, "down");
+        }
+    }, [consoleEditorApi, focusNextSidebarSection, isSidebarFocused]);
+
+    const handleFocusUp = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            focusPreviousSidebarSection();
+            return;
+        }
+
+        if (consoleEditorApi) {
+            focusAdjacentConsoleEditorGroup(consoleEditorApi, "up");
+        }
+    }, [consoleEditorApi, focusPreviousSidebarSection, isSidebarFocused]);
+
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_TOGGLE_EXPLORER_EDITOR,
+        handleToggleSidebarFocus,
+        [handleToggleSidebarFocus],
+    );
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_DOWN,
+        handleFocusDown,
+        [handleFocusDown],
+    );
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_UP,
+        handleFocusUp,
+        [handleFocusUp],
+    );
 
     useLayoutEffect(() => {
         const event = gridEventRef.current;

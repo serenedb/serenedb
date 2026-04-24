@@ -50,3 +50,11 @@ export const CONSOLE_RIGHT_SIDEBAR_SIZE = 300;
 export const CONSOLE_RIGHT_SIDEBAR_MIN_SIZE = 300;
 export const CONSOLE_EDITOR_MIN_WIDTH = 720;
 export const CONSOLE_MAIN_AREA_MIN_WIDTH = 1020;
+
+export const CONSOLE_SIDEBAR_ROOT_SELECTOR = "[data-console-sidebar-root='true']";
+export const CONSOLE_EDITOR_ROOT_SELECTOR = "[data-console-editor-root='true']";
+export const CONSOLE_SIDEBAR_SECTION_IDS = [
+    "pinned",
+    "entities",
+    "savedQueries",
+] as const;

@@ -176,7 +176,7 @@ const focusGroup = (group: DockviewGroupPanel) => {
     group.focus();
 };
 
-const focusAdjacentGroup = (
+export const focusAdjacentConsoleEditorGroup = (
     api: DockviewApi,
     direction: ConsoleEditorDirection,
 ) => {
@@ -259,28 +259,12 @@ export const useConsoleEditorHotkeys = (api?: DockviewApi) => {
         api?.activePanel?.api.close();
     }, [api]);
 
-    const handleFocusDown = useCallback(() => {
-        if (!api) {
-            return;
-        }
-
-        focusAdjacentGroup(api, "down");
-    }, [api]);
-
-    const handleFocusUp = useCallback(() => {
-        if (!api) {
-            return;
-        }
-
-        focusAdjacentGroup(api, "up");
-    }, [api]);
-
     const handleFocusLeft = useCallback(() => {
         if (!api) {
             return;
         }
 
-        focusAdjacentGroup(api, "left");
+        focusAdjacentConsoleEditorGroup(api, "left");
     }, [api]);
 
     const handleFocusRight = useCallback(() => {
@@ -288,7 +272,7 @@ export const useConsoleEditorHotkeys = (api?: DockviewApi) => {
             return;
         }
 
-        focusAdjacentGroup(api, "right");
+        focusAdjacentConsoleEditorGroup(api, "right");
     }, [api]);
 
     useAppHotkey(
@@ -306,16 +290,6 @@ export const useConsoleEditorHotkeys = (api?: DockviewApi) => {
         DEFAULT_HOTKEYS.CONSOLE_CLOSE_TAB,
         handleCloseTab,
         [handleCloseTab],
-    );
-    useAppHotkey(
-        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_DOWN,
-        handleFocusDown,
-        [handleFocusDown],
-    );
-    useAppHotkey(
-        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_UP,
-        handleFocusUp,
-        [handleFocusUp],
     );
     useAppHotkey(
         DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_LEFT,

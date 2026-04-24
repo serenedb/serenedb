@@ -378,12 +378,12 @@ irs::ByPhrase& AddPhraseFilter(Filter& root, catalog::Column::Id column,
 }
 
 template<typename Filter>
-irs::WildcardFilter& AddWildcardNgramFilter(Filter& root,
-                                            catalog::Column::Id column,
-                                            std::string_view pattern,
-                                            bool has_positions) {
+irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root,
+                                             catalog::Column::Id column,
+                                             std::string_view pattern,
+                                             bool has_positions) {
   auto column_analyzer = WildcardAnalyzerProvider(column);
-  auto& wf = AddFilter<irs::WildcardFilter>(root);
+  auto& wf = AddFilter<irs::ByWildcardNgram>(root);
   *wf.mutable_field() = MakeFieldName<std::string_view>(column);
   *wf.mutable_options() = {pattern,
                            basics::downCast<irs::analysis::WildcardAnalyzer>(

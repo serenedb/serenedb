@@ -407,7 +407,12 @@ void DuckDBEntryCache::ScanEntries(
                  .first->second;
     auto& map = sc.MapForType(type);
     for (const auto* p : missing) {
-      auto [it, _] = map.try_emplace(p->GetName());
+      auto it = map.try_emplace(p->GetName()).first;
+      irs::Finally drop_if_null = [&] noexcept {
+        if (!it->second) {
+          map.erase(it);
+        }
+      };
       if (!it->second) {
         it->second = BuildEntry(type, catalog, sc.entry, database, schema,
                                 p->GetName(), snapshot);

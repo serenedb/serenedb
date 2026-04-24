@@ -117,6 +117,21 @@ struct Snapshot {
   virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const = 0;
 
+  // Allocation-free iteration over schema objects. Use these when the caller
+  // can process each item inline and only needs to buffer the misses.
+  virtual void VisitRelations(
+    ObjectId database, std::string_view schema,
+    absl::FunctionRef<void(const SchemaObject&)> visitor) const = 0;
+  virtual void VisitViews(
+    ObjectId database, std::string_view schema,
+    absl::FunctionRef<void(const PgSqlView&)> visitor) const = 0;
+  virtual void VisitFunctions(
+    ObjectId database, std::string_view schema,
+    absl::FunctionRef<void(const PgSqlFunction&)> visitor) const = 0;
+  virtual void VisitIndexes(
+    ObjectId database, std::string_view schema,
+    absl::FunctionRef<void(const Index&)> visitor) const = 0;
+
   virtual std::shared_ptr<Role> GetRole(std::string_view name) const = 0;
   virtual std::shared_ptr<Database> GetDatabase(
     std::string_view database) const = 0;

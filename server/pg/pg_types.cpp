@@ -36,9 +36,11 @@
 #include "catalog/virtual_table.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
 #include "pg/parse_array.h"
 #include "pg/serialize.h"
 #include "pg/sql_collector.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/system_catalog.h"
 
 namespace sdb::pg {
@@ -237,8 +239,8 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
           obj && obj->GetType() == catalog::ObjectType::PgSqlType) {
         return basics::downCast<catalog::PgSqlType>(obj)->GetLogicalType();
       }
-      SDB_ASSERT(false);
-      return {};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                      ERR_MSG("cache lookup failed for type ", oid));
     }
   }
 }

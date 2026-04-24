@@ -23,7 +23,6 @@
 #include <vpack/vpack_helper.h>
 
 #include <duckdb/common/extension_type_info.hpp>
-#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>

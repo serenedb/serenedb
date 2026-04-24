@@ -685,7 +685,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
     if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
       return nullptr;
     }
-    throw duckdb::CatalogException("type \"%s\" already exists", info.name);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("type \"", info.name, "\" already exists"));
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));

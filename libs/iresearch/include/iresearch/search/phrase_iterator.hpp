@@ -46,6 +46,13 @@ class PhrasePosition final : public PosAttr, public Frequency {
     std::tie(_start, _end) = this->GetOffsets();
   }
 
+  explicit PhrasePosition(
+    std::vector<typename Frequency::TermPosition>&& pos,
+    PosAttr::value_t max_slop) noexcept
+    : Frequency{std::move(pos), max_slop} {
+    std::tie(_start, _end) = this->GetOffsets();
+  }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return type == irs::Type<OffsAttr>::id() ? &_offset : nullptr;
   }
@@ -582,6 +589,16 @@ class SlopPhraseFrequency {
   }
 
  private:
+  friend class PhrasePosition<SlopPhraseFrequency>;
+ 
+  std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
+    return {&_start_offset, &_end_offset};
+  }
+ 
+  uint32_t NextPosition() {
+    return 0;
+  }
+  
   void MatchImpl() {
     const auto count = _pos.size();
 
@@ -628,6 +645,30 @@ class SlopPhraseFrequency {
           ++_phrase_freq;
           if (distance < _best_distance) {
             _best_distance = distance;
+            if constexpr (Offs) {
+              // find leftmost/rightmost positions for byte offsets
+              size_t left_idx = 0;
+              size_t right_idx = 0;
+              auto left_pos = _pos[0].first->value();
+              auto right_pos = left_pos;
+              for (size_t k = 1; k < count; ++k) {
+                auto p = _pos[k].first->value();
+                if (p < left_pos) {
+                  left_pos = p;
+                  left_idx = k;
+                }
+                if (p > right_pos) {
+                  right_pos = p;
+                  right_idx = k;
+                }
+              }
+              auto* start_attr = irs::get<OffsAttr>(*_pos[left_idx].first);
+              auto* end_attr = irs::get<OffsAttr>(*_pos[right_idx].first);
+              if (start_attr && end_attr) {
+                _start_offset = start_attr->start;
+                _end_offset = end_attr->end;
+              }
+            }
           }
         }
       }
@@ -642,6 +683,8 @@ class SlopPhraseFrequency {
   PosAttr::value_t _max_slop;
   uint32_t _phrase_freq = 0;
   PosAttr::value_t _best_distance = 0;
+  uint32_t _start_offset{0};
+  uint32_t _end_offset{0};
 };
 
 // Adapter to use DocIterator with positions for disjunction
@@ -1252,8 +1295,8 @@ class PhraseIterator : public DocIterator {
                  std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
                  const FieldProperties& field, const byte_type* stats,
                  score_t boost)
-    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
-                     max_slop} {
+    : PhraseIterator{docs_count, std::forward<Adapters>(itrs),
+                     std::move(pos), max_slop} {
     _stats = stats;
     _boost = boost;
     _field = field;

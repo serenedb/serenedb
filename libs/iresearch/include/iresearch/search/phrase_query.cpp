@@ -135,6 +135,54 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     return DocIterator::empty();
   }
 
+  if (this->slop > 0) {
+    auto* reader = phrase_state->reader;
+    SDB_ASSERT(reader);
+ 
+    if (kRequireOffs != (reader->meta().index_features & kRequireOffs)) {
+      return DocIterator::empty();
+    }
+ 
+    using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<true>>>;
+    using SlopIterator = PhraseIterator<
+      Conjunction<Adapter>,
+      PhrasePosition<SlopPhraseFrequency<true>>>;
+ 
+    std::vector<Adapter> itrs;
+    itrs.reserve(phrase_state->terms.size());
+ 
+    std::vector<typename SlopIterator::TermPosition> positions;
+    positions.reserve(phrase_state->terms.size());
+ 
+    auto position = std::begin(this->positions);
+ 
+    // request offsets from ALL iterators - with reordering any
+    // term could be leftmost/rightmost in the document
+    for (const auto& term_state : phrase_state->terms) {
+      SDB_ASSERT(term_state.first);
+ 
+      auto docs =
+        reader->Iterator(kRequireOffs, {.cookie = term_state.first.get()});
+      if (!docs) [[unlikely]] {
+        return DocIterator::empty();
+      }
+      auto* pos = irs::GetMutable<PosAttr>(docs.get());
+      if (!pos) [[unlikely]] {
+        return DocIterator::empty();
+      }
+      if (!irs::get<OffsAttr>(*pos)) [[unlikely]] {
+        return DocIterator::empty();
+      }
+      itrs.emplace_back(std::move(docs));
+      positions.emplace_back(
+        sdb::basics::downCast<FixedTermPositionImpl<true>>(pos), *position++);
+    }
+ 
+    return memory::make_managed<SlopIterator>(
+      static_cast<doc_id_t>(segment.docs_count()), std::move(itrs),
+      std::move(positions), this->slop);
+  }
+
   const bool has_intervals = absl::c_any_of(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });

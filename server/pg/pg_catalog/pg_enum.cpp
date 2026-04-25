@@ -46,7 +46,8 @@ catalog::MaterializedData SystemTableSnapshot<PgEnum>::GetTableData() {
   // outlives this call, but string_t::GetData() on a non-inlined label points
   // into that storage -- we keep Name wrapping a string_view into it.
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
-    for (const auto& type : snapshot->GetTypes(database_id, schema->GetName())) {
+    for (const auto& type :
+         snapshot->GetTypes(database_id, schema->GetName())) {
       const auto& info = type->GetInfo();
       if (info.type.id() != duckdb::LogicalTypeId::ENUM) {
         continue;

@@ -21,7 +21,7 @@ declare -A defaults=(
 	[single_port]=''
 	[single_port_ssl]=''
 	[cluster_port]=''
-	[engines]='pg-wire-simple'
+	[engines]='pg-wire-simple,pg-wire-extended'
 	[test]='./tests/sqllogic/sdb/**/*.test*'
 	[junit]='./out/sqllogic-tests'
 	[runner]='./third_party/sqllogictest-rs'
@@ -74,6 +74,22 @@ cleanup_minio() {
 	fi
 }
 
+# Sweep containers from previous runs whose owning bash PID is gone (SIGKILL,
+# host crash, etc.). Container names are `<prefix>-serenedb-test-minio-<pid>`,
+# so we trust the trailing PID and skip live runs by checking kill -0.
+sweep_stale_minio() {
+	local names c owner_pid
+	names=$(docker ps -a --format '{{.Names}}' --filter 'name=serenedb-test-minio-' 2>/dev/null) || return 0
+	[[ -z "$names" ]] && return 0
+	while IFS= read -r c; do
+		owner_pid="${c##*-}"
+		if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+			echo "Removing stale MinIO container from dead PID $owner_pid: $c"
+			docker rm -fv "$c" >/dev/null 2>&1 || true
+		fi
+	done <<<"$names"
+}
+
 cleanup_cancel_pid() {
 	if [[ -n "$cancel_pid" ]]; then
 		local pid="$cancel_pid"
@@ -97,6 +113,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 launch_s3() {
+	sweep_stale_minio
 	PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio-${USER:-$(id -un)}.log"
 	MINIO_CONTAINER_NAME="${PREFIX}-serenedb-test-minio-$$"
@@ -124,14 +141,22 @@ launch_s3() {
 		-e "MINIO_ROOT_PASSWORD=$MINIO_SECRET_KEY" \
 		minio/minio:latest server /data
 
+	# Probe MinIO directly from inside the container. A TCP probe on the host
+	# port races with Docker's port forwarder -- the proxy accepts the TCP
+	# connection before MinIO has bound port 9000, so the probe falsely
+	# reports ready and the subsequent `mc` calls fail silently. `mc alias
+	# set` actually round-trips to the API and also leaves the alias
+	# configured for the bucket creation below.
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do
-		if bash -c "echo > /dev/tcp/${MINIO_HOST}/${MINIO_PORT}" 2>/dev/null; then
+		if docker exec "$MINIO_CONTAINER_NAME" \
+			mc alias set local http://localhost:9000 \
+			"$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1; then
 			echo "MinIO is ready."
 			break
 		fi
 		if [[ $i -eq 30 ]]; then
-			echo "ERROR: MinIO failed to start within 30 seconds"
+			echo "ERROR: MinIO failed to start within 30 seconds" >&2
 			exit 1
 		fi
 		sleep 1
@@ -139,9 +164,7 @@ launch_s3() {
 
 	echo "Creating bucket '$MINIO_BUCKET'..."
 	docker exec "$MINIO_CONTAINER_NAME" \
-		mc alias set local http://localhost:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1
-	docker exec "$MINIO_CONTAINER_NAME" \
-		mc mb "local/$MINIO_BUCKET" >/dev/null 2>&1 || true
+		mc mb --ignore-existing "local/$MINIO_BUCKET"
 
 	echo "MinIO running (host=$MINIO_HOST, port=$MINIO_PORT), bucket '$MINIO_BUCKET' created."
 	echo

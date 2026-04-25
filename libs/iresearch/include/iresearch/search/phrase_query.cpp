@@ -88,6 +88,14 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
     positions.emplace_back(
       sdb::basics::downCast<FixedTermPositionImpl<false>>(pos), *position++);
   }
+
+  SDB_ENSURE(
+    this->slop == 0 || !absl::c_any_of(this->positions,
+                                       [](const auto& pos) {
+                                         return pos.offs_max != pos.offs_min;
+                                       }),
+    sdb::ERROR_BAD_PARAMETER, "slop and intervals are mutually exclusive");
+
   if (this->slop > 0) {
     using SlopIterator =
       PhraseIterator<Conjunction<Adapter>, SlopPhraseFrequency<false>>;
@@ -335,6 +343,13 @@ DocIterator::ptr VariadicPhraseQuery::execute(
     ++position;
   }
   SDB_ASSERT(term_state == std::end(phrase_state->terms));
+
+  SDB_ENSURE(
+    this->slop == 0 || !absl::c_any_of(this->positions,
+                                       [](const auto& pos) {
+                                         return pos.offs_max != pos.offs_min;
+                                       }),
+    sdb::ERROR_BAD_PARAMETER, "slop and intervals are mutually exclusive");
 
   if (this->slop > 0) {
     using SlopIterator =

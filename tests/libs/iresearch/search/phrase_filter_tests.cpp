@@ -9441,3 +9441,95 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_execute_with_offsets) {
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
   }
 }
+
+TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_execute_with_offsets) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // "qui* fox" slop=1 with offsets via ExecuteWithOffsets.
+  // Variadic phrase: qui* matches quick, quilt.
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    auto& pt = q.mutable_options()->push_back<irs::ByPrefixOptions>();
+    pt.term = irs::ViewCast<irs::byte_type>(std::string_view("qui"));
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("fox"));
+    q.mutable_options()->set_slop(1);
+
+    auto prepared = q.prepare({.index = rdr});
+    auto* phrase_query =
+      dynamic_cast<const irs::VariadicPhraseQuery*>(prepared.get());
+    ASSERT_NE(nullptr, phrase_query);
+
+    auto sub = rdr.begin();
+    auto docs = phrase_query->ExecuteWithOffsets(*sub);
+    ASSERT_NE(nullptr, docs);
+
+    auto* pos = irs::GetMutable<irs::PosAttr>(docs.get());
+    ASSERT_NE(nullptr, pos);
+    auto* offs = irs::get<irs::OffsAttr>(*pos);
+    ASSERT_NE(nullptr, offs);
+
+    auto column = sub->column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+
+    // A: "quick brown fox ..." -> start=0 (quick), end=15 (fox)
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_TRUE(pos->next());
+    ASSERT_EQ(0, offs->start);
+    ASSERT_EQ(15, offs->end);
+    ASSERT_FALSE(pos->next());
+
+    // G
+    ASSERT_TRUE(docs->next());
+    ASSERT_EQ(docs->value(), values->seek(docs->value()));
+    ASSERT_EQ("G", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_TRUE(pos->next());
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());
+
+    // I
+    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(pos->next());
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());
+
+    // N
+    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(pos->next());
+    ASSERT_FALSE(pos->next());
+
+    // S
+    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(pos->next());
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());
+
+    // T
+    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(pos->next());
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());
+
+    // V
+    ASSERT_TRUE(docs->next());
+    ASSERT_TRUE(pos->next());
+    ASSERT_GT(offs->end, offs->start);
+    ASSERT_FALSE(pos->next());
+
+    ASSERT_FALSE(docs->next());
+    ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
+  }
+}

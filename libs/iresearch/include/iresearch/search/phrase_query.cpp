@@ -138,29 +138,29 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
   if (this->slop > 0) {
     auto* reader = phrase_state->reader;
     SDB_ASSERT(reader);
- 
+
     if (kRequireOffs != (reader->meta().index_features & kRequireOffs)) {
       return DocIterator::empty();
     }
- 
+
     using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<true>>>;
-    using SlopIterator = PhraseIterator<
-      Conjunction<Adapter>,
-      PhrasePosition<SlopPhraseFrequency<true>>>;
- 
+    using SlopIterator =
+      PhraseIterator<Conjunction<Adapter>,
+                     PhrasePosition<SlopPhraseFrequency<true>>>;
+
     std::vector<Adapter> itrs;
     itrs.reserve(phrase_state->terms.size());
- 
+
     std::vector<typename SlopIterator::TermPosition> positions;
     positions.reserve(phrase_state->terms.size());
- 
+
     auto position = std::begin(this->positions);
- 
+
     // request offsets from ALL iterators - with reordering any
     // term could be leftmost/rightmost in the document
     for (const auto& term_state : phrase_state->terms) {
       SDB_ASSERT(term_state.first);
- 
+
       auto docs =
         reader->Iterator(kRequireOffs, {.cookie = term_state.first.get()});
       if (!docs) [[unlikely]] {
@@ -177,7 +177,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
       positions.emplace_back(
         sdb::basics::downCast<FixedTermPositionImpl<true>>(pos), *position++);
     }
- 
+
     return memory::make_managed<SlopIterator>(
       static_cast<doc_id_t>(segment.docs_count()), std::move(itrs),
       std::move(positions), this->slop);
@@ -408,6 +408,62 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
 
   if (kRequireOffs != (reader->meta().index_features & kRequireOffs)) {
     return DocIterator::empty();
+  }
+
+  if (this->slop > 0) {
+    using SlopIterator =
+      PhraseIterator<Conjunction<ScoreAdapter>,
+                     PhrasePosition<SlopVariadicPhraseFrequency<Adapter>>>;
+
+    std::vector<VariadicTermPosition<Adapter>> positions;
+    positions.resize(phrase_size);
+
+    auto position = std::begin(this->positions);
+    auto term_state = std::begin(phrase_state->terms);
+
+    for (size_t i = 0; i < phrase_size; ++i) {
+      const auto num_terms = phrase_state->num_terms[i];
+      auto& pos = positions[i];
+      pos.second = *position;
+
+      std::vector<Adapter> disj_itrs;
+      disj_itrs.reserve(num_terms);
+      for (const auto end = term_state + num_terms; term_state != end;
+           ++term_state) {
+        SDB_ASSERT(term_state->first);
+
+        auto it =
+          reader->Iterator(kRequireOffs, {.cookie = term_state->first.get()});
+        if (!it) [[unlikely]] {
+          continue;
+        }
+
+        Adapter docs{std::move(it), term_state->second};
+        if (!docs.position) [[unlikely]] {
+          continue;
+        }
+        if (!irs::get<OffsAttr>(*docs.position)) [[unlikely]] {
+          continue;
+        }
+
+        disj_itrs.emplace_back(std::move(docs));
+      }
+
+      if (disj_itrs.empty()) {
+        return DocIterator::empty();
+      }
+
+      auto disj = MakeDisjunction<Disjunction>(
+        {}, static_cast<doc_id_t>(segment.docs_count()), std::move(disj_itrs));
+      pos.first = sdb::basics::downCast<CompundDocIterator>(disj.get());
+      conj_itrs.emplace_back(std::move(disj));
+      ++position;
+    }
+    SDB_ASSERT(term_state == std::end(phrase_state->terms));
+
+    return memory::make_managed<SlopIterator>(
+      static_cast<doc_id_t>(segment.docs_count()), std::move(conj_itrs),
+      std::move(positions), this->slop);
   }
 
   const bool has_intervals = absl::c_any_of(

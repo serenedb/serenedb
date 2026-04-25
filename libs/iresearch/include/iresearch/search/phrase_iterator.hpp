@@ -46,9 +46,8 @@ class PhrasePosition final : public PosAttr, public Frequency {
     std::tie(_start, _end) = this->GetOffsets();
   }
 
-  explicit PhrasePosition(
-    std::vector<typename Frequency::TermPosition>&& pos,
-    PosAttr::value_t max_slop) noexcept
+  explicit PhrasePosition(std::vector<typename Frequency::TermPosition>&& pos,
+                          PosAttr::value_t max_slop) noexcept
     : Frequency{std::move(pos), max_slop} {
     std::tie(_start, _end) = this->GetOffsets();
   }
@@ -590,15 +589,13 @@ class SlopPhraseFrequency {
 
  private:
   friend class PhrasePosition<SlopPhraseFrequency>;
- 
+
   std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
     return {&_start_offset, &_end_offset};
   }
- 
-  uint32_t NextPosition() {
-    return 0;
-  }
-  
+
+  uint32_t NextPosition() { return 0; }
+
   void MatchImpl() {
     const auto count = _pos.size();
 
@@ -756,14 +753,41 @@ class SlopVariadicPhraseFrequency {
   }
 
  private:
-  // Visitor that collects all positions from all sub-iterators
-  // in a disjunction into a flat vector.
+  friend class PhrasePosition<SlopVariadicPhraseFrequency>;
+
+  static constexpr bool kHasOffsets =
+    std::is_same_v<Adapter, VariadicPhraseOffsetAdapter>;
+
+  // Position with optional byte offsets for highlighting.
+  struct PosEntry {
+    PosAttr::value_t pos;
+    uint32_t start_offs{0};
+    uint32_t end_offs{0};
+
+    bool operator<(const PosEntry& rhs) const noexcept { return pos < rhs.pos; }
+    bool operator==(const PosEntry& rhs) const noexcept {
+      return pos == rhs.pos;
+    }
+  };
+
+  std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
+    return {&_start_offset, &_end_offset};
+  }
+
+  uint32_t NextPosition() { return 0; }
+
+  // Collects positions (and offsets when available) from all
+  // sub-iterators in a disjunction into a flat vector.
   static bool CollectPositions(void* ctx, Adapter& adapter) {
     SDB_ASSERT(ctx);
-    auto& out = *reinterpret_cast<std::vector<PosAttr::value_t>*>(ctx);
+    auto& out = *reinterpret_cast<std::vector<PosEntry>*>(ctx);
     auto* p = adapter.position;
     if (!p) {
       return true;
+    }
+    const OffsAttr* offs = nullptr;
+    if constexpr (kHasOffsets) {
+      offs = adapter.offset;
     }
     p->reset();
     while (p->next()) {
@@ -771,7 +795,14 @@ class SlopVariadicPhraseFrequency {
       if (pos_limits::eof(val)) {
         break;
       }
-      out.push_back(val);
+      PosEntry entry{.pos = val};
+      if constexpr (kHasOffsets) {
+        if (offs) {
+          entry.start_offs = offs->start;
+          entry.end_offs = offs->end;
+        }
+      }
+      out.push_back(entry);
     }
     return true;
   }
@@ -779,10 +810,7 @@ class SlopVariadicPhraseFrequency {
   void MatchImpl() {
     const auto count = _pos.size();
 
-    // Materialize positions per phrase slot.
-    // Each slot may have multiple sub-iterators (disjunction),
-    // collect all positions, sort, deduplicate.
-    std::vector<std::vector<PosAttr::value_t>> slot_positions(count);
+    std::vector<std::vector<PosEntry>> slot_positions(count);
     for (size_t i = 0; i < count; ++i) {
       _pos[i].first->visit(&slot_positions[i], CollectPositions);
       absl::c_sort(slot_positions[i]);
@@ -794,18 +822,15 @@ class SlopVariadicPhraseFrequency {
       }
     }
 
-    // Min-window algorithm over materialized positions.
-    // Same logic as SlopPhraseFrequency but on vectors instead
-    // of position iterators.
     std::vector<size_t> idx(count, 0);
     while (true) {
       size_t min_slot = 0;
-      auto min_pos = slot_positions[0][idx[0]];
+      auto min_pos = slot_positions[0][idx[0]].pos;
 
       PosAttr::value_t distance = 0;
       for (size_t i = 1; i < count; ++i) {
-        auto prev = slot_positions[i - 1][idx[i - 1]];
-        auto curr = slot_positions[i][idx[i]];
+        auto prev = slot_positions[i - 1][idx[i - 1]].pos;
+        auto curr = slot_positions[i][idx[i]].pos;
 
         if (curr > prev + 1) {
           distance += curr - prev - 1;
@@ -823,7 +848,8 @@ class SlopVariadicPhraseFrequency {
         bool all_unique = true;
         for (size_t i = 0; i < count && all_unique; ++i) {
           for (size_t j = i + 1; j < count; ++j) {
-            if (slot_positions[i][idx[i]] == slot_positions[j][idx[j]]) {
+            if (slot_positions[i][idx[i]].pos ==
+                slot_positions[j][idx[j]].pos) {
               all_unique = false;
               break;
             }
@@ -833,6 +859,27 @@ class SlopVariadicPhraseFrequency {
           ++_phrase_freq;
           if (distance < _best_distance) {
             _best_distance = distance;
+            if constexpr (kHasOffsets) {
+              size_t left_slot = 0;
+              size_t right_slot = 0;
+              auto left_pos = slot_positions[0][idx[0]].pos;
+              auto right_pos = left_pos;
+              for (size_t k = 1; k < count; ++k) {
+                auto p = slot_positions[k][idx[k]].pos;
+                if (p < left_pos) {
+                  left_pos = p;
+                  left_slot = k;
+                }
+                if (p > right_pos) {
+                  right_pos = p;
+                  right_slot = k;
+                }
+              }
+              _start_offset =
+                slot_positions[left_slot][idx[left_slot]].start_offs;
+              _end_offset =
+                slot_positions[right_slot][idx[right_slot]].end_offs;
+            }
           }
         }
       }
@@ -848,6 +895,8 @@ class SlopVariadicPhraseFrequency {
   PosAttr::value_t _max_slop;
   uint32_t _phrase_freq = 0;
   PosAttr::value_t _best_distance = 0;
+  uint32_t _start_offset{0};
+  uint32_t _end_offset{0};
 };
 
 // Helper for variadic phrase frequency evaluation for cases when
@@ -1295,8 +1344,8 @@ class PhraseIterator : public DocIterator {
                  std::vector<TermPosition>&& pos, PosAttr::value_t max_slop,
                  const FieldProperties& field, const byte_type* stats,
                  score_t boost)
-    : PhraseIterator{docs_count, std::forward<Adapters>(itrs),
-                     std::move(pos), max_slop} {
+    : PhraseIterator{docs_count, std::forward<Adapters>(itrs), std::move(pos),
+                     max_slop} {
     _stats = stats;
     _boost = boost;
     _field = field;

@@ -634,7 +634,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
     connector::SearchColumnInfo info;
     info.column_id = col_id;
     info.logical_type = type_it->second;
-    info.analyzer = ctx.analyzer_provider(col_id);
+    info.tokenizer = ctx.analyzer_provider(col_id);
     return info;
   };
 }
@@ -1873,7 +1873,8 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 //
 // We trigger at the AGGREGATE node (not the GET) because projection-pushdown
 // runs before our extension and may leave filter-only columns (e.g. `b` in
-// WHERE PHRASE(b,...)) in get.column_ids even after we claimed the filter.
+// WHERE b @@ PHRASE(...)) in get.column_ids even after we claimed the
+// filter.
 // Detecting at aggregate level lets us verify the output shape is truly
 // "no columns needed" and then strip column_ids ourselves.
 // ---------------------------------------------------------------------------

@@ -35,13 +35,13 @@ namespace sdb::connector {
 
 // Info describing how to build iresearch terms for a referenced column.
 // `logical_type` is the DuckDB column type (what the filter value will
-// coerce to); `analyzer` is the catalog-supplied column analyzer
+// coerce to); `tokenizer` is the catalog-supplied column tokenizer
 // (op-class determines tokenizer choice for text columns -- non-text
-// columns get a null analyzer here).
+// columns get a null tokenizer here).
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
-  catalog::ColumnAnalyzer analyzer;
+  catalog::ColumnAnalyzer tokenizer;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -52,6 +52,7 @@ struct SearchColumnInfo {
 // implementation (typically captures bind data + InvertedIndex).
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
+
 
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result

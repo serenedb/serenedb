@@ -20,13 +20,14 @@
 
 #pragma once
 
+#include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/analysis/analyzer.hpp>
 #include <string>
 
 namespace sdb::connector {
 
 // TODO(codeworse): add constexpr prefix + function name
-inline constexpr std::string_view kPhrase = "phrase";
 inline constexpr std::string_view kTermEq = "term_eq";
 inline constexpr std::string_view kTermLt = "term_lt";
 inline constexpr std::string_view kTermLe = "term_lte";
@@ -34,9 +35,73 @@ inline constexpr std::string_view kTermGe = "term_gte";
 inline constexpr std::string_view kTermGt = "term_gt";
 inline constexpr std::string_view kTermIn = "term_in";
 inline constexpr std::string_view kTermLike = "term_like";
-inline constexpr std::string_view kNgramMatch = "ngram_match";
-inline constexpr std::string_view kLevenshteinMatch = "levenshtein_match";
 inline constexpr std::string_view kBoost = "boost";
+
+// Postgres-style FTS surface. All stubs; the filter builder claims
+// them at bind time and builds the iresearch filter.
+inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
+inline constexpr std::string_view kTokenizerTypeName = "tokenizer";
+
+// TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
+// stubs throw at runtime -- the filter builder claims them at bind.
+inline constexpr std::string_view kTSQPhrase = "phrase";
+inline constexpr std::string_view kTSQNgram = "ngram";
+inline constexpr std::string_view kTSQLike = "like";
+inline constexpr std::string_view kTSQPrefix = "prefix";
+inline constexpr std::string_view kTSQLevenshtein = "levenshtein";
+inline constexpr std::string_view kTSQAnyOf = "any_of";
+inline constexpr std::string_view kTSQAllOf = "all_of";
+inline constexpr std::string_view kTSQTokenize = "tokenize";
+inline constexpr std::string_view kTSQInRange = "in_range";
+
+// PG-compat tsquery constructor family (input-string driven, all use
+// the ambient column analyzer).
+inline constexpr std::string_view kToTsquery = "to_tsquery";
+inline constexpr std::string_view kPlainToTsquery = "plainto_tsquery";
+inline constexpr std::string_view kPhraseToTsquery = "phraseto_tsquery";
+inline constexpr std::string_view kWebsearchToTsquery = "websearch_to_tsquery";
+inline constexpr std::string_view kTsqueryPhrase = "tsquery_phrase";
+
+// TSQUERY combinators -- PG-style doubled glyphs.
+inline constexpr std::string_view kTSQueryOr = "||";
+inline constexpr std::string_view kTSQueryAnd = "&&";
+inline constexpr std::string_view kTSQueryNot = "!!";
+inline constexpr std::string_view kTSQueryBoost = "^";
+inline constexpr std::string_view kTSQueryPhraseSeq = "##";
+
+// @@ match: commutative (ANY, TSQUERY) -> BOOLEAN. Stub; filter builder
+// claims the call at bind time and extracts the column from whichever
+// side resolves to a column reference.
+inline constexpr std::string_view kTSQueryMatch = "@@";
+
+// Opaque logical type backing TSQUERY. Represented as VARCHAR+alias so
+// storage/IO paths stay standard; the stubs never run so the byte slot is
+// unused in practice. Mirrors the JSON type convention in DuckDB.
+duckdb::LogicalType MakeTSQueryType();
+
+// True iff `type` is the TSQUERY alias (VARCHAR + "TSQUERY" alias).
+bool IsTSQueryType(const duckdb::LogicalType& type);
+
+// If `type` is a TSQUERY annotated with a `tokenizer(name)` modifier,
+// returns the tokenizer name and (when the bind function was able to
+// resolve it via the catalog) the live analyzer pointer. The pointer
+// is owned by a process-static cache populated at SQL bind time; the
+// filter builder uses it to override its tokenizer for the inner
+// subtree without needing catalog access of its own.
+struct TokenizerModifier {
+  std::string_view name;
+  irs::analysis::Analyzer* tokenizer = nullptr;
+};
+TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type);
+
+// Resolves a `::tokenizer(<name>)` cast: looks up the named catalog
+// tokenizer at SQL bind time and returns a process-static-cached
+// pointer to the resolved analyzer. The cache holds the tokenizer's
+// AnalyzerWrapper for the lifetime of the process so the returned
+// pointer stays valid through subsequent filter-build / execute time.
+// Returns nullptr if the name doesn't resolve.
+irs::analysis::Analyzer* ResolveTokenizerAnalyzer(
+  duckdb::ClientContext& context, std::string_view name);
 
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running

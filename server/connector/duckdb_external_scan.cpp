@@ -396,7 +396,7 @@ void ExternalScanTypePushdown(
 // iresearch_plan ever sees them, and the phrase/bm25/offsets lose their
 // chance to be claimed as a SearchScan.
 static bool IsSearchFamilyFunction(std::string_view name) {
-  return name == kPhrase || name == kTermEq || name == kTermLt ||
+  return name == kTSQueryMatch || name == kTermEq || name == kTermLt ||
          name == kTermLe || name == kTermGe || name == kTermGt ||
          name == kTermIn || name == kTermLike || name == kBoost ||
          name == kBm25 || name == kTfidf || name == kRawTf || name == kLmJm ||

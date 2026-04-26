@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,7 +52,7 @@ enum class RegexpSyntax {
   PosixEre,
 };
 
-enum RegexpMeta : byte_type {
+enum class RegexpMeta : byte_type {
   kDot = '.',
   kStar = '*',
   kPlus = '+',
@@ -67,28 +69,31 @@ enum RegexpMeta : byte_type {
   kRBrace = '}',
 };
 
+constexpr byte_type AsByte(RegexpMeta m) noexcept {
+  return static_cast<byte_type>(m);
+}
+
 constexpr bool IsRegexpMeta(byte_type c) noexcept {
-  switch (c) {
-    case kDot:
-    case kStar:
-    case kPlus:
-    case kQuestion:
-    case kPipe:
-    case kLParen:
-    case kRParen:
-    case kLBracket:
-    case kRBracket:
-    case kCaret:
-    case kDollar:
-    case kEscape:
-    case kLBrace:
-    case kRBrace:
+  switch (static_cast<RegexpMeta>(c)) {
+    case RegexpMeta::kDot:
+    case RegexpMeta::kStar:
+    case RegexpMeta::kPlus:
+    case RegexpMeta::kQuestion:
+    case RegexpMeta::kPipe:
+    case RegexpMeta::kLParen:
+    case RegexpMeta::kRParen:
+    case RegexpMeta::kLBracket:
+    case RegexpMeta::kRBracket:
+    case RegexpMeta::kCaret:
+    case RegexpMeta::kDollar:
+    case RegexpMeta::kEscape:
+    case RegexpMeta::kLBrace:
+    case RegexpMeta::kRBrace:
       return true;
     default:
       return false;
   }
 }
-
 // After '\', determines whether this is a simple literal escape (e.g. \. \* \{)
 // or an RE2 special sequence that changes matching semantics (e.g. \d \w \b
 // \p). Only regexp metacharacters are "simple escapes" - the backslash just

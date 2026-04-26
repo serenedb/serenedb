@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,20 +96,20 @@ field_visitor ByRegexp::visitor(bytes_view pattern, RegexpSyntax syntax) {
         return irs::Visit(segment, field, ctx->matcher, visitor);
       };
     }
+    default:
+      SDB_UNREACHABLE();
   }
-
-  SDB_UNREACHABLE();
 }
 
 Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
                                      std::string_view field, bytes_view pattern,
                                      size_t scored_terms_limit,
                                      RegexpSyntax syntax) {
-  bstring buf;
   const auto type = ComputeRegexpType(pattern);
 
   switch (type) {
     case RegexpType::LiteralEscaped: {
+      bstring buf;
       UnescapeRegexp(pattern, buf);
       return ByTerm::prepare(ctx, field, buf);
     }
@@ -127,17 +129,17 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
       return ByPrefix::prepare(ctx, field, prefix, scored_terms_limit);
     }
 
-    case RegexpType::Complex:
-      break;
+    case RegexpType::Complex: {
+      auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
+      if (!Validate(acceptor)) {
+        return Query::empty();
+      }
+      return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
+    }
+
+    default:
+      SDB_UNREACHABLE();
   }
-
-  auto acceptor = FromRegexp(pattern, kDefaultMaxDfaStates, syntax);
-
-  if (!Validate(acceptor)) {
-    return Query::empty();
-  }
-
-  return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
 }
 
 }  // namespace irs

@@ -1,5 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -40,10 +42,7 @@ struct ByRegexpOptions : ByRegexpFilterOptions {
   size_t scored_terms_limit{1024};
   RegexpSyntax syntax{RegexpSyntax::Perl};
 
-  bool operator==(const ByRegexpOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs) &&
-           scored_terms_limit == rhs.scored_terms_limit && syntax == rhs.syntax;
-  }
+  bool operator==(const ByRegexpOptions&) const noexcept = default;
 };
 
 class ByRegexp final : public FilterWithField<ByRegexpOptions> {

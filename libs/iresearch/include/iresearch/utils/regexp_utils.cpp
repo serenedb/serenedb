@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
@@ -484,14 +486,14 @@ bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
       SDB_ASSERT(IsSimpleEscape(c));
       out.push_back(c);
       escaped = false;
-    } else if (c == RegexpMeta::kEscape) {
+    } else if (c == AsByte(RegexpMeta::kEscape)) {
       escaped = true;
     } else {
       out.push_back(c);
     }
   }
   if (escaped) {
-    out.push_back(RegexpMeta::kEscape);
+    out.push_back(AsByte(RegexpMeta::kEscape));
   }
 
   return bytes_view{out.data(), out.size()};
@@ -513,7 +515,7 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
       has_escapes = true;
       continue;
     }
-    if (pattern[i] == RegexpMeta::kEscape) {
+    if (pattern[i] == AsByte(RegexpMeta::kEscape)) {
       escaped = true;
       continue;
     }
@@ -521,8 +523,8 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
       continue;
     }
     // First unescaped metacharacter: only .* at end is Prefix
-    if (pattern[i] == RegexpMeta::kDot && i + 1 == pattern.size() - 1 &&
-        pattern[i + 1] == RegexpMeta::kStar) {
+    if (pattern[i] == AsByte(RegexpMeta::kDot) && i + 1 == pattern.size() - 1 &&
+        pattern[i + 1] == AsByte(RegexpMeta::kStar)) {
       return has_escapes ? RegexpType::PrefixEscaped : RegexpType::Prefix;
     }
     return RegexpType::Complex;
@@ -604,7 +606,7 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
   RegexpPtr re{re2::Regexp::Parse(sv, flags, &status)};
   if (!re) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("RE2 regexp parse error: ", status.Text()));
+              "RE2 regexp parse error: ", status.Text());
     return {};
   }
 
@@ -642,8 +644,8 @@ automaton FromRegexp(bytes_view pattern, int64_t max_dfa_states,
   // patterns (e.g. [ab]{20} can produce 2^20 DFA states).
   if (max_dfa_states > 0 && dfa.NumStates() > max_dfa_states) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("RE2 regexp DFA too large: ", dfa.NumStates(),
-                           " states (limit: ", max_dfa_states, ")"));
+              "RE2 regexp DFA too large: ", dfa.NumStates(),
+              " states (limit: ", max_dfa_states, ")");
     return {};
   }
 

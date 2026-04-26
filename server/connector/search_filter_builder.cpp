@@ -33,6 +33,7 @@
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
@@ -46,6 +47,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
@@ -734,10 +736,12 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
     if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
       return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
     }
-    if (column_info->analyzer.analyzer->type() !=
-        irs::Type<irs::StringTokenizer>::id()) {
+    const auto analyzer_type = column_info->analyzer.analyzer->type();
+    if (analyzer_type != irs::Type<irs::StringTokenizer>::id() &&
+        analyzer_type != irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
       return {ERROR_BAD_PARAMETER,
-              "Field is not indexed by identity analyzer. Use TERM_LIKE."};
+              "Field is not indexed by identity or wildcard analyzer. "
+              "Use TERM_LIKE."};
     }
   } else {
     SDB_ASSERT(column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR,
@@ -745,12 +749,31 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   search::mangling::MangleString(field_name);
+  auto pattern =
+    LikeEscapePattern(const_val->GetValue<std::string>(), escape_char);
+
+  // WildcardAnalyzer columns get the ngram-aware ByWildcardNgram filter,
+  // which leverages the analyzer's ngram tokenization to evaluate the
+  // pattern via the inverted index instead of scanning the term dictionary.
+  if (column_info->analyzer.analyzer->type() ==
+      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+    auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(filter)
+                           : AddFilter<irs::ByWildcardNgram>(filter);
+    wf.boost(ctx.boost);
+    *wf.mutable_field() = std::move(field_name);
+    *wf.mutable_options() = {
+      pattern,
+      basics::downCast<irs::analysis::WildcardAnalyzer>(
+        *column_info->analyzer.analyzer.get()),
+      (column_info->analyzer.features & irs::IndexFeatures::Pos) ==
+        irs::IndexFeatures::Pos};
+    return {};
+  }
+
   auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
                                       : AddFilter<irs::ByWildcard>(filter);
   wildcard_filter.boost(ctx.boost);
-  *wildcard_filter.mutable_field() = field_name;
-  auto pattern =
-    LikeEscapePattern(const_val->GetValue<std::string>(), escape_char);
+  *wildcard_filter.mutable_field() = std::move(field_name);
   wildcard_filter.mutable_options()->term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
   return {};

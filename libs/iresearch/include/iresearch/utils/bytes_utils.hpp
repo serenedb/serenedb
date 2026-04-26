@@ -75,14 +75,14 @@ struct bytes_io<T, sizeof(uint16_t)> {
   }
 
   static T ReadBE(const byte_type*& in) {
-    const T out = ((in[0] << 8) | in[1]);
+    const T out = absl::big_endian::Load16(in);
     in += sizeof(T);
 
     return out;
   }
 
   static T ReadLE(const byte_type*& in) {
-    const T out = (in[0] | (in[1] << 8));
+    const T out = absl::little_endian::Load16(in);
     in += sizeof(T);
 
     return out;

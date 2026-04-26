@@ -37,7 +37,7 @@ struct bytes_io<T, sizeof(uint8_t)> {
   static constexpr T kMaxVSize = 1;
 
   template<typename InputIterator>
-  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
+  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
     T out = static_cast<T>(*in);
     ++in;
 
@@ -45,8 +45,8 @@ struct bytes_io<T, sizeof(uint8_t)> {
   }
 
   template<typename InputIterator>
-  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
-    return ReadLE(in, std::input_iterator_tag{});
+  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
+    return ReadBE(in, std::input_iterator_tag{});
   }
 };
 

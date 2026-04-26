@@ -1955,8 +1955,8 @@ TEST(numeric_utils_test, ulong_traits) {
     TraitsT::integral_t value(0x1234567890ABCDEF);
 
     if constexpr (std::endian::native == std::endian::big) {
-      ASSERT_EQ(value, absl::little_endian::FromHost(value));
-      ASSERT_EQ(value, absl::little_endian::ToHost(value));
+      ASSERT_EQ(value, absl::big_endian::FromHost(value));
+      ASSERT_EQ(value, absl::big_endian::ToHost(value));
     } else {
       ASSERT_NE(value, absl::little_endian::FromHost(value));
       ASSERT_NE(value, absl::little_endian::ToHost(value));

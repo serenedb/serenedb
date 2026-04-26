@@ -1890,10 +1890,10 @@ TEST(numeric_utils_test, uint_traits) {
     } else {
       ASSERT_NE(value, absl::little_endian::FromHost(value));
       ASSERT_NE(value, absl::little_endian::ToHost(value));
-      ASSERT_EQ(value,
-                absl::little_endian::FromHost(absl::little_endian::ToHost(value)));
-      ASSERT_EQ(value,
-                absl::little_endian::ToHost(absl::little_endian::FromHost(value)));
+      ASSERT_EQ(value, absl::little_endian::FromHost(
+                         absl::little_endian::ToHost(value)));
+      ASSERT_EQ(value, absl::little_endian::ToHost(
+                         absl::little_endian::FromHost(value)));
     }
   }
 }
@@ -1960,10 +1960,10 @@ TEST(numeric_utils_test, ulong_traits) {
     } else {
       ASSERT_NE(value, absl::little_endian::FromHost(value));
       ASSERT_NE(value, absl::little_endian::ToHost(value));
-      ASSERT_EQ(value,
-                absl::little_endian::FromHost(absl::little_endian::ToHost(value)));
-      ASSERT_EQ(value,
-                absl::little_endian::ToHost(absl::little_endian::FromHost(value)));
+      ASSERT_EQ(value, absl::little_endian::FromHost(
+                         absl::little_endian::ToHost(value)));
+      ASSERT_EQ(value, absl::little_endian::ToHost(
+                         absl::little_endian::FromHost(value)));
     }
   }
 }

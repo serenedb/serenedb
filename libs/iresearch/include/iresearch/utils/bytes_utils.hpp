@@ -175,11 +175,15 @@ struct bytes_io<T, sizeof(uint32_t)> {
   }
 
   template<typename InputIterator>
-  static T ReadBE(InputIterator& in) {
-    T out = static_cast<T>(*in) << 24; ++in;
-    out |= static_cast<T>(*in) << 16; ++in;
-    out |= static_cast<T>(*in) << 8; ++in;
-    out |= static_cast<T>(*in); ++in;
+  static T ReadBE(InputIterator& in, std::input_iterator_tag) {
+    T out = static_cast<T>(*in) << 24;
+    ++in;
+    out |= static_cast<T>(*in) << 16;
+    ++in;
+    out |= static_cast<T>(*in) << 8;
+    ++in;
+    out |= static_cast<T>(*in);
+    ++in;
     return out;
   }
 
@@ -190,11 +194,15 @@ struct bytes_io<T, sizeof(uint32_t)> {
   }
 
   template<typename InputIterator>
-  static T ReadLE(InputIterator& in) {
-    T out = static_cast<T>(*in); ++in;
-    out |= static_cast<T>(*in) << 8; ++in;
-    out |= static_cast<T>(*in) << 16; ++in;
-    out |= static_cast<T>(*in) << 24; ++in;
+  static T ReadLE(InputIterator& in, std::input_iterator_tag) {
+    T out = static_cast<T>(*in);
+    ++in;
+    out |= static_cast<T>(*in) << 8;
+    ++in;
+    out |= static_cast<T>(*in) << 16;
+    ++in;
+    out |= static_cast<T>(*in) << 24;
+    ++in;
     return out;
   }
 
@@ -378,7 +386,8 @@ struct bytes_io<T, sizeof(uint64_t)> {
   static T ReadBE(InputIterator& in, std::input_iterator_tag) {
     typedef bytes_io<uint32_t, sizeof(uint32_t)> bytes_io_t;
 
-    T out = static_cast<T>(bytes_io_t::ReadBE(in, std::input_iterator_tag{})) << 32;
+    T out = static_cast<T>(bytes_io_t::ReadBE(in, std::input_iterator_tag{}))
+            << 32;
     return out |
            static_cast<T>(bytes_io_t::ReadBE(in, std::input_iterator_tag{}));
   }
@@ -394,7 +403,9 @@ struct bytes_io<T, sizeof(uint64_t)> {
     typedef bytes_io<uint32_t, sizeof(uint32_t)> bytes_io_t;
 
     T out = static_cast<T>(bytes_io_t::ReadLE(in, std::input_iterator_tag{}));
-    return out | (static_cast<T>(bytes_io_t::ReadLE(in, std::input_iterator_tag{})) << 32);
+    return out |
+           (static_cast<T>(bytes_io_t::ReadLE(in, std::input_iterator_tag{}))
+            << 32);
   }
 
   static T ReadLE(const byte_type*& in) {

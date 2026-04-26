@@ -266,6 +266,98 @@ a
 2
 
 # ----------------------------------------------------------------------
+# REGEXP(pattern [, syntax]) -- regex over indexed terms. Syntax is
+# 'perl' (default, full RE2) or 'posix' (POSIX ERE only). The pattern
+# is matched against the analyzed token form, not the raw text.
+# ----------------------------------------------------------------------
+
+# Default Perl syntax: matches the token 'quick'.
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('qu.*ck') ORDER BY a;
+----
+a
+1
+2
+
+# Perl syntax with `+` quantifier and an explicit literal.
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('q.+k') ORDER BY a;
+----
+a
+1
+2
+
+# Token-anchored character class: matches 'turtle' (only row 3 has it).
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('.*tle') ORDER BY a;
+----
+a
+3
+
+# Optional group with `?`: matches 'fox' or 'foxes'. The regex is
+# matched against the full token, so `foxes?` (which requires the
+# 'foxe' prefix) wouldn't match 'fox' -- we need `fox(es)?`.
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('fox(es)?') ORDER BY a;
+----
+a
+1
+2
+
+# POSIX ERE syntax with a POSIX character class. Matches every row that
+# has at least one alphabetic token (all rows).
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('[[:alpha:]]+', 'posix') ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+# Syntax names are case-insensitive.
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('[[:alpha:]]+', 'POSIX') ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+# Perl-only escapes work under 'perl' but not 'posix'. None of the
+# indexed tokens contain digits, so the match set is empty.
+query
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('\d+', 'perl') ORDER BY a;
+----
+a
+
+# Negation: rows without a token matching 'qu.*ck'.
+query
+SELECT a FROM tsq_idx WHERE b @@ !!REGEXP('qu.*ck') ORDER BY a;
+----
+a
+3
+4
+
+# Composition with other TSQUERY constructors (OR with PHRASE).
+query
+SELECT a FROM tsq_idx WHERE b @@ (REGEXP('grey') || PHRASE('lazy dog')) ORDER BY a;
+----
+a
+1
+2
+3
+
+# Unknown syntax name -> bind-time error.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ REGEXP('abc', 'pcre');
+
+# REGEXP on a non-VARCHAR column -> bind-time error.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ REGEXP('1');
+
+# ----------------------------------------------------------------------
 # IN_RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
 # Mirrors SQL BETWEEN with explicit inclusivity. Either bound may be
 # NULL (unbounded that side); both NULL is "match all".

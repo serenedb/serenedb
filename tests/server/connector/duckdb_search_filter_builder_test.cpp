@@ -43,6 +43,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
+#include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <optional>
@@ -344,6 +345,18 @@ irs::ByPrefix& AddPrefixFilter(Filter& root, catalog::Column::Id column,
   *pf.mutable_field() = MakeFieldName<std::string_view>(column);
   pf.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
   return pf;
+}
+
+template<typename Filter>
+irs::ByRegexp& AddRegexpFilter(
+  Filter& root, catalog::Column::Id column, std::string_view pattern,
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+  auto& re = AddFilter<irs::ByRegexp>(root);
+  *re.mutable_field() = MakeFieldName<std::string_view>(column);
+  auto* opts = re.mutable_options();
+  opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
+  opts->syntax = syntax;
+  return re;
 }
 
 template<typename Filter>
@@ -2342,6 +2355,81 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Prefix) {
   AddPrefixFilter(expected, 1, std::string_view{"qu"});
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ PREFIX('qu')",
                columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Regexp) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"qu.*ck"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ REGEXP('qu.*ck')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpPerlExplicit) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"\\d+"},
+                  irs::RegexpSyntax::Perl);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ REGEXP('\\d+', 'perl')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpPosix) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"[[:alpha:]]+"},
+                  irs::RegexpSyntax::PosixEre);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ REGEXP('[[:alpha:]]+', 'posix')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpSyntaxCaseInsensitive) {
+  // Syntax names are matched case-insensitively.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, std::string_view{"abc"},
+                  irs::RegexpSyntax::PosixEre);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ REGEXP('abc', 'POSIX')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnknownSyntax) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter({},
+               "SELECT * FROM foo WHERE b @@ REGEXP('abc', 'pcre')", columns,
+               false, IdentityAnalyzerProvider,
+               "REGEXP syntax must be one of");
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpNonVarcharColumn) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
+  AssertFilter({},
+               "SELECT * FROM foo WHERE b @@ REGEXP('abc')", columns, false,
+               IdentityAnalyzerProvider, "REGEXP field is not VARCHAR");
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
+  // Negated regexp: NOT REGEXP('foo.*').
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  auto& re = not_filter.filter<irs::ByRegexp>();
+  *re.mutable_field() = MakeFieldName<std::string_view>(1);
+  re.mutable_options()->pattern.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"foo.*"}));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ !!REGEXP('foo.*')", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Levenshtein) {

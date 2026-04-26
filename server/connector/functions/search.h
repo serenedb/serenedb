@@ -53,6 +53,7 @@ inline constexpr std::string_view kTSQAnyOf = "any_of";
 inline constexpr std::string_view kTSQAllOf = "all_of";
 inline constexpr std::string_view kTSQTokenize = "tokenize";
 inline constexpr std::string_view kTSQInRange = "in_range";
+inline constexpr std::string_view kTSQRegexp = "regexp";
 
 // PG-compat tsquery constructor family (input-string driven, all use
 // the ambient column analyzer).

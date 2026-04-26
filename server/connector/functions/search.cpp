@@ -421,6 +421,17 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction(std::string{name}, {varchar}, tsq, TSQueryStubFn));
   }
 
+  // REGEXP(pattern [, syntax]) -- raw regex match against indexed
+  // terms. `syntax` is 'perl' (default) or 'posix'. No tokenisation;
+  // the pattern is matched directly against terms in the field.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kTSQRegexp}};
+    set.AddFunction(duckdb::ScalarFunction({varchar}, tsq, TSQueryStubFn));
+    set.AddFunction(
+      duckdb::ScalarFunction({varchar, varchar}, tsq, TSQueryStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
   // LEVENSHTEIN(term, distance [, transpositions]) -- raw fuzzy match.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQLevenshtein}};

@@ -21,7 +21,9 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_join.h>
 #include <iresearch/parser/parser.h>
+#include <magic_enum/magic_enum.hpp>
 
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -43,6 +45,7 @@
 #include <iresearch/search/phrase_query.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
+#include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
@@ -58,6 +61,27 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
+
+// Map iresearch's RegexpSyntax enum values to user-facing dialect names.
+// We expose 'perl' and 'posix' rather than the raw enum spelling
+// (PosixEre) so SQL surface stays ergonomic.
+namespace magic_enum {
+
+template<>
+[[maybe_unused]] constexpr customize::customize_t
+customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
+  switch (value) {
+    using enum irs::RegexpSyntax;
+    case Perl:
+      return "perl";
+    case PosixEre:
+      return "posix";
+    default:
+      return invalid_tag;
+  }
+}
+
+}  // namespace magic_enum
 
 namespace sdb::connector {
 
@@ -1294,6 +1318,7 @@ enum class TSQueryOp {
   AnyOf,
   AllOf,
   InRange,
+  Regexp,
   Tokenize,
   PlainToTsquery,
   PhraseToTsquery,
@@ -1331,6 +1356,9 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   }
   if (name == kTSQInRange) {
     return TSQueryOp::InRange;
+  }
+  if (name == kTSQRegexp) {
+    return TSQueryOp::Regexp;
   }
   if (name == kTSQTokenize) {
     return TSQueryOp::Tokenize;
@@ -1494,6 +1522,24 @@ Result BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   *pf.mutable_field() = field_name;
   pf.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(prefix));
   return {};
+}
+
+void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    std::string_view pattern, irs::RegexpSyntax syntax) {
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    throw duckdb::InvalidInputException("REGEXP field is not VARCHAR");
+  }
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+  search::mangling::MangleString(field_name);
+  auto& re = ctx.negated ? Negate<irs::ByRegexp>(parent)
+                         : AddFilter<irs::ByRegexp>(parent);
+  re.boost(ctx.boost);
+  *re.mutable_field() = field_name;
+  auto* opts = re.mutable_options();
+  opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
+  opts->syntax = syntax;
 }
 
 // ---------------------------------------------------------------------------
@@ -1806,59 +1852,109 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto* options = phrase.mutable_options();
 
   // Emit one phrase part per input, using the gap offsets. First part
-  // is always at offset 0 (iresearch normalises this internally).
+  // is always at offset 0 (iresearch normalises this internally). Each
+  // case in the switch is self-contained: it parses the part's args,
+  // pushes a phrase-part Options slot at (gap.offs_min, gap.offs_max),
+  // and breaks. The push_back overload with (offs_min, offs_max) is
+  // the interval form; we always use it (rather than the single-arg
+  // shorthand) to keep offset semantics consistent between exact and
+  // range gaps.
   for (size_t i = 0; i < seq.parts.size(); ++i) {
     const auto& part_expr_ref = UnwrapTSQueryCast(*seq.parts[i]);
     const PhraseGap gap = i > 0 ? seq.gaps[i - 1] : PhraseGap{};
 
-    // Emission dispatches on what the part expression is.
-    std::string text;
-    LevenshteinArgs lev_args;  // populated only for TSQueryOp::Fuzzy
-    TSQueryOp leaf_op = TSQueryOp::Unknown;
+    // Classify the part. Bare VARCHAR constants (via implicit cast to
+    // TSQUERY) are treated as TERM-shaped parts; otherwise dispatch on
+    // the function name.
+    TSQueryOp leaf_op;
+    const duckdb::BoundFunctionExpression* f = nullptr;
+    std::string bare_text;
     if (part_expr_ref.expression_class ==
         duckdb::ExpressionClass::BOUND_CONSTANT) {
-      // Bare string (via implicit cast to TSQUERY) -> term part.
       const auto& val =
         part_expr_ref.Cast<duckdb::BoundConstantExpression>().value;
       if (val.IsNull() || val.type().id() != duckdb::LogicalTypeId::VARCHAR) {
         return {ERROR_BAD_PARAMETER, "## part must be a VARCHAR constant"};
       }
-      text = val.GetValue<std::string>();
+      bare_text = val.GetValue<std::string>();
       leaf_op = TSQueryOp::Term;
     } else if (part_expr_ref.expression_class ==
                duckdb::ExpressionClass::BOUND_FUNCTION) {
-      const auto& f = part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
-      leaf_op = ClassifyTSQueryFunction(f.function.name);
-      if (leaf_op == TSQueryOp::Term || leaf_op == TSQueryOp::Like ||
-          leaf_op == TSQueryOp::Prefix) {
-        if (f.children.size() != 1) {
-          return {ERROR_BAD_PARAMETER, "## ", f.function.name,
-                  " phrase part expects 1 argument, got ", f.children.size()};
-        }
-        if (auto r = GetVarcharArg(*f.children[0], "## phrase part text", text);
-            !r.ok()) {
+      f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
+      leaf_op = ClassifyTSQueryFunction(f->function.name);
+    } else {
+      return {ERROR_NOT_IMPLEMENTED, "## part expression class: ",
+              static_cast<int>(part_expr_ref.expression_class)};
+    }
+
+    // Helper for the simple "1 VARCHAR arg" pattern (Term/Like/Prefix).
+    // For a bare VARCHAR constant, returns the constant value; for a
+    // function, validates arity and extracts its single child.
+    auto get_text_arg = [&](std::string& out) -> Result {
+      if (!f) {
+        out = bare_text;
+        return {};
+      }
+      if (f->children.size() != 1) {
+        return {ERROR_BAD_PARAMETER, "## ", f->function.name,
+                " phrase part expects 1 argument, got ", f->children.size()};
+      }
+      return GetVarcharArg(*f->children[0], "## phrase part text", out);
+    };
+
+    switch (leaf_op) {
+      case TSQueryOp::Term: {
+        std::string text;
+        if (auto r = get_text_arg(text); !r.ok()) {
           return r;
         }
-      } else if (leaf_op == TSQueryOp::Fuzzy) {
-        auto args_or = ParseLevenshteinArgs(f);
+        options->push_back<irs::ByTermOptions>(gap.offs_min, gap.offs_max)
+          .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
+        break;
+      }
+      case TSQueryOp::Prefix: {
+        std::string text;
+        if (auto r = get_text_arg(text); !r.ok()) {
+          return r;
+        }
+        options->push_back<irs::ByPrefixOptions>(gap.offs_min, gap.offs_max)
+          .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
+        break;
+      }
+      case TSQueryOp::Like: {
+        std::string text;
+        if (auto r = get_text_arg(text); !r.ok()) {
+          return r;
+        }
+        FillByWildcardOptions(
+          text, options->push_back<irs::ByWildcardOptions>(gap.offs_min,
+                                                           gap.offs_max));
+        break;
+      }
+      case TSQueryOp::Fuzzy: {
+        auto args_or = ParseLevenshteinArgs(*f);
         if (!args_or) {
           return std::move(args_or.error());
         }
-        lev_args = std::move(*args_or);
-      } else if (leaf_op == TSQueryOp::Phrase) {
+        FillByEditDistanceOptions(
+          *args_or, options->push_back<irs::ByEditDistanceOptions>(
+                      gap.offs_min, gap.offs_max));
+        break;
+      }
+      case TSQueryOp::Phrase: {
         // Nested PHRASE('x y z') -> tokenise via column analyzer and
         // emit one term part per token. The FIRST token uses the
-        // incoming gap (omin, omax); subsequent tokens are strictly
-        // adjacent. Shared with BuildFtsPhrase via EmitPhraseTokens.
-        if (f.children.empty() || f.children.size() > 2) {
+        // incoming gap; subsequent tokens are strictly adjacent. Shared
+        // with BuildFtsPhrase via EmitPhraseTokens.
+        if (f->children.empty() || f->children.size() > 2) {
           return {ERROR_BAD_PARAMETER,
                   "## PHRASE phrase part expects 1 or 2 arguments "
                   "(text[, slop]), got ",
-                  f.children.size()};
+                  f->children.size()};
         }
         std::string phrase_text;
         if (auto r =
-              GetVarcharArg(*f.children[0], "## PHRASE text", phrase_text);
+              GetVarcharArg(*f->children[0], "## PHRASE text", phrase_text);
             !r.ok()) {
           return r;
         }
@@ -1867,20 +1963,19 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             !r.ok()) {
           return r;
         }
-        continue;  // EmitPhraseTokens pushed the parts; skip scalar dispatch
-      } else if (leaf_op == TSQueryOp::AnyOf) {
+        break;
+      }
+      case TSQueryOp::AnyOf: {
         // ANY_OF as a phrase part -> ByTermsOptions slot with the
-        // listed terms as alternatives at this phrase position.
-        // Only `ANY_OF([list])` and `ANY_OF([list], 1)` are accepted:
+        // listed terms as alternatives at this phrase position. Only
+        // `ANY_OF([list])` and `ANY_OF([list], 1)` are accepted:
         // iresearch's phrase filter ignores min_match for a
         // ByTermsOptions slot (a single position holds at most one
-        // token, so min_match > 1 is unsatisfiable). ALL_OF is rejected
-        // for the same reason -- both would silently degrade to
-        // "match any one of these terms here" at runtime.
+        // token, so min_match > 1 is unsatisfiable).
         std::vector<const duckdb::Expression*> sub_args;
         std::vector<duckdb::unique_ptr<duckdb::Expression>> sub_synth;
         std::optional<size_t> sub_min_match;
-        if (auto r = ExtractAnyAllOfArgs(f, /*is_any=*/true, sub_args,
+        if (auto r = ExtractAnyAllOfArgs(*f, /*is_any=*/true, sub_args,
                                          sub_synth, sub_min_match);
             !r.ok()) {
           return r;
@@ -1904,17 +1999,20 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
           terms_opts.terms.emplace(
             irs::ViewCast<irs::byte_type>(std::string_view{term_text}));
         }
-        continue;  // pushed ByTermsOptions; skip scalar dispatch
-      } else if (leaf_op == TSQueryOp::AllOf) {
+        break;
+      }
+      case TSQueryOp::AllOf:
+        // ALL_OF rejected for the same reason min_match > 1 is rejected
+        // for ANY_OF: a phrase position can match only one token.
         throw duckdb::InvalidInputException(
           "## ALL_OF phrase part is not supported (a phrase position "
           "can match only one token; use ANY_OF instead)");
-      } else if (leaf_op == TSQueryOp::InRange) {
+      case TSQueryOp::InRange: {
         // IN_RANGE as a phrase part -> ByRangeOptions slot. Only the
         // VARCHAR variant is meaningful here: phrases live on the
         // analyzed text field, so numeric / boolean ranges (which would
         // target separate fields) make no sense at a phrase position.
-        auto ir_or = ParseInRangeArgs(f);
+        auto ir_or = ParseInRangeArgs(*f);
         if (!ir_or) {
           return std::move(ir_or.error());
         }
@@ -1929,43 +2027,11 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         FillByRangeOptionsVarchar(
           ir_args,
           options->push_back<irs::ByRangeOptions>(gap.offs_min, gap.offs_max));
-        continue;  // pushed ByRangeOptions; skip scalar dispatch
-      } else {
-        return {ERROR_NOT_IMPLEMENTED,
-                "## part type not supported yet: ", f.function.name};
+        break;
       }
-    } else {
-      return {ERROR_NOT_IMPLEMENTED, "## part expression class: ",
-              static_cast<int>(part_expr_ref.expression_class)};
-    }
-
-    // The push_back overload with (offs_min, offs_max) is the interval
-    // form; (offs) is shorthand for {offs+1, offs+1}. We always use the
-    // interval form to keep offs semantics consistent between exact and
-    // range gaps. For i == 0 (first part), iresearch normalises offsets
-    // to (0, 0) internally -- we pass (0, 0) explicitly for clarity.
-    switch (leaf_op) {
-      case TSQueryOp::Term:
-        options->push_back<irs::ByTermOptions>(gap.offs_min, gap.offs_max)
-          .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-        break;
-      case TSQueryOp::Prefix:
-        options->push_back<irs::ByPrefixOptions>(gap.offs_min, gap.offs_max)
-          .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
-        break;
-      case TSQueryOp::Like:
-        FillByWildcardOptions(
-          text, options->push_back<irs::ByWildcardOptions>(gap.offs_min,
-                                                           gap.offs_max));
-        break;
-      case TSQueryOp::Fuzzy:
-        FillByEditDistanceOptions(
-          lev_args, options->push_back<irs::ByEditDistanceOptions>(
-                      gap.offs_min, gap.offs_max));
-        break;
       default:
-        return {ERROR_NOT_IMPLEMENTED,
-                "## part-kind dispatch reached unreachable branch"};
+        return {ERROR_NOT_IMPLEMENTED, "## part type not supported yet: ",
+                f ? f->function.name : "<bare-const>"};
     }
   }
   return {};
@@ -2476,6 +2542,54 @@ Result FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
   return {};
 }
 
+// REGEXP(pattern [, syntax]) -- TSQUERY regex constructor.
+// `syntax` is 'perl' (default, full RE2) or 'posix' (POSIX ERE only).
+// The pattern is matched against indexed terms; on a non-identity-
+// analyzed column it matches the analyzed token form, which is
+// usually only meaningful for explicit ranges (lowercased, etc).
+Result FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::BoundFunctionExpression& func) {
+  if (func.children.empty() || func.children.size() > 2) {
+    return {ERROR_BAD_PARAMETER,
+            "REGEXP expects 1 or 2 arguments (pattern[, syntax]), got ",
+            func.children.size()};
+  }
+  std::string pattern;
+  if (auto r = GetVarcharArg(*func.children[0], "REGEXP pattern", pattern);
+      !r.ok()) {
+    return r;
+  }
+  auto syntax = irs::RegexpSyntax::Perl;
+  if (func.children.size() == 2) {
+    std::string syntax_name;
+    if (auto r =
+          GetVarcharArg(*func.children[1], "REGEXP syntax", syntax_name);
+        !r.ok()) {
+      return r;
+    }
+    // Surface names are mapped to the iresearch RegexpSyntax enum via
+    // the customize::enum_name specialization above; unknown names
+    // throw an InvalidInputException at bind time. The valid-value
+    // list in the error message is generated from the enum so it
+    // stays in sync if a new dialect is added.
+    auto parsed = magic_enum::enum_cast<irs::RegexpSyntax>(
+      syntax_name, magic_enum::case_insensitive);
+    if (!parsed) {
+      throw duckdb::InvalidInputException(
+        "REGEXP syntax must be one of [%s], got '%s'",
+        absl::StrJoin(magic_enum::enum_names<irs::RegexpSyntax>(), ", ",
+                      [](std::string* out, std::string_view name) {
+                        absl::StrAppend(out, "'", name, "'");
+                      }),
+        syntax_name);
+    }
+    syntax = *parsed;
+  }
+  BuildFtsRegexp(parent, ctx, column_info, pattern, syntax);
+  return {};
+}
+
 // IN_RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
 // Mirrors SQL BETWEEN with explicit inclusivity. Either bound may be
 // NULL (unbounded that side). VARCHAR / BOOLEAN columns emit irs::ByRange,
@@ -2721,6 +2835,8 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
     case TSQueryOp::InRange:
       return FromInRange(parent, ctx, column_info, func);
+    case TSQueryOp::Regexp:
+      return FromRegexp(parent, ctx, column_info, func);
     case TSQueryOp::Tokenize:
       return FromTokenize(parent, ctx, column_info, func);
     case TSQueryOp::PlainToTsquery:

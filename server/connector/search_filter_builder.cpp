@@ -21,6 +21,8 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
+#include <iresearch/search/geo_filter.h>
+#include <vpack/parser.h>
 
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -29,6 +31,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -46,10 +49,15 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
+#include "basics/down_cast.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "geo/coding.h"
+#include "geo/geo_json.h"
+#include "geo/shape_container.h"
+#include "geo/wkb.h"
 #include "rocksdb_filter.hpp"
 
 namespace sdb::connector {
@@ -366,6 +374,20 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
+// Forward declarations for geo-distance comparison rewriting (defined later
+// alongside the rest of the geo helpers but called from FromBinaryEq /
+// FromComparison below).
+const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
+  const duckdb::Expression& expr);
+Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
+                               const FilterContext& ctx,
+                               const duckdb::BoundFunctionExpression& geo_call,
+                               const duckdb::Expression& dist_expr);
+Result FromGeoDistanceComparison(
+  irs::BooleanFilter& filter, const FilterContext& ctx,
+  const duckdb::BoundFunctionExpression& geo_call,
+  const duckdb::Expression& dist_expr, ComparisonOp op);
+
 // ---------------------------------------------------------------------------
 // Equality (generic + sdb_term_eq)
 // ---------------------------------------------------------------------------
@@ -374,6 +396,15 @@ template<bool GenericVersion>
 Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
+  // geo_distance(field, centroid) = / != distance  --  rewrite to range.
+  if constexpr (GenericVersion) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(left_expr)) {
+      FilterContext geo_ctx = ctx;
+      geo_ctx.negated = (ctx.negated != not_equal);
+      return FromGeoDistanceBinaryEq(filter, geo_ctx, *geo_call, right_expr);
+    }
+  }
+
   const auto* col_ref = TryGetColumnRef(left_expr);
   const auto* const_val = TryGetConstant(right_expr);
 
@@ -422,6 +453,13 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& value_expr, ComparisonOp op) {
   if (ctx.negated) {
     op = InvertComparisonOp(op);
+  }
+
+  // geo_distance(field, centroid) </<=/>/>= distance  --  rewrite to range.
+  if constexpr (GenericVersion) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(field_expr)) {
+      return FromGeoDistanceComparison(filter, ctx, *geo_call, value_expr, op);
+    }
   }
 
   const auto* col_ref = TryGetColumnRef(field_expr);
@@ -991,6 +1029,307 @@ Result FromLevenshteinMatch(irs::BooleanFilter& filter,
 }
 
 // ---------------------------------------------------------------------------
+// Geo filter helpers
+// ---------------------------------------------------------------------------
+
+// Returns the inner expression as a geo_distance(field, centroid) call when
+// it matches that exact shape, or nullptr otherwise. Used to rewrite the
+// pattern `geo_distance(...) OP <const>` into an iresearch
+// GeoDistanceFilter at filter-build time.
+const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
+  const duckdb::Expression& expr) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return nullptr;
+  }
+  const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+  if (func.function.name != kGeoDistance || func.children.size() != 2) {
+    return nullptr;
+  }
+  return &func;
+}
+
+// Populate the iresearch geo filter base options from the column's geo
+// analyzer. Calls into GeoAnalyzer::prepare which fills in the indexer
+// terms-prefix, S2 indexer options, and the analyzer's stored-form coding.
+Result SetupGeoFilter(const irs::analysis::Analyzer& a,
+                      irs::GeoFilterOptionsBase& options) {
+  const auto type_id = a.type();
+  if (type_id != irs::Type<irs::analysis::GeoJsonAnalyzer>::id() &&
+      type_id != irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
+    return {ERROR_BAD_PARAMETER, "Analyzer for field is not a geo analyzer"};
+  }
+  basics::downCast<irs::analysis::GeoAnalyzer>(a).prepare(options);
+  return {};
+}
+
+// Parse a constant geo argument (centroid / target) into a ShapeContainer.
+// VARCHAR: GeoJSON text via the JSON->vpack->ParseShape pipeline.
+// GEOMETRY: raw WKB bytes via ParseShapeWKB (parser also re-validates CRS84
+// when the bytes carry an EWKB SRID).
+Result ParseGeoConstant(const duckdb::Value& value,
+                        sdb::geo::coding::Options coding,
+                        sdb::geo::ShapeContainer& shape) {
+  std::vector<S2LatLng> cache;
+  switch (value.type().id()) {
+    case duckdb::LogicalTypeId::VARCHAR: {
+      auto json_str = value.GetValue<std::string>();
+      vpack::Builder vpack;
+      try {
+        vpack::Parser parser{vpack};
+        parser.parse(json_str);
+      } catch (...) {
+        return {ERROR_BAD_PARAMETER, "Geo argument is not valid JSON"};
+      }
+      if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
+            vpack.slice(), shape, cache, coding, nullptr)) {
+        return {ERROR_BAD_PARAMETER, "Geo argument is not valid GeoJSON"};
+      }
+      return {};
+    }
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      auto wkb_str = value.GetValue<std::string>();
+      if (auto r = sdb::geo::ParseShapeWKB(wkb_str, shape, cache); r.fail()) {
+        return r;
+      }
+      return {};
+    }
+    default:
+      return {ERROR_BAD_PARAMETER,
+              "Geo argument must be VARCHAR (GeoJSON) or GEOMETRY (WKB)"};
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Set up GeoDistanceFilter (field + origin + analyzer-derived options) from
+// a geo_distance(field, centroid) call and a constant distance expression.
+// Range bounds are left to the caller. Returns the filter and the parsed
+// distance value on success.
+// ---------------------------------------------------------------------------
+
+ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
+  irs::BooleanFilter& parent, const FilterContext& ctx,
+  const duckdb::BoundFunctionExpression& geo_call,
+  const duckdb::Expression& dist_expr) {
+  SDB_ASSERT(geo_call.children.size() == 2);
+
+  const auto* col_ref = TryGetColumnRef(*geo_call.children[0]);
+  if (!col_ref) {
+    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
+                                   "GEO_DISTANCE first input must be a column"};
+  }
+
+  const auto* centroid_val = TryGetConstant(*geo_call.children[1]);
+  if (!centroid_val) {
+    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
+                                   "GEO_DISTANCE centroid must be a constant"};
+  }
+
+  const auto* dist_val = TryGetConstant(dist_expr);
+  if (!dist_val || dist_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "GEO_DISTANCE comparison value must be a constant DOUBLE"};
+  }
+  const double distance = dist_val->GetValue<double>();
+
+  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  if (!column_info ||
+      (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "GEO_DISTANCE field must be VARCHAR (GeoJSON) or GEOMETRY"};
+  }
+  if (!column_info->analyzer.analyzer) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "GEO_DISTANCE field has no analyzer attached"};
+  }
+
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+
+  auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(parent)
+                                 : AddFilter<irs::GeoDistanceFilter>(parent);
+  geo_filter.boost(ctx.boost);
+  *geo_filter.mutable_field() = std::move(field_name);
+
+  auto* options = geo_filter.mutable_options();
+  if (auto r = SetupGeoFilter(*column_info->analyzer.analyzer, *options);
+      r.fail()) {
+    return std::unexpected<Result>(std::move(r));
+  }
+
+  sdb::geo::ShapeContainer centroid_shape;
+  if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
+      r.fail()) {
+    return std::unexpected<Result>(std::move(r));
+  }
+  options->origin = centroid_shape.centroid();
+
+  return std::pair{&geo_filter, distance};
+}
+
+// geo_distance(field, centroid) OP distance  --  range one-sided.
+Result FromGeoDistanceComparison(
+  irs::BooleanFilter& filter, const FilterContext& ctx,
+  const duckdb::BoundFunctionExpression& geo_call,
+  const duckdb::Expression& dist_expr, ComparisonOp op) {
+  auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_expr);
+  if (!setup) {
+    return std::move(setup.error());
+  }
+  auto* options = setup->first->mutable_options();
+  switch (op) {
+    case ComparisonOp::Lt:
+      options->range.max = setup->second;
+      options->range.max_type = irs::BoundType::Exclusive;
+      break;
+    case ComparisonOp::Le:
+      options->range.max = setup->second;
+      options->range.max_type = irs::BoundType::Inclusive;
+      break;
+    case ComparisonOp::Gt:
+      options->range.min = setup->second;
+      options->range.min_type = irs::BoundType::Exclusive;
+      break;
+    case ComparisonOp::Ge:
+      options->range.min = setup->second;
+      options->range.min_type = irs::BoundType::Inclusive;
+      break;
+    default:
+      return {ERROR_BAD_PARAMETER, "GEO_DISTANCE: unsupported comparison op"};
+  }
+  return {};
+}
+
+// geo_distance(field, centroid) = distance  --  point range [d, d].
+Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
+                               const FilterContext& ctx,
+                               const duckdb::BoundFunctionExpression& geo_call,
+                               const duckdb::Expression& dist_expr) {
+  auto setup = PrepareGeoDistanceFilter(filter, ctx, geo_call, dist_expr);
+  if (!setup) {
+    return std::move(setup.error());
+  }
+  auto* options = setup->first->mutable_options();
+  options->range.min = setup->second;
+  options->range.min_type = irs::BoundType::Inclusive;
+  options->range.max = setup->second;
+  options->range.max_type = irs::BoundType::Inclusive;
+  return {};
+}
+
+// ---------------------------------------------------------------------------
+// geo_in_range(field, centroid, min_distance, max_distance,
+//              [include_min, [include_max]]) -> bool
+//
+// `field` is a column reference (VARCHAR with GeoJSON, or GEOMETRY).
+// `centroid` is a constant -- VARCHAR holding GeoJSON text, or a GEOMETRY
+// value (WKB). Builds an iresearch GeoDistanceFilter that matches indexed
+// values whose geodesic distance from `centroid` falls in [min, max].
+// `include_min` / `include_max` toggle each endpoint's inclusivity, both
+// default to inclusive.
+// ---------------------------------------------------------------------------
+
+Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
+                      const duckdb::BoundFunctionExpression& func) {
+  const auto num_inputs = func.children.size();
+  if (num_inputs < 4 || num_inputs > 6) {
+    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE has ", num_inputs,
+            " inputs but 4 to 6 expected"};
+  }
+
+  const auto* col_ref = TryGetColumnRef(*func.children[0]);
+  if (!col_ref) {
+    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE first input must be a column"};
+  }
+
+  const auto* centroid_val = TryGetConstant(*func.children[1]);
+  if (!centroid_val) {
+    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE centroid must be a constant"};
+  }
+
+  const auto* min_val = TryGetConstant(*func.children[2]);
+  if (!min_val || min_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
+    return {ERROR_BAD_PARAMETER,
+            "GEO_IN_RANGE min_distance must be a constant DOUBLE"};
+  }
+  const double min_distance = min_val->GetValue<double>();
+
+  const auto* max_val = TryGetConstant(*func.children[3]);
+  if (!max_val || max_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
+    return {ERROR_BAD_PARAMETER,
+            "GEO_IN_RANGE max_distance must be a constant DOUBLE"};
+  }
+  const double max_distance = max_val->GetValue<double>();
+
+  bool include_min = true;
+  if (num_inputs >= 5) {
+    const auto* v = TryGetConstant(*func.children[4]);
+    if (!v || v->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
+      return {ERROR_BAD_PARAMETER,
+              "GEO_IN_RANGE include_min must be a constant BOOLEAN"};
+    }
+    include_min = v->GetValue<bool>();
+  }
+  bool include_max = true;
+  if (num_inputs >= 6) {
+    const auto* v = TryGetConstant(*func.children[5]);
+    if (!v || v->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
+      return {ERROR_BAD_PARAMETER,
+              "GEO_IN_RANGE include_max must be a constant BOOLEAN"};
+    }
+    include_max = v->GetValue<bool>();
+  }
+
+  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  if (!column_info ||
+      (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
+    return {ERROR_BAD_PARAMETER,
+            "GEO_IN_RANGE field must be VARCHAR (GeoJSON) or GEOMETRY"};
+  }
+  if (!column_info->analyzer.analyzer) {
+    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE field has no analyzer attached"};
+  }
+
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+
+  auto& geo_filter = ctx.negated ? Negate<irs::GeoDistanceFilter>(filter)
+                                 : AddFilter<irs::GeoDistanceFilter>(filter);
+  geo_filter.boost(ctx.boost);
+  *geo_filter.mutable_field() = std::move(field_name);
+
+  auto* options = geo_filter.mutable_options();
+  if (auto r = SetupGeoFilter(*column_info->analyzer.analyzer, *options);
+      r.fail()) {
+    return r;
+  }
+
+  sdb::geo::ShapeContainer centroid_shape;
+  if (auto r = ParseGeoConstant(*centroid_val, options->coding, centroid_shape);
+      r.fail()) {
+    return r;
+  }
+  options->origin = centroid_shape.centroid();
+
+  if (min_distance != 0.) {
+    options->range.min = min_distance;
+    options->range.min_type =
+      include_min ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+  }
+  options->range.max = max_distance;
+  options->range.max_type =
+    include_max ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+
+  return {};
+}
+
+// ---------------------------------------------------------------------------
 // sdb_term_in (function-based IN)
 // ---------------------------------------------------------------------------
 
@@ -1085,6 +1424,9 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   }
   if (name == kLevenshteinMatch) {
     return FromLevenshteinMatch(filter, ctx, func);
+  }
+  if (name == kGeoInRange) {
+    return FromGeoInRange(filter, ctx, func);
   }
   if (name == kTermEq) {
     if (func.children.size() != 2) {

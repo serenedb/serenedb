@@ -601,8 +601,11 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 
   const auto ring = coverer.GetCovering(max_bound).Difference(
     coverer.GetInteriorCovering(min_bound));
-  const auto geo_terms =
-    indexer.GetQueryTermsForCanonicalCovering(ring, options.prefix);
+  // S2CellUnion::Difference has no level cap: GetDifferenceInternal recurses
+  // until cells are disjoint or fully contained, so `ring` can have cells
+  // beyond options.max_level. Re-cover through GetQueryTerms so the coverer
+  // enforces min/max level before GetQueryTermsForCanonicalCovering runs.
+  const auto geo_terms = indexer.GetQueryTerms(ring, options.prefix);
 
   if (geo_terms.empty()) {
     return Filter::Query::empty();

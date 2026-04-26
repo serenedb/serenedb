@@ -38,6 +38,22 @@ inline constexpr std::string_view kNgramMatch = "ngram_match";
 inline constexpr std::string_view kLevenshteinMatch = "levenshtein_match";
 inline constexpr std::string_view kBoost = "boost";
 
+// Geo range search:
+//   geo_in_range(field, centroid_geojson, min_distance, max_distance,
+//                [include_min, [include_max]]) -> BOOLEAN
+// Matches rows whose indexed geo value lies between min_distance and
+// max_distance metres of the centroid (parsed as GeoJSON). The bracket
+// (inclusive vs exclusive) defaults to inclusive on both sides.
+inline constexpr std::string_view kGeoInRange = "geo_in_range";
+
+// Geo distance pseudo-function:
+//   geo_distance(field, centroid) -> DOUBLE
+// Returns the geodesic distance (metres) between the indexed value and the
+// centroid. Cannot be evaluated outside an inverted-index scan; the filter
+// builder recognizes `geo_distance(field, centroid) OP constant` patterns and
+// rewrites them into iresearch GeoDistanceFilter range queries.
+inline constexpr std::string_view kGeoDistance = "geo_distance";
+
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running
 // per-row at execution time. Scorer parameters are constants; the

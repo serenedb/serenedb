@@ -234,6 +234,57 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     {duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::DOUBLE},
     duckdb::LogicalType::BOOLEAN, SearchStubFn));
 
+  // geo_in_range(field, centroid, min_distance, max_distance,
+  //              [include_min, [include_max]]) -> bool
+  //
+  // field   : VARCHAR (GeoJSON column) or GEOMETRY column.
+  // centroid: VARCHAR (GeoJSON literal) or GEOMETRY value.
+  //
+  // Register all 4 type combinations for the (field, centroid) pair across
+  // each arity so DuckDB resolves the call without implicit casts.
+  const duckdb::LogicalType geo_field_types[] = {
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY()};
+  const duckdb::LogicalType geo_centroid_types[] = {
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY()};
+  {
+    duckdb::ScalarFunctionSet set{std::string{kGeoInRange}};
+    for (const auto& field_t : geo_field_types) {
+      for (const auto& centroid_t : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BOOLEAN},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BOOLEAN,
+           duckdb::LogicalType::BOOLEAN},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // geo_distance(field, centroid) -> DOUBLE
+  //
+  // Returns the geodesic distance from the indexed value to the centroid.
+  // Pseudo-function: outside an inverted-index scan it throws via the stub.
+  // The filter builder recognizes `geo_distance(...) OP <const>` and rewrites
+  // it into iresearch GeoDistanceFilter range bounds.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kGeoDistance}};
+    for (const auto& field_t : geo_field_types) {
+      for (const auto& centroid_t : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t}, duckdb::LogicalType::DOUBLE, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
   // bm25(tableoid) / bm25(tableoid, k1, b) -> DOUBLE -- emits the BM25
   // score per row for the scan identified by tableoid. Parameters are
   // extracted at compile time by the iresearch_plan rule; defaults

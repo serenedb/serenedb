@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/internal/endian.h>
+#include <iresearch/search/geo_filter.h>
+#include <s2/s2latlng.h>
 #include <vpack/parser.h>
 
 #include <duckdb.hpp>
@@ -193,6 +195,22 @@ catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
   EXPECT_TRUE(tokenizer);
   return {.analyzer = *std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
+}
+
+[[maybe_unused]] catalog::ColumnAnalyzer GeoJsonAnalyzerProvider(
+  catalog::Column::Id) {
+  auto make_geojson = [] {
+    auto builder = vpack::Parser::fromJson(
+      "{ \"analyzer\": {\"type\":\"geojson\",\"properties\":{}}}");
+    return std::string(builder->slice().startAs<char>(),
+                       builder->slice().byteSize());
+  };
+  static catalog::Tokenizer gGeoTokenizer(ObjectId{12349}, "test_geojson", {},
+                                          make_geojson());
+  auto tokenizer = gGeoTokenizer.GetTokenizer();
+  EXPECT_TRUE(tokenizer);
+  return {.analyzer = *std::move(tokenizer),
+          .features = irs::IndexFeatures::None};
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +393,40 @@ irs::ByPhrase& AddPhraseFilter(Filter& root, catalog::Column::Id column,
       irs::ViewCast<irs::byte_type>(value);
   }
   return wc;
+}
+
+// Build the same S2Point that production's ParseShape produces for a
+// GeoJSON Point at (lng, lat). GeoJSON coordinate order is [lng, lat], so
+// the expected origin in tests is constructed via S2LatLng::FromDegrees.
+S2Point GeoPointFromDegrees(double lat, double lng) {
+  return S2LatLng::FromDegrees(lat, lng).Normalized().ToPoint();
+}
+
+// GeoDistanceFilterOptions::operator== compares only `origin` and `range`
+// (the analyzer-derived prefix / indexer options / stored / coding fields are
+// not part of the equality contract), so the expected filter only needs to
+// set those two -- exactly what FromGeoInRange / FromGeoDistanceComparison
+// populate from user inputs.
+template<typename Filter>
+irs::GeoDistanceFilter& AddGeoDistanceFilter(
+  Filter& root, catalog::Column::Id column, const S2Point& origin,
+  std::optional<double> min_distance, bool min_inclusive,
+  std::optional<double> max_distance, bool max_inclusive) {
+  auto& geo = AddFilter<irs::GeoDistanceFilter>(root);
+  *geo.mutable_field() = MakeFieldName<std::string_view>(column);
+  auto* options = geo.mutable_options();
+  options->origin = origin;
+  if (min_distance.has_value()) {
+    options->range.min = *min_distance;
+    options->range.min_type =
+      min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+  }
+  if (max_distance.has_value()) {
+    options->range.max = *max_distance;
+    options->range.max_type =
+      max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+  }
+  return geo;
 }
 
 template<typename Filter>
@@ -1955,6 +2007,237 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'foo'), -1.0)",
                columns, false);
+}
+
+// ===========================================================================
+// geo_in_range
+//
+// All tests use the canonical (lat=20, lng=10) Point centroid -- expressed in
+// SQL as the GeoJSON literal '{"type":"Point","coordinates":[10,20]}' (GeoJSON
+// orders coordinates [lng, lat]) and reconstructed in the expected filter via
+// S2LatLng::FromDegrees(20, 10).
+// ===========================================================================
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_Basic) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       500.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_GeometryField) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::GEOMETRY(), .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       500.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_MinZeroLeavesUnbounded) {
+  // FromGeoInRange treats min_distance == 0.0 as the absent lower bound: it
+  // skips assigning range.min so the bound stays Unbounded (and `min` stays
+  // at its default 0.0).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+                       false, 500.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 0.0, 500.0)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_ExclusiveBounds) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
+                       500.0, false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, "
+               "false, false)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_FiveArgsExclusiveMin) {
+  // 5-arg form: only include_min explicit; include_max defaults to true.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
+                       500.0, true);
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+    "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, false)",
+    columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_NotNegation) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  auto& negated = expected.add<irs::Not>();
+  AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       500.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"},
+    {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "c"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, c, 100.0, 500.0)",
+               columns, false, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
+  // Field exists but its analyzer is not a geo analyzer -- SetupGeoFilter
+  // rejects it.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
+               columns, false, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "'not a geojson', 100.0, 500.0)",
+               columns, false, GeoJsonAnalyzerProvider);
+}
+
+// ===========================================================================
+// geo_distance (rewritten by FromBinaryEq / FromComparison into
+// GeoDistanceFilter range bounds when used as `geo_distance(...) OP <const>`)
+// ===========================================================================
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_Eq) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       100.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') = 100.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  auto& negated = expected.add<irs::Not>();
+  AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       100.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') != 100.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_Lt) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+                       false, 100.0, false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_Le) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+                       false, 100.0, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') <= 100.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_Gt) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
+                       std::nullopt, false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') > 100.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_Ge) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       std::nullopt, false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') >= 100.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_GeometryField) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::GEOMETRY(), .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+                       false, 500.0, false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 500.0",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"},
+    {.id = 2, .type = duckdb::LogicalType::DOUBLE, .name = "d"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < d",
+               columns, false, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
+               columns, false, SegmentationAnalyzerProvider);
 }
 
 }  // namespace

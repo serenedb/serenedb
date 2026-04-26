@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_join.h>
 #include <iresearch/parser/parser.h>
-#include <magic_enum/magic_enum.hpp>
 
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -52,6 +51,7 @@
 #include <iresearch/search/wildcard_filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "basics/result_or.h"
 #include "basics/string_utils.h"
@@ -245,6 +245,24 @@ bool IsInRangeNumericValueType(duckdb::LogicalTypeId id) {
   return IsNumericTypeId(id) || id == duckdb::LogicalTypeId::DECIMAL;
 }
 
+// Returns the raw byte content of a Value whose physical type is
+// VARCHAR (covers both LogicalType::VARCHAR and LogicalType::BLOB) as
+// an irs::bytes_view ready for term-dictionary use. Use this instead
+// of GetValue<std::string>() at sites where the constant may arrive
+// as BLOB: DuckDB's regex_range_filter optimizer rewrites
+// regexp_full_match(col, pat) into
+//   col >= BLOB_RAW(min) AND col <= BLOB_RAW(max)
+// so the comparison constant against a VARCHAR column may be BLOB
+// even though the column is VARCHAR. GetValue<std::string>() on a
+// BLOB returns the textual display form (e.g. "\xF4\xBF\xBF\xC0" as
+// 24 ASCII chars), which is wrong as a byte-wise term-dictionary
+// bound. StringValue::Get returns the raw stored bytes for both
+// types because they share PhysicalType::VARCHAR.
+irs::bytes_view AsRawBytes(const duckdb::Value& value) {
+  return irs::ViewCast<irs::byte_type>(
+    std::string_view{duckdb::StringValue::Get(value)});
+}
+
 // Sets up a ByTerm filter for a single constant value against a column.
 Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
                        const SearchColumnInfo& column_info,
@@ -260,9 +278,7 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
   }
 
   if (type_id == duckdb::LogicalTypeId::VARCHAR) {
-    auto sv = value.GetValue<std::string>();
-    filter.mutable_options()->term.assign(
-      irs::ViewCast<irs::byte_type>(std::string_view{sv}));
+    filter.mutable_options()->term.assign(AsRawBytes(value));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
       irs::BooleanTokenizer::value(value.GetValue<bool>())));
@@ -614,9 +630,8 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   if (type_id == duckdb::LogicalTypeId::VARCHAR) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
-    auto sv = const_val->GetValue<std::string>();
     setup_base_filter(range_filter, std::move(field_name))
-      .assign(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
+      .assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
     setup_base_filter(range_filter, std::move(field_name))
@@ -759,8 +774,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   for (const auto* value : values) {
     if (type_id == duckdb::LogicalTypeId::VARCHAR) {
-      auto sv = value->GetValue<std::string>();
-      opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
+      opts.terms.emplace(AsRawBytes(*value));
     } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
       opts.terms.emplace(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(value->GetValue<bool>())));
@@ -1279,8 +1293,7 @@ Result FromTermIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   for (const auto* value : values) {
     if (type_id == duckdb::LogicalTypeId::VARCHAR) {
-      auto sv = value->GetValue<std::string>();
-      opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
+      opts.terms.emplace(AsRawBytes(*value));
     } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
       opts.terms.emplace(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(value->GetValue<bool>())));
@@ -1694,9 +1707,10 @@ ResultOr<InRangeArgs> ParseInRangeArgs(
                                    std::forward<decltype(args)>(args)...};
   };
   if (func.children.size() != 4) {
-    return err("IN_RANGE expects 4 arguments "
-               "(min, max, min_incl, max_incl), got ",
-               func.children.size());
+    return err(
+      "IN_RANGE expects 4 arguments "
+      "(min, max, min_incl, max_incl), got ",
+      func.children.size());
   }
   InRangeArgs out;
   for (size_t i = 0; i < 2; ++i) {
@@ -1926,9 +1940,8 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         if (auto r = get_text_arg(text); !r.ok()) {
           return r;
         }
-        FillByWildcardOptions(
-          text, options->push_back<irs::ByWildcardOptions>(gap.offs_min,
-                                                           gap.offs_max));
+        FillByWildcardOptions(text, options->push_back<irs::ByWildcardOptions>(
+                                      gap.offs_min, gap.offs_max));
         break;
       }
       case TSQueryOp::Fuzzy: {
@@ -2563,8 +2576,7 @@ Result FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto syntax = irs::RegexpSyntax::Perl;
   if (func.children.size() == 2) {
     std::string syntax_name;
-    if (auto r =
-          GetVarcharArg(*func.children[1], "REGEXP syntax", syntax_name);
+    if (auto r = GetVarcharArg(*func.children[1], "REGEXP syntax", syntax_name);
         !r.ok()) {
       return r;
     }
@@ -2961,6 +2973,18 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
 
   // DuckDB turns LIKE into a BoundFunctionExpression with function.name
   // "~~" or "like_escape".  Handle it as generic LIKE.
+  //
+  // We deliberately do NOT add a `regexp_full_match` claimer here even
+  // though Postgres `~ / ~* / !~ / !~*` rewrite to it. DuckDB's own
+  // regex_range_filter optimizer runs first and wraps any
+  // `regexp_full_match(col, pat)` call in a sibling LogicalFilter that
+  // adds `col >= range_min AND col <= range_max` (computed from the
+  // pattern's literal prefix). After our walker recursively claims
+  // the inner range filter and rewrites the LogicalGet into an
+  // iresearch scan, the outer filter (still holding the original
+  // regexp_full_match) no longer matches our claim shape -- the Get
+  // has scan_source.Kind() != FullTable -- so the regexp_full_match
+  // would silently fall back to the DuckDB regex executor anyway.
   if (name == "~~" || name == "like_escape") {
     if (func.children.size() < 2) {
       return {ERROR_BAD_PARAMETER, "LIKE has ", func.children.size(),

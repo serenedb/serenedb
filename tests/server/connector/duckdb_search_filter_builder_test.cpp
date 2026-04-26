@@ -2432,6 +2432,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
                true);
 }
 
+
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Levenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};

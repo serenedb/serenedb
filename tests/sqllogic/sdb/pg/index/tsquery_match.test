@@ -1193,6 +1193,70 @@ statement error
 SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick AND');
 
 # ----------------------------------------------------------------------
+# PG-style regex operators on identity-analyzed VARCHAR columns.
+# DuckDB's regex_range_filter optimizer rewrites `regexp_full_match`
+# into a sibling LogicalFilter holding a coarse `col >= range_min AND
+# col <= range_max` pre-filter, where the bounds are typed BLOB but
+# carry RAW bytes (e.g. 0xF4 0xBF 0xBF 0xC0 for the upper bound of any
+# UTF-8 string starting with 'foo'). Our filter builder must extract
+# those bytes RAW (StringValue::Get) -- not via GetValue<std::string>()
+# which would return the display form "\xF4\xBF\xBF\xC0" as 24 ASCII
+# chars and corrupt the iresearch ByRange upper bound.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE re_idn (a INTEGER PRIMARY KEY, name VARCHAR);
+
+# `name` has no analyzer specified -- defaults to identity, which is
+# what the byte-wise range-and-regex pipeline below assumes.
+statement ok
+CREATE INDEX re_idn_idx ON re_idn USING inverted(a, name);
+
+statement ok
+INSERT INTO re_idn VALUES (1, 'Foo'), (2, 'foobar'), (3, 'BARFOO'), (4, 'baz');
+
+statement ok
+VACUUM (UPDATE_INDEXES) re_idn;
+
+# `~` -- case-sensitive POSIX regex. The literal-prefix range bound
+# pushed by regex_range_filter is upper bound `foo<F4 BF BF C0>`,
+# which (with the BLOB-extraction fix) admits 'foobar' into the range
+# scan and the runtime regex confirms the match.
+query
+SELECT a FROM re_idn_idx WHERE name ~ 'foo.*' ORDER BY a;
+----
+a
+2
+
+# `~*` -- case-insensitive. Note: DuckDB rewrites `~`/`~*` into
+# regexp_full_match (anchored), so to match "contains foo" we use
+# `.*foo.*`. Matches 'Foo', 'foobar', 'BARFOO'.
+query
+SELECT a FROM re_idn_idx WHERE name ~* '.*foo.*' ORDER BY a;
+----
+a
+1
+2
+3
+
+# `!~` -- NOT case-sensitive full-match. 'foobar' is the only string
+# whose full content matches 'foo.*'; the others (1, 3, 4) are not.
+query
+SELECT a FROM re_idn_idx WHERE name !~ 'foo.*' ORDER BY a;
+----
+a
+1
+3
+4
+
+# `!~*` -- NOT case-insensitive contains-foo. Only 'baz' lacks 'foo'.
+query
+SELECT a FROM re_idn_idx WHERE name !~* '.*foo.*' ORDER BY a;
+----
+a
+4
+
+# ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------
 

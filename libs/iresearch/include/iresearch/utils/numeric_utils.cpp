@@ -109,7 +109,7 @@ size_t Encode(typename EncodeTraits::type value, byte_type* out, size_t shift) {
 
   value ^= Type(1) << (BitsRequired<Type>() - 1);
   value &= std::numeric_limits<Type>::max() ^ ((Type(1) << shift) - 1);
-  value = absl::big_endian::FromHost(value);
+  value = absl::little_endian::FromHost(value);
 
   const size_t size = EncodedSize<Type>(shift);
   *out = static_cast<byte_type>(shift) + EncodeTraits::TYPE_MAGIC;
@@ -125,7 +125,7 @@ typename EncodeTraits::type Decode(const byte_type* in) {
   const size_t size = EncodedSize<Type>(*in - EncodeTraits::TYPE_MAGIC);
   if (size) {
     std::memcpy(reinterpret_cast<void*>(&value), in + 1, size);
-    value = absl::big_endian::ToHost(value);
+    value = absl::little_endian::ToHost(value);
     value ^= Type(1) << (BitsRequired<Type>() - 1);
   }
 

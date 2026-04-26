@@ -66,9 +66,9 @@ inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
 
   out.WriteV32(mask_size);
   const auto pos = out.Position();
-  for (auto mask : *docs_mask) {
-    out.WriteV32(mask);
-  }
+  docs_mask->ForEach([&out](doc_id_t doc_id) {
+    out.WriteV32(doc_id);
+  });
   return out.Position() - pos;
 }
 

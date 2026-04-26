@@ -44,7 +44,8 @@ class ByPhraseOptions {
  private:
   using phrase_part =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
-                 ByEditDistanceOptions, ByTermsOptions, ByRangeOptions, ByRegexpOptions>;
+                 ByEditDistanceOptions, ByTermsOptions, ByRangeOptions,
+                 ByRegexpOptions>;
 
   struct PhrasePartInfo {
     phrase_part part;

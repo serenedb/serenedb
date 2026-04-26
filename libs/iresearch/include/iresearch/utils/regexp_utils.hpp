@@ -104,9 +104,9 @@ constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
 
 // Default maximum number of DFA states after determinization.
 // Patterns that produce a larger DFA are rejected (return empty automaton).
-// 10 000 is generous for real-world patterns (most produce < 1 000)
+// 10'000 is generous for real-world patterns (most produce < 1'000)
 // while guarding against exponential blowup from pathological input
-// (e.g. [ab]{20} -> up to 2^20 states).
+// (e.g. [ab]*a[ab]{15} -> ~65'000 states).
 // 0 means no limit.
 inline constexpr int64_t kDefaultMaxDfaStates = 10'000;
 

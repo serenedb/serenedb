@@ -1344,23 +1344,50 @@ TEST_F(RegexpUtilsTest, perl_any_byte) {
 
 // DFA size limit
 
-TEST_F(RegexpUtilsTest, dfa_size_limit) {
-  // [ab]{20} sits near the practical limit of DFA size for a pattern
-  // of this shape. Two outcomes are both valid:
-  //   - DFA fits within kDefaultMaxDfaStates -> automaton is usable,
-  //     acceptance must be correct.
-  //   - DFA would exceed the limit -> empty automaton returned, no OOM.
-  // The anti-OOM guarantee is the core contract; correct acceptance is
-  // verified only when the DFA was actually built.
-  auto a = irs::FromRegexp("[ab]{20}");
-  if (a.NumStates() == 0) {
-    return;  // rejected by DFA limit - acceptable, test ends here
-  }
+TEST_F(RegexpUtilsTest, dfa_size_limit_default_allows_normal_pattern) {
+  // [ab]*a[ab]{11} produces about 4'000 DFA states (measured), well within
+  // the default kDefaultMaxDfaStates limit. Must build successfully.
+  auto a = irs::FromRegexp("[ab]*a[ab]{11}");
+  ASSERT_GT(a.NumStates(), 0);
   AssertProperties(a);
-  EXPECT_TRUE(Accepts(a, "aaaaaaaaaaaaaaaaaaaa"));
-  EXPECT_TRUE(Accepts(a, "abababababababababab"));
-  EXPECT_FALSE(Accepts(a, "aaaaaaaaaaaaaaaaaaaaa"));  // 21 chars
+  // Pattern matches strings with 'a' at position 12 from the end.
+  EXPECT_TRUE(Accepts(a, "aaaaaaaaaaaa"));   // 12 chars, 'a' at pos 12
+  EXPECT_TRUE(Accepts(a, "babbabbababba"));  // 13 chars, 'a' at pos 12
+  EXPECT_FALSE(Accepts(a, "bbbbbbbbbbbb"));  // no 'a'
 }
+
+TEST_F(RegexpUtilsTest, dfa_size_limit_default_rejects_blowup) {
+  // [ab]*a[ab]{15} produces about 65'000 DFA states (measured), well above
+  // the default kDefaultMaxDfaStates limit. The guard must reject it.
+  auto a = irs::FromRegexp("[ab]*a[ab]{15}");
+  EXPECT_EQ(0, a.NumStates())
+    << "kDefaultMaxDfaStates guard failed to reject pathological pattern";
+
+  // Verify the rejection above was due to the guard, not a parse error
+  // or another failure: with the limit disabled, the same pattern builds
+  // and exceeds the default limit.
+  auto unlimited = irs::FromRegexp("[ab]*a[ab]{15}", /*max_dfa_states=*/0);
+  ASSERT_GT(unlimited.NumStates(), 0);
+  EXPECT_GT(unlimited.NumStates(), irs::kDefaultMaxDfaStates);
+}
+
+// TEST_F(RegexpUtilsTest, dfa_size_diagnostic) {
+//   // Pattern: ".*a.{N}" - "contains 'a' at position N from the end"
+//   // Classic exponential blowup case for NFA->DFA conversion.
+//   for (int n : {3, 5, 7, 9, 11, 13, 15}) {
+//     const auto pattern = ".*a.{" + std::to_string(n) + "}";
+//     auto a = irs::FromRegexp(pattern, /*max_dfa_states=*/0);
+//     std::cerr << ".*a.{" << n << "} -> " << a.NumStates() << " states\n";
+//   }
+
+//   // Pattern: "[ab]*a[ab]{N}" - same idea, restricted alphabet
+//   for (int n : {3, 5, 7, 9, 11, 13, 15}) {
+//     const auto pattern = "[ab]*a[ab]{" + std::to_string(n) + "}";
+//     auto a = irs::FromRegexp(pattern, /*max_dfa_states=*/0);
+//     std::cerr << "[ab]*a[ab]{" << n << "} -> " << a.NumStates() << "
+//     states\n";
+//   }
+// }
 
 TEST_F(RegexpUtilsTest, dfa_size_limit_custom) {
   // Very low limit - should reject even simple patterns

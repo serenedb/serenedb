@@ -1,4 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
 /// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1327,7 +1329,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_empty_alternation_branch) {
   }
 }
 
-// Walker Copy() — shared subtrees (DAG after Simplify)
+// Walker Copy() - shared subtrees (DAG after Simplify)
 
 TEST_P(RegexpFilterTestCase, by_regexp_shared_subtrees) {
   {
@@ -1402,7 +1404,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_utf8_char_class) {
   }
 }
 
-// kRegexpAnyByte — \C
+// kRegexpAnyByte - \C
 
 TEST_P(RegexpFilterTestCase, by_regexp_any_byte) {
   {

@@ -1659,3 +1659,11 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
     ASSERT_EQ(0, v.prepare_calls_counter());
   }
 }
+
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+
+INSTANTIATE_TEST_SUITE_P(regexp_filter_test, RegexpFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         RegexpFilterTestCase::to_string);

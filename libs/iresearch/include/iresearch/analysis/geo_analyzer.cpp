@@ -38,6 +38,7 @@
 #include "basics/result.h"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "geo/wkb.h"
 #include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/search/geo_filter.h"
 #include "iresearch/utils/vpack_utils.hpp"
@@ -200,22 +201,28 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
     return true;
   }
 
-  bool reset(sdb::geo::ShapeContainer&& shape) final {
+  bool resetWKB(bytes_view wkb) final {
     if constexpr (kIsS2) {
-      // Shape-based reset supports only S2 codings (S2Point /
+      // WKB-based ingest currently supports only S2 codings (S2Point /
       // S2PointShapeCompact / S2PointRegionCompact). LatLng codings
       // (S2LatLngF64, S2LatLngU32) need a per-shape-type walker that emits
-      // LatLng-encoded bytes from the already-built S2 objects; S2LatLngU32
-      // additionally needs pre-quantization (see geo_json.cpp vpack path).
-      // Callers must configure S2 coding before reaching here.
+      // LatLng-encoded bytes either fused with the WKB read or from the
+      // already-built S2 objects; S2LatLngU32 additionally needs
+      // pre-quantization (see geo_json.cpp vpack path). Callers must
+      // configure S2 coding before reaching here.
       SDB_ASSERT(geo::coding::IsOptionsS2(_data.coding) &&
-                 "LatLng coding is not supported by reset(ShapeContainer); "
+                 "LatLng coding is not supported by resetWKB; "
                  "use S2Point / S2PointShapeCompact / S2PointRegionCompact");
-      if (_type == Type::Point &&
-          shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
+      _shape = {};
+      const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
+                                   wkb.size()};
+      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape, _cache); r.fail()) {
         return false;
       }
-      _shape = std::move(shape);
+      if (_type == Type::Point &&
+          _shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
+        return false;
+      }
       _data.encoder.clear();
       // Match what ResetImpl's ParseShape path writes into _data.encoder.
       // Centroid over a non-point shape skips serialization here; StoreImpl
@@ -231,11 +238,12 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       return true;
     } else {
       // VPack coding keeps the original GeoJSON bytes as the stored value
-      // (see GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl). A ShapeContainer
-      // carries no JSON, so there's nothing to store -- callers must not
-      // combine VPack coding with this reset.
+      // (see GeoJsonAnalyzerImpl<vpack::Builder>::StoreImpl). WKB carries no
+      // JSON, so there's nothing to store -- callers must not combine VPack
+      // coding with WKB ingest (catalog/index.cpp rejects this at CREATE
+      // INDEX time).
       SDB_ASSERT(false &&
-                 "VPack coding is not supported by reset(ShapeContainer); "
+                 "VPack coding is not supported by resetWKB; "
                  "no original JSON available to store");
       return false;
     }
@@ -334,8 +342,15 @@ bool GeoPointAnalyzer::reset(vpack::Slice slice) {
   return true;
 }
 
-bool GeoPointAnalyzer::reset(sdb::geo::ShapeContainer&& shape) {
+bool GeoPointAnalyzer::resetWKB(bytes_view wkb) {
   // GeoPointAnalyzer accepts points only.
+  sdb::geo::ShapeContainer shape;
+  std::vector<S2LatLng> cache;
+  const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
+                               wkb.size()};
+  if (auto r = sdb::geo::ParseShapeWKB(bytes, shape, cache); r.fail()) {
+    return false;
+  }
   if (shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {
     return false;
   }

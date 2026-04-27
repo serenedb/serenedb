@@ -22,6 +22,9 @@
 #include <vpack/parser.h>
 #include <vpack/serializer.h>
 
+#include <bit>
+#include <cstring>
+
 #include "basics/down_cast.h"
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
@@ -40,6 +43,44 @@ template<typename Options>
 void ToVPack(vpack::Builder& builder, const Options& opts) {
   vpack::WriteObject(builder, opts);
 }
+
+// Little-endian WKB builder for the resetWKB analyzer tests. Mirrors the
+// builder in tests/libs/iresearch/utils/wkb_parser_test.cpp; kept local so
+// these tests stay self-contained.
+class WkbBuilder {
+ public:
+  WkbBuilder& PutU8(uint8_t v) {
+    _buf.push_back(static_cast<char>(v));
+    return *this;
+  }
+  WkbBuilder& PutU32(uint32_t v) {
+    if (std::endian::native != std::endian::little) {
+      v = std::byteswap(v);
+    }
+    _buf.append(reinterpret_cast<const char*>(&v), sizeof(v));
+    return *this;
+  }
+  WkbBuilder& PutDouble(double v) {
+    uint64_t raw;
+    std::memcpy(&raw, &v, sizeof(v));
+    if (std::endian::native != std::endian::little) {
+      raw = std::byteswap(raw);
+    }
+    _buf.append(reinterpret_cast<const char*>(&raw), sizeof(raw));
+    return *this;
+  }
+  // OGC SFA: lng then lat.
+  WkbBuilder& PutXY(double lng, double lat) {
+    return PutDouble(lng).PutDouble(lat);
+  }
+  WkbBuilder& Header(uint32_t type) { return PutU8(1).PutU32(type); }
+  irs::bytes_view View() const {
+    return {reinterpret_cast<const irs::byte_type*>(_buf.data()), _buf.size()};
+  }
+
+ private:
+  std::string _buf;
+};
 
 }  // namespace
 
@@ -2697,10 +2738,9 @@ TEST(GeoJsonAnalyzerVpackTest, createFromSlice) {
   }
 }
 
-// reset(ShapeContainer&&) path: feed a pre-parsed shape (simulates GEOMETRY
-// column ingest where WKB has been parsed database-side) and verify the
-// analyzer produces the same index terms as the vpack-JSON path would for an
-// equivalent point.
+// resetWKB path: feed raw WKB bytes (simulates GEOMETRY column ingest where
+// the analyzer parses internally) and verify the analyzer produces the same
+// index terms as the vpack-JSON path would for an equivalent point.
 TEST(GeoJsonAnalyzerShapeTest, tokenizePoint) {
   GeoJsonAnalyzer::Options opts;
   opts.type = GeoJsonAnalyzer::Type::Point;
@@ -2712,12 +2752,12 @@ TEST(GeoJsonAnalyzerShapeTest, tokenizePoint) {
   auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
   ASSERT_NE(nullptr, geo);
 
-  ShapeContainer shape;
-  shape.reset(S2LatLng::FromDegrees(50.3, 6.5).ToPoint());
+  WkbBuilder b;
+  b.Header(1).PutXY(6.5, 50.3);
 
   auto* term = irs::get<TermAttr>(*a);
   ASSERT_NE(nullptr, term);
-  ASSERT_TRUE(geo->reset(std::move(shape)));
+  ASSERT_TRUE(geo->resetWKB(b.View()));
   size_t term_count = 0;
   while (a->next()) {
     ++term_count;
@@ -2741,19 +2781,18 @@ TEST(GeoJsonAnalyzerShapeTest, tokenizePolygon) {
   auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
   ASSERT_NE(nullptr, geo);
 
-  // Build a polygon ShapeContainer via the GeoJson parser so it's shaped
-  // exactly as the sink writer would feed it on a GEOMETRY column.
-  auto json = vpack::Parser::fromJson(R"({
-    "type": "Polygon",
-    "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
-  })");
-  ShapeContainer shape;
-  std::vector<S2LatLng> cache;
-  ASSERT_TRUE(sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
-    json->slice(), shape, cache, sdb::geo::coding::Options::Invalid, nullptr));
-  ASSERT_EQ(ShapeContainer::Type::S2Polygon, shape.type());
+  // Square polygon (single CCW ring), closed per OGC.
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)  // ring count
+    .PutU32(5)  // vertex count (closed)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
 
-  ASSERT_TRUE(geo->reset(std::move(shape)));
+  ASSERT_TRUE(geo->resetWKB(b.View()));
   size_t term_count = 0;
   while (a->next()) {
     ++term_count;
@@ -2776,24 +2815,25 @@ TEST(GeoJsonAnalyzerShapeTest, rejectsShapeVsTypeMismatch) {
   auto* geo = dynamic_cast<GeoJsonAnalyzer*>(a.get());
   ASSERT_NE(nullptr, geo);
 
-  auto json = vpack::Parser::fromJson(R"({
-    "type": "Polygon",
-    "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
-  })");
-  ShapeContainer shape;
-  std::vector<S2LatLng> cache;
-  ASSERT_TRUE(sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
-    json->slice(), shape, cache, sdb::geo::coding::Options::Invalid, nullptr));
-  EXPECT_FALSE(geo->reset(std::move(shape)));
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+  EXPECT_FALSE(geo->resetWKB(b.View()));
 }
 
 TEST(GeoPointAnalyzerShapeTest, tokenizePoint) {
   GeoPointAnalyzer::Options opts;
   GeoPointAnalyzer a{opts};
 
-  ShapeContainer shape;
-  shape.reset(S2LatLng::FromDegrees(50.3, 6.5).ToPoint());
-  ASSERT_TRUE(a.reset(std::move(shape)));
+  WkbBuilder b;
+  b.Header(1).PutXY(6.5, 50.3);
+  ASSERT_TRUE(a.resetWKB(b.View()));
 
   auto* term = irs::get<TermAttr>(a);
   ASSERT_NE(nullptr, term);
@@ -2812,13 +2852,14 @@ TEST(GeoPointAnalyzerShapeTest, rejectsNonPoint) {
   GeoPointAnalyzer::Options opts;
   GeoPointAnalyzer a{opts};
 
-  auto json = vpack::Parser::fromJson(R"({
-    "type": "Polygon",
-    "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
-  })");
-  ShapeContainer shape;
-  std::vector<S2LatLng> cache;
-  ASSERT_TRUE(sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
-    json->slice(), shape, cache, sdb::geo::coding::Options::Invalid, nullptr));
-  EXPECT_FALSE(a.reset(std::move(shape)));
+  WkbBuilder b;
+  b.Header(3)
+    .PutU32(1)
+    .PutU32(5)
+    .PutXY(0.0, 0.0)
+    .PutXY(1.0, 0.0)
+    .PutXY(1.0, 1.0)
+    .PutXY(0.0, 1.0)
+    .PutXY(0.0, 0.0);
+  EXPECT_FALSE(a.resetWKB(b.View()));
 }

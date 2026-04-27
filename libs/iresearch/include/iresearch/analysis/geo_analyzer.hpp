@@ -54,10 +54,10 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
   // Use this directly when the caller holds a native VPack type (zero-copy).
   virtual bool reset(vpack::Slice slice) = 0;
 
-  // Resets the analyzer state from a pre-parsed S2 shape. Used by GEOMETRY
-  // columns where WKB is parsed to ShapeContainer database-side before the
-  // value reaches the analyzer -- no JSON/VPack intermediate.
-  virtual bool reset(sdb::geo::ShapeContainer&& shape) = 0;
+  // Resets the analyzer state from raw WKB bytes (GEOMETRY columns). The
+  // analyzer parses internally so future LatLng-coding work can fuse the WKB
+  // read with the encoder write without touching call sites.
+  virtual bool resetWKB(bytes_view wkb) = 0;
 
   virtual void prepare(GeoFilterOptionsBase& options) const = 0;
 
@@ -113,7 +113,7 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
 
   using GeoAnalyzer::reset;
   bool reset(vpack::Slice slice) final;
-  bool reset(sdb::geo::ShapeContainer&& shape) final;
+  bool resetWKB(bytes_view wkb) final;
 
   void prepare(GeoFilterOptionsBase& options) const final;
 

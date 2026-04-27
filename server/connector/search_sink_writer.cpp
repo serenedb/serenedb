@@ -31,8 +31,6 @@
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
-#include "geo/shape_container.h"
-#include "geo/wkb.h"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -300,30 +298,29 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeStoreWriter(&WriteVectorValue);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
-    // GEOMETRY column: WKB bytes arrive in cell_slices, are parsed to an
-    // S2 ShapeContainer database-side, then handed to the geo analyzer via
-    // reset(ShapeContainer&&). This avoids the JSON-text path and skips the
-    // vpack parse that VARCHAR/JSON columns need.
+    // GEOMETRY column: WKB bytes arrive in cell_slices and go straight to
+    // the geo analyzer via resetWKB. The analyzer parses internally, which
+    // lets future LatLng-coding work fuse the WKB read with the encoder
+    // write without changing this call site.
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_analyzer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
-    auto geo_writer = [this](std::string_view,
-                             std::span<const rocksdb::Slice> cell_slices,
-                             Field& field) -> Field& {
+    auto geo_writer = [](std::string_view,
+                         std::span<const rocksdb::Slice> cell_slices,
+                         Field& field) -> Field& {
       SDB_ASSERT(!cell_slices.empty());
       // Raw WKB: last slice (row-prefix serialization may prepend other
       // slices, so use back()).
-      std::string_view wkb{cell_slices.back().data(),
-                           cell_slices.back().size()};
-      sdb::geo::ShapeContainer shape;
-      // Parse failure and reset failure are treated silently (option A from
-      // the port plan): the analyzer keeps whatever state it had, which at
-      // worst means this row contributes no new terms. Matches the existing
-      // VARCHAR path behavior on bad input.
-      (void)sdb::geo::ParseShapeWKB(wkb, shape, _geo_shape_cache);
+      const auto& slice = cell_slices.back();
+      const irs::bytes_view wkb{
+        reinterpret_cast<const irs::byte_type*>(slice.data()), slice.size()};
       auto& geo =
         basics::downCast<irs::analysis::GeoAnalyzer>(**field.string_analyzer);
-      (void)geo.reset(std::move(shape));
+      // Parse failure is treated silently (option A from the port plan): the
+      // analyzer keeps whatever state it had, which at worst means this row
+      // contributes no new terms. Matches the VARCHAR path behavior on bad
+      // input.
+      (void)geo.resetWKB(wkb);
       return field;
     };
     if (has_store) {

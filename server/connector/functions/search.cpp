@@ -206,7 +206,7 @@ void DfiStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& /*state*/,
 
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
 // Runs `token` through the named text search dictionary and returns
-// the resulting lexemes as a VARCHAR array. Mirrors pg_catalog.ts_lexize().
+// the resulting lexemes as a VARCHAR array.
 void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       duckdb::Vector& result) {
   auto count = args.size();
@@ -310,9 +310,7 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 // Registers the TSQUERY logical type, its constructors, combinators, and the
 // @@ match function. All leaf bodies throw via TSQueryStubFn -- actual
-// iresearch filter construction happens at bind time in
-// search_filter_builder.cpp. See the plan at
-// ~/.claude/plans/i-want-to-extend-pure-wall.md for the design rationale.
+// iresearch filter construction happens at bind time
 void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   const auto tsq = MakeTSQueryType();
   const auto varchar = duckdb::LogicalType::VARCHAR;
@@ -397,8 +395,6 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
         duckdb::ListBoundCastData::InitListLocalState);
     },
     /*implicit_cast_cost=*/0);
-
-  // --- Leaf constructors (unprefixed) ---------------------------------
 
   // PHRASE(text [, gap, text, gap, text, ...]) -- tokenises each text
   // pattern via the ambient analyzer and chains them into one
@@ -510,15 +506,13 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // required so DuckDB doesn't constant-fold the call to NULL when a
   // bound is NULL (NULL operands have meaning here -- "unbounded").
   {
-    duckdb::ScalarFunction fn(std::string{kTSQRange},
-                              {duckdb::LogicalType::ANY,
-                               duckdb::LogicalType::ANY, boolv, boolv},
-                              tsq, TSQueryStubFn);
+    duckdb::ScalarFunction fn(
+      std::string{kTSQRange},
+      {duckdb::LogicalType::ANY, duckdb::LogicalType::ANY, boolv, boolv}, tsq,
+      TSQueryStubFn);
     fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(std::move(fn));
   }
-
-  // --- PG-compat tsquery constructor family ---------------------------
 
   // to_tsquery(VARCHAR) -> TSQUERY -- Lucene parser, wiring deferred.
   loader.RegisterFunction(duckdb::ScalarFunction(
@@ -539,8 +533,6 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction({tsq, tsq, intv}, tsq, TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
-
-  // --- Operators -------------------------------------------------------
 
   // PG-style typed-tsquery binary operators: ||, &&.
   for (auto name : {kTSQueryOr, kTSQueryAnd}) {
@@ -591,8 +583,6 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction({varchar, int_list}, tsq, TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
-
-  // --- Match --------------------------------------------------------
 
   // @@(ANY, TSQUERY) -> BOOLEAN. Commutative (filter builder inspects
   // both children for column-ref).

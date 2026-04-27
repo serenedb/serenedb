@@ -122,7 +122,6 @@ bool IsGeoAnalyzer(std::string_view type) noexcept;
 // Thread-safe analyzer pool
 class AnalyzerImpl final {
  public:
-
   // type tags for primitive token streams
   struct StringStreamTag {};
   struct NumberStreamTag {};

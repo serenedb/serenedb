@@ -44,8 +44,7 @@
 
 namespace sdb::search {
 
-[[maybe_unused]] std::tuple<FunctionValueType, FunctionValueType,
-                            char>
+[[maybe_unused]] std::tuple<FunctionValueType, FunctionValueType, char>
 GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   SDB_ASSERT(analyzer);
   const auto type = analyzer->type();
@@ -67,7 +66,7 @@ GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
 
 #ifdef SDB_GTEST
   if ("iresearch-vpack-analyzer" == type().name()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String, 
+    return {FunctionValueType::JsonCompound, FunctionValueType::String,
             mangling::kString};
   }
 #endif
@@ -75,8 +74,7 @@ GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   const auto* value_type = irs::get<AnalyzerReturnTypeAttr>(*analyzer);
   if (value_type) {
     // TODO(gnusi): returning mangling::kString is not always correct
-    return {FunctionValueType::String, value_type->value,
-            mangling::kString};
+    return {FunctionValueType::String, value_type->value, mangling::kString};
   }
 
   return {FunctionValueType::String, FunctionValueType::String,

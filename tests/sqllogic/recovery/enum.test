@@ -29,7 +29,7 @@ id	name	illness	dept
 3	clickclack	panicataka	nabludenie
 
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 query error connection closed
 SELECT 1;

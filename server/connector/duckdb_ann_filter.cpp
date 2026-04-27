@@ -39,8 +39,7 @@ void InitAnnFilter(
   for (size_t i = 0; i < filter_column_ids.size(); ++i) {
     filter_projection[i] = i;
     const auto cat_id = filter_column_ids[i];
-    const auto it = std::find(bind_data.column_ids.begin(),
-                              bind_data.column_ids.end(), cat_id);
+    const auto it = absl::c_find(bind_data.column_ids, cat_id);
     if (it == bind_data.column_ids.end()) {
       filter_projection.clear();
       break;
@@ -85,7 +84,7 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
 
   auto val = _it.value->value;
 
-  std::string_view pk{reinterpret_cast<const char*>(val.data()), val.size()};
+  std::string_view pk = irs::ViewCast<char>(val);
 
   _scratch.Reset();
   std::array<std::string_view, 1> pks{pk};

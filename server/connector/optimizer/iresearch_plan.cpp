@@ -274,8 +274,7 @@ bool RewriteFilterColumnRefs(
           return;
         }
         const auto cat_id = bind_data.column_ids[phys];
-        auto it = std::find(referenced_col_ids.begin(),
-                            referenced_col_ids.end(), cat_id);
+        auto it = absl::c_find(referenced_col_ids, cat_id);
         size_t slot = static_cast<size_t>(it - referenced_col_ids.begin());
         if (it == referenced_col_ids.end()) {
           referenced_col_ids.push_back(cat_id);
@@ -1658,8 +1657,8 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
       "OFFSETS(): column '%s' not found in table", col_name);
   }
   const auto& idx_col_ids = index_entry->GetInvertedIndex()->GetColumnIds();
-  const bool in_index = std::find(idx_col_ids.begin(), idx_col_ids.end(),
-                                  target_col_id) != idx_col_ids.end();
+  const bool in_index =
+    absl::c_find(idx_col_ids, target_col_id) != idx_col_ids.end();
   if (!in_index) {
     throw duckdb::InvalidInputException(
       "OFFSETS(): column '%s' not found in index", col_name);

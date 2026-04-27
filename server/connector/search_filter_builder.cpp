@@ -65,9 +65,41 @@
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
 
-// Map iresearch's RegexpSyntax enum values to user-facing dialect names.
-// We expose 'perl' and 'posix' rather than the raw enum spelling
-// (PosixEre) so SQL surface stays ergonomic.
+namespace sdb::connector {
+namespace {
+
+enum class TSQueryOp {
+  Unknown,
+  Phrase,
+  Term,
+  Like,
+  Prefix,
+  Ngram,
+  Fuzzy,
+  AnyOf,
+  AllOf,
+  Range,
+  Regexp,
+  Less,
+  LessEq,
+  Greater,
+  GreaterEq,
+  Tokenize,
+  PlainToTsquery,
+  PhraseToTsquery,
+  WebsearchToTsquery,
+  TsqueryPhrase,
+  Or,
+  And,
+  Not,
+  Boost,
+  PhraseSeq,
+  ToTSQuery,
+};
+
+}  // namespace
+}  // namespace sdb::connector
+
 namespace magic_enum {
 
 template<>
@@ -82,6 +114,67 @@ customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
     default:
       return invalid_tag;
   }
+}
+
+template<>
+[[maybe_unused]] constexpr customize::customize_t
+customize::enum_name<sdb::connector::TSQueryOp>(
+  sdb::connector::TSQueryOp value) noexcept {
+  using enum sdb::connector::TSQueryOp;
+  switch (value) {
+    case Phrase:
+      return sdb::connector::kTSQPhrase;
+    case Like:
+      return sdb::connector::kTSQLike;
+    case Prefix:
+      return sdb::connector::kTSQPrefix;
+    case Ngram:
+      return sdb::connector::kTSQNgram;
+    case Fuzzy:
+      return sdb::connector::kTSQLevenshtein;
+    case AnyOf:
+      return sdb::connector::kTSQAnyOf;
+    case AllOf:
+      return sdb::connector::kTSQAllOf;
+    case Range:
+      return sdb::connector::kTSQRange;
+    case Regexp:
+      return sdb::connector::kTSQRegexp;
+    case Less:
+      return sdb::connector::kTSQLess;
+    case LessEq:
+      return sdb::connector::kTSQLessEq;
+    case Greater:
+      return sdb::connector::kTSQGreater;
+    case GreaterEq:
+      return sdb::connector::kTSQGreaterEq;
+    case Tokenize:
+      return sdb::connector::kTSQTokenize;
+    case PlainToTsquery:
+      return sdb::connector::kPlainToTsquery;
+    case PhraseToTsquery:
+      return sdb::connector::kPhraseToTsquery;
+    case WebsearchToTsquery:
+      return sdb::connector::kWebsearchToTsquery;
+    case TsqueryPhrase:
+      return sdb::connector::kTsqueryPhrase;
+    case Or:
+      return sdb::connector::kTSQueryOr;
+    case And:
+      return sdb::connector::kTSQueryAnd;
+    case Not:
+      return sdb::connector::kTSQueryNot;
+    case Boost:
+      return sdb::connector::kTSQueryBoost;
+    case PhraseSeq:
+      return sdb::connector::kTSQueryPhraseSeq;
+    case ToTSQuery:
+      return sdb::connector::kToTsquery;
+    case Unknown:
+    case Term:
+      return invalid_tag;
+  }
+  return invalid_tag;
 }
 
 }  // namespace magic_enum
@@ -267,11 +360,11 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
     std::string_view{duckdb::StringValue::Get(value)});
 }
 
-// Forward declaration: defined alongside FillByWildcardOptions below.
+// Forward declaration: definition is below alongside the leaf-builder
+// helpers it shares with the phrase-part path.
 void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    std::string field_name, std::string_view raw_pattern,
-                    char escape_char = '\\');
+                    const SearchColumnInfo& column_info, std::string field_name,
+                    std::string_view raw_pattern, char escape_char = '\\');
 
 // Sets up a ByTerm filter for a single constant value against a column.
 Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
@@ -503,12 +596,12 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_NOT_IMPLEMENTED, "IS NULL has ", op_expr.children.size(),
             " inputs but 1 expected"};
   }
-  const auto* col_ref = TryGetColumnRef(*op_expr.children[0]);
-  if (!col_ref) {
+  const auto* column_ref = TryGetColumnRef(*op_expr.children[0]);
+  if (!column_ref) {
     return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
@@ -528,10 +621,10 @@ template<bool GenericVersion>
 Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
-  const auto* col_ref = TryGetColumnRef(left_expr);
+  const auto* column_ref = TryGetColumnRef(left_expr);
   const auto* const_val = TryGetConstant(right_expr);
 
-  if (!col_ref || !const_val) {
+  if (!column_ref || !const_val) {
     return {ERROR_BAD_PARAMETER,
             "Expected column reference on the left and constant on the right"};
   }
@@ -542,7 +635,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
@@ -575,10 +668,10 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     op = InvertComparisonOp(op);
   }
 
-  const auto* col_ref = TryGetColumnRef(field_expr);
+  const auto* column_ref = TryGetColumnRef(field_expr);
   const auto* const_val = TryGetConstant(value_expr);
 
-  if (!col_ref || !const_val) {
+  if (!column_ref || !const_val) {
     return {ERROR_BAD_PARAMETER,
             "Expected column reference and constant for comparison"};
   }
@@ -588,7 +681,7 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
@@ -666,8 +759,8 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
   // BETWEEN a AND b  =>  field >= a (or >) AND field <= b (or <)
   // NOT BETWEEN       =>  field < a (or <=) OR field > b (or >=)
 
-  const auto* col_ref = TryGetColumnRef(*between.input);
-  if (!col_ref) {
+  const auto* column_ref = TryGetColumnRef(*between.input);
+  if (!column_ref) {
     return {ERROR_BAD_PARAMETER, "BETWEEN input is not a column reference"};
   }
   const auto* lower_val = TryGetConstant(*between.lower);
@@ -678,10 +771,8 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   if (!ctx.negated) {
     // field >= lower AND field <= upper (with inclusivity flags)
-    auto lower_op =
-      between.lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
-    auto upper_op =
-      between.upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
+    auto lower = between.lower_inclusive ? ComparisonOp::Ge : ComparisonOp::Gt;
+    auto upper = between.upper_inclusive ? ComparisonOp::Le : ComparisonOp::Lt;
 
     auto& group = AddFilter<irs::And>(filter);
     group.boost(ctx.boost);
@@ -692,17 +783,17 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
     sub_ctx.boost = irs::kNoBoost;
 
     auto r = FromComparison<true>(group, sub_ctx, *between.input,
-                                  *between.lower, lower_op);
+                                  *between.lower, lower);
     if (!r.ok()) {
       return r;
     }
     return FromComparison<true>(group, sub_ctx, *between.input, *between.upper,
-                                upper_op);
+                                upper);
   }
 
   // NOT BETWEEN: De Morgan -> field < lower OR field > upper
-  auto lower_op = between.lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
-  auto upper_op = between.upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
+  auto lower = between.lower_inclusive ? ComparisonOp::Lt : ComparisonOp::Le;
+  auto upper = between.upper_inclusive ? ComparisonOp::Gt : ComparisonOp::Ge;
 
   auto& group = AddFilter<irs::Or>(filter);
   group.boost(ctx.boost);
@@ -711,13 +802,13 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
   sub_ctx.negated = false;
   sub_ctx.boost = irs::kNoBoost;
 
-  auto r = FromComparison<true>(group, sub_ctx, *between.input, *between.lower,
-                                lower_op);
+  auto r =
+    FromComparison<true>(group, sub_ctx, *between.input, *between.lower, lower);
   if (!r.ok()) {
     return r;
   }
   return FromComparison<true>(group, sub_ctx, *between.input, *between.upper,
-                              upper_op);
+                              upper);
 }
 
 template<bool GenericVersion>
@@ -728,12 +819,12 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
             " inputs but at least 2 expected"};
   }
 
-  const auto* col_ref = TryGetColumnRef(*op_expr.children[0]);
-  if (!col_ref) {
+  const auto* column_ref = TryGetColumnRef(*op_expr.children[0]);
+  if (!column_ref) {
     return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
@@ -814,10 +905,10 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 //    mismatch.
 Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const duckdb::Expression& field_expr,
-                const duckdb::Expression& pattern_expr,
-                bool generic_version, char escape_char = '\\') {
-  const auto* col_ref = TryGetColumnRef(field_expr);
-  if (!col_ref) {
+                const duckdb::Expression& pattern_expr, bool generic_version,
+                char escape_char = '\\') {
+  const auto* column_ref = TryGetColumnRef(field_expr);
+  if (!column_ref) {
     return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
   }
 
@@ -830,7 +921,7 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "Failed to evaluate LIKE pattern as VARCHAR"};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "Column is not indexed"};
   }
@@ -1028,13 +1119,13 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
       THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
                       ERR_MSG("PHRASE has consecutive gaps at argument ", i));
     }
-    auto gap_or = ParsePhraseGap(*const_val, "PHRASE");
-    if (!gap_or) {
+    auto gap = ParsePhraseGap(*const_val, "PHRASE");
+    if (!gap) {
       THROW_SQL_ERROR(
         ERR_CODE(ERROR_BAD_PARAMETER),
-        ERR_MSG(gap_or.error().errorMessage(), " (argument ", i, ")"));
+        ERR_MSG(gap.error().errorMessage(), " (argument ", i, ")"));
     }
-    pending_gap = *gap_or;
+    pending_gap = *gap;
   }
 
   if (pending_gap) {
@@ -1050,12 +1141,6 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-void FillByWildcardOptions(std::string_view pattern,
-                           irs::ByWildcardOptions& out) {
-  auto escaped = LikeEscapePattern(std::string{pattern}, '\\');
-  out.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{escaped}));
-}
-
 // Emits a LIKE-shaped filter against `column_info`. Translates the
 // SQL LIKE `raw_pattern` into iresearch wildcard bytes via
 // LikeEscapePattern (escape_char selects which character escapes
@@ -1066,14 +1151,13 @@ void FillByWildcardOptions(std::string_view pattern,
 // through the inverted index instead of a brute-force term-dictionary
 // scan -- and ByWildcard otherwise.
 void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    std::string field_name, std::string_view raw_pattern,
-                    char escape_char) {
-  auto pattern = LikeEscapePattern(std::string{raw_pattern}, escape_char);
+                    const SearchColumnInfo& column_info, std::string field_name,
+                    std::string_view raw_pattern, char escape_char) {
+  auto pattern = LikeEscapePattern(raw_pattern, escape_char);
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(parent)
-                            : AddFilter<irs::ByWildcardNgram>(parent);
+                           : AddFilter<irs::ByWildcardNgram>(parent);
     wf.boost(ctx.boost);
     *wf.mutable_field() = std::move(field_name);
     *wf.mutable_options() = {
@@ -1085,7 +1169,7 @@ void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
   auto& wild = ctx.negated ? Negate<irs::ByWildcard>(parent)
-                            : AddFilter<irs::ByWildcard>(parent);
+                           : AddFilter<irs::ByWildcard>(parent);
   wild.boost(ctx.boost);
   *wild.mutable_field() = std::move(field_name);
   wild.mutable_options()->term.assign(
@@ -1166,12 +1250,12 @@ Result EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
   if (!analyzer || !analyzer->reset(text)) {
     return {ERROR_BAD_PARAMETER, "PHRASE failed to analyse '", text, "'"};
   }
-  const auto* tok = irs::get<irs::TermAttr>(*analyzer);
+  const auto* token = irs::get<irs::TermAttr>(*analyzer);
   bool first = true;
   while (analyzer->next()) {
     const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
     auto& part = options.push_back<irs::ByTermOptions>(g.offs_min, g.offs_max);
-    part.term.assign(tok->value);
+    part.term.assign(token->value);
     first = false;
   }
   if (first) {
@@ -1251,11 +1335,10 @@ Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
             func.children.size()};
   }
 
-  auto args_or = ParseLevenshteinArgs(func);
-  if (!args_or) {
-    return std::move(args_or.error());
+  auto args = ParseLevenshteinArgs(func);
+  if (!args) {
+    return std::move(args.error());
   }
-  const auto& args = *args_or;
 
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -1265,7 +1348,7 @@ Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                                   : AddFilter<irs::ByEditDistance>(filter);
   edit_filter.boost(ctx.boost);
   *edit_filter.mutable_field() = field_name;
-  FillByEditDistanceOptions(args, *edit_filter.mutable_options());
+  FillByEditDistanceOptions(*args, *edit_filter.mutable_options());
   return {};
 }
 
@@ -1278,109 +1361,8 @@ Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
 // the column comes from the enclosing @@ match.
 // ---------------------------------------------------------------------------
 
-enum class TSQueryOp {
-  Unknown,
-  Phrase,
-  Term,
-  Like,
-  Prefix,
-  Ngram,
-  Fuzzy,
-  AnyOf,
-  AllOf,
-  Range,
-  Regexp,
-  Less,
-  LessEq,
-  Greater,
-  GreaterEq,
-  Tokenize,
-  PlainToTsquery,
-  PhraseToTsquery,
-  WebsearchToTsquery,
-  TsqueryPhrase,
-  Or,
-  And,
-  Not,
-  Boost,
-  PhraseSeq,
-  ToTSQuery,
-};
-
 TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
-  if (name == kTSQPhrase) {
-    return TSQueryOp::Phrase;
-  }
-  if (name == kTSQLike) {
-    return TSQueryOp::Like;
-  }
-  if (name == kTSQPrefix) {
-    return TSQueryOp::Prefix;
-  }
-  if (name == kTSQNgram) {
-    return TSQueryOp::Ngram;
-  }
-  if (name == kTSQLevenshtein) {
-    return TSQueryOp::Fuzzy;
-  }
-  if (name == kTSQAnyOf) {
-    return TSQueryOp::AnyOf;
-  }
-  if (name == kTSQAllOf) {
-    return TSQueryOp::AllOf;
-  }
-  if (name == kTSQRange) {
-    return TSQueryOp::Range;
-  }
-  if (name == kTSQRegexp) {
-    return TSQueryOp::Regexp;
-  }
-  if (name == kTSQLess) {
-    return TSQueryOp::Less;
-  }
-  if (name == kTSQLessEq) {
-    return TSQueryOp::LessEq;
-  }
-  if (name == kTSQGreater) {
-    return TSQueryOp::Greater;
-  }
-  if (name == kTSQGreaterEq) {
-    return TSQueryOp::GreaterEq;
-  }
-  if (name == kTSQTokenize) {
-    return TSQueryOp::Tokenize;
-  }
-  if (name == kPlainToTsquery) {
-    return TSQueryOp::PlainToTsquery;
-  }
-  if (name == kPhraseToTsquery) {
-    return TSQueryOp::PhraseToTsquery;
-  }
-  if (name == kWebsearchToTsquery) {
-    return TSQueryOp::WebsearchToTsquery;
-  }
-  if (name == kTsqueryPhrase) {
-    return TSQueryOp::TsqueryPhrase;
-  }
-  if (name == kTSQueryOr) {
-    return TSQueryOp::Or;
-  }
-  if (name == kTSQueryAnd) {
-    return TSQueryOp::And;
-  }
-  if (name == kTSQueryNot) {
-    return TSQueryOp::Not;
-  }
-  if (name == kTSQueryBoost) {
-    return TSQueryOp::Boost;
-  }
-  if (name == kTSQueryPhraseSeq) {
-    return TSQueryOp::PhraseSeq;
-  }
-  if (name == kToTsquery) {
-    return TSQueryOp::ToTSQuery;
-  }
-  return TSQueryOp::Unknown;
+  return magic_enum::enum_cast<TSQueryOp>(name).value_or(TSQueryOp::Unknown);
 }
 
 Result BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
@@ -1649,11 +1631,11 @@ Result FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     if (seq.pending.has_value()) {
       return {ERROR_BAD_PARAMETER, "## gap must be followed by a phrase part"};
     }
-    auto gap_or = ParsePhraseSeqGap(right);
-    if (!gap_or) {
-      return std::move(gap_or.error());
+    auto gap = ParsePhraseSeqGap(right);
+    if (!gap) {
+      return std::move(gap.error());
     }
-    seq.pending = *gap_or;
+    seq.pending = *gap;
     return {};
   }
   return AttachPart(seq, right);
@@ -1910,18 +1892,20 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         if (auto r = get_text_arg(text); !r.ok()) {
           return r;
         }
-        FillByWildcardOptions(text, options->push_back<irs::ByWildcardOptions>(
-                                      gap.offs_min, gap.offs_max));
+        auto pattern = LikeEscapePattern(text, '\\');
+        options->push_back<irs::ByWildcardOptions>(gap.offs_min, gap.offs_max)
+          .term.assign(
+            irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
         break;
       }
       case TSQueryOp::Fuzzy: {
-        auto args_or = ParseLevenshteinArgs(*f);
-        if (!args_or) {
-          return std::move(args_or.error());
+        auto args = ParseLevenshteinArgs(*f);
+        if (!args) {
+          return std::move(args.error());
         }
         FillByEditDistanceOptions(
-          *args_or, options->push_back<irs::ByEditDistanceOptions>(
-                      gap.offs_min, gap.offs_max));
+          *args, options->push_back<irs::ByEditDistanceOptions>(gap.offs_min,
+                                                                gap.offs_max));
         break;
       }
       case TSQueryOp::Phrase: {
@@ -1995,20 +1979,19 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         // VARCHAR variant is meaningful here: phrases live on the
         // analyzed text field, so numeric / boolean ranges (which would
         // target separate fields) make no sense at a phrase position.
-        auto ir_or = ParseRangeArgs(*f);
-        if (!ir_or) {
-          return std::move(ir_or.error());
+        auto args = ParseRangeArgs(*f);
+        if (!args) {
+          return std::move(args.error());
         }
-        const auto& ir_args = *ir_or;
-        if ((ir_args.min_val &&
-             ir_args.min_val->type().id() != duckdb::LogicalTypeId::VARCHAR) ||
-            (ir_args.max_val &&
-             ir_args.max_val->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
+        if ((args->min_val &&
+             args->min_val->type().id() != duckdb::LogicalTypeId::VARCHAR) ||
+            (args->max_val &&
+             args->max_val->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
           throw duckdb::InvalidInputException(
             "## RANGE phrase part requires VARCHAR bounds");
         }
         FillByRangeOptionsVarchar(
-          ir_args,
+          *args,
           options->push_back<irs::ByRangeOptions>(gap.offs_min, gap.offs_max));
         break;
       }
@@ -2368,19 +2351,12 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (!analyzer || !analyzer->reset(std::string_view{text})) {
       return {ERROR_BAD_PARAMETER, label, " failed to analyse '", text, "'"};
     }
-    const auto* tok = irs::get<irs::TermAttr>(*analyzer);
+    const auto* token = irs::get<irs::TermAttr>(*analyzer);
     if (!analyzer->next()) {
       // Zero tokens (e.g. all-stopword input) -> the comparison can't
       // match anything in the term dictionary.
       AddFilter<irs::Empty>(parent);
       return {};
-    }
-    std::string first_token{
-      reinterpret_cast<const char*>(tok->value.data()), tok->value.size()};
-    if (analyzer->next()) {
-      return {ERROR_BAD_PARAMETER, label,
-              " produced multiple tokens; range comparison requires a "
-              "single token (use RANGE for multi-component bounds)"};
     }
     auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
                            : AddFilter<irs::ByRange>(parent);
@@ -2388,13 +2364,16 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     rf.boost(ctx.boost);
     auto& rng = rf.mutable_options()->range;
     if (is_lower) {
-      rng.min.assign(
-        irs::ViewCast<irs::byte_type>(std::string_view{first_token}));
+      rng.min.assign(token->value);
       rng.min_type = bound_type;
     } else {
-      rng.max.assign(
-        irs::ViewCast<irs::byte_type>(std::string_view{first_token}));
+      rng.max.assign(token->value);
       rng.max_type = bound_type;
+    }
+    if (analyzer->next()) {
+      return {ERROR_BAD_PARAMETER, label,
+              " produced multiple tokens; range comparison requires a "
+              "single token (use RANGE for multi-component bounds)"};
     }
     return {};
   }
@@ -2495,11 +2474,11 @@ Result FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
     return r;
   }
   if (func.children.size() == 3) {
-    auto gap_or = ParsePhraseSeqGap(*func.children[2]);
-    if (!gap_or) {
-      return std::move(gap_or.error());
+    auto gap = ParsePhraseSeqGap(*func.children[2]);
+    if (!gap) {
+      return std::move(gap.error());
     }
-    seq.pending = *gap_or;
+    seq.pending = *gap;
   }
   if (auto r = AttachPart(seq, *func.children[1]); !r.ok()) {
     return r;
@@ -2726,14 +2705,12 @@ Result FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
 Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                  const SearchColumnInfo& column_info,
                  const duckdb::BoundFunctionExpression& func) {
-  auto args_or = ParseRangeArgs(func);
-  if (!args_or) {
-    return std::move(args_or.error());
+  auto args = ParseRangeArgs(func);
+  if (!args) {
+    return std::move(args.error());
   }
-  const auto& args = *args_or;
-
   // Both bounds NULL -> unbounded on both sides; matches every doc.
-  if (!args.min_val && !args.max_val) {
+  if (!args->min_val && !args->max_val) {
     if (ctx.negated) {
       AddFilter<irs::Empty>(parent);
     } else {
@@ -2743,7 +2720,7 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   const auto col_type = column_info.logical_type.id();
-  const auto* val_sample = args.min_val ? args.min_val : args.max_val;
+  const auto* val_sample = args->min_val ? args->min_val : args->max_val;
   const auto val_type = val_sample->type().id();
 
   // Validate value type matches column type family.
@@ -2785,33 +2762,33 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                            : AddFilter<irs::ByRange>(parent);
     *rf.mutable_field() = std::move(field_name);
     rf.boost(ctx.boost);
-    FillByRangeOptionsVarchar(args, *rf.mutable_options());
+    FillByRangeOptionsVarchar(*args, *rf.mutable_options());
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
                            : AddFilter<irs::ByRange>(parent);
     *rf.mutable_field() = std::move(field_name);
     rf.boost(ctx.boost);
     auto& rng = rf.mutable_options()->range;
-    if (args.min_val) {
+    if (args->min_val) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.min_val->GetValue<bool>())));
+        irs::BooleanTokenizer::value(args->min_val->GetValue<bool>())));
       rng.min_type =
-        args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+        args->min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
-    if (args.max_val) {
+    if (args->max_val) {
       rng.max.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.max_val->GetValue<bool>())));
+        irs::BooleanTokenizer::value(args->max_val->GetValue<bool>())));
       rng.max_type =
-        args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+        args->max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
   } else {
     // Numeric. Cast each bound to the column's logical type before
     // tokenising so the indexed and queried representations match.
-    auto& rf = ctx.negated ? Negate<irs::ByGranularRange>(parent)
-                           : AddFilter<irs::ByGranularRange>(parent);
-    *rf.mutable_field() = std::move(field_name);
-    rf.boost(ctx.boost);
-    auto& rng = rf.mutable_options()->range;
+    auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
+                              : AddFilter<irs::ByGranularRange>(parent);
+    *range.mutable_field() = std::move(field_name);
+    range.boost(ctx.boost);
+    auto& rng = range.mutable_options()->range;
     auto emit_bound = [&](const duckdb::Value& v,
                           irs::ByGranularRangeOptions::terms& boundary,
                           irs::BoundType& bt, bool incl) {
@@ -2821,11 +2798,11 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
       irs::SetGranularTerm(boundary, stream);
       bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     };
-    if (args.min_val) {
-      emit_bound(*args.min_val, rng.min, rng.min_type, args.min_incl);
+    if (args->min_val) {
+      emit_bound(*args->min_val, rng.min, rng.min_type, args->min_incl);
     }
-    if (args.max_val) {
-      emit_bound(*args.max_val, rng.max, rng.max_type, args.max_incl);
+    if (args->max_val) {
+      emit_bound(*args->max_val, rng.max, rng.max_type, args->max_incl);
     }
   }
   return {};
@@ -3004,7 +2981,7 @@ Result FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
   // then the cast-stripped RHS. Matches PG `doc @@ q` / `q @@ doc`.
   const auto* left_col = TryGetColumnRef(UnwrapTSQueryCast(*func.children[0]));
   const auto* right_col = TryGetColumnRef(UnwrapTSQueryCast(*func.children[1]));
-  const duckdb::BoundColumnRefExpression* col_ref = nullptr;
+  const duckdb::BoundColumnRefExpression* column_ref = nullptr;
   const duckdb::Expression* tsquery_expr = nullptr;
   if (left_col && right_col) {
     // Both sides resolve to column refs -- only error if BOTH are
@@ -3017,18 +2994,18 @@ Result FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
               "wrapping the non-column side as a TSQUERY (e.g. ::TSQUERY "
               "cast or PHRASE/LIKE/PREFIX/LEVENSHTEIN constructor)"};
     }
-    col_ref = left_info ? left_col : right_col;
+    column_ref = left_info ? left_col : right_col;
     tsquery_expr = left_info ? func.children[1].get() : func.children[0].get();
   } else if (left_col) {
-    col_ref = left_col;
+    column_ref = left_col;
     tsquery_expr = func.children[1].get();
   } else if (right_col) {
-    col_ref = right_col;
+    column_ref = right_col;
     tsquery_expr = func.children[0].get();
   } else {
     return {ERROR_BAD_PARAMETER, "@@ must have a column reference on one side"};
   }
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "@@ column not found in inverted index"};
   }

@@ -24,7 +24,9 @@
 #include <string>
 #include <vector>
 
+#include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/duckdb_table_function.h"
 
 namespace sdb::connector {
 
@@ -32,9 +34,15 @@ namespace sdb::connector {
 // Identical structure to SearchAnnScanGlobalState: results are collected
 // lazily on the first call and streamed in batches.
 struct SearchRangeScanGlobalState : public CommonScanGlobalState {
-  std::vector<std::string> ann_pk_bytes;
-  size_t ann_current_idx = 0;
-  bool ann_search_done = false;
+  // TODO(codeworse): Make batch-processing of range scan
+  // Currently, it evaluates once and stores the whole result
+  // Range scan probably supports streaming the result, so we need to
+  // search only one batch per request
+
+  const RangeSearchScan* scan = nullptr;
+  std::vector<std::string> pk_bytes;
+  size_t current_idx = 0;
+  std::unique_ptr<ANNFilter> filter;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

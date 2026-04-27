@@ -3,11 +3,13 @@ add_library(
     STATIC
     key_utils.cpp
     search_sink_writer.cpp
+    search_pk_lookup.cpp
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
     search_filter_builder.cpp
     search_filter_printer.cpp
+    duckdb_ann_filter.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
@@ -47,7 +49,6 @@ add_library(
     duckdb_vacuum_function.cpp
     duckdb_physical_delete.cpp
     duckdb_physical_update.cpp
-    duckdb_physical_search.cpp
     duckdb_transaction.cpp
 )
 

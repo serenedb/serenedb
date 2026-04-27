@@ -234,7 +234,7 @@ db error: ERROR: Failed to create index: Text search dictionary 'test_english' d
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
 ----
-db error: ERROR: syntax error at or near "("
+db error: ERROR: Opclass option must be a constant value
 
 
 statement error

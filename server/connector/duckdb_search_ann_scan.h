@@ -21,10 +21,13 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <string>
 #include <vector>
 
+#include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/duckdb_table_function.h"
 
 namespace sdb::connector {
 
@@ -32,9 +35,10 @@ namespace sdb::connector {
 // HNSW search is lazy: all results are collected on the first scan call and
 // then streamed in STANDARD_VECTOR_SIZE batches via ann_current_idx.
 struct SearchAnnScanGlobalState : public CommonScanGlobalState {
-  std::vector<std::string> ann_pk_bytes;
-  size_t ann_current_idx = 0;
-  bool ann_search_done = false;
+  const ANNScan* scan = nullptr;
+  std::unique_ptr<ANNFilter> filter;
+  std::vector<std::string> pk_bytes;
+  size_t current_idx = 0;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(

@@ -199,12 +199,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
+      duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
+      if (i < _info->column_opclass_options.size()) {
+        opclass_options = _info->column_opclass_options[i];
+      }
       idx_columns.push_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->name,
         .opclass = i < _info->column_opclasses.size()
                      ? _info->column_opclasses[i]
                      : std::string{},
+        .opclass_options = std::move(opclass_options),
       });
     } else {
       throw duckdb::CatalogException(

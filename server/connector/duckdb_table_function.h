@@ -277,18 +277,25 @@ struct SecondaryIndexScan : ScanSource {
   std::unique_ptr<ScanSource> Clone() const override;
 };
 
+struct VectorSearchScan : ScanSource {
+  VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
+
+  ObjectId index_id;
+  std::string field_name;
+  std::vector<float> query_vector;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> filter_expressions;
+  std::vector<catalog::Column::Id> filter_column_ids;
+};
+
 // ANN (top-k nearest-neighbour) scan using an HNSW index.
 // Populated by iresearch_plan (previously ann_search_plan) when it
 // detects the pattern:
 //   ORDER BY distance_func(col, const_vector) ASC LIMIT k
-struct ANNScan : ScanSource {
-  ANNScan() : ScanSource(ScanSourceKind::Ann) {}
+struct ANNScan : VectorSearchScan {
+  ANNScan() : VectorSearchScan{ScanSourceKind::Ann} {}
 
-  ObjectId index_id;
-  // Field name: big-endian catalog::Column::Id bytes, no MangleString
-  std::string field_name;
-  std::vector<float> query_vector;
   size_t top_k = 0;
+  int ef_search = 0;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -300,12 +307,9 @@ struct ANNScan : ScanSource {
 // Populated by iresearch_plan (previously range_search_plan) when it
 // detects the pattern:
 //   WHERE distance_func(col, const_vector) < radius
-struct RangeSearchScan : ScanSource {
-  RangeSearchScan() : ScanSource(ScanSourceKind::RangeSearch) {}
+struct RangeSearchScan : VectorSearchScan {
+  RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
 
-  ObjectId index_id;
-  std::string field_name;
-  std::vector<float> query_vector;
   float radius = 0.0f;
 
   void AppendSummary(

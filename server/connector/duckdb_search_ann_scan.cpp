@@ -18,21 +18,26 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/duckdb_search_ann_scan.hpp"
+#include "connector/duckdb_search_ann_scan.h"
 
+#include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <limits>
+#include <ranges>
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
+#include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
 #include "connector/rocksdb_row_materializer.h"
+#include "connector/row_materializer.h"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -41,88 +46,109 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
+namespace {
+
+void ANNSearchImpl(SearchAnnScanGlobalState& state,
+                   duckdb::ClientContext& context) {
+  auto& snapshot =
+    GetSereneDBContext(context).EnsureSearchSnapshot(state.scan->index_id);
+  auto& reader = snapshot.reader;
+  if (reader.size() == 0) {
+    state.finished = true;
+    return;
+  }
+
+  SDB_ASSERT(state.scan->top_k > 0);
+  const size_t top_k = state.scan->top_k;
+  std::vector<float> dis(top_k, std::numeric_limits<float>::max());
+  std::vector<int64_t> ids(top_k, -1);
+
+  irs::HNSWSearchInfo info{
+    .query =
+      reinterpret_cast<const irs::byte_type*>(state.scan->query_vector.data()),
+    .top_k = top_k,
+  };
+  info.params.efSearch = std::max<size_t>(top_k, state.scan->ef_search);
+  info.params.sel = state.filter.get();
+  reader.Search(state.scan->field_name, info, dis.data(), ids.data());
+
+  auto new_end = std::remove(ids.begin(), ids.end(), int64_t{-1});
+  const size_t n = static_cast<size_t>(new_end - ids.begin());
+  ids.resize(n);
+
+  auto segments =
+    ids | std::views::transform([](int64_t id) {
+      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
+    });
+  auto doc_ids =
+    ids | std::views::transform([](int64_t id) {
+      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
+    });
+
+  state.pk_bytes.assign(n, std::string{});
+  LookupSegmentsValues(segments, doc_ids, reader, state.pk_bytes);
+  std::erase_if(state.pk_bytes, [](const auto& pk) { return pk.empty(); });
+}
+
+}  // namespace
+
+ANNFilter::ANNFilter(duckdb::ClientContext& context,
+                     const irs::IndexReader& reader,
+                     std::unique_ptr<RowMaterializer> materializer,
+                     std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs,
+                     std::vector<duckdb::LogicalType> filter_types)
+  : _reader{reader},
+    _materializer{std::move(materializer)},
+    _exprs{std::move(exprs)},
+    _executor{context} {
+  for (const auto& e : _exprs) {
+    _executor.AddExpression(*e);
+  }
+  duckdb::vector<duckdb::LogicalType> scratch_types(filter_types.begin(),
+                                                    filter_types.end());
+  _scratch.Initialize(duckdb::Allocator::DefaultAllocator(), scratch_types);
+
+  duckdb::vector<duckdb::LogicalType> bool_types(_exprs.size(),
+                                                 duckdb::LogicalType::BOOLEAN);
+  _bool_out.Initialize(duckdb::Allocator::DefaultAllocator(), bool_types);
+}
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
-  auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
+  const auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();
   auto state = duckdb::make_uniq<SearchAnnScanGlobalState>();
   InitCommonState(*state, context, bind_data, input);
+  state->scan = &bind_data.scan_source->Cast<ANNScan>();
+  InitAnnFilter(state->filter, context, state->scan->filter_expressions,
+                state->scan->filter_column_ids, state->scan->index_id,
+                state->snapshot, bind_data);
 
-  // Eager: run HNSW + collect all pk bytes + construct the materializer
-  // here so by the time SearchAnnScanFunction is first called every
-  // batch is just a hash-lookup.
-  auto& ann = bind_data.scan_source->Cast<ANNScan>();
-  auto& snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(ann.index_id);
-
-  if (snapshot.reader.size() > 0 && ann.top_k > 0) {
-    const size_t top_k = ann.top_k;
-    std::vector<float> dis(top_k, std::numeric_limits<float>::max());
-    std::vector<int64_t> ids(top_k, -1);
-
-    irs::HNSWSearchInfo info{
-      .query = reinterpret_cast<const irs::byte_type*>(ann.query_vector.data()),
-      .top_k = top_k,
-    };
-    snapshot.reader.Search(ann.field_name, info, dis.data(), ids.data());
-
-    state->ann_pk_bytes.reserve(top_k);
-    auto& reader = snapshot.reader;
-    for (size_t i = 0; i < top_k; ++i) {
-      if (ids[i] == -1) {
-        continue;
-      }
-      auto [seg_id, doc_id] =
-        irs::UnpackSegmentWithDoc(static_cast<uint64_t>(ids[i]));
-      if (seg_id >= reader.size()) {
-        continue;
-      }
-      const auto& segment = reader[seg_id];
-      const auto* pk_col = segment.column(kPkFieldName);
-      if (!pk_col) {
-        continue;
-      }
-      auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-      if (!pk_iter) {
-        continue;
-      }
-      const auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-      if (!pk_val) {
-        continue;
-      }
-      if (pk_iter->seek(doc_id) != doc_id) {
-        continue;
-      }
-      auto val = pk_val->value;
-      state->ann_pk_bytes.emplace_back(
-        reinterpret_cast<const char*>(val.data()), val.size());
-    }
-  }
-
-  if (!state->ann_pk_bytes.empty()) {
-    state->materializer = MakeRowMaterializer(
-      context, bind_data, state->snapshot, state->ann_pk_bytes,
-      state->projected_columns, state->projected_types, bind_data.column_ids,
-      nullptr);
-  }
+  state->materializer = MakeRowMaterializer(
+    context, bind_data, state->snapshot, {}, state->projected_columns,
+    state->projected_types, bind_data.column_ids, nullptr);
   return duckdb::unique_ptr_cast<SearchAnnScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(
     std::move(state));
 }
 
-void SearchAnnScanFunction(duckdb::ClientContext& /*context*/,
+void SearchAnnScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchAnnScanGlobalState>();
 
-  if (gstate.finished || gstate.ann_pk_bytes.empty()) {
-    gstate.finished = true;
+  if (gstate.finished) {
     output.SetCardinality(0);
     return;
   }
 
-  const size_t total = gstate.ann_pk_bytes.size();
-  const size_t batch_start = gstate.ann_current_idx;
+  SDB_ASSERT(gstate.scan);
+
+  if (gstate.pk_bytes.empty()) {
+    ANNSearchImpl(gstate, context);
+  }
+
+  const size_t total = gstate.pk_bytes.size();
+  const size_t batch_start = gstate.current_idx;
 
   if (batch_start >= total) {
     gstate.finished = true;
@@ -141,32 +167,27 @@ void SearchAnnScanFunction(duckdb::ClientContext& /*context*/,
     if (gstate.scan_tableoid && proj == gstate.tableoid_output_idx) {
       output.data[proj].Reference(duckdb::Value::BIGINT(gstate.tableoid_value));
     } else {
-      auto* data =
+      auto* data_ptr =
         duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
       for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-        data[i] = static_cast<int64_t>(batch_start + i);
+        data_ptr[i] = static_cast<int64_t>(batch_start + i);
       }
     }
   }
 
-  // Real columns: stream from the materializer constructed during
-  // InitGlobal-after-iresearch.
   std::vector<std::string_view> pk_batch;
   pk_batch.reserve(batch_size);
   for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-    pk_batch.emplace_back(gstate.ann_pk_bytes[batch_start + i]);
+    pk_batch.emplace_back(gstate.pk_bytes[batch_start + i]);
   }
   gstate.materializer->Materialize(pk_batch, output);
 
-  gstate.ann_current_idx += batch_size;
+  gstate.current_idx += batch_size;
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
-  if (batch_size > 0) {
-    gstate.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
-  }
+  SDB_ASSERT(batch_size > 0);
+  gstate.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
 
-  if (gstate.ann_current_idx >= total) {
-    gstate.finished = true;
-  }
+  gstate.finished = gstate.current_idx >= total;
 }
 
 }  // namespace sdb::connector

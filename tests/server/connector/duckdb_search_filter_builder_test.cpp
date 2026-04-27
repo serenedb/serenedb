@@ -429,6 +429,25 @@ irs::GeoDistanceFilter& AddGeoDistanceFilter(
   return geo;
 }
 
+// GeoFilterOptions::operator== compares only `type` and `shape`; other
+// analyzer-derived fields (prefix, indexer options, stored, coding on the
+// base) are ignored. We construct a Point ShapeContainer to match what the
+// filter builder produces from a GeoJSON Point literal -- ParseShape walks
+// the same `reset(S2Point, ...)` path, and ShapeContainer::equals checks
+// type + S2 contents (coding compared via IsSameLoss, where Invalid and
+// any non-U32 coding compare equal).
+template<typename Filter>
+irs::GeoFilter& AddGeoFilter(Filter& root, catalog::Column::Id column,
+                             const S2Point& shape_point,
+                             irs::GeoFilterType type) {
+  auto& gf = AddFilter<irs::GeoFilter>(root);
+  *gf.mutable_field() = MakeFieldName<std::string_view>(column);
+  auto* options = gf.mutable_options();
+  options->type = type;
+  options->shape.reset(shape_point);
+  return gf;
+}
+
 template<typename Filter>
 irs::ByWildcardNgram& AddWildcardNgramFilter(Filter& root,
                                              catalog::Column::Id column,
@@ -2181,6 +2200,83 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE BOOST(TERM_EQ(b, 'foo'), -1.0)",
                columns, false);
+}
+
+// Boost on geo predicates: confirms that BOOST(...) propagates through to the
+// inner GeoDistanceFilter / GeoFilter that the geo function rewrites produce.
+
+TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
+                       500.0, true)
+    .boost(2.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(GEO_IN_RANGE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0), "
+               "2.5)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
+  // geo_distance returns DOUBLE so BOOST wraps the comparison expression
+  // rather than the function call itself; the filter builder rewrites
+  // `geo_distance(...) < d` into a one-sided GeoDistanceFilter range and
+  // applies the boost from the surrounding BOOST.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
+                       false, 100.0, false)
+    .boost(1.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(GEO_DISTANCE(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0, 1.5)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_GeoIntersects) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoFilter(expected, 1, GeoPointFromDegrees(20, 10),
+               irs::GeoFilterType::Intersects)
+    .boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(GEO_INTERSECTS(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}'), 2.0)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
+  // geo_contains(field, shape) -> IsContained (filter shape is contained
+  // within indexed data).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoFilter(expected, 1, GeoPointFromDegrees(20, 10),
+               irs::GeoFilterType::IsContained)
+    .boost(3.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(GEO_CONTAINS(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}'), 3.0)",
+               columns, true, GeoJsonAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
+  // geo_contains(shape, field) -> Contains (filter shape contains indexed
+  // data); the boost should still propagate.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
+  irs::And expected;
+  AddGeoFilter(expected, 1, GeoPointFromDegrees(20, 10),
+               irs::GeoFilterType::Contains)
+    .boost(0.75f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE BOOST(GEO_CONTAINS("
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', g), 0.75)",
+               columns, true, GeoJsonAnalyzerProvider);
 }
 
 // ===========================================================================

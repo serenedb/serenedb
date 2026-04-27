@@ -39,6 +39,7 @@ connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
 ----
+?column?
 1
 
 

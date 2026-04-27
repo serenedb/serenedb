@@ -236,6 +236,9 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
         r = DropFunctionByKind(catalog, info);
       }
       break;
+    case TYPE_ENTRY:
+      r = catalog.DropType(info.catalog, info.schema, info.name);
+      break;
     case SCHEMA_ENTRY:
       if (info.name == StaticStrings::kPgCatalogSchema ||
           info.name == StaticStrings::kInformationSchema) {

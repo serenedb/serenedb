@@ -374,11 +374,7 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeWriterImpl(
       auto& field = func(full_key, cell_slices, _field);
       bool r;
       if constexpr (HasStore) {
-        // Non-null rows have store_attr set (analyzer's StoreAttr or
-        // own_store). Null rows arrive via nullable_writer_func as _null_field
-        // (store_attr
-        // == nullptr, analyzer is the null-stream). We downgrade those to
-        // INDEX only -- skips the empty columnstore record while still letting
+        // Force INDEX only for NULLs so
         // IS NULL queries find them via the null-stream tokens.
         r = field.store_attr
               ? _document->template Insert<NonNullAction>(&field)
@@ -386,7 +382,7 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeWriterImpl(
       } else {
         // Column never stores -- skip the per-row check.
         static_assert(NonNullAction == irs::Action::INDEX,
-                      "No store action should be only INDEX");
+                      "No-store action should be only INDEX");
         r = _document->template Insert<NonNullAction>(&field);
       }
       if (!r) {

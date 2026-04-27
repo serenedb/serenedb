@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/common/types/value.hpp>
 #include <string>
 
 #include "catalog/object.h"
@@ -43,10 +44,7 @@ struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  // TODO(Dronplane): parse opclass options. Passing List* down to concrete
-  // index might be an option but that will leak SQL parsing too deep. On the
-  // other hand if we just parse to some generic map of strings it is unclear
-  // how to implement "help".
+  duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
 };
 
 class Index : public SchemaObject {

@@ -237,6 +237,23 @@ void SerializeVarchar(SerializationContext context,
   }
 }
 
+template<VarFormat Format, bool InArray, typename T>
+void SerializeEnumLabel(SerializationContext context,
+                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                        duckdb::idx_t row) {
+  auto idx = vdata.unified.sel->get_index(row);
+  auto ordinal = duckdb::UnifiedVectorFormat::GetData<T>(vdata.unified)[idx];
+  auto label = duckdb::EnumType::GetString(vdata.logical_type, ordinal);
+  auto value = std::string_view{label.GetData(), label.GetSize()};
+  if constexpr (Format == VarFormat::Text && InArray) {
+    if (ArrayItemNeedQuotesAndEscape(value)) {
+      WriteArrayItemQuotedAndEscaped(value, context);
+      return;
+    }
+  }
+  context.buffer->WriteUncommitted(value);
+}
+
 // Encode a value into PG numeric binary format.
 // value is the unscaled integer (e.g. 12345 for 123.45 with scale=2).
 // Use scale=0 for integer types. Caller must convert duckdb::hugeint_t /
@@ -1473,6 +1490,36 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case BIT:
       RETURN_SERIALIZATION(SerializeBit<VarFormat::Text>,
                            SerializeBit<VarFormat::Binary>);
+    case ENUM: {
+      auto phys = duckdb::EnumType::GetPhysicalType(type);
+      switch (phys) {
+        using enum duckdb::PhysicalType;
+        case UINT8: {
+          static constexpr auto kText =
+            SerializeEnumLabel<VarFormat::Text, false, uint8_t>;
+          static constexpr auto kBinary =
+            SerializeEnumLabel<VarFormat::Binary, false, uint8_t>;
+          RETURN_SERIALIZATION(kText, kBinary);
+        }
+        case UINT16: {
+          static constexpr auto kText =
+            SerializeEnumLabel<VarFormat::Text, false, uint16_t>;
+          static constexpr auto kBinary =
+            SerializeEnumLabel<VarFormat::Binary, false, uint16_t>;
+          RETURN_SERIALIZATION(kText, kBinary);
+        }
+        case UINT32: {
+          static constexpr auto kText =
+            SerializeEnumLabel<VarFormat::Text, false, uint32_t>;
+          static constexpr auto kBinary =
+            SerializeEnumLabel<VarFormat::Binary, false, uint32_t>;
+          RETURN_SERIALIZATION(kText, kBinary);
+        }
+        default:
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("Unsupported ENUM physical type"));
+      }
+    }
     case LIST:
     case ARRAY: {
       const auto* element_type = &type;

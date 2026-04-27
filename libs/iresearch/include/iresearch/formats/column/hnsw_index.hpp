@@ -172,9 +172,11 @@ class HNSWIndexWriter {
     absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
     absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator)
     : _max_doc{info.max_doc},
+      _hnsw{info.m},
       _vt{info.max_doc + 1},
-      _dis{make_iterator(), make_iterator(), std::move(info)},
+      _dis{make_iterator(), make_iterator(), info},
       _update_iterator{std::move(update_iterator)} {
+    _hnsw.efConstruction = info.ef_construction;
     _hnsw.prepare_level_tab(_max_doc + 1, false);
   }
 

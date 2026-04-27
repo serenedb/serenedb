@@ -37,10 +37,10 @@
 #include "connector/duckdb_pk_point_lookup.hpp"
 #include "connector/duckdb_pk_range_scan.hpp"
 #include "connector/duckdb_scan_base.hpp"
-#include "connector/duckdb_search_ann_scan.hpp"
+#include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_count_scan.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_search_range_scan.hpp"
+#include "connector/duckdb_search_range_scan.h"
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
@@ -300,6 +300,16 @@ void ANNScan::AppendSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("TopK", std::to_string(top_k));
   out.insert("Dims", std::to_string(query_vector.size()));
+  if (!filter_expressions.empty()) {
+    std::string summary;
+    for (const auto& expr : filter_expressions) {
+      if (!summary.empty()) {
+        summary += " AND ";
+      }
+      summary += expr->ToString();
+    }
+    out.insert("Filter", summary);
+  }
 }
 
 void RangeSearchScan::AppendSummary(
@@ -307,6 +317,16 @@ void RangeSearchScan::AppendSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("Radius", std::to_string(radius));
   out.insert("Dims", std::to_string(query_vector.size()));
+  if (!filter_expressions.empty()) {
+    std::string summary;
+    for (const auto& expr : filter_expressions) {
+      if (!summary.empty()) {
+        summary += " AND ";
+      }
+      summary += expr->ToString();
+    }
+    out.insert("Filter", summary);
+  }
 }
 
 void CountScan::AppendSummary(

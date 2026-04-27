@@ -128,7 +128,7 @@ duckdb::LogicalType GetFieldType() {
   } else if constexpr (std::is_same_v<Field, Bytea>) {
     return duckdb::LogicalType::BLOB;
   } else if constexpr (std::is_same_v<Field, char>) {
-    return duckdb::LogicalType::VARCHAR;
+    return CHAR();
   } else if constexpr (std::is_same_v<Field, bool>) {
     return duckdb::LogicalType::BOOLEAN;
   } else if constexpr (std::is_same_v<Field, int16_t>) {

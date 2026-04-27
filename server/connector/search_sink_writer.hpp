@@ -87,7 +87,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
       if (store_attr && !irs::IsNull(store_attr->value)) {
         out.WriteBytes(store_attr->value.data(), store_attr->value.size());
       }
-
       return true;
     }
 

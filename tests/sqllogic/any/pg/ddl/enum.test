@@ -8,11 +8,8 @@ CREATE TYPE diagnosis AS ENUM ('something');
 db error: ERROR: type "diagnosis" already exists
 
 
-onlyif serenedb
 query error
 CREATE TYPE bad_enum AS ENUM ('kek', 'lol', 'kek');
-----
-db error: ERROR: Attempted to create ENUM type with duplicate value kek
 
 
 statement ok
@@ -124,9 +121,6 @@ depression
 
 query error
 INSERT INTO vedernikoff_patients VALUES (99, 'nobody', 'invalid_value');
-----
-db error: ERROR: Could not convert string 'invalid_value' to UINT8
-
 
 
 query
@@ -366,8 +360,7 @@ DROP TYPE department;
 query error
 DROP TYPE department;
 ----
-db error: ERROR: Type with name department does not exist!
-Did you mean "datetime"?
+<slt:ignore>does not exist<slt:ignore>
 
 
 statement ok

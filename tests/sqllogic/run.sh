@@ -126,7 +126,6 @@ launch_s3() {
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
 		network_args=(--network "$COMPOSE_NETWORK")
-		export MINIO_HOST="$MINIO_CONTAINER_NAME"
 		export MINIO_PORT=9000
 	else
 		network_args=(-p "$MINIO_PORT:9000")
@@ -165,6 +164,12 @@ launch_s3() {
 	echo "Creating bucket '$MINIO_BUCKET'..."
 	docker exec "$MINIO_CONTAINER_NAME" \
 		mc mb --ignore-existing "local/$MINIO_BUCKET"
+
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		export MINIO_HOST=$(docker inspect -f \
+			"{{(index .NetworkSettings.Networks \"$COMPOSE_NETWORK\").IPAddress}}" \
+			"$MINIO_CONTAINER_NAME")
+	fi
 
 	echo "MinIO running (host=$MINIO_HOST, port=$MINIO_PORT), bucket '$MINIO_BUCKET' created."
 	echo

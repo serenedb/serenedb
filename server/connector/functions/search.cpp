@@ -62,45 +62,6 @@ void TfidfStubFn(duckdb::DataChunk& /*args*/,
     "tfidf() requires an inverted index scan in the same sub-query");
 }
 
-// Transcode arbitrary tokenizer bytes into valid UTF-8 so they can be stored
-// in DuckDB VARCHAR (which requires every value to be valid UTF-8). Tokens
-// that are already valid UTF-8 pass through unchanged -- the wildcard /
-// ngram analyzers tokenize on UTF-8 *characters*, so a multi-byte codepoint
-// like `é` (0xC3 0xA9) inside a token must survive intact. Only individual
-// bytes that aren't part of a valid UTF-8 sequence (notably the wildcard
-// analyzer's 0xFF boundary sentinels) get expanded. Each such byte is
-// mapped to its own Unicode codepoint via Latin-1 -- bytes 0x80..0xFF
-// expand to a two-byte UTF-8 sequence (0xC0|hi, 0x80|lo).
-std::string ToUtf8Safe(std::string_view bytes) {
-  if (duckdb::Value::StringIsValid(bytes.data(), bytes.size())) {
-    return std::string{bytes};
-  }
-  std::string out;
-  out.reserve(bytes.size() + 4);
-  const auto* it = reinterpret_cast<const irs::byte_type*>(bytes.data());
-  const auto* end = it + bytes.size();
-  while (it != end) {
-    // LengthFromChar8<0> returns 0 for invalid lead bytes; otherwise 1..4.
-    auto length = irs::utf8_utils::LengthFromChar8<0>(*it);
-    bool valid = length > 0 && it + length <= end;
-    for (uint8_t i = 1; valid && i < length; ++i) {
-      // Continuation bytes must match 10xxxxxx.
-      if ((it[i] & 0xC0) != 0x80) {
-        valid = false;
-      }
-    }
-    if (valid) {
-      out.append(reinterpret_cast<const char*>(it), length);
-      it += length;
-    } else {
-      // Single byte not part of a valid sequence: Latin-1 transcode.
-      auto b = *it;
-      out.push_back(static_cast<char>(0xC0 | (b >> 6)));
-      out.push_back(static_cast<char>(0x80 | (b & 0x3F)));
-      ++it;
-    }
-  }
-  return out;
 void RawTfStubFn(duckdb::DataChunk& /*args*/,
                  duckdb::ExpressionState& /*state*/,
                  duckdb::Vector& /*result*/) {
@@ -207,8 +168,8 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     auto* term = irs::get<irs::TermAttr>(*tokenizer);
     while (tokenizer->next()) {
       auto char_view = irs::ViewCast<char>(term->value);
-      row_tokens[i].push_back(
-        ToUtf8Safe(std::string_view{char_view.data(), char_view.size()}));
+      row_tokens[i].push_back(irs::utf8_utils::ToUtf8Safe(
+        std::string_view{char_view.data(), char_view.size()}));
     }
     total_tokens += row_tokens[i].size();
   }

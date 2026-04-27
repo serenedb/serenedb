@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <string>
+#include <string_view>
+
 #include "basics/assert.h"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
@@ -193,6 +196,68 @@ inline bool ToUTF32(bytes_view data, OutputIterator&& out) {
     *out = cp;
   }
   return true;
+}
+
+// Verify that |str| is well-formed UTF-8: every byte is part of a sequence
+// whose lead byte declares a valid 1..4 byte length, the bytes don't run off
+// the end, and continuation bytes have the form 10xxxxxx.
+inline bool IsValid(std::string_view str) noexcept {
+  const auto* it = reinterpret_cast<const byte_type*>(str.data());
+  const auto* end = it + str.size();
+  while (it != end) {
+    const auto length = LengthFromChar8<0>(*it);
+    if (length == 0 || it + length > end) {
+      return false;
+    }
+    for (uint8_t i = 1; i < length; ++i) {
+      if ((it[i] & 0xC0) != 0x80) {
+        return false;
+      }
+    }
+    it += length;
+  }
+  return true;
+}
+
+// Transcode arbitrary bytes into valid UTF-8. Bytes that are part of a valid
+// UTF-8 sequence pass through unchanged -- so multi-byte codepoints (e.g.
+// `é` = 0xC3 0xA9) survive intact when they appear in a tokenizer output.
+// Bytes that aren't part of a valid sequence (lone 0x80..0xFF, truncated
+// multi-byte sequences, etc.) are mapped to their own Unicode codepoint via
+// Latin-1: bytes 0x80..0xFF expand to the two-byte UTF-8 sequence
+// (0xC0 | (b >> 6), 0x80 | (b & 0x3F)).
+//
+// Useful for embedding tokenizer output into UTF-8-only string types -- e.g.
+// the wildcard / ngram analyzers' word-boundary sentinel byte (0xFF) is
+// invalid as a standalone UTF-8 byte; this routine converts it (and any
+// other invalid bytes) into a stable, reversible UTF-8 form.
+inline std::string ToUtf8Safe(std::string_view bytes) {
+  if (IsValid(bytes)) {
+    return std::string{bytes};
+  }
+  std::string out;
+  out.reserve(bytes.size() + 4);
+  const auto* it = reinterpret_cast<const byte_type*>(bytes.data());
+  const auto* end = it + bytes.size();
+  while (it != end) {
+    const auto length = LengthFromChar8<0>(*it);
+    bool valid = length > 0 && it + length <= end;
+    for (uint8_t i = 1; valid && i < length; ++i) {
+      if ((it[i] & 0xC0) != 0x80) {
+        valid = false;
+      }
+    }
+    if (valid) {
+      out.append(reinterpret_cast<const char*>(it), length);
+      it += length;
+    } else {
+      const auto b = *it;
+      out.push_back(static_cast<char>(0xC0 | (b >> 6)));
+      out.push_back(static_cast<char>(0x80 | (b & 0x3F)));
+      ++it;
+    }
+  }
+  return out;
 }
 
 }  // namespace irs::utf8_utils

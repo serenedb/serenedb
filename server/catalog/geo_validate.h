@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/common/types/geometry_crs.hpp>
-
 #include <string_view>
 
 #include "basics/errors.h"

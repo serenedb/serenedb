@@ -279,6 +279,7 @@ void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
                   parts_str, "]]");
 }
 
+template<typename FT>
 void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
   absl::StrAppend(out, "REGEXP[", ft(filter.field()), ", ",
                   TermToString(filter.options().pattern), "]");

@@ -24,7 +24,7 @@ namespace sdb::connector {
 
 bool OpenSegmentPkIterator(const irs::SubReader& segment,
                            SegmentPkIterator& out) {
-  out.reset();
+  out.Reset();
   const auto* pk_col = segment.column(kPkFieldName);
   if (!pk_col) {
     return false;

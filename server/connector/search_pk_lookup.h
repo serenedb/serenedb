@@ -43,7 +43,7 @@ struct SegmentPkIterator {
     return static_cast<bool>(iter) && value != nullptr;
   }
 
-  void reset() noexcept {
+  void Reset() noexcept {
     iter.reset();
     value = nullptr;
   }

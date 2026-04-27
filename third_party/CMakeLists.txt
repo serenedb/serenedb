@@ -2,7 +2,7 @@
 # External Projects used by SereneDB
 # ------------------------------------------------------------------------------
 
-# Override install() to no-op within DuckDB suCMake Errobdirectory
+# Override install/export() to no-op for third parties
 macro(install)
 endmacro()
 macro(export)

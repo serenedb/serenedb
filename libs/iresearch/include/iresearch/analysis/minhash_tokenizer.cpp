@@ -22,7 +22,7 @@
 
 #include "minhash_tokenizer.hpp"
 
-#include <absl/strings/internal/escaping.h>
+#include <absl/strings/escaping.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
 
@@ -203,10 +203,9 @@ bool MinHashTokenizer::next() {
 
   const auto value = absl::little_endian::FromHost(*_begin);
 
-  [[maybe_unused]] const size_t length =
-    absl::strings_internal::Base64EscapeInternal(
-      reinterpret_cast<const uint8_t*>(&value), sizeof value, _buf.data(),
-      _buf.size(), absl::strings_internal::kBase64Chars, false);
+  [[maybe_unused]] const size_t length = absl::Base64EscapeInternal(
+    reinterpret_cast<const uint8_t*>(&value), sizeof value, _buf.data(),
+    _buf.size(), absl::kBase64Chars, false);
   SDB_ASSERT(length == _buf.size());
 
   std::get<IncAttr>(_attrs).value = std::exchange(_next_inc.value, 0);

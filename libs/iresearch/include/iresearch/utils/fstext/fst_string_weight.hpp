@@ -98,7 +98,7 @@ class StringLeftWeight : public StringLeftWeightTraits<Label> {
     char buf[sizeof(uint32_t)];
     strm.read(buf, sizeof(buf));
 
-    const uint32_t size = absl::big_endian::Load32(&buf);
+    const uint32_t size = absl::little_endian::Load32(&buf);
 
     // read content
     _str.resize(size);
@@ -113,7 +113,7 @@ class StringLeftWeight : public StringLeftWeightTraits<Label> {
     const uint32_t size = static_cast<uint32_t>(Size());
 
     char buf[sizeof(uint32_t)];
-    absl::big_endian::Store32(&buf, size);
+    absl::little_endian::Store32(&buf, size);
     strm.write(buf, sizeof(buf));
     strm.write(reinterpret_cast<const char*>(_str.c_str()),
                size * sizeof(Label));

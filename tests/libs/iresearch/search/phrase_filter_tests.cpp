@@ -7513,6 +7513,94 @@ TEST(by_phrase_test, copy_move) {
   }
 }
 
+// Style note: other TEST_Ps in this file assert exact document names
+// (A, G, K, ...) per document.  These two cases compare large result
+// sets across two syntax modes, so we collect doc_ids into a vector -
+// the per-name boilerplate would be much longer without adding signal.
+
+TEST_P(PhraseFilterTestCase, regexp_part_syntax) {
+  {
+    tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
+                                &tests::AnalyzedJsonFieldFactory);
+    add_segment(gen);
+  }
+  auto rdr = open_reader();
+
+  auto execute = [&](const irs::ByPhrase& q) {
+    std::vector<irs::doc_id_t> out;
+    auto prepared = q.prepare({.index = rdr});
+    for (auto& sub : rdr) {
+      auto docs = prepared->execute({.segment = sub});
+      while (docs->next()) {
+        out.push_back(docs->value());
+      }
+    }
+    return out;
+  };
+
+  // "quick [br]+own" in Perl equals plain phrase "quick brown"
+  {
+    irs::ByPhrase ref;
+    *ref.mutable_field() = "phrase_anl";
+    ref.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    ref.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("brown"));
+    auto expected = execute(ref);
+    ASSERT_FALSE(expected.empty());
+
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
+      irs::ViewCast<irs::byte_type>(std::string_view("[br]+own"));
+    ASSERT_EQ(expected, execute(q));
+  }
+
+  // "quick \w+" in POSIX matches nothing - \w+ is a parse error
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    auto& r = q.mutable_options()->push_back<irs::ByRegexpOptions>();
+    r.pattern = irs::ViewCast<irs::byte_type>(std::string_view("\\w+"));
+    r.syntax = irs::RegexpSyntax::PosixEre;
+
+    ASSERT_TRUE(execute(q).empty());
+  }
+
+  // sanity: same "quick \w+" in Perl matches something
+  {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    q.mutable_options()->push_back<irs::ByRegexpOptions>().pattern =
+      irs::ViewCast<irs::byte_type>(std::string_view("\\w+"));
+
+    ASSERT_FALSE(execute(q).empty());
+  }
+}
+
+TEST(by_phrase_test, equal_regexp_part_syntax_differs) {
+  // ByRegexpOptions::syntax must propagate through variant equality
+  auto make = [](irs::RegexpSyntax syntax) {
+    irs::ByPhrase q;
+    *q.mutable_field() = "phrase_anl";
+    q.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view("quick"));
+    auto& r = q.mutable_options()->push_back<irs::ByRegexpOptions>();
+    r.pattern = irs::ViewCast<irs::byte_type>(std::string_view("br.wn"));
+    r.syntax = syntax;
+    return q;
+  };
+
+  ASSERT_EQ(make(irs::RegexpSyntax::Perl), make(irs::RegexpSyntax::Perl));
+  ASSERT_NE(make(irs::RegexpSyntax::Perl), make(irs::RegexpSyntax::PosixEre));
+}
+
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,

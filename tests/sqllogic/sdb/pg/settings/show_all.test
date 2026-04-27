@@ -118,6 +118,7 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
+httpfs_connection_caching	off	Enable connection caching for HTTP requests
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
@@ -342,6 +343,7 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
+httpfs_connection_caching	off	Enable connection caching for HTTP requests
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called

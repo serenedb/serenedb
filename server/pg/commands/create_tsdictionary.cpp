@@ -43,6 +43,7 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <type_traits>
@@ -82,6 +83,7 @@ const containers::FlatHashMap<std::string_view, std::string_view>
     {tokenizer_options::kModelLocation.name, "model_location"},
     {tokenizer_options::kTopK.name, "top_k"},
     {tokenizer_options::kNumHashes.name, "numHashes"},
+    {tokenizer_options::kNgramSize.name, "ngramSize"},
 };
 
 template<const auto& Array>
@@ -319,6 +321,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     } else if constexpr (Group.name == tokenizer_options::kCopyFromGroup.name) {
       ParseCopyFrom(prefix);
       return;
+    } else if constexpr (Group.name == tokenizer_options::kWildcardGroup.name) {
+      ParseWildcard(prefix);
+      return;
     } else {
       if constexpr (Group.name == tokenizer_options::kTextGroup.name) {
         bool has_ngram =
@@ -464,6 +469,43 @@ class CreateTSDictionaryOptions : public OptionsParser {
     }
     int hashes = EraseOptionOrDefault<tokenizer_options::kNumHashes>(prefix);
     _builder.add(GetVPackName(tokenizer_options::kNumHashes.name), hashes);
+  }
+
+  void ParseWildcard(std::string_view prefix) {
+    // The wildcard template's nested base analyzer is configured with
+    // a `tokenizer_` user-facing prefix (e.g. `tokenizer_template`,
+    // `tokenizer_delimiter`) so the parameter spelling matches the
+    // catalog noun -- this differs from MinHash's `analyzer_` legacy
+    // prefix. The on-disk vpack key stays "analyzer" because that's
+    // what WildcardAnalyzer::make() reads.
+    constexpr std::string_view kTokenizerOptionPrefix = "tokenizer";
+    auto tokenizer_prefix =
+      OptionInfo::AdjustPrefix(prefix, kTokenizerOptionPrefix);
+    std::string type;
+    bool type_from_template = false;
+    if (OptionsParser::HasOption(tokenizer_options::kTemplate,
+                                 tokenizer_prefix) ||
+        _copy_from.empty()) {
+      type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
+        tokenizer_prefix);
+    } else {
+      SDB_ASSERT(!_copy_from.empty());
+      auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
+                               _copy_from.back().second);
+      type = slice.get(kTypeField).stringView();
+      _copy_from.emplace_back(tokenizer_prefix, slice.get(kPropertiesField));
+      type_from_template = true;
+    }
+    SDB_ASSERT(!type.empty());
+    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+    Parse<false>(type, tokenizer_prefix);
+    _builder.close();
+    if (type_from_template) {
+      _copy_from.pop_back();
+    }
+    int ngram_size =
+      EraseOptionOrDefault<tokenizer_options::kNgramSize>(prefix);
+    _builder.add(GetVPackName(tokenizer_options::kNgramSize.name), ngram_size);
   }
 
   void ParseCopyFrom(std::string_view prefix) {

@@ -1856,6 +1856,49 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
                true, SegmentationAnalyzerProvider);
 }
 
+// Columns indexed by WildcardAnalyzer get the ngram-aware ByWildcardNgram
+// filter (instead of ByWildcard), so the LIKE pattern is evaluated through
+// the inverted index using the analyzer's ngram tokenization.
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b LIKE '%foo_'", columns,
+               true, WildcardAnalyzerProvider);
+}
+
+// Same column kind, accessed via the TSQUERY surface -- exercises
+// BuildFtsLike's WildcardAnalyzer dispatch.
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_TSQuery) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "%foo_", true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ (LIKE('%foo_'))", columns,
+               true, WildcardAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_NotConst) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
+    {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(expected, "SELECT * FROM foo WHERE a LIKE b", columns, false,
+               WildcardAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardAnalyzer_WithNot) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddWildcardNgramFilter(not_filter, 1, "%foo_", true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')",
+               columns, true, WildcardAnalyzerProvider);
+}
+
 TEST_F(SearchFilterBuilderTest, test_TermIn_Segmentation) {
   // ANY_OF on a segmenting analyzer tokenises each list element; for
   // single-token elements that's just ByTerms with one entry per
@@ -2067,6 +2110,18 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Like) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ (LIKE('foo%')) ^ 3.0", columns,
                true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_WildcardFilter) {
+  // Boost on a TSQUERY-surface LIKE against a WildcardAnalyzer column
+  // dispatches to ByWildcardNgram and threads the boost through.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddWildcardNgramFilter(expected, 1, "foo%", true).boost(3.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ (LIKE('foo%')) ^ 3.0", columns,
+               true, WildcardAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramBoost) {

@@ -296,8 +296,13 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     list_entries[i].offset = offset;
     list_entries[i].length = row_tokens[i].size();
     for (const auto& tok : row_tokens[i]) {
+      // AddStringOrBlob: some analyzers (notably wildcard) emit
+      // tokens with non-UTF-8 boundary bytes (\xFF). Callers wanting
+      // those bytes back round-trip them via `ts_lexize(...)::BLOB[]`,
+      // which avoids VARCHAR Value validation; the heap-side path
+      // here still needs the unvalidated insert.
       child_data[offset++] =
-        duckdb::StringVector::AddString(child, tok.c_str(), tok.size());
+        duckdb::StringVector::AddStringOrBlob(child, tok.c_str(), tok.size());
     }
   }
   duckdb::ListVector::SetListSize(result, total_tokens);

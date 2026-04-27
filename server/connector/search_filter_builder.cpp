@@ -33,6 +33,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
@@ -49,10 +50,12 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
 #include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
+#include "basics/down_cast.h"
 #include "basics/result_or.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
@@ -263,6 +266,12 @@ irs::bytes_view AsRawBytes(const duckdb::Value& value) {
   return irs::ViewCast<irs::byte_type>(
     std::string_view{duckdb::StringValue::Get(value)});
 }
+
+// Forward declaration: defined alongside FillByWildcardOptions below.
+void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    std::string field_name, std::string_view raw_pattern,
+                    char escape_char = '\\');
 
 // Sets up a ByTerm filter for a single constant value against a column.
 Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
@@ -793,11 +802,20 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-template<bool GenericVersion>
+// `generic_version` selects the call-site contract:
+//  - true: SQL `b LIKE 'pat'` operator -- the column may be any
+//    indexed type; the function returns a Result so the optimizer
+//    can leave the filter unclaimed when the column rejects the
+//    LIKE shape (non-VARCHAR, non-identity / non-wildcard analyzer).
+//  - false: TSQUERY-surface entry where the binder has already
+//    constrained the column to VARCHAR. Validate via SDB_ASSERT
+//    instead of returning a Result -- the failure mode is a bind-
+//    time programmer error, not a user-recoverable predicate
+//    mismatch.
 Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const duckdb::Expression& field_expr,
                 const duckdb::Expression& pattern_expr,
-                char escape_char = '\\') {
+                bool generic_version, char escape_char = '\\') {
   const auto* col_ref = TryGetColumnRef(field_expr);
   if (!col_ref) {
     return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
@@ -820,30 +838,25 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
   std::string field_name;
   MakeFieldName(*column_info, field_name);
 
-  if constexpr (GenericVersion) {
+  if (generic_version) {
     if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
       return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
     }
-    if (column_info->tokenizer.analyzer->type() !=
-        irs::Type<irs::StringTokenizer>::id()) {
+    const auto analyzer_type = column_info->tokenizer.analyzer->type();
+    if (analyzer_type != irs::Type<irs::StringTokenizer>::id() &&
+        analyzer_type != irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
       return {ERROR_BAD_PARAMETER,
-              "Field is not indexed by identity analyzer. Use `col @@ "
-              "LIKE('pattern')`."};
+              "Field is not indexed by identity or wildcard analyzer. Use "
+              "`col @@ LIKE('pattern')`."};
     }
   } else {
     SDB_ASSERT(column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR,
-               ERROR_BAD_PARAMETER, "TERM_LIKE field is not VARCHAR");
+               ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR");
   }
 
   search::mangling::MangleString(field_name);
-  auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
-                                      : AddFilter<irs::ByWildcard>(filter);
-  wildcard_filter.boost(ctx.boost);
-  *wildcard_filter.mutable_field() = field_name;
-  auto pattern =
-    LikeEscapePattern(const_val->GetValue<std::string>(), escape_char);
-  wildcard_filter.mutable_options()->term.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+  EmitLikeFilter(filter, ctx, *column_info, std::move(field_name),
+                 const_val->GetValue<std::string>(), escape_char);
   return {};
 }
 
@@ -1041,6 +1054,42 @@ void FillByWildcardOptions(std::string_view pattern,
                            irs::ByWildcardOptions& out) {
   auto escaped = LikeEscapePattern(std::string{pattern}, '\\');
   out.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{escaped}));
+}
+
+// Emits a LIKE-shaped filter against `column_info`. Translates the
+// SQL LIKE `raw_pattern` into iresearch wildcard bytes via
+// LikeEscapePattern (escape_char selects which character escapes
+// `%`/`_`; SQL `LIKE 'p' ESCAPE 'x'` flows through here, the
+// TSQUERY-surface entry uses the default `\\`).
+// Picks ByWildcardNgram for WildcardAnalyzer-indexed columns -- those
+// columns ngram-tokenise terms at index time, so the pattern matches
+// through the inverted index instead of a brute-force term-dictionary
+// scan -- and ByWildcard otherwise.
+void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    std::string field_name, std::string_view raw_pattern,
+                    char escape_char) {
+  auto pattern = LikeEscapePattern(std::string{raw_pattern}, escape_char);
+  if (column_info.tokenizer.analyzer->type() ==
+      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+    auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(parent)
+                            : AddFilter<irs::ByWildcardNgram>(parent);
+    wf.boost(ctx.boost);
+    *wf.mutable_field() = std::move(field_name);
+    *wf.mutable_options() = {
+      pattern,
+      basics::downCast<irs::analysis::WildcardAnalyzer>(
+        *column_info.tokenizer.analyzer.get()),
+      (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
+        irs::IndexFeatures::Pos};
+    return;
+  }
+  auto& wild = ctx.negated ? Negate<irs::ByWildcard>(parent)
+                            : AddFilter<irs::ByWildcard>(parent);
+  wild.boost(ctx.boost);
+  *wild.mutable_field() = std::move(field_name);
+  wild.mutable_options()->term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
 }
 
 // LEVENSHTEIN argument parsing + range validation. Used identically by
@@ -1437,11 +1486,7 @@ Result BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   std::string field_name;
   MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
-  auto& wild = ctx.negated ? Negate<irs::ByWildcard>(parent)
-                           : AddFilter<irs::ByWildcard>(parent);
-  wild.boost(ctx.boost);
-  *wild.mutable_field() = field_name;
-  FillByWildcardOptions(like_pattern, *wild.mutable_options());
+  EmitLikeFilter(parent, ctx, column_info, std::move(field_name), like_pattern);
   return {};
 }
 
@@ -3030,8 +3075,8 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
       }
       escape_char = esc_str[0];
     }
-    return FromLike<true>(filter, ctx, *func.children[0], *func.children[1],
-                          escape_char);
+    return FromLike(filter, ctx, *func.children[0], *func.children[1],
+                    /*generic_version=*/true, escape_char);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};

@@ -83,10 +83,9 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     }
 
     bool Write(irs::DataOutput& out) const {
-      if (!irs::IsNull(value)) {
-        out.WriteBytes(value.data(), value.size());
+      if (store_attr && !irs::IsNull(store_attr->value)) {
+        out.WriteBytes(store_attr->value.data(), store_attr->value.size());
       }
-
       return true;
     }
 
@@ -109,18 +108,47 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     search::AnalyzerImpl::CacheType::ptr analyzer;
     std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
     std::string_view name;
-    irs::bytes_view value;
     irs::IndexFeatures index_features;
+    // For paths that don't receive a StoreAttr from an analyzer
+    // (HNSW vector columns, PK). Ignored when store_attr points elsewhere.
+    irs::StoreAttr own_store;
+    // Source of stored bytes for Write(). Either points at the analyzer's
+    // StoreAttr (string columns with store-capable analyzer), or at own_store,
+    // or is nullptr (column does not store values).
+    const irs::StoreAttr* store_attr = nullptr;
   };
 
   using Writer = std::function<void(
     std::string_view full_key, std::span<const rocksdb::Slice> cell_slices)>;
 
-  // Write executors. For INDEX, INDEX and STORE, Sort etc.
-  // Could be more than one when we have index meta and different indexing
-  // options.
-  template<irs::Action Action, typename WriteFunc>
-  Writer MakeIndexWriter(WriteFunc&& write_func);
+  // Generic writer. Non-null rows (field.store_attr != nullptr) use
+  // NonNullAction; null rows -- nullable_writer_func substitutes _null_field
+  // which has no store_attr and a null-stream analyzer -- always get
+  // Insert<INDEX> so IS NULL queries still find them, even on paths where
+  // NonNullAction is STORE-only (e.g. HNSW). HasStore=false skips the
+  // per-row check and just Inserts<INDEX> -- for paths that never store.
+  template<bool HasStore, irs::Action NonNullAction, typename WriteFunc>
+  Writer MakeWriterImpl(WriteFunc&& write_func);
+
+  // Thin wrappers over MakeWriterImpl:
+  //   MakeIndexWriter      -- INDEX only (no columnstore), cheapest path.
+  //   MakeIndexStoreWriter -- non-null INDEX|STORE, null INDEX.
+  //   MakeStoreWriter      -- non-null STORE, null INDEX (HNSW vectors).
+  template<typename WriteFunc>
+  Writer MakeIndexWriter(WriteFunc&& write_func) {
+    return MakeWriterImpl<false, irs::Action::INDEX>(
+      std::forward<WriteFunc>(write_func));
+  }
+  template<typename WriteFunc>
+  Writer MakeIndexStoreWriter(WriteFunc&& write_func) {
+    return MakeWriterImpl<true, irs::Action::INDEX | irs::Action::STORE>(
+      std::forward<WriteFunc>(write_func));
+  }
+  template<typename WriteFunc>
+  Writer MakeStoreWriter(WriteFunc&& write_func) {
+    return MakeWriterImpl<true, irs::Action::STORE>(
+      std::forward<WriteFunc>(write_func));
+  }
 
   // Actual value processors. It is set to write executor (see MakeIndexWriter)
   // as a template. This methods are responsible for extracting value from

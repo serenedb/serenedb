@@ -38,7 +38,6 @@
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
-#include "catalog/analyzer.h"
 #include "catalog/catalog.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/index.h"
@@ -62,8 +61,6 @@ REGISTER_ANALYZER_VPACK(IdentityAnalyzer, IdentityAnalyzer::make,
                         IdentityAnalyzer::normalize);
 REGISTER_ANALYZER_JSON(IdentityAnalyzer, IdentityAnalyzer::make_json,
                        IdentityAnalyzer::normalize_json);
-REGISTER_ANALYZER_VPACK(wildcard::Analyzer, wildcard::Analyzer::make,
-                        wildcard::Analyzer::normalize);
 
 DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
               "Number of inverted indexes currently out of sync");

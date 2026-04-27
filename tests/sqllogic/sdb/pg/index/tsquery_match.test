@@ -358,18 +358,23 @@ statement error
 SELECT a FROM tsq_idx WHERE a @@ REGEXP('1');
 
 # ----------------------------------------------------------------------
-# IN_RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
+# RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
 # Mirrors SQL BETWEEN with explicit inclusivity. Either bound may be
 # NULL (unbounded that side); both NULL is "match all".
 # Numeric variant emits an iresearch granular range; VARCHAR/BOOLEAN
 # variants emit a plain range. The text variant can also appear as a
 # phrase part inside `##`.
+#
+# LESS / LESS_EQ / GREATER / GREATER_EQ are single-bound shortcuts
+# over RANGE. Each takes one bound (VARCHAR / numeric / BOOLEAN) and
+# emits the same byrange filter shape as RANGE with the other side
+# unbounded.
 # ----------------------------------------------------------------------
 
-# Numeric IN_RANGE on the primary-key column `a` (identity-analyzed by
+# Numeric RANGE on the primary-key column `a` (identity-analyzed by
 # default). [2, 4] inclusive both sides.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(2, 4, true, true) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(2, 4, true, true) ORDER BY a;
 ----
 a
 2
@@ -378,7 +383,7 @@ a
 
 # Half-open range: a >= 2 AND a < 4.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(2, 4, true, false) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(2, 4, true, false) ORDER BY a;
 ----
 a
 2
@@ -386,7 +391,7 @@ a
 
 # Open-left bound (NULL min == "no lower bound") with exclusive upper.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(NULL, 3, false, false) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(NULL, 3, false, false) ORDER BY a;
 ----
 a
 1
@@ -394,7 +399,7 @@ a
 
 # Open-right bound (NULL max == "no upper bound") with inclusive lower.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(3, NULL, true, false) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(3, NULL, true, false) ORDER BY a;
 ----
 a
 3
@@ -402,7 +407,7 @@ a
 
 # Both bounds NULL: matches every row.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(NULL, NULL, false, false) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(NULL, NULL, false, false) ORDER BY a;
 ----
 a
 1
@@ -410,20 +415,20 @@ a
 3
 4
 
-# IN_RANGE on a VARCHAR column with a non-identity analyzer (tsq_english
+# RANGE on a VARCHAR column with a non-identity analyzer (tsq_english
 # lowercases / stems) is rejected at the standalone level: the indexed
 # tokens don't match the raw bound bytes meaningfully. Use an identity-
 # analyzed column or wrap in `##` (where the bounds are interpreted
 # against the analyzed terms at a phrase position).
 statement error
-SELECT a FROM tsq_idx WHERE b @@ IN_RANGE('a', 'm', true, true);
+SELECT a FROM tsq_idx WHERE b @@ RANGE('a', 'm', true, true);
 
-# IN_RANGE as a phrase part (## context) is allowed on an analyzed
+# RANGE as a phrase part (## context) is allowed on an analyzed
 # column -- the bounds match against indexed tokens at that phrase
 # position. After 'quick', the next token's term lies in the range
 # ['brown', 'red'] inclusive: 'brown' (row 1) and 'red' (row 2) match.
 query
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE('brown', 'red', true, true)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE('brown', 'red', true, true)) ORDER BY a;
 ----
 a
 1
@@ -432,30 +437,30 @@ a
 # Same phrase-part shape, but exclusive at the upper end: 'red' is
 # excluded so only row 1 matches.
 query
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE('brown', 'red', true, false)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE('brown', 'red', true, false)) ORDER BY a;
 ----
 a
 1
 
 # Open-ended bound inside `##`: any token >= 'r' after 'quick'.
 query
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE('r', NULL, true, false)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE('r', NULL, true, false)) ORDER BY a;
 ----
 a
 2
 
-# IN_RANGE on the primary-key column composed with `||` (TSQUERY OR):
+# RANGE on the primary-key column composed with `||` (TSQUERY OR):
 # union of two disjoint numeric ranges.
 query
-SELECT a FROM tsq_idx WHERE a @@ (IN_RANGE(1, 1, true, true) || IN_RANGE(4, 4, true, true)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ (RANGE(1, 1, true, true) || RANGE(4, 4, true, true)) ORDER BY a;
 ----
 a
 1
 4
 
-# IN_RANGE under negation: NOT IN_RANGE(2, 3) on `a`.
+# RANGE under negation: NOT RANGE(2, 3) on `a`.
 query
-SELECT a FROM tsq_idx WHERE a @@ !!IN_RANGE(2, 3, true, true) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ !!RANGE(2, 3, true, true) ORDER BY a;
 ----
 a
 1
@@ -464,41 +469,41 @@ a
 # Mismatched-type bounds are a bind-time error -- min and max must agree
 # on their value class.
 statement error
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(1, 'foo', true, true);
+SELECT a FROM tsq_idx WHERE a @@ RANGE(1, 'foo', true, true);
 
 # Symmetric: VARCHAR min, INTEGER max also rejected.
 statement error
-SELECT a FROM tsq_idx WHERE b @@ IN_RANGE('a', 5, true, true);
+SELECT a FROM tsq_idx WHERE b @@ RANGE('a', 5, true, true);
 
 # BOOLEAN min vs INTEGER max -- still mismatched.
 statement error
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(false, 1, true, true);
+SELECT a FROM tsq_idx WHERE a @@ RANGE(false, 1, true, true);
 
 # VARCHAR min vs BOOLEAN max.
 statement error
-SELECT a FROM tsq_idx WHERE b @@ IN_RANGE('a', true, true, true);
+SELECT a FROM tsq_idx WHERE b @@ RANGE('a', true, true, true);
 
 # INTEGER vs BIGINT -- different LogicalType ids count as mismatched
 # even though both are integral. Cast both to the same type to fix.
 statement error
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(1::INTEGER, 100::BIGINT, true, true);
+SELECT a FROM tsq_idx WHERE a @@ RANGE(1::INTEGER, 100::BIGINT, true, true);
 
 # Bound vs column type mismatch: VARCHAR bounds on INTEGER column.
 statement error
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE('foo', 'bar', true, true);
+SELECT a FROM tsq_idx WHERE a @@ RANGE('foo', 'bar', true, true);
 
 # Bound vs column type mismatch: INTEGER bounds on VARCHAR column.
 statement error
-SELECT a FROM tsq_idx WHERE b @@ IN_RANGE(1, 5, true, true);
+SELECT a FROM tsq_idx WHERE b @@ RANGE(1, 5, true, true);
 
 # One bound NULL: the type-mismatch check uses the non-NULL side. INT
 # bound + NULL on VARCHAR column still errors.
 statement error
-SELECT a FROM tsq_idx WHERE b @@ IN_RANGE(NULL, 5, false, true);
+SELECT a FROM tsq_idx WHERE b @@ RANGE(NULL, 5, false, true);
 
 # Non-bool inclusivity is a bind-time error.
 statement error
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(1, 2, 1, 0);
+SELECT a FROM tsq_idx WHERE a @@ RANGE(1, 2, 1, 0);
 
 # DECIMAL bounds (the default for fractional literals) on a numeric
 # column work via implicit cast to the column's type. Note: casting a
@@ -506,7 +511,7 @@ SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(1, 2, 1, 0);
 # want bounds with the same numeric class as the column. Here both
 # bounds are integral DECIMAL values (.0) that cast cleanly.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(2.0, 3.0, true, true) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(2.0, 3.0, true, true) ORDER BY a;
 ----
 a
 2
@@ -514,7 +519,7 @@ a
 
 # Half-open with NULL min: matches a < 3 (exclusive).
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(NULL, 3, false, false) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(NULL, 3, false, false) ORDER BY a;
 ----
 a
 1
@@ -522,58 +527,103 @@ a
 
 # Both bounds equal, both inclusive == single-value match.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(2, 2, true, true) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(2, 2, true, true) ORDER BY a;
 ----
 a
 2
 
 # Both bounds equal, both exclusive == empty (a > 2 AND a < 2).
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(2, 2, false, false) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(2, 2, false, false) ORDER BY a;
 ----
 a
 
 # Reversed bounds (min > max) is empty without raising an error.
 query
-SELECT a FROM tsq_idx WHERE a @@ IN_RANGE(10, 1, true, true) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ RANGE(10, 1, true, true) ORDER BY a;
 ----
 a
 
-# IN_RANGE composed with `&&` (TSQUERY AND): a in [1,3] AND a in [2,4]
+# RANGE composed with `&&` (TSQUERY AND): a in [1,3] AND a in [2,4]
 # -> a in [2,3].
 query
-SELECT a FROM tsq_idx WHERE a @@ (IN_RANGE(1, 3, true, true) && IN_RANGE(2, 4, true, true)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ (RANGE(1, 3, true, true) && RANGE(2, 4, true, true)) ORDER BY a;
 ----
 a
 2
 3
 
-# IN_RANGE phrase-part with NULL min (open-ended below): any token
+# RANGE phrase-part with NULL min (open-ended below): any token
 # <= 'r' inclusive after 'quick'. Matches row 1 ('brown') and not
 # row 2 ('red' is > 'r' exclusive? actually 'red' > 'r' is true so
 # 'red' fails; only 'brown' lies <= 'r').
 query
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE(NULL, 'r', false, false)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE(NULL, 'r', false, false)) ORDER BY a;
 ----
 a
 1
 
-# IN_RANGE phrase-part with both bounds NULL: every token at that
+# RANGE phrase-part with both bounds NULL: every token at that
 # position satisfies the range, so any token after 'quick' matches.
 query
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE(NULL, NULL, false, false)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE(NULL, NULL, false, false)) ORDER BY a;
 ----
 a
 1
 2
 
-# Numeric / boolean IN_RANGE inside `##` is rejected (phrase parts
+# Numeric / boolean RANGE inside `##` is rejected (phrase parts
 # operate on analyzed text tokens; non-text bounds make no sense).
 statement error
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE(1, 5, true, true));
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE(1, 5, true, true));
 
 statement error
-SELECT a FROM tsq_idx WHERE b @@ ('quick' ## IN_RANGE(false, true, true, true));
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE(false, true, true, true));
+
+# ----------------------------------------------------------------------
+# Single-bound shortcuts: LESS / LESS_EQ / GREATER / GREATER_EQ.
+# Same per-type dispatch as RANGE; bound vs column type mismatch and
+# NULL bound are bind-time errors.
+# ----------------------------------------------------------------------
+
+# LESS on the primary-key column `a` (INTEGER, identity-analyzed).
+query
+SELECT a FROM tsq_idx WHERE a @@ LESS(3) ORDER BY a;
+----
+a
+1
+2
+
+# LESS_EQ -- inclusive upper bound.
+query
+SELECT a FROM tsq_idx WHERE a @@ LESS_EQ(2) ORDER BY a;
+----
+a
+1
+2
+
+# GREATER -- exclusive lower bound.
+query
+SELECT a FROM tsq_idx WHERE a @@ GREATER(3) ORDER BY a;
+----
+a
+4
+
+# GREATER_EQ -- inclusive lower bound, composed with LESS_EQ via &&.
+query
+SELECT a FROM tsq_idx WHERE a @@ (GREATER_EQ(2) && LESS_EQ(3)) ORDER BY a;
+----
+a
+2
+3
+
+# Type mismatch -- VARCHAR bound on INTEGER column.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ LESS('foo');
+
+# NULL bound -- use RANGE(NULL, ..., ...) instead.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ LESS(NULL);
 
 # ----------------------------------------------------------------------
 # ## phrase-sequence: bare INTEGER gap, adjacent, interval.

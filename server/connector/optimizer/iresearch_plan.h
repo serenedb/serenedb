@@ -43,8 +43,8 @@ namespace sdb::optimizer {
 //           columns -- COUNT(*) / COUNT(1) / EXISTS(SELECT 1 ...))
 //             -> CountScan (pass 2, after scorer/offsets attachment)
 //
-// Runs BEFORE rocksdb_plan so iresearch-only predicates (sdb_phrase,
-// sdb_term_eq, distance, ...) always win when present. Rocksdb-side
+// Runs BEFORE rocksdb_plan so iresearch-only predicates (TSQUERY
+// `@@`, distance, BM25, ...) always win when present. Rocksdb-side
 // predicates that the iresearch rule doesn't claim flow through to
 // rocksdb_plan unchanged.
 //

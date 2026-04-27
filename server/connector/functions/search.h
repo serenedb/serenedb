@@ -27,16 +27,6 @@
 
 namespace sdb::connector {
 
-// TODO(codeworse): add constexpr prefix + function name
-inline constexpr std::string_view kTermEq = "term_eq";
-inline constexpr std::string_view kTermLt = "term_lt";
-inline constexpr std::string_view kTermLe = "term_lte";
-inline constexpr std::string_view kTermGe = "term_gte";
-inline constexpr std::string_view kTermGt = "term_gt";
-inline constexpr std::string_view kTermIn = "term_in";
-inline constexpr std::string_view kTermLike = "term_like";
-inline constexpr std::string_view kBoost = "boost";
-
 // Postgres-style FTS surface. All stubs; the filter builder claims
 // them at bind time and builds the iresearch filter.
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
@@ -52,8 +42,24 @@ inline constexpr std::string_view kTSQLevenshtein = "levenshtein";
 inline constexpr std::string_view kTSQAnyOf = "any_of";
 inline constexpr std::string_view kTSQAllOf = "all_of";
 inline constexpr std::string_view kTSQTokenize = "tokenize";
-inline constexpr std::string_view kTSQInRange = "in_range";
+inline constexpr std::string_view kTSQRange = "range";
 inline constexpr std::string_view kTSQRegexp = "regexp";
+
+// Single-bound range constructors. Each takes one value (VARCHAR /
+// numeric / BOOLEAN) and emits irs::ByRange (VARCHAR / BOOLEAN
+// columns) or irs::ByGranularRange (numeric columns) with the bound
+// on the appropriate side; the other side stays unbounded.
+//
+// VARCHAR bounds are tokenised through the ambient analyzer
+// (identity column -> raw input; segmenting column -> lowercased /
+// stemmed token). Multi-token tokenisation is rejected.
+//
+// For unbounded-on-one-side semantics on a single call, use
+// RANGE(NULL, max, ...) or RANGE(min, NULL, ...) instead.
+inline constexpr std::string_view kTSQLess = "less";
+inline constexpr std::string_view kTSQLessEq = "less_eq";
+inline constexpr std::string_view kTSQGreater = "greater";
+inline constexpr std::string_view kTSQGreaterEq = "greater_eq";
 
 // PG-compat tsquery constructor family (input-string driven, all use
 // the ambient column analyzer).

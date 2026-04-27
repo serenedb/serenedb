@@ -421,6 +421,25 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction(std::string{name}, {varchar}, tsq, TSQueryStubFn));
   }
 
+  // LESS / LESS_EQ / GREATER / GREATER_EQ -- single-bound range
+  // constructors. Each takes one bound value (VARCHAR / numeric /
+  // BOOLEAN). The filter builder dispatches per column type: VARCHAR
+  // bounds tokenise through the ambient analyzer (single-token
+  // requirement) and emit irs::ByRange; numeric bounds emit
+  // irs::ByGranularRange; BOOLEAN bounds emit irs::ByRange via
+  // BooleanTokenizer. Bound vs column type mismatch is a bind-time
+  // error. NULL bound is also a bind-time error -- use
+  // RANGE(NULL, ..., ...) for unbounded semantics.
+  //
+  // SPECIAL_HANDLING is required so DuckDB doesn't constant-fold a
+  // NULL bound to NULL before the filter builder sees it.
+  for (auto name : {kTSQLess, kTSQLessEq, kTSQGreater, kTSQGreaterEq}) {
+    duckdb::ScalarFunction fn(std::string{name}, {duckdb::LogicalType::ANY},
+                              tsq, TSQueryStubFn);
+    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+    loader.RegisterFunction(std::move(fn));
+  }
+
   // REGEXP(pattern [, syntax]) -- raw regex match against indexed
   // terms. `syntax` is 'perl' (default) or 'posix'. No tokenisation;
   // the pattern is matched directly against terms in the field.
@@ -474,7 +493,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // IN_RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
+  // RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
   // Mirrors SQL BETWEEN with explicit inclusivity. The first two args
   // are constants of the same value class (text / numeric / boolean);
   // either may be NULL to indicate an unbounded side. Picks irs::ByRange
@@ -486,7 +505,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // required so DuckDB doesn't constant-fold the call to NULL when a
   // bound is NULL (NULL operands have meaning here -- "unbounded").
   {
-    duckdb::ScalarFunction fn(std::string{kTSQInRange},
+    duckdb::ScalarFunction fn(std::string{kTSQRange},
                               {duckdb::LogicalType::ANY,
                                duckdb::LogicalType::ANY, boolv, boolv},
                               tsq, TSQueryStubFn);
@@ -584,38 +603,15 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  // (Legacy `phrase(col, target[, gap, target, ...])` SQL function
-  // removed -- use the TSQUERY surface `col @@ PHRASE(target[, gap,
-  // target, ...])` instead. Same variadic grammar; column comes from
-  // the @@ context.)
-
-  // term_eq/lt/lte/gte/gt/like(field, target) -> bool
-  for (auto name : {kTermEq, kTermLt, kTermLe, kTermGe, kTermGt, kTermLike}) {
-    loader.RegisterFunction(duckdb::ScalarFunction(
-      std::string{name},
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-  }
-
-  // term_in(field, values...) -> bool  (variadic: 1 fixed VARCHAR + N VARCHAR)
-  {
-    duckdb::ScalarFunction fn(std::string{kTermIn},
-                              {duckdb::LogicalType::VARCHAR},
-                              duckdb::LogicalType::BOOLEAN, SearchStubFn);
-    fn.varargs = duckdb::LogicalType::VARCHAR;
-    loader.RegisterFunction(std::move(fn));
-  }
-
-  // (Legacy `ngram_match(col, target[, threshold])` and
-  // `levenshtein_match(col, target, dist, ...)` SQL functions removed
-  // -- use the TSQUERY surface `col @@ NGRAM(target[, threshold])` and
-  // `col @@ LEVENSHTEIN(target, dist[, transp])` instead.)
-
-  // boost(expr, boost_value) -> bool
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kBoost},
-    {duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::DOUBLE},
-    duckdb::LogicalType::BOOLEAN, SearchStubFn));
+  // (Legacy column-first SQL functions -- `phrase(col, ...)`,
+  // `term_eq` / `term_lt` / `term_lte` / `term_gte` / `term_gt` /
+  // `term_like(col, ...)`, `term_in(col, ...)`, `ngram_match(col, ...)`,
+  // `levenshtein_match(col, ...)`, `boost(pred, factor)` -- have all
+  // been removed. Each is now expressible via standard SQL operators
+  // claimed by FromComparisonExpression / FromOperatorExpression
+  // (= / < / <= / > / >= / IN / LIKE) on identity-analyzed columns,
+  // or via the TSQUERY surface `col @@ ...` (PHRASE, NGRAM,
+  // LEVENSHTEIN, etc., with `^` for boost) on analyzed columns.)
 
   // bm25(tableoid) / bm25(tableoid, k1, b) -> DOUBLE -- emits the BM25
   // score per row for the scan identified by tableoid. Parameters are

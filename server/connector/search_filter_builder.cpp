@@ -234,14 +234,15 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   }
 }
 
-// Looser numeric check used by IN_RANGE bound validation: accepts the
-// same set as IsNumericTypeId plus DECIMAL. IN_RANGE casts bound values
-// to the column's logical type before tokenising, so DECIMAL bounds on
-// a DOUBLE/INT/BIGINT column work as expected. We don't fold DECIMAL
-// into IsNumericTypeId itself because the legacy FromComparison /
-// SetupTermFilter paths feed `type_id` directly into ResetNumericStream,
-// which doesn't handle DECIMAL.
-bool IsInRangeNumericValueType(duckdb::LogicalTypeId id) {
+// Looser numeric check used by RANGE / LESS / LESS_EQ / GREATER /
+// GREATER_EQ bound validation: accepts the same set as
+// IsNumericTypeId plus DECIMAL. The TSQUERY range constructors cast
+// bound values to the column's logical type before tokenising, so
+// DECIMAL bounds on a DOUBLE/INT/BIGINT column work as expected. We
+// don't fold DECIMAL into IsNumericTypeId itself because the legacy
+// FromComparison / SetupTermFilter paths feed `type_id` directly into
+// ResetNumericStream, which doesn't handle DECIMAL.
+bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
   return IsNumericTypeId(id) || id == duckdb::LogicalTypeId::DECIMAL;
 }
 
@@ -1036,28 +1037,6 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-Result FromBoost(irs::BooleanFilter& filter, const FilterContext& ctx,
-                 const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, "BOOST has ", func.children.size(),
-            " inputs but 2 expected"};
-  }
-
-  const auto* boost_val = TryGetConstant(*func.children[1]);
-  if (!boost_val) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate boost value as constant"};
-  }
-
-  const auto boost = static_cast<irs::score_t>(boost_val->GetValue<double>());
-  if (boost < 0.0) {
-    return {ERROR_BAD_PARAMETER, "BOOST value must be >= 0, got ", boost};
-  }
-
-  auto boosted_ctx = ctx;
-  boosted_ctx.boost = boost;
-  return FromExpression(filter, boosted_ctx, *func.children[0]);
-}
-
 void FillByWildcardOptions(std::string_view pattern,
                            irs::ByWildcardOptions& out) {
   auto escaped = LikeEscapePattern(std::string{pattern}, '\\');
@@ -1241,76 +1220,6 @@ Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-Result FromTermIn(irs::BooleanFilter& filter, const FilterContext& ctx,
-                  const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() < 2) {
-    return {ERROR_NOT_IMPLEMENTED, "TERM_IN has ", func.children.size(),
-            " inputs but at least 2 expected"};
-  }
-
-  const auto* col_ref = TryGetColumnRef(*func.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
-  }
-
-  // Collect constant values from children[1..]
-  std::vector<const duckdb::Value*> values;
-  values.reserve(func.children.size() - 1);
-  for (size_t i = 1; i < func.children.size(); ++i) {
-    const auto* val = TryGetConstant(*func.children[i]);
-    if (!val) {
-      return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
-    }
-    if (!val->IsNull()) {
-      values.push_back(val);
-    }
-  }
-
-  if (values.empty()) {
-    AddFilter<irs::Empty>(filter);
-    return {};
-  }
-
-  std::string field_name;
-  MakeFieldName(*column_info, field_name);
-
-  auto type_id = column_info->logical_type.id();
-  auto res = MangleForType(type_id, field_name);
-  if (!res.ok()) {
-    return res;
-  }
-
-  auto& terms_filter = ctx.negated ? Negate<irs::ByTerms>(filter)
-                                   : AddFilter<irs::ByTerms>(filter);
-  terms_filter.boost(ctx.boost);
-  *terms_filter.mutable_field() = field_name;
-  auto& opts = *terms_filter.mutable_options();
-
-  for (const auto* value : values) {
-    if (type_id == duckdb::LogicalTypeId::VARCHAR) {
-      opts.terms.emplace(AsRawBytes(*value));
-    } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-      opts.terms.emplace(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(value->GetValue<bool>())));
-    } else if (IsNumericTypeId(type_id)) {
-      irs::NumericTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      ResetNumericStream(stream, type_id, *value);
-      stream.next();
-      opts.terms.emplace(token->value);
-    } else {
-      return {ERROR_NOT_IMPLEMENTED,
-              "Unsupported type for TERM_IN: ", static_cast<int>(type_id)};
-    }
-  }
-  return {};
-}
-
 // ---------------------------------------------------------------------------
 // TSQUERY dispatch (`@@`, `||`, `&&`, `!!`, `^`, leaf constructors)
 //
@@ -1330,8 +1239,12 @@ enum class TSQueryOp {
   Fuzzy,
   AnyOf,
   AllOf,
-  InRange,
+  Range,
   Regexp,
+  Less,
+  LessEq,
+  Greater,
+  GreaterEq,
   Tokenize,
   PlainToTsquery,
   PhraseToTsquery,
@@ -1367,11 +1280,23 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   if (name == kTSQAllOf) {
     return TSQueryOp::AllOf;
   }
-  if (name == kTSQInRange) {
-    return TSQueryOp::InRange;
+  if (name == kTSQRange) {
+    return TSQueryOp::Range;
   }
   if (name == kTSQRegexp) {
     return TSQueryOp::Regexp;
+  }
+  if (name == kTSQLess) {
+    return TSQueryOp::Less;
+  }
+  if (name == kTSQLessEq) {
+    return TSQueryOp::LessEq;
+  }
+  if (name == kTSQGreater) {
+    return TSQueryOp::Greater;
+  }
+  if (name == kTSQGreaterEq) {
+    return TSQueryOp::GreaterEq;
   }
   if (name == kTSQTokenize) {
     return TSQueryOp::Tokenize;
@@ -1693,14 +1618,14 @@ Result FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
 // emitter and the ## phrase-part dispatcher. Pointers reference the
 // bound function's constant children; nullptr means a NULL operand
 // (unbounded that side).
-struct InRangeArgs {
+struct RangeArgs {
   const duckdb::Value* min_val = nullptr;
   const duckdb::Value* max_val = nullptr;
   bool min_incl = false;
   bool max_incl = false;
 };
 
-ResultOr<InRangeArgs> ParseInRangeArgs(
+ResultOr<RangeArgs> ParseRangeArgs(
   const duckdb::BoundFunctionExpression& func) {
   auto err = [](auto&&... args) {
     return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
@@ -1708,41 +1633,41 @@ ResultOr<InRangeArgs> ParseInRangeArgs(
   };
   if (func.children.size() != 4) {
     return err(
-      "IN_RANGE expects 4 arguments "
+      "RANGE expects 4 arguments "
       "(min, max, min_incl, max_incl), got ",
       func.children.size());
   }
-  InRangeArgs out;
+  RangeArgs out;
   for (size_t i = 0; i < 2; ++i) {
     const auto* val = TryGetConstant(*func.children[i]);
     if (!val) {
-      return err("IN_RANGE bound ", i, " must be a constant");
+      return err("RANGE bound ", i, " must be a constant");
     }
     if (!val->IsNull()) {
       (i == 0 ? out.min_val : out.max_val) = val;
     }
   }
-  if (auto r = GetBoolArg(*func.children[2], "IN_RANGE min_incl", out.min_incl);
+  if (auto r = GetBoolArg(*func.children[2], "RANGE min_incl", out.min_incl);
       !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  if (auto r = GetBoolArg(*func.children[3], "IN_RANGE max_incl", out.max_incl);
+  if (auto r = GetBoolArg(*func.children[3], "RANGE max_incl", out.max_incl);
       !r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
   if (out.min_val && out.max_val &&
       out.min_val->type().id() != out.max_val->type().id()) {
     throw duckdb::InvalidInputException(
-      "IN_RANGE bounds have mismatched types: %s vs %s",
+      "RANGE bounds have mismatched types: %s vs %s",
       out.min_val->type().ToString(), out.max_val->type().ToString());
   }
   return out;
 }
 
-// Fills the VARCHAR-form ByRangeOptions::range from parsed IN_RANGE args.
-// Shared by FromInRange (standalone VARCHAR path) and the ## phrase-part
+// Fills the VARCHAR-form ByRangeOptions::range from parsed RANGE args.
+// Shared by FromRange (standalone VARCHAR path) and the ## phrase-part
 // dispatcher (only the VARCHAR variant is meaningful inside a phrase).
-void FillByRangeOptionsVarchar(const InRangeArgs& args,
+void FillByRangeOptionsVarchar(const RangeArgs& args,
                                irs::ByRangeOptions& out) {
   if (args.min_val) {
     auto sv = args.min_val->GetValue<std::string>();
@@ -2020,12 +1945,12 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         throw duckdb::InvalidInputException(
           "## ALL_OF phrase part is not supported (a phrase position "
           "can match only one token; use ANY_OF instead)");
-      case TSQueryOp::InRange: {
-        // IN_RANGE as a phrase part -> ByRangeOptions slot. Only the
+      case TSQueryOp::Range: {
+        // RANGE as a phrase part -> ByRangeOptions slot. Only the
         // VARCHAR variant is meaningful here: phrases live on the
         // analyzed text field, so numeric / boolean ranges (which would
         // target separate fields) make no sense at a phrase position.
-        auto ir_or = ParseInRangeArgs(*f);
+        auto ir_or = ParseRangeArgs(*f);
         if (!ir_or) {
           return std::move(ir_or.error());
         }
@@ -2035,7 +1960,7 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             (ir_args.max_val &&
              ir_args.max_val->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
           throw duckdb::InvalidInputException(
-            "## IN_RANGE phrase part requires VARCHAR bounds");
+            "## RANGE phrase part requires VARCHAR bounds");
         }
         FillByRangeOptionsVarchar(
           ir_args,
@@ -2323,6 +2248,152 @@ Result FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
           "). Use TOKENIZE(text) for the ambient (column) analyzer."};
 }
 
+// EQ(text) -- analyzer-aware equality. Tokenises `text` via the
+// ambient analyzer and emits ByTerm (single token) or ByTerms with
+// LESS / LESS_EQ / GREATER / GREATER_EQ (bound) -- single-bound
+// range constructor. Mirrors RANGE's per-type dispatch:
+//   * VARCHAR column + VARCHAR bound -> tokenise via ambient analyzer
+//     (single-token requirement) and emit irs::ByRange.
+//   * BOOLEAN column + BOOLEAN bound -> emit irs::ByRange via
+//     BooleanTokenizer.
+//   * Numeric column + numeric bound -> emit irs::ByGranularRange via
+//     NumericTokenizer + SetGranularTerm (DECIMAL bounds are cast to
+//     the column's logical type first).
+// Bound vs column type mismatch is a bind-time error (same shape as
+// FromRange's `type_mismatch` lambda). NULL bound is also a bind-time
+// error -- use RANGE(NULL, ...) for unbounded semantics.
+Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       const duckdb::BoundFunctionExpression& func,
+                       std::string_view label, bool is_lower, bool inclusive) {
+  if (func.children.size() != 1) {
+    return {ERROR_BAD_PARAMETER, label, " expects 1 argument (bound), got ",
+            func.children.size()};
+  }
+  const auto* bound_val = TryGetConstant(*func.children[0]);
+  if (!bound_val) {
+    return {ERROR_BAD_PARAMETER, label, " bound must be a constant"};
+  }
+  if (bound_val->IsNull()) {
+    throw duckdb::InvalidInputException(
+      "%s bound must be non-null (use RANGE(NULL, ..., ...) for unbounded "
+      "semantics)",
+      std::string{label});
+  }
+
+  const auto col_type = column_info.logical_type.id();
+  const auto val_type = bound_val->type().id();
+  auto type_mismatch = [&]() {
+    throw duckdb::InvalidInputException(
+      "%s bound type %s is incompatible with column type %s",
+      std::string{label}, bound_val->type().ToString(),
+      column_info.logical_type.ToString());
+  };
+  if (col_type == duckdb::LogicalTypeId::VARCHAR) {
+    if (val_type != duckdb::LogicalTypeId::VARCHAR) {
+      type_mismatch();
+    }
+  } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
+    if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
+      type_mismatch();
+    }
+  } else if (IsNumericTypeId(col_type)) {
+    if (!IsRangeNumericValueType(val_type)) {
+      type_mismatch();
+    }
+  } else {
+    throw duckdb::InvalidInputException("%s: unsupported column type %s",
+                                        std::string{label},
+                                        column_info.logical_type.ToString());
+  }
+
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+  if (auto r = MangleForType(col_type, field_name); !r.ok()) {
+    return r;
+  }
+  const auto bound_type =
+    inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+
+  if (col_type == duckdb::LogicalTypeId::VARCHAR) {
+    // VARCHAR: tokenise the bound through the ambient analyzer; the
+    // (single) token becomes the bound's bytes.
+    auto text = bound_val->GetValue<std::string>();
+    auto* analyzer = ActiveTokenizer(ctx, column_info);
+    if (!analyzer || !analyzer->reset(std::string_view{text})) {
+      return {ERROR_BAD_PARAMETER, label, " failed to analyse '", text, "'"};
+    }
+    const auto* tok = irs::get<irs::TermAttr>(*analyzer);
+    if (!analyzer->next()) {
+      // Zero tokens (e.g. all-stopword input) -> the comparison can't
+      // match anything in the term dictionary.
+      AddFilter<irs::Empty>(parent);
+      return {};
+    }
+    std::string first_token{
+      reinterpret_cast<const char*>(tok->value.data()), tok->value.size()};
+    if (analyzer->next()) {
+      return {ERROR_BAD_PARAMETER, label,
+              " produced multiple tokens; range comparison requires a "
+              "single token (use RANGE for multi-component bounds)"};
+    }
+    auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
+                           : AddFilter<irs::ByRange>(parent);
+    *rf.mutable_field() = std::move(field_name);
+    rf.boost(ctx.boost);
+    auto& rng = rf.mutable_options()->range;
+    if (is_lower) {
+      rng.min.assign(
+        irs::ViewCast<irs::byte_type>(std::string_view{first_token}));
+      rng.min_type = bound_type;
+    } else {
+      rng.max.assign(
+        irs::ViewCast<irs::byte_type>(std::string_view{first_token}));
+      rng.max_type = bound_type;
+    }
+    return {};
+  }
+
+  if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
+    auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
+                           : AddFilter<irs::ByRange>(parent);
+    *rf.mutable_field() = std::move(field_name);
+    rf.boost(ctx.boost);
+    auto& rng = rf.mutable_options()->range;
+    auto bytes = irs::ViewCast<irs::byte_type>(
+      irs::BooleanTokenizer::value(bound_val->GetValue<bool>()));
+    if (is_lower) {
+      rng.min.assign(bytes);
+      rng.min_type = bound_type;
+    } else {
+      rng.max.assign(bytes);
+      rng.max_type = bound_type;
+    }
+    return {};
+  }
+
+  // Numeric: cast the bound to the column's logical type, then run
+  // NumericTokenizer + SetGranularTerm (mirrors FromRange's numeric
+  // path so DECIMAL bounds on a DOUBLE/INT/BIGINT column work
+  // cleanly).
+  auto& rf = ctx.negated ? Negate<irs::ByGranularRange>(parent)
+                         : AddFilter<irs::ByGranularRange>(parent);
+  *rf.mutable_field() = std::move(field_name);
+  rf.boost(ctx.boost);
+  auto& rng = rf.mutable_options()->range;
+  auto cast = bound_val->DefaultCastAs(column_info.logical_type);
+  irs::NumericTokenizer stream;
+  ResetNumericStream(stream, col_type, cast);
+  if (is_lower) {
+    irs::SetGranularTerm(rng.min, stream);
+    rng.min_type = bound_type;
+  } else {
+    irs::SetGranularTerm(rng.max, stream);
+    rng.max_type = bound_type;
+  }
+  return {};
+}
+
 // plainto_tsquery(text): tokenise via the column analyzer and AND all
 // resulting tokens (PG semantics; every token must match).
 Result FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
@@ -2602,15 +2673,15 @@ Result FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   return {};
 }
 
-// IN_RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
+// RANGE(min, max, min_incl, max_incl) -- TSQUERY range constructor.
 // Mirrors SQL BETWEEN with explicit inclusivity. Either bound may be
 // NULL (unbounded that side). VARCHAR / BOOLEAN columns emit irs::ByRange,
 // numeric columns emit irs::ByGranularRange.
 
-Result FromInRange(irs::BooleanFilter& parent, const FilterContext& ctx,
-                   const SearchColumnInfo& column_info,
-                   const duckdb::BoundFunctionExpression& func) {
-  auto args_or = ParseInRangeArgs(func);
+Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
+                 const SearchColumnInfo& column_info,
+                 const duckdb::BoundFunctionExpression& func) {
+  auto args_or = ParseRangeArgs(func);
   if (!args_or) {
     return std::move(args_or.error());
   }
@@ -2633,7 +2704,7 @@ Result FromInRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   // Validate value type matches column type family.
   auto type_mismatch = [&]() {
     throw duckdb::InvalidInputException(
-      "IN_RANGE bound type %s is incompatible with column type %s",
+      "RANGE bound type %s is incompatible with column type %s",
       val_sample->type().ToString(), column_info.logical_type.ToString());
   };
   if (col_type == duckdb::LogicalTypeId::VARCHAR) {
@@ -2643,18 +2714,18 @@ Result FromInRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (column_info.tokenizer.analyzer->type() !=
         irs::Type<irs::StringTokenizer>::id()) {
       throw duckdb::InvalidInputException(
-        "IN_RANGE on VARCHAR field requires identity-analyzed column");
+        "RANGE on VARCHAR field requires identity-analyzed column");
     }
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
       type_mismatch();
     }
   } else if (IsNumericTypeId(col_type)) {
-    if (!IsInRangeNumericValueType(val_type)) {
+    if (!IsRangeNumericValueType(val_type)) {
       type_mismatch();
     }
   } else {
-    throw duckdb::InvalidInputException("IN_RANGE: unsupported column type %s",
+    throw duckdb::InvalidInputException("RANGE: unsupported column type %s",
                                         column_info.logical_type.ToString());
   }
 
@@ -2845,10 +2916,22 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
     case TSQueryOp::AllOf:
       return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
-    case TSQueryOp::InRange:
-      return FromInRange(parent, ctx, column_info, func);
+    case TSQueryOp::Range:
+      return FromRange(parent, ctx, column_info, func);
     case TSQueryOp::Regexp:
       return FromRegexp(parent, ctx, column_info, func);
+    case TSQueryOp::Less:
+      return FromTSQRangeOne(parent, ctx, column_info, func, "LESS",
+                             /*is_lower=*/false, /*inclusive=*/false);
+    case TSQueryOp::LessEq:
+      return FromTSQRangeOne(parent, ctx, column_info, func, "LESS_EQ",
+                             /*is_lower=*/false, /*inclusive=*/true);
+    case TSQueryOp::Greater:
+      return FromTSQRangeOne(parent, ctx, column_info, func, "GREATER",
+                             /*is_lower=*/true, /*inclusive=*/false);
+    case TSQueryOp::GreaterEq:
+      return FromTSQRangeOne(parent, ctx, column_info, func, "GREATER_EQ",
+                             /*is_lower=*/true, /*inclusive=*/true);
     case TSQueryOp::Tokenize:
       return FromTokenize(parent, ctx, column_info, func);
     case TSQueryOp::PlainToTsquery:
@@ -2914,61 +2997,6 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
 
   if (name == kTSQueryMatch) {
     return FromTSQueryMatch(filter, ctx, func);
-  }
-  if (name == kBoost) {
-    return FromBoost(filter, ctx, func);
-  }
-  if (name == kTermEq) {
-    if (func.children.size() != 2) {
-      return {ERROR_BAD_PARAMETER, "TERM_EQ has ", func.children.size(),
-              " inputs but 2 expected"};
-    }
-    return FromBinaryEq<false>(filter, ctx, *func.children[0],
-                               *func.children[1], false);
-  }
-  if (name == kTermIn) {
-    return FromTermIn(filter, ctx, func);
-  }
-  if (name == kTermLike) {
-    if (func.children.size() < 2) {
-      return {ERROR_BAD_PARAMETER, "TERM_LIKE has ", func.children.size(),
-              " inputs but at least 2 expected"};
-    }
-    return FromLike<false>(filter, ctx, *func.children[0], *func.children[1]);
-  }
-
-  // sdb_term_lt / sdb_term_lte / sdb_term_gt / sdb_term_gte
-  if (name == kTermLt) {
-    if (func.children.size() != 2) {
-      return {ERROR_BAD_PARAMETER, "TERM_LT has ", func.children.size(),
-              " inputs but 2 expected"};
-    }
-    return FromComparison<false>(filter, ctx, *func.children[0],
-                                 *func.children[1], ComparisonOp::Lt);
-  }
-  if (name == kTermLe) {
-    if (func.children.size() != 2) {
-      return {ERROR_BAD_PARAMETER, "TERM_LTE has ", func.children.size(),
-              " inputs but 2 expected"};
-    }
-    return FromComparison<false>(filter, ctx, *func.children[0],
-                                 *func.children[1], ComparisonOp::Le);
-  }
-  if (name == kTermGt) {
-    if (func.children.size() != 2) {
-      return {ERROR_BAD_PARAMETER, "TERM_GT has ", func.children.size(),
-              " inputs but 2 expected"};
-    }
-    return FromComparison<false>(filter, ctx, *func.children[0],
-                                 *func.children[1], ComparisonOp::Gt);
-  }
-  if (name == kTermGe) {
-    if (func.children.size() != 2) {
-      return {ERROR_BAD_PARAMETER, "TERM_GTE has ", func.children.size(),
-              " inputs but 2 expected"};
-    }
-    return FromComparison<false>(filter, ctx, *func.children[0],
-                                 *func.children[1], ComparisonOp::Ge);
   }
 
   // DuckDB turns LIKE into a BoundFunctionExpression with function.name

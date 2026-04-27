@@ -378,9 +378,9 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
   duckdb::CatalogTransaction transaction,
   const duckdb::EntryLookupInfo& schema_lookup,
   duckdb::OnEntryNotFound if_not_found) {
-  auto schema_name = std::string{schema_lookup.GetEntryName()};
+  std::string_view schema_name = schema_lookup.GetEntryName();
   // DuckDB uses "main" as default schema; map to "public" for PG compat
-  if (schema_name == "main" || schema_name.empty()) {
+  if (schema_name.empty() || schema_name == "main") {
     schema_name = "public";
   }
   // Get connection's snapshot and delegate to its cache
@@ -839,13 +839,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // DuckDB defaults to empty or "ART", PG defaults to "btree".
   {
     auto& idx_type = create_index_info->index_type;
-    std::string lower;
-    lower.resize(idx_type.size());
-    std::transform(idx_type.begin(), idx_type.end(), lower.begin(), ::tolower);
-    if (lower.empty() || lower == "art" || lower == "btree") {
+    auto type = absl::AsciiStrToLower(idx_type);
+    if (type.empty() || type == "art" || type == "btree") {
       create_index_info->index_type = "secondary";
-    } else if (lower == "secondary" || lower == "inverted") {
-      create_index_info->index_type = lower;
+    } else if (type == "secondary" || type == "inverted") {
+      create_index_info->index_type = std::move(type);
     } else {
       throw duckdb::CatalogException("access method \"%s\" does not exist",
                                      idx_type);

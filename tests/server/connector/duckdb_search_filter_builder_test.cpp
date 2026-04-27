@@ -513,10 +513,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
     duckdb::OptimizerExtension::Register(db_config, CapturePlanOptimizer());
   }
 
+  // When `expected_error` is non-empty, MakeSearchFilter is expected to
+  // throw a user-visible validation error whose message contains that
+  // substring; `must_succeed` and `expected` are ignored in that case.
   void AssertFilter(
     const irs::And& expected, std::string_view sql,
     const std::vector<ColumnSpec>& columns, bool must_succeed,
-    const AnalyzerProvider& analyzer_provider = IdentityAnalyzerProvider) {
+    const AnalyzerProvider& analyzer_provider = IdentityAnalyzerProvider,
+    std::string_view expected_error = {}) {
     SCOPED_TRACE(testing::Message("Parsing: <") << sql << ">");
 
     // All tests reference a single well-known table "foo"; each test case
@@ -582,21 +586,39 @@ class SearchFilterBuilderTest : public ::testing::Test {
     // also what lets us coexist with DuckDB optimizer rewrites (e.g. the
     // distributivity rule adding factored conjuncts to an OR) that may
     // introduce predicates the iresearch builder doesn't translate on its
-    // own.
+    // own. When `expected_error` is set, the first throw is captured and
+    // validated; remaining expressions are not processed.
     irs::And root;
     size_t claimed = 0;
+    std::string caught_message;
     for (const auto& expr : filter_op->expressions) {
       const auto before = root.size();
       std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&expr, 1};
-      auto result = sdb::connector::MakeSearchFilter(root, single, getter);
-      if (result.ok() && root.size() > before) {
-        ++claimed;
-      } else {
-        while (root.size() > before) {
-          root.PopBack();
+      try {
+        auto result = sdb::connector::MakeSearchFilter(root, single, getter);
+        if (result.ok() && root.size() > before) {
+          ++claimed;
+        } else {
+          while (root.size() > before) {
+            root.PopBack();
+          }
         }
+      } catch (const std::exception& e) {
+        caught_message = e.what();
+        break;
       }
     }
+    if (!expected_error.empty()) {
+      ASSERT_FALSE(caught_message.empty())
+        << "expected MakeSearchFilter to throw";
+      ASSERT_NE(caught_message.find(std::string{expected_error}),
+                std::string::npos)
+        << "exception message: <" << caught_message << ">\n"
+        << "expected substring: <" << expected_error << ">";
+      return;
+    }
+    ASSERT_TRUE(caught_message.empty())
+      << "MakeSearchFilter threw unexpectedly: " << caught_message;
     ASSERT_EQ(claimed > 0, must_succeed);
     if (must_succeed) {
       ASSERT_EQ(root, expected) << "actual:   " << irs::ToString(root) << "\n"
@@ -1565,6 +1587,117 @@ TEST_F(SearchFilterBuilderTest, test_SimpleOrPhrase) {
                "SELECT * FROM foo WHERE PHRASE(category, 'quick brown fox') OR "
                "PHRASE(category, 'quick lazy fox')",
                columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseExactGap) {
+  // PHRASE(field, 'quick', 2, 'fox') -- exactly 2 words between 'quick' and
+  // 'fox', e.g. "quick brown lazy fox"
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  // First term: offsets zeroed by insert() for the first element
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // Second term: gap=2 words -> offs_min=offs_max=3 (2+1, no implicit +1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE PHRASE(category, 'quick', 2, 'fox')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseRangeGap) {
+  // PHRASE(field, 'quick', ARRAY[1,2], 'fox') -- 1 to 2 words between 'quick'
+  // and 'fox'
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // gap=[1,2] words -> offs_min=2, offs_max=3 (min+1, max+1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick', ARRAY[1,2], 'fox')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseMultipleGaps) {
+  // PHRASE(field, 'quick', 1, 'brown', 2, 'fox') -- multiple gaps
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // gap=1 -> offs=2 (1+1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 2).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
+  // gap=2 -> offs=3 (2+1)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick', 1, 'brown', 2, 'fox')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapBetweenMultiTokenPatterns) {
+  // PHRASE(field, 'quick brown', 2, 'lazy fox') -- multi-token patterns with a
+  // gap: 'quick' adj 'brown', then gap=2, then 'lazy' adj 'fox'
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  irs::And expected;
+  auto& phrase = AddFilter<irs::ByPhrase>(expected);
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+  // 'brown' is adjacent to 'quick' (within same pattern)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"brown"});
+  // 'lazy' is the first token of the next pattern -- gap=2 -> offs=3
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"lazy"});
+  // 'fox' is adjacent to 'lazy' (within same pattern)
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick brown', 2, 'lazy fox')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapTrailingError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE PHRASE(category, 'quick', 2)", columns,
+               false, SegmentationAnalyzerProvider, "PHRASE ends with a gap");
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseConsecutiveGapsError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE PHRASE(category, 'quick', 1, 2, 'fox')",
+               columns, false, SegmentationAnalyzerProvider,
+               "PHRASE has consecutive gaps at argument 3");
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(
+    irs::And{},
+    "SELECT * FROM foo WHERE PHRASE(category, 'quick', ARRAY[3,1], 'fox')",
+    columns, false, SegmentationAnalyzerProvider,
+    "PHRASE gap array at argument 2 min (3) must not exceed max (1)");
 }
 
 // ===========================================================================

@@ -151,7 +151,7 @@ bool CtrCipherStream::CryptBlock(uint64_t block_index,
   const auto block_size = this->block_size();
   std::memmove(scratch, _iv.c_str(), block_size);
   auto* begin = scratch;
-  WriteBE<uint64_t>(_counter_base + block_index, begin);
+  WriteLE<uint64_t>(_counter_base + block_index, begin);
 
   // encrypt nonce + counter
   if (!_cipher->Encrypt(scratch)) {

@@ -236,7 +236,7 @@ kostya	vedernikoff
 NULL	deadinside
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) better decimal
 query
 SELECT * FROM (VALUES (1984, '228'), ('1337', 14.999));
 ----
@@ -245,182 +245,162 @@ column1	column2
 1337	14.999
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (228), (true)) AS vedernikoff(iq);
 ----
 db error: ERROR: VALUES types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (1337, 'clickclack'), (true, 'deadinside')) AS lol(iq, kostya);
 ----
 db error: ERROR: VALUES types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (666, true), (993, 42)) AS pudge(vedernikoff, kostya);
 ----
 db error: ERROR: VALUES types boolean and integer cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (1), (2), (true)) AS gul(iq);
 ----
 db error: ERROR: VALUES types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (228::bigint), (true)) AS vedernikoff(iq);
 ----
 db error: ERROR: VALUES types bigint and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (4::smallint), (false)) AS kostya(pencil_size);
 ----
 db error: ERROR: VALUES types smallint and boolean cannot be matched
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES (3.14::real), (true)) AS androed(weight);
-----
-db error: ERROR: VALUES types real and boolean cannot be matched
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES (2.71::double precision), (false)) AS arelav(grade);
-----
-db error: ERROR: VALUES types double precision and boolean cannot be matched
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES ('clickclack'::text), (42)) AS lol(kostya);
-----
-db error: ERROR: VALUES types text and integer cannot be matched
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES ('deadinside'::text), (true)) AS kek(vedernikoff);
-----
-db error: ERROR: VALUES types text and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (1, true), (true, 1)) AS babsky(iq, kostya);
 ----
 db error: ERROR: VALUES types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (1, 'vedernikoff', true), (2, 'kostya', 42)) AS lmao(iq, name, grade);
 ----
 db error: ERROR: VALUES types boolean and integer cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT * FROM (VALUES (228), (666), (993), (true)) AS gul(vedernikoff);
 ----
 db error: ERROR: VALUES types integer and boolean cannot be matched
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES (228), (666, 993)) AS vedernikoff(iq);
 ----
 db error: ERROR: VALUES lists must all be the same length
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES (228, 666), (993)) AS kostya(iq, grade);
 ----
 db error: ERROR: VALUES lists must all be the same length
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES (1, 'clickclack'), (2, 'deadinside'), (3)) AS pudge(iq, name);
 ----
 db error: ERROR: VALUES lists must all be the same length
 
 
-skipif serenedb
 query error
 SELECT * FROM (VALUES (228), (1, 2, 3)) AS babsky(iq);
 ----
 db error: ERROR: VALUES lists must all be the same length
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 228 AS vedernikoff_iq UNION SELECT true;
 ----
 db error: ERROR: UNION types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 228 AS vedernikoff_iq UNION ALL SELECT true;
 ----
 db error: ERROR: UNION types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 'clickclack', 1 UNION SELECT 'deadinside', true;
 ----
 db error: ERROR: UNION types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT true, 'kostya' UNION SELECT 42, 'vedernikoff';
 ----
 db error: ERROR: UNION types boolean and integer cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 228::bigint AS vedernikoff UNION SELECT true;
 ----
 db error: ERROR: UNION types bigint and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 4::smallint AS kostya UNION SELECT false;
 ----
 db error: ERROR: UNION types smallint and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 2.71::double precision AS arelav UNION SELECT true;
-----
-db error: ERROR: UNION types double precision and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 3.14::real AS androed UNION SELECT false;
-----
-db error: ERROR: UNION types real and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 1 AS gul
 UNION ALL
@@ -431,78 +411,57 @@ SELECT true;
 db error: ERROR: UNION types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 228 AS vedernikoff INTERSECT SELECT true;
 ----
 db error: ERROR: INTERSECT types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 1337::bigint AS clickclack INTERSECT SELECT false;
 ----
 db error: ERROR: INTERSECT types bigint and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 993 AS deadinside EXCEPT SELECT true;
 ----
 db error: ERROR: EXCEPT types integer and boolean cannot be matched
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports implicit cast from boolean to integer
 query error
 SELECT 4::smallint AS kostya EXCEPT SELECT true;
 ----
 db error: ERROR: EXCEPT types smallint and boolean cannot be matched
 
 
-skipif serenedb
 query error
 SELECT 228, 666 UNION SELECT 993;
-----
-db error: ERROR: each UNION query must have the same number of columns
 
 
-skipif serenedb
 query error
 SELECT 228 UNION SELECT 666, 993;
-----
-db error: ERROR: each UNION query must have the same number of columns
 
 
-skipif serenedb
 query error
 SELECT 228 AS vedernikoff, 666 AS kostya UNION SELECT 993;
-----
-db error: ERROR: each UNION query must have the same number of columns
 
 
-skipif serenedb
 query error
 SELECT 228 INTERSECT SELECT 666, 993;
-----
-db error: ERROR: each INTERSECT query must have the same number of columns
 
 
-skipif serenedb
 query error
 SELECT 228 EXCEPT SELECT 666, 993;
-----
-db error: ERROR: each EXCEPT query must have the same number of columns
 
 
-skipif serenedb
 query error
 SELECT 228, 'vedernikoff', true UNION ALL SELECT 1, 'kostya';
-----
-db error: ERROR: each UNION query must have the same number of columns
 
 
-skipif serenedb
 query error
 SELECT 1, 2, 3 UNION SELECT 42;
-----
-db error: ERROR: each UNION query must have the same number of columns

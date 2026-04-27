@@ -11,7 +11,7 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "AUTO_UPDATE_MODULES": "Off",
+        "AUTO_UPDATE_MODULES": "On",
         "USE_DEBUG_INFO": "LLDB",
         "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",
@@ -52,6 +52,21 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "STATIC_EXECUTABLES": "On",
+        "SDB_DEV": "Off",
+        "SDB_FAULT_INJECTION": "Off",
+        "SDB_GTEST": "Off",
+        "SDB_ALLOC": "JE"
+      }
+    },
+    {
+      "name": "perf",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "On",
+        "USE_IPO": "Off",
         "SDB_DEV": "Off",
         "SDB_FAULT_INJECTION": "Off",
         "SDB_GTEST": "Off",

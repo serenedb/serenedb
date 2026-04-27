@@ -154,8 +154,8 @@ ColumnIndex ReadBitmapIndex(IndexInput& in) {
 
     if constexpr (std::endian::native != std::endian::big) {
       for (auto& block : blocks) {
-        block.index = absl::big_endian::ToHost32(block.index);
-        block.offset = absl::big_endian::ToHost32(block.offset);
+        block.index = absl::little_endian::ToHost32(block.index);
+        block.offset = absl::little_endian::ToHost32(block.offset);
       }
     }
 
@@ -1164,7 +1164,7 @@ class FixedLengthColumn : public ColumnBase {
     if constexpr (std::endian::native != std::endian::big) {
       // FIXME simd?
       for (auto& block : blocks) {
-        block = absl::big_endian::ToHost64(block);
+        block = absl::little_endian::ToHost64(block);
       }
     }
 

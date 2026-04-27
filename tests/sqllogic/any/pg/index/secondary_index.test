@@ -937,6 +937,9 @@ QUERY PLAN
 │           Table:          │
 │      babsky_composite     │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │          Filter:          │
 │  {city=berlin, level=10}  │
 │                           │
@@ -1123,6 +1126,9 @@ QUERY PLAN
 │           Table:          │
 │    vedernikoff_csv_crew   │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │    Filter: {stocks=30}    │
 │                           │
 │        Projections:       │
@@ -1288,6 +1294,9 @@ QUERY PLAN
 │           Table:          │
 │    vedernikoff_pq_crew    │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │    Filter: {stocks=30}    │
 │                           │
 │        Projections:       │
@@ -1429,6 +1438,9 @@ QUERY PLAN
 │    ────────────────────   │
 │           Table:          │
 │      babsky_from_idx      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
 │                           │
 │        Projections:       │
 │            pid            │
@@ -3423,17 +3435,26 @@ QUERY PLAN
 │           Table:          │
 │     mbkkt_or_suffix_in    │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │          Filter:          │
+│       {a=(-inf, 10)}      │
+│    {a=10, b=(-inf, 20)}   │
+│ {a=10, b=20, c=(-inf, 30)}│
+│ {a=10, b=20, c=30, d=(-inf│
+│           , 40)}          │
 │ {a=10, b=20, c=30, d=40, e│
-│  =50}, {a=(-inf, 10)}, {a │
-│ =10, b=(-inf, 20)}, {a=10,│
-│   b=20, c=(-inf, 30)}, {a │
-│ =10, b=20, c=30, d=(-inf, │
-│  40)}, {a=10, b=20, c=30, │
-│  d=40, e=100}, {a=10, b=20│
-│ , c=30, d=(40, +inf)}, {a │
-│ =10, b=20, c=(30, +inf)}, │
-│       ... (+3 more)       │
+│            =50}           │
+│ {a=10, b=20, c=30, d=40, e│
+│           =100}           │
+│ {a=10, b=20, c=30, d=40, e│
+│           =500}           │
+│ {a=10, b=20, c=30, d=(40, │
+│           +inf)}          │
+│ {a=10, b=20, c=(30, +inf)}│
+│    {a=10, b=(20, +inf)}   │
+│       {a=(10, +inf)}      │
 │                           │
 │        Projections:       │
 │             a             │
@@ -3471,9 +3492,13 @@ QUERY PLAN
 │           Table:          │
 │     mbkkt_or_suffix_in    │
 │                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
 │          Filter:          │
-│  {a=10}, {a=12}, {a=14, b │
-│            =24}           │
+│           {a=10}          │
+│           {a=12}          │
+│        {a=14, b=24}       │
 │                           │
 │      Projections: pid     │
 │                           │

@@ -35,6 +35,7 @@
 #include <iresearch/search/phrase_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/range_filter.hpp>
+#include <iresearch/search/regexp_filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
@@ -116,6 +117,9 @@ struct PhrasePartVisitor : util::Noncopyable {
   }
   auto operator()(const ByEditDistanceOptions& opts) const {
     absl::StrAppend(out, "Levenshtein:", TermToString(opts.term));
+  }
+  auto operator()(const ByRegexpOptions& opts) const {
+    absl::StrAppend(out, "Regexp:", TermToString(opts.pattern));
   }
   auto operator()(const ByRangeOptions& opts) const {
     absl::StrAppend(out, "Range: ");
@@ -273,6 +277,11 @@ void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
                   TermToString(filter.options().token),
                   "', has_pos=", filter.options().has_pos, ", parts=[",
                   parts_str, "]]");
+}
+
+void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
+  absl::StrAppend(out, "REGEXP[", ft(filter.field()), ", ",
+                  TermToString(filter.options().pattern), "]");
 }
 
 template<typename FT>

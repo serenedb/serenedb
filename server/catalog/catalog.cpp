@@ -58,6 +58,7 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "folly/Function.h"
 #include "general_server/scheduler.h"
@@ -253,6 +254,7 @@ class OpenDatabase {
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
+  Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
   Result RegisterIndexShard(const std::shared_ptr<Index>& index);
@@ -389,6 +391,20 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
                          "Failed to read view definition", slice);
       }
       return _catalog.RegisterView(schema_id, std::move(view));
+    });
+}
+
+Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitDefinitions(
+    schema_id, ObjectType::PgSqlType,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto type = PgSqlType::ReadInternal(
+        slice, {.id = key.GetObjectId(), .database_id = db_id});
+      if (!type) {
+        return ErrorMeta(ERROR_INTERNAL, "type",
+                         "Failed to read type definition", slice);
+      }
+      return _catalog.RegisterType(db_id, schema_id, std::move(type));
     });
 }
 
@@ -588,6 +604,9 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   };
 
   if (auto r = RegisterTokenizers(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterTypes(db_id, schema_id); !r.ok()) {
     return r;
   }
   if (auto r = RegisterFunctions(db_id, schema_id); !r.ok()) {

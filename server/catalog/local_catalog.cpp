@@ -79,6 +79,7 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_entry_cache.h"
 #include "general_server/scheduler.h"
@@ -244,6 +245,13 @@ class SnapshotImpl : public Snapshot {
         return r;
       }
       return AddObjectDefinition<TokenizerDependency>(parent_id, object);
+    } else if constexpr (std::is_same_v<T, PgSqlType>) {
+      auto r = AddToResolution<ResolveType::Type>(parent_id, object->GetId(),
+                                                  object->GetName(), replace);
+      if (!r.ok()) {
+        return r;
+      }
+      return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Table>) {
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -288,6 +296,9 @@ class SnapshotImpl : public Snapshot {
     } else if constexpr (std::is_same_v<T, Tokenizer>) {
       RemoveFromResolution<ResolveType::Tokenizer>(parent_id, object->GetName(),
                                                    maybe_not_found);
+    } else if constexpr (std::is_same_v<T, PgSqlType>) {
+      RemoveFromResolution<ResolveType::Type>(parent_id, object->GetName(),
+                                              maybe_not_found);
     } else if constexpr (std::is_same_v<T, Table>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
@@ -351,6 +362,10 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::PgSqlView: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->views.insert(object->GetId());
+      } break;
+      case ObjectType::PgSqlType: {
+        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
+        schema_deps->types.insert(object->GetId());
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
@@ -569,6 +584,32 @@ class SnapshotImpl : public Snapshot {
                std::ranges::to<std::vector>();
       })
       .value_or(std::vector<std::shared_ptr<Tokenizer>>{});
+  }
+
+  std::vector<std::shared_ptr<PgSqlType>> GetTypes(
+    ObjectId db_id, std::string_view schema) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .transform([&](ObjectId schema_id) {
+        return _resolution_table.GetTypeIds(schema_id) |
+               std::views::transform(
+                 [&](ObjectId type_id) -> std::shared_ptr<PgSqlType> {
+                   return GetObject<PgSqlType>(type_id);
+                 }) |
+               std::ranges::to<std::vector>();
+      })
+      .value_or(std::vector<std::shared_ptr<PgSqlType>>{});
+  }
+
+  std::shared_ptr<PgSqlType> GetType(ObjectId db_id, std::string_view schema,
+                                     std::string_view name) const final {
+    return _resolution_table.ResolveObject<ResolveType::Schema>(db_id, schema)
+      .and_then([&](ObjectId schema_id) {
+        return _resolution_table.ResolveObject<ResolveType::Type>(schema_id,
+                                                                  name);
+      })
+      .transform(
+        [&](ObjectId type_id) { return GetObject<PgSqlType>(type_id); })
+      .value_or(nullptr);
   }
 
   std::shared_ptr<Database> GetDatabase(std::string_view database) const final {
@@ -844,6 +885,11 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->views.erase(id);
         } break;
+        case ObjectType::PgSqlType: {
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
+          SDB_ASSERT(schema_deps);
+          schema_deps->types.erase(id);
+        } break;
         default:
           SDB_UNREACHABLE();
       }
@@ -858,6 +904,7 @@ class SnapshotImpl : public Snapshot {
         break;
       case ObjectType::Schema: {
         auto schema_deps = GetDependency<SchemaDependency>(id);
+        drop_childs(schema_deps->types);
         drop_childs(schema_deps->functions);
         drop_childs(schema_deps->views);
         drop_childs(schema_deps->tables);
@@ -889,6 +936,7 @@ class SnapshotImpl : public Snapshot {
 
       } break;
       case ObjectType::PgSqlFunction:
+      case ObjectType::PgSqlType:
       case ObjectType::PgSqlView:
       case ObjectType::Tokenizer:
         break;
@@ -1010,6 +1058,14 @@ Result LocalCatalog::RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(tokenizer), schema_id, false);
+  });
+}
+
+Result LocalCatalog::RegisterType(ObjectId database_id, ObjectId schema_id,
+                                  std::shared_ptr<PgSqlType> type) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(type), schema_id, false);
   });
 }
 
@@ -1434,6 +1490,33 @@ Result LocalCatalog::CreateTokenizer(ObjectId database_id,
     [&](auto& clone) {
       return clone->UnregisterObject(dict, *schema_id, true);
     });
+}
+
+Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
+                                std::shared_ptr<PgSqlType> type) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(
+    _snapshot,
+    [&](auto& clone) {
+      auto r = clone->RegisterObject(type, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+
+      vpack::Builder builder;
+      type->WriteInternal(builder);
+      return _engine->CreateDefinition(*schema_id, ObjectType::PgSqlType,
+                                       type->GetId(),
+                                       [&](bool) { return builder.slice(); });
+    },
+    [&](auto clone) { clone->UnregisterObject(type, *schema_id, true); });
 }
 
 template<typename T>
@@ -1956,6 +2039,45 @@ Result LocalCatalog::DropView(std::string_view database,
       return r;
     }
     clone->UnregisterObject(std::move(view), *schema_id);
+    return Result{};
+  });
+}
+
+Result LocalCatalog::DropType(std::string_view database,
+                              std::string_view schema, std::string_view name) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto type_id =
+    _snapshot->GetObjectId<ResolveType::Type>(*schema_id, name);
+  if (!type_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
+    SDB_ASSERT(clone);
+    auto object = clone->GetObject(*type_id);
+    SDB_ASSERT(object);
+    if (object->GetType() != ObjectType::PgSqlType) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    pg::ToPgObjectTypeName(object->GetType())};
+    }
+    auto type = basics::downCast<PgSqlType>(std::move(object));
+    auto r =
+      _engine->DropDefinition(*schema_id, ObjectType::PgSqlType, type->GetId());
+    if (!r.ok()) {
+      return r;
+    }
+    clone->UnregisterObject(std::move(type), *schema_id);
     return Result{};
   });
 }

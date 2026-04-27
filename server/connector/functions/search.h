@@ -54,6 +54,16 @@ inline constexpr std::string_view kGeoInRange = "geo_in_range";
 // rewrites them into iresearch GeoDistanceFilter range queries.
 inline constexpr std::string_view kGeoDistance = "geo_distance";
 
+// Geo set-relation predicates (build into iresearch GeoFilter):
+//   geo_intersects(field, shape)  -> BOOLEAN  -- shape ∩ indexed != ∅
+//   geo_intersects(shape, field)  -> BOOLEAN  -- commutative
+//   geo_contains(field, shape)    -> BOOLEAN  -- indexed ⊇ shape
+//   geo_contains(shape, field)    -> BOOLEAN  -- shape ⊇ indexed
+// `field` is a column reference (VARCHAR with GeoJSON, or GEOMETRY).
+// `shape` is a constant (VARCHAR holding GeoJSON text, or GEOMETRY).
+inline constexpr std::string_view kGeoIntersects = "geo_intersects";
+inline constexpr std::string_view kGeoContains = "geo_contains";
+
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running
 // per-row at execution time. Scorer parameters are constants; the

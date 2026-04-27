@@ -28,6 +28,7 @@
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
+#include "catalog/geo_validate.h"
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
@@ -48,16 +49,6 @@ Result ValidateInvertedIndexColumns(
     }
   }
   return {};
-}
-
-// The geo analyzer + sink writer pipeline assumes CRS84 (WGS84, lng/lat in
-// degrees). Column-level CRS is the contract; we accept the common aliases
-// by identifier rather than attempting semantic CRS equivalence (which
-// would need a PROJ-style library). PROJJSON / WKT2 CRS84 definitions that
-// don't hand us a matching identifier are rejected -- users should declare
-// with the short form.
-bool IsCRS84Identifier(std::string_view id) noexcept {
-  return id == "OGC:CRS84" || id == "EPSG:4326" || id == "4326";
 }
 
 // Validate that a geo-family analyzer (GeoJsonAnalyzer / GeoPointAnalyzer) is
@@ -96,18 +87,9 @@ Result ValidateGeoAnalyzerColumn(std::string_view column_name,
   }
 
   if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
-    if (!duckdb::GeoType::HasCRS(col_type)) {
+    if (auto r = ValidateGeometryCRS84(col_type); r.fail()) {
       return {ERROR_BAD_PARAMETER, "Column '", column_name,
-              "' is GEOMETRY without a CRS; declare it with CRS84 to index"};
-    }
-    const auto& crs = duckdb::GeoType::GetCRS(col_type);
-    if (!IsCRS84Identifier(crs.GetIdentifier())) {
-      return {ERROR_BAD_PARAMETER,
-              "Column '",
-              column_name,
-              "' is GEOMETRY with CRS '",
-              crs.GetIdentifier(),
-              "'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)"};
+              "': ", r.errorMessage()};
     }
     if (is_geojson) {
       const auto& geojson =

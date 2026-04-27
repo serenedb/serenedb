@@ -24,7 +24,9 @@
 #include <iresearch/search/geo_filter.h>
 #include <vpack/parser.h>
 
+#include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -53,6 +55,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
+#include "catalog/geo_validate.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -83,17 +86,48 @@ namespace {
 
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(
   const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+  // Peel a BoundCastExpression wrapper that DuckDB inserts when a function
+  // signature's parameter type differs from the column's declared type only
+  // in auxiliary metadata (e.g. GEOMETRY('OGC:CRS84') vs GEOMETRY() -- both
+  // share LogicalTypeId::GEOMETRY and the cast is a no-op reinterpret at
+  // runtime). Restricted to same-id, non-nested casts so genuine type
+  // conversions (int -> varchar, struct field reshuffles, etc.) still
+  // surface as opaque expressions and don't get misidentified as columns.
+  const duckdb::Expression* inner = &expr;
+  while (inner->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& c = inner->Cast<duckdb::BoundCastExpression>();
+    if (c.return_type.id() != c.child->return_type.id() ||
+        c.return_type.IsNested()) {
+      break;
+    }
+    inner = c.child.get();
+  }
+  if (inner->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
-  return &expr.Cast<duckdb::BoundColumnRefExpression>();
+  return &inner->Cast<duckdb::BoundColumnRefExpression>();
 }
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  // Peel a BoundCastExpression wrapping a constant when the cast is a no-op
+  // metadata-only reinterpret (same LogicalTypeId, non-nested) -- e.g. a
+  // GEOMETRY('OGC:CRS84') literal narrowed to a GEOMETRY() function signature.
+  // Real conversions across LogicalTypeIds (varchar -> geometry, int -> double,
+  // ...) are left wrapped so the caller treats them as opaque, since peeling
+  // would skip the conversion's effect on the value.
+  const duckdb::Expression* inner = &expr;
+  while (inner->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& c = inner->Cast<duckdb::BoundCastExpression>();
+    if (c.return_type.id() != c.child->return_type.id() ||
+        c.return_type.IsNested()) {
+      break;
+    }
+    inner = c.child.get();
+  }
+  if (inner->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &expr.Cast<duckdb::BoundConstantExpression>().value;
+  return &inner->Cast<duckdb::BoundConstantExpression>().value;
 }
 
 const SearchColumnInfo* FindColumnInfo(
@@ -1095,7 +1129,11 @@ Result ParseGeoConstant(const duckdb::Value& value,
   std::vector<S2LatLng> cache;
   switch (value.type().id()) {
     case duckdb::LogicalTypeId::VARCHAR: {
-      auto json_str = value.GetValue<std::string>();
+      // StringValue::Get returns the raw stored bytes; for VARCHAR that's the
+      // GeoJSON text directly. (Value::GetValue<string>() goes through
+      // ToString() which is fine for VARCHAR but not for GEOMETRY -- see
+      // below -- so we use the same accessor here for consistency.)
+      const auto& json_str = duckdb::StringValue::Get(value);
       vpack::Builder vpack;
       try {
         vpack::Parser parser{vpack};
@@ -1110,7 +1148,20 @@ Result ParseGeoConstant(const duckdb::Value& value,
       return {};
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
-      auto wkb_str = value.GetValue<std::string>();
+      // Mirror the column-side rule from ValidateGeoAnalyzerColumn: a
+      // GEOMETRY constant must declare a CRS84-compatible CRS. The function
+      // signatures are registered with bare GEOMETRY so DuckDB binds any-CRS
+      // values, and our cast peeling in TryGetConstant exposes them; without
+      // this check the bytes would be silently interpreted as CRS84.
+      if (auto r = sdb::catalog::ValidateGeometryCRS84(value.type());
+          r.fail()) {
+        return {ERROR_BAD_PARAMETER, "GEOMETRY constant: ", r.errorMessage()};
+      }
+      // GEOMETRY values store WKB bytes internally. Value::GetValue<string>()
+      // would call Geometry::ToString() and return the WKT text form, which
+      // ParseShapeWKB can't read; StringValue::Get bypasses that and yields
+      // the raw bytes the cast / serializer wrote.
+      const auto& wkb_str = duckdb::StringValue::Get(value);
       if (auto r = sdb::geo::ParseShapeWKB(wkb_str, shape, cache); r.fail()) {
         return r;
       }
@@ -1353,6 +1404,90 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 // ---------------------------------------------------------------------------
+// geo_intersects(field, shape) / geo_intersects(shape, field) -> bool
+// geo_contains(field, shape)   -> bool   indexed ⊇ shape  (IsContained)
+// geo_contains(shape, field)   -> bool   shape ⊇ indexed  (Contains)
+//
+// Both predicates accept VARCHAR (GeoJSON text) or GEOMETRY (WKB) on either
+// side. geo_intersects is commutative; geo_contains' two argument orders
+// pick different GeoFilterType values.
+// ---------------------------------------------------------------------------
+
+Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
+                     const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() != 2) {
+    return {ERROR_BAD_PARAMETER, func.function.name, " has ",
+            func.children.size(), " inputs but 2 expected"};
+  }
+
+  // Either argument can be the column reference; the other must be constant.
+  size_t field_idx = 0;
+  size_t shape_idx = 1;
+  const auto* col_ref = TryGetColumnRef(*func.children[0]);
+  if (!col_ref) {
+    col_ref = TryGetColumnRef(*func.children[1]);
+    if (!col_ref) {
+      return {ERROR_BAD_PARAMETER, func.function.name,
+              ": one argument must be a column reference"};
+    }
+    field_idx = 1;
+    shape_idx = 0;
+  }
+
+  const auto* shape_val = TryGetConstant(*func.children[shape_idx]);
+  if (!shape_val) {
+    return {ERROR_BAD_PARAMETER, func.function.name,
+            ": shape argument must be a constant"};
+  }
+
+  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  if (!column_info ||
+      (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
+       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
+    return {ERROR_BAD_PARAMETER, func.function.name,
+            ": field must be VARCHAR (GeoJSON) or GEOMETRY"};
+  }
+  if (!column_info->analyzer.analyzer) {
+    return {ERROR_BAD_PARAMETER, func.function.name,
+            ": field has no analyzer attached"};
+  }
+
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+
+  auto& geo_filter = ctx.negated ? Negate<irs::GeoFilter>(filter)
+                                 : AddFilter<irs::GeoFilter>(filter);
+  geo_filter.boost(ctx.boost);
+  *geo_filter.mutable_field() = std::move(field_name);
+
+  auto* options = geo_filter.mutable_options();
+  if (auto r = SetupGeoFilter(*column_info->analyzer.analyzer, *options);
+      r.fail()) {
+    return r;
+  }
+
+  sdb::geo::ShapeContainer shape;
+  if (auto r = ParseGeoConstant(*shape_val, options->coding, shape); r.fail()) {
+    return r;
+  }
+  options->shape = std::move(shape);
+
+  if (func.function.name == kGeoIntersects) {
+    options->type = irs::GeoFilterType::Intersects;
+  } else {
+    SDB_ASSERT(func.function.name == kGeoContains);
+    // geo_contains(field, shape): indexed contains shape -> filter type
+    //   IsContained ("the filter shape is contained within indexed data").
+    // geo_contains(shape, field): shape contains indexed -> filter type
+    //   Contains ("the filter shape contains indexed data").
+    options->type = field_idx == 0 ? irs::GeoFilterType::IsContained
+                                   : irs::GeoFilterType::Contains;
+  }
+  return {};
+}
+
+// ---------------------------------------------------------------------------
 // sdb_term_in (function-based IN)
 // ---------------------------------------------------------------------------
 
@@ -1450,6 +1585,9 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   }
   if (name == kGeoInRange) {
     return FromGeoInRange(filter, ctx, func);
+  }
+  if (name == kGeoIntersects || name == kGeoContains) {
+    return FromGeoFilter(filter, ctx, func);
   }
   if (name == kTermEq) {
     if (func.children.size() != 2) {

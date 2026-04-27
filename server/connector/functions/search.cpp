@@ -284,11 +284,17 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // centroid: VARCHAR (GeoJSON literal) or GEOMETRY value.
   //
   // Register all 4 type combinations for the (field, centroid) pair across
-  // each arity so DuckDB resolves the call without implicit casts.
+  // each arity so DuckDB resolves the call without implicit casts. The
+  // GEOMETRY signatures pin CRS84 explicitly so DuckDB's bind-time geo
+  // cast rules apply: matching-CRS values pass through unchanged (CRS
+  // metadata preserved into the bound expression), cross-CRS values throw
+  // BinderException, bare-GEOMETRY values reinterpret to CRS84. Without
+  // the CRS pin, the bind cast to bare GEOMETRY would silently strip CRS
+  // metadata before our filter builder can validate it.
   const duckdb::LogicalType geo_field_types[] = {
-    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY()};
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY("OGC:CRS84")};
   const duckdb::LogicalType geo_centroid_types[] = {
-    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY()};
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY("OGC:CRS84")};
   {
     duckdb::ScalarFunctionSet set{std::string{kGeoInRange}};
     for (const auto& field_t : geo_field_types) {
@@ -323,6 +329,21 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
       for (const auto& centroid_t : geo_centroid_types) {
         set.AddFunction(duckdb::ScalarFunction(
           {field_t, centroid_t}, duckdb::LogicalType::DOUBLE, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // geo_intersects(field, shape) -> bool   (commutative; either arg may be
+  // the column reference. Builds an iresearch GeoFilter with type=Intersects.)
+  // geo_contains(field, shape)   -> bool   (indexed ⊇ shape, type=IsContained)
+  // geo_contains(shape, field)   -> bool   (shape ⊇ indexed, type=Contains)
+  for (auto name : {kGeoIntersects, kGeoContains}) {
+    duckdb::ScalarFunctionSet set{std::string{name}};
+    for (const auto& a : geo_field_types) {
+      for (const auto& b : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {a, b}, duckdb::LogicalType::BOOLEAN, SearchStubFn));
       }
     }
     loader.RegisterFunction(std::move(set));

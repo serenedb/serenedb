@@ -34,6 +34,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_expression_iterator.hpp>
@@ -50,6 +51,7 @@
 #include "catalog/storage_options.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_catalog.h"
 #include "connector/duckdb_client_state.h"
@@ -667,7 +669,29 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateCollation(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateType(
   duckdb::CatalogTransaction transaction, duckdb::CreateTypeInfo& info) {
-  throw duckdb::NotImplementedException("CREATE TYPE through DuckDB");
+  auto& catalog_feature =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog_impl = catalog_feature.Global();
+  auto database_id = GetDatabaseId();
+
+  auto type_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateTypeInfo>(
+      info.Copy());
+  auto type = std::make_shared<catalog::PgSqlType>(
+    database_id, ObjectId{}, info.name, std::move(type_info));
+  auto r = catalog_impl.CreateType(database_id, name, type);
+
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT) {
+      return nullptr;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("type \"", info.name, "\" already exists"));
+  }
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return nullptr;
 }
 
 void SereneDBSchemaEntry::DropEntry(duckdb::ClientContext& context,

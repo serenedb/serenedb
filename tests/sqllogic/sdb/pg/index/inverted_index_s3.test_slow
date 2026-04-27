@@ -8,13 +8,14 @@ control substitution on
 
 
 statement ok
-CREATE OR REPLACE SECRET minio (
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
   TYPE s3,
   KEY_ID '${MINIO_ACCESS_KEY}',
   SECRET '${MINIO_SECRET_KEY}',
   ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
   URL_STYLE 'path',
-  USE_SSL false
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
 );
 
 
@@ -315,4 +316,4 @@ DROP TABLE company_src;
 
 
 statement ok
-DROP SECRET minio;
+DROP SECRET minio_${__DATABASE__};

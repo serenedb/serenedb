@@ -45,6 +45,7 @@
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
 #include "catalog/types.h"
+#include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -83,6 +84,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Role;
   } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
     return ObjectType::PgSqlFunction;
+  } else if constexpr (std::is_same_v<T, PgSqlType>) {
+    return ObjectType::PgSqlType;
   } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
   } else if constexpr (std::is_same_v<T, SecondaryIndex>) {
@@ -116,6 +119,8 @@ struct Snapshot {
     ObjectId database, std::string_view schema) const = 0;
   virtual std::vector<std::shared_ptr<Tokenizer>> GetTokenizers(
     ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<PgSqlType>> GetTypes(
+    ObjectId database, std::string_view schema) const = 0;
 
   // Allocation-free iteration over schema objects. Use these when the caller
   // can process each item inline and only needs to buffer the misses.
@@ -147,6 +152,9 @@ struct Snapshot {
   virtual std::shared_ptr<Tokenizer> GetTokenizer(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
+  virtual std::shared_ptr<PgSqlType> GetType(ObjectId database,
+                                             std::string_view schema,
+                                             std::string_view name) const = 0;
   virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
                                           std::string_view schema,
                                           std::string_view name) const = 0;
@@ -223,6 +231,8 @@ struct LogicalCatalog {
   virtual Result RegisterTokenizer(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Tokenizer> tokenizer) = 0;
+  virtual Result RegisterType(ObjectId database_id, ObjectId schema_id,
+                              std::shared_ptr<catalog::PgSqlType> type) = 0;
   virtual Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
                                std::shared_ptr<Index> index) = 0;
   virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
@@ -240,6 +250,8 @@ struct LogicalCatalog {
     std::shared_ptr<catalog::PgSqlFunction> function, bool replace) = 0;
   virtual Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                                  std::shared_ptr<Tokenizer> dict) = 0;
+  virtual Result CreateType(ObjectId database_id, std::string_view schema,
+                            std::shared_ptr<PgSqlType> type) = 0;
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
@@ -289,6 +301,8 @@ struct LogicalCatalog {
                                std::string_view schema,
                                std::string_view name) = 0;
   virtual Result DropView(std::string_view database, std::string_view schema,
+                          std::string_view name) = 0;
+  virtual Result DropType(std::string_view database, std::string_view schema,
                           std::string_view name) = 0;
   virtual Result DropTable(std::string_view database, std::string_view schema,
                            std::string_view name) = 0;

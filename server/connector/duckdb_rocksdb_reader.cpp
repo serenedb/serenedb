@@ -270,6 +270,17 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadStructColumn(it, output, type, max_rows);
     case duckdb::LogicalTypeId::ARRAY:
       return ReadArrayColumn(it, output, type, max_rows);
+    case duckdb::LogicalTypeId::ENUM:
+      switch (duckdb::EnumType::GetPhysicalType(type)) {
+        case duckdb::PhysicalType::UINT8:
+          return ReadScalarColumn<uint8_t>(it, output, max_rows);
+        case duckdb::PhysicalType::UINT16:
+          return ReadScalarColumn<uint16_t>(it, output, max_rows);
+        case duckdb::PhysicalType::UINT32:
+          return ReadScalarColumn<uint32_t>(it, output, max_rows);
+        default:
+          SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported ENUM physical type");
+      }
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED, "Unsupported vector type");
   }
@@ -399,6 +410,29 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
     } break;
     case duckdb::LogicalTypeId::ARRAY: {
       DeserializeArrayValue(value, output, type, idx);
+    } break;
+    case duckdb::LogicalTypeId::ENUM: {
+      switch (duckdb::EnumType::GetPhysicalType(type)) {
+        case duckdb::PhysicalType::UINT8: {
+          SDB_ASSERT(value.size() == sizeof(uint8_t));
+          duckdb::FlatVector::GetDataMutable<uint8_t>(output)[idx] =
+            static_cast<uint8_t>(value[0]);
+        } break;
+        case duckdb::PhysicalType::UINT16: {
+          SDB_ASSERT(value.size() == sizeof(uint16_t));
+          uint16_t v;
+          std::memcpy(&v, value.data(), sizeof(v));
+          duckdb::FlatVector::GetDataMutable<uint16_t>(output)[idx] = v;
+        } break;
+        case duckdb::PhysicalType::UINT32: {
+          SDB_ASSERT(value.size() == sizeof(uint32_t));
+          uint32_t v;
+          std::memcpy(&v, value.data(), sizeof(v));
+          duckdb::FlatVector::GetDataMutable<uint32_t>(output)[idx] = v;
+        } break;
+        default:
+          SDB_ASSERT(false, "Unsupported ENUM physical type");
+      }
     } break;
     default:
       duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =

@@ -2561,6 +2561,9 @@ Result FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   mixed.boost(ctx.boost);
   sdb::ParserContext parser_ctx{mixed, field_name,
                                 *ActiveTokenizer(ctx, column_info)};
+  // The column is already pinned by the enclosing @@; reject any
+  // `field:term` prefix the user might write inside the Lucene string.
+  parser_ctx.strict_field = true;
   if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
     return {ERROR_BAD_PARAMETER, "to_tsquery parse error: ", r.errorMessage()};
   }

@@ -47,10 +47,6 @@ void InitAnnFilter(
     filter_types[i] = bind_data.column_types[it - bind_data.column_ids.begin()];
   }
   if (!filter_projection.empty()) {
-    auto filter_mat = MakeRowMaterializer(
-      context, bind_data, rocks_snapshot, /*all_pks=*/{}, filter_projection,
-      filter_types, filter_column_ids, nullptr);
-
     // Deep-copy the stashed expressions so the bind_data copy survives
     // subsequent query invocations that share this plan.
     std::vector<duckdb::unique_ptr<duckdb::Expression>> expr_copies;
@@ -62,9 +58,9 @@ void InitAnnFilter(
     auto& search_snapshot =
       GetSereneDBContext(context).EnsureSearchSnapshot(index_id);
 
-    filter = std::make_unique<ANNFilter>(
-      context, search_snapshot.reader, std::move(filter_mat),
-      std::move(expr_copies), std::move(filter_types));
+    filter = std::make_unique<ANNFilter>(context, search_snapshot.reader,
+                                         nullptr, std::move(expr_copies),
+                                         std::move(filter_types));
   }
 }
 

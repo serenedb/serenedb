@@ -33,12 +33,7 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
-<<<<<<< HEAD
-#include "connector/rocksdb_row_materializer.h"
-#include "connector/search_pk_lookup.h"
-=======
 #include "connector/lookup.h"
->>>>>>> 94d26ede (init)
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -143,11 +138,8 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     }
   }
 
-<<<<<<< HEAD
-=======
   // Real columns: look up directly per batch. The HNSW range-search PKs
   // were collected in InitGlobal; we just stream them through LookupRows.
->>>>>>> 94d26ede (init)
   std::vector<std::string_view> pk_batch;
   pk_batch.reserve(batch_size);
   for (duckdb::idx_t i = 0; i < batch_size; ++i) {

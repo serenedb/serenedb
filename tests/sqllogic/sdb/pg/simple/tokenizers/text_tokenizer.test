@@ -1768,18 +1768,19 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner(
 ----
 db error: ERROR: required parameter "delimiter" was not found
 
+
 query
 SELECT encode(t::bytea, 'escape')
 FROM unnest(ts_lexize('wildcard_default', 'hello')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\303\\277he
+\\377he
 ell
 hel
 llo
-lo\\303\\277
-o\\303\\277
+lo\\377
+o\\377
 
 
 query T
@@ -1788,12 +1789,12 @@ FROM unnest(ts_lexize('wildcard_ngram2', 'hello')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\303\\277h
+\\377h
 el
 he
 ll
 lo
-o\\303\\277
+o\\377
 
 
 query
@@ -1802,15 +1803,15 @@ FROM unnest(ts_lexize('wildcard_default', 'hello world')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\303\\277he
-\\303\\277wo
-d\\303\\277
+\\377he
+\\377wo
+d\\377
 ell
 hel
-ld\\303\\277
+ld\\377
 llo
-lo\\303\\277
-o\\303\\277
+lo\\377
+o\\377
 orl
 rld
 wor
@@ -1822,12 +1823,12 @@ FROM unnest(ts_lexize('wildcard_ngram5_seg', 'quick')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\303\\277quic
-ck\\303\\277
-ick\\303\\277
-k\\303\\277
+\\377quic
+ck\\377
+ick\\377
+k\\377
 quick
-uick\\303\\277
+uick\\377
 
 
 query
@@ -1836,16 +1837,16 @@ FROM unnest(ts_lexize('wildcard_text_base', 'Fox juMps')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
-\\303\\277fo
-\\303\\277ju
+\\377fo
+\\377ju
 fox
 jum
 mps
-ox\\303\\277
-ps\\303\\277
-s\\303\\277
+ox\\377
+ps\\377
+s\\377
 ump
-x\\303\\277
+x\\377
 
 
 # GEOPOINT TEMPLATE

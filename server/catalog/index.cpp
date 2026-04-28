@@ -202,11 +202,11 @@ Result ValidateInvertedIndexColumns(
 //   - For GEOMETRY columns, the declared CRS must be CRS84 (EPSG:4326 /
 //     OGC:CRS84 / SRID 4326). The sink-writer path does no per-row SRID
 //     check, so the column declaration is the contract.
-//   - For GEOMETRY + GeoJsonAnalyzer: coding must be S2Point. VPack coding
-//     stores the original GeoJSON text (not available for WKB); LatLng
-//     codings would require a shape -> LatLng-bytes encoder that
-//     ShapeContainer doesn't implement yet -- reject to avoid silent data
-//     loss at read time.
+//   - For GEOMETRY + GeoJsonAnalyzer: coding must be S2Point. LatLng codings
+//     would require a shape -> LatLng-bytes encoder that ShapeContainer
+//     doesn't implement yet -- reject to avoid silent data loss at read
+//     time. (VPack coding is rejected at dictionary creation time, so it
+//     can't reach this check via SQL.)
 Result ValidateGeoAnalyzerColumn(std::string_view column_name,
                                  const duckdb::LogicalType& col_type,
                                  const irs::analysis::Analyzer& analyzer) {
@@ -235,20 +235,15 @@ Result ValidateGeoAnalyzerColumn(std::string_view column_name,
       const auto& geojson =
         basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
       using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
-      switch (geojson.coding()) {
-        case Coding::S2Point:
-          break;
-        case Coding::VPack:
-          return {ERROR_BAD_PARAMETER, "Column '", column_name,
-                  "' is GEOMETRY but the geo analyzer uses VPack coding; ",
-                  "VPack stores the original GeoJSON text which GEOMETRY "
-                  "columns do not carry -- use S2Point coding"};
-        case Coding::S2LatLngF64:
-        case Coding::S2LatLngU32:
-          return {ERROR_BAD_PARAMETER, "Column '", column_name,
-                  "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
-                  "not yet supported for GEOMETRY columns -- use S2Point "
-                  "coding"};
+      if (geojson.coding() != Coding::S2Point) {
+        // VPack is rejected at CREATE TEXT SEARCH DICTIONARY time and can't
+        // reach here via SQL; the remaining non-S2Point options are LatLng
+        // codings, which need a shape -> LatLng-bytes encoder that
+        // ShapeContainer doesn't implement yet.
+        return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
+                "not yet supported for GEOMETRY columns -- use S2Point "
+                "coding"};
       }
     }
   }

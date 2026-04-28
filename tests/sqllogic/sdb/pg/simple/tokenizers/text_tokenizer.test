@@ -2004,7 +2004,19 @@ CREATE TEXT SEARCH DICTIONARY t_gj_err2(
 )
 ----
 db error: ERROR: invalid value in "coding" parameter
-HINT: Encoding format: s2point, s2latlngf64, s2latlngu32, vpack
+HINT: Encoding format: s2point, s2latlngf64, s2latlngu32
+
+
+# --- Error: vpack coding is not exposed via SQL ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gj_err_vpack(
+    template = 'geojson',
+    coding = 'vpack'
+)
+----
+db error: ERROR: invalid value in "coding" parameter
+HINT: Encoding format: s2point, s2latlngf64, s2latlngu32
 
 
 # --- Error: option not applicable to geojson ---
@@ -2028,7 +2040,7 @@ CREATE TEXT SEARCH DICTIONARY t_gj_err4(
 )
 
 
-# --- Valid: geojson with defaults (type=shape, coding=vpack) ---
+# --- Valid: geojson with defaults (type=shape, coding=s2point) ---
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY geojson_basic(
@@ -2216,7 +2228,7 @@ Text Search Dictionary:
       optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
   geojson:
     type (string) [default: shape] - GeoJson shape type: shape, centroid, point
-    coding (string) [default: vpack] - Encoding format: s2point, s2latlngf64, s2latlngu32, vpack
+    coding (string) [default: s2point] - Encoding format: s2point, s2latlngf64, s2latlngu32
     options:
       maxcells (integer) [default: 20] - Maximum number of S2 cells
       minlevel (integer) [default: 4] - Minimum S2 cell level (0-30)

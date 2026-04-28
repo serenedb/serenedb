@@ -47,22 +47,29 @@ inline constexpr std::string_view kBoost = "boost";
 inline constexpr std::string_view kGeoInRange = "geo_in_range";
 
 // Geo distance pseudo-function:
-//   geo_distance(field, centroid) -> DOUBLE
-// Returns the geodesic distance (metres) between the indexed value and the
-// centroid. Cannot be evaluated outside an inverted-index scan; the filter
-// builder recognizes `geo_distance(field, centroid) OP constant` patterns and
-// rewrites them into iresearch GeoDistanceFilter range queries.
-inline constexpr std::string_view kGeoDistance = "geo_distance";
+//   ST_Distance_Centroid(field, centroid) -> DOUBLE
+// Returns the geodesic distance (metres) between the indexed value's
+// centroid and the centroid argument. Cannot be evaluated outside an
+// inverted-index scan; the filter builder recognizes
+// `ST_Distance_Centroid(field, centroid) OP constant` patterns and rewrites
+// them into iresearch GeoDistanceFilter range queries. The name follows the
+// PostGIS / DuckDB ST_* convention; the `_Centroid` suffix flags that this
+// is the centroid-to-centroid distance the indexer is built around (not the
+// edge-to-edge ST_Distance semantics).
+inline constexpr std::string_view kGeoDistance = "ST_Distance_Centroid";
 
 // Geo set-relation predicates (build into iresearch GeoFilter):
-//   geo_intersects(field, shape)  -> BOOLEAN  -- shape ∩ indexed != ∅
-//   geo_intersects(shape, field)  -> BOOLEAN  -- commutative
-//   geo_contains(field, shape)    -> BOOLEAN  -- indexed ⊇ shape
-//   geo_contains(shape, field)    -> BOOLEAN  -- shape ⊇ indexed
-// `field` is a column reference (VARCHAR with GeoJSON, or GEOMETRY).
-// `shape` is a constant (VARCHAR holding GeoJSON text, or GEOMETRY).
-inline constexpr std::string_view kGeoIntersects = "geo_intersects";
-inline constexpr std::string_view kGeoContains = "geo_contains";
+//   ST_Intersects(field, shape)  -> BOOLEAN  -- shape ∩ indexed != ∅
+//   ST_Intersects(shape, field)  -> BOOLEAN  -- commutative
+//   ST_Contains(field, shape)    -> BOOLEAN  -- indexed ⊇ shape
+//   ST_Contains(shape, field)    -> BOOLEAN  -- shape ⊇ indexed
+// `field` is a column reference (JSON GeoJSON, or GEOMETRY).
+// `shape` is a constant (JSON GeoJSON, or GEOMETRY).
+// Names follow the PostGIS / DuckDB ST_* convention. ST_Contains semantics
+// match the closed (boundary-inclusive, reflexive) definition -- not the
+// strict-interior ST_Contains_Properly variant.
+inline constexpr std::string_view kGeoIntersects = "ST_Intersects";
+inline constexpr std::string_view kGeoContains = "ST_Contains";
 
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running

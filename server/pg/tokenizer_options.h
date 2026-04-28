@@ -171,8 +171,7 @@ inline constexpr OptionInfo kGeoJsonType{
   "type", "shape"sv, "GeoJson shape type: shape, centroid, point",
   CheckGeoJsonType};
 inline constexpr OptionInfo kGeoJsonCoding{
-  "coding", "s2point"sv,
-  "Encoding format: s2point, s2latlngf64, s2latlngu32",
+  "coding", "s2point"sv, "Encoding format: s2point, s2latlngf64, s2latlngu32",
   CheckGeoJsonCoding};
 
 // Segmentation

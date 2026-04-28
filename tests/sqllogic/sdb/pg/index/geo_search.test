@@ -1,6 +1,6 @@
 hash-threshold 100
 
-# GEO_INTERSECTS and GEO_CONTAINS search functions over an inverted index
+# ST_Intersects and ST_Contains search functions over an inverted index
 # with a geojson text search dictionary.
 #
 # Test data: points and a polygon stored as JSON (GeoJSON text). The catalog
@@ -61,13 +61,13 @@ statement ok
 VACUUM (UPDATE_INDEXES) geo_data
 
 
-# --- GEO_INTERSECTS ---
+# --- ST_Intersects ---
 
 # large_poly fully contains ids 1, 2, 3 and polygon 6; ids 4 and 5 are outside.
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
 ORDER BY id
 ----
 id
@@ -82,7 +82,7 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.614,55.704],[37.618,55.704],[37.618,55.707],[37.614,55.707],[37.614,55.704]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.614,55.704],[37.618,55.704],[37.618,55.707],[37.614,55.707],[37.614,55.704]]]}')
 ORDER BY id
 ----
 id
@@ -95,7 +95,7 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
 ORDER BY id
 ----
 id
@@ -106,21 +106,21 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}')
 ORDER BY id
 ----
 id
 
 
-# --- GEO_CONTAINS (shape contains indexed data) ---
-# geo_contains(query_shape, field): returns rows whose indexed geometry is
+# --- ST_Contains (shape contains indexed data) ---
+# ST_Contains(query_shape, field): returns rows whose indexed geometry is
 # fully contained within query_shape.
 
 # large_poly fully contains all three close points and polygon 6.
 
 query
 SELECT id FROM geo_idx
-WHERE geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
 ORDER BY id
 ----
 id
@@ -134,21 +134,21 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_contains('{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}', geo)
+WHERE ST_Contains('{"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]}', geo)
 ORDER BY id
 ----
 id
 
 
-# --- GEO_CONTAINS (indexed data contains shape) ---
-# geo_contains(field, query_shape): returns rows whose indexed geometry fully
+# --- ST_Contains (indexed data contains shape) ---
+# ST_Contains(field, query_shape): returns rows whose indexed geometry fully
 # contains query_shape.
 
 # Point [37.615, 55.706] lies inside polygon 6 -- only polygon 6 contains it.
 
 query
 SELECT id FROM geo_idx
-WHERE geo_contains(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+WHERE ST_Contains(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
 ORDER BY id
 ----
 id
@@ -159,18 +159,18 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_contains(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+WHERE ST_Contains(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
 ORDER BY id
 ----
 id
 
 
-# --- geo_intersects with swapped arguments (commutative) ---
-# geo_intersects is commutative: swapping field and shape gives the same result.
+# --- ST_Intersects with swapped arguments (commutative) ---
+# ST_Intersects is commutative: swapping field and shape gives the same result.
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+WHERE ST_Intersects('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
 ORDER BY id
 ----
 id
@@ -181,13 +181,13 @@ id
 
 
 # --- Combined filter ---
-# geo_intersects with medium_poly narrows to {2, 3, 6};
-# geo_contains(large_poly, field) is satisfied by all of them.
+# ST_Intersects with medium_poly narrows to {2, 3, 6};
+# ST_Contains(large_poly, field) is satisfied by all of them.
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.614,55.704],[37.618,55.704],[37.618,55.707],[37.614,55.707],[37.614,55.704]]]}')
-  AND geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.614,55.704],[37.618,55.704],[37.618,55.707],[37.614,55.707],[37.614,55.704]]]}')
+  AND ST_Contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
 ORDER BY id
 ----
 id
@@ -209,7 +209,7 @@ VACUUM (UPDATE_INDEXES) geo_data
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
 ORDER BY id
 ----
 id
@@ -222,7 +222,7 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
 ORDER BY id
 ----
 id
@@ -233,6 +233,99 @@ id
 7
 
 
+# --- ST_Distance_Centroid ---
+#
+# Centroid-to-centroid geodesic distance in metres. The filter builder rewrites
+# `ST_Distance_Centroid(field, centroid) OP <const>` into a one-sided
+# GeoDistanceFilter range; supported ops are <, <=, >, >=, =, !=.
+#
+# Reference centroid (37.616, 55.704). Approximate distances to each row:
+#   id=1 ~100m   id=2 ~100m   id=3 ~100m   id=6 ~250m (polygon centroid)
+#   id=7 ~90m    id=4 ~3.8km  id=5 ~15km
+# Thresholds below are picked to stay clear of those approximate values.
+
+# --- ST_Distance_Centroid: tight threshold picks the cluster ---
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- ST_Distance_Centroid: > separates the far rows ---
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') > 1000.0
+ORDER BY id
+----
+id
+4
+5
+
+
+# --- ST_Distance_Centroid: very far threshold isolates id=5 ---
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') > 10000.0
+ORDER BY id
+----
+id
+5
+
+
+# --- ST_Distance_Centroid: <= picks everything except id=5 ---
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') <= 10000.0
+ORDER BY id
+----
+id
+1
+2
+3
+4
+6
+7
+
+
+# --- ST_Distance_Centroid + GEOMETRY centroid argument ---
+# Same query, centroid passed as a GEOMETRY literal instead of GeoJSON text.
+
+query
+SELECT id FROM geo_idx
+WHERE ST_Distance_Centroid(geo, 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84')) < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- ST_Distance_Centroid: NOT inverts the range ---
+
+query
+SELECT id FROM geo_idx
+WHERE NOT (ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0)
+ORDER BY id
+----
+id
+4
+5
+
+
 # --- Error cases ---
 
 # Valid JSON but unrecognized GeoJSON type -- the filter builder rejects the
@@ -240,18 +333,18 @@ id
 # to reject with the "outside inverted index context" message.
 
 statement error
-SELECT id FROM geo_idx WHERE geo_intersects(geo, '{"type":"Unknown","coordinates":[]}')
+SELECT id FROM geo_idx WHERE ST_Intersects(geo, '{"type":"Unknown","coordinates":[]}')
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
 statement error
-SELECT id FROM geo_idx WHERE geo_contains(geo, '{"type":"Unknown","coordinates":[]}')
+SELECT id FROM geo_idx WHERE ST_Contains(geo, '{"type":"Unknown","coordinates":[]}')
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
-# geo_intersects / geo_contains on a column indexed with a non-geo (text) analyzer.
+# ST_Intersects / ST_Contains on a column indexed with a non-geo (text) analyzer.
 
 statement ok
 CREATE TABLE geo_plain (id INTEGER PRIMARY KEY, geo VARCHAR)
@@ -273,13 +366,13 @@ VACUUM (UPDATE_INDEXES) geo_plain
 
 
 statement error
-SELECT id FROM geo_plain_idx WHERE geo_intersects(geo, '{"type":"Point","coordinates":[0,0]}')
+SELECT id FROM geo_plain_idx WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
 statement error
-SELECT id FROM geo_plain_idx WHERE geo_contains(geo, '{"type":"Point","coordinates":[0,0]}')
+SELECT id FROM geo_plain_idx WHERE ST_Contains(geo, '{"type":"Point","coordinates":[0,0]}')
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
@@ -337,13 +430,13 @@ statement ok
 VACUUM (UPDATE_INDEXES) geo_data_g
 
 
-# --- GEOMETRY field + VARCHAR (GeoJSON) shape ---
+# --- GEOMETRY field + JSON (GeoJSON) shape ---
 
 # large_poly intersects ids 1, 2, 3 and polygon 6.
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
 ORDER BY id
 ----
 id
@@ -357,31 +450,31 @@ id
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+WHERE ST_Intersects(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
 ORDER BY id
 ----
 id
 6
 
 
-# geo_contains(field, shape): indexed contains shape.
+# ST_Contains(field, shape): indexed contains shape.
 # Polygon 6 contains the point [37.615, 55.706].
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
+WHERE ST_Contains(geo, '{"type":"Point","coordinates":[37.615,55.706]}')
 ORDER BY id
 ----
 id
 6
 
 
-# geo_contains(shape, field): shape contains indexed.
+# ST_Contains(shape, field): shape contains indexed.
 # large_poly contains all close shapes.
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
+WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}', geo)
 ORDER BY id
 ----
 id
@@ -397,7 +490,7 @@ id
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Intersects(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
 ORDER BY id
 ----
 id
@@ -406,18 +499,18 @@ id
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Contains(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
 ORDER BY id
 ----
 id
 6
 
 
-# Polygon-shaped centroid (geo_contains(shape, field) variant).
+# Polygon-shaped centroid (ST_Contains(shape, field) variant).
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains('POLYGON((37.610 55.700, 37.620 55.700, 37.620 55.710, 37.610 55.710, 37.610 55.700))'::GEOMETRY('OGC:CRS84'), geo)
+WHERE ST_Contains('POLYGON((37.610 55.700, 37.620 55.700, 37.620 55.710, 37.610 55.710, 37.610 55.700))'::GEOMETRY('OGC:CRS84'), geo)
 ORDER BY id
 ----
 id
@@ -435,7 +528,7 @@ id
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, 'POINT(37.615 55.706)'::GEOMETRY)
+WHERE ST_Intersects(geo, 'POINT(37.615 55.706)'::GEOMETRY)
 ORDER BY id
 ----
 id
@@ -444,7 +537,7 @@ id
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains(geo, 'POINT(37.615 55.706)'::GEOMETRY)
+WHERE ST_Contains(geo, 'POINT(37.615 55.706)'::GEOMETRY)
 ORDER BY id
 ----
 id
@@ -453,7 +546,7 @@ id
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains('POLYGON((37.610 55.700, 37.620 55.700, 37.620 55.710, 37.610 55.710, 37.610 55.700))'::GEOMETRY, geo)
+WHERE ST_Contains('POLYGON((37.610 55.700, 37.620 55.700, 37.620 55.710, 37.610 55.710, 37.610 55.700))'::GEOMETRY, geo)
 ORDER BY id
 ----
 id
@@ -473,21 +566,21 @@ id
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
+WHERE ST_Intersects(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
 db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
+WHERE ST_Contains(geo, 'POINT(0 0)'::GEOMETRY('OGC:CRS83'))
 ----
 db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY('OGC:CRS83'), geo)
+WHERE ST_Contains('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY('OGC:CRS83'), geo)
 ----
 db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with different CRS 'OGC:CRS84'<slt:ignore>
 
@@ -500,28 +593,28 @@ db error: ERROR: Cannot cast GEOMETRY with CRS 'OGC:CRS83' to GEOMETRY with diff
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Intersects(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, 'POINT M (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Intersects(geo, 'POINT M (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, 'POINT ZM (37.615 55.706 0 0)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Intersects(geo, 'POINT ZM (37.615 55.706 0 0)'::GEOMETRY('OGC:CRS84'))
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
 statement error
 SELECT id FROM geo_data_g_idx
-WHERE geo_contains(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Contains(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 ----
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
@@ -532,7 +625,7 @@ db error: ERROR: Inverted index function called outside inverted index context.<
 
 query
 SELECT id FROM geo_idx
-WHERE geo_intersects(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Intersects(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
 ORDER BY id
 ----
 id
@@ -541,7 +634,7 @@ id
 
 query
 SELECT id FROM geo_idx
-WHERE geo_contains(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
+WHERE ST_Contains(geo, 'POINT(37.615 55.706)'::GEOMETRY('OGC:CRS84'))
 ORDER BY id
 ----
 id
@@ -559,7 +652,7 @@ VACUUM (UPDATE_INDEXES) geo_data_g
 
 query
 SELECT id FROM geo_data_g_idx
-WHERE geo_intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
 ORDER BY id
 ----
 id
@@ -568,6 +661,45 @@ id
 3
 6
 7
+
+
+# --- ST_Distance_Centroid on GEOMETRY column ---
+# Same data as the JSON column. Verify the rewrite path picks up
+# GEOMETRY-typed columns and that GEOMETRY centroid arguments parse via the
+# WKB path instead of the GeoJSON-text path.
+
+query
+SELECT id FROM geo_data_g_idx
+WHERE ST_Distance_Centroid(geo, 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84')) < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+query
+SELECT id FROM geo_data_g_idx
+WHERE ST_Distance_Centroid(geo, 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84')) > 10000.0
+ORDER BY id
+----
+id
+5
+
+
+# Mixed: GEOMETRY column with a GeoJSON-text centroid.
+
+query
+SELECT id FROM geo_data_g_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') > 1000.0
+ORDER BY id
+----
+id
+4
+5
 
 
 # --- CREATE INDEX rejection: GEOMETRY column with non-S2Point geojson coding ---

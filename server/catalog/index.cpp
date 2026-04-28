@@ -23,9 +23,9 @@
 #include <absl/strings/ascii.h>
 #include <vpack/serializer.h>
 
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <duckdb/common/exception.hpp>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"

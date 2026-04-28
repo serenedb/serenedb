@@ -2220,10 +2220,11 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
-  // geo_distance returns DOUBLE so BOOST wraps the comparison expression
-  // rather than the function call itself; the filter builder rewrites
-  // `geo_distance(...) < d` into a one-sided GeoDistanceFilter range and
-  // applies the boost from the surrounding BOOST.
+  // ST_Distance_Centroid returns DOUBLE so BOOST wraps the comparison
+  // expression rather than the function call itself; the filter builder
+  // rewrites `ST_Distance_Centroid(...) < d` into a one-sided
+  // GeoDistanceFilter range and applies the boost from the surrounding
+  // BOOST.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
@@ -2231,7 +2232,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
                        false, 100.0, false)
     .boost(1.5f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE BOOST(ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0, 1.5)",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2244,13 +2245,13 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoIntersects) {
                irs::GeoFilterType::Intersects)
     .boost(2.0f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(GEO_INTERSECTS(g, "
+               "SELECT * FROM foo WHERE BOOST(ST_Intersects(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}'), 2.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
-  // geo_contains(field, shape) -> IsContained (filter shape is contained
+  // ST_Contains(field, shape) -> IsContained (filter shape is contained
   // within indexed data).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
@@ -2259,13 +2260,13 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
                irs::GeoFilterType::IsContained)
     .boost(3.0f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(GEO_CONTAINS(g, "
+               "SELECT * FROM foo WHERE BOOST(ST_Contains(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}'), 3.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
-  // geo_contains(shape, field) -> Contains (filter shape contains indexed
+  // ST_Contains(shape, field) -> Contains (filter shape contains indexed
   // data); the boost should still propagate.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
@@ -2274,7 +2275,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
                irs::GeoFilterType::Contains)
     .boost(0.75f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(GEO_CONTAINS("
+               "SELECT * FROM foo WHERE BOOST(ST_Contains("
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', g), 0.75)",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2400,8 +2401,9 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
 }
 
 // ===========================================================================
-// geo_distance (rewritten by FromBinaryEq / FromComparison into
-// GeoDistanceFilter range bounds when used as `geo_distance(...) OP <const>`)
+// ST_Distance_Centroid (rewritten by FromBinaryEq / FromComparison into
+// GeoDistanceFilter range bounds when used as
+// `ST_Distance_Centroid(...) OP <const>`)
 // ===========================================================================
 
 TEST_F(SearchFilterBuilderTest, test_GeoDistance_Eq) {
@@ -2411,7 +2413,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Eq) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        100.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') = 100.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2424,7 +2426,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NotEq) {
   AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        100.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') != 100.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2436,7 +2438,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Lt) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 100.0, false);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2448,7 +2450,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Le) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 100.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') <= 100.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2460,7 +2462,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Gt) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
                        std::nullopt, false);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') > 100.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2472,7 +2474,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_Ge) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        std::nullopt, false);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') >= 100.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2484,7 +2486,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_GeometryField) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 500.0, false);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 500.0",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2495,7 +2497,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_NonConstantDistance) {
     {.id = 2, .type = duckdb::LogicalType::DOUBLE, .name = "d"}};
   irs::And expected;
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < d",
                columns, false, GeoJsonAnalyzerProvider);
 }
@@ -2505,7 +2507,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_DISTANCE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, false, SegmentationAnalyzerProvider);
 }

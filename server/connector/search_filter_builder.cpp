@@ -434,7 +434,8 @@ template<bool GenericVersion>
 Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
-  // geo_distance(field, centroid) = / != distance  --  rewrite to range.
+  // ST_Distance_Centroid(field, centroid) = / != distance  --  rewrite to
+  // range.
   if constexpr (GenericVersion) {
     if (const auto* geo_call = TryGetGeoDistanceCall(left_expr)) {
       FilterContext geo_ctx = ctx;
@@ -493,7 +494,8 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     op = InvertComparisonOp(op);
   }
 
-  // geo_distance(field, centroid) </<=/>/>= distance  --  rewrite to range.
+  // ST_Distance_Centroid(field, centroid) </<=/>/>= distance  --  rewrite to
+  // range.
   if constexpr (GenericVersion) {
     if (const auto* geo_call = TryGetGeoDistanceCall(field_expr)) {
       return FromGeoDistanceComparison(filter, ctx, *geo_call, value_expr, op);
@@ -1220,9 +1222,9 @@ Result FromLevenshteinMatch(irs::BooleanFilter& filter,
 // Geo filter helpers
 // ---------------------------------------------------------------------------
 
-// Returns the inner expression as a geo_distance(field, centroid) call when
-// it matches that exact shape, or nullptr otherwise. Used to rewrite the
-// pattern `geo_distance(...) OP <const>` into an iresearch
+// Returns the inner expression as a ST_Distance_Centroid(field, centroid) call
+// when it matches that exact shape, or nullptr otherwise. Used to rewrite the
+// pattern `ST_Distance_Centroid(...) OP <const>` into an iresearch
 // GeoDistanceFilter at filter-build time.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
   const duckdb::Expression& expr) {
@@ -1251,9 +1253,11 @@ Result SetupGeoFilter(const irs::analysis::Analyzer& a,
 }
 
 // Parse a constant geo argument (centroid / target) into a ShapeContainer.
-// VARCHAR: GeoJSON text via the JSON->vpack->ParseShape pipeline.
+// JSON / VARCHAR-typed string literal: GeoJSON text via the
+//   JSON->vpack->ParseShape pipeline (LogicalTypeId::VARCHAR catches both
+//   the JSON alias and bare string literals the user types inline).
 // GEOMETRY: raw WKB bytes via ParseShapeWKB (parser also re-validates CRS84
-// when the bytes carry an EWKB SRID).
+//   when the bytes carry an EWKB SRID).
 Result ParseGeoConstant(const duckdb::Value& value,
                         sdb::geo::coding::Options coding,
                         sdb::geo::ShapeContainer& shape) {
@@ -1300,15 +1304,15 @@ Result ParseGeoConstant(const duckdb::Value& value,
     }
     default:
       return {ERROR_BAD_PARAMETER,
-              "Geo argument must be VARCHAR (GeoJSON) or GEOMETRY (WKB)"};
+              "Geo argument must be JSON (GeoJSON) or GEOMETRY (WKB)"};
   }
 }
 
 // ---------------------------------------------------------------------------
 // Set up GeoDistanceFilter (field + origin + analyzer-derived options) from
-// a geo_distance(field, centroid) call and a constant distance expression.
-// Range bounds are left to the caller. Returns the filter and the parsed
-// distance value on success.
+// a ST_Distance_Centroid(field, centroid) call and a constant distance
+// expression. Range bounds are left to the caller. Returns the filter and the
+// parsed distance value on success.
 // ---------------------------------------------------------------------------
 
 ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
@@ -1319,21 +1323,23 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
 
   const auto* col_ref = TryGetColumnRef(*geo_call.children[0]);
   if (!col_ref) {
-    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                   "GEO_DISTANCE first input must be a column"};
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "ST_Distance_Centroid first input must be a column"};
   }
 
   const auto* centroid_val = TryGetConstant(*geo_call.children[1]);
   if (!centroid_val) {
-    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                   "GEO_DISTANCE centroid must be a constant"};
+    return std::unexpected<Result>{
+      std::in_place, ERROR_BAD_PARAMETER,
+      "ST_Distance_Centroid centroid must be a constant"};
   }
 
   const auto* dist_val = TryGetConstant(dist_expr);
   if (!dist_val || dist_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "GEO_DISTANCE comparison value must be a constant DOUBLE"};
+      "ST_Distance_Centroid comparison value must be a constant DOUBLE"};
   }
   const double distance = dist_val->GetValue<double>();
 
@@ -1343,12 +1349,12 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
        column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "GEO_DISTANCE field must be VARCHAR (GeoJSON) or GEOMETRY"};
+      "ST_Distance_Centroid field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->analyzer.analyzer) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "GEO_DISTANCE field has no analyzer attached"};
+      "ST_Distance_Centroid field has no analyzer attached"};
   }
 
   std::string field_name;
@@ -1376,7 +1382,7 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   return std::pair{&geo_filter, distance};
 }
 
-// geo_distance(field, centroid) OP distance  --  range one-sided.
+// ST_Distance_Centroid(field, centroid) OP distance  --  range one-sided.
 Result FromGeoDistanceComparison(
   irs::BooleanFilter& filter, const FilterContext& ctx,
   const duckdb::BoundFunctionExpression& geo_call,
@@ -1404,12 +1410,13 @@ Result FromGeoDistanceComparison(
       options->range.min_type = irs::BoundType::Inclusive;
       break;
     default:
-      return {ERROR_BAD_PARAMETER, "GEO_DISTANCE: unsupported comparison op"};
+      return {ERROR_BAD_PARAMETER,
+              "ST_Distance_Centroid: unsupported comparison op"};
   }
   return {};
 }
 
-// geo_distance(field, centroid) = distance  --  point range [d, d].
+// ST_Distance_Centroid(field, centroid) = distance  --  point range [d, d].
 Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
                                const FilterContext& ctx,
                                const duckdb::BoundFunctionExpression& geo_call,
@@ -1430,9 +1437,9 @@ Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
 // geo_in_range(field, centroid, min_distance, max_distance,
 //              [include_min, [include_max]]) -> bool
 //
-// `field` is a column reference (VARCHAR with GeoJSON, or GEOMETRY).
-// `centroid` is a constant -- VARCHAR holding GeoJSON text, or a GEOMETRY
-// value (WKB). Builds an iresearch GeoDistanceFilter that matches indexed
+// `field` is a column reference (JSON GeoJSON, or GEOMETRY).
+// `centroid` is a constant -- JSON GeoJSON, or a GEOMETRY value (WKB).
+// Builds an iresearch GeoDistanceFilter that matches indexed
 // values whose geodesic distance from `centroid` falls in [min, max].
 // `include_min` / `include_max` toggle each endpoint's inclusivity, both
 // default to inclusive.
@@ -1494,7 +1501,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
       (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
        column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
     return {ERROR_BAD_PARAMETER,
-            "GEO_IN_RANGE field must be VARCHAR (GeoJSON) or GEOMETRY"};
+            "GEO_IN_RANGE field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->analyzer.analyzer) {
     return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE field has no analyzer attached"};
@@ -1535,12 +1542,12 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 // ---------------------------------------------------------------------------
-// geo_intersects(field, shape) / geo_intersects(shape, field) -> bool
-// geo_contains(field, shape)   -> bool   indexed ⊇ shape  (IsContained)
-// geo_contains(shape, field)   -> bool   shape ⊇ indexed  (Contains)
+// ST_Intersects(field, shape) / ST_Intersects(shape, field) -> bool
+// ST_Contains(field, shape)    -> bool   indexed ⊇ shape  (IsContained)
+// ST_Contains(shape, field)    -> bool   shape ⊇ indexed  (Contains)
 //
-// Both predicates accept VARCHAR (GeoJSON text) or GEOMETRY (WKB) on either
-// side. geo_intersects is commutative; geo_contains' two argument orders
+// Both predicates accept JSON (GeoJSON) or GEOMETRY (WKB) on either
+// side. ST_Intersects is commutative; ST_Contains' two argument orders
 // pick different GeoFilterType values.
 // ---------------------------------------------------------------------------
 
@@ -1576,7 +1583,7 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
       (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
        column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
     return {ERROR_BAD_PARAMETER, func.function.name,
-            ": field must be VARCHAR (GeoJSON) or GEOMETRY"};
+            ": field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->analyzer.analyzer) {
     return {ERROR_BAD_PARAMETER, func.function.name,
@@ -1608,9 +1615,9 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
     options->type = irs::GeoFilterType::Intersects;
   } else {
     SDB_ASSERT(func.function.name == kGeoContains);
-    // geo_contains(field, shape): indexed contains shape -> filter type
+    // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
-    // geo_contains(shape, field): shape contains indexed -> filter type
+    // ST_Contains(shape, field): shape contains indexed -> filter type
     //   Contains ("the filter shape contains indexed data").
     options->type = field_idx == 0 ? irs::GeoFilterType::IsContained
                                    : irs::GeoFilterType::Contains;

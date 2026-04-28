@@ -278,8 +278,8 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // geo_in_range(field, centroid, min_distance, max_distance,
   //              [include_min, [include_max]]) -> bool
   //
-  // field   : VARCHAR (GeoJSON column) or GEOMETRY column.
-  // centroid: VARCHAR (GeoJSON literal) or GEOMETRY value.
+  // field   : JSON column (GeoJSON) or GEOMETRY column.
+  // centroid: JSON value (GeoJSON) or GEOMETRY value.
   //
   // Register all 4 type combinations for the (field, centroid) pair across
   // each arity so DuckDB resolves the call without implicit casts. The
@@ -315,12 +315,13 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // geo_distance(field, centroid) -> DOUBLE
+  // ST_Distance_Centroid(field, centroid) -> DOUBLE
   //
-  // Returns the geodesic distance from the indexed value to the centroid.
-  // Pseudo-function: outside an inverted-index scan it throws via the stub.
-  // The filter builder recognizes `geo_distance(...) OP <const>` and rewrites
-  // it into iresearch GeoDistanceFilter range bounds.
+  // Returns the geodesic distance from the indexed value's centroid to the
+  // centroid argument. Pseudo-function: outside an inverted-index scan it
+  // throws via the stub. The filter builder recognizes
+  // `ST_Distance_Centroid(...) OP <const>` and rewrites it into iresearch
+  // GeoDistanceFilter range bounds.
   {
     duckdb::ScalarFunctionSet set{std::string{kGeoDistance}};
     for (const auto& field_t : geo_field_types) {
@@ -332,10 +333,10 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // geo_intersects(field, shape) -> bool   (commutative; either arg may be
+  // ST_Intersects(field, shape) -> bool    (commutative; either arg may be
   // the column reference. Builds an iresearch GeoFilter with type=Intersects.)
-  // geo_contains(field, shape)   -> bool   (indexed ⊇ shape, type=IsContained)
-  // geo_contains(shape, field)   -> bool   (shape ⊇ indexed, type=Contains)
+  // ST_Contains(field, shape)   -> bool    (indexed ⊇ shape, type=IsContained)
+  // ST_Contains(shape, field)   -> bool    (shape ⊇ indexed, type=Contains)
   for (auto name : {kGeoIntersects, kGeoContains}) {
     duckdb::ScalarFunctionSet set{std::string{name}};
     for (const auto& a : geo_field_types) {

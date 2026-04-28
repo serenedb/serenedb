@@ -54,7 +54,6 @@ struct SearchColumnInfo {
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
-
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result
 // still needs mangling (MangleString / MangleBool / MangleNumeric /

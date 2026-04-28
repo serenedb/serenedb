@@ -349,13 +349,16 @@ inline constexpr OptionGroup kUnionGroup{
 };
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,         kTextGroup,      kNGramGroup,
-  kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
-  kClassificationGroup,   kCollationGroup, kDelimiterGroup,
-  kMultiDelimiterGroup,   kMinHashGroup,   kWildcardGroup,
-  kNormGroup,             kSegmentationGroup,
-  kPipelineGroup,         kPatternGroup,
-  kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup,
+  kFeaturesGroup,       kTextGroup,
+  kNGramGroup,          kNearestNeighborsGroup,
+  kStemmingGroup,       kStopwordsGroup,
+  kClassificationGroup, kCollationGroup,
+  kDelimiterGroup,      kMultiDelimiterGroup,
+  kMinHashGroup,        kWildcardGroup,
+  kNormGroup,           kSegmentationGroup,
+  kPipelineGroup,       kPatternGroup,
+  kPathHierarchyGroup,  kUnionGroup,
+  kCopyFromGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

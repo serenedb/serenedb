@@ -99,7 +99,6 @@ enum class TSQueryOp {
 
 }  // namespace
 }  // namespace sdb::connector
-
 namespace magic_enum {
 
 template<>
@@ -178,7 +177,6 @@ customize::enum_name<sdb::connector::TSQueryOp>(
 }
 
 }  // namespace magic_enum
-
 namespace sdb::connector {
 
 struct FilterContext {
@@ -3394,11 +3392,11 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 }
 
-Result ExprToFilter(irs::BooleanFilter& filter, const duckdb::Expression& expr,
-                    const ColumnGetter& column_getter,
-                    containers::FlatHashMap<catalog::Column::Id,
-                                            SearchColumnInfo>& column_cache,
-                    const SearchFilterOptions& options) {
+Result ExprToFilter(
+  irs::BooleanFilter& filter, const duckdb::Expression& expr,
+  const ColumnGetter& column_getter,
+  containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo>& column_cache,
+  const SearchFilterOptions& options) {
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,

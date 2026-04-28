@@ -728,8 +728,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     const auto before = root->size();
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
-    auto result =
-      connector::MakeSearchFilter(*root, single, getter, options);
+    auto result = connector::MakeSearchFilter(*root, single, getter, options);
     if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {
@@ -2169,8 +2168,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       }
       if (input.context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
           !v.IsNull()) {
-        options.scored_terms_limit =
-          static_cast<size_t>(v.GetValue<int32_t>());
+        options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
       }
     }
     bool changed =

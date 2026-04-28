@@ -168,8 +168,8 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     auto* term = irs::get<irs::TermAttr>(*tokenizer);
     while (tokenizer->next()) {
       auto char_view = irs::ViewCast<char>(term->value);
-      row_tokens[i].push_back(irs::utf8_utils::ToUtf8Safe(
-        std::string_view{char_view.data(), char_view.size()}));
+      row_tokens[i].emplace_back(
+        std::string_view{char_view.data(), char_view.size()});
     }
     total_tokens += row_tokens[i].size();
   }
@@ -189,7 +189,7 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     list_entries[i].length = row_tokens[i].size();
     for (const auto& tok : row_tokens[i]) {
       child_data[offset++] =
-        duckdb::StringVector::AddString(child, tok.c_str(), tok.size());
+        duckdb::StringVector::AddStringOrBlob(child, tok.c_str(), tok.size());
     }
   }
   duckdb::ListVector::SetListSize(result, total_tokens);

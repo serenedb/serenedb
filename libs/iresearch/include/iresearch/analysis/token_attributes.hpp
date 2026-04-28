@@ -67,14 +67,6 @@ struct PayAttr final : Attribute {
   bytes_view value;
 };
 
-// Represents a value to be stored in the index alongside the indexed field.
-// Analyzers that support storing populate this attribute in reset().
-struct StoreAttr final : Attribute {
-  static constexpr std::string_view type_name() noexcept { return "store"; }
-
-  bytes_view value;
-};
-
 // Number of occurences of a term in a document
 struct FreqAttr final : Attribute {
   static constexpr std::string_view type_name() noexcept { return "frequency"; }

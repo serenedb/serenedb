@@ -1768,17 +1768,9 @@ CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner(
 ----
 db error: ERROR: required parameter "delimiter" was not found
 
-
-# --- ts_lexize: wildcard terms contain binary boundary sentinels (\xFF) which
-# ts_lexize transcodes into valid UTF-8 by mapping each invalid byte to its
-# Latin-1 codepoint -- so byte 0xFF becomes the two-byte UTF-8 sequence
-# 0xC3 0xBF, which encode/escape renders as \\303\\277. Token characters that
-# already form valid UTF-8 (e.g. ASCII letters, multibyte codepoints) pass
-# through unchanged.
-
 query
 SELECT encode(t::bytea, 'escape')
-FROM unnest(ts_lexize('wildcard_default', 'hello')) AS t
+FROM unnest(ts_lexize('wildcard_default', 'hello')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
@@ -1792,7 +1784,7 @@ o\\303\\277
 
 query T
 SELECT encode(t::bytea, 'escape')
-FROM unnest(ts_lexize('wildcard_ngram2', 'hello')) AS t
+FROM unnest(ts_lexize('wildcard_ngram2', 'hello')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
@@ -1806,7 +1798,7 @@ o\\303\\277
 
 query
 SELECT encode(t::bytea, 'escape')
-FROM unnest(ts_lexize('wildcard_default', 'hello world')) AS t
+FROM unnest(ts_lexize('wildcard_default', 'hello world')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
@@ -1826,7 +1818,7 @@ wor
 
 query
 SELECT encode(t::bytea, 'escape')
-FROM unnest(ts_lexize('wildcard_ngram5_seg', 'quick')) AS t
+FROM unnest(ts_lexize('wildcard_ngram5_seg', 'quick')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode
@@ -1840,7 +1832,7 @@ uick\\303\\277
 
 query
 SELECT encode(t::bytea, 'escape')
-FROM unnest(ts_lexize('wildcard_text_base', 'Fox juMps')) AS t
+FROM unnest(ts_lexize('wildcard_text_base', 'Fox juMps')::BLOB[]) AS t
 ORDER BY 1;
 ----
 encode

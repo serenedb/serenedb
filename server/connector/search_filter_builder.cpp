@@ -988,20 +988,6 @@ bool IsPhraseGapIntegralTypeId(duckdb::LogicalTypeId id) {
          id == duckdb::LogicalTypeId::BIGINT;
 }
 
-// True iff a Value is shaped like a phrase gap (integral scalar or a
-// LIST/ARRAY of two integers). FromPhrase uses this to distinguish
-// gaps from VARCHAR text tokens at runtime in its variadic loop. The
-// `##` walker uses a parallel return-type predicate
-// (IsPhraseSeqGapType) that operates on Expression rather than Value.
-bool IsPhraseGapValue(const duckdb::Value& val) {
-  if (val.IsNull()) {
-    return false;
-  }
-  const auto id = val.type().id();
-  return IsPhraseGapIntegralTypeId(id) || id == duckdb::LogicalTypeId::LIST ||
-         id == duckdb::LogicalTypeId::ARRAY;
-}
-
 // Parses a constant Value into a PhraseGap. Accepts a non-negative
 // integral scalar for an exact gap, or a 2-element LIST/ARRAY of
 // non-negative integers for an interval gap (min <= max). The returned
@@ -1050,7 +1036,9 @@ ResultOr<PhraseGap> ParsePhraseGap(const duckdb::Value& val,
     return PhraseGap{.offs_min = static_cast<size_t>(lo) + 1,
                      .offs_max = static_cast<size_t>(hi) + 1};
   }
-  return err(label, " gap has unsupported type: ", val.type().ToString());
+  return err(label, " gap has unsupported type ", val.type().ToString(),
+             "; expected non-negative INTEGER or 2-element INTEGER[] for an "
+             "interval gap");
 }
 
 Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
@@ -1120,12 +1108,11 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
       }
       continue;
     }
-    if (!IsPhraseGapValue(*const_val)) {
+    auto gap = ParsePhraseGap(*const_val, "PHRASE");
+    if (!gap) {
       THROW_SQL_ERROR(
         ERR_CODE(ERROR_BAD_PARAMETER),
-        ERR_MSG("PHRASE argument ", i,
-                " has unsupported type; expected text, non-negative "
-                "integer, or non-negative integer array"));
+        ERR_MSG(gap.error().errorMessage(), " (argument ", i, ")"));
     }
     if (opts->empty()) {
       THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
@@ -1135,12 +1122,6 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     if (pending_gap) {
       THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
                       ERR_MSG("PHRASE has consecutive gaps at argument ", i));
-    }
-    auto gap = ParsePhraseGap(*const_val, "PHRASE");
-    if (!gap) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERROR_BAD_PARAMETER),
-        ERR_MSG(gap.error().errorMessage(), " (argument ", i, ")"));
     }
     pending_gap = *gap;
   }

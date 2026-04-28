@@ -205,6 +205,7 @@ db error: ERROR: relation "vedernikoff" does not exist
 
 
 onlyif serenedb
+connection my_very_unique_name_for_ctas
 query
 EXPLAIN ANALYZE CREATE TABLE vedernikoff AS SELECT x FROM generate_series(1, 10) AS t(x);
 ----

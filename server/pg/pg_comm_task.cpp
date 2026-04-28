@@ -352,7 +352,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       connector::SereneDBClientState::Register(*_duckdb_conn->context,
                                                _connection_ctx);
       // PG: the session user is used to resolve "$user" in catalog_search_path.
-      _duckdb_conn->context->session_user = std::string{UserName()};
+      _duckdb_conn->context->session_user = UserName();
       // PG default search_path: "$user", public. The "$user" entry is resolved
       // on each lookup to the current session user; if no schema with that name
       // exists it's silently skipped during resolution.

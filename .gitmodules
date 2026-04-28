@@ -118,15 +118,86 @@
 	path = third_party/snappy
 	url = https://github.com/serenedb/snappy.git
 	shallow = true
-[submodule "third_party/duckdb"]
-	path = third_party/duckdb
-	url = https://github.com/serenedb/duckdb.git
-	shallow = true
 [submodule "third_party/curl"]
 	path = third_party/curl
 	url = https://github.com/serenedb/curl.git
 	shallow = true
+[submodule "third_party/jansson"]
+	path = third_party/jansson
+	url = https://github.com/serenedb/jansson.git
+	shallow = true
+[submodule "third_party/avro"]
+	path = third_party/avro
+	url = https://github.com/serenedb/avro.git
+	shallow = true
+[submodule "third_party/croaring"]
+	path = third_party/croaring
+	url = https://github.com/RoaringBitmap/CRoaring.git
+[submodule "third_party/aws-c-auth"]
+	path = third_party/aws-c-auth
+	url = https://github.com/serenedb/aws-c-auth.git
+	shallow = true
+[submodule "third_party/aws-c-cal"]
+	path = third_party/aws-c-cal
+	url = https://github.com/serenedb/aws-c-cal.git
+	shallow = true
+[submodule "third_party/aws-c-common"]
+	path = third_party/aws-c-common
+	url = https://github.com/serenedb/aws-c-common.git
+	shallow = true
+[submodule "third_party/aws-c-compression"]
+	path = third_party/aws-c-compression
+	url = https://github.com/serenedb/aws-c-compression.git
+	shallow = true
+[submodule "third_party/aws-c-event-stream"]
+	path = third_party/aws-c-event-stream
+	url = https://github.com/serenedb/aws-c-event-stream.git
+	shallow = true
+[submodule "third_party/aws-c-http"]
+	path = third_party/aws-c-http
+	url = https://github.com/serenedb/aws-c-http.git
+	shallow = true
+[submodule "third_party/aws-c-io"]
+	path = third_party/aws-c-io
+	url = https://github.com/serenedb/aws-c-io.git
+	shallow = true
+[submodule "third_party/aws-c-mqtt"]
+	path = third_party/aws-c-mqtt
+	url = https://github.com/serenedb/aws-c-mqtt.git
+	shallow = true
+[submodule "third_party/aws-c-s3"]
+	path = third_party/aws-c-s3
+	url = https://github.com/serenedb/aws-c-s3.git
+	shallow = true
+[submodule "third_party/aws-c-sdkutils"]
+	path = third_party/aws-c-sdkutils
+	url = https://github.com/serenedb/aws-c-sdkutils.git
+	shallow = true
+[submodule "third_party/aws-checksums"]
+	path = third_party/aws-checksums
+	url = https://github.com/serenedb/aws-checksums.git
+	shallow = true
+[submodule "third_party/aws-crt-cpp"]
+	path = third_party/aws-crt-cpp
+	url = https://github.com/serenedb/aws-crt-cpp.git
+	shallow = true
+[submodule "third_party/aws-sdk-cpp"]
+	path = third_party/aws-sdk-cpp
+	url = https://github.com/serenedb/aws-sdk-cpp.git
+	shallow = true
+[submodule "third_party/duckdb"]
+	path = third_party/duckdb
+	url = https://github.com/serenedb/duckdb.git
+	shallow = true
 [submodule "third_party/duckdb_httpfs"]
 	path = third_party/duckdb_httpfs
 	url = https://github.com/serenedb/duckdb-httpfs.git
+	shallow = true
+[submodule "third_party/duckdb_avro"]
+	path = third_party/duckdb_avro
+	url = https://github.com/serenedb/duckdb-avro.git
+	shallow = true
+[submodule "third_party/duckdb_iceberg"]
+	path = third_party/duckdb_iceberg
+	url = https://github.com/serenedb/duckdb-iceberg.git
 	shallow = true

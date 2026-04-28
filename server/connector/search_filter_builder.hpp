@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -66,9 +67,32 @@ void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
 // MakeSearchFilter to return a failure Result (leaving `root` in an
 // unspecified but still safely-destructible state -- caller should discard
 // it on failure).
+//
+// Per-query session options threaded into the filter builder. The
+// optimizer pipeline reads them once from the ClientContext settings
+// and forwards the same struct through its passes; tests construct
+// it directly with `_conn.context` (or any owned ClientContext).
+//
+// The ClientContext is required (reference, not pointer): the filter
+// builder needs it to resolve named catalog analyzers at filter-build
+// time (`TOKENIZE(text, 'english')` whose stub never runs).
+struct SearchFilterOptions {
+  duckdb::ClientContext& client_context;
+  // Caps the number of terms a multi-term filter (PREFIX / LIKE /
+  // RANGE / REGEXP / LEVENSHTEIN) collects for scoring. Comes from
+  // the `sdb_scored_terms_limit` session setting; the iresearch
+  // default is 1024.
+  size_t scored_terms_limit = 1024;
+  // HNSW-side search-time neighbourhood-size override (efSearch).
+  // Not consumed by MakeSearchFilter -- bundled here so the same
+  // config blob can flow through optimizer passes that DO use it.
+  // 0 = use Top-K value.
+  int ef_search_override = 0;
+};
+
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter);
+  const ColumnGetter& column_getter, const SearchFilterOptions& options);
 
 }  // namespace sdb::connector

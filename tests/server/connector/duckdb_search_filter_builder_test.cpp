@@ -376,8 +376,8 @@ irs::ByNGramSimilarity& AddNgramSimilarityFilter(
 template<typename Filter>
 irs::ByEditDistance& AddEditDistanceFilter(
   Filter& root, catalog::Column::Id column, std::string_view term,
-  uint8_t max_distance, bool with_transpositions = true, size_t max_terms = 64,
-  std::string_view prefix = "") {
+  uint8_t max_distance, bool with_transpositions = true,
+  size_t max_terms = 1024, std::string_view prefix = "") {
   auto& ed = AddFilter<irs::ByEditDistance>(root);
   *ed.mutable_field() = MakeFieldName<std::string_view>(column);
   ed.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(term));
@@ -569,7 +569,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
       const auto before = root.size();
       std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&expr, 1};
       try {
-        auto result = sdb::connector::MakeSearchFilter(root, single, getter);
+        // Pass the test connection's ClientContext through so the
+        // filter builder's named-analyzer resolver runs with a real
+        // context (the resolver returns nullptr for unknown names,
+        // surfacing the "tokenizer not found in catalog" error).
+        sdb::connector::SearchFilterOptions opts{.client_context =
+                                                   *_conn.context};
+        auto result =
+          sdb::connector::MakeSearchFilter(root, single, getter, opts);
         if (result.ok() && root.size() > before) {
           ++claimed;
         } else {
@@ -2236,7 +2243,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
 // Deferred / NOT covered yet (return errors):
 //  - to_tsquery (Lucene parser)
 //  - websearch_to_tsquery (mini-parser)
-//  - TOKENIZE(text, analyzer) / ::tokenizer(name) cast
+//  - TOKENIZE(text, analyzer) / ::tokenize(name) cast
 //  - Bare-string tokenisation through column analyzer (currently raw ByTerm)
 //  - ByTerms optimisation for ANY_OF / ALL_OF
 // ===========================================================================
@@ -2444,7 +2451,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsToTsquery) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsTokenizerCast) {
-  // 'foo'::tokenizer('identity') @@ b -- mirrors
+  // 'foo'::tokenize('identity') @@ b -- mirrors
   // test_TSQueryMatch_TokenizerCastIdentity.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -2452,7 +2459,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsTokenizerCast) {
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE 'quick fox'::tokenizer('identity') @@ b", columns,
+    "SELECT * FROM foo WHERE 'quick fox'::tokenize('identity') @@ b", columns,
     true, SegmentationAnalyzerProvider);
 }
 
@@ -3246,7 +3253,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeIdentity) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
-  // 'foo'::tokenizer('identity') -- parameterized-type cast equivalent
+  // 'foo'::tokenize('identity') -- parameterized-type cast equivalent
   // to TOKENIZE(text, 'identity'). Bypasses the column analyzer.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -3254,30 +3261,261 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenizer('identity')", columns,
+    "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('identity')", columns,
     true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNotImpl) {
-  // 'foo'::tokenizer('english') with a non-identity name is deferred.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNullSugar) {
+  // 'foo'::tokenize(NULL) is sugar for ::tokenize('identity'): both
+  // bypass the column analyzer and emit a single raw ByTerm.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
+  AssertFilter(
+    expected, "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize(NULL)",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
+  // 'foo'::tokenize('english') against a unit-test connection has no
+  // SereneDBClientState wired up, so ResolveTokenizerAnalyzer returns
+  // an empty wrapper and the cast surfaces a "tokenizer not found"
+  // bind error (ERRCODE_UNDEFINED_OBJECT). End-to-end coverage with
+  // a real catalog lives in sqllogic.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenizer('english')", columns,
-    false, SegmentationAnalyzerProvider);
+    "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('english')", columns,
+    false, SegmentationAnalyzerProvider, "tokenizer not found in catalog");
 }
 
-TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeNamedAnalyzerNotImpl) {
-  // 2-arg TOKENIZE(text, analyzer) with a non-identity analyzer name
-  // is deferred -- catalog-registered analyzer lookup is not yet plumbed
-  // through the filter builder.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeNamedAnalyzerNoCatalog) {
+  // 2-arg TOKENIZE(text, name): named analyzer requires a real catalog.
+  // The unit-test connection has no SereneDBClientState, so the
+  // resolver returns null and the filter builder throws with
+  // ERRCODE_UNDEFINED_OBJECT. End-to-end coverage with a real catalog
+  // lives in sqllogic.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ TOKENIZE('quick fox', 'english')",
+               columns, false, SegmentationAnalyzerProvider,
+               "tokenizer not found in catalog");
+}
+
+// Array form: ANY_OF(TOKENIZE([list], 'identity')) -- bypass column
+// analyzer, each list element becomes one ByTerm leaf with raw bytes.
+// Two-element input -> ByTerms with min_match=1.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentity) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermsFilter<std::string_view>(expected, 1,
+                                   {std::string_view{"foo"},
+                                    std::string_view{"bar"}});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['foo', 'bar'], 'identity'))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// Single-element identity collapses to ByTerm.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentitySingle) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['foo'], 'identity'))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// Ambient column analyzer (1-arg form): each input element runs through
+// the column's analyzer, all produced tokens flatten into one ByTerms
+// with min_match=1.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListAmbient) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermsFilter<std::string_view>(expected, 1,
+                                   {std::string_view{"foo"},
+                                    std::string_view{"bar"}});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['Foo', 'Bar']))", columns,
+    true, SegmentationAnalyzerProvider);
+}
+
+// ALL_OF: same flatten, but min_match=token-count so every token must
+// be present. Two raw-identity tokens -> ByTerms with min_match=2.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTokenizeListIdentity) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  {
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& opts = *terms.mutable_options();
+    opts.min_match = 2;
+    opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
+    opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
+  }
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ALL_OF(TOKENIZE(['foo', 'bar'], 'identity'))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// 2-arg TOKENIZE(text_array, name) requires a real catalog. The
+// unit-test connection has no SereneDBClientState, so the resolver
+// returns null and the filter builder throws with
+// ERRCODE_UNDEFINED_OBJECT.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListNamedNoCatalog) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['foo','bar'], 'english'))",
+    columns, false, SegmentationAnalyzerProvider,
+    "tokenizer not found in catalog");
+}
+
+// 'identity' preserves multi-word inputs verbatim -- a single 'foo bar'
+// element becomes a single ByTerm("foo bar"), no tokenisation. Confirms
+// the identity path skips the analyzer split.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListIdentityKeepsSpaces) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo bar"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['foo bar'], 'identity'))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// Ambient analyzer + multi-token element: 'foo bar' splits to two
+// tokens via the segmentation analyzer; combined with a sibling 'baz'
+// element, the flattened list is [foo, bar, baz] under min_match=1.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListAmbientFlattens) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermsFilter<std::string_view>(expected, 1,
+                                   {std::string_view{"foo"},
+                                    std::string_view{"bar"},
+                                    std::string_view{"baz"}});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['Foo Bar', 'BAZ']))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// NULL elements in the list are skipped.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListSkipsNulls) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermsFilter<std::string_view>(expected, 1,
+                                   {std::string_view{"foo"},
+                                    std::string_view{"bar"}});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ "
+    "ANY_OF(TOKENIZE(['foo', NULL, 'bar'], 'identity'))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// Empty-after-tokenisation input -> Empty filter. Stop-word-style empty
+// tokenisation is exercised here by passing a list of empty strings to
+// the segmenting analyzer (it produces zero tokens).
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListEmptyTokensYieldsEmpty) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(['', '   ']))",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+// ANY_OF with explicit min_match >= 1 against an array TOKENIZE: forces
+// at least N of the flattened tokens to match. min_match=2 with 3
+// tokens behaves like a 2-of-3 disjunction.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListMinMatch) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  {
+    auto& terms = expected.add<irs::ByTerms>();
+    *terms.mutable_field() = MakeFieldName<std::string_view>(1);
+    auto& opts = *terms.mutable_options();
+    opts.min_match = 2;
+    opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
+    opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
+    opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
+  }
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ "
+    "ANY_OF(TOKENIZE(['foo','bar','baz'], 'identity'), 2)",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// Negation via NOT(b @@ ANY_OF(TOKENIZE(...))): wraps the resulting
+// ByTerms in irs::Not.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListWithNot) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddTermsFilter<std::string_view>(not_filter, 1,
+                                   {std::string_view{"foo"},
+                                    std::string_view{"bar"}});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE NOT(b @@ "
+    "ANY_OF(TOKENIZE(['foo','bar'], 'identity')))",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// Direct top-level use of TOKENIZE-array (without ANY_OF/ALL_OF wrapper)
+// is rejected at SQL bind time -- @@ expects scalar TSQUERY, not
+// LIST(TSQUERY). The DuckDB binder surfaces a "no function matches"
+// error before the filter builder sees anything.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_TokenizeListBareRejectedByBinder) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ TOKENIZE(['foo','bar'])",
+               columns, false, SegmentationAnalyzerProvider);
+}
+
+// Non-constant array (e.g. the column itself) is rejected: v1 only
+// supports constant-folded LIST(VARCHAR) inputs to the array form.
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_AnyOfTokenizeListNonConstRejected) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"},
+    {.id = 2, .type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+     .name = "tags"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(tags))",
                columns, false, SegmentationAnalyzerProvider);
 }
 

@@ -25,12 +25,14 @@
 #include <iresearch/analysis/analyzer.hpp>
 #include <string>
 
+#include "catalog/tokenizer.h"
+
 namespace sdb::connector {
 
 // Postgres-style FTS surface. All stubs; the filter builder claims
 // them at bind time and builds the iresearch filter.
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
-inline constexpr std::string_view kTokenizerTypeName = "tokenizer";
+inline constexpr std::string_view kTokenizerTypeName = "tokenize";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
@@ -89,25 +91,23 @@ duckdb::LogicalType MakeTSQueryType();
 // True iff `type` is the TSQUERY alias (VARCHAR + "TSQUERY" alias).
 bool IsTSQueryType(const duckdb::LogicalType& type);
 
-// If `type` is a TSQUERY annotated with a `tokenizer(name)` modifier,
-// returns the tokenizer name and (when the bind function was able to
-// resolve it via the catalog) the live analyzer pointer. The pointer
-// is owned by a process-static cache populated at SQL bind time; the
-// filter builder uses it to override its tokenizer for the inner
-// subtree without needing catalog access of its own.
+// If `type` is a TSQUERY annotated with a `tokenize(name)` modifier,
+// returns the tokenizer name. Resolution to a live analyzer happens
+// at filter-build time via ResolveTokenizerAnalyzer below -- the bind
+// callback intentionally does NOT pre-resolve, because the analyzer
+// is stateful (one tokenization stream per use) and shouldn't be
+// shared across queries.
 struct TokenizerModifier {
   std::string_view name;
-  irs::analysis::Analyzer* tokenizer = nullptr;
 };
 TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type);
 
-// Resolves a `::tokenizer(<name>)` cast: looks up the named catalog
-// tokenizer at SQL bind time and returns a process-static-cached
-// pointer to the resolved analyzer. The cache holds the tokenizer's
-// AnalyzerWrapper for the lifetime of the process so the returned
-// pointer stays valid through subsequent filter-build / execute time.
-// Returns nullptr if the name doesn't resolve.
-irs::analysis::Analyzer* ResolveTokenizerAnalyzer(
+// Looks up the named catalog tokenizer in the current transaction's
+// snapshot and returns an owned AnalyzerWrapper. The caller controls
+// the wrapper's lifetime: when destroyed, the underlying analyzer
+// goes back to the Tokenizer's pool. Returns a null wrapper if the
+// name doesn't resolve.
+catalog::Tokenizer::AnalyzerWrapper ResolveTokenizerAnalyzer(
   duckdb::ClientContext& context, std::string_view name);
 
 // Pseudo-functions that are claimed by the iresearch_plan rule and
@@ -118,10 +118,10 @@ irs::analysis::Analyzer* ResolveTokenizerAnalyzer(
 //
 //   bm25(tableoid [, k1 DOUBLE, b DOUBLE])    -> FLOAT
 //   tfidf(tableoid [, with_norms BOOLEAN])    -> FLOAT
-//   sdb_offsets(col)                          -> BIGINT[]
+//   offsets(col)                          -> BIGINT[]
 //
 // bm25 / tfidf need a scan anchor; the convention is `tableoid` so
-// the binding survives projection pushdown. sdb_offsets takes the
+// the binding survives projection pushdown. offsets takes the
 // indexed column directly (the column ref's own binding.table_index
 // is enough -- no separate anchor needed).
 inline constexpr std::string_view kBm25 = "bm25";

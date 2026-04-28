@@ -189,8 +189,21 @@ struct FilterContext {
   // Optional override for the tokenizer used by tokenisation-driven
   // emitters (BuildFtsTokens / BuildFtsPhrase / FromNgramMatch /
   // EmitPhraseTokens). When null, the column's tokenizer is used. Set
-  // by the `<expr>::tokenizer('<name>')` cast for the inner subtree.
+  // by the `<expr>::tokenize('<name>')` cast for the inner subtree.
   irs::analysis::Analyzer* tokenizer = nullptr;
+  // ClientContext used to resolve named catalog analyzers at
+  // filter-build time (e.g. for the function form
+  // `TOKENIZE(text, 'english')` whose stub-function body never runs).
+  // The cast form already has its analyzer resolved at SQL bind time
+  // by the parameterised-type bind callback, so it doesn't depend on
+  // this. Required (reference, not pointer) -- mirrors the public
+  // SearchFilterOptions surface.
+  duckdb::ClientContext& client_context;
+  // Maximum number of terms a multi-term filter (PREFIX / LIKE /
+  // RANGE / REGEXP / LEVENSHTEIN / ngram) will collect for scoring.
+  // Wired from the `sdb_scored_terms_limit` session setting; 1024 is
+  // the iresearch default.
+  size_t scored_terms_limit = 1024;
 };
 
 // Returns the tokenizer the current ctx wants used for tokenisation:
@@ -646,7 +659,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
       return {ERROR_BAD_PARAMETER,
               "Field is not indexed by identity analyzer. Use `col @@ "
               "'value'` (tokenised) or `col @@ "
-              "'value'::tokenizer('identity')` (raw)."};
+              "'value'::tokenize('identity')` (raw)."};
     }
   }
 
@@ -691,7 +704,10 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
           irs::Type<irs::StringTokenizer>::id()) {
       return {ERROR_BAD_PARAMETER,
               "Field is not indexed by identity analyzer. Range predicates "
-              "(<, <=, >, >=, BETWEEN) require an identity-analyzed column."};
+              "(<, <=, >, >=, BETWEEN) require an identity-analyzed column. "
+              "Use `col @@ LESS('value')` / `LESS_EQ` / `GREATER` / "
+              "`GREATER_EQ` / `RANGE(min, max, ...)` (tokenised through the "
+              "column's analyzer) instead."};
     }
   }
 
@@ -733,15 +749,18 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   if (type_id == duckdb::LogicalTypeId::VARCHAR) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
+    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter, std::move(field_name))
       .assign(AsRawBytes(*const_val));
   } else if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range_filter = AddFilter<irs::ByRange>(filter);
+    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     setup_base_filter(range_filter, std::move(field_name))
       .assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(const_val->GetValue<bool>())));
   } else if (IsNumericTypeId(type_id)) {
     auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
+    range_filter.mutable_options()->scored_terms_limit = ctx.scored_terms_limit;
     irs::NumericTokenizer stream;
     ResetNumericStream(stream, type_id, *const_val);
     irs::SetGranularTerm(setup_base_filter(range_filter, std::move(field_name)),
@@ -836,7 +855,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
       return {ERROR_BAD_PARAMETER,
               "Field is not indexed by identity analyzer. Use `col @@ "
               "ANY_OF('a', 'b', ...)` (tokenised) or `col @@ ANY_OF("
-              "'a'::tokenizer('identity'), ...)` (raw)."};
+              "'a'::tokenize('identity'), ...)` (raw)."};
     }
   }
 
@@ -1172,7 +1191,9 @@ void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
                            : AddFilter<irs::ByWildcard>(parent);
   wild.boost(ctx.boost);
   *wild.mutable_field() = std::move(field_name);
-  wild.mutable_options()->term.assign(
+  auto& wild_opts = *wild.mutable_options();
+  wild_opts.scored_terms_limit = ctx.scored_terms_limit;
+  wild_opts.term.assign(
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
 }
 
@@ -1348,7 +1369,9 @@ Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                                   : AddFilter<irs::ByEditDistance>(filter);
   edit_filter.boost(ctx.boost);
   *edit_filter.mutable_field() = field_name;
-  FillByEditDistanceOptions(*args, *edit_filter.mutable_options());
+  auto& edit_opts = *edit_filter.mutable_options();
+  FillByEditDistanceOptions(*args, edit_opts);
+  edit_opts.max_terms = ctx.scored_terms_limit;
   return {};
 }
 
@@ -1485,7 +1508,9 @@ Result BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                          : AddFilter<irs::ByPrefix>(parent);
   pf.boost(ctx.boost);
   *pf.mutable_field() = field_name;
-  pf.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(prefix));
+  auto& pf_opts = *pf.mutable_options();
+  pf_opts.scored_terms_limit = ctx.scored_terms_limit;
+  pf_opts.term.assign(irs::ViewCast<irs::byte_type>(prefix));
   return {};
 }
 
@@ -1503,6 +1528,7 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   re.boost(ctx.boost);
   *re.mutable_field() = field_name;
   auto* opts = re.mutable_options();
+  opts->scored_terms_limit = ctx.scored_terms_limit;
   opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
   opts->syntax = syntax;
 }
@@ -2269,11 +2295,30 @@ Result FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (analyzer_name == "identity") {
     return BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
   }
-  return {ERROR_NOT_IMPLEMENTED,
-          "TOKENIZE(text, analyzer): only 'identity' is supported for v1"
-          " (got: ",
-          analyzer_name,
-          "). Use TOKENIZE(text) for the ambient (column) analyzer."};
+  // Hold the wrapper as a stack local for the duration of this call.
+  // The raw pointer we plant in sub_ctx.tokenizer is valid as long as
+  // `wrapper` lives -- when this function returns, the wrapper drops
+  // and the analyzer goes back to the catalog Tokenizer's pool.
+  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
+  if (!wrapper) {
+    // Throw rather than return Result-error: a misspelled / missing
+    // analyzer name is a programmer-visible mistake. Returning Result
+    // would leave the predicate unclaimed and DuckDB would fall back
+    // to running the TSQUERY stub at runtime, surfacing a confusing
+    // "TSQUERY expression evaluated outside @@" message instead.
+    // 42704 (UNDEFINED_OBJECT) matches what
+    // pg/commands/create_tsdictionary.cpp uses for the same shape
+    // ("text search dictionary <name> does not exist").
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("TOKENIZE(text, '", analyzer_name,
+                            "'): tokenizer not found in catalog"),
+                    ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
+                             "or use 'identity' for raw bytes."));
+  }
+  auto sub_ctx = ctx;
+  sub_ctx.tokenizer = wrapper.get();
+  return BuildFtsTokens(parent, sub_ctx, column_info, text,
+                        /*require_all=*/false);
 }
 
 // EQ(text) -- analyzer-aware equality. Tokenises `text` via the
@@ -2362,7 +2407,9 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
                            : AddFilter<irs::ByRange>(parent);
     *rf.mutable_field() = std::move(field_name);
     rf.boost(ctx.boost);
-    auto& rng = rf.mutable_options()->range;
+    auto* rf_opts = rf.mutable_options();
+    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = rf_opts->range;
     if (is_lower) {
       rng.min.assign(token->value);
       rng.min_type = bound_type;
@@ -2383,7 +2430,9 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
                            : AddFilter<irs::ByRange>(parent);
     *rf.mutable_field() = std::move(field_name);
     rf.boost(ctx.boost);
-    auto& rng = rf.mutable_options()->range;
+    auto* rf_opts = rf.mutable_options();
+    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = rf_opts->range;
     auto bytes = irs::ViewCast<irs::byte_type>(
       irs::BooleanTokenizer::value(bound_val->GetValue<bool>()));
     if (is_lower) {
@@ -2404,7 +2453,9 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
                          : AddFilter<irs::ByGranularRange>(parent);
   *rf.mutable_field() = std::move(field_name);
   rf.boost(ctx.boost);
-  auto& rng = rf.mutable_options()->range;
+  auto* rf_opts = rf.mutable_options();
+  rf_opts->scored_terms_limit = ctx.scored_terms_limit;
+  auto& rng = rf_opts->range;
   auto cast = bound_val->DefaultCastAs(column_info.logical_type);
   irs::NumericTokenizer stream;
   ResetNumericStream(stream, col_type, cast);
@@ -2614,9 +2665,187 @@ Result FromTSQueryPhraseSeq(irs::BooleanFilter& parent,
 // Variadic / non-list forms are intentionally not supported (DuckDB's
 // STRING_LITERAL->INTEGER cost-table preference would absorb 2-arg
 // variadic bare-string calls into a (LIST, INTEGER) overload).
+// True iff `expr` is a `TOKENIZE(text_array [, analyzer])` call whose
+// return type is `LIST(TSQUERY)`. Filters out the scalar overloads.
+bool IsTokenizeListCall(const duckdb::Expression& expr) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return false;
+  }
+  const auto& f = expr.Cast<duckdb::BoundFunctionExpression>();
+  if (f.function.name != kTSQTokenize) {
+    return false;
+  }
+  return f.return_type.id() == duckdb::LogicalTypeId::LIST &&
+         IsTSQueryType(duckdb::ListType::GetChildType(f.return_type));
+}
+
+// Handles `ANY_OF(TOKENIZE([...] [, name]) [, min_match])` and the
+// matching ALL_OF form. Tokenises every element through the chosen
+// analyzer (column's ambient or 'identity' override) and emits a single
+// ByTerms filter aggregating every produced token. min_match selects
+// between OR (1) / AND (count) / explicit. Named (non-identity)
+// analyzer is deferred to mirror the scalar TOKENIZE(text, name)
+// limitation at FromTokenize.
+Result FromTokenizeListInAnyAllOf(
+  irs::BooleanFilter& parent, const FilterContext& ctx,
+  const SearchColumnInfo& column_info,
+  const duckdb::BoundFunctionExpression& outer,
+  const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
+  if (!is_any && outer.children.size() != 1) {
+    return {ERROR_BAD_PARAMETER, "all_of takes a single argument"};
+  }
+  std::optional<size_t> min_match;
+  if (is_any && outer.children.size() == 2) {
+    int64_t m;
+    if (auto r = GetIntArg(*outer.children[1], "any_of min_match", m);
+        !r.ok()) {
+      return r;
+    }
+    if (m < 1) {
+      return {ERROR_BAD_PARAMETER, "any_of min_match must be >= 1, got ", m};
+    }
+    min_match = static_cast<size_t>(m);
+  }
+  if (tokenize_call.children.empty() || tokenize_call.children.size() > 2) {
+    return {ERROR_BAD_PARAMETER,
+            "TOKENIZE(text_array[, analyzer]) expects 1 or 2 arguments, got ",
+            tokenize_call.children.size()};
+  }
+  // Inner list -- v1 requires a constant LIST(VARCHAR).
+  const auto* list_const = TryGetConstant(*tokenize_call.children[0]);
+  if (!list_const) {
+    return {ERROR_BAD_PARAMETER,
+            "TOKENIZE array form requires a constant text array"};
+  }
+  if (list_const->IsNull()) {
+    return {ERROR_BAD_PARAMETER, "TOKENIZE text array must not be NULL"};
+  }
+  if (list_const->type().id() != duckdb::LogicalTypeId::LIST) {
+    return {ERROR_BAD_PARAMETER,
+            "TOKENIZE array form: first arg must be a list, got ",
+            list_const->type().ToString()};
+  }
+  // Resolve the analyzer choice:
+  //   1-arg form               -> ambient column analyzer
+  //   2-arg with 'identity'    -> raw bytes per element (no analysis)
+  //   2-arg with named name    -> resolve via catalog at filter-build time
+  bool use_identity = false;
+  // Hold the wrapper as a stack local so its raw pointer (used by
+  // `analyzer` below) stays valid for the loop. Drops at function
+  // return -> analyzer goes back to the catalog Tokenizer's pool.
+  catalog::Tokenizer::AnalyzerWrapper override_wrapper;
+  if (tokenize_call.children.size() == 2) {
+    std::string analyzer_name;
+    if (auto r = GetVarcharArg(*tokenize_call.children[1],
+                               "TOKENIZE analyzer name", analyzer_name);
+        !r.ok()) {
+      return r;
+    }
+    if (analyzer_name == "identity") {
+      use_identity = true;
+    } else {
+      override_wrapper =
+        ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
+      if (!override_wrapper) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+          ERR_MSG("TOKENIZE(text_array, '", analyzer_name,
+                  "'): tokenizer not found in catalog"),
+          ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY or use "
+                   "'identity' for raw bytes per element."));
+      }
+    }
+  }
+
+  // Walk every element, tokenise it (or take it raw for identity), and
+  // accumulate produced tokens. Empty inputs / NULL elements are skipped
+  // -- they contribute no terms.
+  auto* analyzer = override_wrapper ? override_wrapper.get()
+                                    : ActiveTokenizer(ctx, column_info);
+  if (!use_identity &&
+      (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR ||
+       !analyzer)) {
+    return {ERROR_BAD_PARAMETER,
+            "TOKENIZE array form requires a VARCHAR-indexed column"};
+  }
+  std::vector<irs::bstring> tokens;
+  for (const auto& elem : duckdb::ListValue::GetChildren(*list_const)) {
+    if (elem.IsNull()) {
+      continue;
+    }
+    if (elem.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+      return {ERROR_BAD_PARAMETER,
+              "TOKENIZE text array elements must be VARCHAR, got ",
+              elem.type().ToString()};
+    }
+    auto raw = duckdb::StringValue::Get(elem);
+    if (use_identity) {
+      auto bytes = irs::ViewCast<irs::byte_type>(std::string_view{raw});
+      tokens.emplace_back(bytes.begin(), bytes.end());
+      continue;
+    }
+    if (!analyzer->reset(raw)) {
+      return {ERROR_BAD_PARAMETER, "Failed to analyse '", raw, "'"};
+    }
+    const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
+    while (analyzer->next()) {
+      tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
+    }
+  }
+
+  if (tokens.empty()) {
+    AddFilter<irs::Empty>(parent);
+    return {};
+  }
+
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+  search::mangling::MangleString(field_name);
+
+  // Single-token short-circuit -> ByTerm.
+  if (tokens.size() == 1) {
+    auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
+                             : AddFilter<irs::ByTerm>(parent);
+    term.boost(ctx.boost);
+    *term.mutable_field() = field_name;
+    term.mutable_options()->term.assign(tokens[0]);
+    return {};
+  }
+
+  // Aggregate as ByTerms with the min_match policy:
+  //   ANY_OF without min_match -> 1
+  //   ANY_OF(min_match=N) -> N (capped at tokens.size())
+  //   ALL_OF -> tokens.size()
+  size_t mm = 1;
+  if (!is_any) {
+    mm = tokens.size();
+  } else if (min_match) {
+    mm = std::min<size_t>(*min_match, tokens.size());
+  }
+  auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
+                            : AddFilter<irs::ByTerms>(parent);
+  terms.boost(ctx.boost);
+  *terms.mutable_field() = std::move(field_name);
+  auto& opts = *terms.mutable_options();
+  opts.min_match = mm;
+  for (auto& t : tokens) {
+    opts.terms.emplace(std::move(t));
+  }
+  return {};
+}
+
 Result FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::BoundFunctionExpression& func, bool is_any) {
+  // Special case: ANY_OF/ALL_OF wrapping a TOKENIZE(text_array[, name])
+  // call. Tokenise every element, flatten into a single ByTerms with the
+  // appropriate min_match. Bypasses the per-arg BuildTSQuery loop so we
+  // can emit one aggregated filter rather than N individual leaves.
+  if (!func.children.empty() && IsTokenizeListCall(*func.children[0])) {
+    return FromTokenizeListInAnyAllOf(
+      parent, ctx, column_info, func,
+      func.children[0]->Cast<duckdb::BoundFunctionExpression>(), is_any);
+  }
   std::vector<const duckdb::Expression*> args;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
   std::optional<size_t> min_match;
@@ -2762,13 +2991,17 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                            : AddFilter<irs::ByRange>(parent);
     *rf.mutable_field() = std::move(field_name);
     rf.boost(ctx.boost);
-    FillByRangeOptionsVarchar(*args, *rf.mutable_options());
+    auto* rf_opts = rf.mutable_options();
+    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
+    FillByRangeOptionsVarchar(*args, *rf_opts);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
                            : AddFilter<irs::ByRange>(parent);
     *rf.mutable_field() = std::move(field_name);
     rf.boost(ctx.boost);
-    auto& rng = rf.mutable_options()->range;
+    auto* rf_opts = rf.mutable_options();
+    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = rf_opts->range;
     if (args->min_val) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(args->min_val->GetValue<bool>())));
@@ -2788,7 +3021,9 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                               : AddFilter<irs::ByGranularRange>(parent);
     *range.mutable_field() = std::move(field_name);
     range.boost(ctx.boost);
-    auto& rng = range.mutable_options()->range;
+    auto* range_opts = range.mutable_options();
+    range_opts->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = range_opts->range;
     auto emit_bound = [&](const duckdb::Value& v,
                           irs::ByGranularRangeOptions::terms& boundary,
                           irs::BoundType& bt, bool incl) {
@@ -2811,16 +3046,16 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
 Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::Expression& expr) {
-  // `<expr>::tokenizer('<analyzer>')` annotates a TSQUERY type with an
+  // `<expr>::tokenize('<analyzer>')` annotates a TSQUERY type with an
   // ExtensionTypeInfo modifier carrying the tokenizer name. The
   // modifier can appear on either a BOUND_CAST wrapper (cast not
   // folded) or on a BOUND_CONSTANT's value type (DuckDB constant-folds
-  // `'foo'::tokenizer('name')` into a constant whose type carries the
+  // `'foo'::tokenize('name')` into a constant whose type carries the
   // modifier).
   //
   // 'identity' is special-cased to mean "no tokenisation, raw ByTerm".
   // Any other name was resolved at SQL bind time by the
-  // tokenizer(<name>) parameterized-type bind function: it looked up
+  // tokenize(<name>) parameterized-type bind function: it looked up
   // the named catalog tokenizer and stashed the live analyzer pointer
   // in the type's ExtensionTypeInfo. We just read the pointer here,
   // override ctx.tokenizer for the inner subtree, and recurse.
@@ -2845,21 +3080,36 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       }
     }
     if (!mod.name.empty()) {
+      // NOTE: chained `::tokenize(a)::tokenize(b)` casts collapse at
+      // bind time -- DuckDB constant-folds the inner cast and only
+      // the outer modifier survives on the constant's type. We can't
+      // observe the inner one to surface a conflict here, so the
+      // outermost tokenizer is what wins (silently). If chained-cast
+      // misuse becomes a real problem, detection has to move into
+      // the parameterized-type bind, not here.
       if (mod.name == "identity") {
         if (!inner_val || inner_val->IsNull() ||
             inner_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
           return {ERROR_NOT_IMPLEMENTED,
-                  "::tokenizer('identity') currently supports only bare "
+                  "::tokenize('identity') currently supports only bare "
                   "VARCHAR/TSQUERY constants as the inner expression"};
         }
         return BuildFtsTerm(parent, ctx, column_info, *inner_val);
       }
-      if (!mod.tokenizer) {
-        return {ERROR_BAD_PARAMETER, "::tokenizer('", std::string(mod.name),
-                "'): tokenizer not found in catalog"};
+      // Resolve the named analyzer via the current transaction's
+      // catalog snapshot. The wrapper lives on the stack here; the
+      // raw pointer set on sub_ctx is valid for the recursion below
+      // and goes back to the Tokenizer's pool when this scope exits.
+      auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
+      if (!wrapper) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("::tokenize('", std::string(mod.name),
+                                "'): tokenizer not found in catalog"),
+                        ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
+                                 "or use 'identity' for raw bytes."));
       }
       auto sub_ctx = ctx;
-      sub_ctx.tokenizer = mod.tokenizer;
+      sub_ctx.tokenizer = wrapper.get();
       // Folded-constant case: tokenise the bare value via the override
       // tokenizer (cannot recurse on the constant -- its type still
       // carries the modifier and would re-enter this branch).
@@ -2867,7 +3117,7 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
         if (inner_val->IsNull() ||
             inner_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
           return {ERROR_BAD_PARAMETER,
-                  "::tokenizer(<name>): inner value must be VARCHAR"};
+                  "::tokenize(<name>): inner value must be VARCHAR"};
         }
         return BuildFtsTokens(parent, sub_ctx, column_info,
                               inner_val->GetValue<std::string>(),
@@ -3147,11 +3397,14 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
 Result ExprToFilter(irs::BooleanFilter& filter, const duckdb::Expression& expr,
                     const ColumnGetter& column_getter,
                     containers::FlatHashMap<catalog::Column::Id,
-                                            SearchColumnInfo>& column_cache) {
+                                            SearchColumnInfo>& column_cache,
+                    const SearchFilterOptions& options) {
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
     .column_cache = column_cache,
+    .client_context = options.client_context,
+    .scored_terms_limit = options.scored_terms_limit,
   };
   return FromExpression(filter, ctx, expr);
 }
@@ -3159,10 +3412,10 @@ Result ExprToFilter(irs::BooleanFilter& filter, const duckdb::Expression& expr,
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter) {
+  const ColumnGetter& column_getter, const SearchFilterOptions& options) {
   containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo> column_cache;
   for (const auto& expr : conjuncts) {
-    auto res = ExprToFilter(root, *expr, column_getter, column_cache);
+    auto res = ExprToFilter(root, *expr, column_getter, column_cache, options);
     if (!res.ok()) {
       return res;
     }

@@ -93,11 +93,11 @@ a
 2
 3
 
-# ::tokenizer('identity') bypasses the column analyzer and matches the
+# ::tokenize('identity') bypasses the column analyzer and matches the
 # raw stored token. Row 1's column has lowercase 'quick' as a single
-# token, so 'quick'::tokenizer('identity') matches; 'Quick' wouldn't.
+# token, so 'quick'::tokenize('identity') matches; 'Quick' wouldn't.
 query
-SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenizer('identity') ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize('identity') ORDER BY a;
 ----
 a
 1
@@ -111,12 +111,21 @@ a
 1
 2
 
-# 'Quick'::tokenizer('identity') won't match because the analyzer
+# 'Quick'::tokenize('identity') won't match because the analyzer
 # lower-cased the indexed tokens.
 query
-SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenizer('identity');
+SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenize('identity');
 ----
 a
+
+# ::tokenize(NULL) is sugar for ::tokenize('identity') -- both opt out
+# of tokenisation. Same row-set as the matching identity case above.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize(NULL) ORDER BY a;
+----
+a
+1
+2
 
 # plainto_tsquery(text) = tokenise + AND: every token must match.
 query
@@ -913,9 +922,9 @@ a
 1
 3
 
-# ::tokenizer cast on LHS.
+# ::tokenize cast on LHS.
 query
-SELECT a FROM tsq_idx WHERE 'quick'::tokenizer('identity') @@ b ORDER BY a;
+SELECT a FROM tsq_idx WHERE 'quick'::tokenize('identity') @@ b ORDER BY a;
 ----
 a
 1
@@ -1305,6 +1314,212 @@ SELECT a FROM re_idn_idx WHERE name !~* '.*foo.*' ORDER BY a;
 ----
 a
 4
+
+# ----------------------------------------------------------------------
+# Named-tokenizer cast: ::tokenize('<analyzer>') overrides the column's
+# default analyzer for the inner subtree. Inner-most cast wins. The
+# `tsq_english_upper` dictionary uppercases tokens and lets us prove
+# the override actually changes analyzer behaviour: indexed terms are
+# lowercase (via tsq_english), so an upper-cased query won't match.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_english_upper(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    stemming = false,
+    accent = false
+);
+
+# Default ambient analyzer (tsq_english, lowercase): 'Quick' lowercases
+# to 'quick' which is indexed in rows 1 and 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick' ORDER BY a;
+----
+a
+1
+2
+
+# Override to tsq_english_upper: 'Quick' uppercases to 'QUICK', which
+# is NOT in the index (indexed terms are lowercase) -> 0 rows. Confirms
+# the override actually shaped the query terms.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenize('tsq_english_upper');
+----
+a
+
+# Compound expressions: the override applies at each LEAF cast, not at
+# an outer wrapping cast. Wrapping `(... || ...)::tokenize(name)` does
+# nothing because DuckDB elides TSQUERY -> TSQUERY-with-modifier casts
+# (both share the same logical-type alias). To override per leg, apply
+# the cast on each bare-string operand directly.
+
+# Per-leg override on each VARCHAR operand. Both lowercase via the
+# column's ambient analyzer (since `tsq_english` is the column's
+# analyzer); matches rows 1, 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('Quick'::tokenize('tsq_english') || 'BROWN'::tokenize('tsq_english')) ORDER BY a;
+----
+a
+1
+2
+
+# Per-leg override forcing upper on both legs. Indexed terms are
+# lowercase, so neither leg matches -> 0 rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('Quick'::tokenize('tsq_english_upper') || 'BROWN'::tokenize('tsq_english_upper'));
+----
+a
+
+# Mixed per-leg overrides: left lowercases ('quick' matches rows 1, 2),
+# right uppercases ('BROWN' doesn't match). OR -> rows 1, 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('Quick'::tokenize('tsq_english') || 'BROWN'::tokenize('tsq_english_upper')) ORDER BY a;
+----
+a
+1
+2
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tsq_english_upper;
+
+# ----------------------------------------------------------------------
+# Array form: TOKENIZE(text_array[, analyzer]) -> TSQUERY[].
+# Inside ANY_OF / ALL_OF, every element is tokenised through the
+# chosen analyzer (column ambient by default, 'identity' for raw
+# bytes) and the produced tokens are flattened into a single ByTerms
+# with the appropriate min_match policy.
+# ----------------------------------------------------------------------
+
+# Ambient (1-arg) form: 'Foo Bar' splits on whitespace via the column's
+# `text` analyzer and lowercases. 'BAZ' lowercases to 'baz' (which
+# isn't indexed). Flattened into ANY_OF semantics: tokens [foo, bar,
+# baz], any one matches -> rows 1 (has 'fox'/'brown') ... actually our
+# fixture's 'foo' isn't indexed; we use the indexed lowercase tokens
+# directly here.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['Quick', 'BROWN'])) ORDER BY a;
+----
+a
+1
+2
+
+# 'identity' form: each element becomes a raw single token (no split,
+# no case fold). Indexed terms are lowercase; uppercase 'QUICK' won't
+# match.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['QUICK', 'BROWN'], 'identity'));
+----
+a
+
+# 'identity' with literal lowercase input matches indexed tokens.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['quick', 'brown'], 'identity')) ORDER BY a;
+----
+a
+1
+2
+
+# ALL_OF: every flattened token must match. Row 1 has both 'quick' and
+# 'brown'; row 2 has 'quick' but not 'brown'.
+query
+SELECT a FROM tsq_idx WHERE b @@ ALL_OF(TOKENIZE(['quick', 'brown'], 'identity')) ORDER BY a;
+----
+a
+1
+
+# Multi-token element under ambient: 'Quick Brown' splits to two
+# tokens; combined with 'lazy' the flattened OR matches rows 1, 2
+# (both have 'quick'), 1 (also has 'brown'), and 1+2 (both have
+# 'lazy').
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['Quick Brown', 'lazy'])) ORDER BY a;
+----
+a
+1
+2
+
+# ANY_OF with explicit min_match: rows must have at least 2 of
+# [quick, brown, slow]. Row 1 has quick + brown (2 of 3). Row 2 has
+# only quick. Row 3 has slow (1 of 3). Result: row 1 only.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['quick','brown','slow'], 'identity'), 2);
+----
+a
+1
+
+# NOT (array form): exclude any row that would match the OR-set.
+query
+SELECT a FROM tsq_idx WHERE NOT (b @@ ANY_OF(TOKENIZE(['quick'], 'identity'))) ORDER BY a;
+----
+a
+3
+4
+
+# NULL element is skipped.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['quick', NULL, 'red'], 'identity')) ORDER BY a;
+----
+a
+1
+2
+
+# Named-analyzer resolution (function form): TOKENIZE(text, name) and
+# TOKENIZE(text_array, name) call ResolveTokenizerAnalyzer at filter
+# build time. Need a real catalog tokenizer registered.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_english_upper(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    stemming = false,
+    accent = false
+);
+
+# Scalar TOKENIZE with named analyzer: 'Quick' uppercases to 'QUICK',
+# which isn't in the lowercase index -> 0 rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ TOKENIZE('Quick', 'tsq_english_upper');
+----
+a
+
+# Scalar TOKENIZE with the column's own analyzer name (lowercase).
+# Confirms the named lookup works alongside identity / ambient.
+query
+SELECT a FROM tsq_idx WHERE b @@ TOKENIZE('Quick', 'tsq_english') ORDER BY a;
+----
+a
+1
+2
+
+# Array TOKENIZE with named analyzer: both elements uppercase, neither
+# matches lowercase index -> 0 rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['Quick','BROWN'], 'tsq_english_upper'));
+----
+a
+
+# Array TOKENIZE with column's analyzer (verbose form of the 1-arg call):
+# tokens lowercase to [quick, brown] -> rows 1, 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['Quick','BROWN'], 'tsq_english')) ORDER BY a;
+----
+a
+1
+2
+
+# Unknown analyzer name -> bind-time error.
+statement error tokenizer not found in catalog
+SELECT a FROM tsq_idx WHERE b @@ TOKENIZE('quick', 'nonexistent_analyzer');
+
+# Same for the array form.
+statement error tokenizer not found in catalog
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['quick'], 'nonexistent_analyzer'));
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tsq_english_upper;
 
 # ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.

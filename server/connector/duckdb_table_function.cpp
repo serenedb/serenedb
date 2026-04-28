@@ -419,6 +419,12 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   // just no longer dispatched through a class hierarchy.)
   if (bind.scan_source->IsSearchLike()) {
     const auto& table = *bind.table;
+    // ANN-style scans (HNSW top-k / range) explicitly tag rocksdb as
+    // "(point Get)" because they materialize a precomputed PK set via
+    // RocksDB MultiGet -- the EXPLAIN annotation predates the lookup TF
+    // refactor and is preserved for stable test fixtures.
+    const bool is_ann = bind.scan_source->Kind() == ScanSourceKind::Ann ||
+                        bind.scan_source->Kind() == ScanSourceKind::RangeSearch;
     auto name = [&]() -> std::string {
       switch (table.GetTableType()) {
         using enum TableType;
@@ -433,7 +439,7 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
           return absl::StrCat("file (", path.substr(dot + 1), ")");
         }
         case RocksDB:
-          return "rocksdb";
+          return is_ann ? "rocksdb (point Get)" : "rocksdb";
         case Unknown:
           SDB_UNREACHABLE();
       }

@@ -90,27 +90,6 @@ void ANNSearchImpl(SearchAnnScanGlobalState& state,
 
 }  // namespace
 
-ANNFilter::ANNFilter(duckdb::ClientContext& context,
-                     const irs::IndexReader& reader,
-                     std::unique_ptr<RowMaterializer> materializer,
-                     std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs,
-                     std::vector<duckdb::LogicalType> filter_types)
-  : _reader{reader},
-    _materializer{std::move(materializer)},
-    _exprs{std::move(exprs)},
-    _executor{context} {
-  for (const auto& e : _exprs) {
-    _executor.AddExpression(*e);
-  }
-  duckdb::vector<duckdb::LogicalType> scratch_types(filter_types.begin(),
-                                                    filter_types.end());
-  _scratch.Initialize(duckdb::Allocator::DefaultAllocator(), scratch_types);
-
-  duckdb::vector<duckdb::LogicalType> bool_types(_exprs.size(),
-                                                 duckdb::LogicalType::BOOLEAN);
-  _bool_out.Initialize(duckdb::Allocator::DefaultAllocator(), bool_types);
-}
-
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind_data = input.bind_data->Cast<SereneDBScanBindData>();

@@ -3,8 +3,9 @@ hash-threshold 100
 # GEO_INTERSECTS and GEO_CONTAINS search functions over an inverted index
 # with a geojson text search dictionary.
 #
-# Test data: points and a polygon stored as VARCHAR
-# GeoJSON strings. GeoJSON coordinates are [longitude, latitude].
+# Test data: points and a polygon stored as JSON (GeoJSON text). The catalog
+# rejects plain VARCHAR for geo analyzers -- the column type must be JSON or
+# GEOMETRY. GeoJSON coordinates are [longitude, latitude].
 #
 #   id=1: Point [37.615895, 55.703900]  -- cluster near [37.616, 55.704]
 #   id=2: Point [37.616297, 55.704831]  -- cluster near [37.616, 55.704]
@@ -23,7 +24,7 @@ hash-threshold 100
 # --- Schema setup ---
 
 statement ok
-CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo VARCHAR)
+CREATE TABLE geo_data (id INTEGER PRIMARY KEY, geo JSON)
 
 
 statement ok
@@ -524,8 +525,8 @@ WHERE geo_contains(geo, 'POINT Z (37.615 55.706 0)'::GEOMETRY('OGC:CRS84'))
 db error: ERROR: Inverted index function called outside inverted index context.<slt:ignore>
 
 
-# --- VARCHAR field + GEOMETRY (WKT) shape ---
-# Mixed-type combo: indexed VARCHAR GeoJSON column from earlier `geo_idx`
+# --- JSON field + GEOMETRY (WKT) shape ---
+# Mixed-type combo: indexed JSON GeoJSON column from earlier `geo_idx`
 # queried with a GEOMETRY constant.
 
 query
@@ -594,3 +595,17 @@ statement error
 CREATE INDEX geo_data_g_no_crs_idx ON geo_data_g_no_crs USING inverted(id, geo geojson_s2point)
 ----
 db error: ERROR: Failed to create index: Column 'geo': GEOMETRY type has no CRS attached;<slt:ignore>
+
+
+# --- CREATE INDEX rejection: plain VARCHAR column ---
+# Geo analyzers require JSON or GEOMETRY: a plain VARCHAR column has no type
+# guarantee that its contents are GeoJSON, so the catalog rejects at CREATE
+# INDEX time. Authors must declare the column as JSON.
+
+statement ok
+CREATE TABLE geo_data_v (id INTEGER PRIMARY KEY, geo VARCHAR)
+
+statement error
+CREATE INDEX geo_data_v_idx ON geo_data_v USING inverted(id, geo geojson_shape)
+----
+db error: ERROR: Failed to create index: Column 'geo' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY<slt:ignore>

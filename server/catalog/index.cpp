@@ -194,9 +194,11 @@ Result ValidateInvertedIndexColumns(
 // INDEX time.
 //
 // Rules:
-//   - Column must be VARCHAR (GeoJSON text -- validated by the JSON parser at
+//   - Column must be JSON (GeoJSON text -- validated by the JSON parser at
 //     insert time) or GEOMETRY (strongly typed, CRS declared at the column
-//     level). BLOB is rejected: we have no way to confirm its bytes are WKB.
+//     level). Plain VARCHAR is rejected so the column type itself documents
+//     that the contents are GeoJSON; BLOB is rejected because we have no way
+//     to confirm its bytes are WKB.
 //   - For GEOMETRY columns, the declared CRS must be CRS84 (EPSG:4326 /
 //     OGC:CRS84 / SRID 4326). The sink-writer path does no per-row SRID
 //     check, so the column declaration is the contract.
@@ -218,10 +220,10 @@ Result ValidateGeoAnalyzerColumn(std::string_view column_name,
   }
 
   const auto col_id = col_type.id();
-  if (col_id != duckdb::LogicalTypeId::VARCHAR &&
-      col_id != duckdb::LogicalTypeId::GEOMETRY) {
+  const bool is_json = col_type.IsJSONType();
+  if (!is_json && col_id != duckdb::LogicalTypeId::GEOMETRY) {
     return {ERROR_BAD_PARAMETER, "Column '", column_name,
-            "' uses a geo analyzer; must be VARCHAR (GeoJSON) or GEOMETRY"};
+            "' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY"};
   }
 
   if (col_id == duckdb::LogicalTypeId::GEOMETRY) {

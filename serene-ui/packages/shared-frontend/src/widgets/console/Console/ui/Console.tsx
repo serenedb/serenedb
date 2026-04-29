@@ -17,7 +17,6 @@ import { focusAdjacentConsoleEditorGroup } from "../../ConsoleEditor/model";
 import { ConsoleMainArea } from "./ConsoleMainArea";
 import {
     CONSOLE_EDITOR_ROOT_SELECTOR,
-    CONSOLE_MAIN_AREA_MIN_WIDTH,
     CONSOLE_GRID_EDITOR_PANEL_ID,
     CONSOLE_GRID_SIDEBAR_PANEL_ID,
     CONSOLE_SIDEBAR_ROOT_SELECTOR,
@@ -29,6 +28,40 @@ import {
 } from "../model";
 
 const CONSOLE_LAYOUT_STORAGE_KEY = "console:grid-layout";
+const CONSOLE_SIDEBAR_MAX_WIDTH_RATIO = 0.5;
+
+const getConsoleSidebarMaxWidth = (api: GridviewReadyEvent["api"]) => {
+    return Math.max(
+        CONSOLE_SIDEBAR_MIN_SIZE,
+        Math.floor(api.width * CONSOLE_SIDEBAR_MAX_WIDTH_RATIO),
+    );
+};
+
+const setSidebarWidthConstraints = (api: GridviewReadyEvent["api"]) => {
+    const sidebarPanel = api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+    if (!sidebarPanel) {
+        return;
+    }
+
+    sidebarPanel.api.setConstraints({
+        maximumWidth: () => getConsoleSidebarMaxWidth(api),
+    });
+};
+
+const clampSidebarWidth = (api: GridviewReadyEvent["api"]) => {
+    const sidebarPanel = api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+    if (!sidebarPanel) {
+        return;
+    }
+
+    const maximumWidth = getConsoleSidebarMaxWidth(api);
+
+    if (sidebarPanel.width > maximumWidth) {
+        sidebarPanel.api.setSize({
+            width: maximumWidth,
+        });
+    }
+};
 
 const restoreLayout = (event: GridviewReadyEvent, storageKey: string) => {
     const rawLayout = localStorage.getItem(storageKey);
@@ -63,7 +96,10 @@ const ensureMainAreaPanel = (event: GridviewReadyEvent) => {
 };
 
 const ensureSidebarPanel = (event: GridviewReadyEvent) => {
-    if (event.api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID)) {
+    const existingPanel = event.api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+    if (existingPanel) {
+        setSidebarWidthConstraints(event.api);
+        clampSidebarWidth(event.api);
         return;
     }
 
@@ -74,12 +110,18 @@ const ensureSidebarPanel = (event: GridviewReadyEvent) => {
             id: CONSOLE_GRID_SIDEBAR_PANEL_ID,
             component: "sidebar",
             minimumWidth: CONSOLE_SIDEBAR_MIN_SIZE,
-            size: CONSOLE_SIDEBAR_SIZE,
+            maximumWidth: getConsoleSidebarMaxWidth(event.api),
+            size: Math.min(
+                CONSOLE_SIDEBAR_SIZE,
+                getConsoleSidebarMaxWidth(event.api),
+            ),
             position: {
                 referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
                 direction: "left",
             },
         });
+        setSidebarWidthConstraints(event.api);
+        clampSidebarWidth(event.api);
     } catch (error) {
         console.warn("Failed to add console sidebar panel:", error);
         localStorage.removeItem(CONSOLE_LAYOUT_STORAGE_KEY);
@@ -127,6 +169,9 @@ const ConsoleLayout: React.FC = () => {
             event.api.removePanel(sidebarPanel);
         } else if (!sidebarCollapsed && !sidebarPanel) {
             ensureSidebarPanel(event);
+        } else if (sidebarPanel) {
+            setSidebarWidthConstraints(event.api);
+            clampSidebarWidth(event.api);
         }
 
         if (restored) {
@@ -140,6 +185,8 @@ const ConsoleLayout: React.FC = () => {
         }
 
         const disposable = api.onDidLayoutChange(() => {
+            clampSidebarWidth(api);
+
             try {
                 localStorage.setItem(
                     CONSOLE_LAYOUT_STORAGE_KEY,
@@ -152,28 +199,6 @@ const ConsoleLayout: React.FC = () => {
 
         return () => disposable.dispose();
     }, [api]);
-
-    useEffect(() => {
-        if (!api || sidebarCollapsed) {
-            return;
-        }
-
-        const checkAvailableWidth = () => {
-            const mainAreaPanel = api.getPanel(CONSOLE_GRID_EDITOR_PANEL_ID);
-            if (!mainAreaPanel) {
-                return;
-            }
-
-            if (mainAreaPanel.width < CONSOLE_MAIN_AREA_MIN_WIDTH) {
-                setSidebarCollapsed(true);
-            }
-        };
-
-        checkAvailableWidth();
-        const disposable = api.onDidLayoutChange(checkAvailableWidth);
-
-        return () => disposable.dispose();
-    }, [api, sidebarCollapsed, setSidebarCollapsed]);
 
     const handleToggleSidebarFocus = React.useCallback(() => {
         if (isSidebarFocused()) {

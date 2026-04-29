@@ -3157,6 +3157,32 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const duckdb::Expression& expr) {
   const duckdb::Expression& unwrapped = UnwrapTSQueryCast(expr);
 
+  // Trivial-constant short-circuit: NULL -> Empty, true -> All,
+  // false -> Empty. Surfaces as either a NULL TSQUERY constant or a
+  // BoundCast<TSQUERY> wrapping a BOOLEAN constant. Works at any
+  // TSQUERY position thanks to the recursive walker.
+  if (unwrapped.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& cast = unwrapped.Cast<duckdb::BoundCastExpression>();
+    if (cast.child &&
+        cast.child->return_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
+      const auto* val = TryGetConstant(*cast.child);
+      if (!val) {
+        return {ERROR_BAD_PARAMETER,
+                "BOOLEAN inside TSQUERY must be a constant"};
+      }
+      if (val->IsNull() || !val->GetValue<bool>()) {
+        AddFilter<irs::Empty>(parent);
+      } else {
+        AddFilter<irs::All>(parent);
+      }
+      return {};
+    }
+  }
+  if (const auto* val = TryGetConstant(unwrapped); val && val->IsNull()) {
+    AddFilter<irs::Empty>(parent);
+    return {};
+  }
+
   if (auto r = TryDispatchBoostCast(parent, ctx, column_info, unwrapped)) {
     return std::move(*r);
   }

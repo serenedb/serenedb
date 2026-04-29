@@ -2381,6 +2381,134 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastRange) {
                true);
 }
 
+// Trivial BOOLEAN constants short-circuit at any TSQUERY position.
+// NULL is handled by DuckDB's NULL-strict operator semantics (folds
+// the whole predicate to NULL → no rows), not by our walker.
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialFalse) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ false", columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialTrue) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  expected.add<irs::All>();
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ true", columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialOrAll) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
+  or_group.add<irs::All>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || true)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialOrFalse) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
+  or_group.add<irs::Empty>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY || false)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialAndFalse) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"x"});
+  and_group.add<irs::Empty>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && false)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialAndTrue) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"x"});
+  and_group.add<irs::All>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ('x'::TSQUERY && true)", columns,
+               true);
+}
+
+// Bool on the LHS of a binary combinator -- commutative shape.
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBoolOrTsquery) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  or_group.add<irs::All>();
+  AddTermFilter<std::string_view>(or_group, 1, std::string_view{"x"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ (true || 'x'::TSQUERY)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBoolAndTsquery) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  and_group.add<irs::Empty>();
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"x"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ (false && 'x'::TSQUERY)", columns,
+               true);
+}
+
+// Nested compounds with bool legs.
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialOrAndCompound) {
+  // (true || 'x') && 'y' -- the inner Or has the bool All leg, the
+  // outer And combines that with another term.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_group = expected.add<irs::And>();
+  auto& inner_or = and_group.add<irs::Or>();
+  inner_or.add<irs::All>();
+  AddTermFilter<std::string_view>(inner_or, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"y"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ ((true || 'x'::TSQUERY) && 'y'::TSQUERY)",
+    columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBothBoolsOr) {
+  // true || false -- both legs trivial; walker emits Or{All, Empty}.
+  // (DuckDB doesn't pre-fold this because the operator is our stub.)
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  or_group.add<irs::All>();
+  or_group.add<irs::Empty>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ (true::TSQUERY || false::TSQUERY)",
+               columns, true);
+}
+
+
 // ===========================================================================
 // `@@` TSQUERY surface (v1 redesign)
 //

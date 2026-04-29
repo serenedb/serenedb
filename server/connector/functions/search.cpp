@@ -409,6 +409,28 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   loader.RegisterCastFunction(boosted_tsq, varchar,
                               duckdb::DefaultCasts::ReinterpretCast, 100);
 
+  // BOOLEAN -> {TSQUERY, TOK}: lets `true` / `false` flow into any
+  // TSQUERY position. The runtime function throws -- which makes the
+  // cast non-foldable, so the BoundCastExpression survives in the
+  // bound tree. The walker intercepts it and emits irs::All /
+  // irs::Empty. Both targets registered because DuckDB's binder
+  // doesn't chain multi-step implicit casts (so e.g. @@(ANY, TOK)
+  // wouldn't pick up a BOOL via TSQ).
+  auto bool_cast_bind =
+    +[](duckdb::BindCastInput&, const duckdb::LogicalType&,
+        const duckdb::LogicalType&) -> duckdb::BoundCastInfo {
+    return duckdb::BoundCastInfo(
+      +[](duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
+          duckdb::CastParameters&) -> bool {
+        throw duckdb::InvalidInputException(
+          "BOOLEAN -> TSQUERY: only meaningful inside TSQUERY context");
+      });
+  };
+  loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, tsq, bool_cast_bind,
+                              /*implicit_cast_cost=*/0);
+  loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, tok_tsq,
+                              bool_cast_bind, /*implicit_cast_cost=*/0);
+
   // VARCHAR[] -> TSQUERY[] -- proper element-wise list cast (NOT a
   // ReinterpretCast on the LIST itself; see DuckDB list_casts.cpp).
   // Lets users write `ANY_OF(['a', 'b'])` without per-element

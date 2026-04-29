@@ -1666,6 +1666,60 @@ statement error boost
 SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(NULL);
 
 # ----------------------------------------------------------------------
+# Trivial BOOLEAN / NULL constants in TSQUERY context.
+# `true` -> All; `false` -> Empty; NULL goes through SQL NULL
+# semantics (the whole predicate folds to NULL -> 0 rows).
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ true ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+query
+SELECT a FROM tsq_idx WHERE b @@ false;
+----
+a
+
+query
+SELECT a FROM tsq_idx WHERE b @@ NULL;
+----
+a
+
+# Inside compound: All / Empty as a leg of || / &&.
+query
+SELECT a FROM tsq_idx WHERE b @@ (PHRASE('quick') || true) ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (PHRASE('quick') || false) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (PHRASE('quick') && true) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (PHRASE('quick') && false);
+----
+a
+
+# ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------
 

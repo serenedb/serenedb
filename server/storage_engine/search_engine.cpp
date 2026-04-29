@@ -50,6 +50,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 #include "search/resource_manager.hpp"
+#include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
 using namespace std::chrono_literals;
@@ -264,6 +265,9 @@ void SearchEngine::start() {
       ServerState::instance()->IsSingle()) {
     SDB_ASSERT(_commit_threads);
     SDB_ASSERT(_consolidation_threads);
+
+    
+    WalRecovery{}.Run();
 
     _thread_pools->Get(ThreadGroup::Commit)
       .start(_commit_threads, IR_NATIVE_STRING("search:commit"));

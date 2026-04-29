@@ -53,6 +53,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "search/task.h"
+#include "search/wal_recovery.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
@@ -280,12 +281,15 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
 
 void InvertedIndexShard::InitPostRecovery(bool is_new) {
   auto& server = SerenedServer::Instance();
+
+  // Shared WAL replay for lagging shards runs later from SearchEngine::start,
+  // which walks the catalog itself — no per-shard registration needed.
+
   auto res =
     server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(
       [weak_self = weak_from_this(), is_new]() -> Result {
         auto self = weak_self.lock();
         if (!self) {
-          // Index was dropped during recovery
           return {};
         }
 
@@ -293,7 +297,6 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
 
         const auto recovery_tick = self->_engine.recoveryTick();
 
-        // Check for out-of-sync condition
         if (self->_recovery_tick > recovery_tick) {
           SDB_WARN("xxxxx", Logger::SEARCH, "Inverted index '",
                    self->GetId().id(), "' is recovered at tick ",
@@ -303,11 +306,13 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
                    "of sync");
         }
 
-        // Register flush subscription if we are loading existing index
-        // If not finishCreation would be called later when indexing finishes
+        // Lagging shards defer FinishCreation+StartTasks to WalRecovery::Run.
         if (!is_new) {
-          self->FinishCreation();
-          self->StartTasks();
+          const bool needs_recovery = self->_recovery_tick < recovery_tick;
+          if (!needs_recovery) {
+            self->FinishCreation();
+            self->StartTasks();
+          }
         }
 
         return {};

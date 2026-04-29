@@ -234,6 +234,14 @@ class InvertedIndexShard final
   Result CleanupUnsafeImpl();
   void InitPostRecovery(bool is_new);
 
+ public:
+  // Used by the WalRecovery coordinator immediately before CommitUnsafe so
+  // meta_payload_provider persists the tick we just replayed to. Not for
+  // general use.
+  void SetRecoveredTick(Tick tick) noexcept { _last_committed_tick = tick; }
+
+ private:
+
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;

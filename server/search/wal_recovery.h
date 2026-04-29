@@ -1,0 +1,36 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+namespace sdb::search {
+
+// Stateless one-shot. On Run(), walks the catalog snapshot, picks up every
+// inverted-index shard whose persisted iresearch tick lags the engine's
+// recovered tick, then reads the RocksDB WAL once and fans entries out to
+// each lagging shard's accumulator (routing key = table ObjectId).
+class WalRecovery {
+ public:
+  // Called once from SearchEngine::start, after CatalogFeature has loaded
+  // every shard and before the search thread pools come up.
+  void Run();
+};
+
+}  // namespace sdb::search

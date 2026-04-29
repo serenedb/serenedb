@@ -875,9 +875,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   auto& get = plan->Cast<duckdb::LogicalGet>();
 
-  const bool use_row_number_col = sdb_table->GetTableType() == TableType::File;
   const bool use_generated_pk_rowid_col =
-    !use_row_number_col && sdb_table->GetTableType() != TableType::File &&
+    sdb_table->GetTableType() != TableType::File &&
     sdb_table->PKColumns().empty();
 
   // The binder creates an empty LogicalGet. Populate column_ids for all

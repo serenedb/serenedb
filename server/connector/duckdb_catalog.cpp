@@ -892,7 +892,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     for (size_t i = 0; i < columns.size(); ++i) {
       get.types.push_back(columns[i].type);
     }
-    if (use_row_number_col) {
+    if (sdb_table->GetTableType() == TableType::File) {
       get.AddColumnId(
         duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
       get.types.push_back(duckdb::LogicalType::BIGINT);

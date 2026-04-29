@@ -149,22 +149,22 @@ CREATE INDEX csv_idx_ext_facts ON csv_idx_ext USING inverted(fact test_english, 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'team member');
 ----
-200000 values hashing to 2ecbf77a0e2fb34462b902702f905b07
+200000 values hashing to dffa5050b3b273e066f091861f35419f
 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff has');
 ----
-100000 values hashing to 58ede942274bbe032c45ca26ebf2096b
+100000 values hashing to 68ea068f3dc556204bf660fa9bf9f37d
 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(fact, 'cutelooked has');
 ----
-100000 values hashing to 2d1e385ecd82322da01c76051529a186
+100000 values hashing to cb3f9840fcd2ef13ff17e654eac7c758
 
 query
 SELECT * FROM csv_idx_ext_facts WHERE PHRASE(dept, 'department alpha');
 ----
-66600 values hashing to cd6c3bdbacbfa7d828862dd9c9de13e1
+66600 values hashing to e75efbadfaf23e06fddbfa32ed427ef9
 
 statement ok
 DROP TABLE csv_idx_ext;
@@ -267,17 +267,17 @@ CREATE INDEX dense_csv_slow_idx ON dense_csv_slow_ext USING inverted(content tes
 query
 SELECT * FROM dense_csv_slow_idx WHERE PHRASE(content, 'universal text entry');
 ----
-20000 values hashing to bcfeceddfe84a9e4c79ec4993576de2e
+20000 values hashing to 4d8054ee451f9a6ffac536da14010703
 
 query
 SELECT * FROM dense_csv_slow_idx WHERE PHRASE(content, 'in dataset');
 ----
-20000 values hashing to bcfeceddfe84a9e4c79ec4993576de2e
+20000 values hashing to 4d8054ee451f9a6ffac536da14010703
 
 query
 SELECT content FROM dense_csv_slow_idx WHERE PHRASE(region, 'region north area');
 ----
-5000 values hashing to cecbcacf61dcbbce2762453ae3e66bdc
+5000 values hashing to e2cd166d4f5fecc5ae38bbdc8a03c004
 
 query
 SELECT region FROM dense_csv_slow_idx WHERE PHRASE(region, 'region south area');
@@ -287,7 +287,7 @@ SELECT region FROM dense_csv_slow_idx WHERE PHRASE(region, 'region south area');
 query
 SELECT * FROM dense_csv_slow_idx WHERE PHRASE(content, 'universal') AND PHRASE(region, 'region north area');
 ----
-10000 values hashing to c2f26378778ca656b6e6b9276d5d735b
+10000 values hashing to f795c7eddb5e4c035810211d5ffc3a5d
 
 statement ok
 DROP TABLE dense_csv_slow_ext;

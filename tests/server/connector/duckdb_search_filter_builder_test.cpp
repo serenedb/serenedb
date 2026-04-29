@@ -2213,7 +2213,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
                        500.0, true)
     .boost(2.5f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE BOOST(ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0), "
                "2.5)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2281,7 +2281,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
 }
 
 // ===========================================================================
-// geo_in_range
+// ST_Distance_Between
 //
 // All tests use the canonical (lat=20, lng=10) Point centroid -- expressed in
 // SQL as the GeoJSON literal '{"type":"Point","coordinates":[10,20]}' (GeoJSON
@@ -2296,7 +2296,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_Basic) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2308,7 +2308,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_GeometryField) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2323,7 +2323,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_MinZeroLeavesUnbounded) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), std::nullopt,
                        false, 500.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 0.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2335,7 +2335,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_ExclusiveBounds) {
   AddGeoDistanceFilter(expected, 1, GeoPointFromDegrees(20, 10), 100.0, false,
                        500.0, false);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, "
                "false, false)",
                columns, true, GeoJsonAnalyzerProvider);
@@ -2350,7 +2350,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_FiveArgsExclusiveMin) {
                        500.0, true);
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+    "SELECT * FROM foo WHERE ST_Distance_Between(g, "
     "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0, false)",
     columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2363,7 +2363,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NotNegation) {
   AddGeoDistanceFilter(negated, 1, GeoPointFromDegrees(20, 10), 100.0, true,
                        500.0, true);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE NOT GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE NOT ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
@@ -2374,7 +2374,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "c"}};
   irs::And expected;
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, c, 100.0, 500.0)",
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)",
                columns, false, GeoJsonAnalyzerProvider);
 }
 
@@ -2385,7 +2385,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0)",
                columns, false, SegmentationAnalyzerProvider);
 }
@@ -2395,7 +2395,7 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_InvalidGeoJsonCentroid) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE GEO_IN_RANGE(g, "
+               "SELECT * FROM foo WHERE ST_Distance_Between(g, "
                "'not a geojson', 100.0, 500.0)",
                columns, false, GeoJsonAnalyzerProvider);
 }

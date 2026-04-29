@@ -1434,8 +1434,8 @@ Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
 }
 
 // ---------------------------------------------------------------------------
-// geo_in_range(field, centroid, min_distance, max_distance,
-//              [include_min, [include_max]]) -> bool
+// ST_Distance_Between(field, centroid, min_distance, max_distance,
+//                     [include_min, [include_max]]) -> bool
 //
 // `field` is a column reference (JSON GeoJSON, or GEOMETRY).
 // `centroid` is a constant -- JSON GeoJSON, or a GEOMETRY value (WKB).
@@ -1449,31 +1449,31 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::BoundFunctionExpression& func) {
   const auto num_inputs = func.children.size();
   if (num_inputs < 4 || num_inputs > 6) {
-    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE has ", num_inputs,
+    return {ERROR_BAD_PARAMETER, "ST_Distance_Between has ", num_inputs,
             " inputs but 4 to 6 expected"};
   }
 
   const auto* col_ref = TryGetColumnRef(*func.children[0]);
   if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE first input must be a column"};
+    return {ERROR_BAD_PARAMETER, "ST_Distance_Between first input must be a column"};
   }
 
   const auto* centroid_val = TryGetConstant(*func.children[1]);
   if (!centroid_val) {
-    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE centroid must be a constant"};
+    return {ERROR_BAD_PARAMETER, "ST_Distance_Between centroid must be a constant"};
   }
 
   const auto* min_val = TryGetConstant(*func.children[2]);
   if (!min_val || min_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
     return {ERROR_BAD_PARAMETER,
-            "GEO_IN_RANGE min_distance must be a constant DOUBLE"};
+            "ST_Distance_Between min_distance must be a constant DOUBLE"};
   }
   const double min_distance = min_val->GetValue<double>();
 
   const auto* max_val = TryGetConstant(*func.children[3]);
   if (!max_val || max_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
     return {ERROR_BAD_PARAMETER,
-            "GEO_IN_RANGE max_distance must be a constant DOUBLE"};
+            "ST_Distance_Between max_distance must be a constant DOUBLE"};
   }
   const double max_distance = max_val->GetValue<double>();
 
@@ -1482,7 +1482,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
     const auto* v = TryGetConstant(*func.children[4]);
     if (!v || v->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
       return {ERROR_BAD_PARAMETER,
-              "GEO_IN_RANGE include_min must be a constant BOOLEAN"};
+              "ST_Distance_Between include_min must be a constant BOOLEAN"};
     }
     include_min = v->GetValue<bool>();
   }
@@ -1491,7 +1491,7 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
     const auto* v = TryGetConstant(*func.children[5]);
     if (!v || v->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
       return {ERROR_BAD_PARAMETER,
-              "GEO_IN_RANGE include_max must be a constant BOOLEAN"};
+              "ST_Distance_Between include_max must be a constant BOOLEAN"};
     }
     include_max = v->GetValue<bool>();
   }
@@ -1501,10 +1501,10 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
       (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
        column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY)) {
     return {ERROR_BAD_PARAMETER,
-            "GEO_IN_RANGE field must be JSON (GeoJSON) or GEOMETRY"};
+            "ST_Distance_Between field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->analyzer.analyzer) {
-    return {ERROR_BAD_PARAMETER, "GEO_IN_RANGE field has no analyzer attached"};
+    return {ERROR_BAD_PARAMETER, "ST_Distance_Between field has no analyzer attached"};
   }
 
   std::string field_name;

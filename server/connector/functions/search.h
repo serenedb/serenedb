@@ -39,12 +39,15 @@ inline constexpr std::string_view kLevenshteinMatch = "levenshtein_match";
 inline constexpr std::string_view kBoost = "boost";
 
 // Geo range search:
-//   geo_in_range(field, centroid_geojson, min_distance, max_distance,
-//                [include_min, [include_max]]) -> BOOLEAN
-// Matches rows whose indexed geo value lies between min_distance and
-// max_distance metres of the centroid (parsed as GeoJSON). The bracket
-// (inclusive vs exclusive) defaults to inclusive on both sides.
-inline constexpr std::string_view kGeoInRange = "geo_in_range";
+//   ST_Distance_Between(field, centroid, min_distance, max_distance,
+//                       [include_min, [include_max]]) -> BOOLEAN
+// Matches rows whose centroid-to-centroid geodesic distance to `centroid`
+// lies between min_distance and max_distance metres. The brackets
+// (inclusive vs exclusive) default to inclusive on both sides. The name
+// follows the PostGIS / DuckDB ST_* convention; the `_Between` suffix
+// reads naturally with two distance bounds and avoids confusion with
+// PostGIS's interior `ST_DWithin` / one-sided `ST_DFullyWithin`.
+inline constexpr std::string_view kGeoInRange = "ST_Distance_Between";
 
 // Geo distance pseudo-function:
 //   ST_Distance_Centroid(field, centroid) -> DOUBLE

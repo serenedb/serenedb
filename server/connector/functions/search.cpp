@@ -275,7 +275,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     {duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::DOUBLE},
     duckdb::LogicalType::BOOLEAN, SearchStubFn));
 
-  // geo_in_range(field, centroid, min_distance, max_distance,
+  // ST_Distance_Between(field, centroid, min_distance, max_distance,
   //              [include_min, [include_max]]) -> bool
   //
   // field   : JSON column (GeoJSON) or GEOMETRY column.

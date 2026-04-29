@@ -36,7 +36,9 @@
         }
     },
     "dependencies": {
+        "@emotion/is-prop-valid": "^1.4.0",
         "@linaria/react": "^6.3.0",
+        "@linaria/core": "^6.3.0",
         "@glideapps/glide-data-grid": "6.0.4-alpha24",
         "@orpc/tanstack-query": "^1.13.1",
         "@serene-ui/shared-core": "*",

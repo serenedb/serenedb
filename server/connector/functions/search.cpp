@@ -432,15 +432,30 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // Bare-string lists (`['a', 'b']`) are typed VARCHAR[] by the
   // binder; the registered VARCHAR[] -> TSQUERY[] list-cast (above)
   // lifts them to TSQUERY[] at cost 0 per element.
+  //
+  // Fixed-length ARRAY inputs (e.g. `CAST([...] AS VARCHAR[N])`,
+  // `CAST(... AS TSQUERY[N])`) are accepted via parallel unsized-ARRAY
+  // overloads. DuckDB matches an unsized ARRAY type against any
+  // ARRAY(T, N), and the filter-builder dispatch handles ARRAY children
+  // alongside LIST.
+  const auto tsq_array =
+    duckdb::LogicalType::ARRAY(tsq, duckdb::optional_idx{});
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQAnyOf}};
     set.AddFunction(duckdb::ScalarFunction({tsq_list}, tsq, TSQueryStubFn));
     set.AddFunction(
       duckdb::ScalarFunction({tsq_list, intv}, tsq, TSQueryStubFn));
+    set.AddFunction(duckdb::ScalarFunction({tsq_array}, tsq, TSQueryStubFn));
+    set.AddFunction(
+      duckdb::ScalarFunction({tsq_array, intv}, tsq, TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kTSQAllOf}, {tsq_list}, tsq, TSQueryStubFn));
+  {
+    duckdb::ScalarFunctionSet set{std::string{kTSQAllOf}};
+    set.AddFunction(duckdb::ScalarFunction({tsq_list}, tsq, TSQueryStubFn));
+    set.AddFunction(duckdb::ScalarFunction({tsq_array}, tsq, TSQueryStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
 
   // TOKENIZE(text [, analyzer]). 1-arg uses ambient analyzer (same as
   // bare VARCHAR); 2-arg uses the named analyzer (equivalent to

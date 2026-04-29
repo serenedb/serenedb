@@ -237,6 +237,32 @@ SELECT a FROM tsq_idx WHERE b @@ ANY_OF(['quick', 'brown'], 5);
 statement error
 SELECT a FROM tsq_idx WHERE b @@ ALL_OF(['quick', 'brown'], 1);
 
+# ANY_OF / ALL_OF with explicit fixed-size TSQUERY[N] (ARRAY, not
+# LIST). Routes through the unsized-ARRAY function overload and the
+# ARRAY branch of the list-arg dispatch. Bare-string `[..]` literals
+# bind to LIST(VARCHAR); only an explicit cast produces ARRAY.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(['quick'::TSQUERY, 'turtle'::TSQUERY]::TSQUERY[2]) ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ALL_OF(['quick'::TSQUERY, 'fox'::TSQUERY]::TSQUERY[2]) ORDER BY a;
+----
+a
+1
+2
+
+# ANY_OF([TSQUERY[N]], min_match) -- ARRAY input + explicit min_match.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(['quick'::TSQUERY, 'brown'::TSQUERY, 'turtle'::TSQUERY]::TSQUERY[3], 2);
+----
+a
+1
+
 # ----------------------------------------------------------------------
 # Boost operator `^`
 # ----------------------------------------------------------------------
@@ -676,6 +702,16 @@ a
 # Bare-string version with interval gap.
 query
 SELECT a FROM tsq_idx WHERE b @@ ('quick' ## [0, 2] ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+# ## with explicit fixed-size INTEGER[2] (ARRAY, not LIST). Same
+# semantics as the [0,2] LIST literal, but exercises the ARRAY branch
+# of IsPhraseSeqGapType / ParsePhraseGap.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## [0,2]::INTEGER[2] ## 'fox'::TSQUERY) ORDER BY a;
 ----
 a
 1

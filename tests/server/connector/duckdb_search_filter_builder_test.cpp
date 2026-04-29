@@ -2871,6 +2871,36 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfBareStringList) {
                true);
 }
 
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTsqueryArray) {
+  // ANY_OF(CAST(... AS TSQUERY[N])) -- fixed-length ARRAY input.
+  // Routes through the unsized-ARRAY function overload and the ARRAY
+  // branch of the filter-builder dispatch.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"quick"});
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"fox"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "ANY_OF(CAST(['quick'::TSQUERY, 'fox'::TSQUERY] AS TSQUERY[2]))",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTsqueryArray) {
+  // ALL_OF(CAST(... AS TSQUERY[N])) -- ARRAY input on the AND side.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"quick"});
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"brown"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "ALL_OF(CAST(['quick'::TSQUERY, 'brown'::TSQUERY] AS TSQUERY[2]))",
+               columns, true);
+}
+
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfBareStringList) {
   // ALL_OF([bare strings]) via VARCHAR[] -> TSQUERY[] list cast.
   std::vector<ColumnSpec> columns{

@@ -1747,19 +1747,26 @@ Result ExtractAnyAllOfArgs(
   }
 
   // DuckDB constant-folds `['a', 'b']` into a BOUND_CONSTANT holding a
-  // LIST Value rather than a `list_value` function call. Support both
-  // shapes: synthesised BoundConstantExpression wrappers per child Value
-  // in the folded case, raw child expression pointers otherwise.
+  // LIST/ARRAY Value rather than a `list_value`/`array_value` function
+  // call. Support both shapes (and both LIST and fixed-length ARRAY):
+  // synthesised BoundConstantExpression wrappers per child Value in the
+  // folded case, raw child expression pointers otherwise.
   const auto& list_expr = *func.children[0];
-  if (list_expr.return_type.id() != duckdb::LogicalTypeId::LIST) {
-    return {ERROR_BAD_PARAMETER, "any_of/all_of first argument must be a list"};
+  const auto list_type_id = list_expr.return_type.id();
+  if (list_type_id != duckdb::LogicalTypeId::LIST &&
+      list_type_id != duckdb::LogicalTypeId::ARRAY) {
+    return {ERROR_BAD_PARAMETER,
+            "any_of/all_of first argument must be a list or array"};
   }
   if (list_expr.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val = list_expr.Cast<duckdb::BoundConstantExpression>().value;
     if (val.IsNull()) {
       return {ERROR_BAD_PARAMETER, "list arg must not be NULL"};
     }
-    for (const auto& child_val : duckdb::ListValue::GetChildren(val)) {
+    const auto& children = list_type_id == duckdb::LogicalTypeId::ARRAY
+                             ? duckdb::ArrayValue::GetChildren(val)
+                             : duckdb::ListValue::GetChildren(val);
+    for (const auto& child_val : children) {
       synthesised.push_back(
         duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
       args.push_back(synthesised.back().get());
@@ -1767,16 +1774,17 @@ Result ExtractAnyAllOfArgs(
   } else if (list_expr.expression_class ==
              duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& list_fn = list_expr.Cast<duckdb::BoundFunctionExpression>();
-    if (list_fn.function.name != "list_value") {
+    if (list_fn.function.name != "list_value" &&
+        list_fn.function.name != "array_value") {
       return {ERROR_BAD_PARAMETER,
-              "list arg must be a literal list (got: ", list_fn.function.name,
-              ")"};
+              "list arg must be a literal list or array (got: ",
+              list_fn.function.name, ")"};
     }
     for (const auto& e : list_fn.children) {
       args.push_back(e.get());
     }
   } else {
-    return {ERROR_BAD_PARAMETER, "list arg must be a literal list"};
+    return {ERROR_BAD_PARAMETER, "list arg must be a literal list or array"};
   }
 
   if (func.children.size() == 2) {

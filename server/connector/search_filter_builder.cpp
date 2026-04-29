@@ -468,14 +468,20 @@ bool IsComparisonExpr(const duckdb::Expression& expr) {
          GetComparisonOp(expr.type) != ComparisonOp::None;
 }
 
-// Unwraps reinterpret casts between VARCHAR and TSQUERY so the filter
-// builder can see through both directions of implicit promotion:
-//   - VARCHAR -> TSQUERY (bare string literals into TSQUERY contexts)
-//   - TSQUERY -> VARCHAR (TSQUERY-typed children flowing into VARCHAR
+// Unwraps reinterpret casts between VARCHAR / TSQUERY / TOKENIZED_TSQUERY
+// so the filter builder sees through both directions of implicit
+// promotion:
+//   - VARCHAR -> TSQUERY  (bare string literals into TSQUERY contexts)
+//   - TSQUERY -> VARCHAR  (TSQUERY-typed children flowing into VARCHAR
 //     mirror overloads of `##`, e.g. PHRASE('a') ## 1, where DuckDB
-//     wraps the LHS in BOUND_CAST<VARCHAR>).
-// Iterative because a TSQUERY-cast can wrap a VARCHAR-cast and vice
-// versa when overloads chain.
+//     wraps the LHS in BOUND_CAST<VARCHAR>)
+//   - TOK <-> TSQ / VARCHAR transit casts that DON'T carry a tokenize
+//     modifier on the cast's return_type. Modifier-bearing casts are
+//     preserved here so the BuildTSQuery walker can read the override
+//     before continuing to dispatch the inner expression.
+// Iterative because casts can chain (e.g. PHRASE('x')::tokenize('y')
+// inside @@ becomes BoundCast<TSQ>(BoundCast<TOK-mod-y>(PHRASE)) -- we
+// peel the outer transit cast and stop at the modifier-bearing cast).
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
   const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
@@ -485,12 +491,21 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     }
     const auto& target = cast.return_type;
     const auto& source = cast.child->return_type;
-    const bool is_tsq_to_v = IsTSQueryType(source) &&
-                             target.id() == duckdb::LogicalTypeId::VARCHAR &&
-                             !IsTSQueryType(target);
-    const bool is_v_to_tsq =
-      IsTSQueryType(target) && source.id() == duckdb::LogicalTypeId::VARCHAR;
-    if (!is_tsq_to_v && !is_v_to_tsq) {
+    // Stop at a cast whose target carries a tokenize modifier -- the
+    // walker needs to observe it to apply the analyzer override.
+    if (!TryGetTokenizerModifier(target).name.empty()) {
+      break;
+    }
+    const bool is_tsq_like_target = IsAnyTSQueryType(target);
+    const bool is_tsq_like_source = IsAnyTSQueryType(source);
+    const bool target_is_varchar =
+      target.id() == duckdb::LogicalTypeId::VARCHAR && !is_tsq_like_target;
+    const bool source_is_varchar =
+      source.id() == duckdb::LogicalTypeId::VARCHAR && !is_tsq_like_source;
+    const bool is_tsq_to_v = is_tsq_like_source && target_is_varchar;
+    const bool is_v_to_tsq = is_tsq_like_target && source_is_varchar;
+    const bool is_tsq_to_tsq = is_tsq_like_source && is_tsq_like_target;
+    if (!is_tsq_to_v && !is_v_to_tsq && !is_tsq_to_tsq) {
       break;
     }
     cur = cast.child.get();
@@ -3028,34 +3043,38 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
 Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::Expression& expr) {
-  // `<expr>::tokenize('<analyzer>')` annotates a TSQUERY type with an
-  // ExtensionTypeInfo modifier carrying the tokenizer name. The
-  // modifier can appear on either a BOUND_CAST wrapper (cast not
+  // `<expr>::tokenize('<analyzer>')` annotates a TOKENIZED_TSQUERY type
+  // with an ExtensionTypeInfo modifier carrying the tokenizer name.
+  // The modifier can appear on either a BOUND_CAST wrapper (cast not
   // folded) or on a BOUND_CONSTANT's value type (DuckDB constant-folds
   // `'foo'::tokenize('name')` into a constant whose type carries the
   // modifier).
   //
+  // We first peel any non-modifier transit casts (e.g. the outer
+  // TOK->TSQ cast DuckDB inserts when a tokenized value flows into a
+  // TSQUERY-expecting overload like `@@`). UnwrapTSQueryCast stops at
+  // any modifier-bearing cast so we can observe the override.
+  //
   // 'identity' is special-cased to mean "no tokenisation, raw ByTerm".
-  // Any other name was resolved at SQL bind time by the
-  // tokenize(<name>) parameterized-type bind function: it looked up
-  // the named catalog tokenizer and stashed the live analyzer pointer
-  // in the type's ExtensionTypeInfo. We just read the pointer here,
-  // override ctx.tokenizer for the inner subtree, and recurse.
+  // Any other name is resolved at filter-build time via
+  // ResolveTokenizerAnalyzer; the resulting AnalyzerWrapper lives on
+  // this stack frame and overrides ctx.tokenizer for the inner subtree.
+  const duckdb::Expression& peeled = UnwrapTSQueryCast(expr);
   {
     TokenizerModifier mod;
     const duckdb::Expression* inner_expr = nullptr;
     const duckdb::Value* inner_val = nullptr;
-    if (expr.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
-      const auto& cast_expr = expr.Cast<duckdb::BoundCastExpression>();
+    if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+      const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
       mod = TryGetTokenizerModifier(cast_expr.return_type);
       if (!mod.name.empty() && cast_expr.child) {
         inner_expr = cast_expr.child.get();
         const auto& inner = UnwrapTSQueryCast(*inner_expr);
         inner_val = TryGetConstant(inner);
       }
-    } else if (expr.expression_class ==
+    } else if (peeled.expression_class ==
                duckdb::ExpressionClass::BOUND_CONSTANT) {
-      const auto& cv = expr.Cast<duckdb::BoundConstantExpression>().value;
+      const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
       mod = TryGetTokenizerModifier(cv.type());
       if (!mod.name.empty()) {
         inner_val = &cv;
@@ -3070,13 +3089,25 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       // misuse becomes a real problem, detection has to move into
       // the parameterized-type bind, not here.
       if (mod.name == "identity") {
-        if (!inner_val || inner_val->IsNull() ||
-            inner_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-          return {ERROR_NOT_IMPLEMENTED,
-                  "::tokenize('identity') currently supports only bare "
-                  "VARCHAR/TSQUERY constants as the inner expression"};
+        // Folded-constant case: emit raw ByTerm with the literal bytes,
+        // no analyzer involvement.
+        if (inner_val && !inner_val->IsNull() &&
+            inner_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
+          return BuildFtsTerm(parent, ctx, column_info, *inner_val);
         }
-        return BuildFtsTerm(parent, ctx, column_info, *inner_val);
+        // Cast-wrapped case: recurse with sub_ctx.tokenizer set to a
+        // stack-local identity analyzer so any leaf tokenisation
+        // (PHRASE / NGRAM / LEVENSHTEIN / bare strings) treats input
+        // as one raw token. The local outlives the recursion.
+        if (inner_expr) {
+          irs::StringTokenizer identity_tokenizer;
+          auto sub_ctx = ctx;
+          sub_ctx.tokenizer = &identity_tokenizer;
+          return BuildTSQuery(parent, sub_ctx, column_info, *inner_expr);
+        }
+        return {ERROR_NOT_IMPLEMENTED,
+                "::tokenize('identity'): inner expression has unsupported "
+                "shape"};
       }
       // Resolve the named analyzer via the current transaction's
       // catalog snapshot. The wrapper lives on the stack here; the
@@ -3112,7 +3143,10 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
   }
 
-  const auto& unwrapped = UnwrapTSQueryCast(expr);
+  // The peeled expression is what the rest of the dispatch operates
+  // on -- bare-string / function-call / etc. (we already unwrapped at
+  // the top, no need to re-peel here).
+  const auto& unwrapped = peeled;
 
   // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenise via
   // the ambient (column) analyzer. Multi-token input composes with OR

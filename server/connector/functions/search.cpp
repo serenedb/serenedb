@@ -49,13 +49,27 @@ duckdb::LogicalType MakeTSQueryType() {
   return type;
 }
 
+duckdb::LogicalType MakeTokenizedTSQueryType() {
+  auto type = duckdb::LogicalType(duckdb::LogicalTypeId::VARCHAR);
+  type.SetAlias(std::string{kTokenizedTSQueryTypeName});
+  return type;
+}
+
 bool IsTSQueryType(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::VARCHAR && type.HasAlias() &&
          type.GetAlias() == kTSQueryTypeName;
 }
 
+bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::VARCHAR || !type.HasAlias()) {
+    return false;
+  }
+  const auto& alias = type.GetAlias();
+  return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName;
+}
+
 TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type) {
-  if (!IsTSQueryType(type) || !type.HasExtensionInfo()) {
+  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
     return {};
   }
   const auto* ext = type.GetExtensionInfo().get();
@@ -275,7 +289,13 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       // 'identity' so the filter builder's existing identity branch
       // handles it without a separate null-check path.
       auto resolved = v.IsNull() ? duckdb::Value("identity") : v;
-      auto type = MakeTSQueryType();
+      // Return TOKENIZED_TSQUERY (distinct alias from TSQUERY) so a
+      // `<TSQ-typed expr>::tokenize(...)` cast doesn't get short-
+      // circuited by DuckDB's same-alias cast elision. The implicit
+      // casts registered below let TOKENIZED_TSQUERY values flow back
+      // into TSQUERY-expecting overloads (`@@`, `||`, `&&`, `##`, ...)
+      // transparently.
+      auto type = MakeTokenizedTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(resolved);
       // Note: the bind callback only stashes the analyzer NAME. The
@@ -302,6 +322,25 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
                               duckdb::DefaultCasts::ReinterpretCast, 100);
   loader.RegisterCastFunction(varchar, tsq,
                               duckdb::DefaultCasts::ReinterpretCast, 0);
+
+  // Casts to/from the TOKENIZED_TSQUERY alias. The bind callback for
+  // `tokenize(...)` returns this alias (instead of TSQUERY) so that:
+  //   - `'foo'::tokenize('x')`     -- VARCHAR -> TOK-mod-x cast survives
+  //   - `PHRASE('y')::tokenize('x')` -- TSQ -> TOK-mod-x cast survives
+  // (both are different-alias casts so DuckDB doesn't short-circuit).
+  // The TOK->TSQ direction lets a tokenized value flow back into any
+  // TSQUERY-expecting overload (`@@`, `||`, `&&`, `##`, ...) without
+  // duplicate registrations. TOK->VARCHAR mirrors the asymmetric cost
+  // for TSQ->VARCHAR so TOKENIZED values prefer TSQUERY overloads.
+  const auto tok_tsq = MakeTokenizedTSQueryType();
+  loader.RegisterCastFunction(varchar, tok_tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tsq, tok_tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tok_tsq, tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tok_tsq, varchar,
+                              duckdb::DefaultCasts::ReinterpretCast, 100);
 
   // VARCHAR[] -> TSQUERY[] -- proper element-wise list cast (NOT a
   // ReinterpretCast on the LIST itself; see DuckDB list_casts.cpp).
@@ -468,20 +507,29 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // PG-style typed-tsquery binary operators: ||, &&.
+  // PG-style typed-tsquery binary operators: ||, &&. Registered as
+  // (TOKENIZED_TSQUERY, TOKENIZED_TSQUERY) -> TOKENIZED_TSQUERY only.
+  // TSQUERY operands are auto-cast to TOK at cost 0; the cast wrapper
+  // survives (different aliases). The walker peels modifier-free TOK
+  // wrappers via UnwrapTSQueryCast, so existing tree shapes are
+  // unchanged. Crucially, per-leg `'a'::tokenize(x) || 'b'::tokenize(x)`
+  // resolves directly without a TOK->TSQ auto-cast that would fold the
+  // modifier away. Registering both (TSQ, TSQ) and (TOK, TOK) variants
+  // would cause "Could not choose a best candidate" bind errors for
+  // TSQUERY operands -- DuckDB doesn't break the tie by cast count
+  // when aliases share the underlying VARCHAR type.
   for (auto name : {kTSQueryOr, kTSQueryAnd}) {
     loader.RegisterFunction(duckdb::ScalarFunction(
-      std::string{name}, {tsq, tsq}, tsq, TSQueryStubFn));
+      std::string{name}, {tok_tsq, tok_tsq}, tok_tsq, TSQueryStubFn));
   }
 
-  // Unary prefix NOT (!!). Not registered in DuckDB core, so RegisterFunction
-  // creates a fresh entry.
-  loader.RegisterFunction(duckdb::ScalarFunction(std::string{kTSQueryNot},
-                                                 {tsq}, tsq, TSQueryStubFn));
-
-  // Boost: TSQUERY ^ DOUBLE -> TSQUERY. Own grammar precedence tier.
+  // Unary prefix NOT (!!). Single TOK overload (same reasoning).
   loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kTSQueryBoost}, {tsq, dbl}, tsq, TSQueryStubFn));
+    std::string{kTSQueryNot}, {tok_tsq}, tok_tsq, TSQueryStubFn));
+
+  // Boost: TOK ^ DOUBLE -> TOK. Single TOK overload (same reasoning).
+  loader.RegisterFunction(duckdb::ScalarFunction(
+    std::string{kTSQueryBoost}, {tok_tsq, dbl}, tok_tsq, TSQueryStubFn));
 
   // Phrase sequence `a ## b` (strictly adjacent), `a ## N ## b` (gap N),
   // `a ## [lo, hi] ## b` (interval).
@@ -518,10 +566,21 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // @@(ANY, TSQUERY) -> BOOLEAN. Commutative (filter builder inspects
-  // both children for column-ref).
+  // @@(ANY, TOKENIZED_TSQUERY) -> BOOLEAN. Commutative (filter builder
+  // inspects both children for column-ref). The second arg is typed as
+  // TOKENIZED_TSQUERY (not TSQUERY) so that:
+  //   - `b @@ EXPR::tokenize('x')`: the user-written cast targets TOK
+  //     directly, sits unwrapped under @@. Walker reads modifier.
+  //   - `b @@ PHRASE('y')` / `b @@ 'foo'`: TSQ / VARCHAR auto-cast to
+  //     TOK. The wrapping cast carries no modifier (target alias is
+  //     plain TOK), so the walker peels it via UnwrapTSQueryCast and
+  //     dispatches the inner TSQ/VARCHAR expression as before.
+  // We don't register the (ANY, TSQUERY) overload because that would
+  // cause an ambiguous-overload bind error for STRING_LITERAL operands
+  // (DuckDB ranks `VARCHAR -> TSQUERY` and `VARCHAR -> TOKENIZED_TSQUERY`
+  // identically for literals, regardless of registered cast costs).
   loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kTSQueryMatch}, {duckdb::LogicalType::ANY, tsq},
+    std::string{kTSQueryMatch}, {duckdb::LogicalType::ANY, tok_tsq},
     duckdb::LogicalType::BOOLEAN, TSQueryStubFn));
 }
 

@@ -116,7 +116,7 @@ id	to_	bo
 query
 SELECT id, OFFSETS(body, 0) AS bo
 FROM offsets_test_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ 'fox'
 ORDER BY id;
 ----
 id	bo
@@ -128,7 +128,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE TERM_IN(body, 'fox', 'quick')
+WHERE body @@ ('fox'::TSQUERY || 'quick'::TSQUERY)
 ORDER BY id;
 ----
 id	bo

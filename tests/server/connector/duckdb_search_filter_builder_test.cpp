@@ -146,7 +146,7 @@ template<irs::IndexFeatures Features>
 catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
   auto make_segmentation = [] {
     auto builder =
-      vpack::Parser::fromJson("{ \"analyzer\": {\"type\":\"segmentation\"}}");
+      vpack::Parser::fromJson("{ \"tokenizer\": {\"type\":\"segmentation\"}}");
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
@@ -167,7 +167,7 @@ catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
   catalog::Column::Id) {
   auto make_ngram = [] {
     auto builder = vpack::Parser::fromJson(
-      "{ \"analyzer\": {\"type\":\"ngram\","
+      "{ \"tokenizer\": {\"type\":\"ngram\","
       "\"properties\":{\"min\":2,\"max\":2,"
       "\"preserveOriginal\":false,\"streamType\":\"utf8\"}}}");
     return std::string(builder->slice().startAs<char>(),
@@ -185,9 +185,9 @@ catalog::ColumnAnalyzer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
   catalog::Column::Id) {
   auto make_wildcard = [] {
     auto builder = vpack::Parser::fromJson(
-      "{ \"analyzer\": {\"type\":\"wildcard\","
+      "{ \"tokenizer\": {\"type\":\"wildcard\","
       "\"properties\":{\"ngramSize\":3,"
-      "\"analyzer\":{\"type\":\"identity\"}}}}");
+      "\"tokenizer\":{\"type\":\"identity\"}}}}");
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
@@ -3224,6 +3224,49 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('identity')",
                columns, true, SegmentationAnalyzerProvider);
+}
+
+// PHRASE('text')::tokenize('identity') -- the cast wraps a TSQUERY-typed
+// expression. Two-alias scheme keeps the cast wrapper alive (TSQUERY ->
+// TOKENIZED_TSQUERY differs in alias, so DuckDB doesn't elide). Walker
+// reads the modifier from the cast's return_type, sets sub_ctx.tokenizer,
+// recurses into PHRASE which uses the override at its leaf. With
+// 'identity' override, PHRASE tokenises 'quick fox' through the identity
+// analyzer -> single phrase part with raw bytes (vs the segmentation
+// column's split tokens). The non-identity catalog-resolved path is
+// covered end-to-end in sqllogic.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseCastIdentity) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  // PHRASE under identity tokeniser: identity emits a single raw token
+  // for the whole input string, so the phrase has one part.
+  {
+    auto& phrase = expected.add<irs::ByPhrase>();
+    *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+    phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+      irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  }
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ PHRASE('quick fox')::tokenize('identity')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+// (LEVENSHTEIN(...))::tokenize('identity') -- cast on a TSQUERY-returning
+// constructor with an analyzer-aware tokeniser inside. Verifies the
+// override flows into LEVENSHTEIN's term-tokenisation step (which
+// normally goes through the column analyzer).
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinCastIdentity) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "Quikc", 1);
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ "
+    "LEVENSHTEIN('Quikc', 1)::tokenize('identity')",
+    columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNullSugar) {

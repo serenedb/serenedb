@@ -176,8 +176,8 @@ db error: ERROR: invalid input syntax for type integer: "three"
 statement error
 CREATE TEXT SEARCH DICTIONARY t_err16(
     template = 'minhash',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = '|',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = '|',
     numhashes = 'two'
 )
 ----
@@ -747,8 +747,8 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY t12(
     template = 'minhash',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ',',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ',',
     numhashes = 2
 )
 
@@ -775,9 +775,9 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
     template = 'minhash',
     numhashes = 3,
-    analyzer_template = 'segmentation',
-    analyzer_break = 'alpha',
-    analyzer_case = 'lower'
+    tokenizer_template = 'segmentation',
+    tokenizer_break = 'alpha',
+    tokenizer_case = 'lower'
 )
 
 
@@ -794,10 +794,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_with_text(
     template = 'minhash',
     numhashes = 6,
-    analyzer_template = 'text',
-    analyzer_locale = 'en_US.UTF-8',
-    analyzer_case = 'lower',
-    analyzer_stemming = false
+    tokenizer_template = 'text',
+    tokenizer_locale = 'en_US.UTF-8',
+    tokenizer_case = 'lower',
+    tokenizer_stemming = false
 )
 
 
@@ -1336,7 +1336,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY copy_minhash(
     template = 'copy_from',
     from = 'minhash_with_text',
-    analyzer_stopwords = '"fox"'
+    tokenizer_stopwords = '"fox"'
 )
 
 
@@ -1353,7 +1353,7 @@ CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
     from = 'copy_pipe2',
     step4_template = 'copy_from',
     step4_from = 'copy_minhash',
-    step4_analyzer_stopwords = '"quick"'
+    step4_tokenizer_stopwords = '"quick"'
 )
 
 query
@@ -1401,8 +1401,8 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_copy5(
     template = 'minhash',
     numHashes = 5,
-    analyzer_template = 'copy_from',
-    analyzer_from = 'too_many_pipes'
+    tokenizer_template = 'copy_from',
+    tokenizer_from = 'too_many_pipes'
 )
 
 

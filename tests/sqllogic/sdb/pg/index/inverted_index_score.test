@@ -1408,7 +1408,7 @@ VACUUM (UPDATE_INDEXES) boost_docs;
 
 query
 SELECT id FROM boost_docs_idx
-WHERE BOOST(TERM_EQ(body, 'alpha'), 1000.5) OR TERM_EQ(body, 'beta')
+WHERE body @@ ('alpha'::TSQUERY ^ 1000.5 || 'beta')
 ORDER BY BM25(boost_docs_idx.tableoid) DESC, id;
 ----
 id
@@ -1418,7 +1418,7 @@ id
 
 query
 SELECT id FROM boost_docs_idx
-WHERE TERM_EQ(body, 'alpha') OR BOOST(TERM_EQ(body, 'beta'), 1000.5)
+WHERE body @@ ('alpha' || 'beta'::TSQUERY ^ 1000.5)
 ORDER BY BM25(boost_docs_idx.tableoid) DESC, id;
 ----
 id

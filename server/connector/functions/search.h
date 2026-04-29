@@ -32,6 +32,16 @@ namespace sdb::connector {
 // Postgres-style FTS surface. All stubs; the filter builder claims
 // them at bind time and builds the iresearch filter.
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
+// Distinct alias used for the result of `EXPR::tokenize(...)`. We
+// can't reuse `TSQUERY` here because DuckDB short-circuits same-alias
+// casts as no-ops (compares LogicalTypeId + alias, ignoring
+// ExtensionTypeInfo modifiers), so a `TSQUERY → TSQUERY-with-modifier`
+// cast would never reach the filter builder. Giving the modified type
+// its own alias keeps the BoundCastExpression alive in the bound tree
+// so the modifier is observable downstream. Implicit casts wire it
+// to flow freely wherever TSQUERY is expected.
+inline constexpr std::string_view kTokenizedTSQueryTypeName =
+  "TOKENIZED_TSQUERY";
 inline constexpr std::string_view kTokenizerTypeName = "tokenize";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
@@ -88,8 +98,17 @@ inline constexpr std::string_view kTSQueryMatch = "@@";
 // unused in practice. Mirrors the JSON type convention in DuckDB.
 duckdb::LogicalType MakeTSQueryType();
 
+// Same shape as MakeTSQueryType but with the distinct
+// `TOKENIZED_TSQUERY` alias. Used as the target of `::tokenize(...)`
+// casts so the cast wrapper isn't elided as a same-alias no-op.
+duckdb::LogicalType MakeTokenizedTSQueryType();
+
 // True iff `type` is the TSQUERY alias (VARCHAR + "TSQUERY" alias).
 bool IsTSQueryType(const duckdb::LogicalType& type);
+
+// True iff `type` is either TSQUERY or TOKENIZED_TSQUERY -- both are
+// valid carriers of TSQUERY-shaped values inside the filter builder.
+bool IsAnyTSQueryType(const duckdb::LogicalType& type);
 
 // If `type` is a TSQUERY annotated with a `tokenize(name)` modifier,
 // returns the tokenizer name. Resolution to a live analyzer happens

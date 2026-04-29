@@ -214,7 +214,7 @@ db error: ERROR: PHRASE has consecutive gaps at argument 2
 query error
 SELECT a FROM foo_idx WHERE b @@ PHRASE('quick', ARRAY[3,1], 'fox');
 ----
-db error: ERROR: PHRASE gap array at argument 1 min (3) must not exceed max (1)
+db error: ERROR: PHRASE interval gap must satisfy 0 <= min <= max, got [3, 1] (argument 1)
 
 
 statement ok

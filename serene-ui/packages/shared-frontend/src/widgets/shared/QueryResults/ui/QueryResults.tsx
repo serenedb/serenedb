@@ -6,6 +6,7 @@ import { QueryViewerResults } from "./QueryViewerResults";
 import { QueryPending } from "./QueryPending";
 import { QueryFailed } from "./QueryFailed";
 import { QuerySucceeded } from "./QuerySucceeded";
+import { QueryTextResults } from "./QueryTextResults";
 
 interface QueryResultsProps {
     results: {
@@ -13,6 +14,7 @@ interface QueryResultsProps {
         status: "success" | "failed" | "pending" | "running" | "";
         statementIndex?: number;
         statementQuery?: string;
+        statementType?: string;
         statementRange?: {
             startOffset: number;
             endOffset: number;
@@ -58,6 +60,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     const received_at = selectedResult.received_at;
     const hasRows =
         selectedResult.status === "success" && Boolean(rows?.length);
+    const isExplainStatement = selectedResult.statementType === "ExplainStmt";
 
     let content: React.ReactNode;
 
@@ -84,11 +87,15 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                 <TabsContent
                     className="flex flex-1 w-full h-full min-h-0 overflow-auto"
                     value="viewer">
-                    <QueryViewerResults
-                        colorfulTypes={colorfulTypes}
-                        results={results}
-                        selectedResultIndex={selectedResultIndex}
-                    />
+                    {isExplainStatement ? (
+                        <QueryTextResults rows={rows} />
+                    ) : (
+                        <QueryViewerResults
+                            colorfulTypes={colorfulTypes}
+                            results={results}
+                            selectedResultIndex={selectedResultIndex}
+                        />
+                    )}
                 </TabsContent>
             </>
         );
@@ -106,6 +113,7 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
                 execution_started_at={started_at}
                 execution_finished_at={finished_at}
                 received_at={received_at}
+                viewerLabel={isExplainStatement ? "Text" : "Viewer"}
                 sourcePanelId={sourcePanelId}>
                 {hasRows ? (
                     content

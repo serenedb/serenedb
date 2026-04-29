@@ -78,6 +78,7 @@ export const useConsoleQueryExecution = ({
                         status: "pending" as const,
                         statementIndex: result.statementIndex,
                         statementQuery: result.statementQuery,
+                        statementType: result.statementType,
                         sourceQuery: result.sourceQuery,
                         statementRange: result.statementRange,
                     })),
@@ -132,7 +133,7 @@ export const useConsoleQueryExecution = ({
             const current = paramsRef.current;
             updatePanelParams({ highlightJobIds: [] });
 
-            if (mode === "sequential") {
+            if (mode !== "transaction") {
                 let shouldShowResultsPanel = true;
 
                 const result = await executeQueryBatch(
@@ -146,6 +147,7 @@ export const useConsoleQueryExecution = ({
                                 jobId: job.jobId,
                                 statementIndex: job.statementIndex,
                                 statementQuery: job.statementQuery,
+                                statementType: job.statementType,
                                 sourceQuery: job.sourceQuery,
                                 statementRange: job.statementRange,
                             },
@@ -153,6 +155,9 @@ export const useConsoleQueryExecution = ({
                             showPanel: shouldShowResultsPanel,
                         });
                         shouldShowResultsPanel = false;
+                    },
+                    {
+                        continueOnError: mode === "sequentialIgnoreErrors",
                     },
                 );
 
@@ -254,6 +259,8 @@ export const useConsoleQueryExecution = ({
                             result.statementIndex ?? currentResult.statementIndex,
                         statementQuery:
                             result.statementQuery ?? currentResult.statementQuery,
+                        statementType:
+                            result.statementType ?? currentResult.statementType,
                         sourceQuery:
                             result.sourceQuery ?? currentResult.sourceQuery,
                         statementRange:

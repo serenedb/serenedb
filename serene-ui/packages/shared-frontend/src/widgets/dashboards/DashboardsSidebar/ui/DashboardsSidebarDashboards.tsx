@@ -15,6 +15,7 @@ export const DashboardsSidebarDashboards: React.FC = () => {
             isDataFetched={isDataFetched}
             isDataLoading={isDataLoading}
             emptyState="No dashboards yet"
+            sectionId="dashboards"
         />
     );
 };

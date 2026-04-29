@@ -1,6 +1,9 @@
 import type { QueryResult } from "../../../../features/executeQuery";
 
-export type ConsoleExecutionMode = "sequential" | "transaction";
+export type ConsoleExecutionMode =
+    | "sequential"
+    | "sequentialIgnoreErrors"
+    | "transaction";
 
 export interface ConsoleStatementRange {
     startOffset: number;
@@ -13,6 +16,7 @@ export interface ConsoleResult {
     status: "success" | "failed" | "pending" | "running" | "";
     statementIndex?: number;
     statementQuery?: string;
+    statementType?: string;
     statementRange?: ConsoleStatementRange;
     sourceQuery?: string;
     error?: string;
@@ -28,6 +32,7 @@ export interface PendingConsoleResult {
     jobId: number;
     statementIndex: number;
     statementQuery: string;
+    statementType?: string;
     sourceQuery: string;
     statementRange: ConsoleStatementRange;
 }

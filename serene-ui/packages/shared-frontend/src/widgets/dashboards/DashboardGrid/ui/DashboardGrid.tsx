@@ -8,11 +8,13 @@ import {
     useAddDashboardCard,
     useDeleteDashboardCard,
 } from "../../../../entities/dashboard-card";
+import { CreateDashboardButton } from "../../../../features";
 import ReactGridLayout from "react-grid-layout";
 import { gridBounds, minMaxSize } from "react-grid-layout/core";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
+import { DashboardsIcon } from "../../../../shared";
 import { cleanupDashboardInteractiveSelections } from "../model/useInteractiveSelection";
 import { useDashboardGrid } from "../model/useDashboardGrid";
 import { DashboardAddCardButton } from "./DashboardAddCardButton";
@@ -25,6 +27,7 @@ interface DashboardGridProps {
     editedBlock?: DashboardBlockSchema | null;
     isPanelResizing?: boolean;
     manualRefreshToken?: number;
+    onCreateDashboard?: (dashboardId: number) => void;
     onCloseEditor?: () => void;
     onEditBlock?: (block: DashboardBlockSchema) => void;
 }
@@ -42,6 +45,7 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     editedBlock,
     isPanelResizing = false,
     manualRefreshToken = 0,
+    onCreateDashboard,
     onCloseEditor,
     onEditBlock,
 }) => {
@@ -204,12 +208,31 @@ export const DashboardGrid: React.FC<DashboardGridProps> = ({
     if (!currentDashboard) {
         return (
             <div
-                className="flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+                className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-6 py-8"
                 data-testid="dashboardGrid-emptyState">
-                <div className="rounded-xs border bg-background px-6 py-5 shadow-sm">
-                    <p className="text-sm dark:text-primary-foreground/70">
-                        select dashboard
-                    </p>
+                <div className="relative w-full max-w-md overflow-hidden rounded-xl border border-border/70 bg-background/95 p-7 ">
+                    <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="space-y-3">
+                            <div className="space-y-1.5">
+                                <h2 className="text-xl font-semibold tracking-tight text-foreground">
+                                    Create a dashboard
+                                </h2>
+                                <p className="max-w-md text-sm leading-6 text-muted-foreground">
+                                    Start with a blank canvas for charts and key
+                                    metrics, <br />
+                                    or pick an existing dashboard from the
+                                    sidebar when you are ready.
+                                </p>
+                                <CreateDashboardButton
+                                    className="w-full  mt-6"
+                                    onCreateDashboard={onCreateDashboard}
+                                    size="default"
+                                    variant="default">
+                                    Create dashboard
+                                </CreateDashboardButton>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         );

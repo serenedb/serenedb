@@ -50,8 +50,12 @@ type MonacoEditorProps = {
         monaco: typeof import("monaco-editor"),
     ) => void;
     onChange?: (value: string) => void;
-    onExecute?: (mode: "sequential" | "transaction") => void;
-    onExecuteInNewTab?: () => void;
+    onExecute?: (
+        mode: "sequential" | "sequentialIgnoreErrors" | "transaction",
+    ) => void;
+    onExecuteInNewTab?: (
+        mode?: "sequential" | "sequentialIgnoreErrors" | "transaction",
+    ) => void;
 };
 
 export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
@@ -166,16 +170,31 @@ export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(
             const domNode = editor.getDomNode();
             const handleKeyDown = (e: KeyboardEvent) => {
                 const isCtrlCmd = e.ctrlKey || e.metaKey;
+                const code = e.code;
+                const isTabSwitchHotkey =
+                    code === "ArrowLeft" || code === "ArrowRight";
+                const isDirectionalFocusHotkey =
+                    e.altKey &&
+                    (code === "KeyH" ||
+                        code === "KeyJ" ||
+                        code === "KeyK" ||
+                        code === "KeyL" ||
+                        code === "ArrowDown" ||
+                        code === "ArrowUp" ||
+                        code === "ArrowLeft" ||
+                        code === "ArrowRight");
                 if (
                     isCtrlCmd &&
-                    (e.key === "l" ||
-                        e.key === "e" ||
-                        e.key === "j" ||
-                        e.key === "t" ||
-                        e.key === "w" ||
-                        e.key === "e" ||
-                        e.key === "k")
+                    (code === "KeyL" ||
+                        code === "KeyE" ||
+                        code === "KeyJ" ||
+                        code === "KeyT" ||
+                        code === "KeyW" ||
+                        code === "KeyK" ||
+                        isTabSwitchHotkey ||
+                        isDirectionalFocusHotkey)
                 ) {
+                    e.preventDefault();
                     e.stopImmediatePropagation();
                     const newEvent = new KeyboardEvent("keydown", {
                         key: e.key,

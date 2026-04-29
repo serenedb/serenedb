@@ -3,7 +3,7 @@ WORKDIR /test-app
 
 COPY . .
 
-RUN rm -f package-lock.json && npm install --include=dev --legacy-peer-deps
+RUN npm install --include=dev --legacy-peer-deps --no-package-lock
 
 RUN npm run build
 

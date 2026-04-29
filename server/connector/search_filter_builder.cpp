@@ -481,21 +481,19 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     }
     const auto& target = cast.return_type;
     const auto& source = cast.child->return_type;
-    // Stop at a cast whose target carries a tokenize modifier -- the
-    // walker needs to observe it to apply the analyzer override.
+    // Stop at modifier-bearing casts; the walker needs to see them.
     if (!TryGetTokenizerModifier(target).name.empty()) {
       break;
     }
-    const bool is_tsq_like_target = IsAnyTSQueryType(target);
-    const bool is_tsq_like_source = IsAnyTSQueryType(source);
-    const bool target_is_varchar =
-      target.id() == duckdb::LogicalTypeId::VARCHAR && !is_tsq_like_target;
-    const bool source_is_varchar =
-      source.id() == duckdb::LogicalTypeId::VARCHAR && !is_tsq_like_source;
-    const bool is_tsq_to_v = is_tsq_like_source && target_is_varchar;
-    const bool is_v_to_tsq = is_tsq_like_target && source_is_varchar;
-    const bool is_tsq_to_tsq = is_tsq_like_source && is_tsq_like_target;
-    if (!is_tsq_to_v && !is_v_to_tsq && !is_tsq_to_tsq) {
+    // Peel only transit casts within the {VARCHAR, TSQUERY,
+    // TOKENIZED_TSQUERY} family: both sides VARCHAR-backed, with at
+    // least one carrying a TSQUERY alias (otherwise it's a plain
+    // VARCHAR->VARCHAR cast we shouldn't strip).
+    if (target.id() != duckdb::LogicalTypeId::VARCHAR ||
+        source.id() != duckdb::LogicalTypeId::VARCHAR) {
+      break;
+    }
+    if (!IsAnyTSQueryType(target) && !IsAnyTSQueryType(source)) {
       break;
     }
     cur = cast.child.get();

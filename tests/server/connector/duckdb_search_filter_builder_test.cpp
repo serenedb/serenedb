@@ -3072,6 +3072,25 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqInterval) {
                columns, true, SegmentationAnalyzerProvider);
 }
 
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqIntervalArray) {
+  // 'a' ## CAST([1, 3] AS INTEGER[2]) ## 'b' -- ARRAY (not LIST) interval
+  // gap. Mirrors test_TSQueryMatch_PhraseSeqInterval but exercises the
+  // ARRAY branch in IsPhraseSeqGapType / ParsePhraseGap.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(0, 0).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"a"});
+  phrase.mutable_options()->push_back<irs::ByTermOptions>(2, 4).term =
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "('a'::TSQUERY ## CAST([1, 3] AS INTEGER[2]) ## 'b'::TSQUERY)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAnyOfPart) {
   // 'a' ## ANY_OF(['b', 'c']) -- ANY_OF as phrase part maps to a
   // ByTermsOptions slot at the phrase position with min_match=1.

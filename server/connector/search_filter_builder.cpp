@@ -1567,11 +1567,9 @@ ResultOr<PhraseGap> ParsePhraseSeqGap(const duckdb::Expression& expr) {
 // next phrase part.
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
   const auto id = expr.return_type.id();
-  return id == duckdb::LogicalTypeId::INTEGER ||
-         id == duckdb::LogicalTypeId::BIGINT ||
-         id == duckdb::LogicalTypeId::SMALLINT ||
-         id == duckdb::LogicalTypeId::TINYINT ||
-         id == duckdb::LogicalTypeId::LIST;
+  return IsPhraseGapIntegralTypeId(id) ||
+         id == duckdb::LogicalTypeId::LIST ||
+         id == duckdb::LogicalTypeId::ARRAY;
 }
 
 // True iff `expr` is a ## FunctionExpression.

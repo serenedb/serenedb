@@ -29,11 +29,13 @@
 #include <duckdb/execution/operator/csv_scanner/csv_multi_file_info.hpp>
 
 namespace duckdb {
+
 // Forward-decls of the per-format lookup builders. parquet's and json's
 // declarations live in extension-internal headers that SereneDB doesn't
 // include directly; CSV's lives in csv_multi_file_info.hpp (above).
 TableFunction MakeParquetLookupTableFunction();
 TableFunction MakeJSONLookupTableFunction();
+
 }  // namespace duckdb
 
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -217,14 +219,9 @@ duckdb::BindInfo ExternalScanGetBindInfo(
 
 duckdb::TableFunctionInitInput MakeDelegatedInitInput(
   const ExternalScanBindData& bd, duckdb::TableFunctionInitInput& input) {
-  duckdb::TableFunctionInitInput delegated(bd.underlying_bind_data.get(),
-                                           input.column_indexes,
-                                           input.projection_ids, input.filters,
-                                           input.sample_options, input.op);
-  // Forward the FileMaterializer's exact-offset side channel through the
-  // wrapper so the underlying reader (CSV, etc.) sees it.
-  delegated.pk_lookups = input.pk_lookups;
-  return delegated;
+  return duckdb::TableFunctionInitInput(
+    bd.underlying_bind_data.get(), input.column_indexes, input.projection_ids,
+    input.filters, input.sample_options, input.op);
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> ExternalScanInitGlobal(
@@ -250,7 +247,6 @@ void ExternalScanFunction(duckdb::ClientContext& context,
                                        data.local_state, data.global_state);
   bd.underlying.function(context, delegated, output);
 }
-
 
 duckdb::unique_ptr<duckdb::NodeStatistics> ExternalScanCardinality(
   duckdb::ClientContext& context, const duckdb::FunctionData* bind_data) {

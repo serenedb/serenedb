@@ -18,7 +18,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │          Table: t         │
-│   Materializer: rocksdb   │
+│      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
 │      Projections: id      │
@@ -35,7 +35,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │          Table: t         │
-│   Materializer: rocksdb   │
+│      Lookup: rocksdb      │
 │          TopK: 10         │
 │          Dims: 3          │
 │      Projections: id      │
@@ -109,7 +109,7 @@ QUERY PLAN
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
 │          Table: t         │
-│   Materializer: rocksdb   │
+│      Lookup: rocksdb      │
 │      Radius: 0.700000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -166,7 +166,7 @@ QUERY PLAN
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
 │          Table: t         │
-│   Materializer: rocksdb   │
+│      Lookup: rocksdb      │
 │      Radius: 1.000000     │
 │          Dims: 3          │
 │      Projections: id      │
@@ -191,10 +191,7 @@ QUERY PLAN
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
+│      Lookup: rocksdb      │
 │     Radius: 100.000000    │
 │          Dims: 3          │
 │                           │
@@ -283,10 +280,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │        Table: t_cos       │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
+│      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
 │      Projections: id      │
@@ -323,10 +317,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │        Table: t_ip        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
+│      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
 │      Projections: id      │
@@ -393,10 +384,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │          Table: t         │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
+│      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
 │                           │

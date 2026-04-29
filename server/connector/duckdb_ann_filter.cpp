@@ -79,7 +79,8 @@ void InitAnnFilter(
     // The filter scratch chunk's slot `i` maps to the bind-column index of
     // filter_column_ids[i]. LookupRows projects bind_column_ids[bind_col]
     // onto the matching reader column and writes into output.data[i].
-    filter_projection[i] = static_cast<duckdb::idx_t>(it - bind_data.column_ids.begin());
+    filter_projection[i] =
+      static_cast<duckdb::idx_t>(it - bind_data.column_ids.begin());
     filter_types[i] = bind_data.column_types[filter_projection[i]];
   }
   if (filter_projection.empty()) {

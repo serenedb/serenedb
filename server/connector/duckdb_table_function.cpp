@@ -411,20 +411,11 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table) {
     result.insert("Table", std::string{bind.table->GetName()});
   }
-  // Surface which row-lookup backend the search-scan path will use to
-  // resolve PKs from the iresearch index. Only emit for strategies that
-  // actually run the iresearch pk -> row pipeline.
-  // (Label kept as "Materializer" so existing test fixtures' box wrapping
-  // remains stable -- the operation is still materializing rows from PKs,
-  // just no longer dispatched through a class hierarchy.)
+  // Surface which lookup backend the search-scan path will use to resolve
+  // PKs from the iresearch index. Only emit for strategies that actually
+  // run the iresearch pk -> row pipeline.
   if (bind.scan_source->IsSearchLike()) {
     const auto& table = *bind.table;
-    // ANN-style scans (HNSW top-k / range) explicitly tag rocksdb as
-    // "(point Get)" because they materialize a precomputed PK set via
-    // RocksDB MultiGet -- the EXPLAIN annotation predates the lookup TF
-    // refactor and is preserved for stable test fixtures.
-    const bool is_ann = bind.scan_source->Kind() == ScanSourceKind::Ann ||
-                        bind.scan_source->Kind() == ScanSourceKind::RangeSearch;
     auto name = [&]() -> std::string {
       switch (table.GetTableType()) {
         using enum TableType;
@@ -436,16 +427,16 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
           if (dot == std::string_view::npos) {
             return "file";
           }
-          return absl::StrCat("file (", path.substr(dot + 1), ")");
+          return std::string{path.substr(dot + 1)};
         }
         case RocksDB:
-          return is_ann ? "rocksdb (point Get)" : "rocksdb";
+          return "rocksdb";
         case Unknown:
           SDB_UNREACHABLE();
       }
     }();
 
-    result.insert("Materializer", std::move(name));
+    result.insert("Lookup", std::move(name));
   }
   bind.scan_source->AppendSummary(bind, result);
   return result;

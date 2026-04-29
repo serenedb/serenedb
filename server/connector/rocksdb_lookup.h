@@ -21,11 +21,11 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/data_chunk.hpp>
 #include <rocksdb/db.h>
 #include <rocksdb/utilities/transaction.h>
 
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <functional>
 #include <memory>
 #include <span>

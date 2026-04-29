@@ -54,13 +54,13 @@ struct SereneDBScanBindData;
 //   - `bind_data`: the parquet/csv/json reader's MultiFileBindData, parsed
 //     once at session-build time. The expensive part -- avoiding re-binding
 //     per batch is the main perf win.
-//   - `lookup_gstate`: the lookup TableFunction's global state, cached
-//     across batches.
+//   - `column_indexes`: physical reader columns to project, computed once.
+//     Passed via TableFunctionInitInput to init_global per batch.
 //   - `pk_lookups`: int64 buffer reused across batches; each call to
 //     LookupRows decodes pk_bytes (SereneDB's primary_key encoding) into
 //     this buffer and sorts ascending. Hands the sorted span to upstream
-//     via TableFunctionInput::pk_lookups (no per-call alloc; upstream sees
-//     int64 only -- no SereneDB encoding leak).
+//     via TableFunctionInitInput::pk_lookups (no per-call alloc; upstream
+//     sees int64 only -- no SereneDB encoding leak).
 //   - `real_proj_slots` / `chunk_types`: projection mapping from the
 //     reader's column order back to SereneDB's output slot indices.
 //
@@ -68,11 +68,18 @@ struct SereneDBScanBindData;
 struct FileLookupSession {
   duckdb::TableFunction lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> bind_data;
+  // CSV-only: gstate carries the reusable scanner / parse_chunk and is built
+  // once per query. For parquet/JSON the gstate's per-file scan progress
+  // can't be replayed, so they re-init per batch and this stays null.
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> lookup_gstate;
+  duckdb::vector<duckdb::ColumnIndex> column_indexes;
   std::vector<duckdb::idx_t> real_proj_slots;
   duckdb::vector<duckdb::LogicalType> chunk_types;
   duckdb::DataChunk scratch;
   std::vector<int64_t> pk_lookups;  // reusable: decoded + sorted per batch
+  // True for CSV: cached gstate + per-call pk_lookups via TableFunctionInput.
+  // False for parquet/JSON: per-batch init_global with init_input.pk_lookups.
+  bool gstate_is_reusable = false;
 };
 
 // Fills real-column slots of `output` for rows identified by `pk_bytes`

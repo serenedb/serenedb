@@ -85,7 +85,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: offsets_test    │
-│   Materializer: rocksdb   │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -362,7 +362,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
 │    Table: offsets_test    ││    Table: offsets_test    │
-│   Materializer: rocksdb   ││   Materializer: rocksdb   │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │

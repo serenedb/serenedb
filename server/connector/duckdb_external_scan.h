@@ -69,11 +69,12 @@ duckdb::TableFunction MakeExternalScanFunction(
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
 // Builds a standalone lookup-mode TableFunction matching the file at `path`'s
-// extension (parquet -> MakeParquetLookupTableFunction, csv -> MakeCSVLookupTableFunction,
-// json -> MakeJSONLookupTableFunction). The returned TableFunction shares
-// MultiFileBindData shape with read_parquet / read_csv / read_json, so the
-// caller passes a pre-bound bind_data via TableFunctionInput::bind_data when
-// invoking its callbacks (no separate bind step).
+// extension (parquet -> MakeParquetLookupTableFunction, csv ->
+// MakeCSVLookupTableFunction, json -> MakeJSONLookupTableFunction). The
+// returned TableFunction shares MultiFileBindData shape with read_parquet /
+// read_csv / read_json, so the caller passes a pre-bound bind_data via
+// TableFunctionInput::bind_data when invoking its callbacks (no separate bind
+// step).
 //
 // Throws duckdb::CatalogException for unsupported file extensions.
 duckdb::TableFunction MakeExternalLookupTableFunction(std::string_view path);

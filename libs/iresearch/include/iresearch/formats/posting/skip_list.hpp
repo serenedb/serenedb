@@ -22,10 +22,98 @@
 
 #pragma once
 
+#include <iresearch/formats/formats_attributes.hpp>
+#include <iresearch/store/data_input.hpp>
+#include <iresearch/store/data_output.hpp>
+#include <iresearch/utils/type_limits.hpp>
+#include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/noncopyable.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/formats/posting/common.hpp"
 
 namespace irs {
+
+struct InlineSkipEntry {
+  uint32_t max_doc_delta = 0;
+  std::optional<WandWriter::WandData> wand_data;
+  uint16_t rest_block_size = 0;
+};
+
+struct PosPayMetadata {
+  uint64_t pos_ptr = 0;
+  uint64_t pay_ptr = 0;
+  uint8_t pos_block_idx = 0;
+};
+
+struct SkipEntry {
+  uint32_t max_doc_delta = doc_limits::invalid();
+  uint64_t doc_ptr = 0;
+  PosPayMetadata meta;
+};
+
+class NewSkipWriter : util::Noncopyable {
+public:
+  constexpr static size_t kLevel0Size = 128;
+  constexpr static size_t kLevel1Size = 32;
+  constexpr static size_t kMaxLevels = 2;
+
+  static size_t Skip0() {
+    return kLevel0Size;
+  }
+
+  static size_t Skip1() {
+    return kLevel1Size;
+  }
+
+  static size_t CountLevels(size_t docs_count) {
+    return (docs_count >= NewSkipWriter::Skip0() * NewSkipWriter::Skip1() ? 2 : 1);
+  }
+
+  static size_t MaxLevels() {
+    return kMaxLevels;
+  }
+
+  explicit NewSkipWriter(IResourceManager& rm) noexcept : _level1(rm) {
+  }
+
+  void Prepare(size_t count);
+
+  // TODO(afigor2701): understand where should i write data
+  static void WriteInlineSkipEntry(const InlineSkipEntry& skip_entry, IndexOutput& out);
+  static void WriteInlinePosPayMetadata(const PosPayMetadata& meta, const Features& features, IndexOutput& out);
+  static void WriteSkipEntry(const SkipEntry& skip_entry, const Features& features, MemoryIndexOutput& out);
+
+  static size_t CalculatePosPayMetaSize(PosPayMetadata meta, const Features& features);
+
+
+  // Adds skip at the specified number of elements.
+  // `Write` is a functional object is called for every skip allowing users to
+  // store arbitrary data for a given level in corresponding output stream
+  template<typename Writer>
+  void AddLevel1IfNeed(size_t count, Writer&& write);
+
+  void FlushLevel(size_t num_levels, IndexOutput& out);
+
+  void Reset() {
+    _level1.Reset();
+  }
+
+private:
+  MemoryOutput _level1;
+  uint32_t _count_entries_level1 = 0;
+};
+
+template<typename Writer>
+void NewSkipWriter::AddLevel1IfNeed(size_t count, Writer&& write) {
+  if (count % (kLevel0Size * kLevel1Size) != 0) {
+    return;
+  }
+
+  write(_level1.stream);
+  ++_count_entries_level1;
+}
 
 // Writer for storing skip-list in a directory
 // Example (skip_0 = skip_n = 3):
@@ -314,6 +402,225 @@ doc_id_t SkipReader<Read, InputType>::Seek(doc_id_t target) {
 
   auto& level_0 = this->_levels.back();
   return static_cast<doc_id_t>(level_0.left + level_0.step);
+}
+
+template <typename FieldTraits, typename IteratorTraits, bool HasWand, typename InputType>
+class NewSkipReader {
+  static_assert(doc_limits::invalid() == 0);
+public:
+  void Prepare(const TermMetaImpl& meta, InputType& in) {
+    auto set_default = [&](SkipEntry entry) {
+      entry.max_doc_delta = doc_limits::invalid();
+      entry.doc_ptr = meta.doc_start;
+      if constexpr (FieldTraits::Position()) {
+        entry.meta.pos_ptr = meta.pos_start;
+        if constexpr (FieldTraits::Offset()) {
+          entry.meta.pay_ptr = meta.pay_start;
+        }
+        entry.meta.pos_block_idx = meta.pos_offset;
+      }
+    };
+    for (auto& entry : _entries) {
+      set_default(entry);
+    }
+    set_default(_prev_level1);
+
+    _left_docs = meta.docs_count;
+
+    // TODO(afigor2701): Maybe remove this to seek as if we don't want to use seek, then reading the skip list part is unnecessary
+    if (meta.docs_count >= NewSkipWriter::kLevel0Size * NewSkipWriter::kLevel1Size) {
+      _level1_in = sdb::basics::downCast<InputType>(in.Dup().release());
+      if (!_level1_in) [[unlikely]] {
+        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                  "Failed to duplicate document input");
+        throw IoError("Failed to duplicate document input");
+      }
+      _level1_in->Seek(meta.e_skip_start);
+      SkipWandData();
+      _left_entries_level1 = in.ReadI16();
+    }
+  }
+
+  bool SeekAndReadNewBlock(doc_id_t target, InputType& in, uint32_t* buf, uint32_t* out_doc, uint32_t* out_freq);
+
+  InlineSkipEntry ReadInlineSkipZone(InputType& in) {
+    InlineSkipEntry entry;
+    auto encoding = in.ReadByte();
+    
+    uint32_t max_doc_delta_code = (encoding & 3) + 1;
+    uint32_t wand_freq_code = (encoding >> 2) & 3;
+    uint32_t wand_norm_code = (encoding >> 4) & 3;
+
+    entry.max_doc_delta = ReadByteSize1234(max_doc_delta_code, in);
+    if constexpr (HasWand) {
+      WandWriter::WandData data;
+      data.freq = ReadByteSize124ForSkipEntry(wand_freq_code, in);
+      if (wand_norm_code > 0) {
+        data.norm = ReadByteSize124ForSkipEntry(wand_norm_code, in);
+      }
+      entry.wand_data = data;
+    }
+    entry.rest_block_size = in.ReadI16();
+
+    return entry;
+  }
+
+  PosPayMetadata ReadPosPayMetadata(InputType& in) {
+    PosPayMetadata result;
+    if constexpr (FieldTraits::Position()) {
+      result.pos_block_idx = in.ReadByte();
+
+      uint32_t code = in.ReadByte();
+
+      uint32_t pos_ptr_code = (code & 3) + 1;
+      result.pos_ptr = ReadByteSize1234(pos_ptr_code, in);
+      if constexpr (FieldTraits::Offset()) {
+        uint32_t pay_ptr_code = ((code >> 2) & 3) + 1;
+        result.pay_ptr = ReadByteSize1234(pay_ptr_code, in);
+      }
+    }
+    return result;
+  }
+
+  void ReadInlineBlock(InputType& in, uint32_t* buf, uint32_t* out_doc, uint32_t* out_freq, uint32_t prev) {
+    SDB_ASSERT(_left_docs > NewSkipWriter::kLevel0Size);
+
+    auto skip_zone = ReadInlineSkipZone(in);
+  
+    {
+      IteratorTraits::ReadBlockDelta(in, buf, out_doc, prev);
+      if constexpr (IteratorTraits::Frequency()) {
+        SDB_ASSERT(out_freq != nullptr);
+        IteratorTraits::ReadBlock(in, buf, out_freq);
+      } else if constexpr (FieldTraits::Frequency()) {
+        IteratorTraits::SkipBlock(in);
+      }
+    }
+
+    auto& entry = _entries[0];
+    entry.max_doc_delta += skip_zone.max_doc_delta;
+
+    auto meta = ReadPosPayMetadata(in);
+    if constexpr (FieldTraits::Position()) {
+      entry.meta.pos_ptr += meta.pos_ptr;
+      entry.meta.pos_block_idx = meta.pos_block_idx;
+      if constexpr (FieldTraits::Offset()) {
+        entry.meta.pay_ptr += meta.pay_ptr;
+      }
+    }
+
+    ++_last_block_idx;
+    _left_docs -= NewSkipWriter::kLevel0Size;
+
+    if (static_cast<uint32_t>(_last_block_idx) % NewSkipWriter::kLevel1Size == 0) {
+      auto& entry_level1 = _entries[1];
+      SDB_ASSERT(entry_level1.max_doc_delta == prev);
+      UpdateSkipEntryLevel1();
+    }
+  }
+
+private:
+  bool Advance(doc_id_t target, InputType& in, uint32_t* buf, uint32_t* out_doc, uint32_t* out_freq) {
+    while (target > _entries[0].max_doc_delta) {
+      auto skip_zone = ReadInlineSkipZone(in);
+      
+    }
+
+  }
+
+  void UpdateSkipEntryLevel1() {
+    auto& entry = _entries[1];
+    _prev_level1 = entry;
+
+    if (_left_entries_level1 > 0) [[likely]] {
+      --_left_entries_level1;
+
+      auto encoding = _level1_in.ReadByte();
+
+      uint32_t max_doc_delta_code = (encoding & 3) + 1;
+      uint32_t doc_ptr_delta_code = (encoding >> 2) & 3;
+      uint32_t pos_ptr_delta_code = (encoding >> 4) & 3;
+      uint32_t pay_ptr_delta_code = (encoding >> 6) & 3;
+
+      entry.max_doc_delta += ReadByteSize124ForSkipEntry(max_doc_delta_code, _level1_in);
+      entry.doc_ptr += ReadByteSize1248ForSkipEntry(doc_ptr_delta_code, _level1_in);
+      if constexpr (FieldTraits::Position()) {
+        entry.meta.pos_ptr += ReadByteSize1248ForSkipEntry(pos_ptr_delta_code, _level1_in);
+        if constexpr(FieldTraits::Offset()) {
+          entry.meta.pay_ptr += ReadByteSize1248ForSkipEntry(pay_ptr_delta_code, _level1_in);
+        }
+        entry.meta.pos_block_idx = _level1_in.ReadByte();
+      }
+
+      SkipWandData();
+    } else {
+      entry.max_doc_delta = doc_limits::eof();
+    }
+  }
+
+  uint32_t ReadByteSize1234(uint32_t code, InputType& in) {
+    uint32_t result = 0;
+    in.ReadBytes(reinterpret_cast<byte_type*>(&result), code);
+    return result;
+  }
+
+  uint32_t ReadByteSize124ForSkipEntry(uint32_t code, InputType& in) {
+    uint32_t result = 0;
+    switch (code) {
+      case 1:
+      case 2:
+        in.ReadBytes(reinterpret_cast<byte_type*>(&result), code);
+        break;
+      case 3:
+        result = in.ReadI32();
+    }
+    return result;
+  }
+
+  uint64_t ReadByteSize1248ForSkipEntry(uint32_t code, InputType& in) {
+    switch (code) {
+      case 0:
+        return in.ReadByte();
+      case 1:
+        return in.ReadI16();
+      case 2:
+        return in.ReadI32();
+      case 3:
+        return in.ReadI64();
+      default:
+        SDB_UNREACHABLE();
+    }
+  }
+
+  void SkipWandData() {
+    SDB_ASSERT(_level1_in);
+    CommonSkipWandData(HasWand, *_level1_in);
+  }
+
+  std::array<SkipEntry, NewSkipWriter::kMaxLevels> _entries;
+  SkipEntry _prev_level1;
+  std::unique_ptr<InputType> _level1_in;
+
+  size_t _left_docs = 0;
+
+  int32_t _last_block_idx = -1;
+  uint32_t _left_entries_level1;
+};
+
+template <typename FieldTraits, typename IteratorTraits, bool HasWand, typename InputType>
+bool NewSkipReader<FieldTraits, IteratorTraits, HasWand, InputType>::SeekAndReadNewBlock(doc_id_t target, InputType& in, uint32_t* buf, uint32_t* out_doc, uint32_t* out_freq) {
+  bool moved = false;
+  while (target > _entries[1].max_doc_delta) {
+    UpdateSkipEntryLevel1();
+    moved = true;
+  }
+
+  if (moved) {
+    auto& entry = _entries[0];
+    in.Seek(_prev_level1.doc_ptr);
+    entry = _prev_level1;
+  }
+  Advance(target, in, buf, out_doc, out_freq);
 }
 
 }  // namespace irs

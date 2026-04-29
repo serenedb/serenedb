@@ -66,10 +66,22 @@ class WandWriterImpl final : public WandWriter {
     _producer.Produce(_levels.front());
   }
 
-  void Write(size_t level, MemoryIndexOutput& out) final {
+  auto& Produce(size_t level) {
     SDB_ASSERT(level + 1 < _levels.size());
     auto& entry = _levels[level];
     _producer.Produce(entry, _levels[level + 1]);
+    return entry;
+  }
+
+  WandData CalculateAndGetWandData(size_t level) final {
+    auto& entry = Produce(level);
+    auto result = Producer::GetWandData(entry);
+    entry = {};
+    return result;
+  }
+
+  void Write(size_t level, MemoryIndexOutput& out) final {
+    auto& entry = Produce(level);
     Producer::Write(entry, out);
     entry = {};
   }
@@ -204,6 +216,22 @@ class FreqNormProducer : public AttributeProvider {
       }
     }
   }
+
+  static WandWriter::WandData GetWandData(Entry entry) {
+    WandWriter::WandData data;
+    // TODO(mbkkt) Compute difference second time looks unnecessary.
+    SDB_ASSERT(entry.freq >= 1);
+    data.freq = entry.freq;
+    if constexpr (kNorm) {
+      SDB_ASSERT(entry.norm >= entry.freq);
+      if (entry.norm != entry.freq) {
+        data.norm.emplace(entry.norm - entry.freq);
+      }
+    }
+    return data;
+  }
+
+  
 
   static uint8_t Size(Entry entry) noexcept {
     SDB_ASSERT(entry.freq >= 1);

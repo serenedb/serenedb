@@ -118,6 +118,11 @@ struct WandSource : AttributeProvider {
 struct WandWriter {
   using ptr = std::unique_ptr<WandWriter>;
 
+  struct WandData {
+    uint32_t freq;
+    std::optional<uint32_t> norm;
+  };
+
   static constexpr byte_type kMaxSize = 127;
 
   virtual ~WandWriter() = default;
@@ -130,6 +135,7 @@ struct WandWriter {
 
   virtual void Update() = 0;
 
+  virtual WandData CalculateAndGetWandData(size_t level) = 0;
   virtual void Write(size_t level, MemoryIndexOutput& out) = 0;
   virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
 

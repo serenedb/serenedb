@@ -31,31 +31,35 @@
 
 namespace sdb::connector {
 
+struct ANNFilterContext {
+  duckdb::ClientContext& context;
+  duckdb::unique_ptr<duckdb::Expression> filter_expr;
+  std::vector<duckdb::LogicalType> filter_types;
+
+  const SereneDBScanBindData& bind_data;
+  const rocksdb::Snapshot* rocks_snapshot;
+  std::vector<duckdb::idx_t> filter_projection;
+  std::vector<catalog::Column::Id> filter_column_ids;
+};
+
 class ANNFilter final : public faiss::IDSelector {
  public:
-  ANNFilter(duckdb::ClientContext& context, const irs::IndexReader& reader,
-            std::unique_ptr<RowMaterializer> materializer,
-            std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs,
-            std::vector<duckdb::LogicalType> filter_types);
+  ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
 
   bool is_member(faiss::idx_t id) const override;
 
  private:
-  const irs::IndexReader& _reader;
+  const irs::SubReader& _segment;
   std::unique_ptr<RowMaterializer> _materializer;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> _exprs;
   mutable duckdb::ExpressionExecutor _executor;
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
-  // TODO(codeworse): Will be erased, because filter should be per-segment
-  // using parallel index execution
   mutable SegmentPkIterator _it;
-  mutable uint32_t _it_segment_id = std::numeric_limits<uint32_t>::max();
 };
 
-void InitAnnFilter(
-  std::unique_ptr<ANNFilter>& filter, duckdb::ClientContext& context,
-  const std::vector<duckdb::unique_ptr<duckdb::Expression>>& filter_expressions,
+void InitAnnFilterContext(
+  std::unique_ptr<ANNFilterContext>& filter, duckdb::ClientContext& context,
+  const duckdb::Expression* filter_expression,
   const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
   const rocksdb::Snapshot* rocks_snapshot,
   const SereneDBScanBindData& bind_data);

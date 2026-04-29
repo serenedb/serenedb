@@ -51,13 +51,13 @@ const EmptySubReader kEmpty;
 
 }  // namespace
 
+// dis and ids should be prepared as heaps
 void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
-                         float* dis, int64_t* ids) const {
-  faiss::heap_heapify<faiss::HNSW::C>(info.top_k, dis, ids);
+                         HNSWSearchBuffer& buffer) const {
   HNSWResultHandler handler{
     1,
-    dis,
-    ids,
+    buffer.dis.data(),
+    buffer.ids.data(),
     info.top_k,
   };
 
@@ -77,7 +77,6 @@ void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
     context.segment_id = segment_id;
     column->Search(context);
   }
-  faiss::heap_reorder<faiss::HNSW::C>(info.top_k, dis, ids);
 }
 
 void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,

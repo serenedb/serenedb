@@ -191,7 +191,8 @@ void HNSWIndexReader::Search(HNSWSearchContext& context) const {
   ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
   dis.set_query(reinterpret_cast<const float*>(context.info.query));
 
-  HNSWSegmentResultHandler res{context.segment_id, context.handler};
+  HNSWSegmentResultHandler res{context.segment_id, context.handler,
+                               context.info.global_threshold};
   context.vt.visited.resize(_hnsw.levels.size(), 0);
   context.vt.advance();
   res.Begin(0, false);

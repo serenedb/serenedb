@@ -30,6 +30,7 @@
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
@@ -64,6 +65,23 @@ namespace {
 // ---------------------------------------------------------------------------
 // Mutation context
 // ---------------------------------------------------------------------------
+
+duckdb::unique_ptr<duckdb::Expression> CombineFilterExpressions(
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs) {
+  if (exprs.empty()) {
+    return nullptr;
+  }
+  if (exprs.size() == 1) {
+    return std::move(exprs.front());
+  }
+  auto conj = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+    duckdb::ExpressionType::CONJUNCTION_AND);
+  conj->children.reserve(exprs.size());
+  for (auto& e : exprs) {
+    conj->children.push_back(std::move(e));
+  }
+  return conj;
+}
 
 bool IsMutationOp(duckdb::LogicalOperatorType type) {
   switch (type) {
@@ -291,8 +309,7 @@ bool RewriteFilterColumnRefs(
   return ok;
 }
 
-bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                int ef_search_override) {
+bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
     return false;
   }
@@ -392,9 +409,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   ann->field_name = MakeHnswFieldName(col_id);
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
-  if (ef_search_override > 0) {
-    ann->ef_search = ef_search_override;
-  }
+  ann->ef_search = bind_data.ef_search;
 
   bool pushdown_filter = true;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
@@ -413,7 +428,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     }
   }
   if (pushdown_filter) {
-    ann->filter_expressions = std::move(rewritten_exprs);
+    ann->filter_expression =
+      CombineFilterExpressions(std::move(rewritten_exprs));
     ann->filter_column_ids = std::move(filter_col_ids);
   }
 
@@ -560,6 +576,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->field_name = MakeHnswFieldName(col_id);
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
+  rss->ef_search = bind_data.ef_search;
 
   filter.expressions.erase(filter.expressions.begin() + match_idx);
 
@@ -575,7 +592,8 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     rewritten_exprs.push_back(std::move(copy));
   }
   if (pushdown_filter) {
-    rss->filter_expressions = std::move(rewritten_exprs);
+    rss->filter_expression =
+      CombineFilterExpressions(std::move(rewritten_exprs));
     rss->filter_column_ids = std::move(filter_col_ids);
     filter.expressions.clear();
   }
@@ -1657,8 +1675,7 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
       "OFFSETS(): column '%s' not found in table", col_name);
   }
   const auto& idx_col_ids = index_entry->GetInvertedIndex()->GetColumnIds();
-  const bool in_index =
-    absl::c_find(idx_col_ids, target_col_id) != idx_col_ids.end();
+  const bool in_index = absl::c_linear_search(idx_col_ids, target_col_id);
   if (!in_index) {
     throw duckdb::InvalidInputException(
       "OFFSETS(): column '%s' not found in index", col_name);
@@ -1987,9 +2004,9 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // for BM25/TFIDF in projections.
   static bool TryOptimizePass1(
     duckdb::unique_ptr<duckdb::LogicalOperator>& root,
-    duckdb::unique_ptr<duckdb::LogicalOperator>& plan, int ef_search_override) {
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-      if (TryAnnTopk(plan, ef_search_override)) {
+      if (TryAnnTopk(plan)) {
         return true;
       }
       bool changed = TryAttachScoreTopK(plan);
@@ -2087,12 +2104,12 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   }
 
   static bool TopDownAnnPass(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                             bool in_mutation, int ef_search_override) {
+                             bool in_mutation) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     bool changed = false;
     if (!subtree_in_mutation) {
       if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-        if (TryAnnTopk(plan, ef_search_override)) {
+        if (TryAnnTopk(plan)) {
           changed = true;
         }
       } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
@@ -2102,7 +2119,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       }
     }
     for (auto& child : plan->children) {
-      changed |= TopDownAnnPass(child, subtree_in_mutation, ef_search_override);
+      changed |= TopDownAnnPass(child, subtree_in_mutation);
     }
     return changed;
   }
@@ -2111,16 +2128,15 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // `plan` is the current node being visited.
   static bool Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
                    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                   bool in_mutation, int pass, int ef_search_override) {
+                   bool in_mutation, int pass) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     bool changed = false;
     for (auto& child : plan->children) {
-      changed |=
-        Walk(root, child, subtree_in_mutation, pass, ef_search_override);
+      changed |= Walk(root, child, subtree_in_mutation, pass);
     }
     if (!subtree_in_mutation) {
       if (pass == 1) {
-        changed |= TryOptimizePass1(root, plan, ef_search_override);
+        changed |= TryOptimizePass1(root, plan);
       } else {
         changed |= TryOptimizePass2(root, plan);
       }
@@ -2156,20 +2172,9 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     // Pass 2: pull top-K limits (now scorer is set) and rewrite
     // BM25/TFIDF in Filter/TopN ORDER BY contexts (bottom-up, so by
     // the time we visit Projection the scorer may already be set).
-    int ef_search_override = 0;
-    {
-      duckdb::Value v;
-      if (input.context.TryGetCurrentSetting("sdb_ef_search", v) &&
-          !v.IsNull()) {
-        ef_search_override = v.GetValue<int32_t>();
-      }
-    }
-    bool changed =
-      TopDownAnnPass(plan, /*in_mutation=*/false, ef_search_override);
-    changed |=
-      Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, ef_search_override);
-    changed |=
-      Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, ef_search_override);
+    bool changed = TopDownAnnPass(plan, /*in_mutation=*/false);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2);
 
     if (changed) {
       FlattenSwappedGets(*plan, plan);

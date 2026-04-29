@@ -90,6 +90,12 @@ duckdb::TableFunction SereneDBIndexScanEntry::GetScanFunction(
   }
   data->has_rowid = true;
   data->table_entry = this;
+  {
+    duckdb::Value v;
+    if (context.TryGetCurrentSetting("sdb_ef_search", v) && !v.IsNull()) {
+      data->ef_search = v.GetValue<int32_t>();
+    }
+  }
 
   if (IsSecondaryIndex()) {
     auto sk = std::make_unique<SecondaryIndexScan>();

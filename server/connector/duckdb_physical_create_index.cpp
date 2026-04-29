@@ -181,6 +181,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // Build CreateIndexColumn vector from parsed_expressions.
   // _info->names has ALL scan columns, not just index columns.
   // _info->parsed_expressions has the actual index column refs.
+  SDB_ASSERT(_info->column_opclasses.size() ==
+             _info->parsed_expressions.size());
+  SDB_ASSERT(_info->column_opclass_options.size() ==
+             _info->parsed_expressions.size());
   const auto& columns = _table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
@@ -199,17 +203,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
-      duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
-      if (i < _info->column_opclass_options.size()) {
-        opclass_options = _info->column_opclass_options[i];
-      }
       idx_columns.push_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->name,
-        .opclass = i < _info->column_opclasses.size()
-                     ? _info->column_opclasses[i]
-                     : std::string{},
-        .opclass_options = std::move(opclass_options),
+        .opclass = _info->column_opclasses[i],
+        .opclass_options = std::move(_info->column_opclass_options[i]),
       });
     } else {
       throw duckdb::CatalogException(

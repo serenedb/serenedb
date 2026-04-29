@@ -50,8 +50,11 @@ using HNSWRangeResultHandler =
 class HNSWSegmentResultHandler : public faiss::ResultHandler<faiss::HNSW::C> {
  public:
   explicit HNSWSegmentResultHandler(uint32_t segment_id,
-                                    HNSWResultHandler& handler)
-    : _impl{handler}, _segment_id{segment_id} {}
+                                    HNSWResultHandler& handler,
+                                    float global_threshold)
+    : _impl{handler}, _segment_id{segment_id} {
+    threshold = global_threshold;
+  }
 
   void Begin(size_t i, bool heapify = true) { _impl.begin(i, heapify); }
 
@@ -139,10 +142,36 @@ class ColumnIndexDistance final : public ColumnDistanceBase {
   ResettableDocIterator::ptr _lit;
   ResettableDocIterator::ptr _rit;
 };
+
+struct HNSWSearchBuffer {
+  std::span<float> dis;
+  std::span<int64_t> ids;
+  float max_dist;
+
+  HNSWSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
+                   float max_dist = std::numeric_limits<float>::max())
+    : dis{dis_data, size}, ids{ids_data, size}, max_dist{max_dist} {
+    ResetValues();
+  }
+
+  void ReorderResult() && {
+    faiss::heap_reorder<faiss::HNSW::C>(dis.size(), dis.data(), ids.data());
+  }
+
+  void ResetValues() {
+    for (auto& d : dis) {
+      d = max_dist;
+    }
+    for (auto& id : ids) {
+      id = -1;
+    }
+  }
+};
 struct HNSWSearchInfo {
   const byte_type* query;
   size_t top_k;
   faiss::SearchParametersHNSW params;
+  float global_threshold = faiss::HNSW::C::neutral();
 };
 
 struct HNSWSearchContext {

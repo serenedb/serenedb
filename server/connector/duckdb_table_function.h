@@ -283,8 +283,9 @@ struct VectorSearchScan : ScanSource {
   ObjectId index_id;
   std::string field_name;
   std::vector<float> query_vector;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> filter_expressions;
+  duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
+  int ef_search = 0;
 };
 
 // ANN (top-k nearest-neighbour) scan using an HNSW index.
@@ -295,7 +296,6 @@ struct ANNScan : VectorSearchScan {
   ANNScan() : VectorSearchScan{ScanSourceKind::Ann} {}
 
   size_t top_k = 0;
-  int ef_search = 0;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -392,6 +392,8 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
   std::vector<duckdb::LogicalType> column_types;
   bool has_rowid = false;
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table_entry;
+
+  int ef_search = 0;
 
   // Always non-null. Default-constructed bind data starts as FullTableScan;
   // optimizer rules swap in a different concrete subclass when a matching

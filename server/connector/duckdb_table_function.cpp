@@ -40,7 +40,6 @@
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_count_scan.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_search_range_scan.h"
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
@@ -58,6 +57,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
   copy->column_types = column_types;
   copy->has_rowid = has_rowid;
   copy->table_entry = table_entry;
+  copy->ef_search = ef_search;
   copy->scan_source = scan_source->Clone();
   return copy;
 }
@@ -295,38 +295,32 @@ void SkRangeScan::AppendSummary(
   }
 }
 
+namespace {
+
+void AppendVectorSearchSummary(
+  const VectorSearchScan& scan,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) {
+  out.insert("Dims", std::to_string(scan.query_vector.size()));
+  if (!scan.filter_expression) {
+    return;
+  }
+  out.insert("Filter", scan.filter_expression->ToString());
+}
+
+}  // namespace
+
 void ANNScan::AppendSummary(
   const SereneDBScanBindData& /*bind*/,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("TopK", std::to_string(top_k));
-  out.insert("Dims", std::to_string(query_vector.size()));
-  if (!filter_expressions.empty()) {
-    std::string summary;
-    for (const auto& expr : filter_expressions) {
-      if (!summary.empty()) {
-        summary += " AND ";
-      }
-      summary += expr->ToString();
-    }
-    out.insert("Filter", summary);
-  }
+  AppendVectorSearchSummary(*this, out);
 }
 
 void RangeSearchScan::AppendSummary(
   const SereneDBScanBindData& /*bind*/,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("Radius", std::to_string(radius));
-  out.insert("Dims", std::to_string(query_vector.size()));
-  if (!filter_expressions.empty()) {
-    std::string summary;
-    for (const auto& expr : filter_expressions) {
-      if (!summary.empty()) {
-        summary += " AND ";
-      }
-      summary += expr->ToString();
-    }
-    out.insert("Filter", summary);
-  }
+  AppendVectorSearchSummary(*this, out);
 }
 
 void CountScan::AppendSummary(
@@ -552,6 +546,7 @@ duckdb::TableFunction CreateIResearchANNFullscanFunction() {
     SearchAnnScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.init_local = SearchAnnScanInitLocal;
   return func;
 }
 
@@ -561,6 +556,7 @@ duckdb::TableFunction CreateIResearchANNRangeScanFunction() {
     SearchRangeScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.init_local = SearchRangeScanInitLocal;
   return func;
 }
 

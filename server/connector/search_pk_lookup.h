@@ -57,32 +57,43 @@ void LookupSegmentsValues(const auto& segments, const auto& doc_ids,
   SDB_ASSERT(result.size() == segments.size());
   SDB_ASSERT(result.size() == doc_ids.size());
   const size_t n = result.size();
-  std::vector<size_t> idx(n);
-  std::iota(idx.begin(), idx.end(), 0);
-  std::ranges::sort(
-    idx, {}, [&](size_t i) { return std::pair{segments[i], doc_ids[i]}; });
+  if (n == 0) {
+    return;
+  }
+
+  struct Entry {
+    uint32_t seg;
+    irs::doc_id_t doc;
+    uint32_t idx;
+  };
+  std::vector<Entry> entries(n);
+  for (size_t i = 0; i < n; ++i) {
+    entries[i] = {static_cast<uint32_t>(segments[i]),
+                  static_cast<irs::doc_id_t>(doc_ids[i]),
+                  static_cast<uint32_t>(i)};
+  }
+  std::ranges::sort(entries, [](const Entry& a, const Entry& b) noexcept {
+    return a.seg < b.seg || (a.seg == b.seg && a.doc < b.doc);
+  });
 
   size_t i = 0;
   while (i < n) {
-    const auto seg_id = segments[idx[i]];
+    const uint32_t seg_id = entries[i].seg;
     SegmentPkIterator it;
     const bool opened = OpenSegmentPkIterator(reader[seg_id], it);
     if (!opened) {
-      while (i < n && segments[idx[i]] == seg_id) {
-        i++;
+      while (i < n && entries[i].seg == seg_id) {
+        ++i;
       }
       continue;
     }
-    while (i < n && segments[idx[i]] == seg_id) {
-      const auto doc_id = doc_ids[idx[i]];
-      const bool seeked = it.iter->seek(doc_id) == doc_id;
-      if (!seeked) {
-        ++i;
-        continue;
+    auto* iter = it.iter.get();
+    const auto* pay = it.value;
+    while (i < n && entries[i].seg == seg_id) {
+      const auto doc_id = entries[i].doc;
+      if (iter->seek(doc_id) == doc_id) {
+        result[entries[i].idx] = irs::ViewCast<char>(pay->value);
       }
-      const auto& val = it.value->value;
-      result[idx[i]].assign(reinterpret_cast<const char*>(val.data()),
-                            val.size());
       ++i;
     }
   }

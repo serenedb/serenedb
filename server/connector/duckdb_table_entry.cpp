@@ -84,6 +84,12 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
   data->has_rowid = true;
   data->table_entry = this;
+  {
+    duckdb::Value v;
+    if (context.TryGetCurrentSetting("sdb_ef_search", v) && !v.IsNull()) {
+      data->ef_search = v.GetValue<int32_t>();
+    }
+  }
 
   bind_data = std::move(data);
   return CreateTableFullscanFunction();

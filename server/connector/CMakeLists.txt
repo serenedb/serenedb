@@ -30,7 +30,6 @@ add_library(
     duckdb_search_full_scan.cpp
     duckdb_search_count_scan.cpp
     duckdb_search_ann_scan.cpp
-    duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
     rocksdb_row_materializer.cpp

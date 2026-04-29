@@ -45,7 +45,8 @@ constexpr std::string_view kL1Metric = "l1";
 constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
 
-ResultOr<int64_t> GetIntOption(std::string_view column_name,
+ResultOr<int64_t> GetIntOption(std::string_view index_kind,
+                               std::string_view column_name,
                                std::string_view key, const duckdb::Value& v) {
   auto int_value = v.Copy();
   if (int_value.DefaultTryCastAs(duckdb::LogicalTypeId::BIGINT)) {
@@ -55,14 +56,17 @@ ResultOr<int64_t> GetIntOption(std::string_view column_name,
                                  ERROR_BAD_PARAMETER,
                                  "Column '",
                                  column_name,
-                                 "': hnsw option '",
+                                 "': ",
+                                 index_kind,
+                                 " option '",
                                  key,
                                  "' must be an integer, got '",
                                  v.ToString(),
                                  "'"};
 }
 
-ResultOr<std::string> GetStringOption(std::string_view column_name,
+ResultOr<std::string> GetStringOption(std::string_view index_kind,
+                                      std::string_view column_name,
                                       std::string_view key,
                                       const duckdb::Value& v) {
   auto str_value = v.Copy();
@@ -73,12 +77,16 @@ ResultOr<std::string> GetStringOption(std::string_view column_name,
                                  ERROR_BAD_PARAMETER,
                                  "Column '",
                                  column_name,
-                                 "': hnsw option '",
+                                 "': ",
+                                 index_kind,
+                                 " option '",
                                  key,
                                  "' must be a string, got '",
                                  v.ToString(),
                                  "'"};
 }
+
+constexpr std::string_view kHnswKind = "hnsw";
 
 Result ApplyHNSWOptions(
   std::string_view column_name,
@@ -86,7 +94,7 @@ Result ApplyHNSWOptions(
   HNSWColumnConfig& cfg) {
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
-      auto str = GetStringOption(column_name, key, raw_val);
+      auto str = GetStringOption(kHnswKind, column_name, key, raw_val);
       if (!str) {
         return std::move(str).error();
       }
@@ -116,7 +124,7 @@ Result ApplyHNSWOptions(
                 kIPMetric};
       }
     } else if (key == kMField) {
-      auto n = GetIntOption(column_name, key, raw_val);
+      auto n = GetIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
         return std::move(n).error();
       }
@@ -131,7 +139,7 @@ Result ApplyHNSWOptions(
       }
       cfg.m = static_cast<int>(*n);
     } else if (key == kEfConstructionField) {
-      auto n = GetIntOption(column_name, key, raw_val);
+      auto n = GetIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
         return std::move(n).error();
       }

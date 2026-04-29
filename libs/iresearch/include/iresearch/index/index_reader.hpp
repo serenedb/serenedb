@@ -99,8 +99,8 @@ struct IndexReader {
   // return the i'th sub_reader
   virtual const SubReader& operator[](size_t i) const = 0;
 
-  void Search(std::string_view field, HNSWSearchInfo info, float* dis,
-              int64_t* ids) const;
+  void Search(std::string_view field, HNSWSearchInfo info,
+              HNSWSearchBuffer& buffer) const;
 
   void RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
                    std::vector<float>& dis, std::vector<int64_t>& ids) const;

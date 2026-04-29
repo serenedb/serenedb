@@ -20,8 +20,11 @@
 
 #pragma once
 
+#include <algorithm>
+#include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,21 +34,79 @@
 
 namespace sdb::connector {
 
-// Global state for SearchAnnScan (HNSW top-k).
-// HNSW search is lazy: all results are collected on the first scan call and
-// then streamed in STANDARD_VECTOR_SIZE batches via ann_current_idx.
+// TODO(codeworse): ANN scan should be rewritten in [MATERIALIZE] <= [TOP_N] <=
+// [ANN Scan]
 struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   const ANNScan* scan = nullptr;
-  std::unique_ptr<ANNFilter> filter;
-  std::vector<std::string> pk_bytes;
-  size_t current_idx = 0;
+  std::unique_ptr<ANNFilterContext> filter_ctx;
+
+  const irs::IndexReader* reader = nullptr;
+
+  std::vector<std::vector<float>> dis;
+  std::vector<std::vector<int64_t>> ids;
+  std::atomic<float> global_kth_dis{std::numeric_limits<float>::max()};
+  absl::Mutex m;
+
+  size_t total_segments = 0;
+  std::atomic_size_t remained_segments = 0;
+  std::atomic_size_t next_segment = 0;
+
+  duckdb::idx_t MaxThreads() const override {
+    return std::max<duckdb::idx_t>(1, total_segments);
+  }
+};
+
+// Per-worker local state
+struct SearchAnnScanLocalState : public CommonScanLocalState {
+  SearchAnnScanLocalState(size_t top_k)
+    : dis(top_k), ids(top_k), buffer{dis.data(), ids.data(), top_k} {}
+
+  std::vector<float> dis;
+  std::vector<int64_t> ids;
+  irs::HNSWSearchBuffer buffer;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
 
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchAnnScanInitLocal(
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState* global_state);
+
 void SearchAnnScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output);
+
+struct SearchRangeScanGlobalState : public CommonScanGlobalState {
+  const RangeSearchScan* scan = nullptr;
+  std::unique_ptr<ANNFilterContext> filter_ctx;
+
+  const irs::IndexReader* reader = nullptr;
+
+  size_t total_segments = 0;
+  std::atomic_size_t next_segment = 0;
+
+  absl::Mutex materializer_mutex;
+
+  duckdb::idx_t MaxThreads() const override {
+    return std::max<duckdb::idx_t>(1, total_segments);
+  }
+};
+
+struct SearchRangeScanLocalState : public CommonScanLocalState {
+  std::vector<std::string> pk_bytes;
+  size_t current_idx = 0;
+};
+
+duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
+  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
+
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchRangeScanInitLocal(
+  duckdb::ExecutionContext& context, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState* global_state);
+
+void SearchRangeScanFunction(duckdb::ClientContext& context,
+                             duckdb::TableFunctionInput& data,
+                             duckdb::DataChunk& output);
 
 }  // namespace sdb::connector

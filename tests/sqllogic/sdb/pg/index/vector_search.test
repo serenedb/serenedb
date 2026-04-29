@@ -315,6 +315,98 @@ id
 3
 
 
+query
+EXPLAIN SELECT id FROM cos_index ORDER BY cosine_similarity(emb, [1.0, 0.0, 0.0]::FLOAT[3]) LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│        Table: t_cos       │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM cos_index ORDER BY cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│        Table: t_cos       │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM cos_index WHERE cosine_similarity(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│        Table: t_cos       │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│      Radius: 0.500000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 0.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (cosine_distance(emb, [1, │
+│        0, 0]) > 0.5)      │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│     IRESEARCH_FULLSCAN    │
+│    ────────────────────   │
+│        Table: t_cos       │
+│                           │
+│        Projections:       │
+│            emb            │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
 statement ok
 CREATE TABLE t_ip (id INT, emb FLOAT[3]);
 
@@ -353,6 +445,98 @@ SELECT id FROM ip_index ORDER BY emb <#> [0.0, 1.0, 0.5]::FLOAT[3] LIMIT 2;
 id
 4
 2
+
+
+query
+EXPLAIN SELECT id FROM ip_index ORDER BY negative_inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│        Table: t_ip        │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM ip_index ORDER BY inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   IRESEARCH_ANN_FULLSCAN  │
+│    ────────────────────   │
+│        Table: t_ip        │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM ip_index WHERE negative_inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│        Table: t_ip        │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
+│                           │
+│      Radius: 0.000000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 50;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (inner_product(emb, [1, 0,│
+│          0]) > 50)        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│     IRESEARCH_FULLSCAN    │
+│    ────────────────────   │
+│        Table: t_ip        │
+│                           │
+│        Projections:       │
+│            emb            │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 
 statement ok

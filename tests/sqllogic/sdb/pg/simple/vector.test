@@ -23,7 +23,7 @@ query
 SELECT [0.0, 1.0, 2.0]::FLOAT[3] <=> [2.0, 1.0, 0.0]::FLOAT[3];
 ----
 ?column?
-0.2<slt:ignore>
+0.8<slt:ignore>
 
 
 query
@@ -31,6 +31,13 @@ SELECT cosine_distance([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
 ----
 cosine_distance
 0.2<slt:ignore>
+
+
+query
+SELECT cosine_similarity([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+----
+cosine_similarity
+0.8<slt:ignore>
 
 
 query
@@ -58,6 +65,13 @@ query
 SELECT inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
 ----
 inner_product
+1
+
+
+query
+SELECT negative_inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+----
+negative_inner_product
 -1
 
 
@@ -159,10 +173,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	clickclack
-vedernikoff	clickclack
 pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
 
 
 query
@@ -224,10 +238,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	clickclack
-vedernikoff	clickclack
 pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
 
 
 query

@@ -52,7 +52,8 @@ void ReadVector(IndexInput& in, T& vec) {
                sizeof(*vec.data()) * size);
 }
 
-float ComputeDotProduct(const byte_type* l, const byte_type* r, uint16_t d) {
+float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,
+                                  uint16_t d) {
   return -irs::vector::DotProductImpl<float, float>::Compute(l, r, d);
 }
 
@@ -74,11 +75,11 @@ auto ResolveDistanceFunction(HNSWMetric metric) {
       return ComputeL2;
     case HNSWMetric::L2Sqr:
       return irs::vector::L2Space<float, float, float>::Dist;
-    case HNSWMetric::InnerProduct:
-      return ComputeDotProduct;
+    case HNSWMetric::NegativeIP:
+      return ComputeNegativeInnerProduct;
     case HNSWMetric::L1:
       return irs::vector::L1Space<float, float, float>::Dist;
-    case HNSWMetric::Cosine: {
+    case HNSWMetric::CosineSimilarity: {
       return ComputeCosine;
     }
     default:

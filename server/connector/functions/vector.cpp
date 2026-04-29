@@ -43,7 +43,9 @@ enum class Distance {
   L2,
   L2Sqr,
   Cosine,
+  CosineSimilarity,
   IP,
+  NegativeIP,
 };
 
 template<typename T, typename R>
@@ -79,10 +81,11 @@ R ComputeCosine(const T* l, const T* r, size_t size) {
 }
 
 template<typename T, typename R>
-R ComputeDotProduct(const T* l, const T* r, size_t size) {
-  return -irs::vector::DotProductImpl<T, R>::Compute(
+R ComputeInnerProduct(const T* l, const T* r, size_t size) {
+  auto res = irs::vector::DotProductImpl<T, R>::Compute(
     reinterpret_cast<const irs::byte_type*>(l),
     reinterpret_cast<const irs::byte_type*>(r), static_cast<uint16_t>(size));
+  return res;
 }
 
 template<Distance D, typename T, typename R>
@@ -93,10 +96,14 @@ void Execute(R& result, const T* l, const T* r, size_t size) {
     result = ComputeL2<T, R>(l, r, size);
   } else if constexpr (D == Distance::Cosine) {
     result = ComputeCosine<T, R>(l, r, size);
+  } else if constexpr (D == Distance::CosineSimilarity) {
+    result = 1. - ComputeCosine<T, R>(l, r, size);
   } else if constexpr (D == Distance::IP) {
-    result = ComputeDotProduct<T, R>(l, r, size);
+    result = ComputeInnerProduct<T, R>(l, r, size);
   } else if constexpr (D == Distance::L2Sqr) {
     result = ComputeL2Sqr<T, R>(l, r, size);
+  } else if constexpr (D == Distance::NegativeIP) {
+    result = -ComputeInnerProduct<T, R>(l, r, size);
   } else {
     SDB_UNREACHABLE();
   }
@@ -180,10 +187,14 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
     name = kL2SqrDistance;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
-    op_name = kCosineDistanceOp;
+  } else if constexpr (D == Distance::CosineSimilarity) {
+    name = kCosineSimilarity;
+    op_name = kCosineSimilarityOp;
   } else if constexpr (D == Distance::IP) {
-    name = kInnerProduct;
-    op_name = kIPDistanceOp;
+    name = kIP;
+  } else if constexpr (D == Distance::NegativeIP) {
+    name = kNegativeIP;
+    op_name = kNegativeIPDistanceOp;
   } else {
     SDB_UNREACHABLE();
   }
@@ -218,7 +229,9 @@ void RegisterVectorFunctions(duckdb::DatabaseInstance& db) {
   RegisterDistance<Distance::L1>(loader);
   RegisterDistance<Distance::L2>(loader);
   RegisterDistance<Distance::Cosine>(loader);
+  RegisterDistance<Distance::CosineSimilarity>(loader);
   RegisterDistance<Distance::IP>(loader);
+  RegisterDistance<Distance::NegativeIP>(loader);
   RegisterDistance<Distance::L2Sqr>(loader);
 }
 

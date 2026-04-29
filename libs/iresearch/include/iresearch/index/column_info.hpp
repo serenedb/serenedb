@@ -44,8 +44,8 @@ enum class ValueType : uint8_t {
 enum class HNSWMetric : uint8_t {
   L2 = 0,
   L2Sqr,
-  InnerProduct,
-  Cosine,
+  NegativeIP,
+  CosineSimilarity,
   L1,
 };
 

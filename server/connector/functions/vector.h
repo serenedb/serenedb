@@ -31,9 +31,11 @@ inline constexpr std::string_view kL2SqrDistance = "l2_sqr_distance";
 inline constexpr std::string_view kL1Distance = "l1_distance";
 inline constexpr std::string_view kL1DistanceOp = "<+>";
 inline constexpr std::string_view kCosineDistance = "cosine_distance";
-inline constexpr std::string_view kCosineDistanceOp = "<=>";
-inline constexpr std::string_view kInnerProduct = "inner_product";
-inline constexpr std::string_view kIPDistanceOp = "<#>";
+inline constexpr std::string_view kCosineSimilarityOp = "<=>";
+inline constexpr std::string_view kCosineSimilarity = "cosine_similarity";
+inline constexpr std::string_view kIP = "inner_product";
+inline constexpr std::string_view kNegativeIP = "negative_inner_product";
+inline constexpr std::string_view kNegativeIPDistanceOp = "<#>";
 
 void RegisterVectorFunctions(duckdb::DatabaseInstance& db);
 

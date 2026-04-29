@@ -14624,11 +14624,11 @@ static float ComputeExpectedDistance(const float* q, const float* v, size_t dim,
   switch (metric) {
     case irs::HNSWMetric::L2:
       return faiss::fvec_L2sqr(q, v, dim);
-    case irs::HNSWMetric::InnerProduct:
+    case irs::HNSWMetric::NegativeIP:
       return -faiss::fvec_inner_product(q, v, dim);
     case irs::HNSWMetric::L1:
       return faiss::fvec_L1(q, v, dim);
-    case irs::HNSWMetric::Cosine: {
+    case irs::HNSWMetric::CosineSimilarity: {
       const float dot = faiss::fvec_inner_product(q, v, dim);
       const float denom = std::sqrt(faiss::fvec_norm_L2sqr(q, dim) *
                                     faiss::fvec_norm_L2sqr(v, dim));
@@ -14662,10 +14662,10 @@ class VectorSearchTestBase
       case irs::HNSWMetric::L2:
         name += "_L2";
         break;
-      case irs::HNSWMetric::InnerProduct:
+      case irs::HNSWMetric::NegativeIP:
         name += "_IP";
         break;
-      case irs::HNSWMetric::Cosine:
+      case irs::HNSWMetric::CosineSimilarity:
         name += "_Cosine";
         break;
       case irs::HNSWMetric::L1:
@@ -15007,8 +15007,8 @@ INSTANTIATE_TEST_SUITE_P(
     kTestDirs, kTestFormats,
     ::testing::ValuesIn(std::vector<ANNSearchFeature>{
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L2, 10},
-      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::InnerProduct, 10},
-      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::Cosine, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::NegativeIP, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::CosineSimilarity, 10},
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L1, 10},
     })),
   ANNSearchTest::to_string);
@@ -15019,8 +15019,8 @@ INSTANTIATE_TEST_SUITE_P(
     kTestDirs, kTestFormats,
     ::testing::ValuesIn(std::vector<RangeSearchFeature>{
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L2},
-      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::InnerProduct},
-      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::Cosine},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::NegativeIP},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::CosineSimilarity},
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L1},
     })),
   RangeSearchTest::to_string);

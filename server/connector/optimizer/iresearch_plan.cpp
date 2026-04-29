@@ -175,33 +175,41 @@ std::string MakeHnswFieldName(catalog::Column::Id col_id) {
 // Vector argument extraction (shared by ANN topk + ANN range)
 // ---------------------------------------------------------------------------
 
-bool IsDistanceFunction(std::string_view name) {
-  return name == connector::kL2Distance || name == connector::kL2DistanceOp ||
-         name == connector::kL1Distance || name == connector::kL1DistanceOp ||
-         name == connector::kCosineDistance ||
-         name == connector::kCosineDistanceOp ||
-         name == connector::kInnerProduct || name == connector::kIPDistanceOp;
-}
+struct ExpectedHNSW {
+  irs::HNSWMetric metric;
+  duckdb::OrderType order;
+};
 
-std::optional<irs::HNSWMetric> DistanceMetricForFunction(
-  std::string_view name) {
+std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
+  using OT = duckdb::OrderType;
   if (name == connector::kL2Distance || name == connector::kL2DistanceOp) {
-    return irs::HNSWMetric::L2;
+    return ExpectedHNSW{irs::HNSWMetric::L2, OT::ASCENDING};
   }
   if (name == connector::kL2SqrDistance) {
-    return irs::HNSWMetric::L2Sqr;
+    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, OT::ASCENDING};
   }
   if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
-    return irs::HNSWMetric::L1;
+    return ExpectedHNSW{irs::HNSWMetric::L1, OT::ASCENDING};
   }
-  if (name == connector::kCosineDistance ||
-      name == connector::kCosineDistanceOp) {
-    return irs::HNSWMetric::Cosine;
+  if (name == connector::kCosineDistance) {
+    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity, OT::DESCENDING};
   }
-  if (name == connector::kInnerProduct || name == connector::kIPDistanceOp) {
-    return irs::HNSWMetric::InnerProduct;
+  if (name == connector::kCosineSimilarity ||
+      name == connector::kCosineSimilarityOp) {
+    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity, OT::ASCENDING};
+  }
+  if (name == connector::kIP) {
+    return ExpectedHNSW{irs::HNSWMetric::NegativeIP, OT::DESCENDING};
+  }
+  if (name == connector::kNegativeIP ||
+      name == connector::kNegativeIPDistanceOp) {
+    return ExpectedHNSW{irs::HNSWMetric::NegativeIP, OT::ASCENDING};
   }
   return std::nullopt;
+}
+
+bool IsDistanceFunction(std::string_view name) {
+  return ExpectedHNSWForFunction(name).has_value();
 }
 
 // Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
@@ -318,13 +326,17 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   if (top_n.orders.size() != 1 ||
-      top_n.orders[0].type != duckdb::OrderType::ASCENDING) {
+      top_n.orders[0].type == duckdb::OrderType::INVALID) {
     return false;
   }
   if (top_n.orders[0].expression->type !=
       duckdb::ExpressionType::BOUND_COLUMN_REF) {
     return false;
   }
+  const auto order_type =
+    top_n.orders[0].type == duckdb::OrderType::ORDER_DEFAULT
+      ? duckdb::OrderType::ASCENDING
+      : top_n.orders[0].type;
   auto& order_col_ref =
     top_n.orders[0].expression->Cast<duckdb::BoundColumnRefExpression>();
 
@@ -397,10 +409,13 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  auto expected_metric = DistanceMetricForFunction(func_expr.function.name);
+  auto expected = ExpectedHNSWForFunction(func_expr.function.name);
   auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
-  if (!expected_metric || !hnsw_info || hnsw_info->metric != *expected_metric ||
+  if (!expected || !hnsw_info || hnsw_info->metric != expected->metric ||
       static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
+    return false;
+  }
+  if (order_type != expected->order) {
     return false;
   }
 
@@ -563,10 +578,10 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  auto expected_metric =
-    DistanceMetricForFunction(func_expr_ptr->function.name);
+  auto expected = ExpectedHNSWForFunction(func_expr_ptr->function.name);
   auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
-  if (!expected_metric || !hnsw_info || hnsw_info->metric != *expected_metric ||
+  if (!expected || expected->order != duckdb::OrderType::ASCENDING ||
+      !hnsw_info || hnsw_info->metric != expected->metric ||
       static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
     return false;
   }

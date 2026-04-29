@@ -106,9 +106,9 @@ Result ApplyHNSWOptions(
       } else if (v == kL1Metric) {
         cfg.metric = irs::HNSWMetric::L1;
       } else if (v == kCosineMetric) {
-        cfg.metric = irs::HNSWMetric::Cosine;
+        cfg.metric = irs::HNSWMetric::CosineSimilarity;
       } else if (v == kIPMetric) {
-        cfg.metric = irs::HNSWMetric::InnerProduct;
+        cfg.metric = irs::HNSWMetric::NegativeIP;
       } else {
         return {ERROR_BAD_PARAMETER,
                 "Column '",

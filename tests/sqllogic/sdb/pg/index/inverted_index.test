@@ -264,9 +264,7 @@ QUERY PLAN
 │      IRESEARCH_COUNT      │
 │    ────────────────────   │
 │     Table: vedernikoff    │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -707,8 +705,7 @@ QUERY PLAN
 │           Table:          │
 │     score_parquet_ext     │
 │                           │
-│       Materializer:       │
-│ parquet (file_row_number) │
+│      Lookup: parquet      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -1041,9 +1038,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
-│                           │
-│       Materializer:       │
-│     counter (re-scan)     │
+│        Lookup: csv        │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -1098,6 +1093,75 @@ DROP TABLE dense_csv_ext;
 
 statement ok
 DROP TABLE dense_csv_src;
+
+
+statement ok
+CREATE TABLE vedernikoff_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO vedernikoff_src VALUES
+  (1, 'shared term alpha info', 'dept red color'),
+  (2, 'shared term beta info', 'dept blue color'),
+  (3, 'shared term gamma info', 'dept red color'),
+  (4, 'shared term delta info', 'dept blue color'),
+  (5, 'shared term epsilon info', 'dept red color');
+
+statement count 5
+COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.jsonl' (FORMAT json);
+
+statement ok
+CREATE TABLE vedernikoff_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+)
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.jsonl'
+);
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+3	shared term gamma info
+4	shared term delta info
+5	shared term epsilon info
+
+query
+SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(b, 'info') ORDER BY a;
+----
+a	b	c
+1	shared term alpha info	dept red color
+2	shared term beta info	dept blue color
+3	shared term gamma info	dept red color
+4	shared term delta info	dept blue color
+5	shared term epsilon info	dept red color
+
+query
+SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept red color') ORDER BY a;
+----
+a	c
+1	dept red color
+3	dept red color
+5	dept red color
+
+query
+SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept blue color') ORDER BY a;
+----
+a	c
+2	dept blue color
+4	dept blue color
+
+statement ok
+DROP TABLE vedernikoff_ext;
+
+statement ok
+DROP TABLE vedernikoff_src;
 
 
 statement ok

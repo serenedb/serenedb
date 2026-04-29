@@ -38,9 +38,7 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
-#include "connector/rocksdb_row_materializer.h"
-#include "connector/row_materializer.h"
-#include "connector/search_pk_lookup.h"
+#include "connector/lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -257,30 +255,9 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchAnnScanInitLocal(
 void SearchAnnScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
-  auto& g = data.global_state->Cast<SearchAnnScanGlobalState>();
-  auto& l = data.local_state->Cast<SearchAnnScanLocalState>();
-  size_t processed = 0;
-  size_t segment;
-  SDB_ASSERT(g.reader);
-  std::optional<ANNFilter> filter;
-  while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
-                              segment)) {
-    const auto& reader = (*g.reader)[segment];
-    if (g.filter_ctx) {
-      filter.emplace(*g.filter_ctx, reader);
-    }
-    ANNSearchSegment(reader, filter, g, l, context);
-    processed++;
-    filter.reset();
-  }
-  if (!processed) {
-    output.SetCardinality(0);
-    return;
-  }
-  EmitLocalData(g, l);
-  auto remained =
-    g.remained_segments.fetch_sub(processed, std::memory_order_acq_rel);
-  if (remained != processed) {
+  auto& gstate = data.global_state->Cast<SearchAnnScanGlobalState>();
+
+  if (gstate.finished) {
     output.SetCardinality(0);
     return;
   }
@@ -362,6 +339,8 @@ void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
     }
   }
 
+  // Real columns: look up directly per batch. The HNSW result PKs were
+  // collected in InitGlobal; we just stream them through LookupRows.
   std::vector<std::string_view> pk_batch;
   pk_batch.reserve(batch_size);
   for (size_t i = 0; i < batch_size; ++i) {

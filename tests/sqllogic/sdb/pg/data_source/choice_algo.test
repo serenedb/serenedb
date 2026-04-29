@@ -67,10 +67,6 @@ QUERY PLAN
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │      Filter: (cat=20)     │
 │        Unique: true       │
 │                           │
@@ -124,10 +120,6 @@ QUERY PLAN
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │     Filter: (code=200)    │
 │        Unique: true       │
 │                           │
@@ -273,10 +265,6 @@ QUERY PLAN
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │     Filter: (code=200)    │
 │        Unique: true       │
 │                           │
@@ -317,10 +305,6 @@ QUERY PLAN
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │      Filter: (cat=30)     │
 │        Unique: true       │
 │                           │
@@ -369,9 +353,6 @@ QUERY PLAN
 │   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │      Table: t_choice      │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
 │                           │
 │          Filter:          │
 │ {score=150, cat=(5, +inf)}│

@@ -20,10 +20,12 @@
 
 #include "connector/duckdb_ann_filter.h"
 
+#include <array>
+
 #include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/row_materializer.h"
+#include "connector/lookup.h"
 #include "connector/search_pk_lookup.h"
 #include "pg/connection_context.h"
 
@@ -58,18 +60,14 @@ void InitAnnFilterContext(
     .filter_expr = filter_expression->Copy(),
     .filter_types = std::move(filter_types),
     .bind_data = bind_data,
-    .rocks_snapshot = rocks_snapshot,
+    .rocksdb_snapshot = rocks_snapshot,
     .filter_projection = std::move(filter_projection),
     .filter_column_ids = filter_column_ids,
   });
 }
 
 ANNFilter::ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment)
-  : _segment{segment},
-    _materializer{MakeRowMaterializer(
-      ctx.context, ctx.bind_data, ctx.rocks_snapshot, /*all_pks=*/{},
-      ctx.filter_projection, ctx.filter_types, ctx.filter_column_ids, nullptr)},
-    _executor{ctx.context} {
+  : _ctx{ctx}, _segment{segment}, _executor{ctx.context} {
   _executor.AddExpression(*ctx.filter_expr);
   duckdb::vector<duckdb::LogicalType> scratch_types{ctx.filter_types.begin(),
                                                     ctx.filter_types.end()};
@@ -93,13 +91,15 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
     return false;
   }
 
-  auto val = _it.value->value;
-
-  std::string_view pk = irs::ViewCast<char>(val);
+  std::string_view pk = irs::ViewCast<char>(_it.value->value);
+  std::array<std::string_view, 1> pks{pk};
 
   _scratch.Reset();
-  std::array<std::string_view, 1> pks{pk};
-  _materializer->Materialize(pks, _scratch);
+  // LookupRows fills only real-column slots; ANNFilter projects exclusively
+  // real bind columns (no rowid/score/etc), so no virtual-slot cleanup needed.
+  LookupRows(_ctx.context, _ctx.bind_data, _ctx.rocksdb_snapshot,
+             _ctx.filter_projection, _ctx.filter_types, _ctx.filter_column_ids,
+             nullptr, pks, _file_lookup_session, _scratch);
   _scratch.SetCardinality(1);
 
   _bool_out.Reset();

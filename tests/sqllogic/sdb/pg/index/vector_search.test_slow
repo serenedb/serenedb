@@ -52,10 +52,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │        Table: vecs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
+│      Lookup: rocksdb      │
 │          TopK: 10         │
 │          Dims: 8          │
 │      Projections: id      │
@@ -82,10 +79,7 @@ QUERY PLAN
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
 │        Table: vecs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
+│      Lookup: rocksdb      │
 │          TopK: 10         │
 │          Dims: 8          │
 │    Filter: (#0 > 25000)   │

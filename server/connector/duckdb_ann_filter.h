@@ -25,11 +25,14 @@
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <limits>
+#include <memory>
 
-#include "connector/row_materializer.h"
+#include "connector/lookup.h"
 #include "connector/search_pk_lookup.h"
 
 namespace sdb::connector {
+
+struct SereneDBScanBindData;
 
 struct ANNFilterContext {
   duckdb::ClientContext& context;
@@ -38,22 +41,28 @@ struct ANNFilterContext {
 
   const SereneDBScanBindData& bind_data;
   const rocksdb::Snapshot* rocks_snapshot;
+  const rocksdb::Transaction* rocksdb_txn;
   std::vector<duckdb::idx_t> filter_projection;
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
 class ANNFilter final : public faiss::IDSelector {
  public:
-  ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
+  ANNFilter(duckdb::ClientContext& context, const irs::IndexReader& reader,
+            const SereneDBScanBindData& bind_data,
+            const rocksdb::Snapshot* snapshot, rocksdb::Transaction* txn,
+            std::vector<duckdb::idx_t> filter_projected_columns,
+            std::vector<duckdb::LogicalType> filter_types,
+            std::vector<catalog::Column::Id> filter_bind_column_ids,
+            std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs);
 
   bool is_member(faiss::idx_t id) const override;
 
  private:
-  const irs::SubReader& _segment;
-  std::unique_ptr<RowMaterializer> _materializer;
-  mutable duckdb::ExpressionExecutor _executor;
-  mutable duckdb::DataChunk _scratch;
-  mutable duckdb::DataChunk _bool_out;
+  // Cached File-backed lookup session (lazy, reused across is_member calls).
+  // Empty for RocksDB-backed tables -- LookupRows dispatches to RocksDBLookup
+  // which doesn't need a session. mutable so const is_member can lazily fill.
+  mutable std::shared_ptr<FileLookupSession> _file_lookup_session;
   mutable SegmentPkIterator _it;
 };
 

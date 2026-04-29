@@ -1483,11 +1483,11 @@ Result BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   std::string field_name;
   MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
-  auto& pf = ctx.negated ? Negate<irs::ByPrefix>(parent)
-                         : AddFilter<irs::ByPrefix>(parent);
-  pf.boost(ctx.boost);
-  *pf.mutable_field() = field_name;
-  auto& pf_opts = *pf.mutable_options();
+  auto& filter = ctx.negated ? Negate<irs::ByPrefix>(parent)
+                             : AddFilter<irs::ByPrefix>(parent);
+  filter.boost(ctx.boost);
+  *filter.mutable_field() = field_name;
+  auto& pf_opts = *filter.mutable_options();
   pf_opts.scored_terms_limit = ctx.scored_terms_limit;
   pf_opts.term.assign(irs::ViewCast<irs::byte_type>(prefix));
   return {};
@@ -1502,11 +1502,11 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   std::string field_name;
   MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
-  auto& re = ctx.negated ? Negate<irs::ByRegexp>(parent)
-                         : AddFilter<irs::ByRegexp>(parent);
-  re.boost(ctx.boost);
-  *re.mutable_field() = field_name;
-  auto* opts = re.mutable_options();
+  auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
+                             : AddFilter<irs::ByRegexp>(parent);
+  filter.boost(ctx.boost);
+  *filter.mutable_field() = field_name;
+  auto* opts = filter.mutable_options();
   opts->scored_terms_limit = ctx.scored_terms_limit;
   opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
   opts->syntax = syntax;
@@ -1643,7 +1643,7 @@ Result FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
   return AttachPart(seq, right);
 }
 
-// IN_RANGE argument structure -- shared by the standalone FromInRange
+// RANGE argument structure -- shared by the standalone FromInRange
 // emitter and the ## phrase-part dispatcher. Pointers reference the
 // bound function's constant children; nullptr means a NULL operand
 // (unbounded that side).

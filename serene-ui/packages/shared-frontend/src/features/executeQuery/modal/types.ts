@@ -12,6 +12,7 @@ export type QueryResult = QueryExecutionJobSchema extends infer T
               statementIndex?: number;
               statementRange?: StatementRange;
               statementQuery?: string;
+              statementType?: string;
               sourceQuery?: string;
           }
         : never

@@ -126,7 +126,7 @@ TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type);
 // the wrapper's lifetime: when destroyed, the underlying analyzer
 // goes back to the Tokenizer's pool. Returns a null wrapper if the
 // name doesn't resolve.
-catalog::Tokenizer::AnalyzerWrapper ResolveTokenizerAnalyzer(
+catalog::Tokenizer::TokenizerWrapper ResolveTokenizerAnalyzer(
   duckdb::ClientContext& context, std::string_view name);
 
 // Pseudo-functions that are claimed by the iresearch_plan rule and

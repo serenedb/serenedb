@@ -54,16 +54,17 @@ class Tokenizer : public SchemaObject {
     }
   };
 
-  using AnalyzerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
+  using TokenizerWrapper = std::unique_ptr<irs::analysis::Analyzer, Deleter>;
 
-  ResultOr<AnalyzerWrapper> GetTokenizer();
+  static std::shared_ptr<Tokenizer> ReadInternal(vpack::Slice slice,
+                                                 ReadContext ctx);
+
+  ResultOr<TokenizerWrapper> GetTokenizer();
 
   void PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept;
 
   vpack::Slice Slice() const noexcept;
 
-  static std::shared_ptr<Tokenizer> ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone() const final;
 

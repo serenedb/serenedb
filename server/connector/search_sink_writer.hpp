@@ -78,7 +78,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     irs::Tokenizer& GetTokens() const noexcept {
       SDB_ASSERT(analyzer || string_analyzer);
-      SDB_ASSERT((analyzer == nullptr) || !string_analyzer);
+      SDB_ASSERT(!analyzer || !string_analyzer);
       return analyzer ? *analyzer : **string_analyzer;
     }
 
@@ -106,7 +106,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void SetNullValue();
 
     search::AnalyzerImpl::CacheType::ptr analyzer;
-    std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
+    std::optional<catalog::Tokenizer::TokenizerWrapper> string_analyzer;
     std::string_view name;
     irs::IndexFeatures index_features;
     // For paths that don't receive a StoreAttr from an analyzer

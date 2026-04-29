@@ -88,7 +88,7 @@ TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type) {
 // Lifetime is therefore bounded by the caller's stack frame, which
 // matches the natural use ("hold during filter build, release when
 // done"). Returns a null wrapper if the name doesn't resolve.
-catalog::Tokenizer::AnalyzerWrapper ResolveTokenizerAnalyzer(
+catalog::Tokenizer::TokenizerWrapper ResolveTokenizerAnalyzer(
   duckdb::ClientContext& context, std::string_view name) {
   // SereneDB context isn't registered in some bind paths (e.g. unit
   // tests using a vanilla DuckDB connection). Return an empty
@@ -112,7 +112,7 @@ catalog::Tokenizer::AnalyzerWrapper ResolveTokenizerAnalyzer(
   if (!entry) {
     return {};
   }
-  return entry->GetTokenizer().value_or(catalog::Tokenizer::AnalyzerWrapper{});
+  return entry->GetTokenizer().value_or(catalog::Tokenizer::TokenizerWrapper{});
 }
 
 namespace {

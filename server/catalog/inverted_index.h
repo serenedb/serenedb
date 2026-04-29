@@ -46,7 +46,7 @@ struct InvertedIndexColumnInfo {
 };
 
 struct ColumnAnalyzer {
-  Tokenizer::AnalyzerWrapper analyzer;
+  Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
 

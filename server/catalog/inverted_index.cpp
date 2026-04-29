@@ -87,8 +87,7 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
 
   if (!it->second.text_dictionary.isSet()) {
     auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return {.analyzer = Tokenizer::AnalyzerWrapper{
-              analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return {.analyzer = {analyzer.release(), Tokenizer::Deleter{nullptr}}};
   }
 
   auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);

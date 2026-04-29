@@ -1702,7 +1702,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLess_Identity) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_Segmentation) {
-  // LESS / LESS_EQ / GREATER / GREATER_EQ on the TSQUERY surface
+  // LESS / LESS_EQUAL / GREATER / GREATER_EQUAL on the TSQUERY surface
   // tokenise their VARCHAR argument via the ambient analyzer
   // (segmenting -> 'Foo' becomes 'foo') and use the resulting single
   // token as the range bound.
@@ -1731,7 +1731,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLessEq_Segmentation) {
   irs::And expected;
   AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
                                    std::string_view{"foo"}, true);
-  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ LESS_EQ('foo')", columns,
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ LESS_EQUAL('foo')", columns,
                true, SegmentationAnalyzerProvider);
 }
 
@@ -1743,7 +1743,7 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_Segmentation) {
   irs::And expected;
   AddRangeFilter<std::string_view>(expected, 1, std::string_view{"foo"}, true,
                                    std::nullopt, false);
-  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ GREATER_EQ('fOo')",
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ GREATER_EQUAL('fOo')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -1760,7 +1760,7 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_AndLessEq_Composed) {
                                    std::string_view{"orange"}, true);
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE a @@ (GREATER_EQ('apple') && LESS_EQ('orange'))",
+    "SELECT * FROM foo WHERE a @@ (GREATER_EQUAL('apple') && LESS_EQUAL('orange'))",
     columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -1780,12 +1780,12 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_IntegerColumn) {
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
   irs::And expected;
   AddRangeFilter<int32_t>(expected, 1, 50, true, std::nullopt, false);
-  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ GREATER_EQ(50)", columns,
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ GREATER_EQUAL(50)", columns,
                true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
-  // LESS_EQ on a BOOLEAN column emits irs::ByRange via BooleanTokenizer.
+  // LESS_EQUAL on a BOOLEAN column emits irs::ByRange via BooleanTokenizer.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::BOOLEAN, .name = "b"}};
   irs::And expected;
@@ -1795,7 +1795,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLessEq_BooleanColumn) {
   opts.max.assign(
     irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(true)));
   opts.max_type = irs::BoundType::Inclusive;
-  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ LESS_EQ(true)", columns,
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ LESS_EQUAL(true)", columns,
                true);
 }
 
@@ -2507,6 +2507,263 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialBothBoolsOr) {
                "SELECT * FROM foo WHERE b @@ (true::TSQUERY || false::TSQUERY)",
                columns, true);
 }
+
+// `compound(must, must_not, should [, min_should_match])` --
+// Elasticsearch-style bool query.
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustOnly) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound(['x'::TSQUERY, 'y'::TSQUERY], NULL, NULL)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustSingleClause) {
+  // Single TSQUERY without list wrapping.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound('x'::TSQUERY, NULL, NULL)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundMustNotOnly) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& not_filter = and_filter.add<irs::Not>();
+  AddTermFilter<std::string_view>(not_filter, 1, std::string_view{"x"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound(NULL, 'x'::TSQUERY, NULL)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldOnly) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& or_filter = and_filter.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"y"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound(NULL, NULL, ['x'::TSQUERY, 'y'::TSQUERY])",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMin2) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& or_filter = and_filter.add<irs::Or>();
+  or_filter.min_match_count(2);
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"c"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound(NULL, NULL, "
+               "['a'::TSQUERY, 'b'::TSQUERY, 'c'::TSQUERY], 2)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_CompoundShouldMinOutOfRange) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound(NULL, NULL, ['a'::TSQUERY, 'b'::TSQUERY], 5)",
+               columns, false, IdentityAnalyzerProvider,
+               "min_should_match must be in");
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundShouldMinNoShould) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound('x'::TSQUERY, NULL, NULL, 2)",
+               columns, false, IdentityAnalyzerProvider,
+               "min_should_match makes no sense");
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundAllEmpty) {
+  // All buckets empty -> Empty filter (matches no rows). Mirrors the
+  // SQL NULL semantics of `b @@ NULL` -- no error, just zero rows.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  expected.add<irs::Empty>();
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound(NULL, NULL, NULL)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundFull) {
+  // All three buckets populated: must=[x, y], must_not=z, should=[a, b].
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
+  auto& not_filter = and_filter.add<irs::Not>();
+  AddTermFilter<std::string_view>(not_filter, 1, std::string_view{"z"});
+  auto& or_filter = and_filter.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"a"});
+  AddTermFilter<std::string_view>(or_filter, 1, std::string_view{"b"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound("
+               "['x'::TSQUERY, 'y'::TSQUERY], "
+               "'z'::TSQUERY, "
+               "['a'::TSQUERY, 'b'::TSQUERY])",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundCommutative) {
+  // compound(...) on the LHS of @@.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE compound('x'::TSQUERY, NULL, NULL) @@ b",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundBoostCast) {
+  // compound(...)::boost(K) puts boost K on the top And.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  and_filter.boost(2.5f);
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound("
+               "['x'::TSQUERY, 'y'::TSQUERY], NULL, NULL)::boost(2.5)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundTokenizeCast) {
+  // compound(phrase('q f'))::tokenize('identity') -- tokenizer override
+  // applies to every clause's recursion. Phrase emits one raw-bytes part.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  auto& phrase = and_filter.add<irs::ByPhrase>();
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "compound(PHRASE('quick fox'), NULL, NULL)::tokenize('identity')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundPerClauseTokenize) {
+  // Per-clause modifier cast applies only to that clause's subtree.
+  // must = phrase('q f')::tokenize('identity') -> raw-bytes phrase part.
+  // must_not = phrase('z') -> uses the column analyzer (segmentation).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  // must clause -- identity-tokenized phrase.
+  auto& phrase_must = and_filter.add<irs::ByPhrase>();
+  *phrase_must.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase_must.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  // must_not clause -- segmentation analyzer.
+  auto& not_filter = and_filter.add<irs::Not>();
+  AddPhraseFilter(not_filter, 1, {"z"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound("
+               "PHRASE('quick fox')::tokenize('identity'), "
+               "PHRASE('z'), NULL)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundArbitraryClauseShapes) {
+  // must = phrase('a') || 'b' (combinator), must_not = LESS('z') (range
+  // constructor), should = ['x', 'y'] (bare-string list auto-lifted).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  // must: Or { phrase('a'), term('b') }.
+  auto& or_must = and_filter.add<irs::Or>();
+  AddPhraseFilter(or_must, 1, {"a"});
+  AddTermFilter<std::string_view>(or_must, 1, std::string_view{"b"});
+  // must_not: ByRange (string lower=open, upper=z exclusive).
+  auto& not_filter = and_filter.add<irs::Not>();
+  AddRangeFilter<std::string_view>(not_filter, 1, std::nullopt, false,
+                                   std::string_view{"z"}, false);
+  // should: Or { term('x'), term('y') }.
+  auto& or_should = and_filter.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_should, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(or_should, 1, std::string_view{"y"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound("
+               "PHRASE('a') || 'b', LESS('z'), ['x', 'y'])",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundWithCaretBoost) {
+  // Per-clause `^` boost inside the must-list. Works because `^`
+  // returns TSQUERY (not TOK) so `[expr ^ K, expr]` is LIST(TSQUERY).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& and_filter = expected.add<irs::And>();
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"x"})
+    .boost(2.0f);
+  AddTermFilter<std::string_view>(and_filter, 1, std::string_view{"y"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound("
+               "['x'::TSQUERY ^ 2.0, 'y'::TSQUERY], NULL, NULL)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundNested) {
+  // compound nested as a clause inside another compound.
+  // outer must = compound(must='a', must_not=NULL, should='b')
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& outer_and = expected.add<irs::And>();
+  // outer's must: inner compound.
+  auto& inner_and = outer_and.add<irs::And>();
+  AddTermFilter<std::string_view>(inner_and, 1, std::string_view{"a"});
+  auto& inner_or = inner_and.add<irs::Or>();
+  AddTermFilter<std::string_view>(inner_or, 1, std::string_view{"b"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ compound("
+               "compound('a'::TSQUERY, NULL, 'b'::TSQUERY), "
+               "NULL, NULL)",
+               columns, true);
+}
+
 
 
 // ===========================================================================

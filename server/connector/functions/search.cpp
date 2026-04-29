@@ -550,6 +550,33 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
+  // compound(must, must_not, should [, min_should_match]) -- ES-style
+  // bool query. Each of the first three args is TSQUERY (single
+  // clause), TSQUERY[] (multiple clauses), or NULL (no clauses).
+  // Optional 4th INTEGER is min_should_match (default 1). 16 overloads
+  // = 2 (3-arg / 4-arg) * 2^3 (TSQUERY vs TSQUERY[] per arg).
+  {
+    duckdb::ScalarFunctionSet set{std::string{kTSQCompound}};
+    const std::array<duckdb::LogicalType, 2> opts{tsq, tsq_list};
+    auto register_one = [&](std::vector<duckdb::LogicalType> args) {
+      auto fn = duckdb::ScalarFunction(std::move(args), tsq, TSQueryStubFn);
+      // Without SPECIAL_HANDLING, DuckDB folds any call with a NULL
+      // arg to NULL at bind time; we'd never see the user's bucket
+      // structure (e.g. `compound(list, NULL, NULL)` → NULL).
+      fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+      set.AddFunction(std::move(fn));
+    };
+    for (const auto& a : opts) {
+      for (const auto& b : opts) {
+        for (const auto& c : opts) {
+          register_one({a, b, c});
+          register_one({a, b, c, intv});
+        }
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
   // TOKENIZE(text [, analyzer]). 1-arg uses ambient analyzer (same as
   // bare VARCHAR); 2-arg uses the named analyzer (equivalent to
   // text::tokenize(analyzer)).
@@ -640,9 +667,12 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   loader.RegisterFunction(duckdb::ScalarFunction(
     std::string{kTSQueryNot}, {tok_tsq}, tok_tsq, TSQueryStubFn));
 
-  // Boost: TOK ^ DOUBLE -> TOK. Single TOK overload (same reasoning).
+  // Boost: TOK ^ DOUBLE -> TSQ. Returns plain TSQUERY so the result
+  // composes inside TSQUERY[] contexts (e.g. compound([expr ^ K, ...])).
+  // Args stay TOK so per-leg `::tokenize(...)` modifiers on the LHS
+  // survive (no TOK->TSQ cast that would fold them away).
   loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kTSQueryBoost}, {tok_tsq, dbl}, tok_tsq, TSQueryStubFn));
+    std::string{kTSQueryBoost}, {tok_tsq, dbl}, tsq, TSQueryStubFn));
 
   // Phrase sequence `a ## b` (strictly adjacent), `a ## N ## b` (gap N),
   // `a ## [lo, hi] ## b` (interval).

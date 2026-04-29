@@ -74,7 +74,7 @@ a
 5
 
 query
-SELECT a FROM test_term_ops_idx WHERE c @@ LESS_EQ('d') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ LESS_EQUAL('d') ORDER BY a DESC;
 ----
 a
 4

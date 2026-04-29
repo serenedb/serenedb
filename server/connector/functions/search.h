@@ -63,6 +63,10 @@ inline constexpr std::string_view kTSQAllOf = "all_of";
 inline constexpr std::string_view kTSQTokenize = "tokenize";
 inline constexpr std::string_view kTSQRange = "range";
 inline constexpr std::string_view kTSQRegexp = "regexp";
+// Elasticsearch-style bool query: compound(must, must_not, should
+// [, min_should_match]). Each of the first three args is TSQUERY,
+// TSQUERY[], or NULL.
+inline constexpr std::string_view kTSQCompound = "compound";
 
 // Single-bound range constructors. Each takes one value (VARCHAR /
 // numeric / BOOLEAN) and emits irs::ByRange (VARCHAR / BOOLEAN
@@ -76,9 +80,9 @@ inline constexpr std::string_view kTSQRegexp = "regexp";
 // For unbounded-on-one-side semantics on a single call, use
 // RANGE(NULL, max, ...) or RANGE(min, NULL, ...) instead.
 inline constexpr std::string_view kTSQLess = "less";
-inline constexpr std::string_view kTSQLessEq = "less_eq";
+inline constexpr std::string_view kTSQLessEq = "less_equal";
 inline constexpr std::string_view kTSQGreater = "greater";
-inline constexpr std::string_view kTSQGreaterEq = "greater_eq";
+inline constexpr std::string_view kTSQGreaterEq = "greater_equal";
 
 // PG-compat tsquery constructor family (input-string driven, all use
 // the ambient column analyzer).

@@ -400,7 +400,7 @@ SELECT a FROM tsq_idx WHERE a @@ REGEXP('1');
 # variants emit a plain range. The text variant can also appear as a
 # phrase part inside `##`.
 #
-# LESS / LESS_EQ / GREATER / GREATER_EQ are single-bound shortcuts
+# LESS / LESS_EQUAL / GREATER / GREATER_EQUAL are single-bound shortcuts
 # over RANGE. Each takes one bound (VARCHAR / numeric / BOOLEAN) and
 # emits the same byrange filter shape as RANGE with the other side
 # unbounded.
@@ -616,7 +616,7 @@ statement error
 SELECT a FROM tsq_idx WHERE b @@ ('quick' ## RANGE(false, true, true, true));
 
 # ----------------------------------------------------------------------
-# Single-bound shortcuts: LESS / LESS_EQ / GREATER / GREATER_EQ.
+# Single-bound shortcuts: LESS / LESS_EQUAL / GREATER / GREATER_EQUAL.
 # Same per-type dispatch as RANGE; bound vs column type mismatch and
 # NULL bound are bind-time errors.
 # ----------------------------------------------------------------------
@@ -629,9 +629,9 @@ a
 1
 2
 
-# LESS_EQ -- inclusive upper bound.
+# LESS_EQUAL -- inclusive upper bound.
 query
-SELECT a FROM tsq_idx WHERE a @@ LESS_EQ(2) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ LESS_EQUAL(2) ORDER BY a;
 ----
 a
 1
@@ -644,9 +644,9 @@ SELECT a FROM tsq_idx WHERE a @@ GREATER(3) ORDER BY a;
 a
 4
 
-# GREATER_EQ -- inclusive lower bound, composed with LESS_EQ via &&.
+# GREATER_EQUAL -- inclusive lower bound, composed with LESS_EQUAL via &&.
 query
-SELECT a FROM tsq_idx WHERE a @@ (GREATER_EQ(2) && LESS_EQ(3)) ORDER BY a;
+SELECT a FROM tsq_idx WHERE a @@ (GREATER_EQUAL(2) && LESS_EQUAL(3)) ORDER BY a;
 ----
 a
 2
@@ -1718,6 +1718,95 @@ query
 SELECT a FROM tsq_idx WHERE b @@ (PHRASE('quick') && false);
 ----
 a
+
+# ----------------------------------------------------------------------
+# `compound(must, must_not, should [, min_should_match])` --
+# Elasticsearch-style bool query.
+# ----------------------------------------------------------------------
+
+# All three buckets populated.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(
+  PHRASE('quick'),                            -- must
+  PHRASE('grey'),                              -- must_not
+  [PHRASE('lazy'), PHRASE('big')]              -- should
+) ORDER BY a;
+----
+a
+1
+2
+
+# must only -- all clauses required.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound([PHRASE('quick'), PHRASE('fox')], NULL, NULL) ORDER BY a;
+----
+a
+1
+2
+
+# must_not only -- exclude rows containing any of the must_not clauses.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(NULL, PHRASE('quick'), NULL) ORDER BY a;
+----
+a
+3
+4
+
+# should only -- at least one should clause must match.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(NULL, NULL, [PHRASE('grey'), PHRASE('quick')]) ORDER BY a;
+----
+a
+1
+2
+3
+
+# Single clause without list wrapping.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(PHRASE('quick'), NULL, NULL) ORDER BY a;
+----
+a
+1
+2
+
+# min_should_match >= 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(NULL, NULL, [PHRASE('quick'), PHRASE('fox'), PHRASE('grey')], 2) ORDER BY a;
+----
+a
+1
+2
+
+# All-empty buckets -> Empty filter (matches no rows). No error;
+# mirrors `b @@ NULL` SQL semantics.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(NULL, NULL, NULL);
+----
+a
+
+# min_should_match without should clauses -> error.
+statement error min_should_match makes no sense
+SELECT a FROM tsq_idx WHERE b @@ compound(PHRASE('quick'), NULL, NULL, 2);
+
+# min_should_match out of range -> error.
+statement error min_should_match must be in
+SELECT a FROM tsq_idx WHERE b @@ compound(NULL, NULL, [PHRASE('quick'), PHRASE('fox')], 5);
+
+# Composes with ::boost(K) (outer boost on the And).
+query
+SELECT a FROM tsq_idx WHERE b @@ compound(PHRASE('quick'), NULL, NULL)::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+# Per-clause `^` boost inside a must-list.
+query
+SELECT a FROM tsq_idx WHERE b @@ compound([PHRASE('quick') ^ 2.0, PHRASE('fox')], NULL, NULL) ORDER BY a;
+----
+a
+1
+2
 
 # ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.

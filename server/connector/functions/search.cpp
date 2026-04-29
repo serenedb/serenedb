@@ -465,8 +465,13 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // produce a flattened token list -- each element is tokenised, and
   // every produced token becomes one TSQUERY leaf. Composes naturally
   // with ANY_OF / ALL_OF whose list-arg shapes accept TSQUERY[].
+  //
+  // Both LIST(VARCHAR) and unsized ARRAY(VARCHAR) input shapes are
+  // registered; the filter-builder dispatch handles both.
   {
     const auto varchar_list = duckdb::LogicalType::LIST(varchar);
+    const auto varchar_array =
+      duckdb::LogicalType::ARRAY(varchar, duckdb::optional_idx{});
     duckdb::ScalarFunctionSet set{std::string{kTSQTokenize}};
     set.AddFunction(duckdb::ScalarFunction({varchar}, tsq, TSQueryStubFn));
     set.AddFunction(
@@ -475,6 +480,10 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction({varchar_list}, tsq_list, TSQueryStubFn));
     set.AddFunction(
       duckdb::ScalarFunction({varchar_list, varchar}, tsq_list, TSQueryStubFn));
+    set.AddFunction(
+      duckdb::ScalarFunction({varchar_array}, tsq_list, TSQueryStubFn));
+    set.AddFunction(duckdb::ScalarFunction({varchar_array, varchar}, tsq_list,
+                                           TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -601,16 +610,6 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
 // query fails with the "outside inverted index context" message above.
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
-
-  // (Legacy column-first SQL functions -- `phrase(col, ...)`,
-  // `term_eq` / `term_lt` / `term_lte` / `term_gte` / `term_gt` /
-  // `term_like(col, ...)`, `term_in(col, ...)`, `ngram_match(col, ...)`,
-  // `levenshtein_match(col, ...)`, `boost(pred, factor)` -- have all
-  // been removed. Each is now expressible via standard SQL operators
-  // claimed by FromComparisonExpression / FromOperatorExpression
-  // (= / < / <= / > / >= / IN / LIKE) on identity-analyzed columns,
-  // or via the TSQUERY surface `col @@ ...` (PHRASE, NGRAM,
-  // LEVENSHTEIN, etc., with `^` for boost) on analyzed columns.)
 
   // bm25(tableoid) / bm25(tableoid, k1, b) -> DOUBLE -- emits the BM25
   // score per row for the scan identified by tableoid. Parameters are

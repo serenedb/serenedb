@@ -2723,9 +2723,11 @@ Result FromTokenizeListInAnyAllOf(
   if (list_const->IsNull()) {
     return {ERROR_BAD_PARAMETER, "TOKENIZE text array must not be NULL"};
   }
-  if (list_const->type().id() != duckdb::LogicalTypeId::LIST) {
+  const auto list_const_id = list_const->type().id();
+  if (list_const_id != duckdb::LogicalTypeId::LIST &&
+      list_const_id != duckdb::LogicalTypeId::ARRAY) {
     return {ERROR_BAD_PARAMETER,
-            "TOKENIZE array form: first arg must be a list, got ",
+            "TOKENIZE array form: first arg must be a list or array, got ",
             list_const->type().ToString()};
   }
   // Resolve the analyzer choice:
@@ -2772,7 +2774,10 @@ Result FromTokenizeListInAnyAllOf(
             "TOKENIZE array form requires a VARCHAR-indexed column"};
   }
   std::vector<irs::bstring> tokens;
-  for (const auto& elem : duckdb::ListValue::GetChildren(*list_const)) {
+  const auto& elems = list_const_id == duckdb::LogicalTypeId::ARRAY
+                        ? duckdb::ArrayValue::GetChildren(*list_const)
+                        : duckdb::ListValue::GetChildren(*list_const);
+  for (const auto& elem : elems) {
     if (elem.IsNull()) {
       continue;
     }

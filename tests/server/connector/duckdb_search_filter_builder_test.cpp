@@ -3376,6 +3376,21 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentity) {
     columns, true, SegmentationAnalyzerProvider);
 }
 
+// Same as above but with a fixed-size VARCHAR[2] (ARRAY) input. Routes
+// through the unsized-ARRAY TOKENIZE overload and the ARRAY branch of
+// FromTokenizeListInAnyAllOf's child extraction.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeArrayIdentity) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermsFilter<std::string_view>(
+    expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "ANY_OF(TOKENIZE(['foo', 'bar']::VARCHAR[2], 'identity'))",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
 // Single-element identity collapses to ByTerm.
 TEST_F(SearchFilterBuilderTest,
        test_TSQueryMatch_AnyOfTokenizeListIdentitySingle) {

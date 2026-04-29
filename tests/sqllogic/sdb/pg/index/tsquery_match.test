@@ -1501,6 +1501,15 @@ a
 1
 2
 
+# Fixed-size VARCHAR[N] (ARRAY) input -- routes through the unsized
+# ARRAY TOKENIZE overload instead of the LIST one. Same semantics.
+query
+SELECT a FROM tsq_idx WHERE b @@ ANY_OF(TOKENIZE(['quick', 'red']::VARCHAR[2], 'identity')) ORDER BY a;
+----
+a
+1
+2
+
 # Named-analyzer resolution (function form): TOKENIZE(text, name) and
 # TOKENIZE(text_array, name) call ResolveTokenizerAnalyzer at filter
 # build time. Need a real catalog tokenizer registered.

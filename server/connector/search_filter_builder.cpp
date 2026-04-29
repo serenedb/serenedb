@@ -2406,13 +2406,13 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
       AddFilter<irs::Empty>(parent);
       return {};
     }
-    auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
-                           : AddFilter<irs::ByRange>(parent);
-    *rf.mutable_field() = std::move(field_name);
-    rf.boost(ctx.boost);
-    auto* rf_opts = rf.mutable_options();
-    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
-    auto& rng = rf_opts->range;
+    auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
+                              : AddFilter<irs::ByRange>(parent);
+    *range.mutable_field() = std::move(field_name);
+    range.boost(ctx.boost);
+    auto* options = range.mutable_options();
+    options->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = options->range;
     if (is_lower) {
       rng.min.assign(token->value);
       rng.min_type = bound_type;
@@ -2429,13 +2429,13 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
-                           : AddFilter<irs::ByRange>(parent);
-    *rf.mutable_field() = std::move(field_name);
-    rf.boost(ctx.boost);
-    auto* rf_opts = rf.mutable_options();
-    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
-    auto& rng = rf_opts->range;
+    auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
+                              : AddFilter<irs::ByRange>(parent);
+    *range.mutable_field() = std::move(field_name);
+    range.boost(ctx.boost);
+    auto* options = range.mutable_options();
+    options->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = options->range;
     auto bytes = irs::ViewCast<irs::byte_type>(
       irs::BooleanTokenizer::value(bound_val->GetValue<bool>()));
     if (is_lower) {
@@ -2452,13 +2452,13 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
   // NumericTokenizer + SetGranularTerm (mirrors FromRange's numeric
   // path so DECIMAL bounds on a DOUBLE/INT/BIGINT column work
   // cleanly).
-  auto& rf = ctx.negated ? Negate<irs::ByGranularRange>(parent)
-                         : AddFilter<irs::ByGranularRange>(parent);
-  *rf.mutable_field() = std::move(field_name);
-  rf.boost(ctx.boost);
-  auto* rf_opts = rf.mutable_options();
-  rf_opts->scored_terms_limit = ctx.scored_terms_limit;
-  auto& rng = rf_opts->range;
+  auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
+                            : AddFilter<irs::ByGranularRange>(parent);
+  *range.mutable_field() = std::move(field_name);
+  range.boost(ctx.boost);
+  auto* options = range.mutable_options();
+  options->scored_terms_limit = ctx.scored_terms_limit;
+  auto& rng = options->range;
   auto cast = bound_val->DefaultCastAs(column_info.logical_type);
   irs::NumericTokenizer stream;
   ResetNumericStream(stream, col_type, cast);
@@ -2996,21 +2996,21 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (col_type == duckdb::LogicalTypeId::VARCHAR) {
-    auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
-                           : AddFilter<irs::ByRange>(parent);
-    *rf.mutable_field() = std::move(field_name);
-    rf.boost(ctx.boost);
-    auto* rf_opts = rf.mutable_options();
-    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
-    FillByRangeOptionsVarchar(*args, *rf_opts);
+    auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
+                              : AddFilter<irs::ByRange>(parent);
+    *range.mutable_field() = std::move(field_name);
+    range.boost(ctx.boost);
+    auto* options = range.mutable_options();
+    options->scored_terms_limit = ctx.scored_terms_limit;
+    FillByRangeOptionsVarchar(*args, *options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
-    auto& rf = ctx.negated ? Negate<irs::ByRange>(parent)
-                           : AddFilter<irs::ByRange>(parent);
-    *rf.mutable_field() = std::move(field_name);
-    rf.boost(ctx.boost);
-    auto* rf_opts = rf.mutable_options();
-    rf_opts->scored_terms_limit = ctx.scored_terms_limit;
-    auto& rng = rf_opts->range;
+    auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
+                              : AddFilter<irs::ByRange>(parent);
+    *range.mutable_field() = std::move(field_name);
+    range.boost(ctx.boost);
+    auto* options = range.mutable_options();
+    options->scored_terms_limit = ctx.scored_terms_limit;
+    auto& rng = options->range;
     if (args->min_val) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
         irs::BooleanTokenizer::value(args->min_val->GetValue<bool>())));

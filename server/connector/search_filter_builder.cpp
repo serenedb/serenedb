@@ -188,14 +188,16 @@ struct FilterContext {
   duckdb::ClientContext& client_context;
   size_t scored_terms_limit = 1024;
 
-  FilterContext WithTokenizer(irs::analysis::Analyzer& tok) const {
-    return {.negated = negated,
-            .boost = boost,
-            .column_getter = column_getter,
-            .column_cache = column_cache,
-            .tokenizer = tok,
-            .client_context = client_context,
-            .scored_terms_limit = scored_terms_limit};
+  FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
+    return {
+      .negated = negated,
+      .boost = boost,
+      .column_getter = column_getter,
+      .column_cache = column_cache,
+      .tokenizer = tokenizer,
+      .client_context = client_context,
+      .scored_terms_limit = scored_terms_limit,
+    };
   }
 };
 

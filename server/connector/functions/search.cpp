@@ -56,15 +56,15 @@ duckdb::LogicalType MakeTokenizedTSQueryType() {
 }
 
 bool IsTSQueryType(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::VARCHAR && type.HasAlias() &&
+  return type.id() == duckdb::LogicalTypeId::VARCHAR &&
          type.GetAlias() == kTSQueryTypeName;
 }
 
 bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::VARCHAR || !type.HasAlias()) {
+  if (type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return false;
   }
-  const auto& alias = type.GetAlias();
+  const auto alias = type.GetAlias();
   return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName;
 }
 

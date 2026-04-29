@@ -112,11 +112,7 @@ catalog::Tokenizer::AnalyzerWrapper ResolveTokenizerAnalyzer(
   if (!entry) {
     return {};
   }
-  auto wrapper_or = entry->GetTokenizer();
-  if (!wrapper_or || !*wrapper_or) {
-    return {};
-  }
-  return std::move(*wrapper_or);
+  return entry->GetTokenizer().value_or(catalog::Tokenizer::AnalyzerWrapper{});
 }
 
 namespace {

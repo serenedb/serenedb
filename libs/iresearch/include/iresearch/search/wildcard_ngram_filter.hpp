@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include <unicode/regex.h>
+#include <re2/re2.h>
 
 #include <cstddef>
 #include <string>
@@ -40,33 +40,46 @@ class WildcardAnalyzer;
 
 }  // namespace analysis
 
-class WildcardFilter;
+class ByWildcardNgram;
 
-struct WildcardFilterOptions {
-  using FilterType = WildcardFilter;
+struct ByWildcardNgramOptions {
+  using FilterType = ByWildcardNgram;
 
   std::vector<ByPhraseOptions> parts;
   bstring token;
   bool has_pos{true};
-  std::shared_ptr<icu::RegexMatcher> matcher;
+  std::shared_ptr<RE2> matcher;
 
-  bool operator==(const WildcardFilterOptions&) const noexcept { return false; }
+  bool operator==(const ByWildcardNgramOptions& other) const noexcept {
+    if (parts != other.parts || token != other.token ||
+        has_pos != other.has_pos) {
+      return false;
+    }
+    if (!matcher && !other.matcher) {
+      return true;
+    }
+    if (!matcher || !other.matcher) {
+      return false;
+    }
+    return matcher->pattern() == other.matcher->pattern();
+  }
 
-  WildcardFilterOptions() noexcept = default;
-  WildcardFilterOptions(WildcardFilterOptions&&) noexcept = default;
-  WildcardFilterOptions& operator=(WildcardFilterOptions&&) noexcept = default;
+  ByWildcardNgramOptions() noexcept = default;
+  ByWildcardNgramOptions(ByWildcardNgramOptions&&) noexcept = default;
+  ByWildcardNgramOptions& operator=(ByWildcardNgramOptions&&) noexcept =
+    default;
 
   // Build options from a LIKE wildcard pattern using the given analyzer.
   // has_positions indicates whether the index has position features enabled.
-  WildcardFilterOptions(std::string_view pattern,
-                        analysis::WildcardAnalyzer& analyzer,
-                        bool has_positions);
+  ByWildcardNgramOptions(std::string_view pattern,
+                         analysis::WildcardAnalyzer& analyzer,
+                         bool has_positions);
 };
 
-class WildcardFilter final : public FilterWithField<WildcardFilterOptions> {
+class ByWildcardNgram final : public FilterWithField<ByWildcardNgramOptions> {
  public:
   static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
-                            const WildcardFilterOptions& options);
+                            const ByWildcardNgramOptions& options);
 
   Query::ptr prepare(const PrepareContext& ctx) const final {
     return Prepare(ctx.Boost(Boost()), field(), options());

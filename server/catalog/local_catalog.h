@@ -37,6 +37,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
+#include "catalog/user_type.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb {
@@ -63,6 +64,8 @@ class LocalCatalog final : public LogicalCatalog,
                           std::shared_ptr<PgSqlFunction> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
                            std::shared_ptr<Tokenizer> tokenizer) final;
+  Result RegisterType(ObjectId database_id, ObjectId schema_id,
+                      std::shared_ptr<PgSqlType> type) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        std::shared_ptr<Table> table) final;
   Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
@@ -93,6 +96,8 @@ class LocalCatalog final : public LogicalCatalog,
     CreateIndexOperationOptions operation_options = {}) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
+  Result CreateType(ObjectId database_id, std::string_view schema,
+                    std::shared_ptr<PgSqlType> type) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -118,6 +123,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropSchema(std::string_view database, std::string_view name,
                     bool cascade) final;
   Result DropView(std::string_view database, std::string_view schema,
+                  std::string_view name) final;
+  Result DropType(std::string_view database, std::string_view schema,
                   std::string_view name) final;
   Result DropFunction(std::string_view database, std::string_view schema,
                       std::string_view name) final;

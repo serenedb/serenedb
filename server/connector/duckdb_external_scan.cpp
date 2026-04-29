@@ -26,6 +26,18 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/execution/operator/csv_scanner/csv_multi_file_info.hpp>
+
+namespace duckdb {
+
+// Forward-decls of the per-format lookup builders. parquet's and json's
+// declarations live in extension-internal headers that SereneDB doesn't
+// include directly; CSV's lives in csv_multi_file_info.hpp (above).
+TableFunction MakeParquetLookupTableFunction();
+TableFunction MakeJSONLookupTableFunction();
+
+}  // namespace duckdb
+
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/cast/cast_function_set.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -448,21 +460,6 @@ bool ExternalScanPushdownExpression(duckdb::ClientContext& context,
 
 }  // namespace
 
-bool IsParquetExternalTable(const catalog::Table& table) {
-  if (table.GetTableType() != TableType::File) {
-    return false;
-  }
-  const auto& fi = table.GetFileInfo();
-  if (!fi.storage_options) {
-    return false;
-  }
-  std::string_view path = fi.storage_options->Path();
-  constexpr std::string_view suffix{".parquet"};
-  return path.size() >= suffix.size() &&
-         absl::EqualsIgnoreCase(path.substr(path.size() - suffix.size()),
-                                suffix);
-}
-
 duckdb::unique_ptr<duckdb::FunctionData> ExternalScanBindData::Copy() const {
   auto result = duckdb::make_uniq<ExternalScanBindData>();
   // Inherited SereneDBScanBindData fields.
@@ -497,6 +494,21 @@ bool ExternalScanBindData::Equals(const duckdb::FunctionData& other) const {
   }
   return o->underlying_bind_data &&
          underlying_bind_data->Equals(*o->underlying_bind_data);
+}
+
+duckdb::TableFunction MakeExternalLookupTableFunction(std::string_view path) {
+  auto reader_name = PickReaderByPath(path);
+  if (reader_name == "read_parquet") {
+    return duckdb::MakeParquetLookupTableFunction();
+  }
+  if (reader_name == "read_csv_auto") {
+    return duckdb::MakeCSVLookupTableFunction();
+  }
+  if (reader_name == "read_json_auto") {
+    return duckdb::MakeJSONLookupTableFunction();
+  }
+  throw duckdb::CatalogException(
+    "no lookup TableFunction registered for reader \"%s\"", reader_name);
 }
 
 duckdb::TableFunction MakeExternalScanFunction(

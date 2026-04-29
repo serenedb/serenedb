@@ -33,6 +33,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression/bound_window_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/operator/logical_aggregate.hpp>
@@ -160,7 +161,8 @@ bool IsDistanceFunction(std::string_view name) {
   return name == connector::kL2Distance || name == connector::kL2DistanceOp ||
          name == connector::kL1Distance || name == connector::kL1DistanceOp ||
          name == connector::kCosineDistance ||
-         name == connector::kCosineDistanceOp;
+         name == connector::kCosineDistanceOp ||
+         name == connector::kInnerProduct || name == connector::kIPDistanceOp;
 }
 
 std::optional<irs::HNSWMetric> DistanceMetricForFunction(
@@ -177,6 +179,9 @@ std::optional<irs::HNSWMetric> DistanceMetricForFunction(
   if (name == connector::kCosineDistance ||
       name == connector::kCosineDistanceOp) {
     return irs::HNSWMetric::Cosine;
+  }
+  if (name == connector::kInnerProduct || name == connector::kIPDistanceOp) {
+    return irs::HNSWMetric::InnerProduct;
   }
   return std::nullopt;
 }
@@ -232,10 +237,62 @@ DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 4: ANN top-k  (LogicalTopN -> Projection -> LogicalGet)
+// Case 4: ANN top-k  (LogicalTopN -> Projection -> [LogicalFilter*] ->
+// LogicalGet)
 // ---------------------------------------------------------------------------
 
-bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+bool RewriteFilterColumnRefs(
+  duckdb::Expression& expr, const duckdb::LogicalGet& get,
+  const connector::SereneDBScanBindData& bind_data,
+  std::vector<catalog::Column::Id>& referenced_col_ids) {
+  bool ok = true;
+  duckdb::ExpressionIterator::EnumerateChildren(
+    expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
+      if (!ok) {
+        return;
+      }
+      if (child->expression_class ==
+          duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        auto& ref = child->Cast<duckdb::BoundColumnRefExpression>();
+        if (ref.binding.table_index != get.table_index) {
+          ok = false;
+          return;
+        }
+        const auto col_idx = ref.binding.column_index;
+        if (col_idx >= get.GetColumnIds().size()) {
+          ok = false;
+          return;
+        }
+        const auto& ci = get.GetColumnIds()[col_idx];
+        if (!ci.HasPrimaryIndex()) {
+          ok = false;
+          return;
+        }
+        const auto phys = ci.GetPrimaryIndex();
+        if (phys >= bind_data.column_ids.size()) {
+          ok = false;
+          return;
+        }
+        const auto cat_id = bind_data.column_ids[phys];
+        auto it = absl::c_find(referenced_col_ids, cat_id);
+        size_t slot = static_cast<size_t>(it - referenced_col_ids.begin());
+        if (it == referenced_col_ids.end()) {
+          referenced_col_ids.push_back(cat_id);
+        }
+        child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+          ref.return_type, slot);
+        return;
+      }
+      if (!RewriteFilterColumnRefs(*child, get, bind_data,
+                                   referenced_col_ids)) {
+        ok = false;
+      }
+    });
+  return ok;
+}
+
+bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                int ef_search_override) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
     return false;
   }
@@ -275,12 +332,23 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  if (projection.children.size() != 1 ||
-      projection.children[0]->type !=
-        duckdb::LogicalOperatorType::LOGICAL_GET) {
+  if (projection.children.size() != 1) {
     return false;
   }
-  auto& get = projection.children[0]->Cast<duckdb::LogicalGet>();
+  std::vector<duckdb::LogicalFilter*> residual_filters;
+  duckdb::LogicalOperator* child = projection.children[0].get();
+  while (child->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+    auto& f = child->Cast<duckdb::LogicalFilter>();
+    if (f.children.size() != 1) {
+      return false;
+    }
+    residual_filters.push_back(&f);
+    child = f.children[0].get();
+  }
+  if (child->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+    return false;
+  }
+  auto& get = child->Cast<duckdb::LogicalGet>();
   if (!get.bind_data ||
       !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
     return false;
@@ -324,8 +392,37 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   ann->field_name = MakeHnswFieldName(col_id);
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
+  if (ef_search_override > 0) {
+    ann->ef_search = ef_search_override;
+  }
+
+  bool pushdown_filter = true;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
+  std::vector<catalog::Column::Id> filter_col_ids;
+  for (auto* f : residual_filters) {
+    for (auto& e : f->expressions) {
+      auto copy = e->Copy();
+      if (!RewriteFilterColumnRefs(*copy, get, bind_data, filter_col_ids)) {
+        pushdown_filter = false;
+        break;
+      }
+      rewritten_exprs.push_back(std::move(copy));
+    }
+    if (!pushdown_filter) {
+      break;
+    }
+  }
+  if (pushdown_filter) {
+    ann->filter_expressions = std::move(rewritten_exprs);
+    ann->filter_column_ids = std::move(filter_col_ids);
+  }
+
   bind_data.scan_source = std::move(ann);
   get.function = connector::CreateIResearchANNFullscanFunction();
+
+  if (pushdown_filter && !residual_filters.empty()) {
+    projection.children[0] = std::move(residual_filters.back()->children[0]);
+  }
 
   // The HNSW scan returns rows pre-sorted, bounded; drop the TopN.
   plan = std::move(top_n.children[0]);
@@ -463,10 +560,29 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->field_name = MakeHnswFieldName(col_id);
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
+
+  filter.expressions.erase(filter.expressions.begin() + match_idx);
+
+  bool pushdown_filter = true;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
+  std::vector<catalog::Column::Id> filter_col_ids;
+  for (auto& e : filter.expressions) {
+    auto copy = e->Copy();
+    if (!RewriteFilterColumnRefs(*copy, get, bind_data, filter_col_ids)) {
+      pushdown_filter = false;
+      break;
+    }
+    rewritten_exprs.push_back(std::move(copy));
+  }
+  if (pushdown_filter) {
+    rss->filter_expressions = std::move(rewritten_exprs);
+    rss->filter_column_ids = std::move(filter_col_ids);
+    filter.expressions.clear();
+  }
+
   bind_data.scan_source = std::move(rss);
   get.function = connector::CreateIResearchANNRangeScanFunction();
 
-  filter.expressions.erase(filter.expressions.begin() + match_idx);
   if (filter.expressions.empty()) {
     plan = std::move(filter.children[0]);
   }
@@ -1541,8 +1657,8 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
       "OFFSETS(): column '%s' not found in table", col_name);
   }
   const auto& idx_col_ids = index_entry->GetInvertedIndex()->GetColumnIds();
-  const bool in_index = std::find(idx_col_ids.begin(), idx_col_ids.end(),
-                                  target_col_id) != idx_col_ids.end();
+  const bool in_index =
+    absl::c_find(idx_col_ids, target_col_id) != idx_col_ids.end();
   if (!in_index) {
     throw duckdb::InvalidInputException(
       "OFFSETS(): column '%s' not found in index", col_name);
@@ -1871,9 +1987,9 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // for BM25/TFIDF in projections.
   static bool TryOptimizePass1(
     duckdb::unique_ptr<duckdb::LogicalOperator>& root,
-    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan, int ef_search_override) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-      if (TryAnnTopk(plan)) {
+      if (TryAnnTopk(plan, ef_search_override)) {
         return true;
       }
       bool changed = TryAttachScoreTopK(plan);
@@ -1970,19 +2086,41 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     return false;
   }
 
+  static bool TopDownAnnPass(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                             bool in_mutation, int ef_search_override) {
+    const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
+    bool changed = false;
+    if (!subtree_in_mutation) {
+      if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
+        if (TryAnnTopk(plan, ef_search_override)) {
+          changed = true;
+        }
+      } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
+        if (TryAnnRange(plan)) {
+          changed = true;
+        }
+      }
+    }
+    for (auto& child : plan->children) {
+      changed |= TopDownAnnPass(child, subtree_in_mutation, ef_search_override);
+    }
+    return changed;
+  }
+
   // Bottom-up walk. `root` is the plan root (for FindSearchScanByTableIndex),
   // `plan` is the current node being visited.
   static bool Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
                    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                   bool in_mutation, int pass) {
+                   bool in_mutation, int pass, int ef_search_override) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     bool changed = false;
     for (auto& child : plan->children) {
-      changed |= Walk(root, child, subtree_in_mutation, pass);
+      changed |=
+        Walk(root, child, subtree_in_mutation, pass, ef_search_override);
     }
     if (!subtree_in_mutation) {
       if (pass == 1) {
-        changed |= TryOptimizePass1(root, plan);
+        changed |= TryOptimizePass1(root, plan, ef_search_override);
       } else {
         changed |= TryOptimizePass2(root, plan);
       }
@@ -2018,8 +2156,20 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     // Pass 2: pull top-K limits (now scorer is set) and rewrite
     // BM25/TFIDF in Filter/TopN ORDER BY contexts (bottom-up, so by
     // the time we visit Projection the scorer may already be set).
-    bool changed = Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1);
-    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2);
+    int ef_search_override = 0;
+    {
+      duckdb::Value v;
+      if (input.context.TryGetCurrentSetting("sdb_ef_search", v) &&
+          !v.IsNull()) {
+        ef_search_override = v.GetValue<int32_t>();
+      }
+    }
+    bool changed =
+      TopDownAnnPass(plan, /*in_mutation=*/false, ef_search_override);
+    changed |=
+      Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, ef_search_override);
+    changed |=
+      Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, ef_search_override);
 
     if (changed) {
       FlattenSwappedGets(*plan, plan);

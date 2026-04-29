@@ -8,6 +8,7 @@ target_sources(
         pg_catalog/pg_class.cpp
         pg_catalog/pg_constraint.cpp
         pg_catalog/pg_database.cpp
+        pg_catalog/pg_enum.cpp
         pg_catalog/pg_index.cpp
         pg_catalog/pg_language.cpp
         pg_catalog/pg_namespace.cpp

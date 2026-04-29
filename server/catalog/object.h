@@ -51,6 +51,7 @@ enum class ObjectType : uint8_t {
   // Under schema - dependencies first
   Tokenizer,
   PgSqlFunction,
+  PgSqlType,
   PgSqlView,
   Table,
   // Under table - shards after their parent definition

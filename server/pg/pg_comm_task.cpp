@@ -352,7 +352,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       connector::SereneDBClientState::Register(*_duckdb_conn->context,
                                                _connection_ctx);
       // PG: the session user is used to resolve "$user" in catalog_search_path.
-      _duckdb_conn->context->session_user = std::string{UserName()};
+      _duckdb_conn->context->session_user = UserName();
       // PG default search_path: "$user", public. The "$user" entry is resolved
       // on each lookup to the current session user; if no schema with that name
       // exists it's silently skipped during resolution.
@@ -590,7 +590,9 @@ void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
   for (size_t i = 0; i < nparams; ++i) {
     const auto oid =
       i < stmt.param_oids.size() ? stmt.param_oids[i] : int32_t{0};
-    auto type = oid != 0 ? Oid2Type(oid) : duckdb::LogicalType::VARCHAR;
+    auto type = oid != 0
+                  ? Oid2Type(oid, *_connection_ctx->EnsureCatalogSnapshot())
+                  : duckdb::LogicalType::VARCHAR;
     duckdb::Value v{"1"};
     if (!v.DefaultTryCastAs(type)) {
       v = duckdb::Value{type};
@@ -907,13 +909,15 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
           type_it->second.id() != duckdb::LogicalTypeId::INVALID) {
         param_type = type_it->second;
       } else if (i < stmt.param_oids.size() && stmt.param_oids[i] != 0) {
-        param_type = Oid2Type(stmt.param_oids[i]);
+        param_type = Oid2Type(stmt.param_oids[i],
+                              *_connection_ctx->EnsureCatalogSnapshot());
       } else {
         param_type = duckdb::LogicalType::VARCHAR;
       }
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
-      auto param_value = DeserializeParameter(param_type, format, param);
+      auto param_value = DeserializeParameter(
+        param_type, format, param, *_connection_ctx->EnsureCatalogSnapshot());
       if (!param_value) {
         switch (param_value.error()) {
           case DeserializeError::InvalidRepresentation:

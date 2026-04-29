@@ -373,28 +373,17 @@ EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          district         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│     (code IS NOT NULL)    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
 │   vedernikoff_safehouse   │
 │                           │
+│          Filter:          │
+│    {code=(-inf, +inf)}    │
+│                           │
+│        Unique: true       │
+│                           │
 │        Projections:       │
-│            code           │
 │            pid            │
 │          district         │
 │                           │
@@ -1266,8 +1255,8 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│           pid             │
-│           note            │
+│            pid            │
+│            note           │
 │                           │
 │          ~3 rows          │
 └─────────────┬─────────────┘
@@ -1413,7 +1402,8 @@ QUERY PLAN
 │   Table: babsky_uniq_in   │
 │                           │
 │          Filter:          │
-│   (code=100), (code=300)  │
+│         (code=100)        │
+│         (code=300)        │
 │                           │
 │        Unique: true       │
 │                           │

@@ -770,7 +770,7 @@ class BlockPoolInserter {
     alloc_slice_of_size(size);  // reserve next slice
 
     // write next address at the end of current slice
-    WriteBE<uint32_t>(_where.pool_offset(), pos);
+    WriteLE<uint32_t>(_where.pool_offset(), pos);
 
     pos = _where;
     ++pos;  // move to the next byte after the header
@@ -800,7 +800,7 @@ class BlockPoolInserter {
     {
       // write gets non-const reference. need explicit copy here
       BlockPoolInserter it(pos - kAddrOffset);
-      WriteBE<uint32_t>(_where.pool_offset(), it);
+      WriteLE<uint32_t>(_where.pool_offset(), it);
     }
 
     pos.reset(_where.pool_offset() + kAddrOffset);

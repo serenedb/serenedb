@@ -20,6 +20,8 @@
 
 #include "pg/pg_catalog/pg_type.h"
 
+#include "catalog/catalog.h"
+#include "catalog/user_type.h"
 #include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
@@ -703,11 +705,68 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 
 template<>
 catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
-  auto result = CreateColumns<PgType>(kSampleData.size());
-  for (size_t row = 0; row < kSampleData.size(); ++row) {
-    WriteData(result, kSampleData[row], kNullMask, row);
+  auto snapshot = _config.EnsureCatalogSnapshot();
+  auto database_id = GetDatabaseId();
+
+  std::vector<PgType> rows;
+  rows.reserve(kSampleData.size());
+  for (const auto& row : kSampleData) {
+    rows.push_back(row);
   }
-  return {std::move(result), kSampleData.size()};
+
+  for (const auto& schema : snapshot->GetSchemas(database_id)) {
+    for (const auto& type :
+         snapshot->GetTypes(database_id, schema->GetName())) {
+      const auto& info = type->GetInfo();
+      const auto kind = info.type.id();
+      const bool is_enum = kind == duckdb::LogicalTypeId::ENUM;
+      const bool is_composite = kind == duckdb::LogicalTypeId::STRUCT;
+      rows.push_back({
+        .oid = type->GetId().id(),
+        .typname = type->GetName(),
+        .typnamespace = schema->GetId().id(),
+        .typowner = id::kRootUser.id(),
+        .typlen = is_enum ? int16_t{4} : int16_t{-1},
+        .typbyval = is_enum,
+        .typtype = is_enum        ? PgType::Typetype::Enum
+                   : is_composite ? PgType::Typetype::Composite
+                                  : PgType::Typetype::Base,
+        .typcategory = is_enum        ? PgType::Typcategory::Enum
+                       : is_composite ? PgType::Typcategory::Composite
+                                      : PgType::Typcategory::UserDefined,
+        .typispreferred = false,
+        .typisdefined = true,
+        .typdelim = ',',
+        .typrelid = 0,
+        .typsubscript = 0,
+        .typelem = 0,
+        .typarray = 0,
+        .typinput = 0,
+        .typoutput = 0,
+        .typreceive = 0,
+        .typsend = 0,
+        .typmodin = 0,
+        .typmodout = 0,
+        .typanalyze = 0,
+        .typalign = PgType::Typalign::Int,
+        .typstorage = PgType::Typstorage::Plain,
+        .typnotnull = false,
+        .typbasetype = 0,
+        .typtypmod = -1,
+        .typndims = 0,
+        .typcollation = 0,
+        .typdefaultbin = {},
+        .typdefault = {},
+        .typacl = {},
+      });
+    }
+  }
+
+  auto result = CreateColumns<PgType>(rows.size());
+  for (size_t i = 0; i < rows.size(); ++i) {
+    WriteData(result, rows[i], kNullMask, i);
+  }
+  return {std::move(result), rows.size()};
 }
 
 }  // namespace sdb::pg

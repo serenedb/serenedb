@@ -20,28 +20,33 @@
 
 #pragma once
 
-#include <duckdb.hpp>
+#include <duckdb/parser/parsed_data/create_type_info.hpp>
 #include <string>
-#include <vector>
 
-#include "connector/duckdb_scan_base.hpp"
+#include "catalog/object.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
-// Global state for SearchAnnScan (HNSW top-k).
-// HNSW search is lazy: all results are collected on the first scan call and
-// then streamed in STANDARD_VECTOR_SIZE batches via ann_current_idx.
-struct SearchAnnScanGlobalState : public CommonScanGlobalState {
-  std::vector<std::string> ann_pk_bytes;
-  size_t ann_current_idx = 0;
-  bool ann_search_done = false;
+inline const std::string kPgSqlTypeOidProp{"sdb_oid"};
+
+// A user-defined type (ENUM or composite).
+class PgSqlType final : public SchemaObject {
+ public:
+  PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
+            duckdb::unique_ptr<duckdb::CreateTypeInfo> info);
+
+  static std::shared_ptr<PgSqlType> ReadInternal(vpack::Slice slice,
+                                                 ReadContext ctx);
+
+  void WriteInternal(vpack::Builder& b) const final;
+  std::shared_ptr<Object> Clone() const final;
+
+  const duckdb::CreateTypeInfo& GetInfo() const noexcept { return *_info; }
+
+  duckdb::LogicalType GetLogicalType() const;
+
+ private:
+  duckdb::unique_ptr<duckdb::CreateTypeInfo> _info;
 };
 
-duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
-  duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input);
-
-void SearchAnnScanFunction(duckdb::ClientContext& context,
-                           duckdb::TableFunctionInput& data,
-                           duckdb::DataChunk& output);
-
-}  // namespace sdb::connector
+}  // namespace sdb::catalog

@@ -38,6 +38,8 @@ std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept {
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
       return "function";
+    case TYPE_ENTRY:
+      return "type";
     default:
       return "object";
   }

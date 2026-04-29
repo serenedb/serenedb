@@ -3,11 +3,13 @@ add_library(
     STATIC
     key_utils.cpp
     search_sink_writer.cpp
+    search_pk_lookup.cpp
     search_remove_filter.cpp
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
     search_filter_builder.cpp
     search_filter_printer.cpp
+    duckdb_ann_filter.cpp
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
@@ -31,10 +33,8 @@ add_library(
     duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
-    rocksdb_row_materializer.cpp
-    parquet_row_materializer.cpp
-    counter_row_materializer.cpp
-    row_materializer.cpp
+    lookup.cpp
+    rocksdb_lookup.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_sst_insert.cpp
@@ -47,7 +47,6 @@ add_library(
     duckdb_vacuum_function.cpp
     duckdb_physical_delete.cpp
     duckdb_physical_update.cpp
-    duckdb_physical_search.cpp
     duckdb_transaction.cpp
 )
 

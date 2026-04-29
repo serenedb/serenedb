@@ -18,13 +18,13 @@ target_sources(
         index.cpp
         view.cpp
         function.cpp
+        user_type.cpp
         sharding_strategy.cpp
         replication_common.cpp
         role.cpp
         secondary_index.cpp
         identity_analyzer.cpp
         inverted_index.cpp
-        analyzer.cpp
         mangling.cpp
         tokenizer.cpp
 )

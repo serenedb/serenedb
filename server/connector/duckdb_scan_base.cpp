@@ -92,12 +92,31 @@ void InitCommonState(CommonScanGlobalState& state,
         static_cast<int64_t>(bind_data.table->GetId().id());
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BIGINT);
+    } else if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY ||
+               col_id == duckdb::COLUMN_IDENTIFIER_ROW_NUMBER) {
+      // DuckDB asks for these placeholder columns when no real data is
+      // needed (e.g. COUNT(*)) -- emit a dummy slot the scan ignores.
+      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state.projected_types.push_back(duckdb::LogicalType::BIGINT);
     } else if (col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      auto real_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
-      SDB_ASSERT(real_idx != duckdb::DConstants::INVALID_INDEX);
-      SDB_ASSERT(real_idx < bind_data.column_ids.size());
-      state.projected_columns.push_back(real_idx);
-      state.projected_types.push_back(bind_data.column_types[real_idx]);
+      // VirtualToPKColumnIndex returns the index in table->Columns(), which
+      // includes the generated PK. column_ids skips kGeneratedPKId, so map
+      // the catalog index -> column_ids index by catalog::Column::Id.
+      auto cat_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+      SDB_ASSERT(cat_idx != duckdb::DConstants::INVALID_INDEX);
+      const auto& catalog_cols = bind_data.table->Columns();
+      SDB_ASSERT(cat_idx < catalog_cols.size());
+      const auto catalog_col_id = catalog_cols[cat_idx].id;
+      duckdb::idx_t bind_idx = duckdb::DConstants::INVALID_INDEX;
+      for (duckdb::idx_t i = 0; i < bind_data.column_ids.size(); ++i) {
+        if (bind_data.column_ids[i] == catalog_col_id) {
+          bind_idx = i;
+          break;
+        }
+      }
+      SDB_ASSERT(bind_idx != duckdb::DConstants::INVALID_INDEX);
+      state.projected_columns.push_back(bind_idx);
+      state.projected_types.push_back(bind_data.column_types[bind_idx]);
     } else if (col_id < num_bind_columns) {
       const auto catalog_col_id = bind_data.column_ids[col_id];
       if (catalog_col_id == catalog::Column::kInvertedIndexScoreId) {

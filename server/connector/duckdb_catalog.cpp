@@ -236,6 +236,9 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
         r = DropFunctionByKind(catalog, info);
       }
       break;
+    case TYPE_ENTRY:
+      r = catalog.DropType(info.catalog, info.schema, info.name);
+      break;
     case SCHEMA_ENTRY:
       if (info.name == StaticStrings::kPgCatalogSchema ||
           info.name == StaticStrings::kInformationSchema) {
@@ -378,9 +381,9 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SereneDBCatalog::LookupSchema(
   duckdb::CatalogTransaction transaction,
   const duckdb::EntryLookupInfo& schema_lookup,
   duckdb::OnEntryNotFound if_not_found) {
-  auto schema_name = std::string{schema_lookup.GetEntryName()};
+  std::string_view schema_name = schema_lookup.GetEntryName();
   // DuckDB uses "main" as default schema; map to "public" for PG compat
-  if (schema_name == "main" || schema_name.empty()) {
+  if (schema_name.empty() || schema_name == "main") {
     schema_name = "public";
   }
   // Get connection's snapshot and delegate to its cache
@@ -839,13 +842,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // DuckDB defaults to empty or "ART", PG defaults to "btree".
   {
     auto& idx_type = create_index_info->index_type;
-    std::string lower;
-    lower.resize(idx_type.size());
-    std::transform(idx_type.begin(), idx_type.end(), lower.begin(), ::tolower);
-    if (lower.empty() || lower == "art" || lower == "btree") {
+    auto type = absl::AsciiStrToLower(idx_type);
+    if (type.empty() || type == "art" || type == "btree") {
       create_index_info->index_type = "secondary";
-    } else if (lower == "secondary" || lower == "inverted") {
-      create_index_info->index_type = lower;
+    } else if (type == "secondary" || type == "inverted") {
+      create_index_info->index_type = std::move(type);
     } else {
       throw duckdb::CatalogException("access method \"%s\" does not exist",
                                      idx_type);
@@ -874,15 +875,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   auto& get = plan->Cast<duckdb::LogicalGet>();
 
-  const bool use_row_number_col = IsParquetExternalTable(*sdb_table);
   const bool use_generated_pk_rowid_col =
     sdb_table->GetTableType() != TableType::File &&
     sdb_table->PKColumns().empty();
 
   // The binder creates an empty LogicalGet. Populate column_ids for all
   // table columns so the scan outputs everything the backfill needs. For
-  // parquet external tables, add the trailing file_row_number virtual
-  // column; for RocksDB implicit-PK tables, add the trailing rowid.
+  // external readers that expose file_row_number (parquet, csv, json),
+  // add the trailing file_row_number virtual column. For RocksDB tables
+  // with no declared PK, add the trailing row_id virtual column instead.
   if (get.GetColumnIds().empty()) {
     for (size_t i = 0; i < columns.size(); ++i) {
       get.AddColumnId(static_cast<duckdb::column_t>(i));
@@ -891,7 +892,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     for (size_t i = 0; i < columns.size(); ++i) {
       get.types.push_back(columns[i].type);
     }
-    if (use_row_number_col) {
+    if (sdb_table->GetTableType() == TableType::File) {
       get.AddColumnId(
         duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
       get.types.push_back(duckdb::LogicalType::BIGINT);

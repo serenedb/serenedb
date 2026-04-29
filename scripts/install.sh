@@ -20,10 +20,9 @@ main() {
 		exit 1
 	}
 
-	# Fetch latest version from GitHub releases API
-	LATEST_VER=$(curl -fsSL https://api.github.com/repos/serenedb/serenedb/releases/latest |
-		grep '"tag_name"' |
-		sed 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/')
+	# Fetch the latest database release from GitHub releases API.
+	# UI releases use a "-ui" suffix, while server releases are plain numeric versions.
+	LATEST_VER=$(fetch_latest_db_release_version)
 
 	if [ -z "${LATEST_VER}" ]; then
 		echo >&2 "Could not determine latest SereneDB version from GitHub. Aborting."
@@ -86,9 +85,37 @@ main() {
 	install_tar "${VER}" "${DIST}"
 }
 
+fetch_latest_db_release_version() {
+	PAGE=1
+
+	while [ "${PAGE}" -le 10 ]; do
+		VER=$(curl -fsSL "https://api.github.com/repos/serenedb/serenedb/releases?per_page=100&page=${PAGE}" |
+			grep '"tag_name"' |
+			sed 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/' |
+			grep -E '^[0-9]+\.[0-9]+(\.[0-9]+)*$' |
+			head -n 1)
+
+		if [ -n "${VER}" ]; then
+			printf '%s\n' "${VER}"
+			return 0
+		fi
+
+		PAGE=$((PAGE + 1))
+	done
+
+	return 1
+}
+
 install_tar() {
 	VER=$1
 	DIST=$2
+
+	case "${VER}" in
+	*-ui)
+		echo >&2 "SereneUI release tags are not supported by this installer. Use a SereneDB server version such as 26.04.4."
+		exit 1
+		;;
+	esac
 
 	URL="https://github.com/serenedb/serenedb/releases/download/v${VER}/serenedb-${VER}-linux-${DIST}.tar.gz"
 	PREFIX="${HOME}/.serenedb/server"

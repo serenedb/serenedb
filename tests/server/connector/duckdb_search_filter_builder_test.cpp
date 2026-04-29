@@ -2216,6 +2216,107 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
                columns, false);
 }
 
+// `::boost(K)` parameterised-type cast -- composable analogue of `^ K`.
+// Uses the BOOSTED_TSQUERY alias so the cast wrapper survives in the
+// bound tree (different alias from source) and the walker can read
+// the factor.
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastSimple) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
+    .boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastPhrase) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddPhraseFilter(expected, 1, {"quick", "brown", "fox"}).boost(1.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "PHRASE('quick brown fox')::boost(1.5)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastAndGroup) {
+  // `(a && b)::boost(K)` -- both legs get boost K via the conjunction's
+  // own boost slot (mirrors `^` on a `&&` group).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& group = expected.add<irs::And>();
+  group.boost(3.0f);
+  AddTermFilter<std::string_view>(group, 1, std::string_view{"x"});
+  AddTermFilter<std::string_view>(group, 1, std::string_view{"y"});
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "('x'::TSQUERY && 'y'::TSQUERY)::boost(3.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNestedWithCaret) {
+  // `(expr ^ 2)::boost(3)` -- multiplicative compose: 6x.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
+    .boost(6.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ('foo'::TSQUERY ^ 2.0)::boost(3.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastCaretOnTop) {
+  // `expr::boost(2) ^ 3` -- symmetric, also 6x.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
+    .boost(6.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(2.0) ^ 3.0",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastTokenizeThenBoost) {
+  // PHRASE(...)::tokenize('identity')::boost(42) -- inner tokenize
+  // forces raw-bytes phrase parts; outer boost multiplies.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.boost(42.0f);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "PHRASE('quick fox')::tokenize('identity')::boost(42.0)",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastBoostThenTokenize) {
+  // PHRASE(...)::boost(42)::tokenize('identity') -- symmetric ordering;
+  // both effects must apply (tokenize override + boost 42).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& phrase = expected.add<irs::ByPhrase>();
+  *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+  phrase.boost(42.0f);
+  phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ "
+               "PHRASE('quick fox')::boost(42.0)::tokenize('identity')",
+               columns, true, SegmentationAnalyzerProvider);
+}
+
 // ===========================================================================
 // `@@` TSQUERY surface (v1 redesign)
 //

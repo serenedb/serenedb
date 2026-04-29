@@ -55,6 +55,12 @@ duckdb::LogicalType MakeTokenizedTSQueryType() {
   return type;
 }
 
+duckdb::LogicalType MakeBoostedTSQueryType() {
+  auto type = duckdb::LogicalType(duckdb::LogicalTypeId::VARCHAR);
+  type.SetAlias(std::string{kBoostedTSQueryTypeName});
+  return type;
+}
+
 bool IsTSQueryType(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::VARCHAR &&
          type.GetAlias() == kTSQueryTypeName;
@@ -65,7 +71,8 @@ bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
     return false;
   }
   const auto alias = type.GetAlias();
-  return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName;
+  return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName ||
+         alias == kBoostedTSQueryTypeName;
 }
 
 TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type) {
@@ -79,6 +86,19 @@ TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type) {
     return {};
   }
   return {.name = duckdb::StringValue::Get(mods[0].value)};
+}
+
+BoostModifier TryGetBoostModifier(const duckdb::LogicalType& type) {
+  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
+    return {};
+  }
+  const auto* ext = type.GetExtensionInfo().get();
+  const auto& mods = ext->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != duckdb::LogicalTypeId::DOUBLE) {
+    return {};
+  }
+  return {.factor = mods[0].value.GetValue<double>()};
 }
 
 // Looks up the named catalog tokenizer in the current transaction's
@@ -336,6 +356,49 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   loader.RegisterCastFunction(tok_tsq, tsq,
                               duckdb::DefaultCasts::ReinterpretCast, 0);
   loader.RegisterCastFunction(tok_tsq, varchar,
+                              duckdb::DefaultCasts::ReinterpretCast, 100);
+
+  // `boost(<factor>)` parameterised type: parallel to tokenize, with
+  // a DOUBLE modifier instead of VARCHAR. Different alias keeps the
+  // cast wrapper alive so the walker can read the factor.
+  loader.RegisterType(
+    std::string{kBoostTypeName}, tsq,
+    +[](duckdb::BindLogicalTypeInput& input) -> duckdb::LogicalType {
+      const auto& modifiers = input.modifiers;
+      if (modifiers.size() != 1) {
+        throw duckdb::BinderException(
+          "boost(<factor>) requires exactly one numeric argument");
+      }
+      auto factor = modifiers[0].GetValue().DefaultCastAs(
+        duckdb::LogicalType::DOUBLE);
+      if (factor.IsNull()) {
+        throw duckdb::BinderException("boost() factor must be non-null");
+      }
+      auto type = MakeBoostedTSQueryType();
+      auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
+      info->modifiers.emplace_back(std::move(factor));
+      type.SetExtensionInfo(std::move(info));
+      return type;
+    });
+
+  // BOOSTED <-> {VARCHAR, TSQ, TOK} reinterpret casts. Cost 0 in/out
+  // of the TSQ family so BOOSTED args feed the existing TOK-typed
+  // operator overloads (`||`, `&&`, `^`, `!!`); 100 down to bare
+  // VARCHAR mirrors the TSQ/TOK -> VARCHAR asymmetry. The cross-edges
+  // (TOK <-> BOOSTED) are what let `::tokenize(...)` and `::boost(K)`
+  // compose in either order on a compound expression.
+  const auto boosted_tsq = MakeBoostedTSQueryType();
+  loader.RegisterCastFunction(varchar, boosted_tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tsq, boosted_tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tok_tsq, boosted_tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(boosted_tsq, tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(boosted_tsq, tok_tsq,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(boosted_tsq, varchar,
                               duckdb::DefaultCasts::ReinterpretCast, 100);
 
   // VARCHAR[] -> TSQUERY[] -- proper element-wise list cast (NOT a

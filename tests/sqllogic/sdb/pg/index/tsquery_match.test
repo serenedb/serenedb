@@ -1567,6 +1567,43 @@ statement ok
 DROP TEXT SEARCH DICTIONARY tsq_english_upper;
 
 # ----------------------------------------------------------------------
+# `::boost(K)` cast -- composable analogue of `^ K`.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+# Compound: every leg of the conjunction inherits the boost via the
+# `&&` group's own boost slot.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY && 'fox'::TSQUERY)::boost(3.0) ORDER BY a;
+----
+a
+1
+2
+
+# Composes with ::tokenize in both orderings -- different aliases
+# (BOOSTED vs TOKENIZED) keep both cast wrappers alive so the walker
+# sees and applies both modifiers.
+query
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::tokenize('identity')::boost(42.0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(42.0)::tokenize('identity') ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------
 

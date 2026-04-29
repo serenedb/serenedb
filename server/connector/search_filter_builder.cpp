@@ -482,7 +482,8 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     const auto& target = cast.return_type;
     const auto& source = cast.child->return_type;
     // Stop at modifier-bearing casts; the walker needs to see them.
-    if (!TryGetTokenizerModifier(target).name.empty()) {
+    if (!TryGetTokenizerModifier(target).name.empty() ||
+        TryGetBoostModifier(target).factor.has_value()) {
       break;
     }
     // Peel only transit casts within the {VARCHAR, TSQUERY,
@@ -3045,6 +3046,34 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   // ResolveTokenizerAnalyzer; the resulting AnalyzerWrapper lives on
   // this stack frame and overrides ctx.tokenizer for the inner subtree.
   const duckdb::Expression& peeled = UnwrapTSQueryCast(expr);
+  // Boost-modifier branch: parallel to tokenize, multiplies ctx.boost
+  // and recurses on the inner. Cheap (no catalog lookup), handle first.
+  if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+    if (auto bm = TryGetBoostModifier(cast_expr.return_type);
+        bm.factor.has_value() && cast_expr.child) {
+      const auto factor = static_cast<irs::score_t>(*bm.factor);
+      auto sub_ctx = ctx;
+      sub_ctx.boost = (ctx.boost == irs::kNoBoost) ? factor
+                                                   : ctx.boost * factor;
+      return BuildTSQuery(parent, sub_ctx, column_info, *cast_expr.child);
+    }
+  } else if (peeled.expression_class ==
+             duckdb::ExpressionClass::BOUND_CONSTANT) {
+    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
+    if (auto bm = TryGetBoostModifier(cv.type()); bm.factor.has_value()) {
+      const auto factor = static_cast<irs::score_t>(*bm.factor);
+      auto sub_ctx = ctx;
+      sub_ctx.boost = (ctx.boost == irs::kNoBoost) ? factor
+                                                   : ctx.boost * factor;
+      // Strip the BOOSTED alias before dispatching so the recursion
+      // doesn't re-enter this branch on the same value.
+      duckdb::Value cleaned = cv;
+      cleaned.Reinterpret(MakeTSQueryType());
+      duckdb::BoundConstantExpression cleaned_expr(std::move(cleaned));
+      return BuildTSQuery(parent, sub_ctx, column_info, cleaned_expr);
+    }
+  }
   {
     TokenizerModifier mod;
     const duckdb::Expression* inner_expr = nullptr;

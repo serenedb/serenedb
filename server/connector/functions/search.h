@@ -23,6 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/analyzer.hpp>
+#include <optional>
 #include <string>
 
 #include "catalog/tokenizer.h"
@@ -43,6 +44,12 @@ inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
 inline constexpr std::string_view kTokenizedTSQueryTypeName =
   "TOKENIZED_TSQUERY";
 inline constexpr std::string_view kTokenizerTypeName = "tokenize";
+// Distinct alias for `EXPR::boost(K)` -- different from
+// TOKENIZED_TSQUERY so the two casts compose in either order on a
+// compound expression (each cast wrapper survives because its alias
+// differs from its source).
+inline constexpr std::string_view kBoostedTSQueryTypeName = "BOOSTED_TSQUERY";
+inline constexpr std::string_view kBoostTypeName = "boost";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
@@ -103,11 +110,16 @@ duckdb::LogicalType MakeTSQueryType();
 // casts so the cast wrapper isn't elided as a same-alias no-op.
 duckdb::LogicalType MakeTokenizedTSQueryType();
 
+// Same shape but with the `BOOSTED_TSQUERY` alias -- target of
+// `::boost(K)` casts.
+duckdb::LogicalType MakeBoostedTSQueryType();
+
 // True iff `type` is the TSQUERY alias (VARCHAR + "TSQUERY" alias).
 bool IsTSQueryType(const duckdb::LogicalType& type);
 
-// True iff `type` is either TSQUERY or TOKENIZED_TSQUERY -- both are
-// valid carriers of TSQUERY-shaped values inside the filter builder.
+// True iff `type` is one of TSQUERY / TOKENIZED_TSQUERY /
+// BOOSTED_TSQUERY -- all valid carriers of TSQUERY-shaped values
+// inside the filter builder.
 bool IsAnyTSQueryType(const duckdb::LogicalType& type);
 
 // If `type` is a TSQUERY annotated with a `tokenize(name)` modifier,
@@ -120,6 +132,14 @@ struct TokenizerModifier {
   std::string_view name;
 };
 TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type);
+
+// If `type` carries a `boost(K)` modifier, returns the factor.
+// Distinguished from TokenizerModifier by the modifier's value type
+// (DOUBLE vs VARCHAR) so the two never alias each other.
+struct BoostModifier {
+  std::optional<double> factor;
+};
+BoostModifier TryGetBoostModifier(const duckdb::LogicalType& type);
 
 // Looks up the named catalog tokenizer in the current transaction's
 // snapshot and returns an owned AnalyzerWrapper. The caller controls

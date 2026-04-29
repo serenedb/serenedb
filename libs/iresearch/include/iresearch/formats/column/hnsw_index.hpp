@@ -159,12 +159,8 @@ struct HNSWSearchBuffer {
   }
 
   void ResetValues() {
-    for (auto& d : dis) {
-      d = max_dist;
-    }
-    for (auto& id : ids) {
-      id = -1;
-    }
+    std::ranges::fill(dis, max_dist);
+    std::ranges::fill(ids, -1);
   }
 };
 struct HNSWSearchInfo {

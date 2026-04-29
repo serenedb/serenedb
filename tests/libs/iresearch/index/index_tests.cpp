@@ -14798,14 +14798,14 @@ TEST_P(ANNSearchTest, hnsw_search_basic) {
       expected.resize(f.top_k);
 
       std::vector<float> dis(f.top_k, 0.0f);
-      std::vector<uint64_t> docs(f.top_k);
+      std::vector<int64_t> docs(f.top_k);
       irs::HNSWSearchInfo info{
         reinterpret_cast<const irs::byte_type*>(query.data()),
         f.top_k,
         params,
       };
-      reader.Search("vec", info, reinterpret_cast<float*>(dis.data()),
-                    reinterpret_cast<int64_t*>(docs.data()));
+      irs::HNSWSearchBuffer buffer{dis.data(), docs.data(), f.top_k};
+      reader.Search("vec", info, buffer);
       size_t correct = 0;
       for (size_t k = 0; k < f.top_k; ++k) {
         correct +=

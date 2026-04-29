@@ -45,9 +45,10 @@ constexpr std::string_view kL1Metric = "l1";
 constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
 
-ResultOr<int64_t> GetIntOption(std::string_view index_kind,
-                               std::string_view column_name,
-                               std::string_view key, const duckdb::Value& v) {
+ResultOr<int64_t> GetIndexIntOption(std::string_view index_kind,
+                                    std::string_view column_name,
+                                    std::string_view key,
+                                    const duckdb::Value& v) {
   auto int_value = v.Copy();
   if (int_value.DefaultTryCastAs(duckdb::LogicalTypeId::BIGINT)) {
     return int_value.GetValueUnsafe<int64_t>();
@@ -65,10 +66,10 @@ ResultOr<int64_t> GetIntOption(std::string_view index_kind,
                                  "'"};
 }
 
-ResultOr<std::string> GetStringOption(std::string_view index_kind,
-                                      std::string_view column_name,
-                                      std::string_view key,
-                                      const duckdb::Value& v) {
+ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
+                                           std::string_view column_name,
+                                           std::string_view key,
+                                           const duckdb::Value& v) {
   auto str_value = v.Copy();
   if (str_value.DefaultTryCastAs(duckdb::LogicalTypeId::VARCHAR)) {
     return str_value.GetValue<std::string>();
@@ -94,7 +95,7 @@ Result ApplyHNSWOptions(
   HNSWColumnConfig& cfg) {
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
-      auto str = GetStringOption(kHnswKind, column_name, key, raw_val);
+      auto str = GetIndexStringOption(kHnswKind, column_name, key, raw_val);
       if (!str) {
         return std::move(str).error();
       }
@@ -124,7 +125,7 @@ Result ApplyHNSWOptions(
                 kIPMetric};
       }
     } else if (key == kMField) {
-      auto n = GetIntOption(kHnswKind, column_name, key, raw_val);
+      auto n = GetIndexIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
         return std::move(n).error();
       }
@@ -139,7 +140,7 @@ Result ApplyHNSWOptions(
       }
       cfg.m = static_cast<int>(*n);
     } else if (key == kEfConstructionField) {
-      auto n = GetIntOption(kHnswKind, column_name, key, raw_val);
+      auto n = GetIndexIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
         return std::move(n).error();
       }

@@ -50,8 +50,12 @@ type MonacoEditorProps = {
         monaco: typeof import("monaco-editor"),
     ) => void;
     onChange?: (value: string) => void;
-    onExecute?: (mode: "sequential" | "transaction") => void;
-    onExecuteInNewTab?: () => void;
+    onExecute?: (
+        mode: "sequential" | "sequentialIgnoreErrors" | "transaction",
+    ) => void;
+    onExecuteInNewTab?: (
+        mode?: "sequential" | "sequentialIgnoreErrors" | "transaction",
+    ) => void;
 };
 
 export const MonacoEditor = React.forwardRef<HTMLElement, MonacoEditorProps>(

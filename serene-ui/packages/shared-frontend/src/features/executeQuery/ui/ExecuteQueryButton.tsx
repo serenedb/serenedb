@@ -9,17 +9,20 @@ import {
 import { useQueryResults } from "../modal";
 import { useConnection } from "@serene-ui/shared-frontend/entities";
 
+type ExecuteQueryMode =
+    | "sequential"
+    | "sequentialIgnoreErrors"
+    | "transaction";
+
 interface ExecuteQueryButtonProps {
     query: string;
     bind_vars?: any[];
     saveToHistory?: boolean;
     limit?: number;
     handleJobId?: (jobId: number) => void;
-    onExecute?: (mode: "sequential" | "transaction") => Promise<void> | void;
+    onExecute?: (mode: ExecuteQueryMode) => Promise<void> | void;
     onBeforeExecute?: () => void;
-    onExecuteInNewTab?: (
-        mode?: "sequential" | "transaction",
-    ) => Promise<void> | void;
+    onExecuteInNewTab?: (mode?: ExecuteQueryMode) => Promise<void> | void;
     executeSequentiallyByDefault?: boolean;
     executeInNewTabByDefault?: boolean;
 }
@@ -94,6 +97,16 @@ export const ExecuteQueryButton = ({
                             }
                         }}>
                         Execute sequentially
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                        className="justify-between pr-1 pl-3"
+                        onSelect={(event) => {
+                            event.preventDefault();
+                            if (!disabled && onExecute) {
+                                onExecute("sequentialIgnoreErrors");
+                            }
+                        }}>
+                        Execute sequentially (ignore errors)
                     </DropdownMenuItem>
                     <DropdownMenuItem
                         className="justify-between pr-1 pl-3"

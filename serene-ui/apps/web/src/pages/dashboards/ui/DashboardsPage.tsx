@@ -52,6 +52,7 @@ const MainPanel: React.FC = () => {
         closeEditor,
         openEditor,
         refreshAllCharts,
+        setCurrentDashboardId,
         isExplorerOpened,
         toggleExplorer,
     } = useDashboardPage();
@@ -72,6 +73,7 @@ const MainPanel: React.FC = () => {
                 editedBlock={editedBlock}
                 isPanelResizing={isResizing}
                 manualRefreshToken={chartsRefreshToken}
+                onCreateDashboard={setCurrentDashboardId}
                 onCloseEditor={closeEditor}
                 onEditBlock={openEditor}
             />

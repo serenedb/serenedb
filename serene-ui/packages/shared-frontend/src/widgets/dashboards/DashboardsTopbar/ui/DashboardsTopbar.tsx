@@ -62,7 +62,7 @@ export const DashboardsTopbar: React.FC<DashboardsTopbarProps> = ({
                     </Button>
                 </div>
                 <p className="text-xs dark:text-primary-foreground">
-                    {currentDashboard?.name ?? "Select dashboard"}
+                    {currentDashboard?.name ?? "Dashboards"}
                 </p>
             </div>
             <div className="electron-no-drag flex gap-1">

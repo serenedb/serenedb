@@ -1,4 +1,5 @@
 import React from "react";
+import type { VariantProps } from "class-variance-authority";
 import { toast } from "sonner";
 
 import { useAddDashboard } from "../../../entities/dashboard";
@@ -15,19 +16,33 @@ import {
     Input,
     PlusIcon,
 } from "../../../shared";
+import { cn } from "../../../shared/lib/utils";
+import { buttonVariants } from "../../../shared/ui/button";
 
 const DEFAULT_DASHBOARD_NAME = "Untitled";
 
 interface CreateDashboardButtonProps {
+    children?: React.ReactNode;
+    className?: string;
     onCreateDashboard?: (dashboardId: number) => void;
+    title?: string;
+    variant?: VariantProps<typeof buttonVariants>["variant"];
+    size?: VariantProps<typeof buttonVariants>["size"];
 }
 
 export const CreateDashboardButton: React.FC<CreateDashboardButtonProps> = ({
+    children,
+    className,
     onCreateDashboard,
+    title = "Create dashboard",
+    variant = "ghost",
+    size = "xsIcon",
 }) => {
     const [open, setOpen] = React.useState(false);
     const [name, setName] = React.useState(DEFAULT_DASHBOARD_NAME);
     const { mutateAsync: addDashboard, isPending } = useAddDashboard();
+    const isIconOnly =
+        size === "icon" || size === "iconSmall" || size === "xsIcon";
 
     React.useEffect(() => {
         if (!open) {
@@ -85,12 +100,21 @@ export const CreateDashboardButton: React.FC<CreateDashboardButtonProps> = ({
             <DialogTrigger asChild>
                 <Button
                     type="button"
-                    size="xsIcon"
-                    className="text-foreground/50 hover:text-foreground bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-none duration-0"
-                    variant="ghost"
-                    title="Create dashboard"
+                    size={size}
+                    className={cn(
+                        !children &&
+                            "text-foreground/50 hover:text-foreground bg-transparent hover:bg-black/5 dark:hover:bg-white/5 transition-none duration-0",
+                        className,
+                    )}
+                    variant={variant}
+                    title={title}
                     disabled={isPending}>
-                    <PlusIcon className="size-2.5 text-foreground/50" />
+                    <PlusIcon
+                        className={cn(
+                            isIconOnly ? "size-2.5 text-foreground/50" : "size-4",
+                        )}
+                    />
+                    {children}
                 </Button>
             </DialogTrigger>
             <DialogContent className="max-w-sm">

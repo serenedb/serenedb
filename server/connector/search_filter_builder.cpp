@@ -55,6 +55,7 @@
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
 
+#include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/result_or.h"
 #include "basics/string_utils.h"
@@ -184,6 +185,7 @@ struct FilterContext {
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
   containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo>& column_cache;
+  irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
   size_t scored_terms_limit = 1024;
@@ -194,6 +196,20 @@ struct FilterContext {
       .boost = boost,
       .column_getter = column_getter,
       .column_cache = column_cache,
+      .identity = identity,
+      .tokenizer = tokenizer,
+      .client_context = client_context,
+      .scored_terms_limit = scored_terms_limit,
+    };
+  }
+
+  FilterContext WithBoost(irs::score_t factor) const {
+    return {
+      .negated = negated,
+      .boost = boost * factor,
+      .column_getter = column_getter,
+      .column_cache = column_cache,
+      .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
       .scored_terms_limit = scored_terms_limit,
@@ -483,7 +499,7 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     const auto& source = cast.child->return_type;
     // Stop at modifier-bearing casts; the walker needs to see them.
     if (!TryGetTokenizerModifier(target).name.empty() ||
-        TryGetBoostModifier(target).factor.has_value()) {
+        TryGetBoostModifier(target).factor) {
       break;
     }
     // Peel only transit casts within the {VARCHAR, TSQUERY,
@@ -1631,7 +1647,7 @@ Result FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
   // TSQUERY phrase part.
   const auto& right = *f.children[1];
   if (IsPhraseSeqGapType(right)) {
-    if (seq.pending.has_value()) {
+    if (seq.pending) {
       return {ERROR_BAD_PARAMETER, "## gap must be followed by a phrase part"};
     }
     auto gap = ParsePhraseSeqGap(right);
@@ -1788,7 +1804,7 @@ Result ExtractAnyAllOfArgs(
                                    ? "any_of requires at least one argument"
                                    : "all_of requires at least one argument"};
   }
-  if (min_match.has_value() && *min_match > args.size()) {
+  if (min_match && *min_match > args.size()) {
     return {ERROR_BAD_PARAMETER, "any_of min_match (",
             *min_match,          ") exceeds number of arguments (",
             args.size(),         ")"};
@@ -1803,7 +1819,7 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (seq.parts.empty()) {
     return {ERROR_BAD_PARAMETER, "## phrase has no parts"};
   }
-  if (seq.pending.has_value()) {
+  if (seq.pending) {
     return {ERROR_BAD_PARAMETER,
             "## trailing gap must be followed by a phrase part"};
   }
@@ -1958,7 +1974,7 @@ Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             !r.ok()) {
           return r;
         }
-        if (sub_min_match.has_value() && *sub_min_match != 1) {
+        if (sub_min_match && *sub_min_match != 1) {
           throw duckdb::InvalidInputException(
             "## ANY_OF phrase part requires min_match=1 (got %d); a "
             "phrase position can match only one token",
@@ -2129,6 +2145,15 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::Expression& expr);
 
+std::optional<Result> TryDispatchBoostCast(irs::BooleanFilter& parent,
+                                           const FilterContext& ctx,
+                                           const SearchColumnInfo& column_info,
+                                           const duckdb::Expression& peeled);
+
+std::optional<Result> TryDispatchTokenizeCast(
+  irs::BooleanFilter& parent, const FilterContext& ctx,
+  const SearchColumnInfo& column_info, const duckdb::Expression& peeled);
+
 Result ParseWebsearchQuery(std::string_view text,
                            const SearchColumnInfo& column_info,
                            const FilterContext& ctx,
@@ -2277,7 +2302,7 @@ Result FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
       !r.ok()) {
     return r;
   }
-  if (analyzer_name == "identity") {
+  if (analyzer_name == irs::StringTokenizer::type_name()) {
     return BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
   }
   // Hold the wrapper as a stack local for the duration of this call;
@@ -2617,9 +2642,8 @@ Result FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (factor < 0.0f) {
     return {ERROR_BAD_PARAMETER, "boost factor must be >= 0, got ", factor};
   }
-  auto boosted = ctx;
-  boosted.boost = (ctx.boost == irs::kNoBoost) ? factor : ctx.boost * factor;
-  return BuildTSQuery(parent, boosted, column_info, *func.children[0]);
+  return BuildTSQuery(parent, ctx.WithBoost(factor), column_info,
+                      *func.children[0]);
 }
 
 // TSQUERY `##` -- phrase sequence. Flattens the (possibly nested) ##
@@ -2723,7 +2747,7 @@ Result FromTokenizeListInAnyAllOf(
         !r.ok()) {
       return r;
     }
-    if (analyzer_name == "identity") {
+    if (analyzer_name == irs::StringTokenizer::type_name()) {
       use_identity = true;
     } else {
       override_wrapper =
@@ -2734,7 +2758,9 @@ Result FromTokenizeListInAnyAllOf(
           ERR_MSG("TOKENIZE(text_array, '", analyzer_name,
                   "'): tokenizer not found in catalog"),
           ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY or use "
-                   "'identity' for raw bytes per element."));
+                   "'",
+                   irs::StringTokenizer::type_name(),
+                   "' for raw bytes per element."));
       }
     }
   }
@@ -3026,138 +3052,120 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   return {};
 }
 
-Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::Expression& expr) {
-  // `<expr>::tokenize('<analyzer>')` annotates a TOKENIZED_TSQUERY type
-  // with an ExtensionTypeInfo modifier carrying the tokenizer name.
-  // The modifier can appear on either a BOUND_CAST wrapper (cast not
-  // folded) or on a BOUND_CONSTANT's value type (DuckDB constant-folds
-  // `'foo'::tokenize('name')` into a constant whose type carries the
-  // modifier).
-  //
-  // We first peel any non-modifier transit casts (e.g. the outer
-  // TOK->TSQ cast DuckDB inserts when a tokenized value flows into a
-  // TSQUERY-expecting overload like `@@`). UnwrapTSQueryCast stops at
-  // any modifier-bearing cast so we can observe the override.
-  //
-  // 'identity' is special-cased to mean "no tokenisation, raw ByTerm".
-  // Any other name is resolved at filter-build time via
-  // ResolveTokenizerAnalyzer; the resulting AnalyzerWrapper lives on
-  // this stack frame and overrides ctx.tokenizer for the inner subtree.
-  const duckdb::Expression& peeled = UnwrapTSQueryCast(expr);
-  // Boost-modifier branch: parallel to tokenize, multiplies ctx.boost
-  // and recurses on the inner. Cheap (no catalog lookup), handle first.
+// `(...)::boost(K)` -- multiplies ctx.boost by the modifier's factor
+// and recurses on the inner. Returns nullopt if `peeled` carries no
+// boost modifier.
+std::optional<Result> TryDispatchBoostCast(irs::BooleanFilter& parent,
+                                           const FilterContext& ctx,
+                                           const SearchColumnInfo& column_info,
+                                           const duckdb::Expression& peeled) {
   if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-    if (auto bm = TryGetBoostModifier(cast_expr.return_type);
-        bm.factor.has_value() && cast_expr.child) {
-      const auto factor = static_cast<irs::score_t>(*bm.factor);
-      auto sub_ctx = ctx;
-      sub_ctx.boost = (ctx.boost == irs::kNoBoost) ? factor
-                                                   : ctx.boost * factor;
-      return BuildTSQuery(parent, sub_ctx, column_info, *cast_expr.child);
+    auto mod = TryGetBoostModifier(cast_expr.return_type);
+    if (!mod.factor || !cast_expr.child) {
+      return std::nullopt;
+    }
+    return BuildTSQuery(parent,
+                        ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
+                        column_info, *cast_expr.child);
+  }
+  if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+    const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
+    auto mod = TryGetBoostModifier(cv.type());
+    if (!mod.factor) {
+      return std::nullopt;
+    }
+    // Strip the BOOSTED alias before recursing, otherwise we re-enter
+    // this branch on the same value.
+    duckdb::Value cleaned = cv;
+    cleaned.Reinterpret(MakeTSQueryType());
+    duckdb::BoundConstantExpression cleaned_expr(std::move(cleaned));
+    return BuildTSQuery(parent,
+                        ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
+                        column_info, cleaned_expr);
+  }
+  return std::nullopt;
+}
+
+// `(...)::tokenize('<name>')` -- 'identity' bypasses tokenisation;
+// any other name resolves via the catalog. Returns nullopt if
+// `peeled` carries no tokenize modifier.
+std::optional<Result> TryDispatchTokenizeCast(
+  irs::BooleanFilter& parent, const FilterContext& ctx,
+  const SearchColumnInfo& column_info, const duckdb::Expression& peeled) {
+  TokenizerModifier mod;
+  const duckdb::Expression* expr = nullptr;
+  const duckdb::Value* val = nullptr;
+  if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+    mod = TryGetTokenizerModifier(cast_expr.return_type);
+    if (!mod.name.empty() && cast_expr.child) {
+      expr = cast_expr.child.get();
+      val = TryGetConstant(UnwrapTSQueryCast(*expr));
     }
   } else if (peeled.expression_class ==
              duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
-    if (auto bm = TryGetBoostModifier(cv.type()); bm.factor.has_value()) {
-      const auto factor = static_cast<irs::score_t>(*bm.factor);
-      auto sub_ctx = ctx;
-      sub_ctx.boost = (ctx.boost == irs::kNoBoost) ? factor
-                                                   : ctx.boost * factor;
-      // Strip the BOOSTED alias before dispatching so the recursion
-      // doesn't re-enter this branch on the same value.
-      duckdb::Value cleaned = cv;
-      cleaned.Reinterpret(MakeTSQueryType());
-      duckdb::BoundConstantExpression cleaned_expr(std::move(cleaned));
-      return BuildTSQuery(parent, sub_ctx, column_info, cleaned_expr);
-    }
-  }
-  {
-    TokenizerModifier mod;
-    const duckdb::Expression* inner_expr = nullptr;
-    const duckdb::Value* inner_val = nullptr;
-    if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
-      const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-      mod = TryGetTokenizerModifier(cast_expr.return_type);
-      if (!mod.name.empty() && cast_expr.child) {
-        inner_expr = cast_expr.child.get();
-        const auto& inner = UnwrapTSQueryCast(*inner_expr);
-        inner_val = TryGetConstant(inner);
-      }
-    } else if (peeled.expression_class ==
-               duckdb::ExpressionClass::BOUND_CONSTANT) {
-      const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
-      mod = TryGetTokenizerModifier(cv.type());
-      if (!mod.name.empty()) {
-        inner_val = &cv;
-      }
-    }
+    mod = TryGetTokenizerModifier(cv.type());
     if (!mod.name.empty()) {
-      // NOTE: chained `::tokenize(a)::tokenize(b)` casts collapse at
-      // bind time -- DuckDB constant-folds the inner cast and only
-      // the outer modifier survives on the constant's type. We can't
-      // observe the inner one to surface a conflict here, so the
-      // outermost tokenizer is what wins (silently). If chained-cast
-      // misuse becomes a real problem, detection has to move into
-      // the parameterized-type bind, not here.
-      if (mod.name == "identity") {
-        // Folded-constant case: emit raw ByTerm with the literal bytes,
-        // no analyzer involvement.
-        if (inner_val && !inner_val->IsNull() &&
-            inner_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
-          return BuildFtsTerm(parent, ctx, column_info, *inner_val);
-        }
-        // Cast-wrapped case: recurse with a stack-local identity
-        // analyzer so any leaf tokenisation treats input as one raw
-        // token. The local outlives the recursion.
-        if (inner_expr) {
-          irs::StringTokenizer identity_tokenizer;
-          auto sub_ctx = ctx.WithTokenizer(identity_tokenizer);
-          return BuildTSQuery(parent, sub_ctx, column_info, *inner_expr);
-        }
-        return {ERROR_NOT_IMPLEMENTED,
-                "::tokenize('identity'): inner expression has unsupported "
-                "shape"};
-      }
-      // Wrapper lives on the stack here; the recursion below uses it,
-      // then it goes back to the Tokenizer's pool when this scope exits.
-      auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
-      if (!wrapper) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG("::tokenize('", std::string(mod.name),
-                                "'): tokenizer not found in catalog"),
-                        ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
-                                 "or use 'identity' for raw bytes."));
-      }
-      auto sub_ctx = ctx.WithTokenizer(*wrapper);
-      // Folded-constant case: tokenise the bare value via the override
-      // tokenizer (cannot recurse on the constant -- its type still
-      // carries the modifier and would re-enter this branch).
-      if (inner_val) {
-        if (inner_val->IsNull() ||
-            inner_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-          return {ERROR_BAD_PARAMETER,
-                  "::tokenize(<name>): inner value must be VARCHAR"};
-        }
-        return BuildFtsTokens(parent, sub_ctx, column_info,
-                              inner_val->GetValue<std::string>(),
-                              /*require_all=*/false);
-      }
-      // Cast-wrapped case: recurse on the unwrapped inner so a PHRASE
-      // / LIKE / nested expression rebuilds under the override
-      // tokenizer.
-      return BuildTSQuery(parent, sub_ctx, column_info, *inner_expr);
+      val = &cv;
     }
   }
+  if (mod.name.empty()) {
+    return std::nullopt;
+  }
+  if (mod.name == irs::StringTokenizer::type_name()) {
+    if (val && !val->IsNull() &&
+        val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      return BuildFtsTerm(parent, ctx, column_info, *val);
+    }
+    if (expr) {
+      return BuildTSQuery(parent, ctx.WithTokenizer(ctx.identity), column_info,
+                          *expr);
+    }
+    return Result{ERROR_NOT_IMPLEMENTED,
+                  "::tokenize('identity'): inner expression has unsupported "
+                  "shape"};
+  }
+  // Wrapper lives on this stack frame; releases the analyzer back to
+  // the Tokenizer's pool when the scope exits.
+  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
+  if (!wrapper) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("::tokenize('", mod.name, "'): tokenizer not found in catalog"),
+      ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
+               "or use 'identity' for raw bytes."));
+  }
+  auto sub_ctx = ctx.WithTokenizer(*wrapper);
+  if (val) {
+    // Cannot recurse on a folded constant -- its type still carries
+    // the modifier and would re-enter this branch.
+    if (val->IsNull() || val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+      return Result{ERROR_BAD_PARAMETER,
+                    "::tokenize(<name>): inner value must be VARCHAR"};
+    }
+    return BuildFtsTokens(parent, sub_ctx, column_info,
+                          val->GetValue<std::string>(),
+                          /*require_all=*/false);
+  }
+  return BuildTSQuery(parent, sub_ctx, column_info, *expr);
+}
 
-  // The peeled expression is what the rest of the dispatch operates
-  // on -- bare-string / function-call / etc. (we already unwrapped at
-  // the top, no need to re-peel here).
-  const auto& unwrapped = peeled;
+Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    const duckdb::Expression& expr) {
+  const duckdb::Expression& unwrapped = UnwrapTSQueryCast(expr);
 
-  // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenise via
+  if (auto r = TryDispatchBoostCast(parent, ctx, column_info, unwrapped)) {
+    return std::move(*r);
+  }
+
+  if (auto r = TryDispatchTokenizeCast(parent, ctx, column_info, unwrapped)) {
+    return std::move(*r);
+  }
+
+  // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenize via
   // the ambient (column) analyzer. Multi-token input composes with OR
   // (min_match=1) per the plan's "col @@ 'Quick Fox' ≡ ANY_OF(tokens)"
   // rule. Non-VARCHAR / analyzer-less paths fall back to raw ByTerm.
@@ -3179,6 +3187,7 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     return {ERROR_NOT_IMPLEMENTED, "Unsupported TSQUERY expression class: ",
             static_cast<int>(unwrapped.expression_class)};
   }
+
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
   const auto op = ClassifyTSQueryFunction(func.function.name);
 
@@ -3425,32 +3434,29 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 }
 
-Result ExprToFilter(
-  irs::BooleanFilter& filter, const duckdb::Expression& expr,
-  const ColumnGetter& column_getter,
-  containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo>& column_cache,
-  const SearchFilterOptions& options) {
-  irs::StringTokenizer identity;
-  FilterContext ctx{
-    .negated = false,
-    .column_getter = column_getter,
-    .column_cache = column_cache,
-    .tokenizer = identity,
-    .client_context = options.client_context,
-    .scored_terms_limit = options.scored_terms_limit,
-  };
-  return FromExpression(filter, ctx, expr);
-}
-
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
   const ColumnGetter& column_getter, const SearchFilterOptions& options) {
+  irs::StringTokenizer identity;
   containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo> column_cache;
+
+  FilterContext ctx{
+    .negated = false,
+    .column_getter = column_getter,
+    .column_cache = column_cache,
+    .identity = identity,
+    .tokenizer = identity,
+    .client_context = options.client_context,
+    .scored_terms_limit = options.scored_terms_limit,
+  };
+
   for (const auto& expr : conjuncts) {
-    auto res = ExprToFilter(root, *expr, column_getter, column_cache, options);
-    if (!res.ok()) {
-      return res;
+    SDB_ASSERT(expr);
+
+    auto r = FromExpression(root, ctx, *expr);
+    if (!r.ok()) {
+      return r;
     }
   }
   return {};

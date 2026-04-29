@@ -34,6 +34,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/tokenizer.h"
@@ -304,7 +305,10 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       // treat the bytes as a single raw term". Normalize to a literal
       // 'identity' so the filter builder's existing identity branch
       // handles it without a separate null-check path.
-      auto resolved = v.IsNull() ? duckdb::Value("identity") : v;
+      auto resolved =
+        v.IsNull()
+          ? duckdb::Value(std::string{irs::StringTokenizer::type_name()})
+          : v;
       // Return TOKENIZED_TSQUERY (distinct alias from TSQUERY) so a
       // `<TSQ-typed expr>::tokenize(...)` cast doesn't get short-
       // circuited by DuckDB's same-alias cast elision. The implicit
@@ -369,8 +373,8 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
         throw duckdb::BinderException(
           "boost(<factor>) requires exactly one numeric argument");
       }
-      auto factor = modifiers[0].GetValue().DefaultCastAs(
-        duckdb::LogicalType::DOUBLE);
+      auto factor =
+        modifiers[0].GetValue().DefaultCastAs(duckdb::LogicalType::DOUBLE);
       if (factor.IsNull()) {
         throw duckdb::BinderException("boost() factor must be non-null");
       }

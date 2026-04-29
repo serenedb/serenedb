@@ -708,8 +708,7 @@ a
 2
 
 # ## with explicit fixed-size INTEGER[2] (ARRAY, not LIST). Same
-# semantics as the [0,2] LIST literal, but exercises the ARRAY branch
-# of IsPhraseSeqGapType / ParsePhraseGap.
+# semantics as the [0,2] LIST literal
 query
 SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## [0,2]::INTEGER[2] ## 'fox'::TSQUERY) ORDER BY a;
 ----

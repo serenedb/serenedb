@@ -8,6 +8,18 @@ add_library(
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
     search_filter_builder.cpp
+    tsq_anyallof.cpp
+    tsq_compound.cpp
+    tsq_levenshtein.cpp
+    tsq_like.cpp
+    tsq_ngram.cpp
+    tsq_phrase.cpp
+    tsq_prefix.cpp
+    tsq_range.cpp
+    tsq_regexp.cpp
+    tsq_term.cpp
+    tsq_tokenize.cpp
+    tsq_to_tsquery.cpp
     search_filter_printer.cpp
     duckdb_ann_filter.cpp
     duckdb_client_state.cpp

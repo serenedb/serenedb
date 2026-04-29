@@ -1,0 +1,292 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <iresearch/parser/parser.h>
+
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/mixed_boolean_filter.hpp>
+#include <iresearch/utils/string.hpp>
+
+#include "catalog/mangling.h"
+#include "tsq_common.hpp"
+
+namespace sdb::connector {
+namespace {
+enum class WsTokKind { Word, Phrase, Or };
+
+struct WsToken {
+  WsTokKind kind;
+  std::string text;
+  bool negated = false;
+};
+
+std::vector<WsToken> LexWebsearch(std::string_view text) {
+  std::vector<WsToken> out;
+  size_t i = 0;
+  const size_t n = text.size();
+  while (i < n) {
+    while (i < n && std::isspace(static_cast<unsigned char>(text[i]))) {
+      ++i;
+    }
+    if (i >= n) {
+      break;
+    }
+
+    bool neg = false;
+    if (text[i] == '-') {
+      neg = true;
+      ++i;
+      if (i >= n || std::isspace(static_cast<unsigned char>(text[i]))) {
+        // lone '-' -- ignore
+        continue;
+      }
+    }
+
+    if (text[i] == '"') {
+      ++i;
+      size_t start = i;
+      while (i < n && text[i] != '"') {
+        ++i;
+      }
+      out.push_back(
+        {WsTokKind::Phrase, std::string{text.substr(start, i - start)}, neg});
+      if (i < n) {
+        ++i;  // consume closing quote
+      }
+      continue;
+    }
+
+    size_t start = i;
+    while (i < n && !std::isspace(static_cast<unsigned char>(text[i])) &&
+           text[i] != '"') {
+      ++i;
+    }
+    std::string word{text.substr(start, i - start)};
+    // `OR` keyword: case-insensitive, exactly 2 chars, and only when it
+    // isn't negated (the user wrote `-OR` or similar).
+    if (!neg && word.size() == 2 && (word[0] == 'o' || word[0] == 'O') &&
+        (word[1] == 'r' || word[1] == 'R')) {
+      out.push_back({WsTokKind::Or, {}, false});
+    } else {
+      out.push_back({WsTokKind::Word, std::move(word), neg});
+    }
+  }
+  return out;
+}
+
+// Groups OR-chained atoms. Stray OR tokens (at start / end / between
+// other ORs) are silently dropped.
+std::vector<std::vector<WsToken>> GroupWebsearch(
+  const std::vector<WsToken>& tokens) {
+  std::vector<std::vector<WsToken>> groups;
+  size_t i = 0;
+  while (i < tokens.size()) {
+    if (tokens[i].kind == WsTokKind::Or) {
+      ++i;
+      continue;
+    }
+    std::vector<WsToken> group;
+    group.push_back(tokens[i]);
+    ++i;
+    while (i + 1 < tokens.size() && tokens[i].kind == WsTokKind::Or &&
+           tokens[i + 1].kind != WsTokKind::Or) {
+      group.push_back(tokens[i + 1]);
+      i += 2;
+    }
+    groups.push_back(std::move(group));
+  }
+  return groups;
+}
+
+Result ParseWebsearchQuery(std::string_view text,
+                           const SearchColumnInfo& column_info,
+                           const FilterContext& ctx,
+                           irs::BooleanFilter& parent) {
+  const auto groups = GroupWebsearch(LexWebsearch(text));
+  if (groups.empty()) {
+    AddFilter<irs::Empty>(parent);
+    return {};
+  }
+
+  auto emit_atom = [&](const WsToken& tok, irs::BooleanFilter& into,
+                       const FilterContext& c) -> Result {
+    auto ac = c;
+    ac.negated = c.negated ^ tok.negated;
+    if (tok.kind == WsTokKind::Phrase) {
+      return BuildFtsPhrase(into, ac, column_info, tok.text);
+    }
+    return BuildFtsTokens(into, ac, column_info, tok.text,
+                          /*require_all=*/false);
+  };
+
+  auto emit_group = [&](const std::vector<WsToken>& group,
+                        irs::BooleanFilter& into,
+                        const FilterContext& c) -> Result {
+    if (group.size() == 1) {
+      return emit_atom(group[0], into, c);
+    }
+    auto& or_group =
+      c.negated ? Negate<irs::Or>(into) : AddFilter<irs::Or>(into);
+    or_group.boost(c.boost);
+    auto inner = c;
+    inner.negated = false;
+    inner.boost = irs::kNoBoost;
+    for (const auto& tok : group) {
+      if (auto r = emit_atom(tok, or_group, inner); !r.ok()) {
+        return r;
+      }
+    }
+    return {};
+  };
+
+  if (groups.size() == 1) {
+    return emit_group(groups[0], parent, ctx);
+  }
+
+  auto& and_group =
+    ctx.negated ? Negate<irs::And>(parent) : AddFilter<irs::And>(parent);
+  and_group.boost(ctx.boost);
+  auto inner = ctx;
+  inner.negated = false;
+  inner.boost = irs::kNoBoost;
+  for (const auto& group : groups) {
+    if (auto r = emit_group(group, and_group, inner); !r.ok()) {
+      return r;
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
+Result FromPhrase(irs::BooleanFilter&, const FilterContext&,
+                  const SearchColumnInfo&,
+                  const duckdb::BoundFunctionExpression&);
+
+Result FromPhraseToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                           const SearchColumnInfo& column_info,
+                           const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() != 1) {
+    return {ERROR_BAD_PARAMETER,
+            "phraseto_tsquery expects 1 argument (text), got ",
+            func.children.size()};
+  }
+  return FromPhrase(parent, ctx, column_info, func);
+}
+
+// TOKENIZE(text [, analyzer]): 1-arg uses the ambient (column)
+// analyzer with OR semantics; 2-arg accepts only `'identity'` for v1
+// (bypasses tokenisation, emits a raw ByTerm). Catalog-registered
+// analyzers require snapshot access not yet plumbed through the
+Result FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                          const SearchColumnInfo& column_info,
+                          const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() != 1) {
+    return {ERROR_BAD_PARAMETER,
+            "plainto_tsquery expects 1 argument (text), got ",
+            func.children.size()};
+  }
+  std::string text;
+  if (auto r = GetVarcharArg(*func.children[0], "plainto_tsquery text", text);
+      !r.ok()) {
+    return r;
+  }
+  return BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/true);
+}
+
+// websearch_to_tsquery(text): PG-style web-search syntax (quoted
+// phrases, OR keyword, leading `-` for NOT). Delegates to the
+// websearch parser in this file.
+Result FromWebsearchToTsquery(irs::BooleanFilter& parent,
+                              const FilterContext& ctx,
+                              const SearchColumnInfo& column_info,
+                              const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() != 1) {
+    return {ERROR_BAD_PARAMETER,
+            "websearch_to_tsquery expects 1 argument (text), got ",
+            func.children.size()};
+  }
+  std::string text;
+  if (auto r =
+        GetVarcharArg(*func.children[0], "websearch_to_tsquery text", text);
+      !r.ok()) {
+    return r;
+  }
+  return ParseWebsearchQuery(text, column_info, ctx, parent);
+}
+
+// tsquery_phrase(q1, q2 [, distance]): function form of `##`. Wraps
+// the args into a synthetic PhraseSeq (q1, optional gap, q2) and
+// emits via the shared phrase-seq emitter.
+Result FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+                         const SearchColumnInfo& column_info,
+                         const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() < 2 || func.children.size() > 3) {
+    return {ERROR_BAD_PARAMETER,
+            "tsquery_phrase expects 2 or 3 arguments "
+            "(q1, q2[, distance]), got ",
+            func.children.size()};
+  }
+  PhraseSeq seq;
+  if (auto r = FlattenPhraseSeq(*func.children[0], seq); !r.ok()) {
+    return r;
+  }
+  if (func.children.size() == 3) {
+    auto gap = ParsePhraseSeqGap(*func.children[2]);
+    if (!gap) {
+      return std::move(gap.error());
+    }
+    seq.pending = *gap;
+  }
+  if (auto r = AttachPart(seq, *func.children[1]); !r.ok()) {
+    return r;
+  }
+  return EmitPhraseSeq(parent, ctx, column_info, seq);
+}
+
+Result FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                     const SearchColumnInfo& column_info,
+                     const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() != 1) {
+    return {ERROR_BAD_PARAMETER,
+            "to_tsquery expects 1 argument (lucene-string), got ",
+            func.children.size()};
+  }
+  std::string text;
+  if (auto r = GetVarcharArg(*func.children[0], "to_tsquery text", text);
+      !r.ok()) {
+    return r;
+  }
+  std::string field_name;
+  MakeFieldName(column_info, field_name);
+  search::mangling::MangleString(field_name);
+  auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
+                            : AddFilter<irs::MixedBooleanFilter>(parent);
+  mixed.boost(ctx.boost);
+  sdb::ParserContext parser_ctx{mixed, field_name, ctx.tokenizer};
+  parser_ctx.strict_field = true;
+  if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
+    return {ERROR_BAD_PARAMETER, "to_tsquery parse error: ", r.errorMessage()};
+  }
+  return {};
+}
+
+}  // namespace sdb::connector

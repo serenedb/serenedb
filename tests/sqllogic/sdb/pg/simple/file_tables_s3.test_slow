@@ -192,3 +192,7 @@ SELECT COUNT(*) FROM ext_s3_parquet;
 ----
 count
 5
+
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

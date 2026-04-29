@@ -117,6 +117,14 @@ class PosAttr : public Attribute, public AttributeProvider {
   value_t _value{pos_limits::invalid()};
 };
 
+// Represents a value to be stored in the index alongside the indexed field.
+// Analyzers that support storing populate this attribute in reset().
+struct StoreAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept { return "store"; }
+
+  bytes_view value;
+};
+
 // Subscription for attribute provider change
 class AttrProviderChangeAttr final : public Attribute {
  public:

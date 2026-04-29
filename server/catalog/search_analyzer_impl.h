@@ -122,8 +122,6 @@ bool IsGeoAnalyzer(std::string_view type) noexcept;
 // Thread-safe analyzer pool
 class AnalyzerImpl final {
  public:
-  using StoreFunc = irs::bytes_view (*)(irs::Tokenizer*, vpack::Slice);
-
   // type tags for primitive token streams
   struct StringStreamTag {};
   struct NumberStreamTag {};
@@ -148,7 +146,6 @@ class AnalyzerImpl final {
   std::string_view GetType() const noexcept { return _type; }
   vpack::Slice GetProperties() const noexcept { return _properties; }
   Features GetFeatures() const noexcept { return _features; }
-  StoreFunc GetStoreFunc() const noexcept { return _store_func; }
   char GetFieldMarker() const noexcept { return _field_marker; }
 
   void ToVPack(vpack::Builder& builder) const;
@@ -174,7 +171,6 @@ class AnalyzerImpl final {
   std::string_view _type;
   vpack::Slice _properties;
   Features _features;
-  StoreFunc _store_func{};
   char _field_marker{};
   std::string _config;  // non-null type + non-null properties
 

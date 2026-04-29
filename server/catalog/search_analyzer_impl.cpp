@@ -27,6 +27,7 @@
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
 #include "app/name_validator.h"
@@ -34,7 +35,6 @@
 #include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
-#include "catalog/analyzer.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/mangling.h"
@@ -44,30 +44,29 @@
 
 namespace sdb::search {
 
-[[maybe_unused]] std::tuple<FunctionValueType, FunctionValueType,
-                            AnalyzerImpl::StoreFunc, char>
+[[maybe_unused]] std::tuple<FunctionValueType, FunctionValueType, char>
 GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   SDB_ASSERT(analyzer);
   const auto type = analyzer->type();
 
   if (type == irs::Type<irs::analysis::GeoJsonAnalyzer>::id()) {
     return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            &irs::analysis::GeoJsonAnalyzer::store, mangling::kAnalyzer};
+            mangling::kAnalyzer};
   }
 
   if (type == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            &irs::analysis::GeoPointAnalyzer::store, mangling::kAnalyzer};
+            mangling::kAnalyzer};
   }
 
-  if (type == irs::Type<wildcard::Analyzer>::id()) {
+  if (type == irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
     return {FunctionValueType::String, FunctionValueType::String,
-            &wildcard::Analyzer::store, mangling::kString};
+            mangling::kString};
   }
 
 #ifdef SDB_GTEST
   if ("iresearch-vpack-analyzer" == type().name()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String, nullptr,
+    return {FunctionValueType::JsonCompound, FunctionValueType::String,
             mangling::kString};
   }
 #endif
@@ -75,11 +74,10 @@ GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   const auto* value_type = irs::get<AnalyzerReturnTypeAttr>(*analyzer);
   if (value_type) {
     // TODO(gnusi): returning mangling::kString is not always correct
-    return {FunctionValueType::String, value_type->value, nullptr,
-            mangling::kString};
+    return {FunctionValueType::String, value_type->value, mangling::kString};
   }
 
-  return {FunctionValueType::String, FunctionValueType::String, nullptr,
+  return {FunctionValueType::String, FunctionValueType::String,
           mangling::kString};
 }
 
@@ -187,7 +185,7 @@ Result Features::Validate(std::string_view type) const {
   }
 
   const auto supported_features = [&] {
-    if (type == wildcard::Analyzer::type_name()) {
+    if (type == irs::analysis::WildcardAnalyzer::type_name()) {
       // maybe we should disable norm for wildcard analyzer?
       return irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
              irs::IndexFeatures::Norm;
@@ -285,12 +283,12 @@ Result AnalyzerImpl::init(std::string_view type, vpack::Slice properties,
     bool return_invalid = (return_type == FunctionValueType::Invalid);
     SDB_ASSERT(input_invalid == return_invalid);
     if (input_invalid || return_invalid) {
-      std::tie(std::ignore, std::ignore, _store_func, _field_marker) =
+      std::tie(std::ignore, std::ignore, _field_marker) =
         GetAnalyzerMeta(instance.get());
       return {};
     }
 
-    std::tie(_input_type, _return_type, _store_func, _field_marker) =
+    std::tie(_input_type, _return_type, _field_marker) =
       GetAnalyzerMeta(instance.get());
     if (instance->type() != irs::Type<irs::analysis::PipelineTokenizer>::id()) {
       return {};
@@ -305,7 +303,7 @@ Result AnalyzerImpl::init(std::string_view type, vpack::Slice properties,
     if (!pipeline.visit_members([&](const irs::analysis::Analyzer& curr) {
           FunctionValueType curr_input;
           FunctionValueType curr_output;
-          std::tie(curr_input, curr_output, std::ignore, std::ignore) =
+          std::tie(curr_input, curr_output, std::ignore) =
             GetAnalyzerMeta(&curr);
           if (prev &&
               (curr_input & prev_output) == FunctionValueType::Invalid) {

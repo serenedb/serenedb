@@ -2861,11 +2861,11 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
             func.children.size(), " args"};
   }
 
-  auto extract = [](const duckdb::Expression& arg,
-                    std::string_view label,
-                    std::vector<const duckdb::Expression*>& out,
-                    std::vector<duckdb::unique_ptr<duckdb::Expression>>&
-                      synthesised) -> Result {
+  auto extract =
+    [](const duckdb::Expression& arg, std::string_view label,
+       std::vector<const duckdb::Expression*>& out,
+       std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised)
+    -> Result {
     // NULL bucket-arg -> empty bucket regardless of declared type.
     if (const auto* val = TryGetConstant(arg); val && val->IsNull()) {
       return {};
@@ -2898,9 +2898,12 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       const auto& fn = arg.Cast<duckdb::BoundFunctionExpression>();
       if (fn.function.name != "list_value" &&
           fn.function.name != "array_value") {
-        return {ERROR_BAD_PARAMETER, "compound ", label,
+        return {ERROR_BAD_PARAMETER,
+                "compound ",
+                label,
                 " list arg must be a literal list or array (got: ",
-                fn.function.name, ")"};
+                fn.function.name,
+                ")"};
       }
       for (const auto& e : fn.children) {
         out.push_back(e.get());
@@ -2930,8 +2933,8 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     return {};
   }
 
-  auto& and_filter = ctx.negated ? Negate<irs::And>(parent)
-                                 : AddFilter<irs::And>(parent);
+  auto& and_filter =
+    ctx.negated ? Negate<irs::And>(parent) : AddFilter<irs::And>(parent);
   and_filter.boost(ctx.boost);
 
   auto inner_ctx = ctx;
@@ -2962,8 +2965,7 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
           !r.ok()) {
         return r;
       }
-      if (min_should < 1 ||
-          min_should > static_cast<int64_t>(should.size())) {
+      if (min_should < 1 || min_should > static_cast<int64_t>(should.size())) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("compound min_should_match must be in [1, ",
                                 should.size(), "], got ", min_should));
@@ -3426,51 +3428,67 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   SDB_UNREACHABLE();
 }
 
-Result FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
-                        const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, "@@ has ", func.children.size(),
-            " inputs but 2 expected"};
-  }
+void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
+                      const duckdb::BoundFunctionExpression& func) {
+  SDB_ASSERT(func.children.size() == 2);
   // @@ is commutative: either side can be the column. Try LHS first,
   // then the cast-stripped RHS. Matches PG `doc @@ q` / `q @@ doc`.
   const auto* left_col = TryGetColumnRef(UnwrapTSQueryCast(*func.children[0]));
   const auto* right_col = TryGetColumnRef(UnwrapTSQueryCast(*func.children[1]));
-  const duckdb::BoundColumnRefExpression* column_ref = nullptr;
-  const duckdb::Expression* tsquery_expr = nullptr;
+  const duckdb::BoundColumnRefExpression* column = nullptr;
+  const duckdb::Expression* expr = nullptr;
   if (left_col && right_col) {
-    // Both sides resolve to column refs -- only error if BOTH are
-    // indexed inverted columns; otherwise prefer the indexed side.
     const auto* left_info = FindColumnInfo(ctx, *left_col);
     const auto* right_info = FindColumnInfo(ctx, *right_col);
     if (left_info && right_info) {
-      return {ERROR_BAD_PARAMETER,
-              "@@ has column references on both sides; disambiguate by "
-              "wrapping the non-column side as a TSQUERY (e.g. ::TSQUERY "
-              "cast or PHRASE/LIKE/PREFIX/LEVENSHTEIN constructor)"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("@@ has column references on both sides"),
+        ERR_HINT("One side must be a TSQUERY expression. Wrap a literal in "
+                 "::TSQUERY (e.g. 'word'::TSQUERY) or use a constructor "
+                 "(PHRASE, LIKE, PREFIX, LEVENSHTEIN, ...)."));
     }
-    column_ref = left_info ? left_col : right_col;
-    tsquery_expr = left_info ? func.children[1].get() : func.children[0].get();
+    column = left_info ? left_col : right_col;
+    expr = left_info ? func.children[1].get() : func.children[0].get();
   } else if (left_col) {
-    column_ref = left_col;
-    tsquery_expr = func.children[1].get();
+    column = left_col;
+    expr = func.children[1].get();
   } else if (right_col) {
-    column_ref = right_col;
-    tsquery_expr = func.children[0].get();
+    column = right_col;
+    expr = func.children[0].get();
   } else {
-    return {ERROR_BAD_PARAMETER, "@@ must have a column reference on one side"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("@@ requires a column reference on one side"),
+      ERR_HINT("One side of @@ must be a column reference, not a literal "
+               "or function. Did you mean: <col> @@ <expr>?"));
   }
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
+  const auto* column_info = FindColumnInfo(ctx, *column);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "@@ column not found in inverted index"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("@@ column not found in inverted index"),
+                    ERR_HINT("Add the column to an inverted index: "
+                             "CREATE INDEX ... USING inverted(<col>)."));
   }
-  auto* analyzer = column_info->tokenizer.analyzer.get();
-  if (!analyzer) {
-    return {ERROR_BAD_PARAMETER,
-            "@@ column has no analyzer (not a text-indexed column)"};
+  auto* tokenizer = column_info->tokenizer.analyzer.get();
+  if (!tokenizer) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("@@ column has no analyzer (not a text-indexed column)"),
+      ERR_HINT("Use a VARCHAR-typed column with a text-search analyzer "
+               "attached at index time."));
   }
-  auto sub_ctx = ctx.WithTokenizer(*analyzer);
-  return BuildTSQuery(filter, sub_ctx, *column_info, *tsquery_expr);
+  auto sub_ctx = ctx.WithTokenizer(*tokenizer);
+  auto r = BuildTSQuery(filter, sub_ctx, *column_info, *expr);
+  if (!r.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(r.errorMessage()),
+      ERR_HINT("Each operand inside @@ must be a TSQUERY-typed expression. "
+               "Examples: 'word'::TSQUERY, PHRASE('quick fox'), "
+               "LEVENSHTEIN('test', 1), RANGE('a', 'z'), "
+               "compound(must, must_not, should). Combine with "
+               "|| && !! ^ ## or wrap in ::tokenize(name) / ::boost(K)."));
+  }
 }
 
 Result FromFunctionExpression(irs::BooleanFilter& filter,
@@ -3479,7 +3497,12 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   const auto& name = func.function.name;
 
   if (name == kTSQueryMatch) {
-    return FromTSQueryMatch(filter, ctx, func);
+    // Anything that fails inside `@@` would otherwise fall through to
+    // the runtime stub and surface the generic "TSQUERY expression
+    // evaluated outside @@" error -- losing the specific cause. Throw
+    // at this boundary so users see the actual reason + a hint.
+    FromTSQueryMatch(filter, ctx, func);
+    return {};
   }
 
   // DuckDB turns LIKE into a BoundFunctionExpression with function.name

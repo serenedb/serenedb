@@ -1523,7 +1523,8 @@ TEST_F(SearchFilterBuilderTest, test_SimplePhraseNoFeatures) {
   irs::And expected;
   AssertFilter(
     expected, "SELECT * FROM foo WHERE category @@ PHRASE('quick brown fox')",
-    columns, false, SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>);
+    columns, false, SegmentationAnalyzerProviderBase<irs::IndexFeatures::Freq>,
+    "Positions and Frequency");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SimpleAndPhrase) {
@@ -2021,7 +2022,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ NGRAM('hello')", columns,
-               false);
+               false, IdentityAnalyzerProvider, "NGRAM");
 }
 
 // ===========================================================================
@@ -2045,7 +2046,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinDistanceTooHigh) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('test', 5)",
-               columns, false);
+               columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
 }
 
 TEST_F(SearchFilterBuilderTest,
@@ -2055,7 +2056,7 @@ TEST_F(SearchFilterBuilderTest,
   irs::And expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('test', 4, true)",
-               columns, false);
+               columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNotNegation) {
@@ -2213,7 +2214,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_Negative) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY ^ -1.0",
-               columns, false);
+               columns, false, IdentityAnalyzerProvider, "boost");
 }
 
 // `::boost(K)` parameterised-type cast -- composable analogue of `^ K`.
@@ -3001,7 +3002,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeAmbiguousColumns) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "c"}};
   irs::And expected;
-  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ c", columns, false);
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ c", columns, false,
+               IdentityAnalyzerProvider,
+               "@@ has column references on both sides");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LikeWildcard) {
@@ -3542,7 +3545,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfMinExceedsArgs) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ANY_OF(['a', 'b'], 5)",
-               columns, false);
+               columns, false, IdentityAnalyzerProvider, "min_match");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfRejectsMinMatchArg) {
@@ -3604,7 +3607,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_ToTsqueryError) {
   irs::And expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ to_tsquery('AND AND AND')",
-               columns, false);
+               columns, false, IdentityAnalyzerProvider, "to_tsquery");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseToTsquery) {
@@ -4125,7 +4128,7 @@ TEST_F(SearchFilterBuilderTest,
      .name = "tags"}};
   irs::And expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ANY_OF(TOKENIZE(tags))",
-               columns, false, SegmentationAnalyzerProvider);
+               columns, false, SegmentationAnalyzerProvider, "TOKENIZE");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PlainToTsqueryAnd) {

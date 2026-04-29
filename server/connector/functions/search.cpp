@@ -378,6 +378,10 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       if (factor.IsNull()) {
         throw duckdb::BinderException("boost() factor must be non-null");
       }
+      if (factor.GetValue<double>() < 0.0) {
+        throw duckdb::BinderException("boost() factor must be >= 0, got %f",
+                                      factor.GetValue<double>());
+      }
       auto type = MakeBoostedTSQueryType();
       auto info = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
       info->modifiers.emplace_back(std::move(factor));

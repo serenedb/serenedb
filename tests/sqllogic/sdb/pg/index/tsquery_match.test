@@ -1603,6 +1603,68 @@ a
 1
 2
 
+# Multiplicative compose with `^`: (expr ^ 2)::boost(3) and
+# expr::boost(2) ^ 3 both yield the same row-set as a 6x boost.
+query
+SELECT a FROM tsq_idx WHERE b @@ (PHRASE('quick') ^ 2.0)::boost(3.0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(2.0) ^ 3.0 ORDER BY a;
+----
+a
+1
+2
+
+# Boost cast on each TSQUERY constructor -- same row-set as the
+# bare constructor, just with score multiplication.
+query
+SELECT a FROM tsq_idx WHERE b @@ ("LIKE"('quic%'))::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ PREFIX('turt')::boost(2.0) ORDER BY a;
+----
+a
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ LEVENSHTEIN('quikc', 2)::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+# Zero factor: claim succeeds, scoring contribution is zero (same as `^ 0`).
+query
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(0.0) ORDER BY a;
+----
+a
+1
+2
+
+# Numeric coercion: integer literal accepted (cast to DOUBLE in bind).
+query
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(2) ORDER BY a;
+----
+a
+1
+2
+
+# Negative factor: rejected at bind time.
+statement error boost
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(-1.0);
+
+# NULL factor: rejected at bind time.
+statement error boost
+SELECT a FROM tsq_idx WHERE b @@ PHRASE('quick')::boost(NULL);
+
 # ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------

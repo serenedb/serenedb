@@ -2317,6 +2317,70 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastBoostThenTokenize) {
                columns, true, SegmentationAnalyzerProvider);
 }
 
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastZero) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
+    .boost(0.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(0.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNegative) {
+  // Negative boost factor is rejected at bind time (mirrors `^ -K`).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ 'foo'::TSQUERY::boost(-1.0)",
+               columns, false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2).boost(2.5f);
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('test', 2)::boost(2.5)",
+    columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNgram) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddNgramSimilarityFilter(expected, 1, {"fo", "oo"}).boost(2.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ NGRAM('foo')::boost(2.5)", columns,
+               true, NgramAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLike) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "foo%").boost(3.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ (LIKE('foo%'))::boost(3.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastRange) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
+                                   std::string_view{"foo"}, false)
+    .boost(1.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ LESS('foo')::boost(1.5)", columns,
+               true);
+}
+
 // ===========================================================================
 // `@@` TSQUERY surface (v1 redesign)
 //

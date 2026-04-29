@@ -40,25 +40,24 @@ struct ANNFilterContext {
   std::vector<duckdb::LogicalType> filter_types;
 
   const SereneDBScanBindData& bind_data;
-  const rocksdb::Snapshot* rocks_snapshot;
-  const rocksdb::Transaction* rocksdb_txn;
+  const rocksdb::Snapshot* rocksdb_snapshot;
   std::vector<duckdb::idx_t> filter_projection;
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
 class ANNFilter final : public faiss::IDSelector {
  public:
-  ANNFilter(duckdb::ClientContext& context, const irs::IndexReader& reader,
-            const SereneDBScanBindData& bind_data,
-            const rocksdb::Snapshot* snapshot, rocksdb::Transaction* txn,
-            std::vector<duckdb::idx_t> filter_projected_columns,
-            std::vector<duckdb::LogicalType> filter_types,
-            std::vector<catalog::Column::Id> filter_bind_column_ids,
-            std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs);
+  ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
 
   bool is_member(faiss::idx_t id) const override;
 
  private:
+  const ANNFilterContext& _ctx;
+  const irs::SubReader& _segment;
+  mutable duckdb::ExpressionExecutor _executor;
+  mutable duckdb::DataChunk _scratch;
+  mutable duckdb::DataChunk _bool_out;
+
   // Cached File-backed lookup session (lazy, reused across is_member calls).
   // Empty for RocksDB-backed tables -- LookupRows dispatches to RocksDBLookup
   // which doesn't need a session. mutable so const is_member can lazily fill.

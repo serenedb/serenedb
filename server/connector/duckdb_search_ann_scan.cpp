@@ -107,7 +107,9 @@ void EmitLocalData(SearchAnnScanGlobalState& g, SearchAnnScanLocalState& l) {
   g.ids.emplace_back(std::move(l.ids));
 }
 
-void EmitResult(SearchAnnScanGlobalState& g, duckdb::DataChunk& output) {
+void EmitResult(duckdb::ClientContext& context,
+                const SereneDBScanBindData& bind_data,
+                SearchAnnScanGlobalState& g, duckdb::DataChunk& output) {
   const size_t k = g.scan->top_k;
   const size_t num_lists = g.dis.size();
 
@@ -171,7 +173,10 @@ void EmitResult(SearchAnnScanGlobalState& g, duckdb::DataChunk& output) {
     }
   }
 
-  g.materializer->Materialize(pk_views, output);
+  LookupRows(context, bind_data, g.snapshot, g.projected_columns,
+             g.projected_types, bind_data.column_ids, g.txn, pk_views,
+             g.file_lookup_session, output);
+
   output.SetCardinality(count);
   g.produced_rows.fetch_add(count, std::memory_order_relaxed);
 }
@@ -235,10 +240,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   gstate->total_segments = snapshot.reader.size();
   gstate->remained_segments = gstate->total_segments;
 
-  gstate->materializer =
-    MakeRowMaterializer(context, bind_data, gstate->snapshot, /*all_pks=*/{},
-                        gstate->projected_columns, gstate->projected_types,
-                        bind_data.column_ids, nullptr);
   gstate->reader = &snapshot.reader;
   return gstate;
 }
@@ -255,14 +256,36 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchAnnScanInitLocal(
 void SearchAnnScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
-  auto& gstate = data.global_state->Cast<SearchAnnScanGlobalState>();
-
-  if (gstate.finished) {
+  auto& g = data.global_state->Cast<SearchAnnScanGlobalState>();
+  auto& l = data.local_state->Cast<SearchAnnScanLocalState>();
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
+  size_t processed = 0;
+  size_t segment;
+  SDB_ASSERT(g.reader);
+  std::optional<ANNFilter> filter;
+  while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
+                              segment)) {
+    const auto& reader = (*g.reader)[segment];
+    if (g.filter_ctx) {
+      filter.emplace(*g.filter_ctx, reader);
+    }
+    ANNSearchSegment(reader, filter, g, l, context);
+    processed++;
+    filter.reset();
+  }
+  if (!processed) {
+    output.SetCardinality(0);
+    return;
+  }
+  EmitLocalData(g, l);
+  auto remained =
+    g.remained_segments.fetch_sub(processed, std::memory_order_acq_rel);
+  if (remained != processed) {
     output.SetCardinality(0);
     return;
   }
   // Merge result in a single thread
-  EmitResult(g, output);
+  EmitResult(context, bind_data, g, output);
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
@@ -281,11 +304,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
     GetSereneDBContext(context).EnsureSearchSnapshot(gstate->scan->index_id);
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
-
-  gstate->materializer =
-    MakeRowMaterializer(context, bind_data, gstate->snapshot, /*all_pks=*/{},
-                        gstate->projected_columns, gstate->projected_types,
-                        bind_data.column_ids, nullptr);
   return gstate;
 }
 
@@ -296,11 +314,12 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchRangeScanInitLocal(
   return duckdb::make_uniq<SearchRangeScanLocalState>();
 }
 
-void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
+void SearchRangeScanFunction(duckdb::ClientContext& context,
                              duckdb::TableFunctionInput& data,
                              duckdb::DataChunk& output) {
   auto& g = data.global_state->Cast<SearchRangeScanGlobalState>();
   auto& l = data.local_state->Cast<SearchRangeScanLocalState>();
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
 
   std::optional<ANNFilter> filter;
   size_t segment;
@@ -349,7 +368,9 @@ void SearchRangeScanFunction(duckdb::ClientContext& /*context*/,
 
   {
     std::lock_guard lock{g.materializer_mutex};
-    g.materializer->Materialize(pk_batch, output);
+    LookupRows(context, bind_data, g.snapshot, g.projected_columns,
+               g.projected_types, bind_data.column_ids, g.txn, pk_batch,
+               g.file_lookup_session, output);
   }
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
   l.current_idx += batch_size;

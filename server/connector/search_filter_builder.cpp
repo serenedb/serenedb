@@ -184,32 +184,20 @@ struct FilterContext {
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
   containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo>& column_cache;
-  // Optional override for the tokenizer used by tokenisation-driven
-  // emitters (BuildFtsTokens / BuildFtsPhrase / FromNgramMatch /
-  // EmitPhraseTokens). When null, the column's tokenizer is used. Set
-  // by the `<expr>::tokenize('<name>')` cast for the inner subtree.
-  irs::analysis::Analyzer* tokenizer = nullptr;
-  // ClientContext used to resolve named catalog analyzers at
-  // filter-build time (e.g. for the function form
-  // `TOKENIZE(text, 'english')` whose stub-function body never runs).
-  // The cast form already has its analyzer resolved at SQL bind time
-  // by the parameterised-type bind callback, so it doesn't depend on
-  // this. Required (reference, not pointer) -- mirrors the public
-  // SearchFilterOptions surface.
+  irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
-  // Maximum number of terms a multi-term filter (PREFIX / LIKE /
-  // RANGE / REGEXP / LEVENSHTEIN / ngram) will collect for scoring.
-  // Wired from the `sdb_scored_terms_limit` session setting; 1024 is
-  // the iresearch default.
   size_t scored_terms_limit = 1024;
-};
 
-// Returns the tokenizer the current ctx wants used for tokenisation:
-// the cast-imposed override if set, otherwise the column's tokenizer.
-irs::analysis::Analyzer* ActiveTokenizer(const FilterContext& ctx,
-                                         const SearchColumnInfo& column_info) {
-  return ctx.tokenizer ? ctx.tokenizer : column_info.tokenizer.analyzer.get();
-}
+  FilterContext WithTokenizer(irs::analysis::Analyzer& tok) const {
+    return {.negated = negated,
+            .boost = boost,
+            .column_getter = column_getter,
+            .column_cache = column_cache,
+            .tokenizer = tok,
+            .client_context = client_context,
+            .scored_terms_limit = scored_terms_limit};
+  }
+};
 
 Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& expr);
@@ -1085,8 +1073,8 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   phrase.boost(ctx.boost);
   *phrase.mutable_field() = field_name;
   auto* opts = phrase.mutable_options();
-  auto* analyzer = ActiveTokenizer(ctx, column_info);
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(*analyzer);
+  auto& analyzer = ctx.tokenizer;
+  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
 
   std::optional<PhraseGap> pending_gap;
 
@@ -1106,8 +1094,8 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     }
     if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
       auto text = const_val->GetValue<std::string>();
-      analyzer->reset(std::string_view{text});
-      while (analyzer->next()) {
+      analyzer.reset(std::string_view{text});
+      while (analyzer.next()) {
         if (pending_gap) {
           // First token of a new text pattern: apply pending gap.
           opts
@@ -1261,13 +1249,13 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
 Result EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                         const SearchColumnInfo& column_info,
                         std::string_view text, PhraseGap base_gap) {
-  auto* analyzer = ActiveTokenizer(ctx, column_info);
-  if (!analyzer || !analyzer->reset(text)) {
+  auto& analyzer = ctx.tokenizer;
+  if (!analyzer.reset(text)) {
     return {ERROR_BAD_PARAMETER, "PHRASE failed to analyse '", text, "'"};
   }
-  const auto* token = irs::get<irs::TermAttr>(*analyzer);
+  const auto* token = irs::get<irs::TermAttr>(analyzer);
   bool first = true;
-  while (analyzer->next()) {
+  while (analyzer.next()) {
     const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
     auto& part = options.push_back<irs::ByTermOptions>(g.offs_min, g.offs_max);
     part.term.assign(token->value);
@@ -1328,10 +1316,10 @@ Result FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
   ngram.boost(ctx.boost);
   *ngram.mutable_field() = field_name;
   ngram.mutable_options()->threshold = threshold;
-  auto* analyzer = ActiveTokenizer(ctx, column_info);
-  analyzer->reset(std::string_view{target});
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(*analyzer);
-  while (analyzer->next()) {
+  auto& analyzer = ctx.tokenizer;
+  analyzer.reset(std::string_view{target});
+  const irs::TermAttr* token = irs::get<irs::TermAttr>(analyzer);
+  while (analyzer.next()) {
     ngram.mutable_options()->ngrams.emplace_back(token->value);
   }
   return {};
@@ -1430,20 +1418,17 @@ Result BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
 Result BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       std::string_view text, bool require_all) {
-  auto* analyzer = ActiveTokenizer(ctx, column_info);
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR ||
-      !analyzer) {
-    // Non-VARCHAR or no analyzer: emit a raw term.
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return BuildFtsTerm(parent, ctx, column_info,
                         duckdb::Value(std::string{text}));
   }
-  // Collect tokens via the active analyzer (override or column).
+  auto& analyzer = ctx.tokenizer;
   std::vector<irs::bstring> tokens;
-  if (!analyzer->reset(text)) {
+  if (!analyzer.reset(text)) {
     return {ERROR_BAD_PARAMETER, "Failed to analyse '", text, "'"};
   }
-  const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
-  while (analyzer->next()) {
+  const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
+  while (analyzer.next()) {
     tokens.emplace_back(tok_attr->value.begin(), tok_attr->value.end());
   }
 
@@ -1567,8 +1552,7 @@ ResultOr<PhraseGap> ParsePhraseSeqGap(const duckdb::Expression& expr) {
 // next phrase part.
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
   const auto id = expr.return_type.id();
-  return IsPhraseGapIntegralTypeId(id) ||
-         id == duckdb::LogicalTypeId::LIST ||
+  return IsPhraseGapIntegralTypeId(id) || id == duckdb::LogicalTypeId::LIST ||
          id == duckdb::LogicalTypeId::ARRAY;
 }
 
@@ -2295,28 +2279,21 @@ Result FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (analyzer_name == "identity") {
     return BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
   }
-  // Hold the wrapper as a stack local for the duration of this call.
-  // The raw pointer we plant in sub_ctx.tokenizer is valid as long as
-  // `wrapper` lives -- when this function returns, the wrapper drops
-  // and the analyzer goes back to the catalog Tokenizer's pool.
+  // Hold the wrapper as a stack local for the duration of this call;
+  // when it drops the analyzer goes back to the catalog Tokenizer's
+  // pool.
   auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
   if (!wrapper) {
-    // Throw rather than return Result-error: a misspelled / missing
-    // analyzer name is a programmer-visible mistake. Returning Result
-    // would leave the predicate unclaimed and DuckDB would fall back
-    // to running the TSQUERY stub at runtime, surfacing a confusing
-    // "TSQUERY expression evaluated outside @@" message instead.
-    // 42704 (UNDEFINED_OBJECT) matches what
-    // pg/commands/create_tsdictionary.cpp uses for the same shape
-    // ("text search dictionary <name> does not exist").
+    // Throw rather than return Result-error: returning would leave the
+    // predicate unclaimed and DuckDB would fall back to running the
+    // TSQUERY stub at runtime with a confusing "outside @@" message.
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("TOKENIZE(text, '", analyzer_name,
                             "'): tokenizer not found in catalog"),
                     ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
                              "or use 'identity' for raw bytes."));
   }
-  auto sub_ctx = ctx;
-  sub_ctx.tokenizer = wrapper.get();
+  auto sub_ctx = ctx.WithTokenizer(*wrapper);
   return BuildFtsTokens(parent, sub_ctx, column_info, text,
                         /*require_all=*/false);
 }
@@ -2392,12 +2369,12 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     // VARCHAR: tokenise the bound through the ambient analyzer; the
     // (single) token becomes the bound's bytes.
     auto text = bound_val->GetValue<std::string>();
-    auto* analyzer = ActiveTokenizer(ctx, column_info);
-    if (!analyzer || !analyzer->reset(std::string_view{text})) {
+    auto& analyzer = ctx.tokenizer;
+    if (!analyzer.reset(std::string_view{text})) {
       return {ERROR_BAD_PARAMETER, label, " failed to analyse '", text, "'"};
     }
-    const auto* token = irs::get<irs::TermAttr>(*analyzer);
-    if (!analyzer->next()) {
+    const auto* token = irs::get<irs::TermAttr>(analyzer);
+    if (!analyzer.next()) {
       // Zero tokens (e.g. all-stopword input) -> the comparison can't
       // match anything in the term dictionary.
       AddFilter<irs::Empty>(parent);
@@ -2417,7 +2394,7 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
       rng.max.assign(token->value);
       rng.max_type = bound_type;
     }
-    if (analyzer->next()) {
+    if (analyzer.next()) {
       return {ERROR_BAD_PARAMETER, label,
               " produced multiple tokens; range comparison requires a "
               "single token (use RANGE for multi-component bounds)"};
@@ -2561,8 +2538,7 @@ Result FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
                             : AddFilter<irs::MixedBooleanFilter>(parent);
   mixed.boost(ctx.boost);
-  sdb::ParserContext parser_ctx{mixed, field_name,
-                                *ActiveTokenizer(ctx, column_info)};
+  sdb::ParserContext parser_ctx{mixed, field_name, ctx.tokenizer};
   // The column is already pinned by the enclosing @@; reject any
   // `field:term` prefix the user might write inside the Lucene string.
   parser_ctx.strict_field = true;
@@ -2765,11 +2741,9 @@ Result FromTokenizeListInAnyAllOf(
   // Walk every element, tokenise it (or take it raw for identity), and
   // accumulate produced tokens. Empty inputs / NULL elements are skipped
   // -- they contribute no terms.
-  auto* analyzer = override_wrapper ? override_wrapper.get()
-                                    : ActiveTokenizer(ctx, column_info);
+  auto* analyzer = override_wrapper ? override_wrapper.get() : &ctx.tokenizer;
   if (!use_identity &&
-      (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR ||
-       !analyzer)) {
+      column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return {ERROR_BAD_PARAMETER,
             "TOKENIZE array form requires a VARCHAR-indexed column"};
   }
@@ -3106,24 +3080,20 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
             inner_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
           return BuildFtsTerm(parent, ctx, column_info, *inner_val);
         }
-        // Cast-wrapped case: recurse with sub_ctx.tokenizer set to a
-        // stack-local identity analyzer so any leaf tokenisation
-        // (PHRASE / NGRAM / LEVENSHTEIN / bare strings) treats input
-        // as one raw token. The local outlives the recursion.
+        // Cast-wrapped case: recurse with a stack-local identity
+        // analyzer so any leaf tokenisation treats input as one raw
+        // token. The local outlives the recursion.
         if (inner_expr) {
           irs::StringTokenizer identity_tokenizer;
-          auto sub_ctx = ctx;
-          sub_ctx.tokenizer = &identity_tokenizer;
+          auto sub_ctx = ctx.WithTokenizer(identity_tokenizer);
           return BuildTSQuery(parent, sub_ctx, column_info, *inner_expr);
         }
         return {ERROR_NOT_IMPLEMENTED,
                 "::tokenize('identity'): inner expression has unsupported "
                 "shape"};
       }
-      // Resolve the named analyzer via the current transaction's
-      // catalog snapshot. The wrapper lives on the stack here; the
-      // raw pointer set on sub_ctx is valid for the recursion below
-      // and goes back to the Tokenizer's pool when this scope exits.
+      // Wrapper lives on the stack here; the recursion below uses it,
+      // then it goes back to the Tokenizer's pool when this scope exits.
       auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
       if (!wrapper) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -3132,8 +3102,7 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
                         ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
                                  "or use 'identity' for raw bytes."));
       }
-      auto sub_ctx = ctx;
-      sub_ctx.tokenizer = wrapper.get();
+      auto sub_ctx = ctx.WithTokenizer(*wrapper);
       // Folded-constant case: tokenise the bare value via the override
       // tokenizer (cannot recurse on the constant -- its type still
       // carries the modifier and would re-enter this branch).
@@ -3286,7 +3255,13 @@ Result FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "@@ column not found in inverted index"};
   }
-  return BuildTSQuery(filter, ctx, *column_info, *tsquery_expr);
+  auto* analyzer = column_info->tokenizer.analyzer.get();
+  if (!analyzer) {
+    return {ERROR_BAD_PARAMETER,
+            "@@ column has no analyzer (not a text-indexed column)"};
+  }
+  auto sub_ctx = ctx.WithTokenizer(*analyzer);
+  return BuildTSQuery(filter, sub_ctx, *column_info, *tsquery_expr);
 }
 
 Result FromFunctionExpression(irs::BooleanFilter& filter,
@@ -3426,10 +3401,12 @@ Result ExprToFilter(
   const ColumnGetter& column_getter,
   containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo>& column_cache,
   const SearchFilterOptions& options) {
+  irs::StringTokenizer identity;
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
     .column_cache = column_cache,
+    .tokenizer = identity,
     .client_context = options.client_context,
     .scored_terms_limit = options.scored_terms_limit,
   };

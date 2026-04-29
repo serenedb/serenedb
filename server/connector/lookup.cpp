@@ -53,8 +53,8 @@ std::shared_ptr<FileLookupSession> BuildSession(
   auto session = std::make_shared<FileLookupSession>();
 
   duckdb::unique_ptr<duckdb::FunctionData> wrapper_bd;
-  (void)MakeExternalScanFunction(context, table, /*table_entry=*/nullptr,
-                                 wrapper_bd);
+  std::ignore = MakeExternalScanFunction(context, table,
+                                         /*table_entry=*/nullptr, wrapper_bd);
   session->bind_data =
     std::move(wrapper_bd->Cast<ExternalScanBindData>().underlying_bind_data);
 

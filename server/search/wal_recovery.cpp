@@ -404,15 +404,9 @@ void WalRecovery::Run() {
       db->GetUpdatesSince(min_start_tick, &iter,
                           rocksdb::TransactionLogIterator::ReadOptions(true));
     if (!s.ok()) {
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "WAL recovery: failed to open WAL iterator from tick ",
-               min_start_tick, ": ", s.ToString(), " — promoting ",
-               shards.size(), " shard(s) without replay");
-      for (auto& s_entry : shards) {
-        s_entry.shard->FinishCreation();
-        s_entry.shard->StartTasks();
-      }
-      return;
+      SDB_FATAL("xxxxx", Logger::SEARCH,
+                "WAL recovery: failed to open WAL iterator from tick ",
+                min_start_tick, ": ", s.ToString());
     }
   }
 
@@ -424,14 +418,11 @@ void WalRecovery::Run() {
     }
   };
 
-  bool replay_failed = false;
   while (iter && iter->Valid()) {
     auto status = iter->status();
     if (!status.ok()) {
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "WAL recovery: iterator error: ", status.ToString());
-      replay_failed = true;
-      break;
+      SDB_FATAL("xxxxx", Logger::SEARCH,
+                "WAL recovery: iterator error: ", status.ToString());
     }
 
     auto batch = iter->GetBatch();
@@ -442,31 +433,13 @@ void WalRecovery::Run() {
     FanoutBatchHandler handler{table2shards, default_cf_id, batch.sequence};
     status = batch.writeBatchPtr->Iterate(&handler);
     if (!status.ok()) {
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "WAL recovery: batch iterate failed at seq ", batch.sequence,
-               ": ", status.ToString());
-      replay_failed = true;
-      break;
+      SDB_FATAL("xxxxx", Logger::SEARCH,
+                "WAL recovery: batch iterate failed at seq ", batch.sequence,
+                ": ", status.ToString());
     }
 
     maybe_flush_large_shards();
     iter->Next();
-  }
-
-  if (replay_failed) {
-    // Discard partial trx contents so the persisted tick doesn't advance
-    // and the next restart retries the same range.
-    for (auto& s : shards) {
-      if (s.trx.has_value()) {
-        s.delete_sink.reset();
-        s.insert_sink.reset();
-        s.trx->Reset();
-        s.trx.reset();
-      }
-      s.shard->FinishCreation();
-      s.shard->StartTasks();
-    }
-    return;
   }
 
   for (auto& s : shards) {
@@ -486,10 +459,9 @@ void WalRecovery::Run() {
     CommitResult code = CommitResult::Undefined;
     auto r = s.shard->CommitUnsafe(/*wait=*/true, nullptr, code);
     if (!r.res.ok()) {
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "WAL recovery: commit failed for index '", s.shard->GetId().id(),
-               "': ", r.res.errorMessage());
-      continue;
+      SDB_FATAL("xxxxx", Logger::SEARCH,
+                "WAL recovery: commit failed for index '",
+                s.shard->GetId().id(), "': ", r.res.errorMessage());
     }
     SDB_INFO(
       "xxxxx", Logger::SEARCH, "WAL recovery: index '", s.shard->GetId().id(),

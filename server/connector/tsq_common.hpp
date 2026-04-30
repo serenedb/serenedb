@@ -18,11 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Cross-TU surface for the search_filter_builder family. The main TU
-// (search_filter_builder.cpp) holds the entry point + non-TSQUERY
-// dispatch; each TSQUERY query type lives in its own tsq_<name>.cpp.
-// All shared types and helpers live here.
-
 #pragma once
 
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>

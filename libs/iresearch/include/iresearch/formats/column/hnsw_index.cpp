@@ -196,7 +196,7 @@ void HNSWIndexReader::Search(HNSWSearchContext& context) const {
                                context.info.global_threshold};
   context.vt.visited.resize(_hnsw.levels.size(), 0);
   context.vt.advance();
-  res.Begin(0, false);
+  res.begin(0, false);
   _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 
@@ -207,7 +207,7 @@ void HNSWIndexReader::RangeSearch(HNSWRangeSearchContext& context) const {
   HNSWRangeSegmentResultHandler res{context.segment_id, context.handler};
   context.vt.visited.resize(_hnsw.levels.size(), 0);
   context.vt.advance();
-  res.Begin(0);
+  res.begin(0);
   _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 

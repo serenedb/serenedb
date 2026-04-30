@@ -47,47 +47,38 @@ using HNSWResultHandler = faiss::HeapBlockResultHandler<faiss::HNSW::C>;
 using HNSWRangeResultHandler =
   faiss::RangeSearchBlockResultHandler<faiss::HNSW::C>;
 
-class HNSWSegmentResultHandler : public faiss::ResultHandler<faiss::HNSW::C> {
+class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
  public:
   explicit HNSWSegmentResultHandler(uint32_t segment_id,
                                     HNSWResultHandler& handler,
                                     float global_threshold)
-    : _impl{handler}, _segment_id{segment_id} {
+    : HNSWResultHandler::SingleResultHandler{handler}, _segment_id{segment_id} {
     threshold = global_threshold;
   }
 
-  void Begin(size_t i, bool heapify = true) { _impl.begin(i, heapify); }
-
   bool add_result(float dis, int64_t idx) final {
-    return _impl.add_result(
+    return HNSWResultHandler::SingleResultHandler::add_result(
       dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
   }
 
-  void End() { _impl.end(); }
-
  private:
-  HNSWResultHandler::SingleResultHandler _impl;
   uint32_t _segment_id;
 };
 
 class HNSWRangeSegmentResultHandler
-  : public faiss::ResultHandler<faiss::HNSW::C> {
+  : public HNSWRangeResultHandler::SingleResultHandler {
  public:
   explicit HNSWRangeSegmentResultHandler(uint32_t segment_id,
                                          HNSWRangeResultHandler& handler)
-    : _impl{handler}, _segment_id{segment_id} {}
-
-  void Begin(size_t i) { _impl.begin(i); }
+    : HNSWRangeResultHandler::SingleResultHandler{handler},
+      _segment_id{segment_id} {}
 
   bool add_result(float dis, int64_t idx) final {
-    return _impl.add_result(
+    return HNSWRangeResultHandler::SingleResultHandler::add_result(
       dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
   }
 
-  void End() {}
-
  private:
-  HNSWRangeResultHandler::SingleResultHandler _impl;
   uint32_t _segment_id;
 };
 

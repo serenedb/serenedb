@@ -24,17 +24,23 @@
 #include <rocksdb/db.h>
 #include <rocksdb/utilities/transaction.h>
 
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <functional>
 #include <memory>
+#include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
+#include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "connector/multiget_context.hpp"
-#include "connector/row_materializer.h"
 
 namespace sdb::connector {
 
 // Resolves PK bytes into row values from RocksDB. Picks one of three
-// strategies per batch, matching the origin/main RocksDBMaterializer:
+// strategies per batch:
 //
 // - batch > kSeekThreshold (100): per-column `rocksdb::Iterator::Seek`
 //   over the sorted pks, with iterators CACHED across batches so a
@@ -49,16 +55,17 @@ namespace sdb::connector {
 // contiguous key buffer (`_multi_get_buffer`) so keys are laid out for
 // streaming reads. The caller's original pk order is restored via a
 // permutation vector (`_read_idxs`).
-class RocksDBRowMaterializer final : public RowMaterializer {
+class RocksDBLookup {
  public:
-  RocksDBRowMaterializer(ObjectId table_id, const rocksdb::Snapshot* snapshot,
-                         std::span<const duckdb::idx_t> projected_columns,
-                         std::span<const duckdb::LogicalType> projected_types,
-                         std::span<const catalog::Column::Id> bind_column_ids,
-                         rocksdb::Transaction* txn);
+  RocksDBLookup(ObjectId table_id, const rocksdb::Snapshot* snapshot,
+                std::span<const duckdb::idx_t> projected_columns,
+                std::span<const duckdb::LogicalType> projected_types,
+                std::span<const catalog::Column::Id> bind_column_ids,
+                rocksdb::Transaction* txn);
 
-  void Materialize(std::span<const std::string_view> pk_bytes,
-                   duckdb::DataChunk& output) override;
+  // `pk_bytes.size()` rows, one-to-one by position into `output`.
+  void Lookup(std::span<const std::string_view> pk_bytes,
+              duckdb::DataChunk& output);
 
  private:
   using DecodeFn =
@@ -84,7 +91,7 @@ class RocksDBRowMaterializer final : public RowMaterializer {
                                  const DecodeFn& decode);
 
   // Seek on a per-column `rocksdb::Iterator`, kept alive across
-  // Materialize() calls so sequential batches skip setup. Large batches.
+  // Lookup() calls so sequential batches skip setup. Large batches.
   void SeekIterateColumnKeys(std::string_view column_key_prefix,
                              catalog::Column::Id column_id,
                              std::span<const std::string_view> pk_bytes,

@@ -46,24 +46,26 @@ export const DashboardsTopbar: React.FC<DashboardsTopbarProps> = ({
     };
 
     return (
-        <div className="w-full h-[48.5px] flex px-2.5 items-center justify-between border-b-[0.5px]">
+        <div className="electron-drag-region flex h-[48.5px] w-full items-center justify-between border-b-[0.5px] px-2.5">
             <div className="flex gap-4 items-center">
-                <Button
-                    size="icon"
-                    variant="secondary"
-                    title={
-                        isExplorerOpened
-                            ? "Close dashboards explorer"
-                            : "Open dashboards explorer"
-                    }
-                    onClick={onToggleExplorer}>
-                    <SidebarIcon />
-                </Button>
+                <div className="electron-no-drag">
+                    <Button
+                        size="icon"
+                        variant="secondary"
+                        title={
+                            isExplorerOpened
+                                ? "Close dashboards explorer"
+                                : "Open dashboards explorer"
+                        }
+                        onClick={onToggleExplorer}>
+                        <SidebarIcon />
+                    </Button>
+                </div>
                 <p className="text-xs dark:text-primary-foreground">
-                    {currentDashboard?.name ?? "Select dashboard"}
+                    {currentDashboard?.name ?? "Dashboards"}
                 </p>
             </div>
-            <div className="flex gap-1">
+            <div className="electron-no-drag flex gap-1">
                 <Button
                     size="icon"
                     variant="secondary"

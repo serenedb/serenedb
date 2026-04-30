@@ -33,8 +33,7 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
-#include "connector/rocksdb_row_materializer.h"
-#include "connector/search_pk_lookup.h"
+#include "connector/lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -91,9 +90,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
                 state->scan->filter_column_ids, state->scan->index_id,
                 state->snapshot, bind_data);
 
-  state->materializer = MakeRowMaterializer(
-    context, bind_data, state->snapshot, {}, state->projected_columns,
-    state->projected_types, bind_data.column_ids, nullptr);
   return duckdb::unique_ptr_cast<SearchRangeScanGlobalState,
                                  duckdb::GlobalTableFunctionState>(
     std::move(state));
@@ -103,6 +99,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
                              duckdb::TableFunctionInput& data,
                              duckdb::DataChunk& output) {
   auto& gstate = data.global_state->Cast<SearchRangeScanGlobalState>();
+  auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
 
   if (gstate.finished) {
     output.SetCardinality(0);
@@ -141,12 +138,16 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     }
   }
 
+  // Real columns: look up directly per batch. The HNSW range-search PKs
+  // were collected in InitGlobal; we just stream them through LookupRows.
   std::vector<std::string_view> pk_batch;
   pk_batch.reserve(batch_size);
   for (duckdb::idx_t i = 0; i < batch_size; ++i) {
     pk_batch.emplace_back(gstate.pk_bytes[batch_start + i]);
   }
-  gstate.materializer->Materialize(pk_batch, output);
+  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
+             gstate.projected_types, bind_data.column_ids, gstate.txn, pk_batch,
+             gstate.file_lookup_session, output);
 
   gstate.current_idx += batch_size;
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));

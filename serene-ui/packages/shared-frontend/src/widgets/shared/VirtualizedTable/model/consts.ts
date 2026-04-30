@@ -9,6 +9,7 @@ import type { ValueColors, VisibleRegionState } from "./types";
 export const GRID_LINE_WIDTH = 0.5;
 export const TABLE_ROW_HEIGHT = 34;
 export const TABLE_HEADER_HEIGHT = 36;
+export const TABLE_MAX_COLUMN_WIDTH = 20_000;
 export const SORT_BUTTON_SIZE = 16;
 export const SORT_BUTTON_WIDTH = 24;
 export const SORT_RESIZE_GUARD = 6;

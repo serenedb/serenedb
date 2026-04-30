@@ -1,7 +1,7 @@
 {
     "name": "serene-ui-electron",
     "productName": "SereneUI",
-    "version": "26.04.1",
+    "version": "26.04.2",
     "description": "SereneUI Electron application",
     "author": "SereneDB",
     "main": ".webpack/main",
@@ -16,7 +16,8 @@
     },
     "license": "Apache-2.0",
     "dependencies": {
-        "@orpc/server": "^1.13.2"
+        "@orpc/server": "^1.13.2",
+        "update-electron-app": "^3.1.2"
     },
     "devDependencies": {
         "@electron-forge/cli": "^7.10.2",

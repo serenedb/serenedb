@@ -17,7 +17,7 @@ COPY packages/shared-core/package*.json ./packages/shared-core/
 COPY packages/shared-backend/package*.json ./packages/shared-backend/
 COPY packages/shared-frontend/package*.json ./packages/shared-frontend/
 
-RUN rm -f package-lock.json && npm install --include=dev
+RUN npm install --include=dev --legacy-peer-deps --no-package-lock
 
 COPY tsconfig.base.json ./
 COPY apps/backend ./apps/backend

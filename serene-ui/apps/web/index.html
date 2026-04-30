@@ -17,7 +17,61 @@
             sizes="16x16"
             href="/favicon-16x16.png" />
         <link rel="manifest" href="/site.webmanifest" />
+        <meta name="color-scheme" content="light dark" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+            html,
+            body,
+            #root {
+                height: 100%;
+            }
+
+            body {
+                margin: 0;
+                background: #f5f5f5;
+                color: #506182;
+            }
+
+            html.dark body {
+                background: #1c1c1c;
+                color: #bbbbbb;
+            }
+        </style>
+        <script>
+            (() => {
+                const storageKey = "vite-ui-theme";
+                const defaultTheme = "dark";
+                const prefersDark = window.matchMedia(
+                    "(prefers-color-scheme: dark)",
+                ).matches;
+
+                let storedTheme = null;
+
+                try {
+                    storedTheme = window.localStorage.getItem(storageKey);
+                } catch {
+                    storedTheme = null;
+                }
+
+                const themePreference =
+                    storedTheme ||
+                    window.sereneTheme?.preference ||
+                    defaultTheme;
+                const resolvedTheme =
+                    themePreference === "system"
+                        ? prefersDark
+                            ? "dark"
+                            : "light"
+                        : themePreference === "light"
+                          ? "light"
+                          : "dark";
+
+                document.documentElement.classList.remove("light", "dark");
+                document.documentElement.classList.add(resolvedTheme);
+                document.documentElement.style.colorScheme = resolvedTheme;
+                window.sereneTheme?.setPreference(themePreference);
+            })();
+        </script>
         <title>SereneUI</title>
     </head>
     <body>

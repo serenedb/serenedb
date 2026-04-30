@@ -1,9 +1,7 @@
-<div>
-
 <picture align=left>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/serene-ui-logo-dark">
-    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/serene-ui-logo-light">
-    <img alt="The SereneUI logo." src="https://github.com/user-attachments/assets/serene-ui-logo-dark">
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/b5fa1de1-93da-41d9-97f1-b4069f3f6533">
+    <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/6a8a990b-e167-47b1-b28c-cc59786fb364">
+    <img alt="serenedb+sereneui" src="https://github.com/user-attachments/assets/b5fa1de1-93da-41d9-97f1-b4069f3f6533" />
 </picture>
 
 [![Star Us](https://img.shields.io/badge/Star%20Us-9865e8?style=for-the-badge&logo=github&logoColor=white)](https://github.com/serenedb/serenedb)
@@ -12,11 +10,13 @@
 
 </div>
 
+<img width="1482" height="919" alt="overview" src="https://github.com/user-attachments/assets/3ca72fd5-09e5-4ece-a3e2-bd2b25c15bc9" />
+
+<br/>
+
 SereneUI is an open-source database client built for [SereneDB](https://github.com/serenedb/serenedb) and compatible with PostgreSQL. It gives transactional and analytical workflows a single workspace: connect to Postgres and SereneDB, write queries, inspect results, manage saved work, build dashboards and move between environments without switching tools.
 
 SereneDB is designed for search-analytics over constantly changing data while keeping PostgreSQL compatibility. SereneUI brings that idea to the interface layer: a console-first client for the OLTP-to-analytics workflow, with database navigation, query execution, visualization and productivity tools living in one window.
-
-<img alt="SereneUI overview." src="https://github.com/user-attachments/assets/serene-ui-overview">
 
 ## Why SereneUI
 

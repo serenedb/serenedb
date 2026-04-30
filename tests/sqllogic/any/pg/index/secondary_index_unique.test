@@ -304,9 +304,6 @@ QUERY PLAN
 │           Table:          │
 │   vedernikoff_safehouse   │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │     Filter: (code=100)    │
 │        Unique: true       │
 │                           │
@@ -329,9 +326,6 @@ QUERY PLAN
 │           Table:          │
 │   vedernikoff_safehouse   │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │    Filter: {code=null}    │
 │        Unique: true       │
 │                           │
@@ -352,9 +346,6 @@ QUERY PLAN
 │    ────────────────────   │
 │           Table:          │
 │   vedernikoff_safehouse   │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
 │                           │
 │          Filter:          │
 │     {code=(100, +inf)}    │
@@ -386,9 +377,6 @@ QUERY PLAN
 │    ────────────────────   │
 │           Table:          │
 │   vedernikoff_safehouse   │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
 │                           │
 │          Filter:          │
 │    {code=(-inf, +inf)}    │
@@ -593,9 +581,6 @@ QUERY PLAN
 │    ────────────────────   │
 │           Table:          │
 │     vedernikoff_ledger    │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
 │                           │
 │          Filter:          │
 │    (region=1, tier=10)    │
@@ -1119,9 +1104,6 @@ QUERY PLAN
 │           Table:          │
 │    vedernikoff_tri_uniq   │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │          Filter:          │
 │      (a=1, b=1, c=1)      │
 │                           │
@@ -1291,9 +1273,6 @@ QUERY PLAN
 │           Table:          │
 │    vedernikoff_tri_uniq   │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │   Filter: {a=1, b=null}   │
 │        Unique: true       │
 │                           │
@@ -1422,9 +1401,6 @@ QUERY PLAN
 │    ────────────────────   │
 │   Table: babsky_uniq_in   │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
-│                           │
 │          Filter:          │
 │         (code=100)        │
 │         (code=300)        │
@@ -1545,9 +1521,6 @@ QUERY PLAN
 │    ────────────────────   │
 │           Table:          │
 │    vedernikoff_uniq_rem   │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
 │                           │
 │     Filter: (key=100)     │
 │        Unique: true       │
@@ -2114,9 +2087,6 @@ QUERY PLAN
 │    ────────────────────   │
 │           Table:          │
 │ vedernikoff_uniq_idx_scan │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
 │                           │
 │     Filter: (code=20)     │
 │        Unique: true       │

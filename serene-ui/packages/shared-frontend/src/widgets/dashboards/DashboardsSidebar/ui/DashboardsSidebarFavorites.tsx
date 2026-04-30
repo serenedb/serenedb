@@ -4,6 +4,8 @@ import { useGetSavedQueries } from "../../../../entities";
 import {
     Button,
     EditIcon,
+    focusSidebarElement,
+    handleSidebarListItemKeyDown,
     StarIcon,
     TreeQueryIcon,
 } from "../../../../shared";
@@ -60,6 +62,7 @@ export const DashboardsSidebarFavorites: React.FC = () => {
             isDataFetched={isDataFetched}
             isDataLoading={isDataLoading}
             emptyState="No favorites yet"
+            sectionId="favorites"
             hasAdditionalItems={favoriteSavedQueries.length > 0}
             additionalItems={favoriteSavedQueries.map((savedQuery) => {
                 const isFavorite = isSavedQueryFavorite(savedQuery.id);
@@ -67,9 +70,19 @@ export const DashboardsSidebarFavorites: React.FC = () => {
                 return (
                     <div
                         key={`favorite-saved-query-${savedQuery.id}`}
-                        className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent"
+                        className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent focus:bg-accent outline-none"
                         title={savedQuery.name}
+                        tabIndex={0}
+                        data-sidebar-primary-action="true"
+                        data-sidebar-focus-id={`dashboards-sidebar-favorites-saved-query-${savedQuery.id}`}
+                        data-sidebar-section-id="favorites"
                         draggable
+                        onKeyDown={(event) =>
+                            handleSidebarListItemKeyDown(event, () => {})
+                        }
+                        onClick={(event) => {
+                            focusSidebarElement(event.currentTarget);
+                        }}
                         onDragStart={(event) => {
                             event.stopPropagation();
                             clearDragPreview();

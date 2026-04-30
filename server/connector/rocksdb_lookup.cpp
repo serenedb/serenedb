@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/rocksdb_row_materializer.h"
+#include "connector/rocksdb_lookup.h"
 
 #include <absl/algorithm/container.h>
 
@@ -52,7 +52,7 @@ constexpr size_t kColumnKeySize =
 
 }  // namespace
 
-RocksDBRowMaterializer::RocksDBRowMaterializer(
+RocksDBLookup::RocksDBLookup(
   ObjectId table_id, const rocksdb::Snapshot* snapshot,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
@@ -77,8 +77,8 @@ RocksDBRowMaterializer::RocksDBRowMaterializer(
   SDB_ASSERT(_cf);
 }
 
-void RocksDBRowMaterializer::Materialize(
-  std::span<const std::string_view> pk_bytes, duckdb::DataChunk& output) {
+void RocksDBLookup::Lookup(std::span<const std::string_view> pk_bytes,
+                           duckdb::DataChunk& output) {
   const auto num_rows = pk_bytes.size();
   if (num_rows == 0) {
     return;
@@ -116,7 +116,7 @@ void RocksDBRowMaterializer::Materialize(
   }
 }
 
-void RocksDBRowMaterializer::DispatchColumnRead(
+void RocksDBLookup::DispatchColumnRead(
   std::string_view column_key_prefix, catalog::Column::Id column_id,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
   if (pk_bytes.size() > kSeekThreshold) {
@@ -128,7 +128,7 @@ void RocksDBRowMaterializer::DispatchColumnRead(
   }
 }
 
-void RocksDBRowMaterializer::IterateColumnKeys(
+void RocksDBLookup::IterateColumnKeys(
   std::string_view column_key_prefix,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
   std::string buffer;
@@ -149,7 +149,7 @@ void RocksDBRowMaterializer::IterateColumnKeys(
   }
 }
 
-void RocksDBRowMaterializer::PrepareSortedBatch(
+void RocksDBLookup::PrepareSortedBatch(
   std::span<const std::string_view> pk_bytes) {
   if (!_new_batch) {
     return;
@@ -178,7 +178,7 @@ void RocksDBRowMaterializer::PrepareSortedBatch(
   _new_batch = false;
 }
 
-void RocksDBRowMaterializer::MultiGetIterateColumnKeys(
+void RocksDBLookup::MultiGetIterateColumnKeys(
   std::string_view column_key_prefix,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
   PrepareSortedBatch(pk_bytes);
@@ -211,7 +211,7 @@ void RocksDBRowMaterializer::MultiGetIterateColumnKeys(
   }
 }
 
-void RocksDBRowMaterializer::SeekIterateColumnKeys(
+void RocksDBLookup::SeekIterateColumnKeys(
   std::string_view column_key_prefix, catalog::Column::Id column_id,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
   PrepareSortedBatch(pk_bytes);

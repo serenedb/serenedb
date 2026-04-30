@@ -14806,7 +14806,7 @@ TEST_P(ANNSearchTest, hnsw_search_basic) {
       };
       irs::HNSWSearchBuffer buffer{dis.data(), docs.data(), f.top_k};
       reader.Search("vec", info, buffer);
-      std::move(buffer).ReorderResult();
+      buffer.ReorderResult();
       size_t correct = 0;
       for (size_t k = 0; k < f.top_k; ++k) {
         correct +=

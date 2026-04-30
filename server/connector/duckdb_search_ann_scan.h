@@ -86,8 +86,6 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
   size_t total_segments = 0;
   std::atomic_size_t next_segment = 0;
 
-  absl::Mutex materializer_mutex;
-
   duckdb::idx_t MaxThreads() const override {
     return std::max<duckdb::idx_t>(1, total_segments);
   }
@@ -96,6 +94,9 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
 struct SearchRangeScanLocalState : public CommonScanLocalState {
   std::vector<std::string> pk_bytes;
   size_t current_idx = 0;
+  // Per-worker materialization session: avoids cross-worker contention on
+  // LookupRows. Lazy-built on first call; null for RocksDB tables.
+  std::shared_ptr<FileLookupSession> file_lookup_session;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

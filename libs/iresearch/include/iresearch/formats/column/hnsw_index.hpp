@@ -154,7 +154,7 @@ struct HNSWSearchBuffer {
     ResetValues();
   }
 
-  void ReorderResult() && {
+  void ReorderResult() {
     faiss::heap_reorder<faiss::HNSW::C>(dis.size(), dis.data(), ids.data());
   }
 

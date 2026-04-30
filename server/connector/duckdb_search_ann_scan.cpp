@@ -105,7 +105,7 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
 }
 
 void EmitLocalData(SearchAnnScanGlobalState& g, SearchAnnScanLocalState& l) {
-  std::move(l.buffer).ReorderResult();
+  l.buffer.ReorderResult();
   while (!l.ids.empty() && l.ids.back() == -1) {
     l.ids.pop_back();
   }
@@ -363,7 +363,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
       auto* data_ptr =
         duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
       for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-        data_ptr[i] = static_cast<int64_t>(i);
+        data_ptr[i] = static_cast<int64_t>(batch_start + i);
       }
     }
   }
@@ -376,12 +376,9 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     pk_batch.emplace_back(l.pk_bytes[batch_start + i]);
   }
 
-  {
-    std::lock_guard lock{g.materializer_mutex};
-    LookupRows(context, bind_data, g.snapshot, g.projected_columns,
-               g.projected_types, bind_data.column_ids, g.txn, pk_batch,
-               g.file_lookup_session, output);
-  }
+  LookupRows(context, bind_data, g.snapshot, g.projected_columns,
+             g.projected_types, bind_data.column_ids, g.txn, pk_batch,
+             l.file_lookup_session, output);
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
   l.current_idx += batch_size;
   g.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);

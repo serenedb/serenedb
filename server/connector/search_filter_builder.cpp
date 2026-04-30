@@ -21,6 +21,7 @@
 #include "search_filter_builder.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -123,36 +124,6 @@ const SearchColumnInfo* FindColumnRefInfo(
             .first->second;
 }
 
-const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
-  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
-  out_path.clear();
-  // Reject when outtermost extraction does not return string
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtractString(
-        expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
-    return nullptr;
-  }
-
-  // Walk the chain: every node must be some JSON-extract until we reach a
-  // column ref. Inner nodes can be either text- or JSON-returning.
-  const duckdb::Expression* cur = &expr;
-  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
-      return nullptr;
-    }
-    const auto* key_val = TryGetConstant(*f.children[1]);
-    if (!key_val || key_val->type().id() != duckdb::LogicalTypeId::VARCHAR ||
-        key_val->IsNull()) {
-      return nullptr;
-    }
-    out_path.push_back(key_val->GetValue<std::string>());
-    cur = f.children[0].get();
-  }
-  std::reverse(out_path.begin(), out_path.end());
-  return TryGetColumnRef(*cur);
-}
-
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   switch (id) {
     case duckdb::LogicalTypeId::TINYINT:
@@ -168,6 +139,47 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
     default:
       return false;
   }
+}
+
+const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
+  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
+  out_path.clear();
+  // Reject when outtermost extraction does not return string
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      !IsJsonExtractString(
+        expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
+    return nullptr;
+  }
+
+  // Walk the chain: every node must be some JSON-extract until we reach a
+  // column ref. Inner nodes can be either text- or JSON-returning. Both
+  // VARCHAR (object-key) and integer (array-index) constants are accepted
+  // for the second argument; integer keys are stringified for the path.
+  const duckdb::Expression* cur = &expr;
+  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
+    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
+      return nullptr;
+    }
+    const auto* key_val = TryGetConstant(*f.children[1]);
+    if (!key_val || key_val->IsNull()) {
+      return nullptr;
+    }
+    const auto key_type = key_val->type().id();
+    if (key_type == duckdb::LogicalTypeId::VARCHAR) {
+      out_path.push_back(key_val->GetValue<std::string>());
+    } else if (IsNumericTypeId(key_type)) {
+      // Integer/array-index key like `content->0`: stringify so the path
+      // segment becomes "0", which `simdjson::at_pointer` interprets as
+      // array index 0 when the parent is an array.
+      out_path.push_back(absl::StrCat(key_val->GetValue<int64_t>()));
+    } else {
+      return nullptr;
+    }
+    cur = f.children[0].get();
+  }
+  std::reverse(out_path.begin(), out_path.end());
+  return TryGetColumnRef(*cur);
 }
 
 struct UnwrappedField {

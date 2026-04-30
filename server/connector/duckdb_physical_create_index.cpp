@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
@@ -95,11 +97,20 @@ bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
       return false;
     }
     const auto& key_const = key->Cast<duckdb::ConstantExpression>();
-    if (key_const.value.type().id() != duckdb::LogicalTypeId::VARCHAR ||
-        key_const.value.IsNull()) {
+    if (key_const.value.IsNull()) {
       return false;
     }
-    out_path.push_back(key_const.value.GetValue<std::string>());
+    const auto key_type = key_const.value.type().id();
+    if (key_type == duckdb::LogicalTypeId::VARCHAR) {
+      out_path.push_back(key_const.value.GetValue<std::string>());
+    } else if (key_type == duckdb::LogicalTypeId::TINYINT ||
+               key_type == duckdb::LogicalTypeId::SMALLINT ||
+               key_type == duckdb::LogicalTypeId::INTEGER ||
+               key_type == duckdb::LogicalTypeId::BIGINT) {
+      out_path.push_back(absl::StrCat(key_const.value.GetValue<int64_t>()));
+    } else {
+      return false;
+    }
     cur = next_lhs;
   }
 

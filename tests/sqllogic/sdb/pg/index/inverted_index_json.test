@@ -156,16 +156,13 @@ id
 1
 2
 
-# Array elements are addressed by the same syntax: path key "0" lands on the
-# first array element via JSON Pointer's array-index semantics.
-
 statement ok
 CREATE TABLE arr_logs (id INTEGER PRIMARY KEY, content JSON);
 
 statement ok
 CREATE INDEX arr_idx ON arr_logs USING inverted(
     id,
-    (content->'tags'->>'0') verbatim_dict
+    (content->'tags'->>0) verbatim_dict
 );
 
 statement ok
@@ -178,14 +175,14 @@ statement ok
 VACUUM (UPDATE_INDEXES) arr_logs;
 
 query
-SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>'0', 'alpha') ORDER BY id;
+SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>0, 'alpha') ORDER BY id;
 ----
 id
 1
 3
 
 query
-SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>'0', 'gamma') ORDER BY id;
+SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>0, 'gamma') ORDER BY id;
 ----
 id
 2

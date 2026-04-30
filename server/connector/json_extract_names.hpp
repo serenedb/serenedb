@@ -28,17 +28,25 @@ namespace sdb::connector {
 // this codebase (operator forms `->` / `->>`, plus the spelled-out aliases
 // kept for PG and DuckDB compatibility -- see server/connector/functions/
 // json.cpp). The two predicates partition the set by leaf return type:
-//   * IsJsonExtractString  -> leaf is VARCHAR (`->>`, json_extract_field_text)
+//   * IsJsonExtractString  -> leaf is VARCHAR (`->>`, json_extract_field_text,
+//                                              json_extract_index_text)
 //   * IsJsonExtractJson    -> leaf is JSON    (`->` , json_extract,
-//                                              json_extract_field)
+//                                              json_extract_field,
+//                                              json_extract_index)
 // They are disjoint; together they cover every name we accept.
+//
+// Both _field variants take a VARCHAR key (object lookup) and both _index
+// variants take a BIGINT key (array lookup). The operator forms `->` / `->>`
+// are polymorphic and accept either kind of key.
 
 inline bool IsJsonExtractString(std::string_view name) noexcept {
-  return name == "->>" || name == "json_extract_field_text";
+  return name == "->>" || name == "json_extract_field_text" ||
+         name == "json_extract_index_text";
 }
 
 inline bool IsJsonExtractJson(std::string_view name) noexcept {
-  return name == "->" || name == "json_extract" || name == "json_extract_field";
+  return name == "->" || name == "json_extract" ||
+         name == "json_extract_field" || name == "json_extract_index";
 }
 
 inline bool IsJsonExtract(std::string_view name) noexcept {

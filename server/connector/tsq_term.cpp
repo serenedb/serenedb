@@ -24,6 +24,8 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
@@ -32,32 +34,40 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
                        const SearchColumnInfo& column_info,
                        const duckdb::Value& value);
 
-Result BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::Value& value) {
+void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::Value& value) {
   if (value.IsNull()) {
     AddFilter<irs::Empty>(parent);
-    return {};
+    return;
   }
   auto& term =
     ctx.negated ? Negate<irs::ByTerm>(parent) : AddFilter<irs::ByTerm>(parent);
   term.boost(ctx.boost);
   std::string field_name;
   MakeFieldName(column_info, field_name);
-  return SetupTermFilter(term, field_name, column_info, value);
+  if (auto r = SetupTermFilter(term, field_name, column_info, value); !r.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(r.errorMessage()),
+      ERR_HINT("The value's type must match the column's indexed type."));
+  }
 }
 
-Result BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
-                      const SearchColumnInfo& column_info,
-                      std::string_view text, bool require_all) {
+void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info, std::string_view text,
+                    bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return BuildFtsTerm(parent, ctx, column_info,
-                        duckdb::Value(std::string{text}));
+    BuildFtsTerm(parent, ctx, column_info,
+                 duckdb::Value(std::string{text}));
+    return;
   }
   auto& analyzer = ctx.tokenizer;
   std::vector<irs::bstring> tokens;
   if (!analyzer.reset(text)) {
-    return {ERROR_BAD_PARAMETER, "Failed to analyse '", text, "'"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Failed to analyse '", text, "'"),
+      ERR_HINT("The column's analyzer rejected the input text."));
   }
   const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
   while (analyzer.next()) {
@@ -70,7 +80,7 @@ Result BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   if (tokens.empty()) {
     AddFilter<irs::Empty>(parent);
-    return {};
+    return;
   }
   if (tokens.size() == 1) {
     auto& term = ctx.negated ? Negate<irs::ByTerm>(parent)
@@ -78,7 +88,7 @@ Result BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
     term.boost(ctx.boost);
     *term.mutable_field() = field_name;
     term.mutable_options()->term.assign(tokens[0]);
-    return {};
+    return;
   }
   // Multi-token: ByTerms with min_match=1 (OR) or N (AND).
   auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
@@ -90,20 +100,25 @@ Result BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
   for (auto& t : tokens) {
     opts.terms.emplace(std::move(t));
   }
-  return {};
 }
-Result FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
-                const SearchColumnInfo& column_info,
-                const duckdb::BoundFunctionExpression& func) {
+void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+              const SearchColumnInfo& column_info,
+              const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, "TERM expects 1 argument (text), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TERM expects 1 argument (text), got ", func.children.size()),
+      ERR_HINT("Example: TERM('word'). For multi-token text use "
+               "PHRASE('quick fox') or any_of(['a', 'b'])."));
   }
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "TERM text", text); !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()),
+                    ERR_HINT("TERM expects a non-null VARCHAR constant. "
+                             "Example: TERM('word')."));
   }
-  return BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
+  BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
 }
 
 }  // namespace sdb::connector

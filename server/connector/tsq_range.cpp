@@ -24,27 +24,31 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
 
-ResultOr<RangeArgs> ParseRangeArgs(
-  const duckdb::BoundFunctionExpression& func) {
-  auto err = [](auto&&... args) {
-    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                   std::forward<decltype(args)>(args)...};
-  };
+RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: RANGE('a', 'z', true, false). NULL on either bound means "
+    "unbounded; min_incl/max_incl select inclusive vs exclusive.";
   if (func.children.size() != 4) {
-    return err(
-      "RANGE expects 4 arguments "
-      "(min, max, min_incl, max_incl), got ",
-      func.children.size());
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("RANGE expects 4 arguments (min, max, min_incl, max_incl), "
+              "got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   RangeArgs out;
   for (size_t i = 0; i < 2; ++i) {
     const auto* val = TryGetConstant(*func.children[i]);
     if (!val) {
-      return err("RANGE bound ", i, " must be a constant");
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("RANGE bound ", i, " must be a constant"),
+                      ERR_HINT(kSyntaxHint));
     }
     if (!val->IsNull()) {
       (i == 0 ? out.min_val : out.max_val) = val;
@@ -52,17 +56,22 @@ ResultOr<RangeArgs> ParseRangeArgs(
   }
   if (auto r = GetBoolArg(*func.children[2], "RANGE min_incl", out.min_incl);
       !r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (auto r = GetBoolArg(*func.children[3], "RANGE max_incl", out.max_incl);
       !r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (out.min_val && out.max_val &&
       out.min_val->type().id() != out.max_val->type().id()) {
-    throw duckdb::InvalidInputException(
-      "RANGE bounds have mismatched types: %s vs %s",
-      out.min_val->type().ToString(), out.max_val->type().ToString());
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("RANGE bounds have mismatched types: ",
+              out.min_val->type().ToString(), " vs ",
+              out.max_val->type().ToString()),
+      ERR_HINT("Both bounds must share the same type family."));
   }
   return out;
 }
@@ -83,32 +92,42 @@ void FillByRangeOptionsVarchar(const RangeArgs& args,
   }
 }
 
-Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
-                       const SearchColumnInfo& column_info,
-                       const duckdb::BoundFunctionExpression& func,
-                       std::string_view label, bool is_lower, bool inclusive) {
+void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
+                     const SearchColumnInfo& column_info,
+                     const duckdb::BoundFunctionExpression& func,
+                     std::string_view label, bool is_lower, bool inclusive) {
+  constexpr auto kSyntaxHint =
+    "Example: LESS('m'), GREATER_EQ(42). The bound must be a non-null "
+    "constant; for unbounded comparisons use RANGE(NULL, max, ...).";
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, label, " expects 1 argument (bound), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(label, " expects 1 argument (bound), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
   const auto* bound_val = TryGetConstant(*func.children[0]);
   if (!bound_val) {
-    return {ERROR_BAD_PARAMETER, label, " bound must be a constant"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(label, " bound must be a constant"),
+                    ERR_HINT(kSyntaxHint));
   }
   if (bound_val->IsNull()) {
-    throw duckdb::InvalidInputException(
-      "%s bound must be non-null (use RANGE(NULL, ..., ...) for unbounded "
-      "semantics)",
-      std::string{label});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(label, " bound must be non-null"),
+                    ERR_HINT("Use RANGE(NULL, max, true, false) (or similar) "
+                             "for unbounded semantics."));
   }
 
   const auto col_type = column_info.logical_type.id();
   const auto val_type = bound_val->type().id();
   auto type_mismatch = [&]() {
-    throw duckdb::InvalidInputException(
-      "%s bound type %s is incompatible with column type %s",
-      std::string{label}, bound_val->type().ToString(),
-      column_info.logical_type.ToString());
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label, " bound type ", bound_val->type().ToString(),
+              " is incompatible with column type ",
+              column_info.logical_type.ToString()),
+      ERR_HINT("The bound's type must match the column's type family "
+               "(VARCHAR / BOOLEAN / numeric)."));
   };
   if (col_type == duckdb::LogicalTypeId::VARCHAR) {
     if (val_type != duckdb::LogicalTypeId::VARCHAR) {
@@ -123,15 +142,18 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
       type_mismatch();
     }
   } else {
-    throw duckdb::InvalidInputException("%s: unsupported column type %s",
-                                        std::string{label},
-                                        column_info.logical_type.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(label, ": unsupported column type ",
+                            column_info.logical_type.ToString()),
+                    ERR_HINT("Range comparisons are supported on VARCHAR, "
+                             "BOOLEAN and numeric columns."));
   }
 
   std::string field_name;
   MakeFieldName(column_info, field_name);
   if (auto r = MangleForType(col_type, field_name); !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()));
   }
   const auto bound_type =
     inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
@@ -142,14 +164,17 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto text = bound_val->GetValue<std::string>();
     auto& analyzer = ctx.tokenizer;
     if (!analyzer.reset(std::string_view{text})) {
-      return {ERROR_BAD_PARAMETER, label, " failed to analyse '", text, "'"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(label, " failed to analyse '", text, "'"),
+        ERR_HINT("The column's analyzer rejected the bound value."));
     }
     const auto* token = irs::get<irs::TermAttr>(analyzer);
     if (!analyzer.next()) {
       // Zero tokens (e.g. all-stopword input) -> the comparison can't
       // match anything in the term dictionary.
       AddFilter<irs::Empty>(parent);
-      return {};
+      return;
     }
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
@@ -166,11 +191,13 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
       rng.max_type = bound_type;
     }
     if (analyzer.next()) {
-      return {ERROR_BAD_PARAMETER, label,
-              " produced multiple tokens; range comparison requires a "
-              "single token (use RANGE for multi-component bounds)"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG(label, " produced multiple tokens; range comparison "
+                "requires a single token"),
+        ERR_HINT("Use RANGE(min, max, ...) for multi-component bounds."));
     }
-    return {};
+    return;
   }
 
   if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
@@ -190,7 +217,7 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
       rng.max.assign(bytes);
       rng.max_type = bound_type;
     }
-    return {};
+    return;
   }
 
   // Numeric: cast the bound to the column's logical type, then run
@@ -214,36 +241,34 @@ Result FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     irs::SetGranularTerm(rng.max, stream);
     rng.max_type = bound_type;
   }
-  return {};
 }
 
-// plainto_tsquery(text): tokenise via the column analyzer and AND all
-Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
-                 const SearchColumnInfo& column_info,
-                 const duckdb::BoundFunctionExpression& func) {
+void FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
+               const SearchColumnInfo& column_info,
+               const duckdb::BoundFunctionExpression& func) {
   auto args = ParseRangeArgs(func);
-  if (!args) {
-    return std::move(args.error());
-  }
   // Both bounds NULL -> unbounded on both sides; matches every doc.
-  if (!args->min_val && !args->max_val) {
+  if (!args.min_val && !args.max_val) {
     if (ctx.negated) {
       AddFilter<irs::Empty>(parent);
     } else {
       AddFilter<irs::All>(parent).boost(ctx.boost);
     }
-    return {};
+    return;
   }
 
   const auto col_type = column_info.logical_type.id();
-  const auto* val_sample = args->min_val ? args->min_val : args->max_val;
+  const auto* val_sample = args.min_val ? args.min_val : args.max_val;
   const auto val_type = val_sample->type().id();
 
   // Validate value type matches column type family.
   auto type_mismatch = [&]() {
-    throw duckdb::InvalidInputException(
-      "RANGE bound type %s is incompatible with column type %s",
-      val_sample->type().ToString(), column_info.logical_type.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("RANGE bound type ", val_sample->type().ToString(),
+                            " is incompatible with column type ",
+                            column_info.logical_type.ToString()),
+                    ERR_HINT("Both bounds must match the column's type "
+                             "family (VARCHAR / BOOLEAN / numeric)."));
   };
   if (col_type == duckdb::LogicalTypeId::VARCHAR) {
     if (val_type != duckdb::LogicalTypeId::VARCHAR) {
@@ -251,8 +276,12 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
     if (column_info.tokenizer.analyzer->type() !=
         irs::Type<irs::StringTokenizer>::id()) {
-      throw duckdb::InvalidInputException(
-        "RANGE on VARCHAR field requires identity-analyzed column");
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("RANGE on VARCHAR field requires identity-analyzed column"),
+        ERR_HINT("Recreate the inverted index with the identity tokenizer "
+                 "for this column, or use LESS/LESS_EQ/GREATER/GREATER_EQ "
+                 "for analyzed-text bounds."));
     }
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
@@ -263,14 +292,18 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
       type_mismatch();
     }
   } else {
-    throw duckdb::InvalidInputException("RANGE: unsupported column type %s",
-                                        column_info.logical_type.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("RANGE: unsupported column type ",
+                            column_info.logical_type.ToString()),
+                    ERR_HINT("RANGE is supported on VARCHAR (identity "
+                             "analyzer), BOOLEAN and numeric columns."));
   }
 
   std::string field_name;
   MakeFieldName(column_info, field_name);
   if (auto r = MangleForType(col_type, field_name); !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()));
   }
 
   if (col_type == duckdb::LogicalTypeId::VARCHAR) {
@@ -280,7 +313,7 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     range.boost(ctx.boost);
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
-    FillByRangeOptionsVarchar(*args, *options);
+    FillByRangeOptionsVarchar(args, *options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = ctx.negated ? Negate<irs::ByRange>(parent)
                               : AddFilter<irs::ByRange>(parent);
@@ -289,17 +322,17 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
-    if (args->min_val) {
+    if (args.min_val) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args->min_val->GetValue<bool>())));
+        irs::BooleanTokenizer::value(args.min_val->GetValue<bool>())));
       rng.min_type =
-        args->min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+        args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
-    if (args->max_val) {
+    if (args.max_val) {
       rng.max.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args->max_val->GetValue<bool>())));
+        irs::BooleanTokenizer::value(args.max_val->GetValue<bool>())));
       rng.max_type =
-        args->max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+        args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
   } else {
     // Numeric. Cast each bound to the column's logical type before
@@ -320,14 +353,13 @@ Result FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
       irs::SetGranularTerm(boundary, stream);
       bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     };
-    if (args->min_val) {
-      emit_bound(*args->min_val, rng.min, rng.min_type, args->min_incl);
+    if (args.min_val) {
+      emit_bound(*args.min_val, rng.min, rng.min_type, args.min_incl);
     }
-    if (args->max_val) {
-      emit_bound(*args->max_val, rng.max, rng.max_type, args->max_incl);
+    if (args.max_val) {
+      emit_bound(*args.max_val, rng.max, rng.max_type, args.max_incl);
     }
   }
-  return {};
 }
 
 }  // namespace sdb::connector

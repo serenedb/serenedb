@@ -44,46 +44,64 @@ bool IsTokenizeListCall(const duckdb::Expression& expr) {
          IsTSQueryType(duckdb::ListType::GetChildType(f.return_type));
 }
 
-Result FromTokenizeListInAnyAllOf(
+void FromTokenizeListInAnyAllOf(
   irs::BooleanFilter& parent, const FilterContext& ctx,
   const SearchColumnInfo& column_info,
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
+  constexpr auto kSyntaxHint =
+    "Example: any_of(TOKENIZE(['quick', 'brown'])) tokenises every list "
+    "element through the column analyzer and ORs the resulting terms.";
   if (!is_any && outer.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, "all_of takes a single argument"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("all_of takes a single argument"),
+                    ERR_HINT(kSyntaxHint));
   }
   std::optional<size_t> min_match;
   if (is_any && outer.children.size() == 2) {
     int64_t m;
     if (auto r = GetIntArg(*outer.children[1], "any_of min_match", m);
         !r.ok()) {
-      return r;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
     if (m < 1) {
-      return {ERROR_BAD_PARAMETER, "any_of min_match must be >= 1, got ", m};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("any_of min_match must be >= 1, got ", m),
+                      ERR_HINT(kSyntaxHint));
     }
     min_match = static_cast<size_t>(m);
   }
   if (tokenize_call.children.empty() || tokenize_call.children.size() > 2) {
-    return {ERROR_BAD_PARAMETER,
-            "TOKENIZE(text_array[, analyzer]) expects 1 or 2 arguments, got ",
-            tokenize_call.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TOKENIZE(text_array[, analyzer]) expects 1 or 2 arguments, "
+              "got ",
+              tokenize_call.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   // Inner list -- v1 requires a constant LIST(VARCHAR).
   const auto* list_const = TryGetConstant(*tokenize_call.children[0]);
   if (!list_const) {
-    return {ERROR_BAD_PARAMETER,
-            "TOKENIZE array form requires a constant text array"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("TOKENIZE array form requires a constant text "
+                            "array"),
+                    ERR_HINT(kSyntaxHint));
   }
   if (list_const->IsNull()) {
-    return {ERROR_BAD_PARAMETER, "TOKENIZE text array must not be NULL"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("TOKENIZE text array must not be NULL"),
+                    ERR_HINT(kSyntaxHint));
   }
   const auto list_const_id = list_const->type().id();
   if (list_const_id != duckdb::LogicalTypeId::LIST &&
       list_const_id != duckdb::LogicalTypeId::ARRAY) {
-    return {ERROR_BAD_PARAMETER,
-            "TOKENIZE array form: first arg must be a list or array, got ",
-            list_const->type().ToString()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TOKENIZE array form: first arg must be a list or array, "
+              "got ",
+              list_const->type().ToString()),
+      ERR_HINT(kSyntaxHint));
   }
   // Resolve the analyzer choice:
   //   1-arg form               -> ambient column analyzer
@@ -99,7 +117,8 @@ Result FromTokenizeListInAnyAllOf(
     if (auto r = GetVarcharArg(*tokenize_call.children[1],
                                "TOKENIZE analyzer name", analyzer_name);
         !r.ok()) {
-      return r;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
     if (analyzer_name == irs::StringTokenizer::type_name()) {
       use_identity = true;
@@ -125,8 +144,10 @@ Result FromTokenizeListInAnyAllOf(
   auto* analyzer = override_wrapper ? override_wrapper.get() : &ctx.tokenizer;
   if (!use_identity &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER,
-            "TOKENIZE array form requires a VARCHAR-indexed column"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("TOKENIZE array form requires a VARCHAR-indexed "
+                            "column"),
+                    ERR_HINT(kSyntaxHint));
   }
   std::vector<irs::bstring> tokens;
   const auto& elems = list_const_id == duckdb::LogicalTypeId::ARRAY
@@ -137,9 +158,11 @@ Result FromTokenizeListInAnyAllOf(
       continue;
     }
     if (elem.type().id() != duckdb::LogicalTypeId::VARCHAR) {
-      return {ERROR_BAD_PARAMETER,
-              "TOKENIZE text array elements must be VARCHAR, got ",
-              elem.type().ToString()};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("TOKENIZE text array elements must be VARCHAR, got ",
+                elem.type().ToString()),
+        ERR_HINT(kSyntaxHint));
     }
     auto raw = duckdb::StringValue::Get(elem);
     if (use_identity) {
@@ -148,7 +171,10 @@ Result FromTokenizeListInAnyAllOf(
       continue;
     }
     if (!analyzer->reset(raw)) {
-      return {ERROR_BAD_PARAMETER, "Failed to analyse '", raw, "'"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Failed to analyse '", raw, "'"),
+        ERR_HINT("The selected analyzer rejected this list element."));
     }
     const auto* tok_attr = irs::get<irs::TermAttr>(*analyzer);
     while (analyzer->next()) {
@@ -158,7 +184,7 @@ Result FromTokenizeListInAnyAllOf(
 
   if (tokens.empty()) {
     AddFilter<irs::Empty>(parent);
-    return {};
+    return;
   }
 
   std::string field_name;
@@ -172,7 +198,7 @@ Result FromTokenizeListInAnyAllOf(
     term.boost(ctx.boost);
     *term.mutable_field() = field_name;
     term.mutable_options()->term.assign(tokens[0]);
-    return {};
+    return;
   }
 
   // Aggregate as ByTerms with the min_match policy:
@@ -194,7 +220,6 @@ Result FromTokenizeListInAnyAllOf(
   for (auto& t : tokens) {
     opts.terms.emplace(std::move(t));
   }
-  return {};
 }
 
 }  // namespace
@@ -203,18 +228,25 @@ Result FromTokenizeListInAnyAllOf(
 // `synthesised` owns BoundConstantExpression wrappers when the list was
 // constant-folded; the caller must keep it alive for the duration of `args`
 // use. `min_match` is empty for `all_of` and for `any_of` when not provided.
-Result ExtractAnyAllOfArgs(
+void ExtractAnyAllOfArgs(
   const duckdb::BoundFunctionExpression& func, bool is_any,
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
   std::optional<size_t>& min_match) {
+  constexpr auto kSyntaxHint =
+    "Example: any_of([TERM('a'), TERM('b')]) (OR), all_of([TERM('a'), "
+    "TERM('b')]) (AND), any_of([TERM('a'), TERM('b'), TERM('c')], 2).";
   if (func.children.empty() || func.children.size() > 2) {
-    return {ERROR_BAD_PARAMETER,
-            is_any ? "any_of takes ([list]) or ([list], min_match)"
-                   : "all_of takes ([list])"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(is_any
+                              ? "any_of takes ([list]) or ([list], min_match)"
+                              : "all_of takes ([list])"),
+                    ERR_HINT(kSyntaxHint));
   }
   if (!is_any && func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, "all_of takes a single list argument"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("all_of takes a single list argument"),
+                    ERR_HINT(kSyntaxHint));
   }
 
   // DuckDB constant-folds `['a', 'b']` into a BOUND_CONSTANT holding a
@@ -226,13 +258,17 @@ Result ExtractAnyAllOfArgs(
   const auto list_type_id = list_expr.return_type.id();
   if (list_type_id != duckdb::LogicalTypeId::LIST &&
       list_type_id != duckdb::LogicalTypeId::ARRAY) {
-    return {ERROR_BAD_PARAMETER,
-            "any_of/all_of first argument must be a list or array"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("any_of/all_of first argument must be a list or array"),
+      ERR_HINT(kSyntaxHint));
   }
   if (list_expr.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val = list_expr.Cast<duckdb::BoundConstantExpression>().value;
     if (val.IsNull()) {
-      return {ERROR_BAD_PARAMETER, "list arg must not be NULL"};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("list arg must not be NULL"),
+                      ERR_HINT(kSyntaxHint));
     }
     const auto& children = list_type_id == duckdb::LogicalTypeId::ARRAY
                              ? duckdb::ArrayValue::GetChildren(val)
@@ -247,60 +283,67 @@ Result ExtractAnyAllOfArgs(
     const auto& list_fn = list_expr.Cast<duckdb::BoundFunctionExpression>();
     if (list_fn.function.name != "list_value" &&
         list_fn.function.name != "array_value") {
-      return {ERROR_BAD_PARAMETER,
-              "list arg must be a literal list or array (got: ",
-              list_fn.function.name, ")"};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("list arg must be a literal list or array (got: ",
+                list_fn.function.name, ")"),
+        ERR_HINT(kSyntaxHint));
     }
     for (const auto& e : list_fn.children) {
       args.push_back(e.get());
     }
   } else {
-    return {ERROR_BAD_PARAMETER, "list arg must be a literal list or array"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("list arg must be a literal list or array"),
+                    ERR_HINT(kSyntaxHint));
   }
 
   if (func.children.size() == 2) {
     int64_t m;
     if (auto r = GetIntArg(*func.children[1], "any_of min_match", m); !r.ok()) {
-      return r;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
     if (m < 1) {
-      return {ERROR_BAD_PARAMETER, "any_of min_match must be >= 1, got ", m};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("any_of min_match must be >= 1, got ", m),
+                      ERR_HINT(kSyntaxHint));
     }
     min_match = static_cast<size_t>(m);
   }
 
   if (args.empty()) {
-    return {ERROR_BAD_PARAMETER, is_any
-                                   ? "any_of requires at least one argument"
-                                   : "all_of requires at least one argument"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(is_any ? "any_of requires at least one argument"
+                                   : "all_of requires at least one argument"),
+                    ERR_HINT(kSyntaxHint));
   }
   if (min_match && *min_match > args.size()) {
-    return {ERROR_BAD_PARAMETER, "any_of min_match (",
-            *min_match,          ") exceeds number of arguments (",
-            args.size(),         ")"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("any_of min_match (", *min_match,
+              ") exceeds number of arguments (", args.size(), ")"),
+      ERR_HINT(kSyntaxHint));
   }
-  return {};
 }
 
-Result FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::BoundFunctionExpression& func, bool is_any) {
+void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::BoundFunctionExpression& func, bool is_any) {
   // Special case: ANY_OF/ALL_OF wrapping a TOKENIZE(text_array[, name])
   // call. Tokenise every element, flatten into a single ByTerms with the
   // appropriate min_match. Bypasses the per-arg BuildTSQuery loop so we
   // can emit one aggregated filter rather than N individual leaves.
   if (!func.children.empty() && IsTokenizeListCall(*func.children[0])) {
-    return FromTokenizeListInAnyAllOf(
+    FromTokenizeListInAnyAllOf(
       parent, ctx, column_info, func,
       func.children[0]->Cast<duckdb::BoundFunctionExpression>(), is_any);
+    return;
   }
   std::vector<const duckdb::Expression*> args;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
   std::optional<size_t> min_match;
-  if (auto r = ExtractAnyAllOfArgs(func, is_any, args, synthesised, min_match);
-      !r.ok()) {
-    return r;
-  }
+  ExtractAnyAllOfArgs(func, is_any, args, synthesised, min_match);
 
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
@@ -320,11 +363,8 @@ Result FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   group->boost(ctx.boost);
   for (const auto* arg : args) {
-    if (auto r = BuildTSQuery(*group, sub_ctx, column_info, *arg); !r.ok()) {
-      return r;
-    }
+    BuildTSQuery(*group, sub_ctx, column_info, *arg);
   }
-  return {};
 }
 
 }  // namespace sdb::connector

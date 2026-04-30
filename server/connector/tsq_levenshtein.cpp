@@ -24,50 +24,61 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
 
-ResultOr<LevenshteinArgs> ParseLevenshteinArgs(
+LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
-  auto err = [](auto&&... args) {
-    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                   std::forward<decltype(args)>(args)...};
-  };
+  constexpr auto kSyntaxHint =
+    "Example: LEVENSHTEIN('test', 1) or LEVENSHTEIN('test', 2, false). "
+    "Distance is in [0, 4] (or [0, 3] when transpositions is true, the "
+    "default).";
   if (func.children.empty() || func.children.size() > 3) {
-    return err(
-      "LEVENSHTEIN expects 1 to 3 arguments "
-      "(text, distance?, transpositions?), got ",
-      func.children.size());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("LEVENSHTEIN expects 1 to 3 arguments "
+                            "(text, distance?, transpositions?), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
   LevenshteinArgs out;
   if (auto r = GetVarcharArg(*func.children[0], "LEVENSHTEIN text", out.text);
       !r.ok()) {
-    return std::unexpected<Result>{std::in_place, std::move(r)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 2) {
     if (auto r =
           GetIntArg(*func.children[1], "LEVENSHTEIN distance", out.distance);
         !r.ok()) {
-      return std::unexpected<Result>{std::in_place, std::move(r)};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
   }
   if (out.distance < 0 || out.distance > 4) {
-    return err("LEVENSHTEIN distance must be between 0 and 4, got ",
-               out.distance);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("LEVENSHTEIN distance must be between 0 and 4, got ",
+              out.distance),
+      ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 3) {
     if (auto r = GetBoolArg(*func.children[2], "LEVENSHTEIN transpositions",
                             out.with_transpositions);
         !r.ok()) {
-      return std::unexpected<Result>{std::in_place, std::move(r)};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
   }
   if (out.with_transpositions && out.distance > 3) {
-    return err(
-      "LEVENSHTEIN distance must be between 0 and 3 when "
-      "transpositions is true, got ",
-      out.distance);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("LEVENSHTEIN distance must be between 0 and 3 when "
+              "transpositions is true, got ",
+              out.distance),
+      ERR_HINT(kSyntaxHint));
   }
   return out;
 }
@@ -85,23 +96,27 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
 // from the previous phrase part. Subsequent tokens are strictly
 // adjacent ({1, 1}). Errors if the analyzer produces no tokens. Shared
 // between BuildFtsPhrase (called with PhraseGap{}) and EmitPhraseSeq's
-Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
-                       const SearchColumnInfo& column_info,
-                       const duckdb::BoundFunctionExpression& func) {
+void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
+                     const SearchColumnInfo& column_info,
+                     const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: LEVENSHTEIN('test', 1) or LEVENSHTEIN('test', 2, false). "
+    "Distance is in [0, 4] (or [0, 3] when transpositions is true, the "
+    "default).";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "LEVENSHTEIN field is not VARCHAR"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("LEVENSHTEIN field is not VARCHAR"),
+                    ERR_HINT(kSyntaxHint));
   }
   if (func.children.empty() || func.children.size() > 3) {
-    return {ERROR_BAD_PARAMETER,
-            "LEVENSHTEIN expects 1 to 3 arguments "
-            "(text, distance?, transpositions?), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("LEVENSHTEIN expects 1 to 3 arguments "
+                            "(text, distance?, transpositions?), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
 
   auto args = ParseLevenshteinArgs(func);
-  if (!args) {
-    return std::move(args.error());
-  }
 
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -112,9 +127,8 @@ Result FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
   edit_filter.boost(ctx.boost);
   *edit_filter.mutable_field() = field_name;
   auto& edit_opts = *edit_filter.mutable_options();
-  FillByEditDistanceOptions(*args, edit_opts);
+  FillByEditDistanceOptions(args, edit_opts);
   edit_opts.max_terms = ctx.scored_terms_limit;
-  return {};
 }
 
 }  // namespace sdb::connector

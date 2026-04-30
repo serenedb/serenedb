@@ -28,30 +28,36 @@
 
 namespace sdb::connector {
 
-Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::BoundFunctionExpression& func) {
+void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: compound([PHRASE('hello world')], [TERM('foo')], "
+    "[TERM('a'), TERM('b')], 1). Each bucket is a list of TSQUERY clauses; "
+    "min_should_match (optional 4th arg) defaults to 1. Buckets accept NULL "
+    "for empty.";
   if (func.children.size() < 3 || func.children.size() > 4) {
-    return {ERROR_BAD_PARAMETER,
-            "compound expects (must, must_not, should [, min_should_match]), "
-            "got ",
-            func.children.size(), " args"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("compound expects (must, must_not, should [, "
+              "min_should_match]), got ",
+              func.children.size(), " args"),
+      ERR_HINT(kSyntaxHint));
   }
 
   auto extract =
     [](const duckdb::Expression& arg, std::string_view label,
        std::vector<const duckdb::Expression*>& out,
-       std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised)
-    -> Result {
+       std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised) {
     // NULL bucket-arg -> empty bucket regardless of declared type.
     if (const auto* val = TryGetConstant(arg); val && val->IsNull()) {
-      return {};
+      return;
     }
     const auto type_id = arg.return_type.id();
     if (type_id != duckdb::LogicalTypeId::LIST &&
         type_id != duckdb::LogicalTypeId::ARRAY) {
       out.push_back(&arg);
-      return {};
+      return;
     }
     // List/array shape: NULL-list -> empty bucket; folded constant
     // -> children values; list_value/array_value call -> children
@@ -59,7 +65,7 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (arg.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val = arg.Cast<duckdb::BoundConstantExpression>().value;
       if (val.IsNull()) {
-        return {};
+        return;
       }
       const auto& children = type_id == duckdb::LogicalTypeId::ARRAY
                                ? duckdb::ArrayValue::GetChildren(val)
@@ -69,45 +75,41 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
           duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
         out.push_back(synthesised.back().get());
       }
-      return {};
+      return;
     }
     if (arg.expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
       const auto& fn = arg.Cast<duckdb::BoundFunctionExpression>();
       if (fn.function.name != "list_value" &&
           fn.function.name != "array_value") {
-        return {ERROR_BAD_PARAMETER,
-                "compound ",
-                label,
-                " list arg must be a literal list or array (got: ",
-                fn.function.name,
-                ")"};
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("compound ", label,
+                  " list arg must be a literal list or array (got: ",
+                  fn.function.name, ")"),
+          ERR_HINT("Pass a literal list/array, e.g. [TERM('a'), TERM('b')], "
+                   "or NULL for an empty bucket."));
       }
       for (const auto& e : fn.children) {
         out.push_back(e.get());
       }
-      return {};
+      return;
     }
-    return {ERROR_BAD_PARAMETER, "compound ", label,
-            " list arg must be a literal list or array"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("compound ", label,
+                            " list arg must be a literal list or array"),
+                    ERR_HINT("Pass a literal list/array or NULL for an "
+                             "empty bucket."));
   };
 
   std::vector<const duckdb::Expression*> must, must_not, should;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
-  if (auto r = extract(*func.children[0], "must", must, synthesised); !r.ok()) {
-    return r;
-  }
-  if (auto r = extract(*func.children[1], "must_not", must_not, synthesised);
-      !r.ok()) {
-    return r;
-  }
-  if (auto r = extract(*func.children[2], "should", should, synthesised);
-      !r.ok()) {
-    return r;
-  }
+  extract(*func.children[0], "must", must, synthesised);
+  extract(*func.children[1], "must_not", must_not, synthesised);
+  extract(*func.children[2], "should", should, synthesised);
 
   if (must.empty() && must_not.empty() && should.empty()) {
     AddFilter<irs::Empty>(parent);
-    return {};
+    return;
   }
 
   auto& and_filter =
@@ -119,19 +121,13 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   inner_ctx.boost = irs::kNoBoost;
 
   for (const auto* clause : must) {
-    if (auto r = BuildTSQuery(and_filter, inner_ctx, column_info, *clause);
-        !r.ok()) {
-      return r;
-    }
+    BuildTSQuery(and_filter, inner_ctx, column_info, *clause);
   }
   if (!must_not.empty()) {
     auto neg_ctx = inner_ctx;
     neg_ctx.negated = true;
     for (const auto* clause : must_not) {
-      if (auto r = BuildTSQuery(and_filter, neg_ctx, column_info, *clause);
-          !r.ok()) {
-        return r;
-      }
+      BuildTSQuery(and_filter, neg_ctx, column_info, *clause);
     }
   }
   if (!should.empty()) {
@@ -140,29 +136,28 @@ Result FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       if (auto r = GetIntArg(*func.children[3], "compound min_should_match",
                              min_should);
           !r.ok()) {
-        return r;
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
       }
       if (min_should < 1 || min_should > static_cast<int64_t>(should.size())) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("compound min_should_match must be in [1, ",
-                                should.size(), "], got ", min_should));
+                                should.size(), "], got ", min_should),
+                        ERR_HINT(kSyntaxHint));
       }
     }
     auto& or_filter = and_filter.add<irs::Or>();
     or_filter.min_match_count(static_cast<size_t>(min_should));
     for (const auto* clause : should) {
-      if (auto r = BuildTSQuery(or_filter, inner_ctx, column_info, *clause);
-          !r.ok()) {
-        return r;
-      }
+      BuildTSQuery(or_filter, inner_ctx, column_info, *clause);
     }
   } else if (func.children.size() == 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(
-        "compound min_should_match makes no sense without should clauses"));
+        "compound min_should_match makes no sense without should clauses"),
+      ERR_HINT(kSyntaxHint));
   }
-  return {};
 }
 
 }  // namespace sdb::connector

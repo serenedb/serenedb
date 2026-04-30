@@ -43,7 +43,6 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
-#include "basics/result_or.h"
 #include "search_filter_builder.hpp"
 
 namespace sdb::connector {
@@ -126,27 +125,21 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
                         duckdb::LogicalTypeId type_id,
                         const duckdb::Value& value);
 
-// TSQUERY tree walker. Per-type FromXxx entry points are forward-
-// declared in search_filter_builder.cpp where the dispatch lives;
-// they don't need to be on the cross-TU surface.
-Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::Expression& expr);
+// All throw THROW_SQL_ERROR on any failure.
+void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::Expression& expr);
 
-// Shared FTS leaf builders (called from the dispatch in main and from
-// other per-type cpps -- to_tsquery, tokenize, term).
-Result BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
-                      const SearchColumnInfo& column_info,
-                      std::string_view text);
-Result BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::Value& value);
-Result BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
-                      const SearchColumnInfo& column_info,
-                      std::string_view text, bool require_all);
+void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info, std::string_view text);
+void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::Value& value);
+void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info, std::string_view text,
+                    bool require_all);
 
-// Shared between RANGE constructor and phrase-seq's RANGE-as-part
-// dispatch. Pointers reference constants in the bound expression tree;
+// Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).
 struct RangeArgs {
   const duckdb::Value* min_val = nullptr;
@@ -154,17 +147,18 @@ struct RangeArgs {
   bool min_incl = false;
   bool max_incl = false;
 };
-ResultOr<RangeArgs> ParseRangeArgs(const duckdb::BoundFunctionExpression& func);
+// All Parse*/Fill*/Extract*/Flatten*/Attach*/Emit* helpers below throw
+// THROW_SQL_ERROR on any failure -- callers don't need to wrap.
+RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func);
 void FillByRangeOptionsVarchar(const RangeArgs& args, irs::ByRangeOptions& out);
 
-// Shared between LEVENSHTEIN constructor and phrase-seq's
 // LEVENSHTEIN-as-part dispatch.
 struct LevenshteinArgs {
   std::string text;
   int64_t distance = 1;
   bool with_transpositions = true;
 };
-ResultOr<LevenshteinArgs> ParseLevenshteinArgs(
+LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func);
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out);
@@ -173,7 +167,7 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
 // (extracts elements), and the optional min_should_match suffix.
 // `synthesised` collects any temporary expressions the unpacker
 // constructs (so their lifetime extends past return).
-Result ExtractAnyAllOfArgs(
+void ExtractAnyAllOfArgs(
   const duckdb::BoundFunctionExpression& func, bool is_any,
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
@@ -191,11 +185,11 @@ struct PhraseSeq {
   std::vector<PhraseGap> gaps;
   std::optional<PhraseGap> pending;
 };
-ResultOr<PhraseGap> ParsePhraseSeqGap(const duckdb::Expression& expr);
-Result FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
-Result AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
-Result EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
-                     const SearchColumnInfo& column_info, const PhraseSeq& seq);
+PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr);
+void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
+void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
+void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
+                   const SearchColumnInfo& column_info, const PhraseSeq& seq);
 
 enum class TSQueryOp {
   Unknown,

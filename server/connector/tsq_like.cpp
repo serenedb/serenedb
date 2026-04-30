@@ -23,6 +23,8 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
@@ -33,33 +35,42 @@ void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 namespace {
 
-Result BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    std::string_view like_pattern) {
+void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  std::string_view like_pattern) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("LIKE field is not VARCHAR"),
+      ERR_HINT("LIKE applies to VARCHAR-typed columns indexed by an "
+               "identity or wildcard analyzer."));
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
   EmitLikeFilter(parent, ctx, column_info, std::move(field_name), like_pattern);
-  return {};
 }
 
 }  // namespace
 
-Result FromTSQLike(irs::BooleanFilter& parent, const FilterContext& ctx,
-                   const SearchColumnInfo& column_info,
-                   const duckdb::BoundFunctionExpression& func) {
+void FromTSQLike(irs::BooleanFilter& parent, const FilterContext& ctx,
+                 const SearchColumnInfo& column_info,
+                 const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, "LIKE expects 1 argument (pattern), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("LIKE expects 1 argument (pattern), got ", func.children.size()),
+      ERR_HINT("Example: LIKE('foo%bar'). Use `%` to match any sequence "
+               "and `_` to match a single character."));
   }
   std::string pat;
   if (auto r = GetVarcharArg(*func.children[0], "LIKE pattern", pat); !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()),
+                    ERR_HINT("LIKE expects a non-null VARCHAR pattern. "
+                             "Example: LIKE('foo%bar')."));
   }
-  return BuildFtsLike(parent, ctx, column_info, pat);
+  BuildFtsLike(parent, ctx, column_info, pat);
 }
 
 }  // namespace sdb::connector

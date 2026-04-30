@@ -24,6 +24,8 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 // magic_enum customisation for irs::RegexpSyntax: maps the surface
@@ -71,41 +73,49 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 }  // namespace
 
-Result FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
-                  const SearchColumnInfo& column_info,
-                  const duckdb::BoundFunctionExpression& func) {
+void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
+                const SearchColumnInfo& column_info,
+                const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: REGEXP('abc.*') (Perl, default) or REGEXP('[[:alpha:]]+', "
+    "'posix'). Syntax is one of 'perl' or 'posix'.";
   if (func.children.empty() || func.children.size() > 2) {
-    return {ERROR_BAD_PARAMETER,
-            "REGEXP expects 1 or 2 arguments (pattern[, syntax]), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("REGEXP expects 1 or 2 arguments (pattern[, syntax]), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   std::string pattern;
   if (auto r = GetVarcharArg(*func.children[0], "REGEXP pattern", pattern);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   auto syntax = irs::RegexpSyntax::Perl;
   if (func.children.size() == 2) {
     std::string syntax_name;
     if (auto r = GetVarcharArg(*func.children[1], "REGEXP syntax", syntax_name);
         !r.ok()) {
-      return r;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
     auto parsed = magic_enum::enum_cast<irs::RegexpSyntax>(
       syntax_name, magic_enum::case_insensitive);
     if (!parsed) {
-      throw duckdb::InvalidInputException(
-        "REGEXP syntax must be one of [%s], got '%s'",
-        absl::StrJoin(magic_enum::enum_names<irs::RegexpSyntax>(), ", ",
-                      [](std::string* out, std::string_view name) {
-                        absl::StrAppend(out, "'", name, "'");
-                      }),
-        syntax_name);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("REGEXP syntax must be one of [",
+                absl::StrJoin(magic_enum::enum_names<irs::RegexpSyntax>(), ", ",
+                              [](std::string* out, std::string_view name) {
+                                absl::StrAppend(out, "'", name, "'");
+                              }),
+                "], got '", syntax_name, "'"),
+        ERR_HINT(kSyntaxHint));
     }
     syntax = *parsed;
   }
   BuildFtsRegexp(parent, ctx, column_info, pattern, syntax);
-  return {};
 }
 
 }  // namespace sdb::connector

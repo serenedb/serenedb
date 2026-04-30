@@ -26,6 +26,8 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
@@ -116,32 +118,31 @@ std::vector<std::vector<WsToken>> GroupWebsearch(
   return groups;
 }
 
-Result ParseWebsearchQuery(std::string_view text,
-                           const SearchColumnInfo& column_info,
-                           const FilterContext& ctx,
-                           irs::BooleanFilter& parent) {
+void ParseWebsearchQuery(std::string_view text,
+                         const SearchColumnInfo& column_info,
+                         const FilterContext& ctx, irs::BooleanFilter& parent) {
   const auto groups = GroupWebsearch(LexWebsearch(text));
   if (groups.empty()) {
     AddFilter<irs::Empty>(parent);
-    return {};
+    return;
   }
 
   auto emit_atom = [&](const WsToken& tok, irs::BooleanFilter& into,
-                       const FilterContext& c) -> Result {
+                       const FilterContext& c) {
     auto ac = c;
     ac.negated = c.negated ^ tok.negated;
     if (tok.kind == WsTokKind::Phrase) {
-      return BuildFtsPhrase(into, ac, column_info, tok.text);
+      BuildFtsPhrase(into, ac, column_info, tok.text);
+    } else {
+      BuildFtsTokens(into, ac, column_info, tok.text, /*require_all=*/false);
     }
-    return BuildFtsTokens(into, ac, column_info, tok.text,
-                          /*require_all=*/false);
   };
 
   auto emit_group = [&](const std::vector<WsToken>& group,
-                        irs::BooleanFilter& into,
-                        const FilterContext& c) -> Result {
+                        irs::BooleanFilter& into, const FilterContext& c) {
     if (group.size() == 1) {
-      return emit_atom(group[0], into, c);
+      emit_atom(group[0], into, c);
+      return;
     }
     auto& or_group =
       c.negated ? Negate<irs::Or>(into) : AddFilter<irs::Or>(into);
@@ -150,15 +151,13 @@ Result ParseWebsearchQuery(std::string_view text,
     inner.negated = false;
     inner.boost = irs::kNoBoost;
     for (const auto& tok : group) {
-      if (auto r = emit_atom(tok, or_group, inner); !r.ok()) {
-        return r;
-      }
+      emit_atom(tok, or_group, inner);
     }
-    return {};
   };
 
   if (groups.size() == 1) {
-    return emit_group(groups[0], parent, ctx);
+    emit_group(groups[0], parent, ctx);
+    return;
   }
 
   auto& and_group =
@@ -168,112 +167,122 @@ Result ParseWebsearchQuery(std::string_view text,
   inner.negated = false;
   inner.boost = irs::kNoBoost;
   for (const auto& group : groups) {
-    if (auto r = emit_group(group, and_group, inner); !r.ok()) {
-      return r;
-    }
+    emit_group(group, and_group, inner);
   }
-  return {};
 }
 
 }  // namespace
 
-Result FromPhrase(irs::BooleanFilter&, const FilterContext&,
-                  const SearchColumnInfo&,
-                  const duckdb::BoundFunctionExpression&);
+void FromPhrase(irs::BooleanFilter&, const FilterContext&,
+                const SearchColumnInfo&,
+                const duckdb::BoundFunctionExpression&);
 
-Result FromPhraseToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                           const SearchColumnInfo& column_info,
-                           const duckdb::BoundFunctionExpression& func) {
+void FromPhraseToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                         const SearchColumnInfo& column_info,
+                         const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER,
-            "phraseto_tsquery expects 1 argument (text), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("phraseto_tsquery expects 1 argument (text), got ",
+              func.children.size()),
+      ERR_HINT("Example: phraseto_tsquery('quick fox'). The text is "
+               "tokenised through the column analyzer and emitted as a "
+               "phrase."));
   }
-  return FromPhrase(parent, ctx, column_info, func);
+  FromPhrase(parent, ctx, column_info, func);
 }
 
-// TOKENIZE(text [, analyzer]): 1-arg uses the ambient (column)
-// analyzer with OR semantics; 2-arg accepts only `'identity'` for v1
-// (bypasses tokenisation, emits a raw ByTerm). Catalog-registered
-// analyzers require snapshot access not yet plumbed through the
-Result FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                          const SearchColumnInfo& column_info,
-                          const duckdb::BoundFunctionExpression& func) {
+void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                        const SearchColumnInfo& column_info,
+                        const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: plainto_tsquery('quick fox'). All tokens must match "
+    "(AND-semantics).";
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER,
-            "plainto_tsquery expects 1 argument (text), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("plainto_tsquery expects 1 argument (text), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "plainto_tsquery text", text);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  return BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/true);
+  BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/true);
 }
 
 // websearch_to_tsquery(text): PG-style web-search syntax (quoted
-// phrases, OR keyword, leading `-` for NOT). Delegates to the
-// websearch parser in this file.
-Result FromWebsearchToTsquery(irs::BooleanFilter& parent,
-                              const FilterContext& ctx,
-                              const SearchColumnInfo& column_info,
-                              const duckdb::BoundFunctionExpression& func) {
+// phrases, OR keyword, leading `-` for NOT).
+void FromWebsearchToTsquery(irs::BooleanFilter& parent,
+                            const FilterContext& ctx,
+                            const SearchColumnInfo& column_info,
+                            const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: websearch_to_tsquery('\"quick fox\" -slow OR fast'). "
+    "Quoted segments are phrases, leading `-` negates, `OR` joins.";
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER,
-            "websearch_to_tsquery expects 1 argument (text), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("websearch_to_tsquery expects 1 argument (text), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   std::string text;
   if (auto r =
         GetVarcharArg(*func.children[0], "websearch_to_tsquery text", text);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  return ParseWebsearchQuery(text, column_info, ctx, parent);
+  ParseWebsearchQuery(text, column_info, ctx, parent);
 }
 
 // tsquery_phrase(q1, q2 [, distance]): function form of `##`. Wraps
 // the args into a synthetic PhraseSeq (q1, optional gap, q2) and
 // emits via the shared phrase-seq emitter.
-Result FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
-                         const SearchColumnInfo& column_info,
-                         const duckdb::BoundFunctionExpression& func) {
+void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
+                       const SearchColumnInfo& column_info,
+                       const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: tsquery_phrase(PHRASE('hello'), TERM('world'), 1). "
+    "Equivalent to PHRASE('hello') ## 1 ## TERM('world').";
   if (func.children.size() < 2 || func.children.size() > 3) {
-    return {ERROR_BAD_PARAMETER,
-            "tsquery_phrase expects 2 or 3 arguments "
-            "(q1, q2[, distance]), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("tsquery_phrase expects 2 or 3 arguments "
+                            "(q1, q2[, distance]), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
   PhraseSeq seq;
-  if (auto r = FlattenPhraseSeq(*func.children[0], seq); !r.ok()) {
-    return r;
-  }
+  FlattenPhraseSeq(*func.children[0], seq);
   if (func.children.size() == 3) {
-    auto gap = ParsePhraseSeqGap(*func.children[2]);
-    if (!gap) {
-      return std::move(gap.error());
-    }
-    seq.pending = *gap;
+    seq.pending = ParsePhraseSeqGap(*func.children[2]);
   }
-  if (auto r = AttachPart(seq, *func.children[1]); !r.ok()) {
-    return r;
-  }
-  return EmitPhraseSeq(parent, ctx, column_info, seq);
+  AttachPart(seq, *func.children[1]);
+  EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 
-Result FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                     const SearchColumnInfo& column_info,
-                     const duckdb::BoundFunctionExpression& func) {
+void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                   const SearchColumnInfo& column_info,
+                   const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: to_tsquery('field:foo AND bar*'). Accepts the full Lucene "
+    "syntax: TERM, PHRASE, AND/OR/NOT, +/-, prefix/wildcard/regex, "
+    "ranges, boost, fuzzy, slop.";
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER,
-            "to_tsquery expects 1 argument (lucene-string), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("to_tsquery expects 1 argument (lucene-string), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "to_tsquery text", text);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -284,9 +293,10 @@ Result FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   sdb::ParserContext parser_ctx{mixed, field_name, ctx.tokenizer};
   parser_ctx.strict_field = true;
   if (auto r = sdb::ParseQuery(parser_ctx, text); !r.ok()) {
-    return {ERROR_BAD_PARAMETER, "to_tsquery parse error: ", r.errorMessage()};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("to_tsquery parse error: ", r.errorMessage()),
+                    ERR_HINT(kSyntaxHint));
   }
-  return {};
 }
 
 }  // namespace sdb::connector

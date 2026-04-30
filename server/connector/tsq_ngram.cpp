@@ -25,26 +25,37 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
 
-Result FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
-                 const SearchColumnInfo& column_info,
-                 const duckdb::BoundFunctionExpression& func) {
+void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
+               const SearchColumnInfo& column_info,
+               const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: NGRAM('hello', 0.7). Threshold is in [0, 1] and defaults to "
+    "0.7. The field must be VARCHAR-typed and indexed with Positions and "
+    "Frequency features.";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "NGRAM field is not VARCHAR"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("NGRAM field is not VARCHAR"),
+                    ERR_HINT(kSyntaxHint));
   }
   if (func.children.empty() || func.children.size() > 2) {
-    return {ERROR_BAD_PARAMETER,
-            "NGRAM expects 1 or 2 arguments (text[, threshold]), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("NGRAM expects 1 or 2 arguments (text[, threshold]), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
 
   std::string target;
   if (auto r = GetVarcharArg(*func.children[0], "NGRAM text", target);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
 
   float threshold = 0.7f;
@@ -52,20 +63,27 @@ Result FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     double thr;
     if (auto r = GetDoubleArg(*func.children[1], "NGRAM threshold", thr);
         !r.ok()) {
-      return r;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
     }
     threshold = static_cast<float>(thr);
   }
   if (threshold < 0.f || threshold > 1.f) {
-    return {ERROR_BAD_PARAMETER, "NGRAM threshold must be between 0 and 1"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("NGRAM threshold must be between 0 and 1, got ", threshold),
+      ERR_HINT(kSyntaxHint));
   }
 
   if ((column_info.tokenizer.features &
        irs::NGramSimilarityQuery::kRequiredFeatures) !=
       irs::NGramSimilarityQuery::kRequiredFeatures) {
-    return {ERROR_BAD_PARAMETER,
-            "NGRAM field should have Positions and Frequency features "
-            "enabled"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(
+        "NGRAM field should have Positions and Frequency features enabled"),
+      ERR_HINT("Recreate the inverted index with both `Positions` and "
+               "`Frequency` features attached to the column."));
   }
 
   std::string field_name;
@@ -83,7 +101,6 @@ Result FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
   while (analyzer.next()) {
     ngram.mutable_options()->ngrams.emplace_back(token->value);
   }
-  return {};
 }
 
 }  // namespace sdb::connector

@@ -24,16 +24,21 @@
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "tsq_common.hpp"
 
 namespace sdb::connector {
 namespace {
 
-Result BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
-                      const SearchColumnInfo& column_info,
-                      std::string_view prefix) {
+void BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    std::string_view prefix) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "PREFIX field is not VARCHAR"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("PREFIX field is not VARCHAR"),
+                    ERR_HINT("PREFIX applies to VARCHAR-typed columns. "
+                             "Example: PREFIX('pre')."));
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -45,24 +50,29 @@ Result BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& pf_opts = *filter.mutable_options();
   pf_opts.scored_terms_limit = ctx.scored_terms_limit;
   pf_opts.term.assign(irs::ViewCast<irs::byte_type>(prefix));
-  return {};
 }
 
 }  // namespace
 
-Result FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
-                  const SearchColumnInfo& column_info,
-                  const duckdb::BoundFunctionExpression& func) {
+void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+                const SearchColumnInfo& column_info,
+                const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, "PREFIX expects 1 argument (text), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("PREFIX expects 1 argument (text), got ", func.children.size()),
+      ERR_HINT("Example: PREFIX('pre'). For wildcards anywhere use "
+               "LIKE('foo%bar')."));
   }
   std::string prefix;
   if (auto r = GetVarcharArg(*func.children[0], "PREFIX text", prefix);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()),
+                    ERR_HINT("PREFIX expects a non-null VARCHAR constant. "
+                             "Example: PREFIX('pre')."));
   }
-  return BuildFtsPrefix(parent, ctx, column_info, prefix);
+  BuildFtsPrefix(parent, ctx, column_info, prefix);
 }
 
 }  // namespace sdb::connector

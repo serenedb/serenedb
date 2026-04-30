@@ -29,31 +29,40 @@
 
 namespace sdb::connector {
 
-Result FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::BoundFunctionExpression& func) {
+void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: TOKENIZE('quick fox') uses the column analyzer; "
+    "TOKENIZE('foo', 'identity') keeps raw bytes; "
+    "TOKENIZE('foo', '<name>') resolves a catalog tokenizer.";
   if (func.children.empty() || func.children.size() > 2) {
-    return {ERROR_BAD_PARAMETER,
-            "TOKENIZE expects 1 or 2 arguments (text[, analyzer]), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TOKENIZE expects 1 or 2 arguments (text[, analyzer]), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "TOKENIZE text", text);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() == 1) {
-    return BuildFtsTokens(parent, ctx, column_info, text,
-                          /*require_all=*/false);
+    BuildFtsTokens(parent, ctx, column_info, text, /*require_all=*/false);
+    return;
   }
   std::string analyzer_name;
   if (auto r = GetVarcharArg(*func.children[1], "TOKENIZE analyzer name",
                              analyzer_name);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (analyzer_name == irs::StringTokenizer::type_name()) {
-    return BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
+    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
+    return;
   }
   auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
   if (!wrapper) {
@@ -64,8 +73,7 @@ Result FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                              "or use 'identity' for raw bytes."));
   }
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
-  return BuildFtsTokens(parent, sub_ctx, column_info, text,
-                        /*require_all=*/false);
+  BuildFtsTokens(parent, sub_ctx, column_info, text, /*require_all=*/false);
 }
 
 }  // namespace sdb::connector

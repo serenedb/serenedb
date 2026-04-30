@@ -182,39 +182,29 @@ a	b
 # Error: leading text pattern tokenizes to nothing (empty string) so the
 # following integer gap has no preceding text -- covers the opts->empty()
 # check in the integer gap branch of FromPhrase.
-query error
+query error PHRASE gap at argument 1 must be preceded by a text pattern
 SELECT a FROM foo_idx WHERE b @@ PHRASE('', 1, 'fox');
-----
-db error: ERROR: PHRASE gap at argument 1 must be preceded by a text pattern
 
 
 # Same as above but via a range gap -- covers the opts->empty() check
 # in the LIST/ARRAY gap branch of FromPhrase.
-query error
+query error PHRASE gap at argument 1 must be preceded by a text pattern
 SELECT a FROM foo_idx WHERE b @@ PHRASE('', ARRAY[1,2], 'fox');
-----
-db error: ERROR: PHRASE gap at argument 1 must be preceded by a text pattern
 
 
 # Error: gap at end with no following text pattern
-query error
+query error PHRASE ends with a gap; a text pattern must follow each gap
 SELECT a FROM foo_idx WHERE b @@ PHRASE('quick', 1);
-----
-db error: ERROR: PHRASE ends with a gap; a text pattern must follow each gap
 
 
 # Error: two consecutive gaps
-query error
+query error PHRASE has consecutive gaps at argument 2
 SELECT a FROM foo_idx WHERE b @@ PHRASE('quick', 1, 2, 'fox');
-----
-db error: ERROR: PHRASE has consecutive gaps at argument 2
 
 
 # Error: range gap with min > max
-query error
+query error PHRASE interval gap must satisfy 0 <= min <= max, got \[3, 1\] \(argument 1\)
 SELECT a FROM foo_idx WHERE b @@ PHRASE('quick', ARRAY[3,1], 'fox');
-----
-db error: ERROR: PHRASE interval gap must satisfy 0 <= min <= max, got [3, 1] (argument 1)
 
 
 statement ok

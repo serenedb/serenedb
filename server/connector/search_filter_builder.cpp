@@ -57,7 +57,6 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/result_or.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
@@ -967,75 +966,80 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
 }
 
 // Per-type TSQUERY entry points -- each defined in tsq_<name>.cpp and
-// dispatched to from BuildTSQuery's switch below.
-Result FromPhrase(irs::BooleanFilter&, const FilterContext&,
-                  const SearchColumnInfo&,
-                  const duckdb::BoundFunctionExpression&);
-Result FromNgram(irs::BooleanFilter&, const FilterContext&,
-                 const SearchColumnInfo&,
-                 const duckdb::BoundFunctionExpression&);
-Result FromLevenshtein(irs::BooleanFilter&, const FilterContext&,
-                       const SearchColumnInfo&,
-                       const duckdb::BoundFunctionExpression&);
-Result FromTerm(irs::BooleanFilter&, const FilterContext&,
+// dispatched to from BuildTSQuery's switch below. All throw
+// THROW_SQL_ERROR on any failure (with operator-specific hints).
+void FromPhrase(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
-Result FromTSQLike(irs::BooleanFilter&, const FilterContext&,
-                   const SearchColumnInfo&,
-                   const duckdb::BoundFunctionExpression&);
-Result FromPrefix(irs::BooleanFilter&, const FilterContext&,
-                  const SearchColumnInfo&,
-                  const duckdb::BoundFunctionExpression&);
-Result FromTokenize(irs::BooleanFilter&, const FilterContext&,
-                    const SearchColumnInfo&,
-                    const duckdb::BoundFunctionExpression&);
-Result FromTSQRangeOne(irs::BooleanFilter&, const FilterContext&,
-                       const SearchColumnInfo&,
-                       const duckdb::BoundFunctionExpression&,
-                       std::string_view label, bool is_lower, bool inclusive);
-Result FromRegexp(irs::BooleanFilter&, const FilterContext&,
-                  const SearchColumnInfo&,
-                  const duckdb::BoundFunctionExpression&);
-Result FromRange(irs::BooleanFilter&, const FilterContext&,
-                 const SearchColumnInfo&,
-                 const duckdb::BoundFunctionExpression&);
-Result FromCompound(irs::BooleanFilter&, const FilterContext&,
-                    const SearchColumnInfo&,
-                    const duckdb::BoundFunctionExpression&);
-Result FromAnyAllOf(irs::BooleanFilter&, const FilterContext&,
-                    const SearchColumnInfo&,
-                    const duckdb::BoundFunctionExpression&, bool is_any);
-Result FromPlainToTsquery(irs::BooleanFilter&, const FilterContext&,
-                          const SearchColumnInfo&,
-                          const duckdb::BoundFunctionExpression&);
-Result FromPhraseToTsquery(irs::BooleanFilter&, const FilterContext&,
-                           const SearchColumnInfo&,
-                           const duckdb::BoundFunctionExpression&);
-Result FromTsqueryPhrase(irs::BooleanFilter&, const FilterContext&,
-                         const SearchColumnInfo&,
-                         const duckdb::BoundFunctionExpression&);
-Result FromToTsquery(irs::BooleanFilter&, const FilterContext&,
+void FromNgram(irs::BooleanFilter&, const FilterContext&,
+               const SearchColumnInfo&,
+               const duckdb::BoundFunctionExpression&);
+void FromLevenshtein(irs::BooleanFilter&, const FilterContext&,
                      const SearchColumnInfo&,
                      const duckdb::BoundFunctionExpression&);
-Result FromWebsearchToTsquery(irs::BooleanFilter&, const FilterContext&,
-                              const SearchColumnInfo&,
-                              const duckdb::BoundFunctionExpression&);
-Result FromTSQueryPhraseSeq(irs::BooleanFilter&, const FilterContext&,
+void FromTerm(irs::BooleanFilter&, const FilterContext&,
+              const SearchColumnInfo&,
+              const duckdb::BoundFunctionExpression&);
+void FromTSQLike(irs::BooleanFilter&, const FilterContext&,
+                 const SearchColumnInfo&,
+                 const duckdb::BoundFunctionExpression&);
+void FromPrefix(irs::BooleanFilter&, const FilterContext&,
+                const SearchColumnInfo&,
+                const duckdb::BoundFunctionExpression&);
+void FromTokenize(irs::BooleanFilter&, const FilterContext&,
+                  const SearchColumnInfo&,
+                  const duckdb::BoundFunctionExpression&);
+void FromTSQRangeOne(irs::BooleanFilter&, const FilterContext&,
+                     const SearchColumnInfo&,
+                     const duckdb::BoundFunctionExpression&,
+                     std::string_view label, bool is_lower, bool inclusive);
+void FromRegexp(irs::BooleanFilter&, const FilterContext&,
+                const SearchColumnInfo&,
+                const duckdb::BoundFunctionExpression&);
+void FromRange(irs::BooleanFilter&, const FilterContext&,
+               const SearchColumnInfo&,
+               const duckdb::BoundFunctionExpression&);
+void FromCompound(irs::BooleanFilter&, const FilterContext&,
+                  const SearchColumnInfo&,
+                  const duckdb::BoundFunctionExpression&);
+void FromAnyAllOf(irs::BooleanFilter&, const FilterContext&,
+                  const SearchColumnInfo&,
+                  const duckdb::BoundFunctionExpression&, bool is_any);
+void FromPlainToTsquery(irs::BooleanFilter&, const FilterContext&,
+                        const SearchColumnInfo&,
+                        const duckdb::BoundFunctionExpression&);
+void FromPhraseToTsquery(irs::BooleanFilter&, const FilterContext&,
+                         const SearchColumnInfo&,
+                         const duckdb::BoundFunctionExpression&);
+void FromTsqueryPhrase(irs::BooleanFilter&, const FilterContext&,
+                       const SearchColumnInfo&,
+                       const duckdb::BoundFunctionExpression&);
+void FromToTsquery(irs::BooleanFilter&, const FilterContext&,
+                   const SearchColumnInfo&,
+                   const duckdb::BoundFunctionExpression&);
+void FromWebsearchToTsquery(irs::BooleanFilter&, const FilterContext&,
                             const SearchColumnInfo&,
                             const duckdb::BoundFunctionExpression&);
+void FromTSQueryPhraseSeq(irs::BooleanFilter&, const FilterContext&,
+                          const SearchColumnInfo&,
+                          const duckdb::BoundFunctionExpression&);
 
 TSQueryOp ClassifyTSQueryFunction(std::string_view name) {
   return magic_enum::enum_cast<TSQueryOp>(name).value_or(TSQueryOp::Unknown);
 }
 
-Result FromTSQueryConjunction(irs::BooleanFilter& parent,
-                              const FilterContext& ctx,
-                              const SearchColumnInfo& column_info,
-                              const duckdb::BoundFunctionExpression& func,
-                              bool is_and) {
+void FromTSQueryConjunction(irs::BooleanFilter& parent,
+                            const FilterContext& ctx,
+                            const SearchColumnInfo& column_info,
+                            const duckdb::BoundFunctionExpression& func,
+                            bool is_and) {
   if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, "TSQUERY ", is_and ? "&&" : "||",
-            " expects 2 operands, got ", func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TSQUERY ", is_and ? "&&" : "||", " expects 2 operands, got ",
+              func.children.size()),
+      ERR_HINT("Example: PHRASE('a') && TERM('b'). Both operands must be "
+               "TSQUERY-typed expressions."));
   }
   irs::BooleanFilter* group;
   if (is_and) {
@@ -1050,92 +1054,100 @@ Result FromTSQueryConjunction(irs::BooleanFilter& parent,
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
   for (const auto& child : func.children) {
-    if (auto r = BuildTSQuery(*group, sub_ctx, column_info, *child); !r.ok()) {
-      return r;
-    }
+    BuildTSQuery(*group, sub_ctx, column_info, *child);
   }
-  return {};
 }
 
 // TSQUERY `!!` -- prefix NOT. Flips ctx.negated and recurses; no new
 // filter node is added at this level (the inner expression's emitter
 // will wrap itself in irs::Not when ctx.negated is true).
-Result FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
-                      const SearchColumnInfo& column_info,
-                      const duckdb::BoundFunctionExpression& func) {
+void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
-    return {ERROR_BAD_PARAMETER, "TSQUERY !! expects 1 operand, got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TSQUERY !! expects 1 operand, got ", func.children.size()),
+      ERR_HINT("Example: !!PHRASE('text'). The operand must be a TSQUERY "
+               "expression."));
   }
   auto neg = ctx;
   neg.negated = !ctx.negated;
-  return BuildTSQuery(parent, neg, column_info, *func.children[0]);
+  BuildTSQuery(parent, neg, column_info, *func.children[0]);
 }
 
 // TSQUERY `^` -- boost. Multiplies the inherited ctx.boost by the
 // factor and recurses into the inner expression.
-Result FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
-                        const SearchColumnInfo& column_info,
-                        const duckdb::BoundFunctionExpression& func) {
+void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
+                      const SearchColumnInfo& column_info,
+                      const duckdb::BoundFunctionExpression& func) {
+  constexpr auto kSyntaxHint =
+    "Example: PHRASE('text') ^ 2.0. The factor must be a non-negative "
+    "numeric constant. For composable boosts use ::boost(K).";
   if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER,
-            "TSQUERY ^ expects 2 operands (query ^ factor), got ",
-            func.children.size()};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("TSQUERY ^ expects 2 operands (query ^ factor), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   double factor_d;
   if (auto r = GetDoubleArg(*func.children[1], "boost factor", factor_d);
       !r.ok()) {
-    return r;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   const auto factor = static_cast<irs::score_t>(factor_d);
   if (factor < 0.0f) {
-    return {ERROR_BAD_PARAMETER, "boost factor must be >= 0, got ", factor};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("boost factor must be >= 0, got ", factor),
+                    ERR_HINT(kSyntaxHint));
   }
-  return BuildTSQuery(parent, ctx.WithBoost(factor), column_info,
-                      *func.children[0]);
+  BuildTSQuery(parent, ctx.WithBoost(factor), column_info, *func.children[0]);
 }
 
 // `(...)::boost(K)` -- multiplies ctx.boost by the modifier's factor
-// and recurses on the inner. Returns nullopt if `peeled` carries no
-// boost modifier.
-std::optional<Result> TryDispatchBoostCast(irs::BooleanFilter& parent,
-                                           const FilterContext& ctx,
-                                           const SearchColumnInfo& column_info,
-                                           const duckdb::Expression& peeled) {
+// and recurses on the inner. Returns false if `peeled` carries no
+// boost modifier; true if it claimed and dispatched the cast (any
+// dispatch failure throws via the inner BuildTSQuery / BuildFts*).
+bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
+                          const SearchColumnInfo& column_info,
+                          const duckdb::Expression& peeled) {
   if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
     auto mod = TryGetBoostModifier(cast_expr.return_type);
     if (!mod.factor || !cast_expr.child) {
-      return std::nullopt;
+      return false;
     }
-    return BuildTSQuery(parent,
-                        ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
-                        column_info, *cast_expr.child);
+    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
+                 column_info, *cast_expr.child);
+    return true;
   }
   if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
     auto mod = TryGetBoostModifier(cv.type());
     if (!mod.factor) {
-      return std::nullopt;
+      return false;
     }
     // Strip the BOOSTED alias before recursing, otherwise we re-enter
     // this branch on the same value.
     duckdb::Value cleaned = cv;
     cleaned.Reinterpret(MakeTSQueryType());
     duckdb::BoundConstantExpression cleaned_expr(std::move(cleaned));
-    return BuildTSQuery(parent,
-                        ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
-                        column_info, cleaned_expr);
+    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
+                 column_info, cleaned_expr);
+    return true;
   }
-  return std::nullopt;
+  return false;
 }
 
 // `(...)::tokenize('<name>')` -- 'identity' bypasses tokenisation;
-// any other name resolves via the catalog. Returns nullopt if
-// `peeled` carries no tokenize modifier.
-std::optional<Result> TryDispatchTokenizeCast(
-  irs::BooleanFilter& parent, const FilterContext& ctx,
-  const SearchColumnInfo& column_info, const duckdb::Expression& peeled) {
+// any other name resolves via the catalog. Returns false if `peeled`
+// carries no tokenize modifier.
+bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
+                             const FilterContext& ctx,
+                             const SearchColumnInfo& column_info,
+                             const duckdb::Expression& peeled) {
   TokenizerModifier mod;
   const duckdb::Expression* expr = nullptr;
   const duckdb::Value* val = nullptr;
@@ -1155,20 +1167,22 @@ std::optional<Result> TryDispatchTokenizeCast(
     }
   }
   if (mod.name.empty()) {
-    return std::nullopt;
+    return false;
   }
   if (mod.name == irs::StringTokenizer::type_name()) {
     if (val && !val->IsNull() &&
         val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
-      return BuildFtsTerm(parent, ctx, column_info, *val);
+      BuildFtsTerm(parent, ctx, column_info, *val);
+      return true;
     }
     if (expr) {
-      return BuildTSQuery(parent, ctx.WithTokenizer(ctx.identity), column_info,
-                          *expr);
+      BuildTSQuery(parent, ctx.WithTokenizer(ctx.identity), column_info, *expr);
+      return true;
     }
-    return Result{ERROR_NOT_IMPLEMENTED,
-                  "::tokenize('identity'): inner expression has unsupported "
-                  "shape"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::tokenize('identity'): inner expression has unsupported "
+              "shape"));
   }
   // Wrapper lives on this stack frame; releases the analyzer back to
   // the Tokenizer's pool when the scope exits.
@@ -1185,19 +1199,21 @@ std::optional<Result> TryDispatchTokenizeCast(
     // Cannot recurse on a folded constant -- its type still carries
     // the modifier and would re-enter this branch.
     if (val->IsNull() || val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-      return Result{ERROR_BAD_PARAMETER,
-                    "::tokenize(<name>): inner value must be VARCHAR"};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("::tokenize(<name>): inner value must be "
+                              "VARCHAR"));
     }
-    return BuildFtsTokens(parent, sub_ctx, column_info,
-                          val->GetValue<std::string>(),
-                          /*require_all=*/false);
+    BuildFtsTokens(parent, sub_ctx, column_info, val->GetValue<std::string>(),
+                   /*require_all=*/false);
+    return true;
   }
-  return BuildTSQuery(parent, sub_ctx, column_info, *expr);
+  BuildTSQuery(parent, sub_ctx, column_info, *expr);
+  return true;
 }
 
-Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    const duckdb::Expression& expr) {
+void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info,
+                  const duckdb::Expression& expr) {
   const duckdb::Expression& unwrapped = UnwrapTSQueryCast(expr);
 
   // Trivial-constant short-circuit: NULL -> Empty, true -> All,
@@ -1210,28 +1226,31 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
         cast.child->return_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
       const auto* val = TryGetConstant(*cast.child);
       if (!val) {
-        return {ERROR_BAD_PARAMETER,
-                "BOOLEAN inside TSQUERY must be a constant"};
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),
+          ERR_HINT("Use a literal `true`/`false` or NULL; runtime BOOLEAN "
+                   "expressions are not allowed in TSQUERY position."));
       }
       if (val->IsNull() || !val->GetValue<bool>()) {
         AddFilter<irs::Empty>(parent);
       } else {
         AddFilter<irs::All>(parent);
       }
-      return {};
+      return;
     }
   }
   if (const auto* val = TryGetConstant(unwrapped); val && val->IsNull()) {
     AddFilter<irs::Empty>(parent);
-    return {};
+    return;
   }
 
-  if (auto r = TryDispatchBoostCast(parent, ctx, column_info, unwrapped)) {
-    return std::move(*r);
+  if (TryDispatchBoostCast(parent, ctx, column_info, unwrapped)) {
+    return;
   }
 
-  if (auto r = TryDispatchTokenizeCast(parent, ctx, column_info, unwrapped)) {
-    return std::move(*r);
+  if (TryDispatchTokenizeCast(parent, ctx, column_info, unwrapped)) {
+    return;
   }
 
   // Bare string (promoted via VARCHAR -> TSQUERY cast) -> tokenize via
@@ -1242,19 +1261,25 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     const auto& val = unwrapped.Cast<duckdb::BoundConstantExpression>().value;
     if (val.IsNull()) {
       AddFilter<irs::Empty>(parent);
-      return {};
+      return;
     }
     if (val.type().id() == duckdb::LogicalTypeId::VARCHAR) {
-      return BuildFtsTokens(parent, ctx, column_info,
-                            val.GetValue<std::string>(),
-                            /*require_all=*/false);
+      BuildFtsTokens(parent, ctx, column_info, val.GetValue<std::string>(),
+                     /*require_all=*/false);
+      return;
     }
-    return BuildFtsTerm(parent, ctx, column_info, val);
+    BuildFtsTerm(parent, ctx, column_info, val);
+    return;
   }
 
   if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
-    return {ERROR_NOT_IMPLEMENTED, "Unsupported TSQUERY expression class: ",
-            static_cast<int>(unwrapped.expression_class)};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Unsupported TSQUERY expression class: ",
+              static_cast<int>(unwrapped.expression_class)),
+      ERR_HINT("Each operand inside @@ must be a TSQUERY-typed expression: "
+               "a constructor (PHRASE, LIKE, PREFIX, LEVENSHTEIN, ...), a "
+               "::TSQUERY-cast literal, or a combination via || && !! ^ ##."));
   }
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
@@ -1262,66 +1287,95 @@ Result BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   switch (op) {
     case TSQueryOp::Phrase:
-      return FromPhrase(parent, ctx, column_info, func);
+      FromPhrase(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Term:
-      return FromTerm(parent, ctx, column_info, func);
+      FromTerm(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Like:
-      return FromTSQLike(parent, ctx, column_info, func);
+      FromTSQLike(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Prefix:
-      return FromPrefix(parent, ctx, column_info, func);
+      FromPrefix(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Ngram:
-      return FromNgram(parent, ctx, column_info, func);
+      FromNgram(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Fuzzy:
-      return FromLevenshtein(parent, ctx, column_info, func);
+      FromLevenshtein(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Or:
-      return FromTSQueryConjunction(parent, ctx, column_info, func,
-                                    /*is_and=*/false);
+      FromTSQueryConjunction(parent, ctx, column_info, func, /*is_and=*/false);
+      return;
     case TSQueryOp::And:
-      return FromTSQueryConjunction(parent, ctx, column_info, func,
-                                    /*is_and=*/true);
+      FromTSQueryConjunction(parent, ctx, column_info, func, /*is_and=*/true);
+      return;
     case TSQueryOp::Not:
-      return FromTSQueryNot(parent, ctx, column_info, func);
+      FromTSQueryNot(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Boost:
-      return FromTSQueryBoost(parent, ctx, column_info, func);
+      FromTSQueryBoost(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::PhraseSeq:
-      return FromTSQueryPhraseSeq(parent, ctx, column_info, func);
+      FromTSQueryPhraseSeq(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::PhraseToTsquery:
-      return FromPhraseToTsquery(parent, ctx, column_info, func);
+      FromPhraseToTsquery(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::AnyOf:
-      return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
+      FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
+      return;
     case TSQueryOp::AllOf:
-      return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
+      FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
+      return;
     case TSQueryOp::Compound:
-      return FromCompound(parent, ctx, column_info, func);
+      FromCompound(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Range:
-      return FromRange(parent, ctx, column_info, func);
+      FromRange(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Regexp:
-      return FromRegexp(parent, ctx, column_info, func);
+      FromRegexp(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Less:
-      return FromTSQRangeOne(parent, ctx, column_info, func, "LESS",
-                             /*is_lower=*/false, /*inclusive=*/false);
+      FromTSQRangeOne(parent, ctx, column_info, func, "LESS",
+                      /*is_lower=*/false, /*inclusive=*/false);
+      return;
     case TSQueryOp::LessEq:
-      return FromTSQRangeOne(parent, ctx, column_info, func, "LESS_EQ",
-                             /*is_lower=*/false, /*inclusive=*/true);
+      FromTSQRangeOne(parent, ctx, column_info, func, "LESS_EQ",
+                      /*is_lower=*/false, /*inclusive=*/true);
+      return;
     case TSQueryOp::Greater:
-      return FromTSQRangeOne(parent, ctx, column_info, func, "GREATER",
-                             /*is_lower=*/true, /*inclusive=*/false);
+      FromTSQRangeOne(parent, ctx, column_info, func, "GREATER",
+                      /*is_lower=*/true, /*inclusive=*/false);
+      return;
     case TSQueryOp::GreaterEq:
-      return FromTSQRangeOne(parent, ctx, column_info, func, "GREATER_EQ",
-                             /*is_lower=*/true, /*inclusive=*/true);
+      FromTSQRangeOne(parent, ctx, column_info, func, "GREATER_EQ",
+                      /*is_lower=*/true, /*inclusive=*/true);
+      return;
     case TSQueryOp::Tokenize:
-      return FromTokenize(parent, ctx, column_info, func);
+      FromTokenize(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::PlainToTsquery:
-      return FromPlainToTsquery(parent, ctx, column_info, func);
+      FromPlainToTsquery(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::WebsearchToTsquery:
-      return FromWebsearchToTsquery(parent, ctx, column_info, func);
+      FromWebsearchToTsquery(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::TsqueryPhrase:
-      return FromTsqueryPhrase(parent, ctx, column_info, func);
+      FromTsqueryPhrase(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::ToTSQuery:
-      return FromToTsquery(parent, ctx, column_info, func);
+      FromToTsquery(parent, ctx, column_info, func);
+      return;
     case TSQueryOp::Unknown:
-      return {ERROR_NOT_IMPLEMENTED,
-              "Not a TSQUERY-producing function: ", func.function.name};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("Not a TSQUERY-producing function: ", func.function.name),
+        ERR_HINT("Call a TSQUERY constructor (PHRASE, TERM, LIKE, PREFIX, "
+                 "LEVENSHTEIN, RANGE, REGEXP, NGRAM, any_of, all_of, "
+                 "compound, plainto_tsquery, ...) or wrap a literal in "
+                 "::TSQUERY."));
   }
   SDB_UNREACHABLE();
 }
@@ -1377,16 +1431,9 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                "attached at index time."));
   }
   auto sub_ctx = ctx.WithTokenizer(*tokenizer);
-  auto r = BuildTSQuery(filter, sub_ctx, *column_info, *expr);
-  if (!r.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE), ERR_MSG(r.errorMessage()),
-      ERR_HINT("Each operand inside @@ must be a TSQUERY-typed expression. "
-               "Examples: 'word'::TSQUERY, PHRASE('quick fox'), "
-               "LEVENSHTEIN('test', 1), RANGE('a', 'z'), "
-               "compound(must, must_not, should). Combine with "
-               "|| && !! ^ ## or wrap in ::tokenize(name) / ::boost(K)."));
-  }
+  // BuildTSQuery throws THROW_SQL_ERROR with the standard hint on any
+  // dispatch failure, so we don't wrap its result here.
+  BuildTSQuery(filter, sub_ctx, *column_info, *expr);
 }
 
 Result FromComparisonExpression(irs::BooleanFilter& filter,

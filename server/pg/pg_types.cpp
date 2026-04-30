@@ -606,11 +606,9 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       }
     } break;
     case BIGINT: {
-      if (IsOidLike(type)) {
-        if (data.size() == 4) {
-          return duckdb::Value::BIGINT(
-            static_cast<int64_t>(absl::big_endian::Load<int32_t>(data.data())));
-        }
+      if (IsOidLike(type) && data.size() == 4) {
+        return duckdb::Value::BIGINT(
+          static_cast<int64_t>(absl::big_endian::Load<int32_t>(data.data())));
       } else if (data.size() == 8) {
         return duckdb::Value::BIGINT(
           absl::big_endian::Load<int64_t>(data.data()));

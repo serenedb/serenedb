@@ -106,7 +106,13 @@ bool Config::GetReadYourOwnWrites() const {
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
-    return value.ToString();
+    if (value.type().id() == duckdb::LogicalTypeId::BOOLEAN) {
+      // PostgreSQL protocol uses on/off not true/false. And some client tools
+      // like JDBC expects exactly on/off
+      return duckdb::BooleanValue::Get(value) ? "on" : "off";
+    } else {
+      return value.ToString();
+    }
   }
   return std::nullopt;
 }
@@ -164,6 +170,14 @@ void Config::OnSet(std::string_view name, bool is_local,
 void Config::SetSetting(std::string_view key, std::string value,
                         bool /*is_local*/) {
   SetInternal(key, std::move(value));
+}
+
+void Config::SetSettingChecked(std::string_view key, std::string value,
+                               bool is_local) {
+  duckdb::PhysicalSet::SetVariable(
+    _client_ctx, duckdb::String::Reference(key.data(), key.size()),
+    is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
+    duckdb::Value{std::move(value)});
 }
 
 void Config::ResetAll() {

@@ -341,13 +341,6 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       _state = State::Idle;
       _send.Write(ToBuffer(kAuthOk), false);
       _key = _feature.RegisterTask(*this);
-      // clang-format off
-      std::array<char, 13> backend_key_data {
-        PQ_MSG_BACKEND_KEY_DATA, 0x00, 0x00, 0x00, 0x0c, 0x01, 0x02, 0x03, 0x04,
-        0x01, 0x01, 0x01, 0x01};
-      // clang-format on
-      memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
-      _send.Write(ToBuffer(backend_key_data), false);
 
       connector::SereneDBClientState::Register(*_duckdb_conn->context,
                                                _connection_ctx);
@@ -394,8 +387,31 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         });
       for (const auto param : kParameterStatusVariables) {
         // TODO(codeworse): Avoid copy string in GetSetting
+        if (auto it = _client_parameters.find(param);
+            it != _client_parameters.end()) {
+          try {
+            // Run the option's set_callback so client-supplied values are
+            // validated
+            _connection_ctx->SetSettingChecked(param, it->second, false);
+          } catch (const duckdb::Exception& e) {
+            // As per protocol description  - encountered during client hellow
+            // error aborts connection.
+            return SendError(duckdb::ErrorData(e).RawMessage(),
+                             ERRCODE_INVALID_PARAMETER_VALUE);
+          }
+        }
+        // always fresh get as validation callback may have altered settings
+        // provide by user
         SendParameterStatus(param, *_connection_ctx->Get(param));
       }
+
+      // clang-format off
+      std::array<char, 13> backend_key_data {
+        PQ_MSG_BACKEND_KEY_DATA, 0x00, 0x00, 0x00, 0x0c, 0x01, 0x02, 0x03, 0x04,
+        0x01, 0x01, 0x01, 0x01};
+      // clang-format on
+      memcpy(backend_key_data.data() + 5, &_key, sizeof(_key));
+      _send.Write(ToBuffer(backend_key_data), false);
 
       _send.Write(ToBuffer(kReadyForQuery), true);
       std::move(cleanup).Cancel();

@@ -363,6 +363,20 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       _connection_ctx->SetSetting(
         "is_superuser", _connection_ctx->isSuperuser() ? "on" : "off", false);
 
+      // Apply all user settings from startup packet
+      for (const auto& user_setting : _client_parameters) {
+        try {
+          if (_connection_ctx->Get(user_setting.first)) {
+            _connection_ctx->SetSettingChecked(user_setting.first,
+                                               user_setting.second, false);
+          }
+        } catch (const duckdb::Exception& e) {
+          // As per protocol description  - encountered during client hello
+          // error aborts connection.
+          return SendError(duckdb::ErrorData(e).RawMessage(),
+                           ERRCODE_INVALID_PARAMETER_VALUE);
+        }
+      }
       // TODO:
       // ParameterStatus messages will be generated when vars from the list:
       // https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-ASYNC
@@ -387,21 +401,6 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
         });
       for (const auto param : kParameterStatusVariables) {
         // TODO(codeworse): Avoid copy string in GetSetting
-        if (auto it = _client_parameters.find(param);
-            it != _client_parameters.end()) {
-          try {
-            // Run the option's set_callback so client-supplied values are
-            // validated
-            _connection_ctx->SetSettingChecked(param, it->second, false);
-          } catch (const duckdb::Exception& e) {
-            // As per protocol description  - encountered during client hellow
-            // error aborts connection.
-            return SendError(duckdb::ErrorData(e).RawMessage(),
-                             ERRCODE_INVALID_PARAMETER_VALUE);
-          }
-        }
-        // always fresh get as validation callback may have altered settings
-        // provide by user
         SendParameterStatus(param, *_connection_ctx->Get(param));
       }
 

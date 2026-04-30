@@ -50,8 +50,8 @@ void FromTokenizeListInAnyAllOf(
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
   constexpr auto kSyntaxHint =
-    "Example: any_of(TOKENIZE(['quick', 'brown'])) tokenises every list "
-    "element through the column analyzer and ORs the resulting terms.";
+    "Example: any_of(TOKENIZE(['quick', 'brown'])). Tokenises each list "
+    "element through the column analyzer.";
   if (!is_any && outer.children.size() != 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("all_of takes a single argument"),
@@ -234,8 +234,7 @@ void ExtractAnyAllOfArgs(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
   std::optional<size_t>& min_match) {
   constexpr auto kSyntaxHint =
-    "Example: any_of([TERM('a'), TERM('b')]) (OR), all_of([TERM('a'), "
-    "TERM('b')]) (AND), any_of([TERM('a'), TERM('b'), TERM('c')], 2).";
+    "Example: any_of(['a', 'b'], 1) (OR), all_of(['a', 'b']) (AND).";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

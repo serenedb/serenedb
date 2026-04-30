@@ -353,8 +353,17 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // duplicate registrations. TOK->VARCHAR mirrors the asymmetric cost
   // for TSQ->VARCHAR so TOKENIZED values prefer TSQUERY overloads.
   const auto tok_tsq = MakeTokenizedTSQueryType();
+  // VARCHAR -> TOK_TSQ at cost 50 (NOT 0): the operator overload set
+  // (`||`, `&&`, `!!`, `^`, `##`) is registered against TOK_TSQ, and a
+  // free VARCHAR -> TOK_TSQ cast would let our overloads tie with
+  // builtin VARCHAR ones for plain VARCHAR operands (e.g. `a::varchar
+  // || b::varchar`), with DuckDB silently picking ours and producing a
+  // TSQUERY value that fires SearchStubFn at runtime. Cost 50 is high
+  // enough that builtin VARCHAR wins for VARCHAR/VARCHAR operands and
+  // low enough that STRING_LITERAL (cost 20 to alias) and TSQ-typed
+  // (cost 0 via TSQ -> TOK below) operands still prefer ours.
   loader.RegisterCastFunction(varchar, tok_tsq,
-                              duckdb::DefaultCasts::ReinterpretCast, 0);
+                              duckdb::DefaultCasts::ReinterpretCast, 50);
   loader.RegisterCastFunction(tsq, tok_tsq,
                               duckdb::DefaultCasts::ReinterpretCast, 0);
   loader.RegisterCastFunction(tok_tsq, tsq,
@@ -396,8 +405,11 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // (TOK <-> BOOSTED) are what let `::tokenize(...)` and `::boost(K)`
   // compose in either order on a compound expression.
   const auto boosted_tsq = MakeBoostedTSQueryType();
+  // Same rationale as VARCHAR -> TOK_TSQ above: keep plain VARCHAR
+  // operands from being silently swept into the TSQUERY operator
+  // overload set.
   loader.RegisterCastFunction(varchar, boosted_tsq,
-                              duckdb::DefaultCasts::ReinterpretCast, 0);
+                              duckdb::DefaultCasts::ReinterpretCast, 50);
   loader.RegisterCastFunction(tsq, boosted_tsq,
                               duckdb::DefaultCasts::ReinterpretCast, 0);
   loader.RegisterCastFunction(tok_tsq, boosted_tsq,

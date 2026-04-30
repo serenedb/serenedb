@@ -78,8 +78,8 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: REGEXP('abc.*') (Perl, default) or REGEXP('[[:alpha:]]+', "
-    "'posix'). Syntax is one of 'perl' or 'posix'.";
+    "Example: REGEXP('abc.*') or REGEXP('foo', 'posix'). "
+    "Syntax is 'perl' (default) or 'posix'.";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

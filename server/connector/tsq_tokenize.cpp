@@ -33,9 +33,8 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: TOKENIZE('quick fox') uses the column analyzer; "
-    "TOKENIZE('foo', 'identity') keeps raw bytes; "
-    "TOKENIZE('foo', '<name>') resolves a catalog tokenizer.";
+    "Example: TOKENIZE('quick fox') or TOKENIZE('foo', 'identity'). "
+    "'identity' = raw bytes; other names resolve via the catalog.";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

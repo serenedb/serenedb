@@ -106,15 +106,13 @@ void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("TERM expects 1 argument (text), got ", func.children.size()),
-      ERR_HINT("Example: TERM('word'). For multi-token text use "
-               "PHRASE('quick fox') or any_of(['a', 'b'])."));
+      ERR_HINT("Example: 'word' (bare-string literal)."));
   }
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "TERM text", text); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),
-                    ERR_HINT("TERM expects a non-null VARCHAR constant. "
-                             "Example: TERM('word')."));
+                    ERR_HINT("Example: 'word' (bare-string literal)."));
   }
   BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
 }

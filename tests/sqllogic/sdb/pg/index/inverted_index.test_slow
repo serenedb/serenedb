@@ -467,12 +467,12 @@ SELECT a, b FROM dense_no_pk_slow WHERE a < 90 ORDER BY a;
 # and that should be not messed up during reading
 
 query
-SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE a < 90 AND PHRASE (c, 'some row shares universal') ORDER BY a;
+SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE a < 90 AND c @@ PHRASE('some row shares universal') ORDER BY a;
 ----
 178 values hashing to 14a5a0609c3123f16b5bf68188c29c7a
 
 query
-SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE PHRASE (c, 'some row shares universal') ORDER BY a;
+SELECT a, BM25(tableoid) FROM dense_no_pk_slow_idx WHERE c @@ PHRASE('some row shares universal') ORDER BY a;
 ----
 10000 values hashing to 6041173fd76ad4943c0b357001d50af4
 

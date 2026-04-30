@@ -33,10 +33,8 @@ namespace sdb::connector {
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: LEVENSHTEIN('test', 1), LEVENSHTEIN('test', 2, false), or "
-    "LEVENSHTEIN('approximate', 1, true, 'app'). Distance is in [0, 4] "
-    "(or [0, 3] when transpositions is true, the default). Optional "
-    "`prefix` is a literal leading substring that must match exactly.";
+    "Example: LEVENSHTEIN('test', 1, true, 'pre'). Distance must be 0-4 "
+    "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (func.children.empty() || func.children.size() > 4) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
@@ -110,10 +108,8 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: LEVENSHTEIN('test', 1), LEVENSHTEIN('test', 2, false), or "
-    "LEVENSHTEIN('approximate', 1, true, 'app'). Distance is in [0, 4] "
-    "(or [0, 3] when transpositions is true, the default). Optional "
-    "`prefix` is a literal leading substring that must match exactly.";
+    "Example: LEVENSHTEIN('test', 1, true, 'pre'). Distance must be 0-4 "
+    "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("LEVENSHTEIN field is not VARCHAR"),

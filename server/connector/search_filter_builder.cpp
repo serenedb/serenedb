@@ -1034,8 +1034,7 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("TSQUERY ", is_and ? "&&" : "||", " expects 2 operands, got ",
               func.children.size()),
-      ERR_HINT("Example: PHRASE('a') && TERM('b'). Both operands must be "
-               "TSQUERY-typed expressions."));
+      ERR_HINT("Example: PHRASE('a') && 'b'."));
   }
   irs::BooleanFilter* group;
   if (is_and) {
@@ -1064,8 +1063,7 @@ void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("TSQUERY !! expects 1 operand, got ", func.children.size()),
-      ERR_HINT("Example: !!PHRASE('text'). The operand must be a TSQUERY "
-               "expression."));
+      ERR_HINT("Example: !!PHRASE('text')."));
   }
   auto neg = ctx;
   neg.negated = !ctx.negated;
@@ -1078,8 +1076,8 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: PHRASE('text') ^ 2.0. The factor must be a non-negative "
-    "numeric constant. For composable boosts use ::boost(K).";
+    "Example: PHRASE('text') ^ 2.0. Factor must be ≥ 0; "
+    "for composable boost use ::boost(K).";
   if (func.children.size() != 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1225,8 +1223,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),
-          ERR_HINT("Use a literal `true`/`false` or NULL; runtime BOOLEAN "
-                   "expressions are not allowed in TSQUERY position."));
+          ERR_HINT("Use a literal true / false / NULL."));
       }
       if (val->IsNull() || !val->GetValue<bool>()) {
         AddFilter<irs::Empty>(parent);
@@ -1273,9 +1270,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("Unsupported TSQUERY expression class: ",
               static_cast<int>(unwrapped.expression_class)),
-      ERR_HINT("Each operand inside @@ must be a TSQUERY-typed expression: "
-               "a constructor (PHRASE, LIKE, PREFIX, LEVENSHTEIN, ...), a "
-               "::TSQUERY-cast literal, or a combination via || && !! ^ ##."));
+      ERR_HINT("Use a TSQUERY constructor (PHRASE, LIKE, ...) or "
+               "'literal'::TSQUERY."));
   }
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
@@ -1368,10 +1364,9 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Not a TSQUERY-producing function: ", func.function.name),
-        ERR_HINT("Call a TSQUERY constructor (PHRASE, TERM, LIKE, PREFIX, "
-                 "LEVENSHTEIN, RANGE, REGEXP, NGRAM, any_of, all_of, "
-                 "compound, plainto_tsquery, ...) or wrap a literal in "
-                 "::TSQUERY."));
+        ERR_HINT("Use a TSQUERY constructor (PHRASE, LIKE, RANGE, NGRAM, "
+                 "LEVENSHTEIN, REGEXP, any_of, all_of, compound, ...) or "
+                 "'literal'::TSQUERY."));
   }
   SDB_UNREACHABLE();
 }
@@ -1392,9 +1387,8 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("@@ has column references on both sides"),
-        ERR_HINT("One side must be a TSQUERY expression. Wrap a literal in "
-                 "::TSQUERY (e.g. 'word'::TSQUERY) or use a constructor "
-                 "(PHRASE, LIKE, PREFIX, LEVENSHTEIN, ...)."));
+        ERR_HINT("Wrap one side in 'word'::TSQUERY or a constructor "
+                 "(PHRASE, LIKE, ...)."));
     }
     column = left_info ? left_col : right_col;
     expr = left_info ? func.children[1].get() : func.children[0].get();
@@ -1408,23 +1402,20 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("@@ requires a column reference on one side"),
-      ERR_HINT("One side of @@ must be a column reference, not a literal "
-               "or function. Did you mean: <col> @@ <expr>?"));
+      ERR_HINT("Use: <col> @@ <tsquery_expr>."));
   }
   const auto* column_info = FindColumnInfo(ctx, *column);
   if (!column_info) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("@@ column not found in inverted index"),
-                    ERR_HINT("Add the column to an inverted index: "
-                             "CREATE INDEX ... USING inverted(<col>)."));
+                    ERR_HINT("CREATE INDEX ... USING inverted(<col>)."));
   }
   auto* tokenizer = column_info->tokenizer.analyzer.get();
   if (!tokenizer) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("@@ column has no analyzer (not a text-indexed column)"),
-      ERR_HINT("Use a VARCHAR-typed column with a text-search analyzer "
-               "attached at index time."));
+      ERR_HINT("Reindex the VARCHAR column with a text-search analyzer."));
   }
   auto sub_ctx = ctx.WithTokenizer(*tokenizer);
   // BuildTSQuery throws THROW_SQL_ERROR with the standard hint on any

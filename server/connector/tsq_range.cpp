@@ -32,8 +32,7 @@ namespace sdb::connector {
 
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: RANGE('a', 'z', true, false). NULL on either bound means "
-    "unbounded; min_incl/max_incl select inclusive vs exclusive.";
+    "Example: RANGE('a', 'z', true, false). NULL bound = unbounded.";
   if (func.children.size() != 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -96,8 +95,8 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func,
                      std::string_view label, bool is_lower, bool inclusive) {
   constexpr auto kSyntaxHint =
-    "Example: LESS('m'), GREATER_EQ(42). The bound must be a non-null "
-    "constant; for unbounded comparisons use RANGE(NULL, max, ...).";
+    "Example: LESS('m') or GREATER_EQ(42). Bound must be non-null; "
+    "use RANGE(NULL, ...) for unbounded.";
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

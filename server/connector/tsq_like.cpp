@@ -42,8 +42,8 @@ void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("LIKE field is not VARCHAR"),
-      ERR_HINT("LIKE applies to VARCHAR-typed columns indexed by an "
-               "identity or wildcard analyzer."));
+      ERR_HINT("LIKE requires a VARCHAR column with identity or wildcard "
+               "analyzer."));
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -60,15 +60,14 @@ void FromTSQLike(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("LIKE expects 1 argument (pattern), got ", func.children.size()),
-      ERR_HINT("Example: LIKE('foo%bar'). Use `%` to match any sequence "
-               "and `_` to match a single character."));
+      ERR_HINT("Example: LIKE('foo%bar'). `%` = any sequence, `_` = one "
+               "char."));
   }
   std::string pat;
   if (auto r = GetVarcharArg(*func.children[0], "LIKE pattern", pat); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),
-                    ERR_HINT("LIKE expects a non-null VARCHAR pattern. "
-                             "Example: LIKE('foo%bar')."));
+                    ERR_HINT("Example: LIKE('foo%bar')."));
   }
   BuildFtsLike(parent, ctx, column_info, pat);
 }

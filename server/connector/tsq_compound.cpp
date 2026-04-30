@@ -32,10 +32,8 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: compound([PHRASE('hello world')], [TERM('foo')], "
-    "[TERM('a'), TERM('b')], 1). Each bucket is a list of TSQUERY clauses; "
-    "min_should_match (optional 4th arg) defaults to 1. Buckets accept NULL "
-    "for empty.";
+    "Example: compound([PHRASE('a')], [], ['b','c'], 1). "
+    "Buckets are TSQUERY[] or NULL; min_should_match defaults to 1.";
   if (func.children.size() < 3 || func.children.size() > 4) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("compound expects (must, must_not, should [, "
@@ -85,8 +83,8 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
             ERR_MSG("compound ", label,
                     " list arg must be a literal list or array (got: ",
                     fn.function.name, ")"),
-            ERR_HINT("Pass a literal list/array, e.g. [TERM('a'), TERM('b')], "
-                     "or NULL for an empty bucket."));
+            ERR_HINT("Pass a literal list/array, e.g. ['a', 'b'], or NULL "
+                     "for an empty bucket."));
         }
         for (const auto& e : fn.children) {
           out.push_back(e.get());

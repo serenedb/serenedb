@@ -1667,7 +1667,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
 
 // ===========================================================================
 // Term equality / range / IN / LIKE -- migrated from the legacy
-// TERM_EQ / TERM_LT / TERM_LIKE / TERM_IN / BOOST functions to the
+// TERM_LT / TERM_LIKE / TERM_IN / BOOST functions to the
 // native SQL operators (= / < / <= / > / >= / IN / LIKE) on identity-
 // analyzed columns and the TSQUERY surface (`@@ 'val'`,
 // `@@ LIKE(...)`, `@@ ANY_OF([...])`) on analyzed columns.

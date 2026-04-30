@@ -109,9 +109,8 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: PHRASE('quick brown fox') or PHRASE('a', 1, 'b'). VARCHAR "
-    "arguments are tokens; INTEGER / INTEGER[] arguments are gaps in "
-    "between (N or [min, max]).";
+    "Example: PHRASE('quick brown fox') or PHRASE('a', 1, 'b'). "
+    "INTEGER / INTEGER[] gap allowed between text args.";
   // PHRASE is registered with at least one VARCHAR arg (plus variadic
   // ANY tail), so DuckDB's function resolver rejects empty calls at
   // bind time before we get here.
@@ -277,7 +276,7 @@ PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("## gap must be a constant"),
-      ERR_HINT("Use a literal INTEGER (e.g. PHRASE('a') ## 1 ## TERM('b')) "
+      ERR_HINT("Use a literal INTEGER (e.g. PHRASE('a') ## 1 ## 'b') "
                "or a 2-element INTEGER[] interval."));
   }
   auto gap = ParsePhraseGap(*val, "##");
@@ -351,8 +350,8 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("## gap must appear between two phrase parts"),
-        ERR_HINT("Example: PHRASE('a') ## 1 ## TERM('b'). A gap (INTEGER "
-                 "or INTEGER[]) is only valid between TSQUERY parts."));
+        ERR_HINT("Example: PHRASE('a') ## 1 ## 'b'. A gap (INTEGER or "
+                 "INTEGER[]) is only valid between TSQUERY parts."));
     }
     seq.parts.push_back(&unwrapped);
     return;
@@ -362,8 +361,8 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("## expects 2 arguments (lhs ## rhs), got ", f.children.size()),
-      ERR_HINT("Example: PHRASE('a') ## TERM('b') (adjacent), or with a gap: "
-               "PHRASE('a') ## 1 ## TERM('b')."));
+      ERR_HINT("Example: PHRASE('a') ## 'b' (adjacent), or with a gap: "
+               "PHRASE('a') ## 1 ## 'b'."));
   }
   FlattenPhraseSeq(*f.children[0], seq);
   const auto& right = *f.children[1];
@@ -385,8 +384,8 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
 void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq) {
   constexpr auto kSyntaxHint =
-    "Example: PHRASE('hello') ## 1 ## TERM('world'). Each '##' separates "
-    "TSQUERY parts with optional INTEGER / INTEGER[] gaps in between.";
+    "Example: PHRASE('hello') ## 1 ## 'world'. Gap is optional "
+    "INTEGER / INTEGER[].";
   if (seq.parts.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("## phrase has no parts"), ERR_HINT(kSyntaxHint));

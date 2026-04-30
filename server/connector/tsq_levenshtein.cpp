@@ -33,15 +33,17 @@ namespace sdb::connector {
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: LEVENSHTEIN('test', 1) or LEVENSHTEIN('test', 2, false). "
-    "Distance is in [0, 4] (or [0, 3] when transpositions is true, the "
-    "default).";
-  if (func.children.empty() || func.children.size() > 3) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("LEVENSHTEIN expects 1 to 3 arguments "
-                            "(text, distance?, transpositions?), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
+    "Example: LEVENSHTEIN('test', 1), LEVENSHTEIN('test', 2, false), or "
+    "LEVENSHTEIN('approximate', 1, true, 'app'). Distance is in [0, 4] "
+    "(or [0, 3] when transpositions is true, the default). Optional "
+    "`prefix` is a literal leading substring that must match exactly.";
+  if (func.children.empty() || func.children.size() > 4) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
+              "(text, distance?, transpositions?, prefix?), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   LevenshteinArgs out;
   if (auto r = GetVarcharArg(*func.children[0], "LEVENSHTEIN text", out.text);
@@ -80,12 +82,22 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
+  if (func.children.size() >= 4) {
+    if (auto r =
+          GetVarcharArg(*func.children[3], "LEVENSHTEIN prefix", out.prefix);
+        !r.ok()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
+    }
+  }
   return out;
 }
 
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out) {
   out.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{args.text}));
+  out.prefix.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{args.prefix}));
   out.max_distance = static_cast<uint8_t>(args.distance);
   out.with_transpositions = args.with_transpositions;
   out.max_terms = 64;
@@ -100,20 +112,22 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func) {
   constexpr auto kSyntaxHint =
-    "Example: LEVENSHTEIN('test', 1) or LEVENSHTEIN('test', 2, false). "
-    "Distance is in [0, 4] (or [0, 3] when transpositions is true, the "
-    "default).";
+    "Example: LEVENSHTEIN('test', 1), LEVENSHTEIN('test', 2, false), or "
+    "LEVENSHTEIN('approximate', 1, true, 'app'). Distance is in [0, 4] "
+    "(or [0, 3] when transpositions is true, the default). Optional "
+    "`prefix` is a literal leading substring that must match exactly.";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("LEVENSHTEIN field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  if (func.children.empty() || func.children.size() > 3) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("LEVENSHTEIN expects 1 to 3 arguments "
-                            "(text, distance?, transpositions?), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
+  if (func.children.empty() || func.children.size() > 4) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
+              "(text, distance?, transpositions?, prefix?), got ",
+              func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
 
   auto args = ParseLevenshteinArgs(func);

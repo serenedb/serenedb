@@ -2070,6 +2070,45 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNotNegation) {
                true);
 }
 
+// LEVENSHTEIN with the optional `prefix` 4th argument: only the suffix
+// after `prefix` participates in edit-distance matching.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "roximate", 1, /*with_transpositions=*/true,
+                        /*max_terms=*/1024, /*prefix=*/"app");
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('roximate', 1, true, 'app')",
+    columns, true);
+}
+
+// 4-arg form with empty prefix should behave like the 3-arg form.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinEmptyPrefix) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddEditDistanceFilter(expected, 1, "test", 2, /*with_transpositions=*/false);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('test', 2, false, '')",
+               columns, true);
+}
+
+// 5+ arguments must be rejected with the expected hint.
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinTooManyArgs) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  // DuckDB rejects the call at bind time because there is no
+  // (VARCHAR, INTEGER, BOOLEAN, VARCHAR, VARCHAR) overload.
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('test', 1, true, 'p', 'extra')",
+    columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
+}
+
+
 // ===========================================================================
 // Boost (`^`) -- migrated from the legacy `BOOST(predicate, factor)`
 // function to the TSQUERY-surface `^` operator. The new surface only

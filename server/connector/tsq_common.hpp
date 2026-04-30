@@ -157,6 +157,9 @@ struct LevenshteinArgs {
   std::string text;
   int64_t distance = 1;
   bool with_transpositions = true;
+  // Literal prefix that must match exactly; only the suffix beyond it
+  // participates in edit-distance computation. Empty by default.
+  std::string prefix;
 };
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func);

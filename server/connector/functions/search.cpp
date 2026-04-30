@@ -504,13 +504,18 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // LEVENSHTEIN(term, distance [, transpositions]) -- raw fuzzy match.
+  // LEVENSHTEIN(term, distance [, transpositions [, prefix]]) -- raw
+  // fuzzy match. The optional `prefix` is a literal leading substring
+  // that must match exactly; only the suffix after `prefix` participates
+  // in edit-distance computation.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQLevenshtein}};
     set.AddFunction(
       duckdb::ScalarFunction({varchar, intv}, tsq, TSQueryStubFn));
     set.AddFunction(
       duckdb::ScalarFunction({varchar, intv, boolv}, tsq, TSQueryStubFn));
+    set.AddFunction(duckdb::ScalarFunction({varchar, intv, boolv, varchar},
+                                            tsq, TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
 

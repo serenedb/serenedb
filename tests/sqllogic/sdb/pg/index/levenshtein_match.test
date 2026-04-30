@@ -109,3 +109,80 @@ a
 
 statement ok
 DROP TABLE test_levenshtein;
+
+
+# Optional `prefix` 4th argument: a literal leading substring that must
+# match exactly. Only the suffix beyond `prefix` participates in
+# edit-distance computation.
+statement ok
+DROP TABLE IF EXISTS test_levenshtein_prefix;
+
+statement ok
+CREATE TABLE test_levenshtein_prefix (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_prefix_idx ON test_levenshtein_prefix USING inverted(a, b test_english);
+
+statement ok
+INSERT INTO test_levenshtein_prefix VALUES
+    (1, 'apple'),
+    (2, 'apply'),
+    (3, 'application'),
+    (4, 'apricot'),
+    (5, 'banana');
+
+statement ok
+VACUUM (UPDATE_INDEXES) test_levenshtein_prefix;
+
+
+# Prefix `app` + suffix `le` distance 0 -> only `apple` matches.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 0, true, 'app') ORDER BY a;
+----
+a
+1
+
+
+# Prefix `app` + suffix `le` distance 1 -> `apple` (dist 0) and `apply` (dist 1).
+# `application` has suffix `lication` which is way beyond distance 1 from `le`.
+# `apricot` doesn't share the literal `app` prefix (only `ap`) so it's excluded.
+# `banana` doesn't share the prefix at all.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 1, true, 'app') ORDER BY a;
+----
+a
+1
+2
+
+
+# Empty prefix is equivalent to the 3-arg form: full term participates in
+# edit-distance computation.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('apple', 1, true, '') ORDER BY a;
+----
+a
+1
+2
+
+
+# `!! LEVENSHTEIN(... prefix)` -- negation composes with the prefix path.
+query
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ !!LEVENSHTEIN('le', 1, true, 'app') ORDER BY a;
+----
+a
+3
+4
+5
+
+
+# Distance bounds (>4 / >3-with-transpositions) are still enforced when
+# a prefix is supplied.
+statement error
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 5, true, 'app');
+
+statement error
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 4, true, 'app');
+
+
+statement ok
+DROP TABLE test_levenshtein_prefix;

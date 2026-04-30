@@ -33,10 +33,8 @@ add_library(
     duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
-    rocksdb_row_materializer.cpp
-    parquet_row_materializer.cpp
-    counter_row_materializer.cpp
-    row_materializer.cpp
+    lookup.cpp
+    rocksdb_lookup.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_sst_insert.cpp

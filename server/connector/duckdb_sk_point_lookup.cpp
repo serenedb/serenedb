@@ -26,8 +26,8 @@
 #include "basics/assert.h"
 #include "connector/duckdb_key_builder.hpp"
 #include "connector/duckdb_table_function.h"
+#include "connector/lookup.h"
 #include "connector/multiget_context.hpp"
-#include "connector/row_materializer.h"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -124,11 +124,9 @@ void SKPointLookupFunction(duckdb::ClientContext& context,
     views.emplace_back(pk);
   }
 
-  auto materializer =
-    MakeRowMaterializer(context, bind_data, gstate.snapshot, batch_pk_bytes,
-                        gstate.projected_columns, gstate.projected_types,
-                        bind_data.column_ids, gstate.txn);
-  materializer->Materialize(views, output);
+  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
+             gstate.projected_types, bind_data.column_ids, gstate.txn, views,
+             gstate.file_lookup_session, output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

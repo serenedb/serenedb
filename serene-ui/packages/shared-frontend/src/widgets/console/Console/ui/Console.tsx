@@ -5,12 +5,22 @@ import {
     Orientation,
 } from "dockview";
 import { ConsoleSidebar } from "../../ConsoleSidebar";
-import { useDockviewLayoutSync } from "../../../../shared/hooks";
+import {
+    useDockviewLayoutSync,
+    useSidebarFocusController,
+} from "../../../../shared/hooks";
+import {
+    DEFAULT_HOTKEYS,
+    useAppHotkey,
+} from "../../../../shared/hotkeys";
+import { focusAdjacentConsoleEditorGroup } from "../../ConsoleEditor/model";
 import { ConsoleMainArea } from "./ConsoleMainArea";
 import {
-    CONSOLE_MAIN_AREA_MIN_WIDTH,
+    CONSOLE_EDITOR_ROOT_SELECTOR,
     CONSOLE_GRID_EDITOR_PANEL_ID,
     CONSOLE_GRID_SIDEBAR_PANEL_ID,
+    CONSOLE_SIDEBAR_ROOT_SELECTOR,
+    CONSOLE_SIDEBAR_SECTION_IDS,
     CONSOLE_SIDEBAR_MIN_SIZE,
     CONSOLE_SIDEBAR_SIZE,
     ConsoleProvider,
@@ -18,6 +28,40 @@ import {
 } from "../model";
 
 const CONSOLE_LAYOUT_STORAGE_KEY = "console:grid-layout";
+const CONSOLE_SIDEBAR_MAX_WIDTH_RATIO = 0.5;
+
+const getConsoleSidebarMaxWidth = (api: GridviewReadyEvent["api"]) => {
+    return Math.max(
+        CONSOLE_SIDEBAR_MIN_SIZE,
+        Math.floor(api.width * CONSOLE_SIDEBAR_MAX_WIDTH_RATIO),
+    );
+};
+
+const setSidebarWidthConstraints = (api: GridviewReadyEvent["api"]) => {
+    const sidebarPanel = api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+    if (!sidebarPanel) {
+        return;
+    }
+
+    sidebarPanel.api.setConstraints({
+        maximumWidth: () => getConsoleSidebarMaxWidth(api),
+    });
+};
+
+const clampSidebarWidth = (api: GridviewReadyEvent["api"]) => {
+    const sidebarPanel = api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+    if (!sidebarPanel) {
+        return;
+    }
+
+    const maximumWidth = getConsoleSidebarMaxWidth(api);
+
+    if (sidebarPanel.width > maximumWidth) {
+        sidebarPanel.api.setSize({
+            width: maximumWidth,
+        });
+    }
+};
 
 const restoreLayout = (event: GridviewReadyEvent, storageKey: string) => {
     const rawLayout = localStorage.getItem(storageKey);
@@ -52,7 +96,10 @@ const ensureMainAreaPanel = (event: GridviewReadyEvent) => {
 };
 
 const ensureSidebarPanel = (event: GridviewReadyEvent) => {
-    if (event.api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID)) {
+    const existingPanel = event.api.getPanel(CONSOLE_GRID_SIDEBAR_PANEL_ID);
+    if (existingPanel) {
+        setSidebarWidthConstraints(event.api);
+        clampSidebarWidth(event.api);
         return;
     }
 
@@ -63,12 +110,18 @@ const ensureSidebarPanel = (event: GridviewReadyEvent) => {
             id: CONSOLE_GRID_SIDEBAR_PANEL_ID,
             component: "sidebar",
             minimumWidth: CONSOLE_SIDEBAR_MIN_SIZE,
-            size: CONSOLE_SIDEBAR_SIZE,
+            maximumWidth: getConsoleSidebarMaxWidth(event.api),
+            size: Math.min(
+                CONSOLE_SIDEBAR_SIZE,
+                getConsoleSidebarMaxWidth(event.api),
+            ),
             position: {
                 referencePanel: CONSOLE_GRID_EDITOR_PANEL_ID,
                 direction: "left",
             },
         });
+        setSidebarWidthConstraints(event.api);
+        clampSidebarWidth(event.api);
     } catch (error) {
         console.warn("Failed to add console sidebar panel:", error);
         localStorage.removeItem(CONSOLE_LAYOUT_STORAGE_KEY);
@@ -76,10 +129,23 @@ const ensureSidebarPanel = (event: GridviewReadyEvent) => {
 };
 
 const ConsoleLayout: React.FC = () => {
-    const { sidebarCollapsed, setSidebarCollapsed } = useConsole();
+    const { consoleEditorApi, sidebarCollapsed, setSidebarCollapsed } =
+        useConsole();
     const gridEventRef = useRef<GridviewReadyEvent | null>(null);
     const [api, setApi] = React.useState<GridviewReadyEvent["api"]>();
     const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
+    const {
+        focusLastEditor,
+        focusNextSidebarSection,
+        focusPreviousSidebarSection,
+        focusSidebar,
+        isSidebarFocused,
+        restoreSidebarFocusAfterRender,
+    } = useSidebarFocusController({
+        sidebarRootSelector: CONSOLE_SIDEBAR_ROOT_SELECTOR,
+        editorRootSelectors: [CONSOLE_EDITOR_ROOT_SELECTOR],
+        sectionOrder: [...CONSOLE_SIDEBAR_SECTION_IDS],
+    });
     const components = React.useMemo(() => {
         return {
             sidebar: () => {
@@ -103,6 +169,9 @@ const ConsoleLayout: React.FC = () => {
             event.api.removePanel(sidebarPanel);
         } else if (!sidebarCollapsed && !sidebarPanel) {
             ensureSidebarPanel(event);
+        } else if (sidebarPanel) {
+            setSidebarWidthConstraints(event.api);
+            clampSidebarWidth(event.api);
         }
 
         if (restored) {
@@ -116,6 +185,8 @@ const ConsoleLayout: React.FC = () => {
         }
 
         const disposable = api.onDidLayoutChange(() => {
+            clampSidebarWidth(api);
+
             try {
                 localStorage.setItem(
                     CONSOLE_LAYOUT_STORAGE_KEY,
@@ -129,27 +200,76 @@ const ConsoleLayout: React.FC = () => {
         return () => disposable.dispose();
     }, [api]);
 
-    useEffect(() => {
-        if (!api || sidebarCollapsed) {
-            return;
-        }
+    const handleToggleSidebarFocus = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            setSidebarCollapsed(true);
 
-        const checkAvailableWidth = () => {
-            const mainAreaPanel = api.getPanel(CONSOLE_GRID_EDITOR_PANEL_ID);
-            if (!mainAreaPanel) {
+            if (typeof window === "undefined") {
+                focusLastEditor();
                 return;
             }
 
-            if (mainAreaPanel.width < CONSOLE_MAIN_AREA_MIN_WIDTH) {
-                setSidebarCollapsed(true);
-            }
-        };
+            window.requestAnimationFrame(() => {
+                focusLastEditor();
+            });
+            return;
+        }
 
-        checkAvailableWidth();
-        const disposable = api.onDidLayoutChange(checkAvailableWidth);
+        if (sidebarCollapsed) {
+            setSidebarCollapsed(false);
+            restoreSidebarFocusAfterRender();
+            return;
+        }
 
-        return () => disposable.dispose();
-    }, [api, sidebarCollapsed, setSidebarCollapsed]);
+        if (!focusSidebar()) {
+            restoreSidebarFocusAfterRender();
+        }
+    }, [
+        focusLastEditor,
+        focusSidebar,
+        isSidebarFocused,
+        restoreSidebarFocusAfterRender,
+        setSidebarCollapsed,
+        sidebarCollapsed,
+    ]);
+
+    const handleFocusDown = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            focusNextSidebarSection();
+            return;
+        }
+
+        if (consoleEditorApi) {
+            focusAdjacentConsoleEditorGroup(consoleEditorApi, "down");
+        }
+    }, [consoleEditorApi, focusNextSidebarSection, isSidebarFocused]);
+
+    const handleFocusUp = React.useCallback(() => {
+        if (isSidebarFocused()) {
+            focusPreviousSidebarSection();
+            return;
+        }
+
+        if (consoleEditorApi) {
+            focusAdjacentConsoleEditorGroup(consoleEditorApi, "up");
+        }
+    }, [consoleEditorApi, focusPreviousSidebarSection, isSidebarFocused]);
+
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_TOGGLE_EXPLORER_EDITOR,
+        handleToggleSidebarFocus,
+        [handleToggleSidebarFocus],
+    );
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_DOWN,
+        handleFocusDown,
+        [handleFocusDown],
+    );
+    useAppHotkey(
+        DEFAULT_HOTKEYS.CONSOLE_FOCUS_WINDOW_UP,
+        handleFocusUp,
+        [handleFocusUp],
+    );
 
     useLayoutEffect(() => {
         const event = gridEventRef.current;

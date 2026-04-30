@@ -875,15 +875,15 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
   auto& get = plan->Cast<duckdb::LogicalGet>();
 
-  const bool use_row_number_col = IsParquetExternalTable(*sdb_table);
   const bool use_generated_pk_rowid_col =
     sdb_table->GetTableType() != TableType::File &&
     sdb_table->PKColumns().empty();
 
   // The binder creates an empty LogicalGet. Populate column_ids for all
   // table columns so the scan outputs everything the backfill needs. For
-  // parquet external tables, add the trailing file_row_number virtual
-  // column; for RocksDB implicit-PK tables, add the trailing rowid.
+  // external readers that expose file_row_number (parquet, csv, json),
+  // add the trailing file_row_number virtual column. For RocksDB tables
+  // with no declared PK, add the trailing row_id virtual column instead.
   if (get.GetColumnIds().empty()) {
     for (size_t i = 0; i < columns.size(); ++i) {
       get.AddColumnId(static_cast<duckdb::column_t>(i));
@@ -892,7 +892,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     for (size_t i = 0; i < columns.size(); ++i) {
       get.types.push_back(columns[i].type);
     }
-    if (use_row_number_col) {
+    if (sdb_table->GetTableType() == TableType::File) {
       get.AddColumnId(
         duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
       get.types.push_back(duckdb::LogicalType::BIGINT);

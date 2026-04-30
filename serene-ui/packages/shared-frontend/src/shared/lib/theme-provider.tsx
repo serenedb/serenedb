@@ -20,19 +20,65 @@ const initialState: ThemeProviderState = {
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
+const isTheme = (value: unknown): value is Theme =>
+    value === "dark" || value === "light" || value === "system";
+
+const getStoredTheme = (storageKey: string, defaultTheme: Theme) => {
+    if (typeof window === "undefined") {
+        return defaultTheme;
+    }
+
+    try {
+        const storedTheme = window.localStorage.getItem(storageKey);
+
+        if (isTheme(storedTheme)) {
+            return storedTheme;
+        }
+    } catch {
+        // Ignore localStorage read failures and fall back to other sources.
+    }
+
+    if (isTheme(window.sereneTheme?.preference)) {
+        return window.sereneTheme.preference;
+    }
+
+    return defaultTheme;
+};
+
+const resolveTheme = (theme: Theme) => {
+    if (theme === "system") {
+        return window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+    }
+
+    return theme;
+};
+
+const applyTheme = (theme: Theme) => {
+    const root = window.document.documentElement;
+    const resolvedTheme = resolveTheme(theme);
+
+    root.classList.remove("light", "dark");
+    root.classList.add(resolvedTheme);
+    root.style.colorScheme = resolvedTheme;
+};
+
 export function ThemeProvider({
     children,
     defaultTheme = "dark",
     storageKey = "vite-ui-theme",
     ...props
 }: ThemeProviderProps) {
-    const [theme, setTheme] = useState<Theme>(
-        () => (localStorage.getItem(storageKey) as Theme) || defaultTheme,
+    const [theme, setTheme] = useState<Theme>(() =>
+        getStoredTheme(storageKey, defaultTheme),
     );
 
     useEffect(() => {
         const root = window.document.documentElement;
+        const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
         root.classList.add("no-theme-transition");
+
         const removeTransitions = () => {
             root.classList.remove("no-theme-transition");
         };
@@ -40,22 +86,22 @@ export function ThemeProvider({
             window.requestAnimationFrame(removeTransitions);
         });
 
-        root.classList.remove("light", "dark");
+        const syncTheme = () => {
+            applyTheme(theme);
+        };
+
+        syncTheme();
 
         if (theme === "system") {
-            const systemTheme = window.matchMedia(
-                "(prefers-color-scheme: dark)",
-            ).matches
-                ? "dark"
-                : "light";
-
-            root.classList.add(systemTheme);
-            return;
+            mediaQuery.addEventListener("change", syncTheme);
         }
 
-        root.classList.add(theme);
+        window.sereneTheme?.setPreference(theme);
 
         return () => {
+            if (theme === "system") {
+                mediaQuery.removeEventListener("change", syncTheme);
+            }
             window.cancelAnimationFrame(raf);
             removeTransitions();
         };
@@ -64,7 +110,11 @@ export function ThemeProvider({
     const value = {
         theme,
         setTheme: (theme: Theme) => {
-            localStorage.setItem(storageKey, theme);
+            try {
+                window.localStorage.setItem(storageKey, theme);
+            } catch {
+                // Ignore localStorage write failures and still apply the theme.
+            }
             setTheme(theme);
         },
     };

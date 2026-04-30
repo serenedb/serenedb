@@ -5,7 +5,9 @@ import { useUpdateDashboard } from "../../../../entities/dashboard";
 import {
     Button,
     DashboardsIcon,
+    focusSidebarElement,
     getErrorMessage,
+    handleSidebarListItemKeyDown,
     Skeleton,
     StarIcon,
 } from "../../../../shared";
@@ -22,6 +24,7 @@ interface DashboardsSidebarDashboardListProps {
     isDataFetched: boolean;
     isDataLoading: boolean;
     emptyState: string;
+    sectionId: "favorites" | "dashboards";
     hasAdditionalItems?: boolean;
     additionalItems?: React.ReactNode;
 }
@@ -33,6 +36,7 @@ export const DashboardsSidebarDashboardList: React.FC<
     isDataFetched,
     isDataLoading,
     emptyState,
+    sectionId,
     hasAdditionalItems = false,
     additionalItems,
 }) => {
@@ -98,11 +102,22 @@ export const DashboardsSidebarDashboardList: React.FC<
                     {(dashboards ?? []).map((dashboard) => (
                         <div
                             key={dashboard.id}
-                            className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent"
+                            className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent focus:bg-accent outline-none"
                             title={dashboard.name}
-                            onClick={() =>
-                                onCurrentDashboardChange(dashboard.id)
-                            }>
+                            tabIndex={0}
+                            role="button"
+                            data-sidebar-primary-action="true"
+                            data-sidebar-focus-id={`dashboards-sidebar-${sectionId}-dashboard-${dashboard.id}`}
+                            data-sidebar-section-id={sectionId}
+                            onKeyDown={(event) =>
+                                handleSidebarListItemKeyDown(event, () =>
+                                    onCurrentDashboardChange(dashboard.id),
+                                )
+                            }
+                            onClick={(event) => {
+                                focusSidebarElement(event.currentTarget);
+                                onCurrentDashboardChange(dashboard.id);
+                            }}>
                             <DashboardsIcon className="size-3 ml-3 shrink-0 opacity-70" />
                             <p className="min-w-0 flex-1 truncate text-xs ml-1.5">
                                 {dashboard.name}

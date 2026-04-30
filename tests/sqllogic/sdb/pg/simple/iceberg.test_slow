@@ -1,0 +1,107 @@
+control substitution on
+
+# Iceberg REST catalog with the warehouse on MinIO (S3). The catalog stores
+# parquet/avro under s3://${MINIO_BUCKET}/warehouse/<schema>/<table>/...;
+# serened reads those via duckdb's httpfs S3 client.
+#
+# Isolation is per-${__DATABASE__}: secret name, ATTACH alias, and the iceberg
+# namespace are all scoped that way so tests can run in parallel without
+# clashing in DuckDB's global secret/ATTACH state or in the shared iceberg-rest
+# catalog.
+#
+# Exercises:
+#  - ATTACH against the REST catalog
+#  - CREATE SCHEMA / CREATE TABLE / INSERT through the iceberg backend
+#  - SELECT, JOIN with a native serenedb table, UNION ALL across both
+
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+ATTACH IF NOT EXISTS '${ICEBERG_WAREHOUSE}' AS iceberg (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE TABLE local_emp (id INTEGER PRIMARY KEY, name TEXT);
+
+
+statement count 3
+INSERT INTO local_emp VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol');
+
+
+statement ok
+CREATE SCHEMA iceberg.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE iceberg.${__DATABASE__}.salary (id INTEGER, salary BIGINT);
+
+
+statement count 3
+INSERT INTO iceberg.${__DATABASE__}.salary VALUES (1, 100000), (2, 90000), (3, 80000);
+
+
+query
+SELECT id, salary FROM iceberg.${__DATABASE__}.salary ORDER BY id;
+----
+id	salary
+1	100000
+2	90000
+3	80000
+
+
+query
+SELECT e.name, s.salary
+FROM local_emp AS e
+JOIN iceberg.${__DATABASE__}.salary AS s ON e.id = s.id
+ORDER BY e.id;
+----
+name	salary
+Alice	100000
+Bob	90000
+Carol	80000
+
+
+query
+SELECT id, name AS label FROM local_emp
+UNION ALL
+SELECT id, 'salary='::text || salary::text FROM iceberg.${__DATABASE__}.salary
+ORDER BY id, label;
+----
+id	label
+1	Alice
+1	salary=100000
+2	Bob
+2	salary=90000
+3	Carol
+3	salary=80000
+
+
+statement ok
+DROP TABLE iceberg.${__DATABASE__}.salary;
+
+
+statement ok
+DROP SCHEMA iceberg.${__DATABASE__};
+
+
+statement ok
+DROP SECRET iceberg_${__DATABASE__};

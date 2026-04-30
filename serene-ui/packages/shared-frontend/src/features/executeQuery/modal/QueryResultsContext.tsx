@@ -16,8 +16,13 @@ export interface ExecuteQueryBatchJob {
     jobId: number;
     statementIndex: number;
     statementQuery: string;
+    statementType?: string;
     sourceQuery: string;
     statementRange: StatementRange;
+}
+
+export interface ExecuteQueryBatchOptions {
+    continueOnError?: boolean;
 }
 
 export interface ExecuteQueryBatchResult {
@@ -42,6 +47,7 @@ export interface QueryResultsContextType {
         saveToHistory?: boolean,
         limit?: number,
         onJobStarted?: (job: ExecuteQueryBatchJob) => void,
+        options?: ExecuteQueryBatchOptions,
     ) => Promise<ExecuteQueryBatchResult | ExecuteQueryError>;
     subscribe: (
         jobId: number,

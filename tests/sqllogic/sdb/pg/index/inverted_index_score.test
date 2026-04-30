@@ -373,9 +373,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -407,9 +405,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -452,9 +448,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -549,9 +543,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -724,9 +716,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -781,9 +771,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
 │        Table: docs        ││        Table: docs        │
-│                           ││                           │
-│       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -851,9 +839,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -897,9 +883,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │        Table: docs        │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │ AND[PHRASE[body(string) = │
@@ -1061,9 +1045,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
 │        Table: docs        ││        Table: docs2       │
-│                           ││                           │
-│       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -1129,12 +1111,10 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   ││    ────────────────────   │
 │        Table: docs        ││        Table: meta        │
-│                           ││                           │
-│       Materializer:       ││        Projections:       │
-│    rocksdb (point Get)    ││             id            │
-│                           ││            tag            │
-│          Filter:          ││                           │
-│ AND[PHRASE[body(string) = ││                           │
+│      Lookup: rocksdb      ││                           │
+│                           ││        Projections:       │
+│          Filter:          ││             id            │
+│ AND[PHRASE[body(string) = ││            tag            │
 │    <Term:fox(0, 0); >]]   ││                           │
 │                           ││                           │
 │           Score:          ││                           │
@@ -1233,9 +1213,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
 │        Table: docs        ││        Table: docs        ││        Table: docs        ││        Table: docs        │
-│                           ││                           ││                           ││                           │
-│       Materializer:       ││       Materializer:       ││       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           ││                           ││                           │
 │          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │
@@ -1299,9 +1277,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
 │        Table: docs        ││        Table: docs        ││        Table: docs        ││        Table: docs        │
-│                           ││                           ││                           ││                           │
-│       Materializer:       ││       Materializer:       ││       Materializer:       ││       Materializer:       │
-│    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    ││    rocksdb (point Get)    │
+│      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           ││                           ││                           │
 │          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
 │ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = ││ AND[PHRASE[body(string) = │

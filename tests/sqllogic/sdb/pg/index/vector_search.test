@@ -577,14 +577,12 @@ CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int hnsw);
 db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
 
 
-statement error db error: ERROR: syntax error at or near "\)"
+statement ok
 CREATE INDEX hnsw_defaults ON t_err USING inverted(emb hnsw ());
 
-statement error
+
+statement ok
 DROP INDEX hnsw_defaults;
-----
-db error: ERROR: Index with name hnsw_defaults does not exist!
-Did you mean "cos_index"?
 
 
 

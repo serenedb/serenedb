@@ -53,20 +53,20 @@ inline constexpr std::string_view kBoostTypeName = "boost";
 
 // TSQUERY leaf constructors (unprefixed). Produce a TSQUERY value;
 // stubs throw at runtime -- the filter builder claims them at bind.
-inline constexpr std::string_view kTSQPhrase = "phrase";
-inline constexpr std::string_view kTSQNgram = "ngram";
-inline constexpr std::string_view kTSQLike = "like";
-inline constexpr std::string_view kTSQPrefix = "prefix";
-inline constexpr std::string_view kTSQLevenshtein = "levenshtein";
-inline constexpr std::string_view kTSQAnyOf = "any_of";
-inline constexpr std::string_view kTSQAllOf = "all_of";
-inline constexpr std::string_view kTSQTokenize = "tokenize";
-inline constexpr std::string_view kTSQRange = "range";
-inline constexpr std::string_view kTSQRegexp = "regexp";
-// Elasticsearch-style bool query: compound(must, must_not, should
+inline constexpr std::string_view kTSQPhrase = "ts_phrase";
+inline constexpr std::string_view kTSQNgram = "ts_ngram";
+inline constexpr std::string_view kTSQLike = "ts_like";
+inline constexpr std::string_view kTSQPrefix = "ts_starts_with";
+inline constexpr std::string_view kTSQLevenshtein = "ts_levenshtein";
+inline constexpr std::string_view kTSQAnyOf = "ts_any";
+inline constexpr std::string_view kTSQAllOf = "ts_all";
+inline constexpr std::string_view kTSQTokenize = "ts_tokenize";
+inline constexpr std::string_view kTSQRange = "ts_between";
+inline constexpr std::string_view kTSQRegexp = "ts_regexp";
+// Elasticsearch-style bool query: ts_compound(must, must_not, should
 // [, min_should_match]). Each of the first three args is TSQUERY,
 // TSQUERY[], or NULL.
-inline constexpr std::string_view kTSQCompound = "compound";
+inline constexpr std::string_view kTSQCompound = "ts_compound";
 
 // Single-bound range constructors. Each takes one value (VARCHAR /
 // numeric / BOOLEAN) and emits irs::ByRange (VARCHAR / BOOLEAN
@@ -79,10 +79,10 @@ inline constexpr std::string_view kTSQCompound = "compound";
 //
 // For unbounded-on-one-side semantics on a single call, use
 // RANGE(NULL, max, ...) or RANGE(min, NULL, ...) instead.
-inline constexpr std::string_view kTSQLess = "less";
-inline constexpr std::string_view kTSQLessEq = "less_equal";
-inline constexpr std::string_view kTSQGreater = "greater";
-inline constexpr std::string_view kTSQGreaterEq = "greater_equal";
+inline constexpr std::string_view kTSQLess = "ts_lt";
+inline constexpr std::string_view kTSQLessEq = "ts_le";
+inline constexpr std::string_view kTSQGreater = "ts_gt";
+inline constexpr std::string_view kTSQGreaterEq = "ts_ge";
 
 // PG-compat tsquery constructor family (input-string driven, all use
 // the ambient column analyzer).

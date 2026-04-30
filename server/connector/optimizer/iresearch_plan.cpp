@@ -608,7 +608,8 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::ColumnAnalyzer(catalog::Column::Id)> analyzer_provider;
+  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
+    analyzer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {

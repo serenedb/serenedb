@@ -42,7 +42,7 @@ namespace sdb::connector {
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
-  catalog::ColumnAnalyzer tokenizer;
+  catalog::ColumnTokenizer tokenizer;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,

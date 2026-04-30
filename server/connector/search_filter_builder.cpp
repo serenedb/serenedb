@@ -84,11 +84,11 @@ customize::enum_name<sdb::connector::TSQueryOp>(
       return sdb::connector::kTSQNgram;
     case Fuzzy:
       return sdb::connector::kTSQLevenshtein;
-    case AnyOf:
+    case Any:
       return sdb::connector::kTSQAnyOf;
-    case AllOf:
+    case All:
       return sdb::connector::kTSQAllOf;
-    case Range:
+    case Between:
       return sdb::connector::kTSQRange;
     case Regexp:
       return sdb::connector::kTSQRegexp;
@@ -360,13 +360,13 @@ bool IsComparisonExpr(const duckdb::Expression& expr) {
 // promotion:
 //   - VARCHAR -> TSQUERY  (bare string literals into TSQUERY contexts)
 //   - TSQUERY -> VARCHAR  (TSQUERY-typed children flowing into VARCHAR
-//     mirror overloads of `##`, e.g. PHRASE('a') ## 1, where DuckDB
+//     mirror overloads of `##`, e.g. ts_phrase('a') ## 1, where DuckDB
 //     wraps the LHS in BOUND_CAST<VARCHAR>)
 //   - TOK <-> TSQ / VARCHAR transit casts that DON'T carry a tokenize
 //     modifier on the cast's return_type. Modifier-bearing casts are
 //     preserved here so the BuildTSQuery walker can read the override
 //     before continuing to dispatch the inner expression.
-// Iterative because casts can chain (e.g. PHRASE('x')::tokenize('y')
+// Iterative because casts can chain (e.g. ts_phrase('x')::tokenize('y')
 // inside @@ becomes BoundCast<TSQ>(BoundCast<TOK-mod-y>(PHRASE)) -- we
 // peel the outer transit cast and stop at the modifier-bearing cast).
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
@@ -606,12 +606,13 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
         column_info->tokenizer.analyzer->type() !=
           irs::Type<irs::StringTokenizer>::id()) {
-      return {ERROR_BAD_PARAMETER,
-              "Field is not indexed by identity analyzer. Range predicates "
-              "(<, <=, >, >=, BETWEEN) require an identity-analyzed column. "
-              "Use `col @@ LESS('value')` / `LESS_EQ` / `GREATER` / "
-              "`GREATER_EQ` / `RANGE(min, max, ...)` (tokenised through the "
-              "column's analyzer) instead."};
+      return {
+        ERROR_BAD_PARAMETER,
+        "Field is not indexed by identity analyzer. Range predicates "
+        "(<, <=, >, >=, BETWEEN) require an identity-analyzed column. "
+        "Use `col @@ ts_lt('value')` / `LESS_EQ` / `GREATER` / "
+        "`GREATER_EQ` / `ts_between(min, max, ...)` (tokenised through the "
+        "column's analyzer) instead."};
     }
   }
 
@@ -868,7 +869,7 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
         analyzer_type != irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
       return {ERROR_BAD_PARAMETER,
               "Field is not indexed by identity or wildcard analyzer. Use "
-              "`col @@ LIKE('pattern')`."};
+              "`col @@ ts_like('pattern')`."};
     }
   } else {
     SDB_ASSERT(column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR,
@@ -1030,11 +1031,10 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
                             const duckdb::BoundFunctionExpression& func,
                             bool is_and) {
   if (func.children.size() != 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("TSQUERY ", is_and ? "&&" : "||", " expects 2 operands, got ",
-              func.children.size()),
-      ERR_HINT("Example: PHRASE('a') && 'b'."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("TSQUERY ", is_and ? "&&" : "||",
+                            " expects 2 operands, got ", func.children.size()),
+                    ERR_HINT("Example: ts_phrase('a') && 'b'."));
   }
   irs::BooleanFilter* group;
   if (is_and) {
@@ -1063,7 +1063,7 @@ void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("TSQUERY !! expects 1 operand, got ", func.children.size()),
-      ERR_HINT("Example: !!PHRASE('text')."));
+      ERR_HINT("Example: !!ts_phrase('text')."));
   }
   auto neg = ctx;
   neg.negated = !ctx.negated;
@@ -1075,8 +1075,8 @@ void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: PHRASE('text') ^ 2.0. Factor must be ≥ 0; "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_phrase('text') ^ 2.0. Factor must be ≥ 0; "
     "for composable boost use ::boost(K).";
   if (func.children.size() != 2) {
     THROW_SQL_ERROR(
@@ -1182,11 +1182,11 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   // the Tokenizer's pool when the scope exits.
   auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
   if (!wrapper) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("::tokenize('", mod.name, "'): tokenizer not found in catalog"),
-      ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
-               "or use 'identity' for raw bytes."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("::tokenize('", mod.name,
+                            "'): tokenizer not found in catalog"),
+                    ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
+                             "or use 'identity' for raw bytes."));
   }
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {
@@ -1220,10 +1220,9 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
         cast.child->return_type.id() == duckdb::LogicalTypeId::BOOLEAN) {
       const auto* val = TryGetConstant(*cast.child);
       if (!val) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),
-          ERR_HINT("Use a literal true / false / NULL."));
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("BOOLEAN inside TSQUERY must be a constant"),
+                        ERR_HINT("Use a literal true / false / NULL."));
       }
       if (val->IsNull() || !val->GetValue<bool>()) {
         AddFilter<irs::Empty>(parent);
@@ -1266,12 +1265,11 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Unsupported TSQUERY expression class: ",
-              static_cast<int>(unwrapped.expression_class)),
-      ERR_HINT("Use a TSQUERY constructor (PHRASE, LIKE, ...) or "
-               "'literal'::TSQUERY."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Unsupported TSQUERY expression class: ",
+                            static_cast<int>(unwrapped.expression_class)),
+                    ERR_HINT("Use a TSQUERY constructor (PHRASE, LIKE, ...) or "
+                             "'literal'::TSQUERY."));
   }
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
@@ -1314,16 +1312,16 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     case TSQueryOp::PhraseToTsquery:
       FromPhraseToTsquery(parent, ctx, column_info, func);
       return;
-    case TSQueryOp::AnyOf:
+    case TSQueryOp::Any:
       FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
       return;
-    case TSQueryOp::AllOf:
+    case TSQueryOp::All:
       FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
       return;
     case TSQueryOp::Compound:
       FromCompound(parent, ctx, column_info, func);
       return;
-    case TSQueryOp::Range:
+    case TSQueryOp::Between:
       FromRange(parent, ctx, column_info, func);
       return;
     case TSQueryOp::Regexp:
@@ -1399,10 +1397,9 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
     column = right_col;
     expr = func.children[0].get();
   } else {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("@@ requires a column reference on one side"),
-      ERR_HINT("Use: <col> @@ <tsquery_expr>."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("@@ requires a column reference on one side"),
+                    ERR_HINT("Use: <col> @@ <tsquery_expr>."));
   }
   const auto* column_info = FindColumnInfo(ctx, *column);
   if (!column_info) {

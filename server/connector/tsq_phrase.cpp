@@ -108,8 +108,8 @@ ResultOr<PhraseGap> ParsePhraseGap(const duckdb::Value& val,
 void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: PHRASE('quick brown fox') or PHRASE('a', 1, 'b'). "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b'). "
     "INTEGER / INTEGER[] gap allowed between text args.";
   // PHRASE is registered with at least one VARCHAR arg (plus variadic
   // ANY tail), so DuckDB's function resolver rejects empty calls at
@@ -231,7 +231,7 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
   if (first) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PHRASE('", text, "') produced no tokens after analysis"),
+      ERR_MSG("ts_phrase('", text, "') produced no tokens after analysis"),
       ERR_HINT("All tokens were stripped (e.g. all-stopword input). Provide "
                "at least one searchable term."));
   }
@@ -276,7 +276,7 @@ PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("## gap must be a constant"),
-      ERR_HINT("Use a literal INTEGER (e.g. PHRASE('a') ## 1 ## 'b') "
+      ERR_HINT("Use a literal INTEGER (e.g. ts_phrase('a') ## 1 ## 'b') "
                "or a 2-element INTEGER[] interval."));
   }
   auto gap = ParsePhraseGap(*val, "##");
@@ -350,7 +350,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("## gap must appear between two phrase parts"),
-        ERR_HINT("Example: PHRASE('a') ## 1 ## 'b'. A gap (INTEGER or "
+        ERR_HINT("Example: ts_phrase('a') ## 1 ## 'b'. A gap (INTEGER or "
                  "INTEGER[]) is only valid between TSQUERY parts."));
     }
     seq.parts.push_back(&unwrapped);
@@ -361,8 +361,8 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("## expects 2 arguments (lhs ## rhs), got ", f.children.size()),
-      ERR_HINT("Example: PHRASE('a') ## 'b' (adjacent), or with a gap: "
-               "PHRASE('a') ## 1 ## 'b'."));
+      ERR_HINT("Example: ts_phrase('a') ## 'b' (adjacent), or with a gap: "
+               "ts_phrase('a') ## 1 ## 'b'."));
   }
   FlattenPhraseSeq(*f.children[0], seq);
   const auto& right = *f.children[1];
@@ -383,8 +383,8 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
 // Emits the flattened phrase sequence as an irs::ByPhrase under `parent`.
 void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq) {
-  constexpr auto kSyntaxHint =
-    "Example: PHRASE('hello') ## 1 ## 'world'. Gap is optional "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional "
     "INTEGER / INTEGER[].";
   if (seq.parts.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -509,7 +509,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         break;
       }
       case TSQueryOp::Phrase: {
-        // Nested PHRASE('x y z') -> tokenise via column analyzer and
+        // Nested ts_phrase('x y z') -> tokenise via column analyzer and
         // emit one term part per token. The FIRST token uses the
         // incoming gap; subsequent tokens are strictly adjacent. Shared
         // with BuildFtsPhrase via EmitPhraseTokens.
@@ -531,7 +531,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         EmitPhraseTokens(*options, ctx, column_info, phrase_text, gap);
         break;
       }
-      case TSQueryOp::AnyOf: {
+      case TSQueryOp::Any: {
         // ANY_OF as a phrase part -> ByTermsOptions slot with the
         // listed terms as alternatives at this phrase position. Only
         // `ANY_OF([list])` and `ANY_OF([list], 1)` are accepted:
@@ -568,7 +568,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         }
         break;
       }
-      case TSQueryOp::AllOf:
+      case TSQueryOp::All:
         // ALL_OF rejected for the same reason min_match > 1 is rejected
         // for ANY_OF: a phrase position can match only one token.
         THROW_SQL_ERROR(
@@ -576,7 +576,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
           ERR_MSG("## ALL_OF phrase part is not supported (a phrase position "
                   "can match only one token; use ANY_OF instead)"),
           ERR_HINT(kSyntaxHint));
-      case TSQueryOp::Range: {
+      case TSQueryOp::Between: {
         // RANGE as a phrase part -> ByRangeOptions slot. Only the
         // VARCHAR variant is meaningful here: phrases live on the
         // analyzed text field, so numeric / boolean ranges (which would

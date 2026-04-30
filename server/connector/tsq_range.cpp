@@ -31,8 +31,8 @@
 namespace sdb::connector {
 
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: RANGE('a', 'z', true, false). NULL bound = unbounded.";
+  static constexpr auto kSyntaxHint =
+    "Example: ts_between('a', 'z', true, false). NULL bound = unbounded.";
   if (func.children.size() != 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -94,9 +94,9 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func,
                      std::string_view label, bool is_lower, bool inclusive) {
-  constexpr auto kSyntaxHint =
-    "Example: LESS('m') or GREATER_EQ(42). Bound must be non-null; "
-    "use RANGE(NULL, ...) for unbounded.";
+  static constexpr auto kSyntaxHint =
+    "Example: ts_lt('m') or ts_ge(42). Bound must be non-null; "
+    "use ts_between(NULL, ...) for unbounded.";
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -110,10 +110,11 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_HINT(kSyntaxHint));
   }
   if (bound_val->IsNull()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(label, " bound must be non-null"),
-                    ERR_HINT("Use RANGE(NULL, max, true, false) (or similar) "
-                             "for unbounded semantics."));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label, " bound must be non-null"),
+      ERR_HINT("Use ts_between(NULL, max, true, false) (or similar) "
+               "for unbounded semantics."));
   }
 
   const auto col_type = column_info.logical_type.id();
@@ -194,7 +195,7 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
         ERR_MSG(label,
                 " produced multiple tokens; range comparison "
                 "requires a single token"),
-        ERR_HINT("Use RANGE(min, max, ...) for multi-component bounds."));
+        ERR_HINT("Use ts_between(min, max, ...) for multi-component bounds."));
     }
     return;
   }

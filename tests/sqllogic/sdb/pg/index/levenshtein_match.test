@@ -42,14 +42,14 @@ VACUUM (UPDATE_INDEXES) test_levenshtein;
 
 # Exact match (distance 0)
 query
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 0) ORDER BY a;
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 0) ORDER BY a;
 ----
 a
 1
 
 # Distance 1: cat, bat (substitution), car (substitution), cats (insertion), act (transposition with default transpositions=true)
 query
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 1) ORDER BY a;
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 1) ORDER BY a;
 ----
 a
 1
@@ -60,7 +60,7 @@ a
 
 # Distance 1 without transpositions: act is distance 2 (not a single transposition)
 query
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 1, false) ORDER BY a;
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 1, false) ORDER BY a;
 ----
 a
 1
@@ -70,7 +70,7 @@ a
 
 # Distance 2 matches more
 query
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 2) ORDER BY a;
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 2) ORDER BY a;
 ----
 a
 1
@@ -81,7 +81,7 @@ a
 
 # !! LEVENSHTEIN -- TSQUERY-surface negation.
 query
-SELECT a FROM test_levenshtein_idx WHERE b @@ !!LEVENSHTEIN('cat', 0) ORDER BY a;
+SELECT a FROM test_levenshtein_idx WHERE b @@ !!ts_levenshtein('cat', 0) ORDER BY a;
 ----
 a
 2
@@ -92,15 +92,15 @@ a
 
 # Distance too high (> 4)
 statement error
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 5);
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 5);
 
 # Distance too high for transpositions (> 3)
 statement error
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 4, true);
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 4, true);
 
 # Combined with AND on a non-FTS predicate.
 query
-SELECT a FROM test_levenshtein_idx WHERE b @@ LEVENSHTEIN('cat', 1) AND a < 4 ORDER BY a;
+SELECT a FROM test_levenshtein_idx WHERE b @@ ts_levenshtein('cat', 1) AND a < 4 ORDER BY a;
 ----
 a
 1
@@ -137,7 +137,7 @@ VACUUM (UPDATE_INDEXES) test_levenshtein_prefix;
 
 # Prefix `app` + suffix `le` distance 0 -> only `apple` matches.
 query
-SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 0, true, 'app') ORDER BY a;
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 0, true, 'app') ORDER BY a;
 ----
 a
 1
@@ -148,7 +148,7 @@ a
 # `apricot` doesn't share the literal `app` prefix (only `ap`) so it's excluded.
 # `banana` doesn't share the prefix at all.
 query
-SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 1, true, 'app') ORDER BY a;
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 1, true, 'app') ORDER BY a;
 ----
 a
 1
@@ -158,16 +158,16 @@ a
 # Empty prefix is equivalent to the 3-arg form: full term participates in
 # edit-distance computation.
 query
-SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('apple', 1, true, '') ORDER BY a;
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('apple', 1, true, '') ORDER BY a;
 ----
 a
 1
 2
 
 
-# `!! LEVENSHTEIN(... prefix)` -- negation composes with the prefix path.
+# `!! ts_levenshtein(... prefix)` -- negation composes with the prefix path.
 query
-SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ !!LEVENSHTEIN('le', 1, true, 'app') ORDER BY a;
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ !!ts_levenshtein('le', 1, true, 'app') ORDER BY a;
 ----
 a
 3
@@ -178,10 +178,10 @@ a
 # Distance bounds (>4 / >3-with-transpositions) are still enforced when
 # a prefix is supplied.
 statement error
-SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 5, true, 'app');
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 5, true, 'app');
 
 statement error
-SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ LEVENSHTEIN('le', 4, true, 'app');
+SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 4, true, 'app');
 
 
 statement ok

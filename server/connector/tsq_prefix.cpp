@@ -37,7 +37,7 @@ void BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("PREFIX field is not VARCHAR"),
-                    ERR_HINT("Example: PREFIX('pre'). PREFIX requires a "
+                    ERR_HINT("Example: ts_starts_with('pre'). PREFIX requires a "
                              "VARCHAR column."));
   }
   std::string field_name;
@@ -61,15 +61,15 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("PREFIX expects 1 argument (text), got ", func.children.size()),
-      ERR_HINT("Example: PREFIX('pre'). For mid-string wildcards use "
-               "LIKE('foo%bar')."));
+      ERR_HINT("Example: ts_starts_with('pre'). For mid-string wildcards use "
+               "ts_like('foo%bar')."));
   }
   std::string prefix;
   if (auto r = GetVarcharArg(*func.children[0], "PREFIX text", prefix);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: PREFIX('pre')."));
+                    ERR_HINT("Example: ts_starts_with('pre')."));
   }
   BuildFtsPrefix(parent, ctx, column_info, prefix);
 }

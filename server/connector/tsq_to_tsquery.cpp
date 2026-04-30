@@ -206,7 +206,7 @@ void FromPhraseToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                         const SearchColumnInfo& column_info,
                         const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
+  static constexpr auto kSyntaxHint =
     "Example: plainto_tsquery('quick fox'). AND-semantics over tokens.";
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -229,7 +229,7 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
                             const FilterContext& ctx,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
+  static constexpr auto kSyntaxHint =
     "Example: websearch_to_tsquery('\"quick fox\" -slow OR fast').";
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
@@ -254,9 +254,9 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
 void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: tsquery_phrase(PHRASE('hello'), 'world', 1). Same as "
-    "PHRASE('hello') ## 1 ## 'world'.";
+  static constexpr auto kSyntaxHint =
+    "Example: tsquery_phrase(ts_phrase('hello'), 'world', 1). Same as "
+    "ts_phrase('hello') ## 1 ## 'world'.";
   if (func.children.size() < 2 || func.children.size() > 3) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("tsquery_phrase expects 2 or 3 arguments "
@@ -276,7 +276,7 @@ void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
+  static constexpr auto kSyntaxHint =
     "Example: to_tsquery('field:foo AND bar*'). Lucene syntax: "
     "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N.";
   if (func.children.size() != 1) {

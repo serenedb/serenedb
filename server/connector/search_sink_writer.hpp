@@ -35,7 +35,7 @@ namespace sdb::connector {
 class SearchRemoveFilterBase;
 
 using AnalyzerProvider =
-  absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
+  absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
 inline AnalyzerProvider MakeAnalyzerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
@@ -92,7 +92,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void PrepareForVectorValue();
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(catalog::ColumnAnalyzer&& column_analyzer);
+    void PrepareForStringValue(catalog::ColumnTokenizer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();

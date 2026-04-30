@@ -76,7 +76,7 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
-ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
+ColumnTokenizer InvertedIndex::GetColumnAnalyzer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
   auto it = _columns.find(column_id);

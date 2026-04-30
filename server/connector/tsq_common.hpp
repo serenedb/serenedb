@@ -53,25 +53,29 @@ struct FilterContext {
   size_t scored_terms_limit = 1024;
 
   FilterContext WithTokenizer(irs::analysis::Analyzer& tokenizer) const {
-    return {.negated = negated,
-            .boost = boost,
-            .column_getter = column_getter,
-            .column_cache = column_cache,
-            .identity = identity,
-            .tokenizer = tokenizer,
-            .client_context = client_context,
-            .scored_terms_limit = scored_terms_limit};
+    return {
+      .negated = negated,
+      .boost = boost,
+      .column_getter = column_getter,
+      .column_cache = column_cache,
+      .identity = identity,
+      .tokenizer = tokenizer,
+      .client_context = client_context,
+      .scored_terms_limit = scored_terms_limit,
+    };
   }
 
   FilterContext WithBoost(irs::score_t factor) const {
-    return {.negated = negated,
-            .boost = boost * factor,
-            .column_getter = column_getter,
-            .column_cache = column_cache,
-            .identity = identity,
-            .tokenizer = tokenizer,
-            .client_context = client_context,
-            .scored_terms_limit = scored_terms_limit};
+    return {
+      .negated = negated,
+      .boost = boost * factor,
+      .column_getter = column_getter,
+      .column_cache = column_cache,
+      .identity = identity,
+      .tokenizer = tokenizer,
+      .client_context = client_context,
+      .scored_terms_limit = scored_terms_limit,
+    };
   }
 };
 
@@ -197,9 +201,9 @@ enum class TSQueryOp {
   Prefix,
   Ngram,
   Fuzzy,
-  AnyOf,
-  AllOf,
-  Range,
+  Any,
+  All,
+  Between,
   Regexp,
   Less,
   LessEq,

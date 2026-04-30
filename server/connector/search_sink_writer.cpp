@@ -453,7 +453,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  catalog::ColumnAnalyzer&& column_analyzer) {
+  catalog::ColumnTokenizer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();

@@ -32,8 +32,8 @@ namespace sdb::connector {
 
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: LEVENSHTEIN('test', 1, true, 'pre'). Distance must be 0-4 "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (func.children.empty() || func.children.size() > 4) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -107,8 +107,8 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
 void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: LEVENSHTEIN('test', 1, true, 'pre'). Distance must be 0-4 "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

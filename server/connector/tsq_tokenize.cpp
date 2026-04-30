@@ -32,8 +32,8 @@ namespace sdb::connector {
 void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: TOKENIZE('quick fox') or TOKENIZE('foo', 'identity'). "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'identity'). "
     "'identity' = raw bytes; other names resolve via the catalog.";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
@@ -66,7 +66,7 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
   if (!wrapper) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("TOKENIZE(text, '", analyzer_name,
+                    ERR_MSG("ts_tokenize(text, '", analyzer_name,
                             "'): tokenizer not found in catalog"),
                     ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
                              "or use 'identity' for raw bytes."));

@@ -35,20 +35,20 @@ statement ok
 VACUUM (UPDATE_INDEXES) test_term_ops;
 
 query
-SELECT a FROM test_term_ops_idx WHERE b @@ (LIKE('percent_not_contain')) ORDER BY a;
+SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent_not_contain')) ORDER BY a;
 ----
 a
 1
 2
 
 query
-SELECT a FROM test_term_ops_idx WHERE b @@ (LIKE('percent_not_contain')) AND a < 2;
+SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent_not_contain')) AND a < 2;
 ----
 a
 1
 
 query
-SELECT a FROM test_term_ops_idx WHERE b @@ (LIKE('percent\_not\_contain')) ORDER BY a;
+SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent\_not\_contain')) ORDER BY a;
 ----
 a
 2
@@ -67,14 +67,14 @@ a
 
 
 query
-SELECT a FROM test_term_ops_idx WHERE c @@ GREATER('d') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ ts_gt('d') ORDER BY a DESC;
 ----
 a
 6
 5
 
 query
-SELECT a FROM test_term_ops_idx WHERE c @@ LESS_EQUAL('d') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ ts_le('d') ORDER BY a DESC;
 ----
 a
 4
@@ -83,7 +83,7 @@ a
 1
 
 query
-SELECT a FROM test_term_ops_idx WHERE NOT (c @@ LESS('d')) ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE NOT (c @@ ts_lt('d')) ORDER BY a DESC;
 ----
 a
 6
@@ -91,7 +91,7 @@ a
 4
 
 query
-SELECT a FROM test_term_ops_idx WHERE c @@ ANY_OF(['d', 'a']) ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ ts_any(['d', 'a']) ORDER BY a DESC;
 ----
 a
 4

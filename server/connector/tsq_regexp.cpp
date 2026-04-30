@@ -29,7 +29,7 @@
 #include "tsq_common.hpp"
 
 // magic_enum customisation for irs::RegexpSyntax: maps the surface
-// names accepted by REGEXP(pattern, syntax) ('perl', 'posix') to the
+// names accepted by ts_regexp(pattern, syntax) ('perl', 'posix') to the
 // underlying enum values. The specialisation must be visible at
 // every enum_cast / enum_names<irs::RegexpSyntax> instantiation; only
 // this TU calls them, so the customisation lives here.
@@ -77,8 +77,8 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: REGEXP('abc.*') or REGEXP('foo', 'posix'). "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). "
     "Syntax is 'perl' (default) or 'posix'.";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(

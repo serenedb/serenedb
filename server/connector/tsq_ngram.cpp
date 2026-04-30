@@ -34,8 +34,8 @@ namespace sdb::connector {
 void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                const SearchColumnInfo& column_info,
                const duckdb::BoundFunctionExpression& func) {
-  constexpr auto kSyntaxHint =
-    "Example: NGRAM('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).";
+  static constexpr auto kSyntaxHint =
+    "Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("NGRAM field is not VARCHAR"),

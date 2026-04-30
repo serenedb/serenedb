@@ -49,8 +49,8 @@ void FromTokenizeListInAnyAllOf(
   const SearchColumnInfo& column_info,
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
-  constexpr auto kSyntaxHint =
-    "Example: any_of(TOKENIZE(['quick', 'brown'])). Tokenises each list "
+  static constexpr auto kSyntaxHint =
+    "Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list "
     "element through the column analyzer.";
   if (!is_any && outer.children.size() != 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -75,7 +75,7 @@ void FromTokenizeListInAnyAllOf(
   if (tokenize_call.children.empty() || tokenize_call.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("TOKENIZE(text_array[, analyzer]) expects 1 or 2 arguments, "
+      ERR_MSG("ts_tokenize(text_array[, analyzer]) expects 1 or 2 arguments, "
               "got ",
               tokenize_call.children.size()),
       ERR_HINT(kSyntaxHint));
@@ -128,7 +128,7 @@ void FromTokenizeListInAnyAllOf(
       if (!override_wrapper) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-          ERR_MSG("TOKENIZE(text_array, '", analyzer_name,
+          ERR_MSG("ts_tokenize(text_array, '", analyzer_name,
                   "'): tokenizer not found in catalog"),
           ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY or use "
                    "'",
@@ -233,8 +233,8 @@ void ExtractAnyAllOfArgs(
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
   std::optional<size_t>& min_match) {
-  constexpr auto kSyntaxHint =
-    "Example: any_of(['a', 'b'], 1) (OR), all_of(['a', 'b']) (AND).";
+  static constexpr auto kSyntaxHint =
+    "Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -328,7 +328,7 @@ void ExtractAnyAllOfArgs(
 void FromAnyAllOf(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func, bool is_any) {
-  // Special case: ANY_OF/ALL_OF wrapping a TOKENIZE(text_array[, name])
+  // Special case: ANY_OF/ALL_OF wrapping a ts_tokenize(text_array[, name])
   // call. Tokenise every element, flatten into a single ByTerms with the
   // appropriate min_match. Bypasses the per-arg BuildTSQuery loop so we
   // can emit one aggregated filter rather than N individual leaves.

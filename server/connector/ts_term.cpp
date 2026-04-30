@@ -26,7 +26,7 @@
 #include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "tsq_common.hpp"
+#include "ts_common.hpp"
 
 namespace sdb::connector {
 

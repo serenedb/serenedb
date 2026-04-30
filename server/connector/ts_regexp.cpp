@@ -26,7 +26,7 @@
 #include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "tsq_common.hpp"
+#include "ts_common.hpp"
 
 // magic_enum customisation for irs::RegexpSyntax: maps the surface
 // names accepted by ts_regexp(pattern, syntax) ('perl', 'posix') to the

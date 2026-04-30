@@ -64,7 +64,7 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
-#include "tsq_common.hpp"
+#include "ts_common.hpp"
 
 namespace magic_enum {
 
@@ -818,7 +818,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 }
 
 // Defined below; forward-declared here so FromLike can call it before
-// the definition. EmitLikeFilter is also called from tsq_like.cpp,
+// the definition. EmitLikeFilter is also called from ts_like.cpp,
 // which has its own forward decl.
 void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string field_name,
@@ -965,7 +965,7 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};
 }
 
-// Per-type TSQUERY entry points -- each defined in tsq_<name>.cpp and
+// Per-type TSQUERY entry points -- each defined in ts_<name>.cpp and
 // dispatched to from BuildTSQuery's switch below. All throw
 // THROW_SQL_ERROR on any failure (with operator-specific hints).
 void FromPhrase(irs::BooleanFilter&, const FilterContext&,

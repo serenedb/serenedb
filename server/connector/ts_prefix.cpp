@@ -20,56 +20,58 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-#include "tsq_common.hpp"
+#include "ts_common.hpp"
 
 namespace sdb::connector {
-
-void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info, std::string field_name,
-                    std::string_view raw_pattern, char escape_char = '\\');
-
 namespace {
 
-void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
-                  const SearchColumnInfo& column_info,
-                  std::string_view like_pattern) {
+void BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info,
+                    std::string_view prefix) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LIKE field is not VARCHAR"),
-      ERR_HINT("LIKE requires a VARCHAR column with identity or wildcard "
-               "analyzer."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("PREFIX field is not VARCHAR"),
+                    ERR_HINT("Example: ts_starts_with('pre'). PREFIX requires a "
+                             "VARCHAR column."));
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
-  EmitLikeFilter(parent, ctx, column_info, std::move(field_name), like_pattern);
+  auto& filter = ctx.negated ? Negate<irs::ByPrefix>(parent)
+                             : AddFilter<irs::ByPrefix>(parent);
+  filter.boost(ctx.boost);
+  *filter.mutable_field() = field_name;
+  auto& pf_opts = *filter.mutable_options();
+  pf_opts.scored_terms_limit = ctx.scored_terms_limit;
+  pf_opts.term.assign(irs::ViewCast<irs::byte_type>(prefix));
 }
 
 }  // namespace
 
-void FromTSQLike(irs::BooleanFilter& parent, const FilterContext& ctx,
-                 const SearchColumnInfo& column_info,
-                 const duckdb::BoundFunctionExpression& func) {
+void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+                const SearchColumnInfo& column_info,
+                const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LIKE expects 1 argument (pattern), got ", func.children.size()),
-      ERR_HINT("Example: ts_like('foo%bar'). `%` = any sequence, `_` = one "
-               "char."));
+      ERR_MSG("PREFIX expects 1 argument (text), got ", func.children.size()),
+      ERR_HINT("Example: ts_starts_with('pre'). For mid-string wildcards use "
+               "ts_like('foo%bar')."));
   }
-  std::string pat;
-  if (auto r = GetVarcharArg(*func.children[0], "LIKE pattern", pat); !r.ok()) {
+  std::string prefix;
+  if (auto r = GetVarcharArg(*func.children[0], "PREFIX text", prefix);
+      !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: ts_like('foo%bar')."));
+                    ERR_HINT("Example: ts_starts_with('pre')."));
   }
-  BuildFtsLike(parent, ctx, column_info, pat);
+  BuildFtsPrefix(parent, ctx, column_info, prefix);
 }
 
 }  // namespace sdb::connector

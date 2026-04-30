@@ -2076,7 +2076,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinWithPrefix) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AddEditDistanceFilter(expected, 1, "roximate", 1, /*with_transpositions=*/true,
+  AddEditDistanceFilter(expected, 1, "roximate", 1,
+                        /*with_transpositions=*/true,
                         /*max_terms=*/1024, /*prefix=*/"app");
   AssertFilter(
     expected,
@@ -2107,7 +2108,6 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinTooManyArgs) {
     "SELECT * FROM foo WHERE b @@ LEVENSHTEIN('test', 1, true, 'p', 'extra')",
     columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
 }
-
 
 // ===========================================================================
 // Boost (`^`) -- migrated from the legacy `BOOST(predicate, factor)`
@@ -2421,7 +2421,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastRange) {
 
 // Trivial BOOLEAN constants short-circuit at any TSQUERY position.
 // NULL is handled by DuckDB's NULL-strict operator semantics (folds
-// the whole predicate to NULL → no rows), not by our walker.
+// the whole predicate to NULL -> no rows), not by our walker.
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TrivialFalse) {
   std::vector<ColumnSpec> columns{

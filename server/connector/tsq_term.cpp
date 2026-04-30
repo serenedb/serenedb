@@ -57,17 +57,15 @@ void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    BuildFtsTerm(parent, ctx, column_info,
-                 duckdb::Value(std::string{text}));
+    BuildFtsTerm(parent, ctx, column_info, duckdb::Value(std::string{text}));
     return;
   }
   auto& analyzer = ctx.tokenizer;
   std::vector<irs::bstring> tokens;
   if (!analyzer.reset(text)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Failed to analyse '", text, "'"),
-      ERR_HINT("The column's analyzer rejected the input text."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("Failed to analyse '", text, "'"),
+                    ERR_HINT("The column's analyzer rejected the input text."));
   }
   const auto* tok_attr = irs::get<irs::TermAttr>(analyzer);
   while (analyzer.next()) {

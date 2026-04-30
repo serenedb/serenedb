@@ -37,69 +37,68 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     "min_should_match (optional 4th arg) defaults to 1. Buckets accept NULL "
     "for empty.";
   if (func.children.size() < 3 || func.children.size() > 4) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("compound expects (must, must_not, should [, "
-              "min_should_match]), got ",
-              func.children.size(), " args"),
-      ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("compound expects (must, must_not, should [, "
+                            "min_should_match]), got ",
+                            func.children.size(), " args"),
+                    ERR_HINT(kSyntaxHint));
   }
 
   auto extract =
     [](const duckdb::Expression& arg, std::string_view label,
        std::vector<const duckdb::Expression*>& out,
        std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised) {
-    // NULL bucket-arg -> empty bucket regardless of declared type.
-    if (const auto* val = TryGetConstant(arg); val && val->IsNull()) {
-      return;
-    }
-    const auto type_id = arg.return_type.id();
-    if (type_id != duckdb::LogicalTypeId::LIST &&
-        type_id != duckdb::LogicalTypeId::ARRAY) {
-      out.push_back(&arg);
-      return;
-    }
-    // List/array shape: NULL-list -> empty bucket; folded constant
-    // -> children values; list_value/array_value call -> children
-    // expressions. Mirrors FromAnyAllOf's extraction.
-    if (arg.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
-      const auto& val = arg.Cast<duckdb::BoundConstantExpression>().value;
-      if (val.IsNull()) {
+      // NULL bucket-arg -> empty bucket regardless of declared type.
+      if (const auto* val = TryGetConstant(arg); val && val->IsNull()) {
         return;
       }
-      const auto& children = type_id == duckdb::LogicalTypeId::ARRAY
-                               ? duckdb::ArrayValue::GetChildren(val)
-                               : duckdb::ListValue::GetChildren(val);
-      for (const auto& child_val : children) {
-        synthesised.push_back(
-          duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
-        out.push_back(synthesised.back().get());
+      const auto type_id = arg.return_type.id();
+      if (type_id != duckdb::LogicalTypeId::LIST &&
+          type_id != duckdb::LogicalTypeId::ARRAY) {
+        out.push_back(&arg);
+        return;
       }
-      return;
-    }
-    if (arg.expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
-      const auto& fn = arg.Cast<duckdb::BoundFunctionExpression>();
-      if (fn.function.name != "list_value" &&
-          fn.function.name != "array_value") {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("compound ", label,
-                  " list arg must be a literal list or array (got: ",
-                  fn.function.name, ")"),
-          ERR_HINT("Pass a literal list/array, e.g. [TERM('a'), TERM('b')], "
-                   "or NULL for an empty bucket."));
+      // List/array shape: NULL-list -> empty bucket; folded constant
+      // -> children values; list_value/array_value call -> children
+      // expressions. Mirrors FromAnyAllOf's extraction.
+      if (arg.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
+        const auto& val = arg.Cast<duckdb::BoundConstantExpression>().value;
+        if (val.IsNull()) {
+          return;
+        }
+        const auto& children = type_id == duckdb::LogicalTypeId::ARRAY
+                                 ? duckdb::ArrayValue::GetChildren(val)
+                                 : duckdb::ListValue::GetChildren(val);
+        for (const auto& child_val : children) {
+          synthesised.push_back(
+            duckdb::make_uniq<duckdb::BoundConstantExpression>(child_val));
+          out.push_back(synthesised.back().get());
+        }
+        return;
       }
-      for (const auto& e : fn.children) {
-        out.push_back(e.get());
+      if (arg.expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
+        const auto& fn = arg.Cast<duckdb::BoundFunctionExpression>();
+        if (fn.function.name != "list_value" &&
+            fn.function.name != "array_value") {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("compound ", label,
+                    " list arg must be a literal list or array (got: ",
+                    fn.function.name, ")"),
+            ERR_HINT("Pass a literal list/array, e.g. [TERM('a'), TERM('b')], "
+                     "or NULL for an empty bucket."));
+        }
+        for (const auto& e : fn.children) {
+          out.push_back(e.get());
+        }
+        return;
       }
-      return;
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("compound ", label,
-                            " list arg must be a literal list or array"),
-                    ERR_HINT("Pass a literal list/array or NULL for an "
-                             "empty bucket."));
-  };
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("compound ", label,
+                              " list arg must be a literal list or array"),
+                      ERR_HINT("Pass a literal list/array or NULL for an "
+                               "empty bucket."));
+    };
 
   std::vector<const duckdb::Expression*> must, must_not, should;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;

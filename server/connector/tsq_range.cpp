@@ -66,12 +66,11 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   }
   if (out.min_val && out.max_val &&
       out.min_val->type().id() != out.max_val->type().id()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("RANGE bounds have mismatched types: ",
-              out.min_val->type().ToString(), " vs ",
-              out.max_val->type().ToString()),
-      ERR_HINT("Both bounds must share the same type family."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("RANGE bounds have mismatched types: ",
+                            out.min_val->type().ToString(), " vs ",
+                            out.max_val->type().ToString()),
+                    ERR_HINT("Both bounds must share the same type family."));
   }
   return out;
 }
@@ -100,10 +99,10 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     "Example: LESS('m'), GREATER_EQ(42). The bound must be a non-null "
     "constant; for unbounded comparisons use RANGE(NULL, max, ...).";
   if (func.children.size() != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(label, " expects 1 argument (bound), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label, " expects 1 argument (bound), got ", func.children.size()),
+      ERR_HINT(kSyntaxHint));
   }
   const auto* bound_val = TryGetConstant(*func.children[0]);
   if (!bound_val) {
@@ -193,7 +192,8 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (analyzer.next()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(label, " produced multiple tokens; range comparison "
+        ERR_MSG(label,
+                " produced multiple tokens; range comparison "
                 "requires a single token"),
         ERR_HINT("Use RANGE(min, max, ...) for multi-component bounds."));
     }

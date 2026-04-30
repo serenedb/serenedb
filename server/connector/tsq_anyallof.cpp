@@ -237,11 +237,11 @@ void ExtractAnyAllOfArgs(
     "Example: any_of([TERM('a'), TERM('b')]) (OR), all_of([TERM('a'), "
     "TERM('b')]) (AND), any_of([TERM('a'), TERM('b'), TERM('c')], 2).";
   if (func.children.empty() || func.children.size() > 2) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(is_any
-                              ? "any_of takes ([list]) or ([list], min_match)"
-                              : "all_of takes ([list])"),
-                    ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(is_any ? "any_of takes ([list]) or ([list], min_match)"
+                     : "all_of takes ([list])"),
+      ERR_HINT(kSyntaxHint));
   }
   if (!is_any && func.children.size() != 1) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -283,11 +283,10 @@ void ExtractAnyAllOfArgs(
     const auto& list_fn = list_expr.Cast<duckdb::BoundFunctionExpression>();
     if (list_fn.function.name != "list_value" &&
         list_fn.function.name != "array_value") {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("list arg must be a literal list or array (got: ",
-                list_fn.function.name, ")"),
-        ERR_HINT(kSyntaxHint));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("list arg must be a literal list or array (got: ",
+                              list_fn.function.name, ")"),
+                      ERR_HINT(kSyntaxHint));
     }
     for (const auto& e : list_fn.children) {
       args.push_back(e.get());

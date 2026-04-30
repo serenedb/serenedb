@@ -36,7 +36,7 @@ inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
 // Distinct alias used for the result of `EXPR::tokenize(...)`. We
 // can't reuse `TSQUERY` here because DuckDB short-circuits same-alias
 // casts as no-ops (compares LogicalTypeId + alias, ignoring
-// ExtensionTypeInfo modifiers), so a `TSQUERY → TSQUERY-with-modifier`
+// ExtensionTypeInfo modifiers), so a `TSQUERY -> TSQUERY-with-modifier`
 // cast would never reach the filter builder. Giving the modified type
 // its own alias keeps the BoundCastExpression alive in the bound tree
 // so the modifier is observable downstream. Implicit casts wire it

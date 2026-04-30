@@ -32,6 +32,7 @@
 
 namespace sdb::connector {
 namespace {
+
 enum class WsTokKind { Word, Phrase, Or };
 
 struct WsToken {

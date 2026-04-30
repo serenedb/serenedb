@@ -419,12 +419,12 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   auto bool_cast_bind =
     +[](duckdb::BindCastInput&, const duckdb::LogicalType&,
         const duckdb::LogicalType&) -> duckdb::BoundCastInfo {
-    return duckdb::BoundCastInfo(
-      +[](duckdb::Vector&, duckdb::Vector&, duckdb::idx_t,
-          duckdb::CastParameters&) -> bool {
-        throw duckdb::InvalidInputException(
-          "BOOLEAN -> TSQUERY: only meaningful inside TSQUERY context");
-      });
+    return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
+                                     duckdb::idx_t,
+                                     duckdb::CastParameters&) -> bool {
+      throw duckdb::InvalidInputException(
+        "BOOLEAN -> TSQUERY: only meaningful inside TSQUERY context");
+    });
   };
   loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, tsq, bool_cast_bind,
                               /*implicit_cast_cost=*/0);
@@ -514,8 +514,8 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction({varchar, intv}, tsq, TSQueryStubFn));
     set.AddFunction(
       duckdb::ScalarFunction({varchar, intv, boolv}, tsq, TSQueryStubFn));
-    set.AddFunction(duckdb::ScalarFunction({varchar, intv, boolv, varchar},
-                                            tsq, TSQueryStubFn));
+    set.AddFunction(duckdb::ScalarFunction({varchar, intv, boolv, varchar}, tsq,
+                                           TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -567,7 +567,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       auto fn = duckdb::ScalarFunction(std::move(args), tsq, TSQueryStubFn);
       // Without SPECIAL_HANDLING, DuckDB folds any call with a NULL
       // arg to NULL at bind time; we'd never see the user's bucket
-      // structure (e.g. `compound(list, NULL, NULL)` → NULL).
+      // structure (e.g. `compound(list, NULL, NULL)` -> NULL).
       fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
       set.AddFunction(std::move(fn));
     };

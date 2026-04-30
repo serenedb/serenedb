@@ -132,7 +132,6 @@ customize::enum_name<sdb::connector::TSQueryOp>(
 }
 
 }  // namespace magic_enum
-
 namespace sdb::connector {
 
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(
@@ -972,14 +971,12 @@ void FromPhrase(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
 void FromNgram(irs::BooleanFilter&, const FilterContext&,
-               const SearchColumnInfo&,
-               const duckdb::BoundFunctionExpression&);
+               const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
 void FromLevenshtein(irs::BooleanFilter&, const FilterContext&,
                      const SearchColumnInfo&,
                      const duckdb::BoundFunctionExpression&);
 void FromTerm(irs::BooleanFilter&, const FilterContext&,
-              const SearchColumnInfo&,
-              const duckdb::BoundFunctionExpression&);
+              const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
 void FromTSQLike(irs::BooleanFilter&, const FilterContext&,
                  const SearchColumnInfo&,
                  const duckdb::BoundFunctionExpression&);
@@ -997,8 +994,7 @@ void FromRegexp(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
 void FromRange(irs::BooleanFilter&, const FilterContext&,
-               const SearchColumnInfo&,
-               const duckdb::BoundFunctionExpression&);
+               const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
 void FromCompound(irs::BooleanFilter&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&);

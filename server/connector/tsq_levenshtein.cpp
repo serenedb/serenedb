@@ -38,12 +38,11 @@ LevenshteinArgs ParseLevenshteinArgs(
     "(or [0, 3] when transpositions is true, the default). Optional "
     "`prefix` is a literal leading substring that must match exactly.";
   if (func.children.empty() || func.children.size() > 4) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
-              "(text, distance?, transpositions?, prefix?), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
+                            "(text, distance?, transpositions?, prefix?), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
   LevenshteinArgs out;
   if (auto r = GetVarcharArg(*func.children[0], "LEVENSHTEIN text", out.text);
@@ -75,12 +74,11 @@ LevenshteinArgs ParseLevenshteinArgs(
     }
   }
   if (out.with_transpositions && out.distance > 3) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LEVENSHTEIN distance must be between 0 and 3 when "
-              "transpositions is true, got ",
-              out.distance),
-      ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("LEVENSHTEIN distance must be between 0 and 3 when "
+                            "transpositions is true, got ",
+                            out.distance),
+                    ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 4) {
     if (auto r =
@@ -122,12 +120,11 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_HINT(kSyntaxHint));
   }
   if (func.children.empty() || func.children.size() > 4) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
-              "(text, distance?, transpositions?, prefix?), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
+                            "(text, distance?, transpositions?, prefix?), got ",
+                            func.children.size()),
+                    ERR_HINT(kSyntaxHint));
   }
 
   auto args = ParseLevenshteinArgs(func);

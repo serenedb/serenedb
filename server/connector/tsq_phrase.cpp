@@ -217,10 +217,9 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
                       std::string_view text, PhraseGap base_gap) {
   auto& analyzer = ctx.tokenizer;
   if (!analyzer.reset(text)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PHRASE failed to analyse '", text, "'"),
-      ERR_HINT("The column's analyzer rejected the input text."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("PHRASE failed to analyse '", text, "'"),
+                    ERR_HINT("The column's analyzer rejected the input text."));
   }
   const auto* token = irs::get<irs::TermAttr>(analyzer);
   bool first = true;
@@ -400,8 +399,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("## field is not VARCHAR"),
-                    ERR_HINT(kSyntaxHint));
+                    ERR_MSG("## field is not VARCHAR"), ERR_HINT(kSyntaxHint));
   }
   if ((column_info.tokenizer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
@@ -456,11 +454,10 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
       leaf_op = ClassifyTSQueryFunction(f->function.name);
     } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("## part expression class: ",
-                static_cast<int>(part_expr_ref.expression_class)),
-        ERR_HINT(kSyntaxHint));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("## part expression class: ",
+                              static_cast<int>(part_expr_ref.expression_class)),
+                      ERR_HINT(kSyntaxHint));
     }
 
     auto get_text_arg = [&] {
@@ -551,7 +548,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("## ANY_OF phrase part requires min_match=1 (got ",
-                    *sub_min_match, "); a phrase position can match only "
+                    *sub_min_match,
+                    "); a phrase position can match only "
                     "one token"),
             ERR_HINT("Drop the min_match argument or set it to 1."));
         }
@@ -595,9 +593,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             ERR_HINT("Phrase parts live on the analyzed VARCHAR field; "
                      "numeric / BOOLEAN ranges target other fields."));
         }
-        FillByRangeOptionsVarchar(
-          args,
-          options->push_back<irs::ByRangeOptions>(gap.offs_min, gap.offs_max));
+        FillByRangeOptionsVarchar(args, options->push_back<irs::ByRangeOptions>(
+                                          gap.offs_min, gap.offs_max));
         break;
       }
       default:

@@ -34,6 +34,7 @@
 // every enum_cast / enum_names<irs::RegexpSyntax> instantiation; only
 // this TU calls them, so the customisation lives here.
 namespace magic_enum {
+
 template<>
 [[maybe_unused]] constexpr customize::customize_t
 customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
@@ -47,8 +48,8 @@ customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
       return invalid_tag;
   }
 }
-}  // namespace magic_enum
 
+}  // namespace magic_enum
 namespace sdb::connector {
 namespace {
 

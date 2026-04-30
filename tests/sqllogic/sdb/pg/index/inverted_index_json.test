@@ -1,0 +1,328 @@
+# JSON-path inverted index -- mirrors the scenario in json_indexing.md.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(
+    template = 'identity'
+);
+
+statement ok
+CREATE TABLE logs (id INTEGER PRIMARY KEY, content JSON);
+
+# One JSON path indexed on the column.
+statement ok
+CREATE INDEX logs_idx ON logs USING inverted(id, (content->>'host') verbatim_dict);
+
+statement ok
+INSERT INTO logs VALUES
+    (1, '{"host":"server-01","status":"ok"}'::json),
+    (2, '{"host":"server-02","status":"error"}'::json),
+    (3, '{"host":"server-03","status":"ok"}'::json),
+    (4, '{"host":"server-14","status":"warning"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) logs;
+
+# The wildcard 'server-0_' should match ids 1..3 only.
+query
+SELECT id FROM logs_idx WHERE TERM_LIKE(content->>'host', 'server-0_') ORDER BY id;
+----
+id
+1
+2
+3
+
+# Exact-match path also works via the indexed path.
+query
+SELECT id FROM logs_idx WHERE TERM_LIKE(content->>'host', 'server-02') ORDER BY id;
+----
+id
+2
+
+# Multiple paths on the same column.
+statement ok
+CREATE TABLE evts (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX evts_idx ON evts USING inverted(
+    id,
+    (content->>'host') verbatim_dict,
+    (content->>'status') verbatim_dict
+);
+
+statement ok
+INSERT INTO evts VALUES
+    (1, '{"host":"a","status":"ok"}'::json),
+    (2, '{"host":"b","status":"error"}'::json),
+    (3, '{"host":"a","status":"error"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) evts;
+
+query
+SELECT id FROM evts_idx WHERE TERM_LIKE(content->>'host', 'a') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM evts_idx WHERE TERM_LIKE(content->>'status', 'error') ORDER BY id;
+----
+id
+2
+3
+
+# All other index predicates (TERM_EQ, PHRASE, TERM_IN, BOOST, IS NULL,
+# range, IN) accept the same JSON-path expression as TERM_LIKE.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE preds (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX preds_idx ON preds USING inverted(
+    id,
+    (content->>'host') verbatim_dict,
+    (content->>'msg') text_dict
+);
+
+statement ok
+INSERT INTO preds VALUES
+    (1, '{"host":"server-01","msg":"quick brown fox"}'::json),
+    (2, '{"host":"server-02","msg":"lazy dog runs"}'::json),
+    (3, '{"host":"server-03","msg":"the quick fox jumps"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) preds;
+
+# TERM_EQ on a JSON path
+query
+SELECT id FROM preds_idx WHERE TERM_EQ(content->>'host', 'server-02');
+----
+id
+2
+
+# PHRASE on a JSON path
+query
+SELECT id FROM preds_idx WHERE PHRASE(content->>'msg', 'quick fox') ORDER BY id;
+----
+id
+3
+
+# TERM_IN on a JSON path
+query
+SELECT id FROM preds_idx WHERE TERM_IN(content->>'host', 'server-01', 'server-03') ORDER BY id;
+----
+id
+1
+3
+
+# BOOST wraps any predicate; the JSON-path expression flows through.
+query
+SELECT id FROM preds_idx WHERE BOOST(TERM_LIKE(content->>'host', 'server-0_'), 2.0) ORDER BY id;
+----
+id
+1
+2
+3
+
+# LEVENSHTEIN_MATCH on a JSON path: fuzzy match against the leaf string.
+# 'urgent' (dist 0) and 'urgnet' (one transposition) match within distance 1
+# when the default with_transpositions flag is on; 'unrelated' is far.
+
+statement ok
+CREATE TABLE lev (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX lev_idx ON lev USING inverted(id, (content->>'tag') verbatim_dict);
+
+statement ok
+INSERT INTO lev VALUES
+    (1, '{"tag":"urgent"}'::json),
+    (2, '{"tag":"urgnet"}'::json),
+    (3, '{"tag":"unrelated"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) lev;
+
+query
+SELECT id FROM lev_idx WHERE LEVENSHTEIN_MATCH(content->>'tag', 'urgent', 1) ORDER BY id;
+----
+id
+1
+2
+
+# Array elements are addressed by the same syntax: path key "0" lands on the
+# first array element via JSON Pointer's array-index semantics.
+
+statement ok
+CREATE TABLE arr_logs (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX arr_idx ON arr_logs USING inverted(
+    id,
+    (content->'tags'->>'0') verbatim_dict
+);
+
+statement ok
+INSERT INTO arr_logs VALUES
+    (1, '{"tags":["alpha","beta"]}'::json),
+    (2, '{"tags":["gamma","delta"]}'::json),
+    (3, '{"tags":["alpha","epsilon"]}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_logs;
+
+query
+SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>'0', 'alpha') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>'0', 'gamma') ORDER BY id;
+----
+id
+2
+
+
+statement ok
+CREATE TABLE jonly (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX jonly_idx ON jonly USING inverted(id, (content->>'host') verbatim_dict);
+
+statement ok
+INSERT INTO jonly VALUES
+    (1, '{"host":"server-01"}'::json),
+    (2, '{"host":"server-02"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) jonly;
+
+# Sanity check: the ->> form claims the predicate and returns rows.
+query
+SELECT id FROM jonly_idx WHERE TERM_LIKE(content->>'host', 'server-0_') ORDER BY id;
+----
+id
+1
+2
+
+# The -> form returns JSON; the predicate is NOT claimed by the index, so
+# TERM_LIKE's runtime body is invoked and refuses.
+query error
+SELECT id FROM jonly_idx WHERE TERM_LIKE(content->'host', 'server-0_') ORDER BY id;
+----
+db error: ERROR: Inverted index function called outside inverted index context. Use in WHERE clause on a table with an inverted index.
+
+
+# CREATE INDEX itself rejects a JSON-typed (`->`) leaf: the indexed leaf must
+# be TEXT, otherwise we'd index JSON tokens (`{`, `[`) that nobody can
+# meaningfully query. The user has to write `->>` (or json_extract_field_text).
+
+statement ok
+CREATE TABLE bad_index (id INTEGER PRIMARY KEY, content JSON);
+
+statement error
+CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'host') verbatim_dict);
+----
+db error: ERROR: Expression-based index columns are not supported
+
+
+# Same rejection in a chain whose OUTERMOST step is `->`: even though deeper
+# steps could be `->>`, the leaf type at the top is what matters.
+statement error
+CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->'b') verbatim_dict);
+----
+db error: ERROR: Expression-based index columns are not supported
+
+
+# Mixed chain ending in ->> is accepted: the OUTERMOST step yields TEXT.
+statement ok
+CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->>'b') verbatim_dict);
+
+
+# JSON path leaves are indexed via the column's STRING analyzer. Inserting
+# a value where the leaf at the indexed path is a number/boolean/object/
+# array is rejected -- silently indexing the JSON token (`{`, `[`, or a
+# numeric literal as text) would either give wrong results (lex-ordered
+# numbers) or be useless. The user must keep the leaf as a string in their
+# data, or remove the path from the index.
+
+statement ok
+CREATE TABLE strict_typed (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX strict_typed_idx ON strict_typed USING inverted(id, (content->>'host') verbatim_dict);
+
+# String leaf -- accepted.
+statement ok
+INSERT INTO strict_typed VALUES (1, '{"host":"server-01"}'::json);
+
+# Integer leaf -- rejected.
+statement error
+INSERT INTO strict_typed VALUES (2, '{"host":42}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+
+
+# Float leaf -- rejected (same number type as int).
+statement error
+INSERT INTO strict_typed VALUES (3, '{"host":3.14}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+
+
+# Boolean leaf -- rejected.
+statement error
+INSERT INTO strict_typed VALUES (4, '{"host":true}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+
+
+# Object leaf -- rejected.
+statement error
+INSERT INTO strict_typed VALUES (5, '{"host":{"x":1}}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+
+
+# Array leaf -- rejected.
+statement error
+INSERT INTO strict_typed VALUES (6, '{"host":["a","b"]}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+
+
+# Null leaf and missing path are NOT errors -- both are treated as "no
+# value" (matching SQL NULL semantics) and the row simply contributes
+# nothing to the path's posting list.
+statement ok
+INSERT INTO strict_typed VALUES (7, '{"host":null}'::json);
+
+statement ok
+INSERT INTO strict_typed VALUES (8, '{"other":"x"}'::json);
+
+# Only the rows with valid (string / null / missing) leaves were committed.
+query
+SELECT id FROM strict_typed ORDER BY id;
+----
+id
+1
+7
+8
+
+statement ok
+VACUUM (UPDATE_INDEXES) strict_typed;
+
+# And only the row with an actual string leaf is searchable.
+query
+SELECT id FROM strict_typed_idx WHERE TERM_EQ(content->>'host', 'server-01');
+----
+id
+1

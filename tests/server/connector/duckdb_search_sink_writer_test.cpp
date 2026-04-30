@@ -1015,4 +1015,95 @@ TEST_F(DuckDBSearchSinkWriterTest, UpdateWithExisting) {
   }
 }
 
+// Verifies JSON-path indexing: two paths on one column each get their own
+// iresearch field named `[BE col_id].<key><string-mangle>`, values come from
+// the JSON leaf, and un-configured keys do not produce fields.
+TEST_F(DuckDBSearchSinkWriterTest, JsonPathEmitsPerPathFields) {
+  static constexpr catalog::Column::Id kColId = 7;
+  // Expected field names: 8 big-endian bytes + "." + key + 0x03 (string
+  // mangle). 0x07 is the low byte of col_id.
+  // Path segment uses '/' as the separator so the field name's path portion
+  // is itself a valid JSON Pointer (see MakeColumnFieldName).
+  static constexpr char kHostField[] =
+    "\x00\x00\x00\x00\x00\x00\x00\x07/host\x03";
+  static constexpr size_t kHostFieldLen = sizeof(kHostField) - 1;
+  static constexpr char kStatusField[] =
+    "\x00\x00\x00\x00\x00\x00\x00\x07/status\x03";
+  static constexpr size_t kStatusFieldLen = sizeof(kStatusField) - 1;
+  static constexpr char kMissField[] =
+    "\x00\x00\x00\x00\x00\x00\x00\x07/missing\x03";
+  static constexpr size_t kMissFieldLen = sizeof(kMissField) - 1;
+
+  // Provider that returns two indexed paths for col_id; each uses the
+  // identity tokenizer so TERMs are whole-string.
+  auto paths_provider =
+    [](catalog::Column::Id id) -> std::vector<JsonPathSinkConfig> {
+    EXPECT_EQ(kColId, id);
+    std::vector<JsonPathSinkConfig> out;
+    auto make_cfg = [](std::string key) {
+      JsonPathSinkConfig cfg;
+      cfg.path = {std::move(key)};
+      cfg.analyzer = AnalyzerProvider(kColId);
+      return cfg;
+    };
+    out.push_back(make_cfg("host"));
+    out.push_back(make_cfg("status"));
+    return out;
+  };
+
+  const std::string_view pk1{
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+  const std::string_view pk2{
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19};
+  // Raw-VARCHAR layout: the single cell slice is the JSON text (no prefix
+  // byte because the sink's re-index path reads without the prefix wrapper).
+  const std::string json1{R"({"host":"server-01","status":"ok"})"};
+  const std::string json2{R"({"host":"server-02","status":"error"})"};
+
+  auto trx = _data_writer->GetBatch();
+  DuckDBSearchSinkInsertWriter sink{
+    trx, AnalyzerProvider, {kColId}, paths_provider};
+  sink.Init(2, _dummy_chunk);
+  sink.SwitchColumn(duckdb::LogicalType::JSON(), false, kColId);
+  sink.Write({rocksdb::Slice(json1)}, pk1);
+  sink.Write({rocksdb::Slice(json2)}, pk2);
+  sink.Finish();
+  ASSERT_TRUE(trx.Commit());
+  _data_writer->Commit();
+
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(2, reader.docs_count());
+  auto& segment = reader[0];
+
+  // Configured paths: fields exist and terms match the leaf values.
+  auto host_terms = segment.field({kHostField, kHostFieldLen});
+  ASSERT_NE(nullptr, host_terms);
+  auto status_terms = segment.field({kStatusField, kStatusFieldLen});
+  ASSERT_NE(nullptr, status_terms);
+
+  // Un-configured path: no field emitted.
+  ASSERT_EQ(nullptr, segment.field({kMissField, kMissFieldLen}));
+
+  // Row 1's "host" term is "server-01".
+  auto itr = host_terms->iterator(irs::SeekMode::NORMAL);
+  ASSERT_TRUE(
+    itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"server-01"})));
+  auto postings1 = segment.mask(itr->postings(irs::IndexFeatures::None));
+  ASSERT_TRUE(postings1->next());
+  ASSERT_FALSE(postings1->next());
+
+  // Row 2's "status" term is "error".
+  auto sitr = status_terms->iterator(irs::SeekMode::NORMAL);
+  ASSERT_TRUE(
+    sitr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"error"})));
+  auto postings2 = segment.mask(sitr->postings(irs::IndexFeatures::None));
+  ASSERT_TRUE(postings2->next());
+  ASSERT_FALSE(postings2->next());
+
+  // PK field is emitted once per row.
+  const auto* pk_column = segment.column(kPkFieldName);
+  ASSERT_NE(nullptr, pk_column);
+}
+
 }  // namespace

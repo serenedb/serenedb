@@ -1716,3 +1716,5 @@ Text Search Dictionary:
     (no additional options)
   copy_from:
     from[required] (string) [default: none] - the source tokenizer name
+  identity:
+    (no additional options)

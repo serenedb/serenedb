@@ -34,10 +34,12 @@ namespace sdb::connector {
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:
-  DuckDBSearchSinkInsertWriter(irs::IndexWriter::Transaction& trx,
-                               AnalyzerProvider&& analyzer_provider,
-                               std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider), columns} {}
+  DuckDBSearchSinkInsertWriter(
+    irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+    std::span<const catalog::Column::Id> columns,
+    JsonPathsProvider&& json_paths_provider = NoJsonPaths())
+    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider),
+                               std::move(json_paths_provider), columns} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
     InitImpl(batch_size);
@@ -79,10 +81,12 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl,
                                            public SearchSinkDeleteBaseImpl {
  public:
-  DuckDBSearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx,
-                               AnalyzerProvider&& analyzer_provider,
-                               std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider), columns},
+  DuckDBSearchSinkUpdateWriter(
+    irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+    std::span<const catalog::Column::Id> columns,
+    JsonPathsProvider&& json_paths_provider = NoJsonPaths())
+    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider),
+                               std::move(json_paths_provider), columns},
       SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {

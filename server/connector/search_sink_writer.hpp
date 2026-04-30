@@ -20,7 +20,12 @@
 
 #pragma once
 
+#include <simdjson.h>
+
 #include <iresearch/index/index_writer.hpp>
+#include <span>
+#include <string>
+#include <vector>
 
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
@@ -37,6 +42,22 @@ class SearchRemoveFilterBase;
 using AnalyzerProvider =
   absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
 
+// One JSON path's worth of indexing config, resolved against the catalog.
+// The sink owns these while the column is active.
+struct JsonPathSinkConfig {
+  std::vector<std::string> path;
+  catalog::ColumnAnalyzer analyzer;
+};
+
+using JsonPathsProvider =
+  absl::AnyInvocable<std::vector<JsonPathSinkConfig>(catalog::Column::Id)>;
+
+// A JsonPathsProvider that returns an empty vector for every column. Useful
+// for code paths that do not yet support path-based JSON indexing.
+inline JsonPathsProvider NoJsonPaths() {
+  return [](catalog::Column::Id) { return std::vector<JsonPathSinkConfig>{}; };
+}
+
 inline AnalyzerProvider MakeAnalyzerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
@@ -45,10 +66,37 @@ inline AnalyzerProvider MakeAnalyzerProvider(
   };
 }
 
+// Resolves every configured JSON path for `column_id` against the catalog.
+// Returns an empty vector for columns without path-based indexing.
+inline JsonPathsProvider MakeJsonPathsProvider(
+  std::shared_ptr<const catalog::Snapshot> snapshot,
+  const catalog::InvertedIndex& index) {
+  return [snapshot = std::move(snapshot), &index](
+           catalog::Column::Id column_id) -> std::vector<JsonPathSinkConfig> {
+    std::vector<JsonPathSinkConfig> out;
+    for (const auto& col : index.GetColumns()) {
+      if (col.first != column_id) {
+        continue;
+      }
+      for (const auto& p : col.second.json_paths) {
+        auto analyzer = index.GetJsonPathAnalyzer(snapshot, column_id, p.path);
+        if (!analyzer) {
+          continue;
+        }
+        out.push_back(
+          JsonPathSinkConfig{.path = p.path, .analyzer = *std::move(analyzer)});
+      }
+      break;
+    }
+    return out;
+  };
+}
+
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
                            AnalyzerProvider&& analyzer_provider,
+                           JsonPathsProvider&& json_paths_provider,
                            std::span<const catalog::Column::Id> columns);
 
   void InitImpl(size_t batch_size);
@@ -174,7 +222,22 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   template<duckdb::LogicalTypeId Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
+  // Setup the writer for a JSON column with one or more configured paths.
+  // Each path becomes a distinct iresearch field named
+  // [8 bytes BE column_id] + "." + key1 + "." + key2 + ... + <MangleString>.
+  void SetupJsonColumnWriter(catalog::Column::Id column_id,
+                             std::vector<JsonPathSinkConfig> paths);
+
+  // One pre-computed JSON path: the mangled iresearch field name + the
+  // Field that carries its tokenizer. Stored next to the analyzer so
+  // tokenizer lifetime tracks the column's Setup/Switch scope.
+  struct JsonPathField {
+    std::string name;  // backing storage; Field::name is a view on this
+    Field field;
+  };
+
   AnalyzerProvider _analyzer_provider;
+  JsonPathsProvider _json_paths_provider;
   Field _field;
   Field _pk_field;
   Field _null_field;
@@ -185,6 +248,12 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   Writer _current_writer;
   bool _emit_pk{true};
+
+  // State for the currently active JSON column (empty when the column is not
+  // path-indexed). Rebuilt on every SwitchColumn.
+  std::vector<JsonPathField> _json_fields;
+  simdjson::ondemand::parser _json_parser;
+  simdjson::padded_string _json_padded;
 };
 
 class SearchSinkDeleteBaseImpl {

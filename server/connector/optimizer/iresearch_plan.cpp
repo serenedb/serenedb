@@ -609,6 +609,9 @@ struct SearchColumnContext {
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
   std::function<catalog::ColumnAnalyzer(catalog::Column::Id)> analyzer_provider;
+  std::function<std::optional<catalog::ColumnAnalyzer>(
+    catalog::Column::Id, std::span<const std::string>)>
+    json_path_analyzer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -635,6 +638,39 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
     info.column_id = col_id;
     info.logical_type = type_it->second;
     info.analyzer = ctx.analyzer_provider(col_id);
+    return info;
+  };
+}
+
+connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
+  return [&ctx](const duckdb::BoundColumnRefExpression& ref,
+                std::span<const std::string> path)
+           -> std::optional<connector::SearchColumnInfo> {
+    if (ref.binding.table_index != ctx.table_index) {
+      return std::nullopt;
+    }
+    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
+      return std::nullopt;
+    }
+    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
+    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+      return std::nullopt;
+    }
+    if (!ctx.json_path_analyzer_provider) {
+      return std::nullopt;
+    }
+    auto analyzer = ctx.json_path_analyzer_provider(col_id, path);
+    if (!analyzer) {
+      return std::nullopt;
+    }
+    connector::SearchColumnInfo info;
+    info.column_id = col_id;
+    // All indexed JSON path leaves are treated as VARCHAR
+    // TODO(mkornaukhov)
+    // fix this logics when support non-varchar types as leaves
+    info.logical_type = duckdb::LogicalType::VARCHAR;
+    info.analyzer = *std::move(analyzer);
+    info.json_path.assign(path.begin(), path.end());
     return info;
   };
 }
@@ -715,7 +751,13 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
                            snapshot_for_analyzer](catalog::Column::Id col_id) {
     return index_ptr->GetColumnAnalyzer(snapshot_for_analyzer, col_id);
   };
+  ctx.json_path_analyzer_provider = [index_ptr, snapshot_for_analyzer](
+                                      catalog::Column::Id col_id,
+                                      std::span<const std::string> path) {
+    return index_ptr->GetJsonPathAnalyzer(snapshot_for_analyzer, col_id, path);
+  };
   auto getter = MakeColumnGetter(ctx);
+  auto json_getter = MakeJsonPathGetter(ctx);
 
   // Per-expression claim: try each filter expression individually so we
   // can leave non-iresearch predicates on the LogicalFilter. The
@@ -727,7 +769,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     const auto before = root->size();
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
-    auto result = connector::MakeSearchFilter(*root, single, getter);
+    auto result =
+      connector::MakeSearchFilter(*root, single, getter, json_getter);
     if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {

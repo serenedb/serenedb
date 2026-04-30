@@ -38,10 +38,15 @@ namespace sdb::connector {
 // coerce to); `analyzer` is the catalog-supplied column analyzer
 // (op-class determines tokenizer choice for text columns -- non-text
 // columns get a null analyzer here).
+//
+// For JSON-path indexed fields (e.g. `TERM_LIKE(content->'host', ...)`)
+// `json_path` is non-empty and holds the keys root-to-leaf; `logical_type`
+// is the DuckDB type of the indexed leaf (VARCHAR for the string-leaf MVP).
 struct SearchColumnInfo {
   catalog::Column::Id column_id{};
   duckdb::LogicalType logical_type;
   catalog::ColumnAnalyzer analyzer;
+  std::vector<std::string> json_path;
 };
 
 // Resolves a DuckDB bound column reference (by table_index + column_index,
@@ -52,6 +57,12 @@ struct SearchColumnInfo {
 // implementation (typically captures bind data + InvertedIndex).
 using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
+
+// Resolves a JSON path (e.g. {"host"}) on an already-known base column to
+// a SearchColumnInfo carrying the per-path analyzer. Returns nullopt if no
+// indexed path matches.
+using JsonPathGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
+  const duckdb::BoundColumnRefExpression&, std::span<const std::string>) const>;
 
 // Encodes column_id as an 8-byte big-endian binary string into
 // field_name. Before being used as an iresearch field name, the result
@@ -68,6 +79,7 @@ void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter);
+  const ColumnGetter& column_getter,
+  const JsonPathGetter& json_path_getter = {});
 
 }  // namespace sdb::connector

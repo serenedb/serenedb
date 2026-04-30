@@ -36,6 +36,7 @@
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
@@ -332,6 +333,11 @@ inline constexpr OptionGroup kUnionGroup{
   {},
   {},
 };
+inline constexpr OptionGroup kIdentityGroup{
+  irs::StringTokenizer::type_name(),
+  {},
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,         kTextGroup,      kNGramGroup,
@@ -340,6 +346,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
   kSegmentationGroup,     kPipelineGroup,  kPatternGroup,
   kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup,
+  kIdentityGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/planner/expression/bound_between_expression.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -46,8 +47,11 @@
 #include <iresearch/types.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 
+#include "basics/containers/node_hash_map.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
+#include "connector/json_extract_names.hpp"
+#include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
 #include "pg/errcodes.h"
@@ -61,7 +65,13 @@ struct FilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
   const ColumnGetter& column_getter;
-  containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo>& column_cache;
+  const JsonPathGetter* json_path_getter = nullptr;  // may be null
+  // Cache key is the same byte sequence as the iresearch field name before
+  // mangling (see MakeColumnFieldName): `[8 bytes BE col_id] + . + path`.
+  // This lets whole-column and JSON-path entries coexist in one map without
+  // collisions. NodeHashMap because SearchColumnInfo is larger than the
+  // FlatHashMap size cap.
+  containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
 };
 
 Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
@@ -88,23 +98,19 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
 }
 
-const SearchColumnInfo* FindColumnInfo(
+const SearchColumnInfo* FindColumnRefInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
-  // Try cache first -- keyed on column_id from a previous resolution.
-  // We do a two-step lookup: first resolve via column_getter to get the
-  // column_id, then check cache.  The column_getter itself may be cheap
-  // (just a span lookup), but caching avoids repeated analyzer copies.
-
-  // We cannot cache by binding alone (table_index + column_index) because
-  // different bindings may map to the same catalog column_id.  Instead
-  // we resolve first, then cache by column_id.
-
   auto info = ctx.column_getter(ref);
   if (!info) {
     return nullptr;
   }
 
-  auto cache_it = ctx.column_cache.find(info->column_id);
+  // The cache key is the un-mangled iresearch field name. For a bare column
+  // reference that is just [BE col_id] with no suffix.
+  std::string cache_key;
+  MakeColumnFieldName(info->column_id, {}, cache_key);
+
+  auto cache_it = ctx.column_cache.find(cache_key);
   if (cache_it != ctx.column_cache.end()) {
     SDB_ASSERT(cache_it->second.logical_type.id() !=
                  duckdb::LogicalTypeId::VARCHAR ||
@@ -112,14 +118,74 @@ const SearchColumnInfo* FindColumnInfo(
     return &cache_it->second;
   }
 
-  auto column_id = info->column_id;
-  return &ctx.column_cache.emplace(column_id, std::move(info.value()))
+  return &ctx.column_cache
+            .emplace(std::move(cache_key), std::move(info.value()))
+            .first->second;
+}
+
+const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
+  const duckdb::Expression& expr, std::vector<std::string>& out_path) {
+  out_path.clear();
+  // Reject when outtermost extraction does not return string
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
+      !IsJsonExtractString(
+        expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
+    return nullptr;
+  }
+
+  // Walk the chain: every node must be some JSON-extract until we reach a
+  // column ref. Inner nodes can be either text- or JSON-returning.
+  const duckdb::Expression* cur = &expr;
+  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
+    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
+    if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
+      return nullptr;
+    }
+    const auto* key_val = TryGetConstant(*f.children[1]);
+    if (!key_val || key_val->type().id() != duckdb::LogicalTypeId::VARCHAR ||
+        key_val->IsNull()) {
+      return nullptr;
+    }
+    out_path.push_back(key_val->GetValue<std::string>());
+    cur = f.children[0].get();
+  }
+  std::reverse(out_path.begin(), out_path.end());
+  return TryGetColumnRef(*cur);
+}
+
+// Full column info resolver that supports both bare column refs and JSON
+// path expressions (e.g. `content->'host'`). On success the returned pointer
+// is owned by `ctx.column_cache`.
+const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
+                                              const duckdb::Expression& expr) {
+  if (const auto* col_ref = TryGetColumnRef(expr)) {
+    return FindColumnRefInfo(ctx, *col_ref);
+  }
+  if (!ctx.json_path_getter) {
+    return nullptr;
+  }
+  std::vector<std::string> path;
+  const auto* col_ref = TryGetJsonColumnRef(expr, path);
+  if (!col_ref) {
+    return nullptr;
+  }
+  auto info = (*ctx.json_path_getter)(*col_ref, path);
+  if (!info) {
+    return nullptr;
+  }
+  std::string cache_key;
+  MakeColumnFieldName(info->column_id, info->json_path, cache_key);
+  auto it = ctx.column_cache.find(cache_key);
+  if (it != ctx.column_cache.end()) {
+    return &it->second;
+  }
+  return &ctx.column_cache
+            .emplace(std::move(cache_key), std::move(info.value()))
             .first->second;
 }
 
 void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  basics::StrResize(field_name, sizeof(column.column_id));
-  absl::big_endian::Store(field_name.data(), column.column_id);
+  MakeColumnFieldName(column.column_id, column.json_path, field_name);
 }
 
 // ---------------------------------------------------------------------------
@@ -347,14 +413,10 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_NOT_IMPLEMENTED, "IS NULL has ", op_expr.children.size(),
             " inputs but 1 expected"};
   }
-  const auto* col_ref = TryGetColumnRef(*op_expr.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, *op_expr.children[0]);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "Input is not a column reference or indexed JSON path"};
   }
   std::string field_name;
   MakeFieldName(*column_info, field_name);
@@ -376,12 +438,10 @@ template<bool GenericVersion>
 Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
-  const auto* col_ref = TryGetColumnRef(left_expr);
   const auto* const_val = TryGetConstant(right_expr);
 
-  if (!col_ref || !const_val) {
-    return {ERROR_BAD_PARAMETER,
-            "Expected column reference on the left and constant on the right"};
+  if (!const_val) {
+    return {ERROR_BAD_PARAMETER, "Expected constant on the right"};
   }
 
   if (const_val->IsNull()) {
@@ -390,9 +450,10 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, left_expr);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "Expected column reference or indexed JSON path on the left"};
   }
   if constexpr (GenericVersion) {
     if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
@@ -426,12 +487,10 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     op = InvertComparisonOp(op);
   }
 
-  const auto* col_ref = TryGetColumnRef(field_expr);
   const auto* const_val = TryGetConstant(value_expr);
 
-  if (!col_ref || !const_val) {
-    return {ERROR_BAD_PARAMETER,
-            "Expected column reference and constant for comparison"};
+  if (!const_val) {
+    return {ERROR_BAD_PARAMETER, "Expected constant for comparison"};
   }
 
   if (const_val->IsNull()) {
@@ -439,9 +498,10 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, field_expr);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "Expected column reference or indexed JSON path for comparison"};
   }
   if constexpr (GenericVersion) {
     if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
@@ -524,10 +584,9 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
   // BETWEEN a AND b  =>  field >= a (or >) AND field <= b (or <)
   // NOT BETWEEN       =>  field < a (or <=) OR field > b (or >=)
 
-  const auto* col_ref = TryGetColumnRef(*between.input);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "BETWEEN input is not a column reference"};
-  }
+  // No early validation of `between.input` -- the column-vs-JSON-path lift
+  // happens inside the FromComparison sub-calls below, which produce a
+  // proper error if the input isn't an indexed column or path.
   const auto* lower_val = TryGetConstant(*between.lower);
   const auto* upper_val = TryGetConstant(*between.upper);
   if (!lower_val || !upper_val) {
@@ -590,14 +649,10 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
             " inputs but at least 2 expected"};
   }
 
-  const auto* col_ref = TryGetColumnRef(*op_expr.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, *op_expr.children[0]);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "Input is not a column reference or indexed JSON path"};
   }
 
   if constexpr (GenericVersion) {
@@ -672,11 +727,6 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const duckdb::Expression& field_expr,
                 const duckdb::Expression& pattern_expr,
                 char escape_char = '\\') {
-  const auto* col_ref = TryGetColumnRef(field_expr);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
   const auto* const_val = TryGetConstant(pattern_expr);
   if (!const_val) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate LIKE pattern as constant"};
@@ -686,9 +736,10 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "Failed to evaluate LIKE pattern as VARCHAR"};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, field_expr);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column is not indexed"};
+    return {ERROR_BAD_PARAMETER,
+            "Input is not a column reference or indexed JSON path"};
   }
 
   std::string field_name;
@@ -757,15 +808,23 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   // tail), so DuckDB's function resolver rejects anything shorter at
   // bind time before we get here.
   SDB_ASSERT(func.children.size() >= 2);
-  const auto* col_ref = TryGetColumnRef(*func.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER,
-            "PHRASE first argument must be a column reference"};
+
+  const auto* const_val = TryGetConstant(*func.children[1]);
+  if (!const_val) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
+  }
+  if (const_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as VARCHAR"};
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  // Accepts both a bare column reference and a JSON-path expression like
+  // `content->'msg'` (the binder wraps the latter in a JSON->VARCHAR cast,
+  // which FindColumnInfoForExpr unwraps).
+  const auto* column_info = FindColumnInfoForExpr(ctx, *func.children[0]);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column is not indexed"};
+    return {ERROR_BAD_PARAMETER,
+            "PHRASE first argument must be a column reference or "
+            "indexed JSON path"};
   }
   if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return {ERROR_BAD_PARAMETER, "PHRASE field is not VARCHAR"};
@@ -945,11 +1004,6 @@ Result FromNgramMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
             " inputs but 2 or 3 expected"};
   }
 
-  const auto* col_ref = TryGetColumnRef(*func.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
   // target (string)
   const auto* target_val = TryGetConstant(*func.children[1]);
   if (!target_val) {
@@ -974,7 +1028,7 @@ Result FromNgramMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
     }
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, *func.children[0]);
   if (!column_info ||
       column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return {ERROR_BAD_PARAMETER, "NGRAM_MATCH field is not VARCHAR"};
@@ -1018,11 +1072,6 @@ Result FromLevenshteinMatch(irs::BooleanFilter& filter,
   if (num_inputs < 3 || num_inputs > 6) {
     return {ERROR_BAD_PARAMETER, "LEVENSHTEIN_MATCH has ", num_inputs,
             " inputs but 3 to 6 expected"};
-  }
-
-  const auto* col_ref = TryGetColumnRef(*func.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
   }
 
   // target (string)
@@ -1094,7 +1143,7 @@ Result FromLevenshteinMatch(irs::BooleanFilter& filter,
     prefix = prefix_val->GetValue<std::string>();
   }
 
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, *func.children[0]);
   if (!column_info ||
       column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return {ERROR_BAD_PARAMETER, "LEVENSHTEIN_MATCH field is not VARCHAR"};
@@ -1132,14 +1181,10 @@ Result FromTermIn(irs::BooleanFilter& filter, const FilterContext& ctx,
             " inputs but at least 2 expected"};
   }
 
-  const auto* col_ref = TryGetColumnRef(*func.children[0]);
-  if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *col_ref);
+  const auto* column_info = FindColumnInfoForExpr(ctx, *func.children[0]);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "Input is not a column reference or indexed JSON path"};
   }
 
   // Collect constant values from children[1..]
@@ -1397,13 +1442,14 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
 // ExprToFilter: wraps FromExpression with error boundary
 // ---------------------------------------------------------------------------
 
-Result ExprToFilter(irs::BooleanFilter& filter, const duckdb::Expression& expr,
-                    const ColumnGetter& column_getter,
-                    containers::FlatHashMap<catalog::Column::Id,
-                                            SearchColumnInfo>& column_cache) {
+Result ExprToFilter(
+  irs::BooleanFilter& filter, const duckdb::Expression& expr,
+  const ColumnGetter& column_getter, const JsonPathGetter* json_path_getter,
+  containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache) {
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
+    .json_path_getter = json_path_getter,
     .column_cache = column_cache,
   };
   return FromExpression(filter, ctx, expr);
@@ -1416,10 +1462,13 @@ Result ExprToFilter(irs::BooleanFilter& filter, const duckdb::Expression& expr,
 Result MakeSearchFilter(
   irs::And& root,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> conjuncts,
-  const ColumnGetter& column_getter) {
-  containers::FlatHashMap<catalog::Column::Id, SearchColumnInfo> column_cache;
+  const ColumnGetter& column_getter, const JsonPathGetter& json_path_getter) {
+  containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
+  // json_path_getter is optional; only pass a pointer when the caller supplied
+  // a non-empty invocable.
+  const JsonPathGetter* jpg = json_path_getter ? &json_path_getter : nullptr;
   for (const auto& expr : conjuncts) {
-    auto res = ExprToFilter(root, *expr, column_getter, column_cache);
+    auto res = ExprToFilter(root, *expr, column_getter, jpg, column_cache);
     if (res.fail()) {
       return res;
     }

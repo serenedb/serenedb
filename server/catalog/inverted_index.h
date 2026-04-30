@@ -22,6 +22,10 @@
 
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <optional>
+#include <span>
+#include <string>
+#include <vector>
 
 #include "basics/object_pool.hpp"
 #include "catalog/index.h"
@@ -38,11 +42,21 @@ struct HNSWColumnConfig {
   irs::HNSWMetric metric = irs::HNSWMetric::L2;
 };
 
+// One configured JSON path inside a JSON-typed column of an inverted index.
+// Each path effectively becomes a separate iresearch field named
+// [column_id BE] + "." + path[0] + "." + path[1] + ... (+ type mangle).
+struct JsonPathInfo {
+  std::vector<std::string> path;
+  ObjectId text_dictionary = ObjectId::none();
+  search::Features features;
+};
+
 struct InvertedIndexColumnInfo {
   ObjectId text_dictionary = ObjectId::none();
   bool store_values = false;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
+  std::vector<JsonPathInfo> json_paths;
 };
 
 struct ColumnAnalyzer {
@@ -78,10 +92,16 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 
+  std::optional<ColumnAnalyzer> GetJsonPathAnalyzer(
+    const std::shared_ptr<const Snapshot>& snapshot,
+    catalog::Column::Id column_id, std::span<const std::string> path) const;
+
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
+
+  const ColumnOptions& GetColumns() const noexcept { return _columns; }
 
  private:
   ColumnOptions _columns;

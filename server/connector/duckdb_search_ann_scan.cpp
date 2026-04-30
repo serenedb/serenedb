@@ -90,7 +90,9 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
     .top_k = top_k,
     .global_threshold = gstate.global_kth_dis.load(std::memory_order_relaxed),
   };
-  info.params.efSearch = std::max<size_t>(top_k, gstate.ef_search);
+  if (gstate.ef_search > 0) {
+    info.params.efSearch = gstate.ef_search;
+  }
   info.params.sel = filter.has_value() ? &*filter : nullptr;
 
   SDB_ASSERT(reader);

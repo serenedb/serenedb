@@ -61,6 +61,9 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+statement ok
+SET sdb_ef_search TO 512;
+
 query
 WITH
   result AS (SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
@@ -89,9 +92,9 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+# Since filter demands larger efSearch
 statement ok
 SET sdb_ef_search TO 2048;
-
 
 query
 WITH
@@ -101,6 +104,9 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_filtered WHERE id IN (SELECT id 
 ?column?
 t
 
+
+statement ok
+SET sdb_ef_search TO 512;
 
 # L1 recall
 
@@ -144,7 +150,7 @@ INSERT INTO correct_cos SELECT id FROM vecs ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0
 
 
 statement ok
-INSERT INTO correct_cos2 SELECT id FROM vecs ORDER BY cosine_distance(emb, [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8]) DESC LIMIT 512;
+INSERT INTO correct_cos2 SELECT id FROM vecs ORDER BY cosine_similarity(emb, [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8]) DESC LIMIT 512;
 
 
 statement ok

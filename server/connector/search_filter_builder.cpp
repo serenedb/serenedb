@@ -759,7 +759,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
           irs::Type<irs::StringTokenizer>::id()) {
       return {ERROR_BAD_PARAMETER,
               "Field is not indexed by identity analyzer. Use `col @@ "
-              "ANY_OF('a', 'b', ...)` (tokenised) or `col @@ ANY_OF("
+              "ts_any('a', 'b', ...)` (tokenised) or `col @@ ts_any("
               "'a'::tokenize('identity'), ...)` (raw)."};
     }
   }
@@ -1269,8 +1269,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("Unsupported TSQUERY expression class: ",
                             static_cast<int>(unwrapped.expression_class)),
-                    ERR_HINT("Use a TSQUERY constructor (PHRASE, LIKE, ...) or "
-                             "'literal'::TSQUERY."));
+                    ERR_HINT("Use a TSQUERY constructor (ts_phrase, ts_like, "
+                             "...) or 'literal'::TSQUERY."));
   }
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
@@ -1363,7 +1363,7 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("@@ has column references on both sides"),
         ERR_HINT("Wrap one side in 'word'::TSQUERY or a constructor "
-                 "(PHRASE, LIKE, ...)."));
+                 "(ts_phrase, ts_like, ...)."));
     }
     column = left_info ? left_col : right_col;
     expr = left_info ? func.children[1].get() : func.children[0].get();

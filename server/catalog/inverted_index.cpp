@@ -107,25 +107,26 @@ std::optional<ColumnAnalyzer> InvertedIndex::GetJsonPathAnalyzer(
   if (it == _columns.end()) {
     return std::nullopt;
   }
-  for (const auto& p : it->second.json_paths) {
-    if (p.path.size() != path.size()) {
+  for (const auto& path_info : it->second.json_paths) {
+    if (path_info.path.size() != path.size()) {
       continue;
     }
-    if (!std::equal(p.path.begin(), p.path.end(), path.begin())) {
+    if (!std::equal(path_info.path.begin(), path_info.path.end(),
+                    path.begin())) {
       continue;
     }
-    if (!p.text_dictionary.isSet()) {
+    if (!path_info.text_dictionary.isSet()) {
       auto analyzer = std::make_unique<irs::StringTokenizer>();
       return ColumnAnalyzer{.analyzer = Tokenizer::AnalyzerWrapper{
                               analyzer.release(), Tokenizer::Deleter{nullptr}}};
     }
-    auto dict = snapshot->GetObject<Tokenizer>(p.text_dictionary);
+    auto dict = snapshot->GetObject<Tokenizer>(path_info.text_dictionary);
     SDB_ENSURE(dict, ERROR_INTERNAL,
                "Dictionary for inverted index does not exists");
     auto tokenizer = dict->GetTokenizer();
     SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
     return ColumnAnalyzer{.analyzer = *std::move(tokenizer),
-                          .features = p.features.GetIndexFeatures()};
+                          .features = path_info.features.GetIndexFeatures()};
   }
   return std::nullopt;
 }

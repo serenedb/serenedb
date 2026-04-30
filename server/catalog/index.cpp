@@ -252,6 +252,12 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   auto resolve_dict = [&](std::string_view col_name, const std::string& opclass)
     -> ResultOr<std::pair<ObjectId, search::Features>> {
     auto object_name = pg::ParseObjectName(opclass, schema_name);
+    // Technically nothing prevents us from allowing so.
+    // But that will make schema drop more complicated as we will need to
+    // check if any dictionaries are used in the indexes from other
+    // schemas and even fail schema drops on this case. For now if we
+    // drop text dictionary as a child entity we can be sure that
+    // indexes will also be dropped along with tables from same schema.
     if (object_name.schema != schema_name) {
       return std::unexpected<Result>{
         std::in_place, ERROR_BAD_PARAMETER,

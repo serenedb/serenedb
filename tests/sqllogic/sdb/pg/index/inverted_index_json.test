@@ -247,82 +247,126 @@ statement ok
 CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->>'b') verbatim_dict);
 
 
-# JSON path leaves are indexed via the column's STRING analyzer. Inserting
-# a value where the leaf at the indexed path is a number/boolean/object/
-# array is rejected -- silently indexing the JSON token (`{`, `[`, or a
-# numeric literal as text) would either give wrong results (lex-ordered
-# numbers) or be useless. The user must keep the leaf as a string in their
-# data, or remove the path from the index.
+# All JSON primitive leaf types are accepted at indexed paths. Internally
+# each leaf type goes to a different iresearch field via the type-mangle
+# byte (string=\3, numeric=\2, bool=\1, null=\0), so different-typed values
+# at the same path don't collide. Compound types (object, array) are still
+# rejected -- they would index as the useless `{` / `[` JSON token.
 
 statement ok
-CREATE TABLE strict_typed (id INTEGER PRIMARY KEY, content JSON);
+CREATE TABLE prim_types (id INTEGER PRIMARY KEY, content JSON);
 
 statement ok
-CREATE INDEX strict_typed_idx ON strict_typed USING inverted(id, (content->>'host') verbatim_dict);
+CREATE INDEX prim_types_idx ON prim_types USING inverted(id, (content->>'val') verbatim_dict);
 
-# String leaf -- accepted.
+# Every primitive leaf type is accepted at insert time:
 statement ok
-INSERT INTO strict_typed VALUES (1, '{"host":"server-01"}'::json);
+INSERT INTO prim_types VALUES (1, '{"val":"hello"}'::json);
 
-# Integer leaf -- rejected.
-statement error
-INSERT INTO strict_typed VALUES (2, '{"host":42}'::json);
-----
-db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+statement ok
+INSERT INTO prim_types VALUES (2, '{"val":42}'::json);
 
+statement ok
+INSERT INTO prim_types VALUES (3, '{"val":3.14}'::json);
 
-# Float leaf -- rejected (same number type as int).
-statement error
-INSERT INTO strict_typed VALUES (3, '{"host":3.14}'::json);
-----
-db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+statement ok
+INSERT INTO prim_types VALUES (4, '{"val":true}'::json);
 
+statement ok
+INSERT INTO prim_types VALUES (5, '{"val":false}'::json);
 
-# Boolean leaf -- rejected.
-statement error
-INSERT INTO strict_typed VALUES (4, '{"host":true}'::json);
-----
-db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+# Null leaf -- accepted, indexed under a null-mangled marker.
+statement ok
+INSERT INTO prim_types VALUES (6, '{"val":null}'::json);
 
+# Missing path -- accepted, no posting at all for this row.
+statement ok
+INSERT INTO prim_types VALUES (7, '{"other":"x"}'::json);
 
 # Object leaf -- rejected.
 statement error
-INSERT INTO strict_typed VALUES (5, '{"host":{"x":1}}'::json);
+INSERT INTO prim_types VALUES (8, '{"val":{"x":1}}'::json);
 ----
-db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+db error: ERROR: JSON path indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
 # Array leaf -- rejected.
 statement error
-INSERT INTO strict_typed VALUES (6, '{"host":["a","b"]}'::json);
+INSERT INTO prim_types VALUES (9, '{"val":["a","b"]}'::json);
 ----
-db error: ERROR: JSON path indexed by an inverted index must point to a string leaf; got a non-string value (number/boolean/object/array). Cast to text in your data, or omit the path from the index definition
+db error: ERROR: JSON path indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
 
 
-# Null leaf and missing path are NOT errors -- both are treated as "no
-# value" (matching SQL NULL semantics) and the row simply contributes
-# nothing to the path's posting list.
-statement ok
-INSERT INTO strict_typed VALUES (7, '{"host":null}'::json);
-
-statement ok
-INSERT INTO strict_typed VALUES (8, '{"other":"x"}'::json);
-
-# Only the rows with valid (string / null / missing) leaves were committed.
+# All seven primitive/null/missing rows were committed; the two compound
+# rows were rolled back at insert time.
 query
-SELECT id FROM strict_typed ORDER BY id;
+SELECT id FROM prim_types ORDER BY id;
 ----
 id
 1
+2
+3
+4
+5
+6
 7
-8
 
 statement ok
-VACUUM (UPDATE_INDEXES) strict_typed;
+VACUUM (UPDATE_INDEXES) prim_types;
 
-# And only the row with an actual string leaf is searchable.
+# String leaf is searchable through TERM_EQ on the ->> form (string mangle).
 query
-SELECT id FROM strict_typed_idx WHERE TERM_EQ(content->>'host', 'server-01');
+SELECT id FROM prim_types_idx WHERE TERM_EQ(content->>'val', 'hello');
 ----
 id
 1
+
+# Each leaf type is queryable via the predicate's natural type. The filter
+# builder peels the user's CAST around the JSON path, picks the matching
+# mangle byte, and looks up the correct pre-emitted field on the index.
+# Numeric casts are normalised to DOUBLE because all JSON numbers are
+# written through NumericTokenizer.reset(double) in the sink.
+
+# Integer-valued leaf via ::int cast.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::int = 42;
+----
+id
+2
+
+# Float-valued leaf via ::double cast.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::double = 3.14;
+----
+id
+3
+
+# Numeric range -- granular range filter on the numeric mangle.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::double > 2 ORDER BY id;
+----
+id
+2
+3
+
+# Boolean true / false leaves via ::bool cast.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::bool = true;
+----
+id
+4
+
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::bool = false;
+----
+id
+5
+
+# Null leaf via SQL IS NULL. FromIsNull always uses MangleNull regardless
+# of the column's logical type, so this hits the null-mangled field
+# directly without needing a cast.
+query
+SELECT id FROM prim_types_idx WHERE content->>'val' IS NULL;
+----
+id
+6

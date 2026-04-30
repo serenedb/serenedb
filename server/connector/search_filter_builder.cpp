@@ -153,6 +153,39 @@ const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
   return TryGetColumnRef(*cur);
 }
 
+bool IsNumericTypeId(duckdb::LogicalTypeId id) {
+  switch (id) {
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+    case duckdb::LogicalTypeId::FLOAT:
+    case duckdb::LogicalTypeId::DOUBLE:
+    case duckdb::LogicalTypeId::DATE:
+    case duckdb::LogicalTypeId::TIMESTAMP:
+    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
+      return true;
+    default:
+      return false;
+  }
+}
+
+struct UnwrappedField {
+  const duckdb::Expression* expr;
+  std::optional<duckdb::LogicalType> override_type;
+};
+
+UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+    return {&expr, std::nullopt};
+  }
+  const auto& c = expr.Cast<duckdb::BoundCastExpression>();
+  if (!c.child) {
+    return {&expr, std::nullopt};
+  }
+  return {c.child.get(), c.return_type};
+}
+
 // Full column info resolver that supports both bare column refs and JSON
 // path expressions (e.g. `content->'host'`). On success the returned pointer
 // is owned by `ctx.column_cache`.
@@ -164,8 +197,10 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   if (!ctx.json_path_getter) {
     return nullptr;
   }
+
+  const auto unwrapped = UnwrapFieldCast(expr);
   std::vector<std::string> path;
-  const auto* col_ref = TryGetJsonColumnRef(expr, path);
+  const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path);
   if (!col_ref) {
     return nullptr;
   }
@@ -173,8 +208,21 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   if (!info) {
     return nullptr;
   }
+
+  // Has cast
+  if (unwrapped.override_type.has_value()) {
+    if (IsNumericTypeId(unwrapped.override_type->id())) {
+      info->logical_type = duckdb::LogicalType::DOUBLE;
+    } else {
+      info->logical_type = *unwrapped.override_type;
+    }
+  }
+
+  // The cache key needs to incorporate the (possibly overridden) type so
+  // numeric and string lookups against the same path don't collide.
   std::string cache_key;
   MakeColumnFieldName(info->column_id, info->json_path, cache_key);
+  cache_key.push_back(static_cast<char>(info->logical_type.id()));
   auto it = ctx.column_cache.find(cache_key);
   if (it != ctx.column_cache.end()) {
     return &it->second;
@@ -244,23 +292,6 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
       break;
     default:
       SDB_ASSERT(false, "ResetNumericStream called with non-numeric type");
-  }
-}
-
-bool IsNumericTypeId(duckdb::LogicalTypeId id) {
-  switch (id) {
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-    case duckdb::LogicalTypeId::FLOAT:
-    case duckdb::LogicalTypeId::DOUBLE:
-    case duckdb::LogicalTypeId::DATE:
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      return true;
-    default:
-      return false;
   }
 }
 

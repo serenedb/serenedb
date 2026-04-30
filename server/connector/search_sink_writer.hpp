@@ -228,12 +228,23 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   void SetupJsonColumnWriter(catalog::Column::Id column_id,
                              std::vector<JsonPathSinkConfig> paths);
 
-  // One pre-computed JSON path: the mangled iresearch field name + the
-  // Field that carries its tokenizer. Stored next to the analyzer so
-  // tokenizer lifetime tracks the column's Setup/Switch scope.
   struct JsonPathField {
-    std::string name;  // backing storage; Field::name is a view on this
-    Field field;
+    // Backing storage for each per-type field name; Field::name is a
+    // string_view into the corresponding buffer.
+    std::string string_name;
+    std::string numeric_name;
+    std::string bool_name;
+    std::string null_name;
+    Field string_field;  // user's configured analyzer
+    // TODO decide whether we need separate int and float
+    Field numeric_field;  // built-in NumericTokenizer
+    Field bool_field;     // built-in BooleanTokenizer
+    Field null_field;     // built-in NullTokenizer
+    // JSON Pointer view inside one of the name buffers.
+    std::string_view pointer;
+
+    void Init(catalog::Column::Id column_id, std::span<const std::string> path,
+              catalog::ColumnAnalyzer string_analyzer);
   };
 
   AnalyzerProvider _analyzer_provider;

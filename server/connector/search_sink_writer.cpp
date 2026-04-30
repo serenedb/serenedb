@@ -337,22 +337,52 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
+void SearchSinkInsertBaseImpl::JsonPathField::Init(
+  catalog::Column::Id column_id, std::span<const std::string> path,
+  catalog::ColumnAnalyzer string_analyzer) {
+  // Common prefix: [BE col_id]/key1/key2... -- no mangle byte yet.
+  std::string prefix;
+  MakeColumnFieldName(column_id, path, prefix);
+  const size_t prefix_size = prefix.size();
+
+  string_name = prefix;
+  search::mangling::MangleString(string_name);
+  string_field.PrepareForStringValue(std::move(string_analyzer));
+  string_field.name = string_name;
+
+  numeric_name = prefix;
+  search::mangling::MangleNumeric(numeric_name);
+  numeric_field.PrepareForNumericValue();
+  numeric_field.name = numeric_name;
+
+  bool_name = prefix;
+  search::mangling::MangleBool(bool_name);
+  bool_field.PrepareForBooleanValue();
+  bool_field.name = bool_name;
+
+  null_name = std::move(prefix);
+  search::mangling::MangleNull(null_name);
+  null_field.PrepareForNullValue();
+  null_field.name = null_name;
+
+  // The pointer view is shared across every type's name -- they all have
+  // the same bytes for the prefix, so any buffer's data() works.
+  constexpr size_t kColIdSize = sizeof(catalog::Column::Id);
+  pointer =
+    std::string_view{string_name.data() + kColIdSize, prefix_size - kColIdSize};
+}
+
 void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   catalog::Column::Id column_id, std::vector<JsonPathSinkConfig> paths) {
   SDB_ASSERT(!paths.empty());
 
-  // Build the iresearch field name for each configured path. The path
-  // segment of the name is itself a valid JSON Pointer, so at write time
-  // we can hand a string_view into the field name directly to
-  // simdjson::at_pointer -- no second buffer, no per-row reconstruction.
+  // Build per-path Field instances for every primitive leaf type. Each
+  // leaf type goes to a distinct iresearch field via the mangle byte, so
+  // different-typed values at the same path don't collide.
   _json_fields.clear();
   _json_fields.reserve(paths.size());
   for (auto& p : paths) {
-    auto& json_field = _json_fields.emplace_back();
-    MakeColumnFieldName(column_id, p.path, json_field.name);
-    search::mangling::MangleString(json_field.name);
-    json_field.field.PrepareForStringValue(std::move(p.analyzer));
-    json_field.field.name = json_field.name;
+    _json_fields.emplace_back().Init(column_id, p.path, std::move(p.analyzer));
   }
 
   _current_writer = [this](std::string_view /*full_key*/,
@@ -382,45 +412,77 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
 
     _json_padded = simdjson::padded_string{json_str};
 
+    auto insert_field = [this](Field& field) {
+      const bool ok = _document->template Insert<irs::Action::INDEX>(&field);
+      if (!ok) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert JSON path field into IResearch document");
+      }
+    };
+
     // Look up each path independently. On simdjson ondemand a new document
     // cursor is required per at_pointer() call on a freshly parsed document
     // to avoid consuming other paths' state.
-    for (auto& json_field : _json_fields) {
-      const std::string_view pointer = JsonPointerOf(json_field.name);
+    for (auto& jpf : _json_fields) {
       simdjson::ondemand::document doc;
       if (_json_parser.iterate(_json_padded).get(doc) != simdjson::SUCCESS) {
         return;
       }
       simdjson::ondemand::value val;
-      if (doc.at_pointer(pointer).get(val)) {
+      if (doc.at_pointer(jpf.pointer).get(val) != simdjson::SUCCESS) {
         continue;
       }
       simdjson::ondemand::json_type t;
-      if (val.type().get(t)) {
+      if (val.type().get(t) != simdjson::SUCCESS) {
         continue;
       }
-      if (t == simdjson::ondemand::json_type::null) {
-        continue;
-      }
-      if (t != simdjson::ondemand::json_type::string) {
-        SDB_THROW(ERROR_BAD_PARAMETER,
-                  "JSON path indexed by an inverted index must point to a "
-                  "string leaf; got a non-string value (number/boolean/"
-                  "object/array). Cast to text in your data, or omit the "
-                  "path from the index definition");
-      }
-      auto s = val.get_string();
-      if (s.error()) {
-        continue;
-      }
-      const std::string_view leaf = s.value_unsafe();
-
-      json_field.field.SetStringValue(leaf);
-      const bool ok =
-        _document->template Insert<irs::Action::INDEX>(&json_field.field);
-      if (!ok) {
-        SDB_THROW(ERROR_INTERNAL,
-                  "Failed to insert JSON path field into IResearch document");
+      switch (t) {
+        case simdjson::ondemand::json_type::string: {
+          auto s = val.get_string();
+          if (s.error() != simdjson::SUCCESS) {
+            continue;
+          }
+          jpf.string_field.SetStringValue(s.value_unsafe());
+          insert_field(jpf.string_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::number: {
+          // Always as double. JSON has only one number type, so picking
+          // the int-vs-float encoding per row would split the same field
+          // into incompatible term sets; double is a safe superset for
+          // values up to 2^53.
+          double d;
+          if (val.get_double().get(d) != simdjson::SUCCESS) {
+            continue;
+          }
+          jpf.numeric_field.SetNumericValue(d);
+          insert_field(jpf.numeric_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::boolean: {
+          bool b;
+          if (val.get_bool().get(b) != simdjson::SUCCESS) {
+            continue;
+          }
+          jpf.bool_field.SetBooleanValue(b);
+          insert_field(jpf.bool_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::null: {
+          jpf.null_field.SetNullValue();
+          insert_field(jpf.null_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::object:
+        case simdjson::ondemand::json_type::array:
+          SDB_THROW(ERROR_BAD_PARAMETER,
+                    "JSON path indexed by an inverted index must point to a "
+                    "primitive (string/number/boolean/null) leaf; got an "
+                    "object or array");
+        default:
+          // simdjson::ondemand::json_type has an `unknown` sentinel; treat
+          // it the same as a missing leaf (skip silently).
+          continue;
       }
     }
   };

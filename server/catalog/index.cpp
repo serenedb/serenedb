@@ -106,7 +106,7 @@ Result ApplyHNSWOptions(
       } else if (v == kL1Metric) {
         cfg.metric = irs::HNSWMetric::L1;
       } else if (v == kCosineMetric) {
-        cfg.metric = irs::HNSWMetric::CosineSimilarity;
+        cfg.metric = irs::HNSWMetric::Cosine;
       } else if (v == kIPMetric) {
         cfg.metric = irs::HNSWMetric::NegativeIP;
       } else {

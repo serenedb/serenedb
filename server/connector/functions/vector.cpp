@@ -69,13 +69,13 @@ R ComputeL1(const T* l, const T* r, size_t size) {
 }
 
 template<typename T, typename R>
-R ComputeCosine(const T* l, const T* r, size_t size) {
+R ComputeCos(const T* l, const T* r, size_t size) {
   const auto [ll, lr, rr] = irs::vector::CosineDistanceImpl<T, T, R>::Compute(
     reinterpret_cast<const irs::byte_type*>(l),
     reinterpret_cast<const irs::byte_type*>(r), static_cast<uint16_t>(size));
   const R denom = std::sqrt(ll * rr);
   if (denom == 0.0) {
-    return 0.0;
+    return 0.;
   }
   return lr / denom;
 }
@@ -95,9 +95,9 @@ void Execute(R& result, const T* l, const T* r, size_t size) {
   } else if constexpr (D == Distance::L2) {
     result = ComputeL2<T, R>(l, r, size);
   } else if constexpr (D == Distance::Cosine) {
-    result = ComputeCosine<T, R>(l, r, size);
+    result = 1. - ComputeCos<T, R>(l, r, size);
   } else if constexpr (D == Distance::CosineSimilarity) {
-    result = 1. - ComputeCosine<T, R>(l, r, size);
+    result = ComputeCos<T, R>(l, r, size);
   } else if constexpr (D == Distance::IP) {
     result = ComputeInnerProduct<T, R>(l, r, size);
   } else if constexpr (D == Distance::L2Sqr) {
@@ -187,9 +187,9 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
     name = kL2SqrDistance;
   } else if constexpr (D == Distance::Cosine) {
     name = kCosineDistance;
+    op_name = kCosineDistanceOp;
   } else if constexpr (D == Distance::CosineSimilarity) {
     name = kCosineSimilarity;
-    op_name = kCosineSimilarityOp;
   } else if constexpr (D == Distance::IP) {
     name = kIP;
   } else if constexpr (D == Distance::NegativeIP) {

@@ -190,14 +190,12 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
   if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
     return ExpectedHNSW{irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING};
   }
-  if (name == connector::kCosineDistance) {
-    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity,
-                        duckdb::OrderType::DESCENDING};
+  if (name == connector::kCosineDistance ||
+      name == connector::kCosineDistanceOp) {
+    return ExpectedHNSW{irs::HNSWMetric::Cosine, duckdb::OrderType::ASCENDING};
   }
-  if (name == connector::kCosineSimilarity ||
-      name == connector::kCosineSimilarityOp) {
-    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity,
-                        duckdb::OrderType::ASCENDING};
+  if (name == connector::kCosineSimilarity) {
+    return ExpectedHNSW{irs::HNSWMetric::Cosine, duckdb::OrderType::DESCENDING};
   }
   if (name == connector::kIP) {
     return ExpectedHNSW{irs::HNSWMetric::NegativeIP,

@@ -27,17 +27,17 @@ SELECT [0.0, 1.0, 2.0]::FLOAT[3] <=> [2.0, 1.0, 0.0]::FLOAT[3];
 
 
 query
-SELECT cosine_distance([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+SELECT cosine_distance([0.0, 1.0, 2.0]::FLOAT[3], [0.0, -1.0, -2.0]::FLOAT[3]);
 ----
 cosine_distance
-0.2<slt:ignore>
+2
 
 
 query
-SELECT cosine_similarity([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+SELECT cosine_similarity([0.0, 1.0, 2.0]::FLOAT[3], [0.0, -1.0, -2.0]::FLOAT[3]);
 ----
 cosine_similarity
-0.8<slt:ignore>
+-1
 
 
 query

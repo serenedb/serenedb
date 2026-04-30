@@ -298,7 +298,7 @@ id
 
 
 query
-EXPLAIN SELECT id FROM cos_index ORDER BY cosine_similarity(emb, [1.0, 0.0, 0.0]::FLOAT[3]) LIMIT 2;
+EXPLAIN SELECT id FROM cos_index ORDER BY cosine_similarity(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -315,7 +315,7 @@ QUERY PLAN
 
 
 query
-EXPLAIN SELECT id FROM cos_index ORDER BY cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+EXPLAIN SELECT id FROM cos_index ORDER BY cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) LIMIT 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -332,7 +332,7 @@ QUERY PLAN
 
 
 query
-EXPLAIN SELECT id FROM cos_index WHERE cosine_similarity(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.5;
+EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐

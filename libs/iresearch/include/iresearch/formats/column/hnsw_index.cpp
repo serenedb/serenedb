@@ -79,7 +79,7 @@ auto ResolveDistanceFunction(HNSWMetric metric) {
       return ComputeNegativeInnerProduct;
     case HNSWMetric::L1:
       return irs::vector::L1Space<float, float, float>::Dist;
-    case HNSWMetric::CosineSimilarity: {
+    case HNSWMetric::Cosine: {
       return ComputeCosine;
     }
     default:

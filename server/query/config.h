@@ -95,6 +95,8 @@ class Config {
 
   std::shared_ptr<const catalog::Snapshot> EnsureCatalogSnapshot() const;
 
+  bool HasSetting(std::string_view key) const;
+
   // Returns the current value of a setting, or std::nullopt if not found.
   std::optional<std::string> Get(std::string_view key) const;
 

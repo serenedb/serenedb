@@ -103,6 +103,22 @@ bool Config::GetReadYourOwnWrites() const {
   return duckdb::BooleanValue::Get(value);
 }
 
+bool Config::HasSetting(std::string_view key) const {
+  // Mirror TryGetCurrentSetting's existence semantics without paying for the
+  // value fetch (string copy + Value allocation). A setting is known when
+  // TryGetSettingIndex returns a valid index (extension, or built-in with an
+  // index), or when a legacy built-in without an index still exposes a
+  // get_setting callback or a default value.
+  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  auto setting_index = db_config.TryGetSettingIndex(
+    duckdb::String::Reference(key.data(), key.size()), option);
+  if (setting_index.IsValid()) {
+    return true;
+  }
+  return option && (option->get_setting || option->default_value);
+}
+
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {

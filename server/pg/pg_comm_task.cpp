@@ -366,7 +366,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       // Apply all user settings from startup packet
       for (const auto& user_setting : _client_parameters) {
         try {
-          if (_connection_ctx->Get(user_setting.first)) {
+          if (_connection_ctx->HasSetting(user_setting.first)) {
             _connection_ctx->SetSettingChecked(user_setting.first,
                                                user_setting.second, false);
           }

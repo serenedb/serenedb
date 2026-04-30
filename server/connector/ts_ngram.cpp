@@ -38,19 +38,19 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     "Example: ts_ngram('hello', 0.7). Threshold is 0.0-1.0 (default 0.7).";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("NGRAM field is not VARCHAR"),
+                    ERR_MSG("ts_ngram field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("NGRAM expects 1 or 2 arguments (text[, threshold]), got ",
+      ERR_MSG("ts_ngram expects 1 or 2 arguments (text[, threshold]), got ",
               func.children.size()),
       ERR_HINT(kSyntaxHint));
   }
 
   std::string target;
-  if (auto r = GetVarcharArg(*func.children[0], "NGRAM text", target);
+  if (auto r = GetVarcharArg(*func.children[0], "ts_ngram text", target);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -59,7 +59,7 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
   float threshold = 0.7f;
   if (func.children.size() == 2) {
     double thr;
-    if (auto r = GetDoubleArg(*func.children[1], "NGRAM threshold", thr);
+    if (auto r = GetDoubleArg(*func.children[1], "ts_ngram threshold", thr);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -69,7 +69,7 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
   if (threshold < 0.f || threshold > 1.f) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("NGRAM threshold must be between 0 and 1, got ", threshold),
+      ERR_MSG("ts_ngram threshold must be between 0 and 1, got ", threshold),
       ERR_HINT(kSyntaxHint));
   }
 
@@ -79,7 +79,7 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(
-        "NGRAM field should have Positions and Frequency features enabled"),
+        "ts_ngram field should have Positions and Frequency features enabled"),
       ERR_HINT("Recreate the inverted index with both `Positions` and "
                "`Frequency` features attached to the column."));
   }

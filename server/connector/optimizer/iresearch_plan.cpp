@@ -1875,7 +1875,7 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 //
 // We trigger at the AGGREGATE node (not the GET) because projection-pushdown
 // runs before our extension and may leave filter-only columns (e.g. `b` in
-// WHERE b @@ PHRASE(...)) in get.column_ids even after we claimed the
+// WHERE b @@ ts_phrase(...)) in get.column_ids even after we claimed the
 // filter.
 // Detecting at aggregate level lets us verify the output shape is truly
 // "no columns needed" and then strip column_ids ourselves.

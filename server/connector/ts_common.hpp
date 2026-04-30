@@ -151,7 +151,7 @@ struct RangeArgs {
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func);
 void FillByRangeOptionsVarchar(const RangeArgs& args, irs::ByRangeOptions& out);
 
-// LEVENSHTEIN-as-part dispatch.
+// ts_levenshtein-as-part dispatch.
 struct LevenshteinArgs {
   std::string text;
   int64_t distance = 1;
@@ -165,7 +165,7 @@ LevenshteinArgs ParseLevenshteinArgs(
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out);
 
-// ANY_OF/ALL_OF arg unpacker: handles single TSQUERY, TSQUERY[]
+// ts_any/ts_all arg unpacker: handles single TSQUERY, TSQUERY[]
 // (extracts elements), and the optional min_should_match suffix.
 // `synthesised` collects any temporary expressions the unpacker
 // constructs (so their lifetime extends past return).

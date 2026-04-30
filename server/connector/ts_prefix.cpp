@@ -36,9 +36,9 @@ void BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                     std::string_view prefix) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("PREFIX field is not VARCHAR"),
-                    ERR_HINT("Example: ts_starts_with('pre'). PREFIX requires a "
-                             "VARCHAR column."));
+                    ERR_MSG("ts_starts_with field is not VARCHAR"),
+                    ERR_HINT("Example: ts_starts_with('pre'). ts_starts_with "
+                             "requires a VARCHAR column."));
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -60,12 +60,12 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PREFIX expects 1 argument (text), got ", func.children.size()),
+      ERR_MSG("ts_starts_with expects 1 argument (text), got ", func.children.size()),
       ERR_HINT("Example: ts_starts_with('pre'). For mid-string wildcards use "
                "ts_like('foo%bar')."));
   }
   std::string prefix;
-  if (auto r = GetVarcharArg(*func.children[0], "PREFIX text", prefix);
+  if (auto r = GetVarcharArg(*func.children[0], "ts_starts_with text", prefix);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),

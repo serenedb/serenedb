@@ -36,7 +36,7 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("RANGE expects 4 arguments (min, max, min_incl, max_incl), "
+      ERR_MSG("ts_between expects 4 arguments (min, max, min_incl, max_incl), "
               "got ",
               func.children.size()),
       ERR_HINT(kSyntaxHint));
@@ -46,19 +46,19 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
     const auto* val = TryGetConstant(*func.children[i]);
     if (!val) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("RANGE bound ", i, " must be a constant"),
+                      ERR_MSG("ts_between bound ", i, " must be a constant"),
                       ERR_HINT(kSyntaxHint));
     }
     if (!val->IsNull()) {
       (i == 0 ? out.min_val : out.max_val) = val;
     }
   }
-  if (auto r = GetBoolArg(*func.children[2], "RANGE min_incl", out.min_incl);
+  if (auto r = GetBoolArg(*func.children[2], "ts_between min_incl", out.min_incl);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  if (auto r = GetBoolArg(*func.children[3], "RANGE max_incl", out.max_incl);
+  if (auto r = GetBoolArg(*func.children[3], "ts_between max_incl", out.max_incl);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -66,7 +66,7 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   if (out.min_val && out.max_val &&
       out.min_val->type().id() != out.max_val->type().id()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("RANGE bounds have mismatched types: ",
+                    ERR_MSG("ts_between bounds have mismatched types: ",
                             out.min_val->type().ToString(), " vs ",
                             out.max_val->type().ToString()),
                     ERR_HINT("Both bounds must share the same type family."));
@@ -90,10 +90,10 @@ void FillByRangeOptionsVarchar(const RangeArgs& args,
   }
 }
 
-void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
-                     const SearchColumnInfo& column_info,
-                     const duckdb::BoundFunctionExpression& func,
-                     std::string_view label, bool is_lower, bool inclusive) {
+void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
+                   const SearchColumnInfo& column_info,
+                   const duckdb::BoundFunctionExpression& func,
+                   std::string_view label, bool is_lower, bool inclusive) {
   static constexpr auto kSyntaxHint =
     "Example: ts_lt('m') or ts_ge(42). Bound must be non-null; "
     "use ts_between(NULL, ...) for unbounded.";
@@ -220,10 +220,6 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
 
-  // Numeric: cast the bound to the column's logical type, then run
-  // NumericTokenizer + SetGranularTerm (mirrors FromRange's numeric
-  // path so DECIMAL bounds on a DOUBLE/INT/BIGINT column work
-  // cleanly).
   auto& range = ctx.negated ? Negate<irs::ByGranularRange>(parent)
                             : AddFilter<irs::ByGranularRange>(parent);
   *range.mutable_field() = std::move(field_name);
@@ -243,9 +239,9 @@ void FromTSQRangeOne(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 }
 
-void FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
-               const SearchColumnInfo& column_info,
-               const duckdb::BoundFunctionExpression& func) {
+void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
+                 const SearchColumnInfo& column_info,
+                 const duckdb::BoundFunctionExpression& func) {
   auto args = ParseRangeArgs(func);
   // Both bounds NULL -> unbounded on both sides; matches every doc.
   if (!args.min_val && !args.max_val) {
@@ -264,7 +260,7 @@ void FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   // Validate value type matches column type family.
   auto type_mismatch = [&]() {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("RANGE bound type ", val_sample->type().ToString(),
+                    ERR_MSG("ts_between bound type ", val_sample->type().ToString(),
                             " is incompatible with column type ",
                             column_info.logical_type.ToString()),
                     ERR_HINT("Both bounds must match the column's type "
@@ -278,10 +274,10 @@ void FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
         irs::Type<irs::StringTokenizer>::id()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("RANGE on VARCHAR field requires identity-analyzed column"),
+        ERR_MSG("ts_between on VARCHAR field requires identity-analyzed column"),
         ERR_HINT("Recreate the inverted index with the identity tokenizer "
-                 "for this column, or use LESS/LESS_EQ/GREATER/GREATER_EQ "
-                 "for analyzed-text bounds."));
+                 "for this column, or use ts_lt/ts_le/ts_gt/ts_ge for "
+                 "analyzed-text bounds."));
     }
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
@@ -293,9 +289,9 @@ void FromRange(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("RANGE: unsupported column type ",
+                    ERR_MSG("ts_between: unsupported column type ",
                             column_info.logical_type.ToString()),
-                    ERR_HINT("RANGE is supported on VARCHAR (identity "
+                    ERR_HINT("ts_between is supported on VARCHAR (identity "
                              "analyzer), BOOLEAN and numeric columns."));
   }
 

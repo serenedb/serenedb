@@ -346,7 +346,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // Casts to/from the TOKENIZED_TSQUERY alias. The bind callback for
   // `tokenize(...)` returns this alias (instead of TSQUERY) so that:
   //   - `'foo'::tokenize('x')`     -- VARCHAR -> TOK-mod-x cast survives
-  //   - `PHRASE('y')::tokenize('x')` -- TSQ -> TOK-mod-x cast survives
+  //   - `ts_phrase('y')::tokenize('x')` -- TSQ -> TOK-mod-x cast survives
   // (both are different-alias casts so DuckDB doesn't short-circuit).
   // The TOK->TSQ direction lets a tokenized value flow back into any
   // TSQUERY-expecting overload (`@@`, `||`, `&&`, `##`, ...) without
@@ -460,7 +460,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     },
     /*implicit_cast_cost=*/0);
 
-  // PHRASE(text [, gap, text, gap, text, ...]) -- tokenises each text
+  // ts_phrase(text [, gap, text, gap, text, ...]) -- tokenises each text
   // pattern via the ambient analyzer and chains them into one
   // irs::ByPhrase. Gap args are bare INTEGERs (exact gap N) or 2-element
   // INTEGER[] / arrays ([min, max] range). See FromPhrase for the full
@@ -480,7 +480,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // LIKE(pattern) / PREFIX(text) -- raw, no tokenisation.
+  // ts_like(pattern) / PREFIX(text) -- raw, no tokenisation.
   for (auto name : {kTSQLike, kTSQPrefix}) {
     loader.RegisterFunction(
       duckdb::ScalarFunction(std::string{name}, {varchar}, tsq, TSQueryStubFn));
@@ -731,7 +731,7 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // TOKENIZED_TSQUERY (not TSQUERY) so that:
   //   - `b @@ EXPR::tokenize('x')`: the user-written cast targets TOK
   //     directly, sits unwrapped under @@. Walker reads modifier.
-  //   - `b @@ PHRASE('y')` / `b @@ 'foo'`: TSQ / VARCHAR auto-cast to
+  //   - `b @@ ts_phrase('y')` / `b @@ 'foo'`: TSQ / VARCHAR auto-cast to
   //     TOK. The wrapping cast carries no modifier (target alias is
   //     plain TOK), so the walker peels it via UnwrapTSQueryCast and
   //     dispatches the inner TSQ/VARCHAR expression as before.

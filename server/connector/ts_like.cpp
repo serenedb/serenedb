@@ -41,8 +41,8 @@ void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LIKE field is not VARCHAR"),
-      ERR_HINT("LIKE requires a VARCHAR column with identity or wildcard "
+      ERR_MSG("ts_like field is not VARCHAR"),
+      ERR_HINT("ts_like requires a VARCHAR column with identity or wildcard "
                "analyzer."));
   }
   std::string field_name;
@@ -59,12 +59,12 @@ void FromTSQLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LIKE expects 1 argument (pattern), got ", func.children.size()),
+      ERR_MSG("ts_like expects 1 argument (pattern), got ", func.children.size()),
       ERR_HINT("Example: ts_like('foo%bar'). `%` = any sequence, `_` = one "
                "char."));
   }
   std::string pat;
-  if (auto r = GetVarcharArg(*func.children[0], "LIKE pattern", pat); !r.ok()) {
+  if (auto r = GetVarcharArg(*func.children[0], "ts_like pattern", pat); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),
                     ERR_HINT("Example: ts_like('foo%bar')."));

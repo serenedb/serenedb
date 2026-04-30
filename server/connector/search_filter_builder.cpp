@@ -987,15 +987,16 @@ void FromPrefix(irs::BooleanFilter&, const FilterContext&,
 void FromTokenize(irs::BooleanFilter&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&);
-void FromTSQRangeOne(irs::BooleanFilter&, const FilterContext&,
+void FromHalfRange(irs::BooleanFilter&, const FilterContext&,
                      const SearchColumnInfo&,
                      const duckdb::BoundFunctionExpression&,
                      std::string_view label, bool is_lower, bool inclusive);
 void FromRegexp(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
-void FromRange(irs::BooleanFilter&, const FilterContext&,
-               const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
+void FromBetween(irs::BooleanFilter&, const FilterContext&,
+                 const SearchColumnInfo&,
+                 const duckdb::BoundFunctionExpression&);
 void FromCompound(irs::BooleanFilter&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&);
@@ -1182,11 +1183,11 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   // the Tokenizer's pool when the scope exits.
   auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
   if (!wrapper) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("::tokenize('", mod.name,
-                            "'): tokenizer not found in catalog"),
-                    ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
-                             "or use 'identity' for raw bytes."));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+      ERR_MSG("::tokenize('", mod.name, "'): tokenizer not found in catalog"),
+      ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
+               "or use 'identity' for raw bytes."));
   }
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {
@@ -1277,94 +1278,70 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   switch (op) {
     case TSQueryOp::Phrase:
-      FromPhrase(parent, ctx, column_info, func);
-      return;
+      return FromPhrase(parent, ctx, column_info, func);
     case TSQueryOp::Term:
-      FromTerm(parent, ctx, column_info, func);
-      return;
+      return FromTerm(parent, ctx, column_info, func);
     case TSQueryOp::Like:
-      FromTSQLike(parent, ctx, column_info, func);
-      return;
+      return FromTSQLike(parent, ctx, column_info, func);
     case TSQueryOp::Prefix:
-      FromPrefix(parent, ctx, column_info, func);
-      return;
+      return FromPrefix(parent, ctx, column_info, func);
     case TSQueryOp::Ngram:
-      FromNgram(parent, ctx, column_info, func);
-      return;
+      return FromNgram(parent, ctx, column_info, func);
     case TSQueryOp::Fuzzy:
-      FromLevenshtein(parent, ctx, column_info, func);
-      return;
+      return FromLevenshtein(parent, ctx, column_info, func);
     case TSQueryOp::Or:
-      FromTSQueryConjunction(parent, ctx, column_info, func, /*is_and=*/false);
-      return;
+      return FromTSQueryConjunction(parent, ctx, column_info, func,
+                                    /*is_and=*/false);
     case TSQueryOp::And:
-      FromTSQueryConjunction(parent, ctx, column_info, func, /*is_and=*/true);
-      return;
+      return FromTSQueryConjunction(parent, ctx, column_info, func,
+                                    /*is_and=*/true);
     case TSQueryOp::Not:
-      FromTSQueryNot(parent, ctx, column_info, func);
-      return;
+      return FromTSQueryNot(parent, ctx, column_info, func);
     case TSQueryOp::Boost:
-      FromTSQueryBoost(parent, ctx, column_info, func);
-      return;
+      return FromTSQueryBoost(parent, ctx, column_info, func);
     case TSQueryOp::PhraseSeq:
-      FromTSQueryPhraseSeq(parent, ctx, column_info, func);
-      return;
+      return FromTSQueryPhraseSeq(parent, ctx, column_info, func);
     case TSQueryOp::PhraseToTsquery:
-      FromPhraseToTsquery(parent, ctx, column_info, func);
-      return;
+      return FromPhraseToTsquery(parent, ctx, column_info, func);
     case TSQueryOp::Any:
-      FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
-      return;
+      return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
     case TSQueryOp::All:
-      FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
-      return;
+      return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/false);
     case TSQueryOp::Compound:
-      FromCompound(parent, ctx, column_info, func);
-      return;
+      return FromCompound(parent, ctx, column_info, func);
     case TSQueryOp::Between:
-      FromRange(parent, ctx, column_info, func);
-      return;
+      return FromBetween(parent, ctx, column_info, func);
     case TSQueryOp::Regexp:
-      FromRegexp(parent, ctx, column_info, func);
-      return;
+      return FromRegexp(parent, ctx, column_info, func);
     case TSQueryOp::Less:
-      FromTSQRangeOne(parent, ctx, column_info, func, "LESS",
-                      /*is_lower=*/false, /*inclusive=*/false);
-      return;
+      return FromHalfRange(parent, ctx, column_info, func, "ts_lt",
+                           /*is_lower=*/false, /*inclusive=*/false);
     case TSQueryOp::LessEq:
-      FromTSQRangeOne(parent, ctx, column_info, func, "LESS_EQ",
-                      /*is_lower=*/false, /*inclusive=*/true);
-      return;
+      return FromHalfRange(parent, ctx, column_info, func, "ts_le",
+                           /*is_lower=*/false, /*inclusive=*/true);
     case TSQueryOp::Greater:
-      FromTSQRangeOne(parent, ctx, column_info, func, "GREATER",
-                      /*is_lower=*/true, /*inclusive=*/false);
-      return;
+      return FromHalfRange(parent, ctx, column_info, func, "ts_gt",
+                           /*is_lower=*/true, /*inclusive=*/false);
     case TSQueryOp::GreaterEq:
-      FromTSQRangeOne(parent, ctx, column_info, func, "GREATER_EQ",
-                      /*is_lower=*/true, /*inclusive=*/true);
-      return;
+      return FromHalfRange(parent, ctx, column_info, func, "ts_ge",
+                           /*is_lower=*/true, /*inclusive=*/true);
     case TSQueryOp::Tokenize:
-      FromTokenize(parent, ctx, column_info, func);
-      return;
+      return FromTokenize(parent, ctx, column_info, func);
     case TSQueryOp::PlainToTsquery:
-      FromPlainToTsquery(parent, ctx, column_info, func);
-      return;
+      return FromPlainToTsquery(parent, ctx, column_info, func);
     case TSQueryOp::WebsearchToTsquery:
-      FromWebsearchToTsquery(parent, ctx, column_info, func);
-      return;
+      return FromWebsearchToTsquery(parent, ctx, column_info, func);
     case TSQueryOp::TsqueryPhrase:
-      FromTsqueryPhrase(parent, ctx, column_info, func);
-      return;
+      return FromTsqueryPhrase(parent, ctx, column_info, func);
     case TSQueryOp::ToTSQuery:
-      FromToTsquery(parent, ctx, column_info, func);
-      return;
+      return FromToTsquery(parent, ctx, column_info, func);
     case TSQueryOp::Unknown:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("Not a TSQUERY-producing function: ", func.function.name),
-        ERR_HINT("Use a TSQUERY constructor (PHRASE, LIKE, RANGE, NGRAM, "
-                 "LEVENSHTEIN, REGEXP, any_of, all_of, compound, ...) or "
-                 "'literal'::TSQUERY."));
+        ERR_HINT("Use a TSQUERY constructor (ts_phrase, ts_like, ts_between, "
+                 "ts_ngram, ts_levenshtein, ts_regexp, ts_any, ts_all, "
+                 "ts_compound, ...) or 'literal'::TSQUERY."));
   }
   SDB_UNREACHABLE();
 }

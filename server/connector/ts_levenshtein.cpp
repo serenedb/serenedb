@@ -37,20 +37,20 @@ LevenshteinArgs ParseLevenshteinArgs(
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (func.children.empty() || func.children.size() > 4) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
+                    ERR_MSG("ts_levenshtein expects 1 to 4 arguments "
                             "(text, distance?, transpositions?, prefix?), got ",
                             func.children.size()),
                     ERR_HINT(kSyntaxHint));
   }
   LevenshteinArgs out;
-  if (auto r = GetVarcharArg(*func.children[0], "LEVENSHTEIN text", out.text);
+  if (auto r = GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 2) {
     if (auto r =
-          GetIntArg(*func.children[1], "LEVENSHTEIN distance", out.distance);
+          GetIntArg(*func.children[1], "ts_levenshtein distance", out.distance);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -59,12 +59,12 @@ LevenshteinArgs ParseLevenshteinArgs(
   if (out.distance < 0 || out.distance > 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("LEVENSHTEIN distance must be between 0 and 4, got ",
+      ERR_MSG("ts_levenshtein distance must be between 0 and 4, got ",
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 3) {
-    if (auto r = GetBoolArg(*func.children[2], "LEVENSHTEIN transpositions",
+    if (auto r = GetBoolArg(*func.children[2], "ts_levenshtein transpositions",
                             out.with_transpositions);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -73,14 +73,14 @@ LevenshteinArgs ParseLevenshteinArgs(
   }
   if (out.with_transpositions && out.distance > 3) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("LEVENSHTEIN distance must be between 0 and 3 when "
+                    ERR_MSG("ts_levenshtein distance must be between 0 and 3 when "
                             "transpositions is true, got ",
                             out.distance),
                     ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 4) {
     if (auto r =
-          GetVarcharArg(*func.children[3], "LEVENSHTEIN prefix", out.prefix);
+          GetVarcharArg(*func.children[3], "ts_levenshtein prefix", out.prefix);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -112,12 +112,12 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("LEVENSHTEIN field is not VARCHAR"),
+                    ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
   if (func.children.empty() || func.children.size() > 4) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("LEVENSHTEIN expects 1 to 4 arguments "
+                    ERR_MSG("ts_levenshtein expects 1 to 4 arguments "
                             "(text, distance?, transpositions?, prefix?), got ",
                             func.children.size()),
                     ERR_HINT(kSyntaxHint));

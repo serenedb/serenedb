@@ -182,28 +182,28 @@ a	b
 # Error: leading text pattern tokenizes to nothing (empty string) so the
 # following integer gap has no preceding text -- covers the opts->empty()
 # check in the integer gap branch of FromPhrase.
-query error PHRASE gap at argument 1 must be preceded by a text pattern
+query error ts_phrase gap at argument 1 must be preceded by a text pattern
 SELECT a FROM foo_idx WHERE b @@ ts_phrase('', 1, 'fox');
 
 
 # Same as above but via a range gap -- covers the opts->empty() check
 # in the LIST/ARRAY gap branch of FromPhrase.
-query error PHRASE gap at argument 1 must be preceded by a text pattern
+query error ts_phrase gap at argument 1 must be preceded by a text pattern
 SELECT a FROM foo_idx WHERE b @@ ts_phrase('', ARRAY[1,2], 'fox');
 
 
 # Error: gap at end with no following text pattern
-query error PHRASE ends with a gap; a text pattern must follow each gap
+query error ts_phrase ends with a gap; a text pattern must follow each gap
 SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 1);
 
 
 # Error: two consecutive gaps
-query error PHRASE has consecutive gaps at argument 2
+query error ts_phrase has consecutive gaps at argument 2
 SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 1, 2, 'fox');
 
 
 # Error: range gap with min > max
-query error PHRASE interval gap must satisfy 0 <= min <= max, got \[3, 1\] \(argument 1\)
+query error ts_phrase interval gap must satisfy 0 <= min <= max, got \[3, 1\] \(argument 1\)
 SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', ARRAY[3,1], 'fox');
 
 

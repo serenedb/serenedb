@@ -55,7 +55,7 @@ bool IsPhraseGapIntegralTypeId(duckdb::LogicalTypeId id) {
 // non-negative integers for an interval gap (min <= max). The returned
 // PhraseGap has offsets already +1-adjusted; callers can hand it
 // directly to ByPhraseOptions::push_back(offs_min, offs_max). Returns
-// Result rather than throwing because PHRASE callers need to append
+// Result rather than throwing because ts_phrase callers need to append
 // the argument index to the error message before propagating.
 ResultOr<PhraseGap> ParsePhraseGap(const duckdb::Value& val,
                                    std::string_view label) {
@@ -111,14 +111,14 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   static constexpr auto kSyntaxHint =
     "Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b'). "
     "INTEGER / INTEGER[] gap allowed between text args.";
-  // PHRASE is registered with at least one VARCHAR arg (plus variadic
+  // ts_phrase is registered with at least one VARCHAR arg (plus variadic
   // ANY tail), so DuckDB's function resolver rejects empty calls at
   // bind time before we get here.
   SDB_ASSERT(!func.children.empty());
 
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("PHRASE field is not VARCHAR"),
+                    ERR_MSG("ts_phrase field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
 
@@ -127,7 +127,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PHRASE field should have Positions and Frequency features "
+      ERR_MSG("ts_phrase field should have Positions and Frequency features "
               "enabled"),
       ERR_HINT("Recreate the inverted index with both `Positions` and "
                "`Frequency` features attached to the column."));
@@ -151,7 +151,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     const auto* const_val = TryGetConstant(*func.children[i]);
     if (!const_val) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("PHRASE argument ", i, " must be a constant"),
+                      ERR_MSG("ts_phrase argument ", i, " must be a constant"),
                       ERR_HINT(kSyntaxHint));
     }
     if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
@@ -175,16 +175,16 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     }
     if (opts->empty()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("PHRASE gap at argument ", i,
+                      ERR_MSG("ts_phrase gap at argument ", i,
                               " must be preceded by a text pattern"),
                       ERR_HINT(kSyntaxHint));
     }
     if (pending_gap) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("PHRASE has consecutive gaps at argument ", i),
+                      ERR_MSG("ts_phrase has consecutive gaps at argument ", i),
                       ERR_HINT(kSyntaxHint));
     }
-    auto gap = ParsePhraseGap(*const_val, "PHRASE");
+    auto gap = ParsePhraseGap(*const_val, "ts_phrase");
     if (!gap) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -197,14 +197,14 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   if (pending_gap) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PHRASE ends with a gap; a text pattern must follow each gap"),
+      ERR_MSG("ts_phrase ends with a gap; a text pattern must follow each gap"),
       ERR_HINT(kSyntaxHint));
   }
   if (opts->empty()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PHRASE text arguments produced no searchable terms"),
-      ERR_HINT("All PHRASE text arguments tokenised to nothing (e.g. "
+      ERR_MSG("ts_phrase text arguments produced no searchable terms"),
+      ERR_HINT("All ts_phrase text arguments tokenised to nothing (e.g. "
                "all-stopword input). Provide at least one searchable term."));
   }
 }
@@ -217,7 +217,7 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
   auto& analyzer = ctx.tokenizer;
   if (!analyzer.reset(text)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("PHRASE failed to analyse '", text, "'"),
+                    ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));
   }
   const auto* token = irs::get<irs::TermAttr>(analyzer);
@@ -244,14 +244,14 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                     std::string_view text) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("PHRASE field is not VARCHAR"));
+                    ERR_MSG("ts_phrase field is not VARCHAR"));
   }
   if ((column_info.tokenizer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("PHRASE field should have Positions and Frequency features "
+      ERR_MSG("ts_phrase field should have Positions and Frequency features "
               "enabled"),
       ERR_HINT("Recreate the inverted index with both `Positions` and "
                "`Frequency` features attached to the column."));
@@ -516,14 +516,14 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         if (f->children.empty() || f->children.size() > 2) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG("## PHRASE phrase part expects 1 or 2 arguments "
+            ERR_MSG("## ts_phrase phrase part expects 1 or 2 arguments "
                     "(text[, slop]), got ",
                     f->children.size()),
             ERR_HINT(kSyntaxHint));
         }
         std::string phrase_text;
         if (auto r =
-              GetVarcharArg(*f->children[0], "## PHRASE text", phrase_text);
+              GetVarcharArg(*f->children[0], "## ts_phrase text", phrase_text);
             !r.ok()) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                           ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -532,9 +532,9 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         break;
       }
       case TSQueryOp::Any: {
-        // ANY_OF as a phrase part -> ByTermsOptions slot with the
+        // ts_any as a phrase part -> ByTermsOptions slot with the
         // listed terms as alternatives at this phrase position. Only
-        // `ANY_OF([list])` and `ANY_OF([list], 1)` are accepted:
+        // `ts_any([list])` and `ts_any([list], 1)` are accepted:
         // iresearch's phrase filter ignores min_match for a
         // ByTermsOptions slot (a single position holds at most one
         // token, so min_match > 1 is unsatisfiable).
@@ -546,7 +546,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         if (sub_min_match && *sub_min_match != 1) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG("## ANY_OF phrase part requires min_match=1 (got ",
+            ERR_MSG("## ts_any phrase part requires min_match=1 (got ",
                     *sub_min_match,
                     "); a phrase position can match only "
                     "one token"),
@@ -558,7 +558,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         for (const auto* arg : sub_args) {
           std::string term_text;
           if (auto r = GetVarcharArg(UnwrapTSQueryCast(*arg),
-                                     "## ANY_OF phrase part term", term_text);
+                                     "## ts_any phrase part term", term_text);
               !r.ok()) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                             ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -569,15 +569,15 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         break;
       }
       case TSQueryOp::All:
-        // ALL_OF rejected for the same reason min_match > 1 is rejected
-        // for ANY_OF: a phrase position can match only one token.
+        // ts_all rejected for the same reason min_match > 1 is rejected
+        // for ts_any: a phrase position can match only one token.
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("## ALL_OF phrase part is not supported (a phrase position "
-                  "can match only one token; use ANY_OF instead)"),
+          ERR_MSG("## ts_all phrase part is not supported (a phrase position "
+                  "can match only one token; use ts_any instead)"),
           ERR_HINT(kSyntaxHint));
       case TSQueryOp::Between: {
-        // RANGE as a phrase part -> ByRangeOptions slot. Only the
+        // ts_between as a phrase part -> ByRangeOptions slot. Only the
         // VARCHAR variant is meaningful here: phrases live on the
         // analyzed text field, so numeric / boolean ranges (which would
         // target separate fields) make no sense at a phrase position.
@@ -588,7 +588,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
              args.max_val->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG("## RANGE phrase part requires VARCHAR bounds"),
+            ERR_MSG("## ts_between phrase part requires VARCHAR bounds"),
             ERR_HINT("Phrase parts live on the analyzed VARCHAR field; "
                      "numeric / BOOLEAN ranges target other fields."));
         }
@@ -601,8 +601,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("## part type not supported yet: ",
                   f ? f->function.name : "<bare-const>"),
-          ERR_HINT("Supported phrase parts: TERM, PREFIX, LIKE, LEVENSHTEIN, "
-                   "PHRASE, ANY_OF, RANGE."));
+          ERR_HINT("Supported phrase parts: bare 'word', ts_starts_with, "
+                   "ts_like, ts_levenshtein, ts_phrase, ts_any, ts_between."));
     }
   }
 }

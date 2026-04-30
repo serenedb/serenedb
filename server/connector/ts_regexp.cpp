@@ -57,7 +57,7 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     std::string_view pattern, irs::RegexpSyntax syntax) {
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    throw duckdb::InvalidInputException("REGEXP field is not VARCHAR");
+    throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
   }
   std::string field_name;
   MakeFieldName(column_info, field_name);
@@ -83,12 +83,12 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("REGEXP expects 1 or 2 arguments (pattern[, syntax]), got ",
+      ERR_MSG("ts_regexp expects 1 or 2 arguments (pattern[, syntax]), got ",
               func.children.size()),
       ERR_HINT(kSyntaxHint));
   }
   std::string pattern;
-  if (auto r = GetVarcharArg(*func.children[0], "REGEXP pattern", pattern);
+  if (auto r = GetVarcharArg(*func.children[0], "ts_regexp pattern", pattern);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -96,7 +96,7 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto syntax = irs::RegexpSyntax::Perl;
   if (func.children.size() == 2) {
     std::string syntax_name;
-    if (auto r = GetVarcharArg(*func.children[1], "REGEXP syntax", syntax_name);
+    if (auto r = GetVarcharArg(*func.children[1], "ts_regexp syntax", syntax_name);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -106,7 +106,7 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
     if (!parsed) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("REGEXP syntax must be one of [",
+        ERR_MSG("ts_regexp syntax must be one of [",
                 absl::StrJoin(magic_enum::enum_names<irs::RegexpSyntax>(), ", ",
                               [](std::string* out, std::string_view name) {
                                 absl::StrAppend(out, "'", name, "'");

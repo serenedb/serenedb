@@ -38,12 +38,12 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("TOKENIZE expects 1 or 2 arguments (text[, analyzer]), got ",
+      ERR_MSG("ts_tokenize expects 1 or 2 arguments (text[, analyzer]), got ",
               func.children.size()),
       ERR_HINT(kSyntaxHint));
   }
   std::string text;
-  if (auto r = GetVarcharArg(*func.children[0], "TOKENIZE text", text);
+  if (auto r = GetVarcharArg(*func.children[0], "ts_tokenize text", text);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -53,7 +53,7 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
     return;
   }
   std::string analyzer_name;
-  if (auto r = GetVarcharArg(*func.children[1], "TOKENIZE analyzer name",
+  if (auto r = GetVarcharArg(*func.children[1], "ts_tokenize analyzer name",
                              analyzer_name);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

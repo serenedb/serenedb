@@ -36,7 +36,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     "Buckets are TSQUERY[] or NULL; min_should_match defaults to 1.";
   if (func.children.size() < 3 || func.children.size() > 4) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("compound expects (must, must_not, should [, "
+                    ERR_MSG("ts_compound expects (must, must_not, should [, "
                             "min_should_match]), got ",
                             func.children.size(), " args"),
                     ERR_HINT(kSyntaxHint));
@@ -80,7 +80,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
             fn.function.name != "array_value") {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG("compound ", label,
+            ERR_MSG("ts_compound ", label,
                     " list arg must be a literal list or array (got: ",
                     fn.function.name, ")"),
             ERR_HINT("Pass a literal list/array, e.g. ['a', 'b'], or NULL "
@@ -92,7 +92,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
         return;
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("compound ", label,
+                      ERR_MSG("ts_compound ", label,
                               " list arg must be a literal list or array"),
                       ERR_HINT("Pass a literal list/array or NULL for an "
                                "empty bucket."));
@@ -130,7 +130,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (!should.empty()) {
     int64_t min_should = 1;
     if (func.children.size() == 4) {
-      if (auto r = GetIntArg(*func.children[3], "compound min_should_match",
+      if (auto r = GetIntArg(*func.children[3], "ts_compound min_should_match",
                              min_should);
           !r.ok()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -138,7 +138,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
       }
       if (min_should < 1 || min_should > static_cast<int64_t>(should.size())) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("compound min_should_match must be in [1, ",
+                        ERR_MSG("ts_compound min_should_match must be in [1, ",
                                 should.size(), "], got ", min_should),
                         ERR_HINT(kSyntaxHint));
       }
@@ -152,7 +152,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(
-        "compound min_should_match makes no sense without should clauses"),
+        "ts_compound min_should_match makes no sense without should clauses"),
       ERR_HINT(kSyntaxHint));
   }
 }

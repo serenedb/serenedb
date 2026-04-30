@@ -1646,7 +1646,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapTrailingError) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   AssertFilter(
     irs::And{}, "SELECT * FROM foo WHERE category @@ ts_phrase('quick', 2)",
-    columns, false, SegmentationAnalyzerProvider, "PHRASE ends with a gap");
+    columns, false, SegmentationAnalyzerProvider, "ts_phrase ends with a gap");
 }
 
 TEST_F(SearchFilterBuilderTest, test_PhraseConsecutiveGapsError) {
@@ -1656,7 +1656,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseConsecutiveGapsError) {
     irs::And{},
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick', 1, 2, 'fox')",
     columns, false, SegmentationAnalyzerProvider,
-    "PHRASE has consecutive gaps at argument 2");
+    "ts_phrase has consecutive gaps at argument 2");
 }
 
 TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
@@ -1666,7 +1666,7 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
     irs::And{},
     "SELECT * FROM foo WHERE category @@ ts_phrase('quick', ARRAY[3,1], 'fox')",
     columns, false, SegmentationAnalyzerProvider,
-    "PHRASE interval gap must satisfy 0 <= min <= max, got [3, 1]");
+    "ts_phrase interval gap must satisfy 0 <= min <= max, got [3, 1]");
 }
 
 // ===========================================================================
@@ -2026,7 +2026,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_ngram('hello')",
-               columns, false, IdentityAnalyzerProvider, "NGRAM");
+               columns, false, IdentityAnalyzerProvider, "ts_ngram");
 }
 
 // ===========================================================================
@@ -2051,7 +2051,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinDistanceTooHigh) {
   irs::And expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 5)",
-               columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
+               columns, false, IdentityAnalyzerProvider, "ts_levenshtein");
 }
 
 TEST_F(SearchFilterBuilderTest,
@@ -2061,7 +2061,7 @@ TEST_F(SearchFilterBuilderTest,
   irs::And expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 4, true)",
-               columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
+               columns, false, IdentityAnalyzerProvider, "ts_levenshtein");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinNotNegation) {
@@ -2112,7 +2112,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinTooManyArgs) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_levenshtein('test', 1, true, "
                "'p', 'extra')",
-               columns, false, IdentityAnalyzerProvider, "LEVENSHTEIN");
+               columns, false, IdentityAnalyzerProvider, "ts_levenshtein");
 }
 
 // ===========================================================================
@@ -3114,14 +3114,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnknownSyntax) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_regexp('abc', 'pcre')",
                columns, false, IdentityAnalyzerProvider,
-               "REGEXP syntax must be one of");
+               "ts_regexp syntax must be one of");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpNonVarcharColumn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
   AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_regexp('abc')", columns,
-               false, IdentityAnalyzerProvider, "REGEXP field is not VARCHAR");
+               false, IdentityAnalyzerProvider, "ts_regexp field is not VARCHAR");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
@@ -3256,7 +3256,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedVarcharInt) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(
     {}, "SELECT * FROM foo WHERE b @@ ts_between('a', 5, true, true)", columns,
-    false, IdentityAnalyzerProvider, "RANGE bounds have mismatched types");
+    false, IdentityAnalyzerProvider, "ts_between bounds have mismatched types");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedIntVarchar) {
@@ -3265,7 +3265,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedIntVarchar) {
   AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between(1, 'foo', true, true)",
                columns, false, IdentityAnalyzerProvider,
-               "RANGE bounds have mismatched types");
+               "ts_between bounds have mismatched types");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedBoolInt) {
@@ -3274,7 +3274,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedBoolInt) {
   AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between(false, 1, true, true)",
                columns, false, IdentityAnalyzerProvider,
-               "RANGE bounds have mismatched types");
+               "ts_between bounds have mismatched types");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedVarcharBool) {
@@ -3283,7 +3283,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeMismatchedVarcharBool) {
   AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between('a', true, true, true)",
                columns, false, IdentityAnalyzerProvider,
-               "RANGE bounds have mismatched types");
+               "ts_between bounds have mismatched types");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeIntBigintMismatch) {
@@ -3296,7 +3296,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeIntBigintMismatch) {
                "SELECT * FROM foo WHERE b @@ "
                "ts_between(1::INTEGER, 100::BIGINT, true, true)",
                columns, false, IdentityAnalyzerProvider,
-               "RANGE bounds have mismatched types");
+               "ts_between bounds have mismatched types");
 }
 
 TEST_F(SearchFilterBuilderTest,
@@ -3352,7 +3352,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseNumericRejected) {
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_between(1, 5, true, true))",
                columns, false, SegmentationAnalyzerProvider,
-               "## RANGE phrase part requires VARCHAR bounds");
+               "## ts_between phrase part requires VARCHAR bounds");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseBoolRejected) {
@@ -3362,7 +3362,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseBoolRejected) {
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_between(false, true, true, true))",
                columns, false, SegmentationAnalyzerProvider,
-               "## RANGE phrase part requires VARCHAR bounds");
+               "## ts_between phrase part requires VARCHAR bounds");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeIntExclusiveBoth) {
@@ -3770,7 +3770,7 @@ TEST_F(SearchFilterBuilderTest,
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_any(['b', 'c'], 2))",
                columns, false, SegmentationAnalyzerProvider,
-               "ANY_OF phrase part requires min_match=1");
+               "ts_any phrase part requires min_match=1");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAllOfPartRejected) {
@@ -3782,7 +3782,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseSeqAllOfPartRejected) {
                "SELECT * FROM foo WHERE b @@ "
                "('a'::TSQUERY ## ts_all(['b', 'c']))",
                columns, false, SegmentationAnalyzerProvider,
-               "ALL_OF phrase part is not supported");
+               "ts_all phrase part is not supported");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TsqueryPhraseFunction) {
@@ -4179,7 +4179,7 @@ TEST_F(SearchFilterBuilderTest,
   irs::And expected;
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(tags))",
-               columns, false, SegmentationAnalyzerProvider, "TOKENIZE");
+               columns, false, SegmentationAnalyzerProvider, "ts_tokenize");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PlainToTsqueryAnd) {

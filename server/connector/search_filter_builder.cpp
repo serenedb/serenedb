@@ -988,9 +988,9 @@ void FromTokenize(irs::BooleanFilter&, const FilterContext&,
                   const SearchColumnInfo&,
                   const duckdb::BoundFunctionExpression&);
 void FromHalfRange(irs::BooleanFilter&, const FilterContext&,
-                     const SearchColumnInfo&,
-                     const duckdb::BoundFunctionExpression&,
-                     std::string_view label, bool is_lower, bool inclusive);
+                   const SearchColumnInfo&,
+                   const duckdb::BoundFunctionExpression&,
+                   std::string_view label, bool is_lower, bool inclusive);
 void FromRegexp(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
@@ -1076,7 +1076,7 @@ void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('text') ^ 2.0. Factor must be ≥ 0; "
     "for composable boost use ::boost(K).";
   if (func.children.size() != 2) {

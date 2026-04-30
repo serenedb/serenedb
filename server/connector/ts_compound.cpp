@@ -31,7 +31,7 @@ namespace sdb::connector {
 void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_compound([ts_phrase('a')], [], ['b','c'], 1). "
     "Buckets are TSQUERY[] or NULL; min_should_match defaults to 1.";
   if (func.children.size() < 3 || func.children.size() > 4) {

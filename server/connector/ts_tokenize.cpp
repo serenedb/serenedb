@@ -32,9 +32,8 @@ namespace sdb::connector {
 void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
-    "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'identity'). "
-    "'identity' = raw bytes; other names resolve via the catalog.";
+  static constexpr std::string_view kSyntaxHint =
+    "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'identity').";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

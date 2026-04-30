@@ -49,7 +49,7 @@ void FromTokenizeListInAnyAllOf(
   const SearchColumnInfo& column_info,
   const duckdb::BoundFunctionExpression& outer,
   const duckdb::BoundFunctionExpression& tokenize_call, bool is_any) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list "
     "element through the column analyzer.";
   if (!is_any && outer.children.size() != 1) {
@@ -233,7 +233,7 @@ void ExtractAnyAllOfArgs(
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
   std::optional<size_t>& min_match) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(

@@ -77,7 +77,7 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
 void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). "
     "Syntax is 'perl' (default) or 'posix'.";
   if (func.children.empty() || func.children.size() > 2) {
@@ -96,7 +96,8 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto syntax = irs::RegexpSyntax::Perl;
   if (func.children.size() == 2) {
     std::string syntax_name;
-    if (auto r = GetVarcharArg(*func.children[1], "ts_regexp syntax", syntax_name);
+    if (auto r =
+          GetVarcharArg(*func.children[1], "ts_regexp syntax", syntax_name);
         !r.ok()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));

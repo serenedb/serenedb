@@ -108,7 +108,7 @@ ResultOr<PhraseGap> ParsePhraseGap(const duckdb::Value& val,
 void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('quick brown fox') or ts_phrase('a', 1, 'b'). "
     "INTEGER / INTEGER[] gap allowed between text args.";
   // ts_phrase is registered with at least one VARCHAR arg (plus variadic
@@ -383,7 +383,7 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
 // Emits the flattened phrase sequence as an irs::ByPhrase under `parent`.
 void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional "
     "INTEGER / INTEGER[].";
   if (seq.parts.empty()) {

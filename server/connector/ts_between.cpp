@@ -31,7 +31,7 @@
 namespace sdb::connector {
 
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_between('a', 'z', true, false). NULL bound = unbounded.";
   if (func.children.size() != 4) {
     THROW_SQL_ERROR(
@@ -53,12 +53,14 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
       (i == 0 ? out.min_val : out.max_val) = val;
     }
   }
-  if (auto r = GetBoolArg(*func.children[2], "ts_between min_incl", out.min_incl);
+  if (auto r =
+        GetBoolArg(*func.children[2], "ts_between min_incl", out.min_incl);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  if (auto r = GetBoolArg(*func.children[3], "ts_between max_incl", out.max_incl);
+  if (auto r =
+        GetBoolArg(*func.children[3], "ts_between max_incl", out.max_incl);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -94,7 +96,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info,
                    const duckdb::BoundFunctionExpression& func,
                    std::string_view label, bool is_lower, bool inclusive) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_lt('m') or ts_ge(42). Bound must be non-null; "
     "use ts_between(NULL, ...) for unbounded.";
   if (func.children.size() != 1) {
@@ -259,12 +261,13 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
 
   // Validate value type matches column type family.
   auto type_mismatch = [&]() {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_between bound type ", val_sample->type().ToString(),
-                            " is incompatible with column type ",
-                            column_info.logical_type.ToString()),
-                    ERR_HINT("Both bounds must match the column's type "
-                             "family (VARCHAR / BOOLEAN / numeric)."));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_between bound type ", val_sample->type().ToString(),
+              " is incompatible with column type ",
+              column_info.logical_type.ToString()),
+      ERR_HINT("Both bounds must match the column's type "
+               "family (VARCHAR / BOOLEAN / numeric)."));
   };
   if (col_type == duckdb::LogicalTypeId::VARCHAR) {
     if (val_type != duckdb::LogicalTypeId::VARCHAR) {
@@ -274,7 +277,8 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
         irs::Type<irs::StringTokenizer>::id()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("ts_between on VARCHAR field requires identity-analyzed column"),
+        ERR_MSG(
+          "ts_between on VARCHAR field requires identity-analyzed column"),
         ERR_HINT("Recreate the inverted index with the identity tokenizer "
                  "for this column, or use ts_lt/ts_le/ts_gt/ts_ge for "
                  "analyzed-text bounds."));

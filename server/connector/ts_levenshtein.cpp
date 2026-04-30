@@ -32,7 +32,7 @@ namespace sdb::connector {
 
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (func.children.empty() || func.children.size() > 4) {
@@ -43,7 +43,8 @@ LevenshteinArgs ParseLevenshteinArgs(
                     ERR_HINT(kSyntaxHint));
   }
   LevenshteinArgs out;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
+  if (auto r =
+        GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
       !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
@@ -72,11 +73,12 @@ LevenshteinArgs ParseLevenshteinArgs(
     }
   }
   if (out.with_transpositions && out.distance > 3) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_levenshtein distance must be between 0 and 3 when "
-                            "transpositions is true, got ",
-                            out.distance),
-                    ERR_HINT(kSyntaxHint));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_levenshtein distance must be between 0 and 3 when "
+              "transpositions is true, got ",
+              out.distance),
+      ERR_HINT(kSyntaxHint));
   }
   if (func.children.size() >= 4) {
     if (auto r =
@@ -107,7 +109,7 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
 void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func) {
-  static constexpr auto kSyntaxHint =
+  static constexpr std::string_view kSyntaxHint =
     "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {

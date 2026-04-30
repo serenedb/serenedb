@@ -168,6 +168,40 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
+  {
+    .oid = 26,
+    .typname = "oid",
+    .typnamespace = 11,
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = true,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 1028,    // oid
+    .typinput = 1798,    // oidin
+    .typoutput = 1799,   // ioidout
+    .typreceive = 2418,  // oidrecv
+    .typsend = 2419,     // oidsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
   // float4/real (OID 700)
   {
     .oid = 700,

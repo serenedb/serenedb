@@ -38,8 +38,7 @@ inline bool IsJsonExtractString(std::string_view name) noexcept {
 }
 
 inline bool IsJsonExtractJson(std::string_view name) noexcept {
-  return name == "->" || name == "json_extract" ||
-         name == "json_extract_field";
+  return name == "->" || name == "json_extract" || name == "json_extract_field";
 }
 
 inline bool IsJsonExtract(std::string_view name) noexcept {

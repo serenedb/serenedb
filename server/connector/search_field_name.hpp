@@ -32,7 +32,8 @@ namespace sdb::connector {
 // Builds the iresearch field name for a column, optionally qualified by a
 // JSON path.
 //
-// Layout: [8 bytes BE column_id] + "/" + escape(path[0]) + "/" + escape(path[1])
+// Layout: [8 bytes BE column_id] + "/" + escape(path[0]) + "/" +
+// escape(path[1])
 //                                + ... + (caller-applied mangle byte)
 //
 // The path-segment portion is a valid RFC 6901 JSON Pointer, so the sink can

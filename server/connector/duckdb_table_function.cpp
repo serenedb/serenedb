@@ -56,7 +56,6 @@ duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
   copy->column_types = column_types;
   copy->has_rowid = has_rowid;
   copy->table_entry = table_entry;
-  copy->ef_search = ef_search;
   copy->scan_source = scan_source->Clone();
   return copy;
 }

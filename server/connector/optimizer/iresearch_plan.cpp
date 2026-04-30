@@ -181,35 +181,34 @@ struct ExpectedHNSW {
 };
 
 std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
-  using OT = duckdb::OrderType;
   if (name == connector::kL2Distance || name == connector::kL2DistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::L2, OT::ASCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::L2, duckdb::OrderType::ASCENDING};
   }
   if (name == connector::kL2SqrDistance) {
-    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, OT::ASCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
   }
   if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::L1, OT::ASCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING};
   }
   if (name == connector::kCosineDistance) {
-    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity, OT::DESCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity,
+                        duckdb::OrderType::DESCENDING};
   }
   if (name == connector::kCosineSimilarity ||
       name == connector::kCosineSimilarityOp) {
-    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity, OT::ASCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::CosineSimilarity,
+                        duckdb::OrderType::ASCENDING};
   }
   if (name == connector::kIP) {
-    return ExpectedHNSW{irs::HNSWMetric::NegativeIP, OT::DESCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::NegativeIP,
+                        duckdb::OrderType::DESCENDING};
   }
   if (name == connector::kNegativeIP ||
       name == connector::kNegativeIPDistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::NegativeIP, OT::ASCENDING};
+    return ExpectedHNSW{irs::HNSWMetric::NegativeIP,
+                        duckdb::OrderType::ASCENDING};
   }
   return std::nullopt;
-}
-
-bool IsDistanceFunction(std::string_view name) {
-  return ExpectedHNSWForFunction(name).has_value();
 }
 
 // Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
@@ -356,8 +355,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   auto& func_expr = dist_expr.Cast<duckdb::BoundFunctionExpression>();
-  if (!IsDistanceFunction(func_expr.function.name) ||
-      func_expr.children.size() < 2) {
+  auto expected_func = ExpectedHNSWForFunction(func_expr.function.name);
+  if (!expected_func || func_expr.children.size() < 2) {
     return false;
   }
 
@@ -409,13 +408,12 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  auto expected = ExpectedHNSWForFunction(func_expr.function.name);
   auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
-  if (!expected || !hnsw_info || hnsw_info->metric != expected->metric ||
+  if (!hnsw_info || hnsw_info->metric != expected_func->metric ||
       static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
     return false;
   }
-  if (order_type != expected->order) {
+  if (order_type != expected_func->order) {
     return false;
   }
 
@@ -424,7 +422,6 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   ann->field_name = MakeHnswFieldName(col_id);
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
-  ann->ef_search = bind_data.ef_search;
 
   bool pushdown_filter = true;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
@@ -498,9 +495,16 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
+  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
+  auto resolved = ResolveIresearch(bind_data, *snapshot);
+  if (!resolved) {
+    return false;
+  }
+
   duckdb::idx_t match_idx = duckdb::DConstants::INVALID_INDEX;
-  duckdb::BoundFunctionExpression* func_expr_ptr = nullptr;
   float radius = 0.0f;
+  std::vector<float> query_vector;
+  catalog::Column::Id col_id = std::numeric_limits<catalog::Column::Id>::max();
 
   for (duckdb::idx_t i = 0; i < filter.expressions.size(); ++i) {
     auto& expr = *filter.expressions[i];
@@ -529,7 +533,11 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       continue;
     }
     auto& func = func_side->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsDistanceFunction(func.function.name) || func.children.size() < 2) {
+    auto expected_current = ExpectedHNSWForFunction(func.function.name);
+    if (!expected_current || func.children.size() < 2) {
+      continue;
+    }
+    if (expected_current->order != duckdb::OrderType::ASCENDING) {
       continue;
     }
     if (const_side->expression_class !=
@@ -540,17 +548,40 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     if (const_expr.value.IsNull()) {
       continue;
     }
+    float candidate_radius = 0.0f;
     switch (const_expr.value.type().id()) {
       case duckdb::LogicalTypeId::FLOAT:
-        radius = const_expr.value.GetValue<float>();
+        candidate_radius = const_expr.value.GetValue<float>();
         break;
       case duckdb::LogicalTypeId::DOUBLE:
-        radius = static_cast<float>(const_expr.value.GetValue<double>());
+        candidate_radius =
+          static_cast<float>(const_expr.value.GetValue<double>());
         break;
       default:
         continue;
     }
-    func_expr_ptr = &func;
+    auto args = ExtractDistanceArgs(func);
+    if (!args.col_arg || !args.const_arg) {
+      continue;
+    }
+    std::vector<float> candidate_vector;
+    if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
+      continue;
+    }
+    auto candidate_col_id =
+      ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+    if (candidate_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+      continue;
+    }
+    auto hnsw_info = resolved->index->GetColumnHNSWInfo(candidate_col_id);
+    if (!hnsw_info || hnsw_info->metric != expected_current->metric ||
+        static_cast<size_t>(hnsw_info->d) != candidate_vector.size()) {
+      continue;
+    }
+
+    radius = candidate_radius;
+    query_vector = std::move(candidate_vector);
+    col_id = candidate_col_id;
     match_idx = i;
     break;
   }
@@ -559,39 +590,11 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  auto args = ExtractDistanceArgs(*func_expr_ptr);
-  if (!args.col_arg || !args.const_arg) {
-    return false;
-  }
-  std::vector<float> query_vector;
-  if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
-    return false;
-  }
-  auto col_id = ColumnIdByName(*bind_data.table, args.col_arg->GetName());
-  if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
-    return false;
-  }
-
-  auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
-  auto resolved = ResolveIresearch(bind_data, *snapshot);
-  if (!resolved) {
-    return false;
-  }
-
-  auto expected = ExpectedHNSWForFunction(func_expr_ptr->function.name);
-  auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
-  if (!expected || expected->order != duckdb::OrderType::ASCENDING ||
-      !hnsw_info || hnsw_info->metric != expected->metric ||
-      static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
-    return false;
-  }
-
   auto rss = std::make_unique<connector::RangeSearchScan>();
   rss->index_id = resolved->index->GetId();
   rss->field_name = MakeHnswFieldName(col_id);
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
-  rss->ef_search = bind_data.ef_search;
 
   filter.expressions.erase(filter.expressions.begin() + match_idx);
 

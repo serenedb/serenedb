@@ -51,7 +51,6 @@ const EmptySubReader kEmpty;
 
 }  // namespace
 
-// dis and ids should be prepared as heaps
 void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
                          HNSWSearchBuffer& buffer) const {
   HNSWResultHandler handler{

@@ -163,6 +163,7 @@ struct HNSWSearchBuffer {
     std::ranges::fill(ids, -1);
   }
 };
+
 struct HNSWSearchInfo {
   const byte_type* query;
   size_t top_k;

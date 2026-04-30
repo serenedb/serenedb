@@ -34,13 +34,12 @@
 
 namespace sdb::connector {
 
-// TODO(codeworse): ANN scan should be rewritten in [MATERIALIZE] <= [TOP_N] <=
-// [ANN Scan]
 struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   const ANNScan* scan = nullptr;
   std::unique_ptr<ANNFilterContext> filter_ctx;
 
   const irs::IndexReader* reader = nullptr;
+  int ef_search = 0;
 
   std::vector<std::vector<float>> dis;
   std::vector<std::vector<int64_t>> ids;
@@ -82,6 +81,7 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
   std::unique_ptr<ANNFilterContext> filter_ctx;
 
   const irs::IndexReader* reader = nullptr;
+  int ef_search = 0;
 
   size_t total_segments = 0;
   std::atomic_size_t next_segment = 0;

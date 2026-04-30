@@ -690,6 +690,50 @@ QUERY PLAN
 
 
 query
+EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 200 AND cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│          Table: t         │
+│      Lookup: rocksdb      │
+│     Radius: 200.000000    │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│ (cosine_distance(#0, [0, 0│
+│        , 0]) < 0.5)       │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│          Table: t         │
+│      Lookup: rocksdb      │
+│     Radius: 200.000000    │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│ (cosine_distance(#0, [0, 0│
+│        , 0]) < 0.5)       │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
 EXPLAIN SELECT id FROM proj_idx WHERE category = 1 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
 ----
 QUERY PLAN

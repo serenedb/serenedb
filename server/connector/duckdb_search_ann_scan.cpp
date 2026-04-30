@@ -49,6 +49,14 @@
 namespace sdb::connector {
 namespace {
 
+int ReadEfSearch(duckdb::ClientContext& context) {
+  duckdb::Value v;
+  if (context.TryGetCurrentSetting("sdb_ef_search", v) && !v.IsNull()) {
+    return v.GetValue<int32_t>();
+  }
+  return 0;
+}
+
 bool ClaimNextLiveSegment(std::atomic_size_t& next_segment,
                           size_t total_segments, const irs::IndexReader& reader,
                           size_t& out) {
@@ -82,7 +90,7 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
     .top_k = top_k,
     .global_threshold = gstate.global_kth_dis.load(std::memory_order_relaxed),
   };
-  info.params.efSearch = std::max<size_t>(top_k, gstate.scan->ef_search);
+  info.params.efSearch = std::max<size_t>(top_k, gstate.ef_search);
   info.params.sel = filter.has_value() ? &*filter : nullptr;
 
   SDB_ASSERT(reader);
@@ -192,8 +200,8 @@ void RangeSearchSegment(const irs::SubReader& sub,
       reinterpret_cast<const irs::byte_type*>(g.scan->query_vector.data()),
     .radius = g.scan->radius,
   };
-  if (g.scan->ef_search > 0) {
-    info.params.efSearch = static_cast<size_t>(g.scan->ef_search);
+  if (g.ef_search > 0) {
+    info.params.efSearch = static_cast<size_t>(g.ef_search);
   }
   info.params.sel = filter.has_value() ? &*filter : nullptr;
   sub.RangeSearch(g.scan->field_name, info, dis, ids);
@@ -229,6 +237,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   auto gstate = duckdb::make_uniq<SearchAnnScanGlobalState>();
   InitCommonState(*gstate, context, bind_data, input);
   gstate->scan = &bind_data.scan_source->Cast<ANNScan>();
+  gstate->ef_search = ReadEfSearch(context);
 
   InitAnnFilterContext(gstate->filter_ctx, context,
                        gstate->scan->filter_expression.get(),
@@ -294,6 +303,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   auto gstate = duckdb::make_uniq<SearchRangeScanGlobalState>();
   InitCommonState(*gstate, context, bind_data, input);
   gstate->scan = &bind_data.scan_source->Cast<RangeSearchScan>();
+  gstate->ef_search = ReadEfSearch(context);
 
   InitAnnFilterContext(gstate->filter_ctx, context,
                        gstate->scan->filter_expression.get(),

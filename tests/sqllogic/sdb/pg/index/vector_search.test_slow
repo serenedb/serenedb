@@ -136,7 +136,15 @@ CREATE TABLE correct_cos(id INT);
 
 
 statement ok
+CREATE TABLE correct_cos2(id INT);
+
+
+statement ok
 INSERT INTO correct_cos SELECT id FROM vecs ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+INSERT INTO correct_cos2 SELECT id FROM vecs ORDER BY cosine_distance(emb, [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8]) DESC LIMIT 512;
 
 
 statement ok
@@ -151,6 +159,15 @@ query
 WITH
   result AS (SELECT id FROM vecs_hnsw_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_cos WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_hnsw_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_cos2 WHERE id IN (SELECT id FROM result);
 ----
 ?column?
 t

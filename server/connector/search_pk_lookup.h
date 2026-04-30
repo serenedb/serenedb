@@ -72,13 +72,13 @@ void LookupSegmentsValues(const auto& segments, const auto& doc_ids,
                   static_cast<irs::doc_id_t>(doc_ids[i]),
                   static_cast<uint32_t>(i)};
   }
-  std::ranges::sort(entries, [](const Entry& a, const Entry& b) noexcept {
+  absl::c_sort(entries, [](const Entry& a, const Entry& b) noexcept {
     return a.seg < b.seg || (a.seg == b.seg && a.doc < b.doc);
   });
 
   size_t i = 0;
   while (i < n) {
-    const uint32_t seg_id = entries[i].seg;
+    const auto seg_id = entries[i].seg;
     SegmentPkIterator it;
     const bool opened = OpenSegmentPkIterator(reader[seg_id], it);
     if (!opened) {

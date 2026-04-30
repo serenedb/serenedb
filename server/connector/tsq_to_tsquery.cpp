@@ -69,8 +69,13 @@ std::vector<WsToken> LexWebsearch(std::string_view text) {
       while (i < n && text[i] != '"') {
         ++i;
       }
-      out.push_back(
-        {WsTokKind::Phrase, std::string{text.substr(start, i - start)}, neg});
+      // Drop empty quoted segments (`""` or `-""`) -- they have no
+      // searchable content and would otherwise reach BuildFtsPhrase
+      // which rejects empty input.
+      if (i > start) {
+        out.push_back(
+          {WsTokKind::Phrase, std::string{text.substr(start, i - start)}, neg});
+      }
       if (i < n) {
         ++i;  // consume closing quote
       }
@@ -81,6 +86,11 @@ std::vector<WsToken> LexWebsearch(std::string_view text) {
     while (i < n && !std::isspace(static_cast<unsigned char>(text[i])) &&
            text[i] != '"') {
       ++i;
+    }
+    if (i == start) {
+      // No characters consumed (shouldn't happen given the outer
+      // whitespace skip + EOF check, but guards against future edits).
+      continue;
     }
     std::string word{text.substr(start, i - start)};
     // `OR` keyword: case-insensitive, exactly 2 chars, and only when it

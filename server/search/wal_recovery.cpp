@@ -26,6 +26,7 @@
 #include <rocksdb/write_batch.h>
 
 #include <algorithm>
+#include <chrono>
 #include <iresearch/index/index_writer.hpp>
 #include <limits>
 
@@ -33,6 +34,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/errors.h"
 #include "basics/logger/logger.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
@@ -48,13 +50,22 @@
 namespace sdb::search {
 namespace {
 
-constexpr size_t kFlushThreshold = 2048;
+constexpr size_t kFlushThreshold = 1 << 16;
 
-struct RowState {
-  // Empty cell = column not seen in this WAL window (flushed as null).
-  std::vector<std::string> cells;
-  bool has_put = false;
-  bool deleted = false;
+// Last-op-wins per pk. Invalid is the default after lazy creation; the next
+// PutCF/DeleteCF transitions it. Put after Delete and Delete after Put both
+// just overwrite the field -- no priority logic needed at flush time.
+enum class RowOp : uint8_t {
+  Invalid,
+  Put,
+  Delete,
+};
+
+struct Row {
+  // empty view = column not seen
+  std::vector<std::string_view> indexed_cols;
+  std::string_view full_key;
+  RowOp op = RowOp::Invalid;
 };
 
 struct ShardState {
@@ -74,8 +85,8 @@ struct ShardState {
   };
   std::vector<IndexedColumn> indexed_columns;
 
-  containers::FlatHashMap<std::string, RowState> pk2state;
-  std::vector<std::string> ordered_pks;
+  // pk -> state. Keys are string_view into live_batches; valid until flush.
+  containers::FlatHashMap<std::string_view, Row> pk2row;
 
   // Lazy: only opened on first matching WAL entry, so shards with no entries
   // in the scanned range never touch iresearch.
@@ -84,11 +95,25 @@ struct ShardState {
   std::optional<connector::SearchSinkDeleteBaseImpl> delete_sink;
 
   // [ObjectId(8 BE)][ColumnId(8 BE)] prefix; pk gets appended then
-  // truncated per cell during flush.
+  // truncated per col during flush.
   std::string full_key_prefix;
 
   uint64_t total_inserted = 0;
   uint64_t total_deleted = 0;
+
+  Row& GetRow(std::string_view pk) {
+    auto [it, inserted] = pk2row.try_emplace(pk);
+    if (inserted) {
+      it->second.indexed_cols.resize(indexed_columns.size());
+    }
+    return it->second;
+  }
+
+  static auto GetComparator() {
+    return [](const ShardState* a, const ShardState* b) {
+      return a->start_tick < b->start_tick;
+    };
+  }
 };
 
 bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
@@ -157,112 +182,114 @@ void EnsureTrxOpen(ShardState& s,
 }
 
 void FlushShard(ShardState& s,
-                const std::shared_ptr<const catalog::Snapshot>& snapshot) {
-  if (s.ordered_pks.empty()) {
+                const std::shared_ptr<const catalog::Snapshot>& snapshot,
+                rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf) {
+  if (s.pk2row.empty()) {
     return;
   }
 
-  std::vector<std::pair<std::string_view, const RowState*>> insert_entries;
-  std::vector<std::string_view> delete_only_pks;
-  insert_entries.reserve(s.ordered_pks.size());
+  irs::Finally _ = [&] noexcept { s.pk2row.clear(); };
 
-  for (const auto& pk : s.ordered_pks) {
-    auto it = s.pk2state.find(pk);
-    SDB_ASSERT(it != s.pk2state.end());
-    const auto& state = it->second;
-    if (state.deleted) {
-      delete_only_pks.emplace_back(pk);
-    } else if (state.has_put) {
-      insert_entries.emplace_back(std::string_view{pk}, &state);
+  // Materialise put-affected rows for the column-major insert phase. The pk
+  // is the suffix of full_key after the [ObjectId][ColumnId] prefix, so we
+  // don't need to keep it alongside the Row pointer.
+  std::vector<const Row*> insert_entries;
+  insert_entries.reserve(s.pk2row.size());
+  for (const auto& [_pk, row] : s.pk2row) {
+    switch (row.op) {
+      case RowOp::Put:
+        insert_entries.push_back(&row);
+        break;
+      case RowOp::Delete:
+        break;
+      case RowOp::Invalid:
+        SDB_UNREACHABLE();
     }
-  }
-
-  if (insert_entries.empty() && delete_only_pks.empty()) {
-    s.pk2state.clear();
-    s.ordered_pks.clear();
-    return;
   }
 
   EnsureTrxOpen(s, snapshot);
 
-  // Put-affected pks get a remove first to clear stale fields from the old
-  // doc — mirrors SearchSinkUpdateWriter.
-  const size_t delete_batch_size =
-    insert_entries.size() + delete_only_pks.size();
-  s.delete_sink->InitImpl(delete_batch_size);
-  for (const auto& [pk, _] : insert_entries) {
-    s.delete_sink->DeleteRowImpl(pk);
-  }
-  for (auto pk : delete_only_pks) {
+  // Put-affected pks get a remove first to mirror SearchSinkUpdateWriter
+  // (clear stale fields from the prior doc).
+  s.delete_sink->InitImpl(s.pk2row.size());
+  for (const auto& [pk, _row] : s.pk2row) {
     s.delete_sink->DeleteRowImpl(pk);
   }
   s.delete_sink->FinishImpl();
-  s.total_deleted += delete_only_pks.size();
+  s.total_deleted += s.pk2row.size() - insert_entries.size();
 
   if (!insert_entries.empty()) {
-    s.insert_sink->InitImpl(insert_entries.size());
-    auto& key_buffer = s.full_key_prefix;
+    auto& sink = *s.insert_sink;
+    sink.InitImpl(insert_entries.size());
+    auto& get_key_buffer = s.full_key_prefix;
+    rocksdb::ReadOptions read_opts;
+    rocksdb::PinnableSlice value_buffer;
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
-      if (!s.insert_sink->SwitchColumnImpl(col.type, /*have_nulls=*/true,
-                                           col.id)) {
-        continue;
-      }
-      absl::big_endian::Store(key_buffer.data() + sizeof(ObjectId), col.id);
-      for (const auto& [pk, state] : insert_entries) {
-        const auto& cell = state->cells[col_idx];
-
-        key_buffer.resize(sizeof(ObjectId) + sizeof(catalog::Column::Id));
-        key_buffer.append(pk.data(), pk.size());
-
-        rocksdb::Slice cell_slice{cell.data(), cell.size()};
-        std::array<rocksdb::Slice, 1> slices{cell_slice};
-        s.insert_sink->WriteImpl(slices, key_buffer);
+      const bool switched = sink.SwitchColumnImpl(col.type, true, col.id);
+      SDB_ASSERT(switched);
+      absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
+      static constexpr auto kPrefix =
+        sizeof(ObjectId) + sizeof(catalog::Column::Id);
+      for (const auto* row : insert_entries) {
+        std::string_view cell = row->indexed_cols[col_idx];
+        if (!cell.empty()) {
+          rocksdb::Slice slice{cell.data(), cell.size()};
+          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+        } else {
+          // This is a very bad code that exists because we don't support PATCH
+          // queries for inverted index. It happens when we update a column that
+          // is indexed but not included in the UPDATE statement: the new value
+          // is missing from the WAL window, so we have to fetch it from the db
+          // to be able to write it to iresearch.
+          std::string_view pk = row->full_key.substr(kPrefix);
+          get_key_buffer.resize(kPrefix);
+          get_key_buffer.append(pk.data(), pk.size());
+          value_buffer.Reset();
+          auto status = db.Get(read_opts, &cf, get_key_buffer, &value_buffer);
+          SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                       "WAL recovery: rocksdb Get failed for index '",
+                       s.shard->GetId().id(), "' col=", col.id, ": ",
+                       status.ToString());
+          rocksdb::Slice slice{value_buffer.data(), value_buffer.size()};
+          sink.WriteImpl(std::span{&slice, 1}, row->full_key);
+        }
       }
     }
-    s.insert_sink->FinishImpl();
-    s.total_inserted += insert_entries.size();
+    sink.FinishImpl();
   }
 
-  s.pk2state.clear();
-  s.ordered_pks.clear();
+  s.total_inserted += insert_entries.size();
 }
+
+struct PerTableShards {
+  // shards[0..started) -- the prefix of shards whose start tick < curr tick.
+  size_t started = 0;
+  std::vector<ShardState*> shards;
+};
+
+using TableToShards = containers::FlatHashMap<ObjectId, PerTableShards>;
 
 class FanoutBatchHandler final : public rocksdb::WriteBatch::Handler {
  public:
-  FanoutBatchHandler(
-    containers::FlatHashMap<ObjectId, std::vector<ShardState*>>& table2shards,
-    uint32_t default_cf_id, rocksdb::SequenceNumber batch_sequence)
+  FanoutBatchHandler(TableToShards& table2shards, uint32_t default_cf_id,
+                     rocksdb::SequenceNumber batch_sequence)
     : _table2shards{table2shards},
       _default_cf_id{default_cf_id},
       _batch_sequence{batch_sequence} {}
 
   rocksdb::Status PutCF(uint32_t cf_id, const rocksdb::Slice& key,
                         const rocksdb::Slice& value) override {
-    ForEachMatchingShard(
-      cf_id, key, [&](ShardState& s, size_t col_idx, std::string_view pk) {
-        auto& state = s.pk2state[std::string{pk}];
-        if (state.cells.empty()) {
-          state.cells.resize(s.indexed_columns.size());
-          s.ordered_pks.emplace_back(pk);
-        }
-        state.cells[col_idx].assign(value.data(), value.size());
-        state.has_put = true;
-        state.deleted = false;
-      });
+    ForEachMatchingShard(cf_id, key, [&](Row& row, size_t col_idx) {
+      row.indexed_cols[col_idx] = {value.data(), value.size()};
+      row.op = RowOp::Put;
+    });
     return rocksdb::Status::OK();
   }
 
   rocksdb::Status DeleteCF(uint32_t cf_id, const rocksdb::Slice& key) override {
     ForEachMatchingShard(
-      cf_id, key, [&](ShardState& s, size_t /*col_idx*/, std::string_view pk) {
-        auto& state = s.pk2state[std::string{pk}];
-        if (state.cells.empty()) {
-          state.cells.resize(s.indexed_columns.size());
-          s.ordered_pks.emplace_back(pk);
-        }
-        state.deleted = true;
-      });
+      cf_id, key, [&](Row& row, size_t col_idx) { row.op = RowOp::Delete; });
     return rocksdb::Status::OK();
   }
 
@@ -298,35 +325,45 @@ class FanoutBatchHandler final : public rocksdb::WriteBatch::Handler {
     if (cf_id != _default_cf_id) {
       return;
     }
-    constexpr size_t kPrefix = sizeof(ObjectId) + sizeof(catalog::Column::Id);
+    static constexpr auto kPrefix =
+      sizeof(ObjectId) + sizeof(catalog::Column::Id);
     if (key.size() <= kPrefix) {
       return;
     }
-    ObjectId key_object_id{absl::big_endian::Load64(key.data())};
-    auto table_it = _table2shards.find(key_object_id);
+    ObjectId id{absl::big_endian::Load64(key.data())};
+    auto table_it = _table2shards.find(id);
     if (table_it == _table2shards.end()) {
       return;
     }
 
-    catalog::Column::Id col_id = absl::big_endian::Load<catalog::Column::Id>(
+    auto& [started, shards] = table_it->second;
+    SDB_ASSERT(std::ranges::is_sorted(shards, ShardState::GetComparator()));
+    // start_tick is exclusive: a shard already has everything up.
+    while (started < shards.size() &&
+           shards[started]->start_tick < _batch_sequence) {
+      ++started;
+    }
+    if (started == 0) {
+      return;
+    }
+
+    const auto col_id = absl::big_endian::Load<catalog::Column::Id>(
       key.data() + sizeof(ObjectId));
     std::string_view pk{key.data() + kPrefix, key.size() - kPrefix};
-
-    for (auto* s : table_it->second) {
-      // start_tick is exclusive: shard already has everything up to and
-      // including start_tick in its persisted payload.
-      if (_batch_sequence <= s->start_tick) {
-        continue;
-      }
+    std::string_view full_key{key.data(), key.size()};
+    for (auto* s : std::span{shards.data(), started}) {
       auto col_it = s->col2index.find(col_id);
       if (col_it == s->col2index.end()) {
+        // unindexed column
         continue;
       }
-      fn(*s, col_it->second, pk);
+      auto& row = s->GetRow(pk);
+      row.full_key = full_key;
+      fn(row, col_it->second);
     }
   }
 
-  containers::FlatHashMap<ObjectId, std::vector<ShardState*>>& _table2shards;
+  TableToShards& _table2shards;
   uint32_t _default_cf_id;
   rocksdb::SequenceNumber _batch_sequence;
 };
@@ -334,6 +371,8 @@ class FanoutBatchHandler final : public rocksdb::WriteBatch::Handler {
 }  // namespace
 
 void WalRecovery::Run() {
+  auto recovery_begin = std::chrono::steady_clock::now();
+
   auto& server = SerenedServer::Instance();
   auto& engine = server.getFeature<EngineFeature>().engine();
   auto& rdb = basics::downCast<RocksDBEngineCatalog>(engine);
@@ -344,9 +383,6 @@ void WalRecovery::Run() {
   auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
   SDB_ASSERT(snapshot);
 
-  // Walk the catalog and collect every inverted-index shard whose persisted
-  // tick lags the engine's recovered tick. Caught-up shards are promoted by
-  // their own InitPostRecovery callback, so we only deal with lagging ones.
   std::vector<ShardState> shards;
   Tick min_start_tick = std::numeric_limits<Tick>::max();
   for (const auto& database : snapshot->GetDatabases()) {
@@ -370,12 +406,11 @@ void WalRecovery::Run() {
         state.shard = std::move(inv_shard);
         state.start_tick = persisted;
         state.end_tick = end_tick;
-        if (!ResolveShardMetadata(state, *snapshot)) {
-          SDB_FATAL("xxxxx", Logger::SEARCH,
-                    "WAL recovery: could not resolve catalog metadata for "
-                    "inverted index '",
-                    state.shard->GetId().id(), "'");
-        }
+        SDB_FATAL_IF("xxxxx", Logger::SEARCH,
+                     !ResolveShardMetadata(state, *snapshot),
+                     "WAL recovery: could not resolve catalog metadata for "
+                     "inverted index '",
+                     state.shard->GetId().id(), "'");
         min_start_tick = std::min(min_start_tick, state.start_tick);
         shards.push_back(std::move(state));
       }
@@ -386,9 +421,12 @@ void WalRecovery::Run() {
     return;
   }
 
-  containers::FlatHashMap<ObjectId, std::vector<ShardState*>> table2shards;
+  TableToShards table2shards;
   for (auto& s : shards) {
-    table2shards[s.table_object_id].push_back(&s);
+    table2shards[s.table_object_id].shards.push_back(&s);
+  }
+  for (auto& [_, per_table] : table2shards) {
+    std::ranges::sort(per_table.shards, ShardState::GetComparator());
   }
 
   auto* db = rdb.db();
@@ -398,32 +436,31 @@ void WalRecovery::Run() {
   SDB_ASSERT(default_cf);
   const uint32_t default_cf_id = default_cf->GetID();
 
-  std::unique_ptr<rocksdb::TransactionLogIterator> iter;
-  {
-    auto s =
-      db->GetUpdatesSince(min_start_tick, &iter,
-                          rocksdb::TransactionLogIterator::ReadOptions(true));
-    if (!s.ok()) {
-      SDB_FATAL("xxxxx", Logger::SEARCH,
-                "WAL recovery: failed to open WAL iterator from tick ",
-                min_start_tick, ": ", s.ToString());
-    }
-  }
+  SDB_INFO("xxxxx", Logger::SEARCH,
+           "Starting WAL recovery, to skip it use the flag: "
+           "\"--search.skip-wal-recovery\"");
 
-  auto maybe_flush_large_shards = [&]() {
+  std::unique_ptr<rocksdb::TransactionLogIterator> iter;
+
+  auto s = db->GetUpdatesSince(
+    min_start_tick, &iter, rocksdb::TransactionLogIterator::ReadOptions(true));
+  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !s.ok(),
+               "WAL recovery: failed to open WAL iterator from tick ",
+               min_start_tick, ": ", s.ToString());
+  SDB_ASSERT(iter);
+
+  std::vector<rocksdb::BatchResult> live_batches;
+  auto flush_all = [&]() {
     for (auto& s : shards) {
-      if (s.ordered_pks.size() >= kFlushThreshold) {
-        FlushShard(s, snapshot);
-      }
+      FlushShard(s, snapshot, *db, *default_cf);
     }
+    live_batches.clear();
   };
 
-  while (iter && iter->Valid()) {
+  while (iter->Valid()) {
     auto status = iter->status();
-    if (!status.ok()) {
-      SDB_FATAL("xxxxx", Logger::SEARCH,
-                "WAL recovery: iterator error: ", status.ToString());
-    }
+    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                 "WAL recovery: iterator error: ", status.ToString());
 
     auto batch = iter->GetBatch();
     if (batch.sequence > end_tick) {
@@ -432,23 +469,29 @@ void WalRecovery::Run() {
 
     FanoutBatchHandler handler{table2shards, default_cf_id, batch.sequence};
     status = batch.writeBatchPtr->Iterate(&handler);
-    if (!status.ok()) {
-      SDB_FATAL("xxxxx", Logger::SEARCH,
-                "WAL recovery: batch iterate failed at seq ", batch.sequence,
-                ": ", status.ToString());
+    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
+                 "WAL recovery: batch iterate failed at seq ", batch.sequence,
+                 ": ", status.ToString());
+
+    live_batches.emplace_back(std::move(batch));
+
+    const auto need_flush = absl::c_any_of(shards, [&](const ShardState& s) {
+      return s.pk2row.size() >= kFlushThreshold;
+    });
+    if (need_flush) {
+      flush_all();
     }
 
-    maybe_flush_large_shards();
     iter->Next();
   }
 
-  for (auto& s : shards) {
-    FlushShard(s, snapshot);
-  }
+  auto status = iter->status();
+  SDB_FATAL_IF(
+    "xxxxx", Logger::SEARCH, !iter->status().ok(),
+    "WAL recovery: iterator error after last batch: ", status.ToString());
 
-  // Destruct trx before CommitUnsafe so pending inserts reach the
-  // IndexWriter — otherwise Commit takes the "no changes" fast-path and
-  // skips meta_payload_provider, which is what persists the recovery tick.
+  flush_all();
+
   for (auto& s : shards) {
     s.delete_sink.reset();
     s.insert_sink.reset();
@@ -458,11 +501,9 @@ void WalRecovery::Run() {
 
     CommitResult code = CommitResult::Undefined;
     auto r = s.shard->CommitUnsafe(/*wait=*/true, nullptr, code);
-    if (!r.res.ok()) {
-      SDB_FATAL("xxxxx", Logger::SEARCH,
-                "WAL recovery: commit failed for index '",
-                s.shard->GetId().id(), "': ", r.res.errorMessage());
-    }
+    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !r.res.ok(),
+                 "WAL recovery: commit failed for index '",
+                 s.shard->GetId().id(), "': ", r.res.errorMessage());
     SDB_INFO(
       "xxxxx", Logger::SEARCH, "WAL recovery: index '", s.shard->GetId().id(),
       "' replayed (", s.start_tick, ", ", s.end_tick,
@@ -474,6 +515,13 @@ void WalRecovery::Run() {
     s.shard->FinishCreation();
     s.shard->StartTasks();
   }
+
+  uint64_t recovery_time_ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - recovery_begin)
+      .count();
+  SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: completed in ",
+           recovery_time_ms, " ms, indexes=", shards.size());
 }
 
 }  // namespace sdb::search

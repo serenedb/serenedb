@@ -23,6 +23,7 @@
 #include <absl/strings/ascii.h>
 #include <vpack/serializer.h>
 
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 
 #include "basics/down_cast.h"
@@ -174,12 +175,34 @@ Result ApplyHNSWOptions(
 
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
+  // Whitelist must stay in sync with SearchSinkInsertBaseImpl::SwitchColumnImpl
+  // (search_sink_writer.cpp): every kind here MUST have a writer setup case
+  // there, otherwise inserts/updates would silently drop the column at write
+  // time. TIMESTAMP is supported by the writer but not by the search filter
+  // path yet, so it stays rejected explicitly.
   for (auto c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
-    if (c.catalog_column->type.id() == duckdb::LogicalTypeId::TIMESTAMP ||
-        c.catalog_column->type.id() == duckdb::LogicalTypeId::HUGEINT) {
-      return {ERROR_BAD_PARAMETER, "Column ", c.name,
-              " has unsupported kind and can not be indexed"};
+    auto kind = c.catalog_column->type.id();
+    bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
+                     kind == duckdb::LogicalTypeId::VARCHAR ||
+                     kind == duckdb::LogicalTypeId::BLOB ||
+                     kind == duckdb::LogicalTypeId::BOOLEAN ||
+                     kind == duckdb::LogicalTypeId::TINYINT ||
+                     kind == duckdb::LogicalTypeId::SMALLINT ||
+                     kind == duckdb::LogicalTypeId::INTEGER ||
+                     kind == duckdb::LogicalTypeId::BIGINT ||
+                     kind == duckdb::LogicalTypeId::FLOAT ||
+                     kind == duckdb::LogicalTypeId::DOUBLE ||
+                     kind == duckdb::LogicalTypeId::DATE ||
+                     kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+                     kind == duckdb::LogicalTypeId::ARRAY;
+    if (!supported) {
+      return {ERROR_BAD_PARAMETER,
+              "Column ",
+              c.name,
+              " has unsupported kind ",
+              duckdb::EnumUtil::ToString(kind),
+              " and can not be indexed"};
     }
   }
   return {};

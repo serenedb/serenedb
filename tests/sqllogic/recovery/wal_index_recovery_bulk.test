@@ -50,7 +50,7 @@ SELECT 1;
 # --- restart ---
 
 connection bulk_after
-statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+statement ok retry 60 backoff 1s
 VACUUM (UPDATE_INDEXES) wal_bulk_t;
 
 connection bulk_after

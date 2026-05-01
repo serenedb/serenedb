@@ -241,7 +241,6 @@ class InvertedIndexShard final
   void SetRecoveredTick(Tick tick) noexcept { _last_committed_tick = tick; }
 
  private:
-
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;

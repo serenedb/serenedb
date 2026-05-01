@@ -72,6 +72,7 @@ const std::string kCommitThreadsParam("--search.commit-threads");
 const std::string kConsolidationThreadsParam("--search.consolidation-threads");
 const std::string kFailOnOutOfSync("--search.fail-queries-on-out-of-sync");
 const std::string kSkipRecovery("--search.skip-recovery");
+const std::string kSkipWalRecovery("--search.skip-wal-recovery");
 const std::string kCacheLimit("--search.columns-cache-limit");
 const std::string kCacheOnlyLeader("--search.columns-cache-only-leader");
 const std::string kSearchThreadsLimit("--search.execution-threads-limit");
@@ -166,6 +167,15 @@ number based on the number of cores in the system.)");
     "recreated.",
     new options::VectorParameter<options::StringParameter>(
       &_skip_recovery_items));
+
+  options->addOption(
+    kSkipWalRecovery,
+    "Skip the entire WAL replay phase for inverted indexes on startup. "
+    "Lagging shards will start serving queries with stale content; the "
+    "missing WAL delta will not be applied. Intended for diagnostics -- "
+    "data loss is permanent for the skipped delta unless you crash again "
+    "with a longer recovery window.",
+    new options::BooleanParameter(&_skip_wal_recovery));
 
   options
     ->addOption(kFailOnOutOfSync,
@@ -266,8 +276,9 @@ void SearchEngine::start() {
     SDB_ASSERT(_commit_threads);
     SDB_ASSERT(_consolidation_threads);
 
-    
-    WalRecovery{}.Run();
+    if (!_skip_wal_recovery) {
+      WalRecovery{}.Run();
+    }
 
     _thread_pools->Get(ThreadGroup::Commit)
       .start(_commit_threads, IR_NATIVE_STRING("search:commit"));

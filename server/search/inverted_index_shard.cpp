@@ -283,7 +283,7 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
   auto& server = SerenedServer::Instance();
 
   // Shared WAL replay for lagging shards runs later from SearchEngine::start,
-  // which walks the catalog itself — no per-shard registration needed.
+  // which walks the catalog itself -- no per-shard registration needed.
 
   auto res =
     server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(

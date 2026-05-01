@@ -444,6 +444,37 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, tokenized,
                               bool_cast_bind, /*implicit_cast_cost=*/0);
 
+  // BOOLEAN <-> BOOSTED_TSQUERY: lets `(predicate)::boost(K)` apply
+  // to plain SQL conditions outside `@@`. Both directions throw at
+  // runtime -- the optimizer extension claims the boost cast at
+  // bind time when the inner predicate is index-claimable; if it
+  // isn't, the throwing stub fires with a specific message
+  // pointing the user back to `@@`.
+  auto boost_bool_cast_bind =
+    +[](duckdb::BindCastInput&, const duckdb::LogicalType&,
+        const duckdb::LogicalType&) -> duckdb::BoundCastInfo {
+    return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
+                                     duckdb::idx_t,
+                                     duckdb::CastParameters&) -> bool {
+      throw duckdb::InvalidInputException(
+        "::boost(K) used on a predicate the inverted index could not "
+        "claim -- boost is only meaningful inside an inverted-index "
+        "match. Move the boost into an `@@` match or remove it.");
+    });
+  };
+  // Cost 50 mirrors VARCHAR -> BOOSTED_TSQUERY (above): keeps plain
+  // BOOLEAN operands from sweeping into TSQUERY overloads when no
+  // boost was actually requested.
+  loader.RegisterCastFunction(duckdb::LogicalType::BOOLEAN, boosted_tsq,
+                              boost_bool_cast_bind,
+                              /*implicit_cast_cost=*/50);
+  // Cost 0: this is the WHERE-clause coercion DuckDB inserts when a
+  // `(predicate)::boost(K)` cast appears at the predicate root (the
+  // WhereBinder unconditionally adds a cast to BOOLEAN).
+  loader.RegisterCastFunction(boosted_tsq, duckdb::LogicalType::BOOLEAN,
+                              boost_bool_cast_bind,
+                              /*implicit_cast_cost=*/0);
+
   // VARCHAR[] -> TSQUERY[] -- proper element-wise list cast (NOT a
   // ReinterpretCast on the LIST itself; see DuckDB list_casts.cpp).
   // Lets users write `ANY_OF(['a', 'b'])` without per-element

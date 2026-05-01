@@ -60,7 +60,8 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_starts_with expects 1 argument (text), got ", func.children.size()),
+      ERR_MSG("ts_starts_with expects 1 argument (text), got ",
+              func.children.size()),
       ERR_HINT("Example: ts_starts_with('pre'). For mid-string wildcards use "
                "ts_like('foo%bar')."));
   }
@@ -72,6 +73,36 @@ void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_HINT("Example: ts_starts_with('pre')."));
   }
   BuildFtsPrefix(parent, ctx, column_info, prefix);
+}
+
+Result FromFuncPrefix(irs::BooleanFilter& filter, const FilterContext& ctx,
+                      const duckdb::BoundFunctionExpression& func) {
+  if (func.children.size() != 2) {
+    return {ERROR_BAD_PARAMETER, "prefix expects 2 arguments, got ",
+            func.children.size()};
+  }
+  const auto* column_ref = TryGetColumnRef(*func.children[0]);
+  if (!column_ref) {
+    return {ERROR_BAD_PARAMETER, "prefix input is not a column reference"};
+  }
+  const auto* literal_val = TryGetConstant(*func.children[1]);
+  if (!literal_val ||
+      literal_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "prefix literal must be a VARCHAR constant"};
+  }
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
+  if (!column_info) {
+    return {ERROR_BAD_PARAMETER, "Column is not indexed"};
+  }
+  if (column_info->tokenizer.analyzer->type() !=
+      irs::Type<irs::StringTokenizer>::id()) {
+    return {ERROR_BAD_PARAMETER,
+            "prefix requires an identity-analyzed column. Use "
+            "`col @@ ts_starts_with('pre')` for non-identity analyzers."};
+  }
+  BuildFtsPrefix(filter, ctx, *column_info,
+                 literal_val->GetValue<std::string>());
+  return {};
 }
 
 }  // namespace sdb::connector

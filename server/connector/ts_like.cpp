@@ -28,11 +28,6 @@
 #include "ts_common.hpp"
 
 namespace sdb::connector {
-
-void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info, std::string field_name,
-                    std::string_view raw_pattern, char escape_char = '\\');
-
 namespace {
 
 void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,

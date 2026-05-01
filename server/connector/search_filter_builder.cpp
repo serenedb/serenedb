@@ -369,6 +369,29 @@ bool IsComparisonExpr(const duckdb::Expression& expr) {
 // Iterative because casts can chain (e.g. ts_phrase('x')::tokenize('y')
 // inside @@ becomes BoundCast<TSQ>(BoundCast<TOK-mod-y>(PHRASE)) -- we
 // peel the outer transit cast and stop at the modifier-bearing cast).
+// Peels the BOOSTED_TSQUERY -> BOOLEAN coercion that the WhereBinder
+// inserts when a `(predicate)::boost(K)` cast appears at the WHERE
+// root. Returns the inner cast (whose return_type carries the boost
+// modifier) so the SQL-surface peel can read the factor. If `expr`
+// isn't that exact shape, returns `expr` unchanged.
+const duckdb::Expression& UnwrapBoostBoolCoercion(
+  const duckdb::Expression& expr) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+    return expr;
+  }
+  const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
+  if (!cast.child) {
+    return expr;
+  }
+  if (cast.return_type.id() != duckdb::LogicalTypeId::BOOLEAN) {
+    return expr;
+  }
+  if (!TryGetBoostModifier(cast.child->return_type).factor) {
+    return expr;
+  }
+  return *cast.child;
+}
+
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
   const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
@@ -817,13 +840,6 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-// Defined below; forward-declared here so FromLike can call it before
-// the definition. EmitLikeFilter is also called from ts_like.cpp,
-// which has its own forward decl.
-void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info, std::string field_name,
-                    std::string_view raw_pattern, char escape_char = '\\');
-
 // `generic_version` selects the call-site contract:
 //  - true: SQL `b LIKE 'pat'` operator -- the column may be any
 //    indexed type; the function returns a Result so the optimizer
@@ -960,6 +976,10 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
     }
     return FromLike(filter, ctx, *func.children[0], *func.children[1],
                     /*generic_version=*/true, escape_char);
+  }
+
+  if (name == "prefix") {
+    return FromFuncPrefix(filter, ctx, func);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};
@@ -1134,6 +1154,31 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
     return true;
   }
   return false;
+}
+
+bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
+                             const FilterContext& ctx,
+                             const duckdb::Expression& peeled) {
+  if (peeled.expression_class != duckdb::ExpressionClass::BOUND_CAST) {
+    return false;
+  }
+  const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
+  auto mod = TryGetBoostModifier(cast_expr.return_type);
+  if (!mod.factor || !cast_expr.child) {
+    return false;
+  }
+  auto factor = static_cast<irs::score_t>(*mod.factor);
+  auto r = FromExpression(filter, ctx.WithBoost(factor), *cast_expr.child);
+  if (!r.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::boost(K) used on a predicate the inverted index could not "
+              "claim: ",
+              r.errorMessage()),
+      ERR_HINT("boost is only meaningful inside an inverted-index match. "
+               "Move the boost into an `@@` match or remove it."));
+  }
+  return true;
 }
 
 // `(...)::tokenize('<name>')` -- 'identity' bypasses tokenisation;
@@ -1450,6 +1495,13 @@ Result FromOperatorExpression(irs::BooleanFilter& filter,
 
 Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& expr) {
+  // Peel the BOOSTED_TSQUERY -> BOOLEAN coercion the WHERE-binder
+  // inserts when a `(predicate)::boost(K)` cast appears at the
+  // predicate root, then dispatch the boost cast itself. If the
+  // inner predicate can't be claimed, this throws.
+  if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
+    return {};
+  }
   switch (expr.expression_class) {
     case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
       const auto& conj = expr.Cast<duckdb::BoundConjunctionExpression>();

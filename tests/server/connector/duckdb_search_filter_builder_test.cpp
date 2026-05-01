@@ -2509,6 +2509,184 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastRange) {
                true);
 }
 
+// `(predicate)::boost(K)` -- boost a SQL predicate outside `@@`.
+// The cast peels through both the WHERE-coercion (BOOSTED -> BOOLEAN)
+// and the user-written boost cast (BOOLEAN -> BOOSTED), then
+// recurses into the SQL-surface dispatch with WithBoost(K).
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlComparison) {
+  // (b > 50)::boost(2.0) -- numeric range gets boost 2.0.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, false, std::nullopt, false)
+    .boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (b > 50)::boost(2.0)", columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlEquality) {
+  // (b = 'foo')::boost(0.5) -- term filter gets boost 0.5.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
+    .boost(0.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (b = 'foo')::boost(0.5)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlBetween) {
+  // (b BETWEEN 1 AND 10)::boost(2.0) -- BETWEEN's And group gets boost 2.0.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
+  irs::And expected;
+  auto& group = expected.add<irs::And>();
+  group.boost(2.0f);
+  AddRangeFilter<int32_t>(group, 1, 1, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(group, 1, std::nullopt, false, 10, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (b BETWEEN 1 AND 10)::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlIn) {
+  // (a IN ('x','y'))::boost(2.0) -- ByTerms gets boost 2.0.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
+  irs::And expected;
+  AddTermsFilter<std::string_view>(
+    expected, 1, {std::string_view{"x"}, std::string_view{"y"}})
+    .boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (a IN ('x','y'))::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlLike) {
+  // (col LIKE '%foo_')::boost(2.0) -- the underlying `~~` operator
+  // path; the wildcard pattern is preserved as-is.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "col"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo_").boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (col LIKE '%foo_')::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlLikePrefix) {
+  // (col LIKE 'pre%')::boost(2.0) -- DuckDB rewrites this to
+  // `prefix(col, 'pre')`. On identity-analyzed columns we emit the
+  // dedicated irs::ByPrefix filter (cheaper than a wildcard pattern
+  // scan).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "col"}};
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"pre"}).boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (col LIKE 'pre%')::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_SqlPrefixUnboosted) {
+  // Bare `col LIKE 'pre%'` (no boost) -- claim the rewritten
+  // `prefix(col, 'pre')` and emit irs::ByPrefix directly.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "col"}};
+  irs::And expected;
+  AddPrefixFilter(expected, 1, std::string_view{"pre"});
+  AssertFilter(expected, "SELECT * FROM foo WHERE col LIKE 'pre%'", columns,
+               true);
+}
+
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlEqualityInOr) {
+  // Boosted equality inside an OR group -- verifies that the boost
+  // peel propagates the factor through MakeGroup<irs::Or>'s child
+  // dispatch and onto the per-leg ByTerm filter.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "sku"}};
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  AddTermFilter<std::string_view>(or_group, 1, std::string_view{"alpha-1"});
+  AddTermFilter<std::string_view>(or_group, 1, std::string_view{"beta-1"})
+    .boost(1000.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE sku = 'alpha-1' OR (sku = "
+               "'beta-1')::boost(1000.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlPrefixInOr) {
+  // Boosted LIKE 'pre%' (rewritten by DuckDB to prefix(...)) inside
+  // an OR group -- verifies boost propagates onto the ByPrefix leg.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "sku"}};
+  irs::And expected;
+  auto& or_group = expected.add<irs::Or>();
+  AddPrefixFilter(or_group, 1, std::string_view{"alpha-"});
+  AddPrefixFilter(or_group, 1, std::string_view{"beta-"}).boost(1000.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE sku LIKE 'alpha-%' OR (sku LIKE "
+               "'beta-%')::boost(1000.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlAndCombined) {
+  // Mix TSQUERY-surface boost with SQL-surface boost in one query.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"},
+    {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
+  irs::And expected;
+  AddTermFilter<std::string_view>(expected, 1, std::string_view{"q"});
+  AddRangeFilter<int32_t>(expected, 2, 50, false, std::nullopt, false)
+    .boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE a @@ 'q' AND (b > 50)::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlNegated) {
+  // NOT (b > 50)::boost(2.0) -- boost survives negation. DuckDB's
+  // expression simplifier folds NOT (b > 50) -> b <= 50 before the
+  // optimizer extension runs, so we observe the rewritten range
+  // (with boost still applied).
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, true)
+    .boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT (b > 50)::boost(2.0)", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlUnclaimable_BindError) {
+  // (unindexed_col > 50)::boost(2.0) -- unindexed column; the boost
+  // peel can't claim and escalates to a specific error.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "indexed_col"}};
+  AssertFilter(
+    irs::And{},
+    "SELECT * FROM foo WHERE (unindexed_col > 50)::boost(2.0)", columns, false,
+    IdentityAnalyzerProvider,
+    "::boost(K) used on a predicate the inverted index could not claim");
+}
+
+TEST_F(SearchFilterBuilderTest, test_Boost_SqlUnclaimable_NonConstRhs) {
+  // (b > c)::boost(2.0) -- non-constant RHS isn't claimable; same
+  // bind-time error as the unindexed-column case.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"},
+    {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "c"}};
+  AssertFilter(
+    irs::And{}, "SELECT * FROM foo WHERE (b > c)::boost(2.0)", columns, false,
+    IdentityAnalyzerProvider,
+    "::boost(K) used on a predicate the inverted index could not claim");
+}
+
 // Trivial BOOLEAN constants short-circuit at any TSQUERY position.
 // NULL is handled by DuckDB's NULL-strict operator semantics (folds
 // the whole predicate to NULL -> no rows), not by our walker.

@@ -1428,3 +1428,237 @@ id
 
 statement ok
 DROP TABLE boost_docs;
+
+
+# ============================================================================
+# `::boost(K)` on plain SQL conditions outside `@@`. The cast peels the
+# WHERE-coercion (BOOSTED_TSQUERY -> BOOLEAN) plus the user-written
+# boost cast (BOOLEAN -> BOOSTED_TSQUERY) and applies the factor at
+# the leaf-filter level via FilterContext::WithBoost.
+# ============================================================================
+
+statement ok
+CREATE TABLE sql_boost_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sql_boost_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX sql_boost_idx ON sql_boost_docs USING inverted(id, body sql_boost_en);
+
+
+statement count 1
+INSERT INTO sql_boost_docs VALUES (1, 'alpha');
+
+
+statement count 1
+INSERT INTO sql_boost_docs VALUES (2, 'beta');
+
+
+statement count 1
+INSERT INTO sql_boost_docs VALUES (3, 'gamma');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) sql_boost_docs;
+
+
+# Baseline (no SQL-surface boost): 3-way OR over the body terms; all
+# three rows score identically so they sort by id.
+query
+SELECT id FROM sql_boost_idx
+WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+1
+2
+3
+
+
+# End-to-end BM25 ordering via SQL-surface boost wrapping a TSQUERY
+# match: `(body @@ 'word')::boost(K)`. The boost peel recurses into
+# the @@ expression with WithBoost(K), producing a ByTerm leaf with
+# boost K -- which is scored under the analyzed body column. Boost
+# on the alpha leg lifts id=1 to the top.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha')::boost(1000.0) OR (body @@ 'beta')
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+1
+2
+
+
+# Inverse: boost beta instead -- id=2 ranks first.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha') OR (body @@ 'beta')::boost(1000.0)
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+2
+1
+
+
+# Three-way: each leg with its own SQL-surface boost factor; the
+# largest factor wins regardless of id order.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha')::boost(100.0)
+   OR (body @@ 'beta')::boost(1000.0)
+   OR (body @@ 'gamma')::boost(10.0)
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+2
+1
+3
+
+
+# Boost cast wrapping a compound predicate (AND of @@ + numeric
+# equality): the factor applies to the AND group's score
+# contribution. id=1 satisfies both conjuncts and gets the boost.
+query
+SELECT id FROM sql_boost_idx
+WHERE (body @@ 'alpha' AND id = 1)::boost(1000.0)
+   OR (body @@ 'beta')
+ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+----
+id
+1
+2
+
+
+# Bind-time error: SQL-surface boost cast on a predicate the inverted
+# index can't claim (binary comparison with column refs on both
+# sides).
+query error ::boost\(K\) used on a predicate the inverted index could not claim
+SELECT id FROM sql_boost_idx
+WHERE (id > id)::boost(2.0);
+
+
+statement ok
+DROP TABLE sql_boost_docs;
+
+
+# ============================================================================
+# `prefix(col, 'pre')` -- DuckDB's specialised rewrite of `LIKE 'pre%'`
+# (when the literal portion has no SQL wildcards). Claimed via
+# irs::ByPrefix on identity-analyzed columns; declined for other
+# analyzers (predicate falls back to row-by-row evaluation).
+# ============================================================================
+
+statement ok
+CREATE TABLE prefix_docs (id INTEGER PRIMARY KEY, sku VARCHAR);
+
+
+# Default (identity) analyzer on `sku` -- exact-match semantics for
+# `=`, `IN`, `LIKE` claimers. No BM25 scoring features so we only
+# verify row inclusion for this section; SQL-boost rank semantics
+# are covered separately below using the analyzed-body setup.
+statement ok
+CREATE INDEX prefix_idx ON prefix_docs USING inverted(id, sku);
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (1, 'alpha-1');
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (2, 'alpha-2');
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (3, 'beta-1');
+
+
+statement count 1
+INSERT INTO prefix_docs VALUES (4, 'gamma-1');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) prefix_docs;
+
+
+# Bare `LIKE 'pre%'` -- DuckDB rewrites to prefix(sku, 'alpha-');
+# claimed via ByPrefix.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE 'alpha-%' ORDER BY id;
+----
+id
+1
+2
+
+
+# Identity-analyzed columns don't carry BM25 scoring features in
+# current DDL (no text_dictionary -> StringTokenizer with default
+# features), so we verify only inclusion -- claim correctness is
+# what matters here. Boost-on-filter correctness is verified
+# separately by C++ unit tests (test_Boost_SqlEqualityInOr /
+# test_Boost_SqlPrefixInOr) via filter-equality assertions.
+
+# `LIKE 'pre%'` -- DuckDB rewrites to prefix(sku, 'alpha-'); claimed
+# via ByPrefix.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE 'alpha-%' ORDER BY id;
+----
+id
+1
+2
+
+
+# Trailing `_` keeps the `~~` operator (no prefix() rewrite);
+# claimed via the LIKE branch as ByWildcard.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE 'alpha-_' ORDER BY id;
+----
+id
+1
+2
+
+
+# Non-prefix wildcards (`%-1`): claimed via the LIKE branch.
+query
+SELECT id FROM prefix_idx WHERE sku LIKE '%-1' ORDER BY id;
+----
+id
+1
+3
+4
+
+
+# Equality on identity-analyzed VARCHAR: ByTerm.
+query
+SELECT id FROM prefix_idx WHERE sku = 'alpha-1' OR sku = 'beta-1' ORDER BY id;
+----
+id
+1
+3
+
+
+# IN on identity-analyzed VARCHAR: ByTerms.
+query
+SELECT id FROM prefix_idx
+WHERE sku IN ('alpha-1', 'gamma-1', 'beta-1') ORDER BY id;
+----
+id
+1
+3
+4
+
+
+statement ok
+DROP TABLE prefix_docs;

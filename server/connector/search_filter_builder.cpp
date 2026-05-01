@@ -628,9 +628,9 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
         column_info->tokenizer.analyzer->type() !=
           irs::Type<irs::StringTokenizer>::id()) {
       return {ERROR_BAD_PARAMETER,
-              "Field is not indexed by identity analyzer. Use `col @@ "
+              "Field is not indexed by keyword analyzer. Use `col @@ "
               "'value'` (tokenised) or `col @@ "
-              "'value'::tokenize('identity')` (raw)."};
+              "'value'::tokenize('keyword')` (raw)."};
     }
   }
 
@@ -675,8 +675,8 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
           irs::Type<irs::StringTokenizer>::id()) {
       return {
         ERROR_BAD_PARAMETER,
-        "Field is not indexed by identity analyzer. Range predicates "
-        "(<, <=, >, >=, BETWEEN) require an identity-analyzed column. "
+        "Field is not indexed by keyword analyzer. Range predicates "
+        "(<, <=, >, >=, BETWEEN) require an keyword-analyzed column. "
         "Use `col @@ ts_lt('value')` / `LESS_EQ` / `GREATER` / "
         "`GREATER_EQ` / `ts_between(min, max, ...)` (tokenised through the "
         "column's analyzer) instead."};
@@ -825,9 +825,9 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
         column_info->tokenizer.analyzer->type() !=
           irs::Type<irs::StringTokenizer>::id()) {
       return {ERROR_BAD_PARAMETER,
-              "Field is not indexed by identity analyzer. Use `col @@ "
+              "Field is not indexed by keyword analyzer. Use `col @@ "
               "ts_any('a', 'b', ...)` (tokenised) or `col @@ ts_any("
-              "'a'::tokenize('identity'), ...)` (raw)."};
+              "'a'::tokenize('keyword'), ...)` (raw)."};
     }
   }
 
@@ -888,7 +888,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
 //  - true: SQL `b LIKE 'pat'` operator -- the column may be any
 //    indexed type; the function returns a Result so the optimizer
 //    can leave the filter unclaimed when the column rejects the
-//    LIKE shape (non-VARCHAR, non-identity / non-wildcard analyzer).
+//    LIKE shape (non-VARCHAR, non-keyword / non-wildcard analyzer).
 //  - false: TSQUERY-surface entry where the binder has already
 //    constrained the column to VARCHAR. Validate via SDB_ASSERT
 //    instead of returning a Result -- the failure mode is a bind-
@@ -1225,7 +1225,7 @@ bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
   return true;
 }
 
-// `(...)::tokenize('<name>')` -- 'identity' bypasses tokenisation;
+// `(...)::tokenize('<name>')` -- 'keyword' bypasses tokenisation;
 // any other name resolves via the catalog. Returns false if `peeled`
 // carries no tokenize modifier.
 bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
@@ -1265,7 +1265,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
     }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("::tokenize('identity'): inner expression has unsupported "
+      ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
   // Wrapper lives on this stack frame; releases the analyzer back to
@@ -1276,7 +1276,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
       ERR_MSG("::tokenize('", tokenizer, "'): tokenizer not found in catalog"),
       ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
-               "or use 'identity' for raw bytes."));
+               "or use 'keyword' for raw bytes."));
   }
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {

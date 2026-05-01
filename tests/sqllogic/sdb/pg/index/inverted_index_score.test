@@ -1557,7 +1557,7 @@ DROP TABLE sql_boost_docs;
 # ============================================================================
 # `prefix(col, 'pre')` -- DuckDB's specialised rewrite of `LIKE 'pre%'`
 # (when the literal portion has no SQL wildcards). Claimed via
-# irs::ByPrefix on identity-analyzed columns; declined for other
+# irs::ByPrefix on keyword-analyzed columns; declined for other
 # analyzers (predicate falls back to row-by-row evaluation).
 # ============================================================================
 
@@ -1640,7 +1640,7 @@ id
 4
 
 
-# Equality on identity-analyzed VARCHAR: ByTerm.
+# Equality on keyword-analyzed VARCHAR: ByTerm.
 query
 SELECT id FROM prefix_idx WHERE sku = 'alpha-1' OR sku = 'beta-1' ORDER BY id;
 ----
@@ -1649,7 +1649,7 @@ id
 3
 
 
-# IN on identity-analyzed VARCHAR: ByTerms.
+# IN on keyword-analyzed VARCHAR: ByTerms.
 query
 SELECT id FROM prefix_idx
 WHERE sku IN ('alpha-1', 'gamma-1', 'beta-1') ORDER BY id;

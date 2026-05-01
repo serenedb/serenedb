@@ -97,8 +97,8 @@ Result FromFuncPrefix(irs::BooleanFilter& filter, const FilterContext& ctx,
   if (column_info->tokenizer.analyzer->type() !=
       irs::Type<irs::StringTokenizer>::id()) {
     return {ERROR_BAD_PARAMETER,
-            "prefix requires an identity-analyzed column. Use "
-            "`col @@ ts_starts_with('pre')` for non-identity analyzers."};
+            "prefix requires an keyword-analyzed column. Use "
+            "`col @@ ts_starts_with('pre')` for non-keyword analyzers."};
   }
   BuildFtsPrefix(filter, ctx, *column_info,
                  literal_val->GetValue<std::string>());

@@ -107,9 +107,9 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
         throw duckdb::BinderException(
           "tokenize() argument must be a VARCHAR analyzer name or NULL");
       }
-      // NULL is sugar for 'identity' -- both mean "no tokenisation,
+      // NULL is sugar for 'keyword' -- both mean "no tokenisation,
       // treat the bytes as a single raw term". Normalize to a literal
-      // 'identity' so the filter builder's existing identity branch
+      // 'keyword' so the filter builder's existing identity branch
       // handles it without a separate null-check path.
       auto resolved =
         v.IsNull()

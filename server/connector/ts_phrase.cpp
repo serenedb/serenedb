@@ -18,6 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
+#include <cstdint>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/phrase_filter.hpp>
@@ -26,7 +29,6 @@
 #include <iresearch/utils/string.hpp>
 
 #include "basics/assert.h"
-#include "basics/result_or.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -40,67 +42,53 @@ TSQueryOp ClassifyTSQueryFunction(std::string_view name);
 
 namespace {
 
-// True iff `id` is one of the integral types we accept as a phrase-gap
-// scalar (any signed integer narrower than or equal to BIGINT). Values
-// in this set need a sign check at parse time.
-bool IsPhraseGapIntegralTypeId(duckdb::LogicalTypeId id) {
-  return id == duckdb::LogicalTypeId::TINYINT ||
-         id == duckdb::LogicalTypeId::SMALLINT ||
-         id == duckdb::LogicalTypeId::INTEGER ||
-         id == duckdb::LogicalTypeId::BIGINT;
-}
-
-// Parses a constant Value into a PhraseGap. Accepts a non-negative
-// integral scalar for an exact gap, or a 2-element LIST/ARRAY of
-// non-negative integers for an interval gap (min <= max). The returned
-// PhraseGap has offsets already +1-adjusted; callers can hand it
-// directly to ByPhraseOptions::push_back(offs_min, offs_max). Returns
-// Result rather than throwing because ts_phrase callers need to append
-// the argument index to the error message before propagating.
-ResultOr<PhraseGap> ParsePhraseGap(const duckdb::Value& val,
-                                   std::string_view label) {
-  auto err = [&](auto&&... args) {
-    return std::unexpected<Result>{std::in_place, ERROR_BAD_PARAMETER,
-                                   std::forward<decltype(args)>(args)...};
+PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
+                         std::string_view hint,
+                         std::optional<size_t> arg_index = std::nullopt) {
+  auto error = [&](auto&&... msg) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label, std::forward<decltype(msg)>(msg)...,
+              arg_index ? absl::StrCat(" (argument ", *arg_index, ")")
+                        : std::string{}),
+      ERR_HINT(hint));
   };
-  if (val.IsNull()) {
-    return err(label, " gap must be a non-null constant");
-  }
-  const auto id = val.type().id();
-  if (IsPhraseGapIntegralTypeId(id)) {
-    auto raw = val.GetValue<int64_t>();
-    if (raw < 0) {
-      return err(label, " gap must be >= 0, got ", raw);
+  auto coerce = [&](const duckdb::Value& v) -> int64_t {
+    duckdb::Value out;
+    if (v.IsNull() || !v.type().IsNumeric() ||
+        !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
+                            /*error_message=*/nullptr, /*strict=*/true)) {
+      error(" gap must be a non-null non-negative integer, got ", v.ToString(),
+            " of type ", v.type().ToString());
     }
-    return PhraseGap{.offs_min = static_cast<size_t>(raw) + 1,
-                     .offs_max = static_cast<size_t>(raw) + 1};
-  }
+    auto raw = out.GetValue<int64_t>();
+    if (raw < 0) {
+      error(" gap must be >= 0, got ", raw);
+    }
+    return raw;
+  };
+
+  const auto id = val.type().id();
   if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::ARRAY) {
     const auto& children = id == duckdb::LogicalTypeId::ARRAY
                              ? duckdb::ArrayValue::GetChildren(val)
                              : duckdb::ListValue::GetChildren(val);
     if (children.size() != 2) {
-      return err(label,
-                 " interval gap must be a 2-element list [min, max], got ",
-                 children.size(), " elements");
+      error(" interval gap must be a 2-element list [min, max], got ",
+            children.size(), " elements");
     }
-    if (!IsPhraseGapIntegralTypeId(children[0].type().id()) ||
-        !IsPhraseGapIntegralTypeId(children[1].type().id()) ||
-        children[0].IsNull() || children[1].IsNull()) {
-      return err(label, " interval gap elements must be non-negative integers");
+    auto lo = coerce(children[0]);
+    auto hi = coerce(children[1]);
+    if (lo > hi) {
+      error(" interval gap must satisfy 0 <= min <= max, got [", lo, ", ", hi,
+            "]");
     }
-    auto lo = children[0].GetValue<int64_t>();
-    auto hi = children[1].GetValue<int64_t>();
-    if (lo < 0 || hi < 0 || lo > hi) {
-      return err(label, " interval gap must satisfy 0 <= min <= max, got [", lo,
-                 ", ", hi, "]");
-    }
-    return PhraseGap{.offs_min = static_cast<size_t>(lo) + 1,
-                     .offs_max = static_cast<size_t>(hi) + 1};
+    return {.offs_min = static_cast<size_t>(lo) + 1,
+            .offs_max = static_cast<size_t>(hi) + 1};
   }
-  return err(label, " gap has unsupported type ", val.type().ToString(),
-             "; expected non-negative INTEGER or 2-element INTEGER[] for an "
-             "interval gap");
+  auto raw = coerce(val);
+  return {.offs_min = static_cast<size_t>(raw) + 1,
+          .offs_max = static_cast<size_t>(raw) + 1};
 }
 
 }  // namespace
@@ -184,14 +172,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                       ERR_MSG("ts_phrase has consecutive gaps at argument ", i),
                       ERR_HINT(kSyntaxHint));
     }
-    auto gap = ParsePhraseGap(*const_val, "ts_phrase");
-    if (!gap) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(gap.error().errorMessage(), " (argument ", i, ")"),
-        ERR_HINT(kSyntaxHint));
-    }
-    pending_gap = *gap;
+    pending_gap = ParsePhraseGap(*const_val, "ts_phrase", kSyntaxHint, i);
   }
 
   if (pending_gap) {
@@ -270,32 +251,24 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
 // Expression-level wrapper for `##`: extracts the constant Value from
 // `expr` (unwrapping any TSQUERY casts) and delegates to ParsePhraseGap.
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
+  static constexpr std::string_view kHint =
+    "Use a literal INTEGER (e.g. ts_phrase('a') ## 1 ## 'b') or a "
+    "2-element INTEGER[] interval.";
   const auto& unwrapped = UnwrapTSQueryCast(expr);
   const auto* val = TryGetConstant(unwrapped);
   if (!val) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("## gap must be a constant"),
-      ERR_HINT("Use a literal INTEGER (e.g. ts_phrase('a') ## 1 ## 'b') "
-               "or a 2-element INTEGER[] interval."));
-  }
-  auto gap = ParsePhraseGap(*val, "##");
-  if (!gap) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(gap.error().errorMessage()));
+                    ERR_MSG("## gap must be a constant"), ERR_HINT(kHint));
   }
-  return *gap;
+  return ParsePhraseGap(*val, "##", kHint);
 }
 
 namespace {
 
-// True iff `expr`'s return_type indicates a gap operand (bare INTEGER
-// or INTEGER[]) rather than a TSQUERY part. Used to distinguish the
-// RHS of a `##` binary: if INTEGER/INTEGER[], treat as gap; else as
-// next phrase part.
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
-  const auto id = expr.return_type.id();
-  return IsPhraseGapIntegralTypeId(id) || id == duckdb::LogicalTypeId::LIST ||
+  const auto& type = expr.return_type;
+  const auto id = type.id();
+  return type.IsNumeric() || id == duckdb::LogicalTypeId::LIST ||
          id == duckdb::LogicalTypeId::ARRAY;
 }
 

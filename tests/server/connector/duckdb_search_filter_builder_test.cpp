@@ -688,6 +688,17 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
     AssertFilter(expected, "SELECT * FROM foo WHERE b = 'foo'", columns, false,
                  SegmentationAnalyzerProvider);
   }
+  {
+    // TSQUERY-surface equality is accepted on a segmenting analyzer:
+    // `b @@ 'foo'` tokenises through the column analyzer and emits
+    // ByTerm for the single resulting token.
+    std::vector<ColumnSpec> columns{
+      {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+    irs::And expected;
+    AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
+    AssertFilter(expected, "SELECT * FROM foo WHERE b @@ 'foo'", columns, true,
+                 SegmentationAnalyzerProvider);
+  }
 }
 
 // ===========================================================================
@@ -1451,6 +1462,20 @@ TEST_F(SearchFilterBuilderTest, test_LikeCustomEscape) {
     columns, true);
 }
 
+TEST_F(SearchFilterBuilderTest, test_TSQLikeEscape) {
+  // TSQUERY-surface analogue: ts_like('\%!foo_') passes the literal
+  // pattern straight through to iresearch -- no SQL ESCAPE re-mapping
+  // because the function form takes a raw wildcard pattern.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "\\%!foo_");
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE required_field @@ ts_like('\\%!foo_')",
+    columns, true);
+}
+
 TEST_F(SearchFilterBuilderTest, test_NotLike) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
@@ -1669,6 +1694,46 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGapRangeMinExceedsMaxError) {
     "ts_phrase interval gap must satisfy 0 <= min <= max, got [3, 1]");
 }
 
+TEST_F(SearchFilterBuilderTest, test_PhraseGap_DateTimestampRejected) {
+  // DATE / TIMESTAMP cast to BIGINT in DuckDB (days / microseconds),
+  // but a date literal as a phrase-gap offset is nonsense. Reject at
+  // parse time.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE category @@ ts_phrase('quick', "
+               "DATE '2024-01-01', 'fox')",
+               columns, false, SegmentationAnalyzerProvider,
+               "ts_phrase gap must be a non-null non-negative integer");
+}
+
+TEST_F(SearchFilterBuilderTest, test_PhraseGap_BroadNumericTypes) {
+  // The gap parser accepts any numeric type whose value coerces to a
+  // non-negative int64. This covers UBIGINT, HUGEINT, and DOUBLE/
+  // DECIMAL with no fractional part.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
+  for (const auto* gap_expr : {
+         "CAST(2 AS UBIGINT)",
+         "CAST(2 AS HUGEINT)",
+         "CAST(2.0 AS DOUBLE)",
+         "CAST(2.0 AS DECIMAL(5,2))",
+       }) {
+    irs::And expected;
+    auto& phrase = AddFilter<irs::ByPhrase>(expected);
+    *phrase.mutable_field() = MakeFieldName<std::string_view>(1);
+    phrase.mutable_options()->push_back<irs::ByTermOptions>().term =
+      irs::ViewCast<irs::byte_type>(std::string_view{"quick"});
+    phrase.mutable_options()->push_back<irs::ByTermOptions>(3, 3).term =
+      irs::ViewCast<irs::byte_type>(std::string_view{"fox"});
+    AssertFilter(expected,
+                 "SELECT * FROM foo WHERE category @@ ts_phrase('quick', " +
+                   std::string{gap_expr} + ", 'fox')",
+                 columns, true, SegmentationAnalyzerProvider);
+  }
+}
+
+
 // ===========================================================================
 // Term equality / range / IN / LIKE -- migrated from the legacy
 // TERM_LT / TERM_LIKE / TERM_IN / BOOST functions to the
@@ -1767,6 +1832,23 @@ TEST_F(SearchFilterBuilderTest, test_TermGreaterEq_AndLessEq_Composed) {
                "SELECT * FROM foo WHERE a @@ (ts_ge('apple') && "
                "ts_le('orange'))",
                columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TermGe_AndTermLe_Range_SqlAnd) {
+  // Two separate `@@` predicates AND'd at the SQL level (rather than
+  // composed inside a single @@ via TSQUERY `&&`) produce two
+  // ByRange filters at the top-level And.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "a"}};
+  irs::And expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"apple"}, true,
+                                   std::nullopt, false);
+  AddRangeFilter<std::string_view>(expected, 1, std::nullopt, false,
+                                   std::string_view{"orange"}, true);
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE a @@ ts_ge('apple') AND a @@ ts_le('orange')",
+    columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TermLess_IntegerColumn) {

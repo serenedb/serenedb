@@ -241,7 +241,7 @@ class BlockScoringTestCase : public IndexTestBase {
   void WriteSegment(irs::IndexWriter& writer, auto& gens) {
     auto& index = const_cast<tests::index_t&>(this->index());
     for (auto& gen : gens) {
-      index.emplace_back(writer.FeatureInfo());
+      index.emplace_back();
       write_segment(writer, index.back(), gen);
     }
     writer.Commit();
@@ -274,7 +274,7 @@ class BlockScoringTestCase : public IndexTestBase {
     {
       tests::JsonDocGenerator gen(resource("block_scoring_segment1.json"),
                                   &BlockScoringFieldFactory);
-      index_ref.emplace_back(writer->FeatureInfo());
+      index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen);
       writer->Commit();
     }
@@ -283,7 +283,7 @@ class BlockScoringTestCase : public IndexTestBase {
     {
       tests::JsonDocGenerator gen(resource("block_scoring_segment2.json"),
                                   &BlockScoringFieldFactory);
-      index_ref.emplace_back(writer->FeatureInfo());
+      index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen);
       writer->Commit();
     }
@@ -292,7 +292,7 @@ class BlockScoringTestCase : public IndexTestBase {
     {
       tests::JsonDocGenerator gen(resource("block_scoring_segment3.json"),
                                   &BlockScoringFieldFactory);
-      index_ref.emplace_back(writer->FeatureInfo());
+      index_ref.emplace_back();
       write_segment(*writer, index_ref.back(), gen);
       writer->Commit();
     }

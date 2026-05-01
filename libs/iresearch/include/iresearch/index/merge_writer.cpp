@@ -44,6 +44,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -1275,7 +1276,6 @@ bool WriteColumns(Columnstore& cs, Iterator& columns,
 template<typename Iterator>
 bool WriteFields(Columnstore& cs, Iterator& feature_itr,
                  const irs::FlushState& flush_state, const SegmentMeta& meta,
-                 const FeatureInfoProvider& column_info,
                  CompoundFieldIterator& field_itr,
                  IndexFeatures scorers_features,
                  const MergeWriter::FlushProgress& progress,
@@ -1340,11 +1340,9 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
       return false;
     }
 
-    const auto [info, factory] = column_info(kFeature);
-
-    std::optional<field_id> res;
-    auto feature_writer =
-      factory ? (*factory)({hdrs.data(), hdrs.size()}) : FeatureWriter::ptr{};
+    // no compression, no encryption
+    const ColumnInfo info{Type<compression::None>::get(), {}, false};
+    auto feature_writer = Norm::MakeWriter({hdrs.data(), hdrs.size()});
 
     auto* buffered_column = IsSubsetOf(kFeature, scorers_features)
                               ? &buffered_columns.PushColumn()
@@ -1357,8 +1355,9 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
       buffered_column->Reserve(count, kValueSize);
     }
 
+    std::optional<field_id> res;
     if (feature_writer) {
-      auto write_values = [&, &info = info]<typename T>(T&& value_writer) {
+      auto write_values = [&]<typename T>(T&& value_writer) {
         return cs.insert(feature_itr, info,
                          ColumnFinalizer{
                            [feature_writer = std::move(feature_writer)](
@@ -1379,24 +1378,6 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
             writer->write(out, payload);
           });
       }
-
-    } else if (!factory) {
-      // Factory has failed to instantiate a writer
-      res = cs.insert(
-        feature_itr, info,
-        ColumnFinalizer{
-          [](DataOutput&) {},
-          [] { return std::string_view{}; },
-        },
-        [buffered_column](ColumnOutput& out, doc_id_t doc, bytes_view payload) {
-          out.Prepare(doc);
-          if (!payload.empty()) {
-            out.WriteBytes(payload.data(), payload.size());
-            if (buffered_column) {
-              buffered_column->PushBack(doc, payload);
-            }
-          }
-        });
     }
 
     if (!res.has_value()) {
@@ -1501,7 +1482,6 @@ bool MergeWriter::FlushUnsorted(TrackingDirectory& dir, SegmentMeta& segment,
   SDB_ASSERT(progress);
   SDB_ASSERT(!_comparator);
   SDB_ASSERT(_column_info && *_column_info);
-  SDB_ASSERT(_feature_info && *_feature_info);
 
   const size_t size = _readers.size();
 
@@ -1590,8 +1570,8 @@ bool MergeWriter::FlushUnsorted(TrackingDirectory& dir, SegmentMeta& segment,
     return false;  // progress callback requested termination
   }
   // Write field meta and field term data
-  if (!WriteFields(cs, remapping_itrs, state, segment, *_feature_info,
-                   fields_itr, _scorers_features, progress,
+  if (!WriteFields(cs, remapping_itrs, state, segment, fields_itr,
+                   _scorers_features, progress,
                    _readers.get_allocator().Manager())) {
     return false;  // Flush failure
   }
@@ -1610,7 +1590,6 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
   SDB_ASSERT(progress);
   SDB_ASSERT(_comparator);
   SDB_ASSERT(_column_info && *_column_info);
-  SDB_ASSERT(_feature_info && *_feature_info);
 
   const size_t size = _readers.size();
 
@@ -1823,8 +1802,8 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
   }
 
   // Write field meta and field term data
-  if (!WriteFields(cs, sorting_doc_it, state, segment, *_feature_info,
-                   fields_itr, _scorers_features, progress,
+  if (!WriteFields(cs, sorting_doc_it, state, segment, fields_itr,
+                   _scorers_features, progress,
                    _readers.get_allocator().Manager())) {
     return false;  // flush failure
   }

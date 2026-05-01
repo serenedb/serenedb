@@ -297,20 +297,6 @@ TEST(NormHeaderTest, ResetByPayload) {
 
 class NormTestCase : public tests::IndexTestBase {
  protected:
-  irs::FeatureInfoProvider Features() {
-    return [](irs::IndexFeatures id) {
-      if (id == irs::IndexFeatures::Norm) {
-        return std::make_pair(
-          irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-          &irs::Norm::MakeWriter);
-      }
-
-      return std::make_pair(
-        irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-        irs::FeatureWriterFactory{});
-    };
-  }
-
   void AssertIndex() {
     IndexTestBase::assert_index(irs::IndexFeatures::None);
     IndexTestBase::assert_index(irs::IndexFeatures::Freq);
@@ -411,7 +397,6 @@ TEST_P(NormTestCase, CheckNorms) {
   auto* doc3 = gen.next();  // name == 'D'
 
   irs::IndexWriterOptions opts;
-  opts.features = Features();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
@@ -429,7 +414,7 @@ TEST_P(NormTestCase, CheckNorms) {
 
   // Create expected index
   auto& expected_index = index();
-  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                doc0->stored.begin(), doc0->stored.end());
   expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -527,7 +512,6 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   auto* doc3 = docs[3];
 
   irs::IndexWriterOptions opts;
-  opts.features = Features();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
@@ -539,7 +523,7 @@ TEST_P(NormTestCase, CheckNormsBatched) {
 
   // Create expected index
   auto& expected_index = index();
-  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                doc0->stored.begin(), doc0->stored.end());
   expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -634,7 +618,6 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
   auto* doc6 = gen.next();  // name == 'G'
 
   irs::IndexWriterOptions opts;
-  opts.features = Features();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
@@ -660,7 +643,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
   // Create expected index
   auto& expected_index = index();
-  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                doc0->stored.begin(), doc0->stored.end());
   expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -669,7 +652,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
                                doc2->stored.begin(), doc2->stored.end());
   expected_index.back().insert(doc3->indexed.begin(), doc3->indexed.end(),
                                doc3->stored.begin(), doc3->stored.end());
-  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(doc4->indexed.begin(), doc4->indexed.end(),
                                doc4->stored.begin(), doc4->stored.end());
   expected_index.back().insert(doc5->indexed.begin(), doc5->indexed.end(),
@@ -776,7 +759,7 @@ TEST_P(NormTestCase, CheckNormsConsolidation) {
 
     // Simulate consolidation
     index().clear();
-    index().emplace_back(writer->FeatureInfo());
+    index().emplace_back();
     auto& segment = index().back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                  doc0->stored.begin(), doc0->stored.end());
@@ -897,7 +880,6 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
   auto* doc6 = gen.next();  // name == 'G'
 
   irs::IndexWriterOptions opts;
-  opts.features = Features();
 
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
@@ -923,7 +905,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
   // Create expected index
   auto& expected_index = index();
-  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                doc0->stored.begin(), doc0->stored.end());
   expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -932,7 +914,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
                                doc2->stored.begin(), doc2->stored.end());
   expected_index.back().insert(doc3->indexed.begin(), doc3->indexed.end(),
                                doc3->stored.begin(), doc3->stored.end());
-  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(doc4->indexed.begin(), doc4->indexed.end(),
                                doc4->stored.begin(), doc4->stored.end());
   expected_index.back().insert(doc5->indexed.begin(), doc5->indexed.end(),
@@ -1047,7 +1029,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 
     // Simulate consolidation
     index().clear();
-    index().emplace_back(writer->FeatureInfo());
+    index().emplace_back();
     auto& segment = index().back();
     expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
                                  doc0->stored.begin(), doc0->stored.end());

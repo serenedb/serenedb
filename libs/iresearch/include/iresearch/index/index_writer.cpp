@@ -64,12 +64,6 @@ const ColumnInfoProvider kDefaultColumnInfo = [](std::string_view) {
   return ColumnInfo{irs::Type<compression::None>::get(), {}, false};
 };
 
-const FeatureInfoProvider kDefaultFeatureInfo = [](irs::IndexFeatures) {
-  // no compression, no encryption
-  return std::pair{ColumnInfo{irs::Type<compression::None>::get(), {}, false},
-                   FeatureWriterFactory{}};
-};
-
 struct FlushedSegmentContext {
   FlushedSegmentContext(std::shared_ptr<const SegmentReaderImpl>&& reader,
                         IndexWriter::SegmentContext& segment,
@@ -1101,11 +1095,9 @@ IndexWriter::IndexWriter(
   Directory& dir, Format::ptr codec, size_t segment_pool_size,
   const SegmentOptions& segment_limits, const Comparer* comparator,
   const ColumnInfoProvider& column_info,
-  const FeatureInfoProvider& feature_info,
   const PayloadProvider& meta_payload_provider,
   std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
-  : _feature_info{feature_info},
-    _column_info{column_info},
+  : _column_info{column_info},
     _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
@@ -1118,8 +1110,7 @@ IndexWriter::IndexWriter(
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
     _write_lock_file_ref{std::move(lock_file_ref)} {
-  SDB_ASSERT(column_info);   // ensured by 'make'
-  SDB_ASSERT(feature_info);  // ensured by 'make'
+  SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
   _wand_scorer = _committed_reader->Options().scorer;
@@ -1249,7 +1240,6 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
     options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
-    options.features ? options.features : kDefaultFeatureInfo,
     options.meta_payload_provider, std::move(reader));
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
@@ -1672,7 +1662,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   bool consolidation) const noexcept {
   return {
     .column_info = _column_info,
-    .feature_info = _feature_info,
     .scorers_features = _wand_features,
     .scorer = _wand_scorer,
     .comparator = _comparator,

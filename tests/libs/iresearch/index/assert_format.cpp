@@ -36,6 +36,7 @@
 #include "iresearch/index/directory_reader_impl.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -299,29 +300,20 @@ void IndexSegment::insert_indexed(const Ifield& f) {
     auto& new_field = res.first->second;
     _id_to_field.emplace_back(&new_field);
 
-    auto write_feature = [&](irs::IndexFeatures feature) -> irs::field_id {
-      if (feature != irs::IndexFeatures::None) {
-        auto handler = _field_features(feature);
+    if (irs::IsSubsetOf(irs::IndexFeatures::Norm, requested_features)) {
+      auto feature_writer = irs::Norm::MakeWriter({});
+      if (feature_writer) {
+        const size_t id = _columns.size();
+        EXPECT_LE(id, std::numeric_limits<irs::field_id>::max());
+        _columns.emplace_back(id, &irs::Norm::MakeWriter, feature_writer.get());
 
-        auto feature_writer = handler.second ? (*handler.second)({}) : nullptr;
+        new_field.feature_infos.emplace_back(
+          Field::FeatureInfo{irs::field_id{id}, &irs::Norm::MakeWriter,
+                             std::move(feature_writer)});
 
-        if (feature_writer) {
-          const size_t id = _columns.size();
-          EXPECT_LE(id, std::numeric_limits<irs::field_id>::max());
-          _columns.emplace_back(id, handler.second, feature_writer.get());
-
-          new_field.feature_infos.emplace_back(Field::FeatureInfo{
-            irs::field_id{id}, handler.second, std::move(feature_writer)});
-
-          return irs::field_id{id};
-        }
+        new_field.norm = irs::field_id{id};
       }
-
-      return irs::field_limits::invalid();
-    };
-
-    new_field.norm =
-      write_feature(requested_features & irs::IndexFeatures::Norm);
+    }
     const_cast<std::string_view&>(res.first->first) = field.name;
   }
 

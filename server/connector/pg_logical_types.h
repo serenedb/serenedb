@@ -38,7 +38,7 @@ namespace sdb::pg {
   inline constexpr std::string_view k##Name##Alias = alias_str; \
   inline bool Is##Name(const duckdb::LogicalType& type) {       \
     return type.id() == duckdb::LogicalTypeId::BaseTypeId &&    \
-           type.HasAlias() && type.GetAlias() == alias_str;     \
+           type.GetAlias() == alias_str;                        \
   }
 
 // Factory function (only safe where Velox types.h is NOT included)

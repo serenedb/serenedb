@@ -41,7 +41,7 @@ using namespace connector;
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
-  static catalog::ColumnAnalyzer AnalyzerProvider(catalog::Column::Id) {
+  static catalog::ColumnTokenizer AnalyzerProvider(catalog::Column::Id) {
     auto make_identity = [] {
       return std::string(vpack::Slice::emptyObjectSlice().startAs<char>(),
                          vpack::Slice::emptyObjectSlice().byteSize());

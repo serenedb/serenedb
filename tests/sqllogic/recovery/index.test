@@ -92,7 +92,7 @@ INSERT INTO t VALUES ('one'), ('two'), ('three');
 
 connection new2
 query
-SELECT r FROM index_t WHERE PHRASE(r, 'one') LIMIT 1;
+SELECT r FROM index_t WHERE r @@ ts_phrase('one') LIMIT 1;
 ----
 r
 one
@@ -202,7 +202,7 @@ VACUUM (UPDATE_INDEXES) t;
 
 connection new2
 query
-SELECT r FROM index_t WHERE PHRASE(r, 'one') LIMIT 1;
+SELECT r FROM index_t WHERE r @@ ts_phrase('one') LIMIT 1;
 ----
 r
 one

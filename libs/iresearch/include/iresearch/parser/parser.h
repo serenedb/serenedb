@@ -48,6 +48,7 @@ struct ParserContext {
   irs::analysis::Analyzer* tokenizer;
   std::string error_message;
   Modifier last_mod{Modifier::None};
+  bool strict_field = false;
 
   ParserContext(irs::MixedBooleanFilter& root, std::string_view field,
                 irs::analysis::Analyzer& tokenizer)

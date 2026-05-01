@@ -46,7 +46,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 
 query
-EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -86,7 +86,7 @@ QUERY PLAN
 
 
 query ?
-EXPLAIN SELECT id, BM25(docs_topk_idx.tableoid) FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY id LIMIT 5;
+EXPLAIN SELECT id, BM25(docs_topk_idx.tableoid) FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -121,7 +121,7 @@ QUERY PLAN
 
 
 query
-EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -164,7 +164,7 @@ QUERY PLAN
 
 
 query
-EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) ASC;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -208,7 +208,7 @@ QUERY PLAN
 # the scan function name and adds a "TopK: k" line to the EXPLAIN box.
 
 query
-EXPLAIN SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -236,9 +236,9 @@ QUERY PLAN
 # should show Strategy=iresearch_score_topk_scan with TopK=3.
 
 query
-EXPLAIN (SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
+EXPLAIN (SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
 UNION ALL
-(SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
+(SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3)
 ORDER BY id;
 ----
 QUERY PLAN
@@ -289,7 +289,7 @@ QUERY PLAN
 
 query
 EXPLAIN SELECT id, score FROM (
-  SELECT id, BM25(docs_topk_idx.tableoid) AS score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3
+  SELECT id, BM25(docs_topk_idx.tableoid) AS score FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 3
 ) sub ORDER BY id;
 ----
 QUERY PLAN
@@ -328,7 +328,7 @@ QUERY PLAN
 # First get the expected results without topk (full scan path).
 # Length-normalized BM25 ranks shorter docs higher: id=2 (3t) > 4 (4t) > 5 (7t) > 1 (9t).
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
 ----
 id
 2
@@ -337,7 +337,7 @@ id
 
 
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
 ----
 id
 2
@@ -346,7 +346,7 @@ id
 
 
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id;
 ----
 id
 2
@@ -356,7 +356,7 @@ id
 
 
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 1;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC LIMIT 1;
 ----
 id
 2
@@ -401,7 +401,7 @@ VACUUM (UPDATE_INDEXES) docs;
 
 # Get expected results from full scan across two segments
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 id
 10
@@ -412,7 +412,7 @@ id
 
 
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 id
 10
@@ -423,20 +423,20 @@ id
 
 
 query
-SELECT COUNT(*) FROM (SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC) t;
+SELECT COUNT(*) FROM (SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC) t;
 ----
 count
 14
 
 
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'nonexistent_term_xyz') ORDER BY BM25(docs_topk_idx.tableoid) DESC;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('nonexistent_term_xyz') ORDER BY BM25(docs_topk_idx.tableoid) DESC;
 ----
 id
 
 
 query
-SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
+SELECT id, BM25(docs_topk_idx.tableoid) > 0 AS has_score FROM docs_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 3;
 ----
 id	has_score
 10	t
@@ -445,7 +445,7 @@ id	has_score
 
 
 query
-SELECT id FROM docs_topk_idx WHERE PHRASE(body, 'lazy') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 2;
+SELECT id FROM docs_topk_idx WHERE body @@ ts_phrase('lazy') ORDER BY BM25(docs_topk_idx.tableoid) DESC, id LIMIT 2;
 ----
 id
 3

@@ -49,7 +49,7 @@ VACUUM (UPDATE_INDEXES) docs;
 # for every matching doc. It can be negative, unlike lm_dirichlet.
 query
 SELECT id, indri_dirichlet(docs_idx.tableoid, 5.0) IS NOT NULL AS ok
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	ok
 1	t
@@ -61,7 +61,7 @@ id	ok
 # Default mu (2000) -- same call succeeds with no arg.
 query
 SELECT id, indri_dirichlet(docs_idx.tableoid) IS NOT NULL AS ok
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	ok
 1	t
@@ -72,7 +72,7 @@ id	ok
 
 # mu must be non-negative.
 statement error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY indri_dirichlet(docs_idx.tableoid, -1.0) DESC, id;
 
 

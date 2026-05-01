@@ -102,6 +102,15 @@ inline constexpr std::string_view kTSQueryPhraseSeq = "##";
 // side resolves to a column reference.
 inline constexpr std::string_view kTSQueryMatch = "@@";
 
+// SQL-native predicate sugar. Each rewrites at filter-build time to
+// `col @@ <inner ts_*(...)>` and dispatches through the existing @@
+// handler -- no per-predicate filter logic.
+inline constexpr std::string_view kPhraseMatches = "phrase_matches";
+inline constexpr std::string_view kNgramMatches = "ngram_matches";
+inline constexpr std::string_view kLevenshteinMatches = "levenshtein_matches";
+inline constexpr std::string_view kTokensMatchAll = "tokens_match_all";
+inline constexpr std::string_view kTokensMatchAny = "tokens_match_any";
+
 // Opaque logical type backing TSQUERY. Represented as VARCHAR+alias so
 // storage/IO paths stay standard; the stubs never run so the byte slot is
 // unused in practice. Mirrors the JSON type convention in DuckDB.

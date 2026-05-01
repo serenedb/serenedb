@@ -1808,6 +1808,169 @@ a
 2
 
 # ----------------------------------------------------------------------
+# SQL-native predicate sugar: <name>(col, args...) is sugar for
+# `col @@ <inner ts_*>`. Each block is a row-equivalence pair against
+# the canonical @@ form.
+# ----------------------------------------------------------------------
+
+# phrase_matches
+query
+SELECT a FROM tsq_idx WHERE phrase_matches(b, 'over lazy dog') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
+----
+a
+1
+2
+
+# phrase_matches with gap.
+query
+SELECT a FROM tsq_idx WHERE phrase_matches(b, 'quick', 1, 'fox') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick', 1, 'fox') ORDER BY a;
+----
+a
+1
+2
+
+# ngram_matches needs an ngram-tokenised column -- separate fixture.
+statement ok
+CREATE TABLE tsq_ngram (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_ngram_dict(
+    template = 'ngram',
+    mingram = 2,
+    maxgram = 2,
+    preserveoriginal = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX tsq_ngram_idx ON tsq_ngram USING inverted(a, b tsq_ngram_dict);
+
+statement ok
+INSERT INTO tsq_ngram values (1, 'hello'), (2, 'help'), (3, 'held');
+
+statement ok
+VACUUM (UPDATE_INDEXES) tsq_ngram;
+
+query
+SELECT a FROM tsq_ngram_idx WHERE ngram_matches(b, 'hello', 0.3) ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_ngram_idx WHERE b @@ ts_ngram('hello', 0.3) ORDER BY a;
+----
+a
+1
+2
+3
+
+# levenshtein_matches
+query
+SELECT a FROM tsq_idx WHERE levenshtein_matches(b, 'quikc', 2) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quikc', 2) ORDER BY a;
+----
+a
+1
+2
+
+# tokens_match_all
+query
+SELECT a FROM tsq_idx WHERE tokens_match_all(b, ['quick', 'fox']) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_all(ts_tokenize(['quick', 'fox'])) ORDER BY a;
+----
+a
+1
+2
+
+# tokens_match_any list-form.
+query
+SELECT a FROM tsq_idx WHERE tokens_match_any(b, ['turtle', 'fox']) ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['turtle', 'fox'])) ORDER BY a;
+----
+a
+1
+2
+3
+
+# tokens_match_any list-form with min_match.
+query
+SELECT a FROM tsq_idx WHERE tokens_match_any(b, ['quick', 'fox', 'lazy'], 2) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'fox', 'lazy']), 2) ORDER BY a;
+----
+a
+1
+2
+
+# tokens_match_any single-string form (no min_match -> bare-string @@).
+query
+SELECT a FROM tsq_idx WHERE tokens_match_any(b, 'Quick Turtle') ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick Turtle' ORDER BY a;
+----
+a
+1
+2
+3
+
+# tokens_match_any single-string form with min_match -- both tokens
+# of 'quick fox' must match.
+query
+SELECT a FROM tsq_idx WHERE tokens_match_any(b, 'quick fox', 2) ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------
 

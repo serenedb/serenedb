@@ -57,6 +57,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include "basics/assert.h"
+#include "basics/containers/trivial_map.h"
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
@@ -134,6 +135,18 @@ customize::enum_name<sdb::connector::TSQueryOp>(
 
 }  // namespace magic_enum
 namespace sdb::connector {
+namespace {
+
+template<typename... Args>
+std::vector<duckdb::unique_ptr<duckdb::Expression>> MakeChildren(
+  Args&&... children) {
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> v;
+  v.reserve(sizeof...(children));
+  (v.emplace_back(std::forward<Args>(children)), ...);
+  return v;
+}
+
+}  // namespace
 
 // True iff `type` is one of TSQUERY / TOKENIZED_TSQUERY /
 // BOOSTED_TSQUERY -- all valid carriers of TSQUERY-shaped values
@@ -974,6 +987,129 @@ void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
     irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
 }
 
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
+  std::string_view ts_name, duckdb::LogicalType return_type,
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> children) {
+  duckdb::ScalarFunction fn(std::string{ts_name}, {}, return_type, nullptr);
+  auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+    return_type, std::move(fn), std::move(children), nullptr);
+  expr->function.name = std::string{ts_name};
+  return expr;
+}
+
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
+  std::string_view ts_name,
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> children) {
+  return MakeTSQueryCall(ts_name, MakeTSQueryType(), std::move(children));
+}
+
+// ts_tokenize taking a list returns LIST(TSQUERY); the array-form
+// dispatch (FromTokenizeListInAnyAllOf) keys on this via
+// IsTokenizeListCall.
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryTokenizeList(
+  duckdb::unique_ptr<duckdb::Expression> list) {
+  return MakeTSQueryCall(kTSQTokenize,
+                         duckdb::LogicalType::LIST(MakeTSQueryType()),
+                         MakeChildren(std::move(list)));
+}
+
+template<const std::string_view& kTsName>
+duckdb::unique_ptr<duckdb::Expression> BuildPassthrough(
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  return MakeTSQueryCall(kTsName, std::move(args));
+}
+
+duckdb::unique_ptr<duckdb::Expression> BuildAllTokens(
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  return MakeTSQueryCall(
+    kTSQAllOf, MakeChildren(MakeTSQueryTokenizeList(std::move(args.at(0)))));
+}
+
+// Wraps a single VARCHAR expression in a constant LIST(VARCHAR) so it
+// flows through ts_tokenize array form. The text must be a constant;
+// non-constant text is rejected (matches the existing ts_tokenize
+// array-form constraint).
+duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
+  duckdb::unique_ptr<duckdb::Expression> text) {
+  const auto* val = TryGetConstant(*text);
+  if (!val || val->IsNull()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(kTokensMatchAny,
+              "(col, text, min_match) requires a constant non-NULL text"),
+      ERR_HINT("Pass a literal string or a list-form: ", kTokensMatchAny,
+               "(col, ['text'], n)."));
+  }
+  duckdb::vector<duckdb::Value> elems;
+  elems.emplace_back(*val);
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(elems)));
+}
+
+duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  const bool is_text =
+    args.at(0)->return_type.id() == duckdb::LogicalTypeId::VARCHAR;
+  const bool has_min_match = args.size() >= 2;
+
+  if (!is_text) {
+    auto tokenize = MakeTSQueryTokenizeList(std::move(args[0]));
+    return MakeTSQueryCall(
+      kTSQAnyOf, has_min_match
+                   ? MakeChildren(std::move(tokenize), std::move(args[1]))
+                   : MakeChildren(std::move(tokenize)));
+  }
+  if (!has_min_match) {
+    return std::move(args[0]);
+  }
+  auto list = WrapTextAsConstantList(std::move(args[0]));
+  auto tokenize = MakeTSQueryTokenizeList(std::move(list));
+  return MakeTSQueryCall(kTSQAnyOf,
+                         MakeChildren(std::move(tokenize), std::move(args[1])));
+}
+
+using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
+
+constexpr containers::TrivialBiMap kPredicateBuilders = [](auto selector) {
+  return selector()
+    .Case(kPhraseMatches, PredicateInnerBuilder{&BuildPassthrough<kTSQPhrase>})
+    .Case(kNgramMatches, PredicateInnerBuilder{&BuildPassthrough<kTSQNgram>})
+    .Case(kLevenshteinMatches,
+          PredicateInnerBuilder{&BuildPassthrough<kTSQLevenshtein>})
+    .Case(kTokensMatchAll, PredicateInnerBuilder{&BuildAllTokens})
+    .Case(kTokensMatchAny, PredicateInnerBuilder{&BuildAnyToken});
+};
+
+Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
+                     PredicateInnerBuilder build_inner,
+                     const duckdb::BoundFunctionExpression& func) {
+  if (func.children.empty()) {
+    return {ERROR_BAD_PARAMETER, func.function.name,
+            " requires a column reference as the first argument"};
+  }
+  auto column = func.children[0]->Copy();
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> tail;
+  tail.reserve(func.children.size() - 1);
+  for (size_t i = 1; i < func.children.size(); ++i) {
+    tail.emplace_back(func.children[i]->Copy());
+  }
+  auto inner = build_inner(std::move(tail));
+
+  // Synthesise `column @@ inner` and reuse FromTSQueryMatch -- it
+  // resolves the column, sets up the tokenizer ctx, and dispatches
+  // the inner ts_* via BuildTSQuery's name switch.
+  duckdb::ScalarFunction match_fn(std::string{kTSQueryMatch}, {},
+                                  duckdb::LogicalType::BOOLEAN, nullptr);
+  duckdb::BoundFunctionExpression at_at(
+    duckdb::LogicalType::BOOLEAN, std::move(match_fn),
+    MakeChildren(std::move(column), std::move(inner)), nullptr);
+  at_at.function.name = std::string{kTSQueryMatch};
+
+  FromTSQueryMatch(filter, ctx, at_at);
+  return {};
+}
+
 Result FromFunctionExpression(irs::BooleanFilter& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundFunctionExpression& func) {
@@ -1024,6 +1160,10 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
 
   if (name == "prefix") {
     return FromFuncPrefix(filter, ctx, func);
+  }
+
+  if (auto build = kPredicateBuilders.TryFindByFirst(name)) {
+    return FromPredicate(filter, ctx, *build, func);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};

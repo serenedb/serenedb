@@ -694,16 +694,16 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // tokens_match_all(col, list).
+  // has_all_tokens(col, list).
   loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kTokensMatchAll},
+    std::string{kHasAllTokens},
     {duckdb::LogicalType::ANY,
      duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
     duckdb::LogicalType::BOOLEAN, SearchStubFn));
 
-  // tokens_match_any(col, list [, n]) and (col, text [, n]).
+  // has_any_token(col, list [, n]) and (col, text [, n]).
   {
-    duckdb::ScalarFunctionSet set{std::string{kTokensMatchAny}};
+    duckdb::ScalarFunctionSet set{std::string{kHasAnyToken}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::ANY,
        duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},

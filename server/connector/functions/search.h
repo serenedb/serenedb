@@ -108,8 +108,8 @@ inline constexpr std::string_view kTSQueryMatch = "@@";
 inline constexpr std::string_view kPhraseMatches = "phrase_matches";
 inline constexpr std::string_view kNgramMatches = "ngram_matches";
 inline constexpr std::string_view kLevenshteinMatches = "levenshtein_matches";
-inline constexpr std::string_view kTokensMatchAll = "tokens_match_all";
-inline constexpr std::string_view kTokensMatchAny = "tokens_match_any";
+inline constexpr std::string_view kHasAllTokens = "has_all_tokens";
+inline constexpr std::string_view kHasAnyToken = "has_any_token";
 
 // Opaque logical type backing TSQUERY. Represented as VARCHAR+alias so
 // storage/IO paths stay standard; the stubs never run so the byte slot is

@@ -4680,7 +4680,7 @@ TEST_F(SearchFilterBuilderTest,
                columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TokensMatchAll_eq_AtAtTsAllTsTokenize) {
+TEST_F(SearchFilterBuilderTest, test_HasAllTokens_eq_AtAtTsAllTsTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
@@ -4693,24 +4693,24 @@ TEST_F(SearchFilterBuilderTest, test_TokensMatchAll_eq_AtAtTsAllTsTokenize) {
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE tokens_match_all(b, ['Foo', 'Bar'])",
+               "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo', 'Bar'])",
                columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest,
-       test_TokensMatchAny_List_eq_AtAtTsAnyTsTokenize) {
+       test_HasAnyToken_List_eq_AtAtTsAnyTsTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermsFilter<std::string_view>(
     expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE tokens_match_any(b, ['Foo', 'Bar'])",
+               "SELECT * FROM foo WHERE has_any_token(b, ['Foo', 'Bar'])",
                columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest,
-       test_TokensMatchAny_ListWithMinMatch_eq_AtAtTsAnyTsTokenizeMinMatch) {
+       test_HasAnyToken_ListWithMinMatch_eq_AtAtTsAnyTsTokenizeMinMatch) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
@@ -4725,21 +4725,21 @@ TEST_F(SearchFilterBuilderTest,
   }
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE tokens_match_any(b, ['Foo', 'Bar', 'Baz'], 2)",
+    "SELECT * FROM foo WHERE has_any_token(b, ['Foo', 'Bar', 'Baz'], 2)",
     columns, true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TokensMatchAny_Text_eq_AtAtBareString) {
+TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_eq_AtAtBareString) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
-  AssertFilter(expected, "SELECT * FROM foo WHERE tokens_match_any(b, 'Foo')",
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_any_token(b, 'Foo')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest,
-       test_TokensMatchAny_TextWithMinMatch_eq_AtAtTsAnyListValueTokenize) {
+       test_HasAnyToken_TextWithMinMatch_eq_AtAtTsAnyListValueTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
@@ -4754,7 +4754,7 @@ TEST_F(SearchFilterBuilderTest,
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE tokens_match_any(b, 'Foo Bar', 2)",
+               "SELECT * FROM foo WHERE has_any_token(b, 'Foo Bar', 2)",
                columns, true, SegmentationAnalyzerProvider);
 }
 

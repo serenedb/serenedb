@@ -1897,9 +1897,9 @@ a
 1
 2
 
-# tokens_match_all
+# has_all_tokens
 query
-SELECT a FROM tsq_idx WHERE tokens_match_all(b, ['quick', 'fox']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_all_tokens(b, ['quick', 'fox']) ORDER BY a;
 ----
 a
 1
@@ -1912,9 +1912,9 @@ a
 1
 2
 
-# tokens_match_any list-form.
+# has_any_token list-form.
 query
-SELECT a FROM tsq_idx WHERE tokens_match_any(b, ['turtle', 'fox']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_token(b, ['turtle', 'fox']) ORDER BY a;
 ----
 a
 1
@@ -1929,9 +1929,9 @@ a
 2
 3
 
-# tokens_match_any list-form with min_match.
+# has_any_token list-form with min_match.
 query
-SELECT a FROM tsq_idx WHERE tokens_match_any(b, ['quick', 'fox', 'lazy'], 2) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_token(b, ['quick', 'fox', 'lazy'], 2) ORDER BY a;
 ----
 a
 1
@@ -1944,9 +1944,9 @@ a
 1
 2
 
-# tokens_match_any single-string form (no min_match -> bare-string @@).
+# has_any_token single-string form (no min_match -> bare-string @@).
 query
-SELECT a FROM tsq_idx WHERE tokens_match_any(b, 'Quick Turtle') ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_token(b, 'Quick Turtle') ORDER BY a;
 ----
 a
 1
@@ -1961,10 +1961,10 @@ a
 2
 3
 
-# tokens_match_any single-string form with min_match -- both tokens
+# has_any_token single-string form with min_match -- both tokens
 # of 'quick fox' must match.
 query
-SELECT a FROM tsq_idx WHERE tokens_match_any(b, 'quick fox', 2) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_token(b, 'quick fox', 2) ORDER BY a;
 ----
 a
 1

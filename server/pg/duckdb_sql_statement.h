@@ -38,7 +38,6 @@ struct DuckDBStatement {
     prepared.reset();
     extracted.clear();
     current_stmt_idx = 0;
-    param_oids.clear();
     resolved_types.clear();
     resolved_names.clear();
   }
@@ -47,8 +46,6 @@ struct DuckDBStatement {
   // For simple protocol multi-statement support
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> extracted;
   uint32_t current_stmt_idx = 0;
-  // Parameter type OIDs from Parse message
-  std::vector<int32_t> param_oids;
 
   std::vector<duckdb::LogicalType> resolved_types;
   std::vector<std::string> resolved_names;

@@ -26,6 +26,7 @@
 #include <absl/time/civil_time.h>
 
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/common/types.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
@@ -226,6 +227,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kTimeTz, LogicalType::TIME_TZ)
     SDB_OID2TYPE(kBit, LogicalType::BIT)
     SDB_OID2TYPE(kVarbit, LogicalType::BIT)
+    SDB_OID2TYPE(kVarchar, LogicalType::VARCHAR)
     SDB_OID2TYPE(kRegprocedure, REGPROCEDURE())
     SDB_OID2TYPE(kRegoper, REGOPER())
     SDB_OID2TYPE(kRegoperator, REGOPERATOR())
@@ -606,9 +608,15 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       }
     } break;
     case BIGINT: {
-      if (IsOidLike(type) && data.size() == 4) {
-        return duckdb::Value::BIGINT(
-          static_cast<int64_t>(absl::big_endian::Load<int32_t>(data.data())));
+      // OID-family types travel as 4-byte unsigned on the PG wire (typsend =
+      // oidsend) but are stored as BIGINT in DuckDB; plain int8 is 8 bytes.
+      // Client OIDs are pinned at Parse via type hints, so the wire shape
+      // always matches the declared type -- mismatches are protocol errors.
+      if (IsOidLike(type)) {
+        if (data.size() == 4) {
+          return duckdb::Value::BIGINT(
+            static_cast<int64_t>(absl::big_endian::Load<int32_t>(data.data())));
+        }
       } else if (data.size() == 8) {
         return duckdb::Value::BIGINT(
           absl::big_endian::Load<int64_t>(data.data()));

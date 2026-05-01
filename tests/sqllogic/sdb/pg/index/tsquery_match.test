@@ -1,0 +1,1824 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE tsq (a INTEGER PRIMARY KEY, b VARCHAR, c VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE INDEX tsq_idx ON tsq USING inverted(a, b tsq_english, c tsq_english);
+
+statement ok
+INSERT INTO tsq values (1, 'quick brown fox jumps over lazy dog', 'hello world');
+
+statement ok
+INSERT INTO tsq values (2, 'quick red fox jumps over lazy dog', 'hello moon');
+
+statement ok
+INSERT INTO tsq values (3, 'slow grey turtle sleeps', 'goodbye world');
+
+statement ok
+INSERT INTO tsq values (4, 'something else entirely', 'bar');
+
+statement ok
+VACUUM (UPDATE_INDEXES) tsq;
+
+# ----------------------------------------------------------------------
+# Basic @@ with PHRASE
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
+----
+a
+1
+2
+
+# phraseto_tsquery is an alias for PHRASE.
+query
+SELECT a FROM tsq_idx WHERE b @@ phraseto_tsquery('over lazy dog') ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# Bare string now tokenises via the ambient column analyzer and
+# produces ByTerms with min_match=1 (OR semantics) for multi-token
+# input. Single token stays as ByTerm.
+# ----------------------------------------------------------------------
+
+# Single-token bare string.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick' ORDER BY a;
+----
+a
+1
+2
+
+# Case-insensitive match -- analyzer has case='lower', so 'Quick'
+# tokenises to 'quick' and matches.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick' ORDER BY a;
+----
+a
+1
+2
+
+# Multi-token bare string: OR semantics -- matches rows containing
+# ANY of the tokens (analyzer lowercases each).
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick Turtle' ORDER BY a;
+----
+a
+1
+2
+3
+
+# ts_tokenize(text) is the explicit form of the same behaviour.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('Quick Turtle') ORDER BY a;
+----
+a
+1
+2
+3
+
+# ::tokenize('keyword') bypasses the column analyzer and matches the
+# raw stored token. Row 1's column has lowercase 'quick' as a single
+# token, so 'quick'::tokenize('keyword') matches; 'Quick' wouldn't.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize('keyword') ORDER BY a;
+----
+a
+1
+2
+
+# Same via ts_tokenize(text, 'keyword') -- equivalent surface.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('quick', 'keyword') ORDER BY a;
+----
+a
+1
+2
+
+# 'Quick'::tokenize('keyword') won't match because the analyzer
+# lower-cased the indexed tokens.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenize('keyword');
+----
+a
+
+# ::tokenize(NULL) is sugar for ::tokenize('keyword') -- both opt out
+# of tokenisation. Same row-set as the matching keyword case above.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize(NULL) ORDER BY a;
+----
+a
+1
+2
+
+# plainto_tsquery(text) = tokenise + AND: every token must match.
+query
+SELECT a FROM tsq_idx WHERE b @@ plainto_tsquery('Quick Brown') ORDER BY a;
+----
+a
+1
+
+# plainto_tsquery with a token that no row has -> empty result.
+query
+SELECT a FROM tsq_idx WHERE b @@ plainto_tsquery('Quick Nonexistent');
+----
+a
+
+# ----------------------------------------------------------------------
+# PG-style typed operators ||, &&, !! -- typed operands required on
+# bare-string OR (see docs for workaround via ANY_OF on bare strings).
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick brown') || ts_phrase('grey turtle')) ORDER BY a;
+----
+a
+1
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') && ts_phrase('brown fox'));
+----
+a
+1
+
+# !! unary NOT
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') && !!ts_phrase('brown fox')) ORDER BY a;
+----
+a
+2
+
+# ----------------------------------------------------------------------
+# ANY_OF / ALL_OF -- list-only call forms. Variadic isn't registered:
+# `ts_any('a', 'b')` would silently bind to (TSQUERY[], INTEGER) and
+# crash at runtime because DuckDB's STRING_LITERAL cast resolver
+# prefers STRING_LITERAL -> INTEGER over -> TSQUERY. Multi-arg calls
+# wrap operands in `[...]`. The registered VARCHAR[] -> TSQUERY[]
+# list cast lifts bare-string lists element-wise.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any([ts_phrase('red fox'), ts_phrase('grey turtle')]) ORDER BY a;
+----
+a
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_all([ts_phrase('quick'), ts_phrase('brown fox')]) ORDER BY a;
+----
+a
+1
+
+# Explicit ::TSQUERY list form.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick'::TSQUERY, 'turtle'::TSQUERY]) ORDER BY a;
+----
+a
+1
+2
+3
+
+# Bare-string list (no explicit ::TSQUERY) -- the registered VARCHAR[]
+# -> TSQUERY[] list cast lifts each element to a tokenised TSQUERY.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick', 'turtle']) ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_all(['quick', 'fox']) ORDER BY a;
+----
+a
+1
+2
+
+# ts_any([list], min_match) -- at least min_match alternatives must
+# match. Encoded via irs::Or.min_match_count.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick', 'brown', 'turtle'], 2);
+----
+a
+1
+
+# min_match equal to list length is the same as ALL_OF.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick', 'fox'], 2) ORDER BY a;
+----
+a
+1
+2
+
+# min_match exceeds list length -- bind-time error.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick', 'brown'], 5);
+
+# ALL_OF doesn't accept a min_match argument (no `(list, int)` overload).
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_all(['quick', 'brown'], 1);
+
+# ANY_OF / ALL_OF with explicit fixed-size TSQUERY[N] (ARRAY, not
+# LIST). Routes through the unsized-ARRAY function overload and the
+# ARRAY branch of the list-arg dispatch. Bare-string `[..]` literals
+# bind to LIST(VARCHAR); only an explicit cast produces ARRAY.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick'::TSQUERY, 'turtle'::TSQUERY]::TSQUERY[2]) ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_all(['quick'::TSQUERY, 'fox'::TSQUERY]::TSQUERY[2]) ORDER BY a;
+----
+a
+1
+2
+
+# ts_any([TSQUERY[N]], min_match) -- ARRAY input + explicit min_match.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(['quick'::TSQUERY, 'brown'::TSQUERY, 'turtle'::TSQUERY]::TSQUERY[3], 2);
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# Boost operator `^`
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick') ^ 2.0 ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# LIKE / PREFIX / LEVENSHTEIN constructors. LIKE needs double-quoting
+# because the unquoted LIKE keyword is grammatically an infix operator
+# in DuckDB and can't appear as a function name right after `@@`.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_like('quic%')) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_starts_with('turt') ORDER BY a;
+----
+a
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quikc', 2) ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# ts_regexp(pattern [, syntax]) -- regex over indexed terms. Syntax is
+# 'perl' (default, full RE2) or 'posix' (POSIX ERE only). The pattern
+# is matched against the analyzed token form, not the raw text.
+# ----------------------------------------------------------------------
+
+# Default Perl syntax: matches the token 'quick'.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('qu.*ck') ORDER BY a;
+----
+a
+1
+2
+
+# Perl syntax with `+` quantifier and an explicit literal.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('q.+k') ORDER BY a;
+----
+a
+1
+2
+
+# Token-anchored character class: matches 'turtle' (only row 3 has it).
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('.*tle') ORDER BY a;
+----
+a
+3
+
+# Optional group with `?`: matches 'fox' or 'foxes'. The regex is
+# matched against the full token, so `foxes?` (which requires the
+# 'foxe' prefix) wouldn't match 'fox' -- we need `fox(es)?`.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('fox(es)?') ORDER BY a;
+----
+a
+1
+2
+
+# POSIX ERE syntax with a POSIX character class. Matches every row that
+# has at least one alphabetic token (all rows).
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('[[:alpha:]]+', 'posix') ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+# Syntax names are case-insensitive.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('[[:alpha:]]+', 'POSIX') ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+# Perl-only escapes work under 'perl' but not 'posix'. None of the
+# indexed tokens contain digits, so the match set is empty.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('\d+', 'perl') ORDER BY a;
+----
+a
+
+# Negation: rows without a token matching 'qu.*ck'.
+query
+SELECT a FROM tsq_idx WHERE b @@ !!ts_regexp('qu.*ck') ORDER BY a;
+----
+a
+3
+4
+
+# Composition with other TSQUERY constructors (OR with PHRASE).
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_regexp('grey') || ts_phrase('lazy dog')) ORDER BY a;
+----
+a
+1
+2
+3
+
+# Unknown syntax name -> bind-time error.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_regexp('abc', 'pcre');
+
+# REGEXP on a non-VARCHAR column -> bind-time error.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_regexp('1');
+
+# ----------------------------------------------------------------------
+# ts_between(min, max, min_incl, max_incl) -- TSQUERY range constructor.
+# Mirrors SQL BETWEEN with explicit inclusivity. Either bound may be
+# NULL (unbounded that side); both NULL is "match all".
+# Numeric variant emits an iresearch granular range; VARCHAR/BOOLEAN
+# variants emit a plain range. The text variant can also appear as a
+# phrase part inside `##`.
+#
+# LESS / LESS_EQUAL / GREATER / GREATER_EQUAL are single-bound shortcuts
+# over RANGE. Each takes one bound (VARCHAR / numeric / BOOLEAN) and
+# emits the same byrange filter shape as RANGE with the other side
+# unbounded.
+# ----------------------------------------------------------------------
+
+# Numeric RANGE on the primary-key column `a` (keyword-analyzed by
+# default). [2, 4] inclusive both sides.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(2, 4, true, true) ORDER BY a;
+----
+a
+2
+3
+4
+
+# Half-open range: a >= 2 AND a < 4.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(2, 4, true, false) ORDER BY a;
+----
+a
+2
+3
+
+# Open-left bound (NULL min == "no lower bound") with exclusive upper.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(NULL, 3, false, false) ORDER BY a;
+----
+a
+1
+2
+
+# Open-right bound (NULL max == "no upper bound") with inclusive lower.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(3, NULL, true, false) ORDER BY a;
+----
+a
+3
+4
+
+# Both bounds NULL: matches every row.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(NULL, NULL, false, false) ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+# RANGE on a VARCHAR column with a non-keyword analyzer (tsq_english
+# lowercases / stems) is rejected at the standalone level: the indexed
+# tokens don't match the raw bound bytes meaningfully. Use an identity-
+# analyzed column or wrap in `##` (where the bounds are interpreted
+# against the analyzed terms at a phrase position).
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_between('a', 'm', true, true);
+
+# RANGE as a phrase part (## context) is allowed on an analyzed
+# column -- the bounds match against indexed tokens at that phrase
+# position. After 'quick', the next token's term lies in the range
+# ['brown', 'red'] inclusive: 'brown' (row 1) and 'red' (row 2) match.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between('brown', 'red', true, true)) ORDER BY a;
+----
+a
+1
+2
+
+# Same phrase-part shape, but exclusive at the upper end: 'red' is
+# excluded so only row 1 matches.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between('brown', 'red', true, false)) ORDER BY a;
+----
+a
+1
+
+# Open-ended bound inside `##`: any token >= 'r' after 'quick'.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between('r', NULL, true, false)) ORDER BY a;
+----
+a
+2
+
+# RANGE on the primary-key column composed with `||` (TSQUERY OR):
+# union of two disjoint numeric ranges.
+query
+SELECT a FROM tsq_idx WHERE a @@ (ts_between(1, 1, true, true) || ts_between(4, 4, true, true)) ORDER BY a;
+----
+a
+1
+4
+
+# RANGE under negation: NOT ts_between(2, 3) on `a`.
+query
+SELECT a FROM tsq_idx WHERE a @@ !!ts_between(2, 3, true, true) ORDER BY a;
+----
+a
+1
+4
+
+# Mismatched-type bounds are a bind-time error -- min and max must agree
+# on their value class.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_between(1, 'foo', true, true);
+
+# Symmetric: VARCHAR min, INTEGER max also rejected.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_between('a', 5, true, true);
+
+# BOOLEAN min vs INTEGER max -- still mismatched.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_between(false, 1, true, true);
+
+# VARCHAR min vs BOOLEAN max.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_between('a', true, true, true);
+
+# INTEGER vs BIGINT -- different LogicalType ids count as mismatched
+# even though both are integral. Cast both to the same type to fix.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_between(1::INTEGER, 100::BIGINT, true, true);
+
+# Bound vs column type mismatch: VARCHAR bounds on INTEGER column.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_between('foo', 'bar', true, true);
+
+# Bound vs column type mismatch: INTEGER bounds on VARCHAR column.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_between(1, 5, true, true);
+
+# One bound NULL: the type-mismatch check uses the non-NULL side. INT
+# bound + NULL on VARCHAR column still errors.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ts_between(NULL, 5, false, true);
+
+# Non-bool inclusivity is a bind-time error.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_between(1, 2, 1, 0);
+
+# DECIMAL bounds (the default for fractional literals) on a numeric
+# column work via implicit cast to the column's type. Note: casting a
+# fractional DECIMAL to an INTEGER column rounds, so users typically
+# want bounds with the same numeric class as the column. Here both
+# bounds are integral DECIMAL values (.0) that cast cleanly.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(2.0, 3.0, true, true) ORDER BY a;
+----
+a
+2
+3
+
+# Half-open with NULL min: matches a < 3 (exclusive).
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(NULL, 3, false, false) ORDER BY a;
+----
+a
+1
+2
+
+# Both bounds equal, both inclusive == single-value match.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(2, 2, true, true) ORDER BY a;
+----
+a
+2
+
+# Both bounds equal, both exclusive == empty (a > 2 AND a < 2).
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(2, 2, false, false) ORDER BY a;
+----
+a
+
+# Reversed bounds (min > max) is empty without raising an error.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_between(10, 1, true, true) ORDER BY a;
+----
+a
+
+# RANGE composed with `&&` (TSQUERY AND): a in [1,3] AND a in [2,4]
+# -> a in [2,3].
+query
+SELECT a FROM tsq_idx WHERE a @@ (ts_between(1, 3, true, true) && ts_between(2, 4, true, true)) ORDER BY a;
+----
+a
+2
+3
+
+# RANGE phrase-part with NULL min (open-ended below): any token
+# <= 'r' inclusive after 'quick'. Matches row 1 ('brown') and not
+# row 2 ('red' is > 'r' exclusive? actually 'red' > 'r' is true so
+# 'red' fails; only 'brown' lies <= 'r').
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between(NULL, 'r', false, false)) ORDER BY a;
+----
+a
+1
+
+# RANGE phrase-part with both bounds NULL: every token at that
+# position satisfies the range, so any token after 'quick' matches.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between(NULL, NULL, false, false)) ORDER BY a;
+----
+a
+1
+2
+
+# Numeric / boolean RANGE inside `##` is rejected (phrase parts
+# operate on analyzed text tokens; non-text bounds make no sense).
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between(1, 5, true, true));
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between(false, true, true, true));
+
+# ----------------------------------------------------------------------
+# Single-bound shortcuts: LESS / LESS_EQUAL / GREATER / GREATER_EQUAL.
+# Same per-type dispatch as RANGE; bound vs column type mismatch and
+# NULL bound are bind-time errors.
+# ----------------------------------------------------------------------
+
+# LESS on the primary-key column `a` (INTEGER, keyword-analyzed).
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_lt(3) ORDER BY a;
+----
+a
+1
+2
+
+# LESS_EQUAL -- inclusive upper bound.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_le(2) ORDER BY a;
+----
+a
+1
+2
+
+# GREATER -- exclusive lower bound.
+query
+SELECT a FROM tsq_idx WHERE a @@ ts_gt(3) ORDER BY a;
+----
+a
+4
+
+# GREATER_EQUAL -- inclusive lower bound, composed with LESS_EQUAL via &&.
+query
+SELECT a FROM tsq_idx WHERE a @@ (ts_ge(2) && ts_le(3)) ORDER BY a;
+----
+a
+2
+3
+
+# Type mismatch -- VARCHAR bound on INTEGER column.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_lt('foo');
+
+# NULL bound -- use ts_between(NULL, ..., ...) instead.
+statement error
+SELECT a FROM tsq_idx WHERE a @@ ts_lt(NULL);
+
+# ----------------------------------------------------------------------
+# ## phrase-sequence: bare INTEGER gap, adjacent, interval.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## 1 ## 'fox'::TSQUERY) ORDER BY a;
+----
+a
+1
+2
+
+# Bare-string version of `a ## N ## b` (gap = N).
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## 1 ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## 'brown'::TSQUERY);
+----
+a
+1
+
+# Bare-string version of the strictly-adjacent form.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## 'brown');
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## [0, 2] ## 'fox'::TSQUERY) ORDER BY a;
+----
+a
+1
+2
+
+# Bare-string version with interval gap.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## [0, 2] ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+# ## with explicit fixed-size INTEGER[2] (ARRAY, not LIST). Same
+# semantics as the [0,2] LIST literal
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## [0,2]::INTEGER[2] ## 'fox'::TSQUERY) ORDER BY a;
+----
+a
+1
+2
+
+# tsquery_phrase function form
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('fox'), 1) ORDER BY a;
+----
+a
+1
+2
+
+# tsquery_phrase 2-arg form (strictly adjacent)
+query
+SELECT a FROM tsq_idx WHERE b @@ tsquery_phrase(ts_phrase('quick'), ts_phrase('brown'));
+----
+a
+1
+
+# ## with multi-step (> 2 parts)
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY ## 1 ## 'fox'::TSQUERY ## 1 ## 'over'::TSQUERY) ORDER BY a;
+----
+a
+1
+2
+
+# Bare-string multi-step.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## 1 ## 'fox' ## 1 ## 'over') ORDER BY a;
+----
+a
+1
+2
+
+# ## mixing PREFIX and term parts (bare-string RHS).
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_starts_with('qu') ## 1 ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+# ## with nested PHRASE: inner phrase's tokens expand as adjacent parts.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick brown') ## 1 ## 'jumps');
+----
+a
+1
+
+# ## with LEVENSHTEIN as a phrase part (bare-string RHS).
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_levenshtein('quikc', 2) ## 'brown');
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# ## with ANY_OF / ALL_OF phrase parts.
+# Inside `##`, ANY_OF/ALL_OF map to ByTermsOptions at a phrase position
+# (rather than a separate Or/And subtree). min_match is 1 (any), N (all),
+# or an explicit override on ANY_OF.
+# ----------------------------------------------------------------------
+
+# ANY_OF as the second part: match "quick X" where X in {brown, red}.
+# Adjacent gap -- row 1 has "quick brown", row 2 has "quick red".
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_any(['brown', 'red'])) ORDER BY a;
+----
+a
+1
+2
+
+# ANY_OF on the LHS: {quick, slow} immediately followed by 'fox'.
+# None of the rows have those terms strictly adjacent ("quick brown fox",
+# "quick red fox") -- empty.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_any(['quick', 'slow']) ## 'fox') ORDER BY a;
+----
+a
+
+# Same intent with a 1-gap so "quick X fox" matches.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_any(['quick', 'slow']) ## 1 ## 'fox') ORDER BY a;
+----
+a
+1
+2
+
+# ANY_OF after a gap, picking either of two trailing tokens.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## 1 ## ts_any(['fox', 'turtle'])) ORDER BY a;
+----
+a
+1
+2
+
+# ANY_OF with explicit min_match=1 (the implicit default).
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_any(['brown', 'red', 'grey'], 1)) ORDER BY a;
+----
+a
+1
+2
+
+# ts_any([], 1) is allowed: explicit min_match=1 is the only value
+# that is meaningful at a phrase position (a single position holds
+# at most one token).
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_any(['brown', 'red'], 1)) ORDER BY a;
+----
+a
+1
+2
+
+# ts_any([], N>1) inside a phrase is rejected: unsatisfiable at a
+# single phrase position.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_any(['brown', 'red'], 2));
+
+# ALL_OF as a phrase part is rejected for the same reason; users who
+# want "any of these terms here" should use ANY_OF.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_all(['brown', 'red']));
+
+# ----------------------------------------------------------------------
+# Commutative @@: LHS is the TSQUERY, RHS is the column. Mirrors the
+# main @@ surface -- every TSQUERY shape that's valid on the right
+# should also be valid on the left.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE 'quick' @@ b ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE ts_phrase('grey turtle') @@ b;
+----
+a
+3
+
+# Boolean combinators on LHS.
+query
+SELECT a FROM tsq_idx WHERE (ts_phrase('quick brown') || ts_phrase('grey turtle')) @@ b ORDER BY a;
+----
+a
+1
+3
+
+query
+SELECT a FROM tsq_idx WHERE (ts_phrase('quick') && !!ts_phrase('brown fox')) @@ b ORDER BY a;
+----
+a
+2
+
+# ANY_OF / ALL_OF on LHS (list form).
+query
+SELECT a FROM tsq_idx WHERE ts_any([ts_phrase('red fox'), ts_phrase('grey turtle')]) @@ b ORDER BY a;
+----
+a
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE ts_all([ts_starts_with('qu'), ts_levenshtein('brown', 1)]) @@ b;
+----
+a
+1
+
+# Bare-string ANY_OF list on LHS.
+query
+SELECT a FROM tsq_idx WHERE ts_any(['quick', 'turtle']) @@ b ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE ts_all(['quick', 'fox']) @@ b ORDER BY a;
+----
+a
+1
+2
+
+# ## phrase-seq on LHS, both bare-string and explicitly-cast forms.
+query
+SELECT a FROM tsq_idx WHERE ('quick' ## 1 ## 'fox') @@ b ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE ('quick'::TSQUERY ## 'brown'::TSQUERY) @@ b;
+----
+a
+1
+
+# LIKE / PREFIX / LEVENSHTEIN constructors on LHS.
+query
+SELECT a FROM tsq_idx WHERE ts_starts_with('turt') @@ b;
+----
+a
+3
+
+query
+SELECT a FROM tsq_idx WHERE ts_levenshtein('quikc', 2) @@ b ORDER BY a;
+----
+a
+1
+2
+
+# Boost on LHS.
+query
+SELECT a FROM tsq_idx WHERE (ts_phrase('quick') ^ 2.0) @@ b ORDER BY a;
+----
+a
+1
+2
+
+# to_tsquery on LHS (Lucene parser).
+query
+SELECT a FROM tsq_idx WHERE to_tsquery('quick AND brown') @@ b;
+----
+a
+1
+
+# PG-compat constructor families on LHS.
+query
+SELECT a FROM tsq_idx WHERE plainto_tsquery('Quick Brown') @@ b;
+----
+a
+1
+
+query
+SELECT a FROM tsq_idx WHERE websearch_to_tsquery('"quick brown" OR "grey turtle"') @@ b ORDER BY a;
+----
+a
+1
+3
+
+# ::tokenize cast on LHS.
+query
+SELECT a FROM tsq_idx WHERE 'quick'::tokenize('keyword') @@ b ORDER BY a;
+----
+a
+1
+2
+
+# tsquery_phrase function form on LHS.
+query
+SELECT a FROM tsq_idx WHERE tsquery_phrase(ts_phrase('quick'), ts_phrase('brown')) @@ b;
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# Second column (c) with multi-column predicates via plain SQL OR/AND.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick' OR c @@ 'world' ORDER BY a;
+----
+a
+1
+2
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick' AND c @@ 'hello' ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# Boost composition: boost on a group (parens) and nested boosts compose.
+# ----------------------------------------------------------------------
+
+# Boost on a subtree (Or-group) -- same match set as unboosted version.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('red fox') || ts_phrase('grey turtle')) ^ 3.0 ORDER BY a;
+----
+a
+2
+3
+
+# Nested boost composes multiplicatively: 2.0 * 3.0 = 6.0; match set unchanged.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') ^ 2.0) ^ 3.0 ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# NOT / AND combinations.
+# ----------------------------------------------------------------------
+
+# 'quick' AND NOT 'brown'
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') && !!ts_phrase('brown')) ORDER BY a;
+----
+a
+2
+
+# NOT of a phrase
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') && !!ts_phrase('brown fox')) ORDER BY a;
+----
+a
+2
+
+# ----------------------------------------------------------------------
+# ANY_OF / ALL_OF across different constructor kinds.
+# ----------------------------------------------------------------------
+
+# Mix LEVENSHTEIN + PHRASE under ANY_OF.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any([ts_levenshtein('quikc', 2), ts_phrase('grey turtle')]) ORDER BY a;
+----
+a
+1
+2
+3
+
+# ALL_OF of PREFIX + LEVENSHTEIN.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_all([ts_starts_with('qu'), ts_levenshtein('brown', 1)]);
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# Edge cases: empty results, no match.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'nonexistent';
+----
+a
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick nonexistent');
+----
+a
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_starts_with('zzz');
+----
+a
+
+# ----------------------------------------------------------------------
+# PREFIX corner cases: full-term prefix, empty prefix rejected.
+# ----------------------------------------------------------------------
+
+# Full-term prefix -- 'turtle' is a full token in row 3.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_starts_with('turtle');
+----
+a
+3
+
+# ----------------------------------------------------------------------
+# LEVENSHTEIN distance-0 is exact-term match.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quick', 0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('nonexistent', 0);
+----
+a
+
+# LEVENSHTEIN distance-1 allows one edit.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quikc', 1) ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# Combining TSQUERY match with non-FTS predicates via plain SQL AND.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ 'quick' AND a >= 2 ORDER BY a;
+----
+a
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick brown') AND a = 1;
+----
+a
+1
+
+# ----------------------------------------------------------------------
+# Ambiguous commutative @@: both sides column refs to indexed cols.
+# ----------------------------------------------------------------------
+
+statement error
+SELECT a FROM tsq_idx WHERE b @@ c;
+
+# ----------------------------------------------------------------------
+# ## error cases.
+# ----------------------------------------------------------------------
+
+# Trailing gap with no next part.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('a' ## 2);
+
+# Negative gap.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('a' ## -1 ## 'b');
+
+# Interval list wrong length.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('a' ## [1, 2, 3] ## 'b');
+
+# Interval list with min > max.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ ('a' ## [3, 1] ## 'b');
+
+# ----------------------------------------------------------------------
+# websearch_to_tsquery -- PG web-search syntax.
+# Quoted substrings are phrases, bare words AND, `OR` keyword between
+# two tokens is disjunction with higher precedence than implicit AND,
+# `-word` is NOT.
+# ----------------------------------------------------------------------
+
+# Single word -- same as bare string.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick') ORDER BY a;
+----
+a
+1
+2
+
+# Quoted phrase.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('"quick brown"');
+----
+a
+1
+
+# Implicit AND of two words.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick brown');
+----
+a
+1
+
+# OR chain.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick OR turtle') ORDER BY a;
+----
+a
+1
+2
+3
+
+# OR precedence: (quick OR turtle) AND fox -- only rows with both
+# (quick or turtle) AND fox. Rows 1,2 match.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick OR turtle fox') ORDER BY a;
+----
+a
+1
+2
+
+# Negation: quick AND NOT brown.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('quick -brown') ORDER BY a;
+----
+a
+2
+
+# Full example: quoted phrase with OR alternative and negation.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('"quick brown" OR "grey turtle" -spam') ORDER BY a;
+----
+a
+1
+3
+
+# Empty input -> no matches.
+query
+SELECT a FROM tsq_idx WHERE b @@ websearch_to_tsquery('');
+----
+a
+
+# ----------------------------------------------------------------------
+# to_tsquery -- Lucene-style query string parsed by the iresearch Lucene
+# parser. Supports AND/OR/NOT (or &&/||/!), +/- modifiers, "quoted
+# phrases", prefix*, and parens.
+# ----------------------------------------------------------------------
+
+# Single term.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick') ORDER BY a;
+----
+a
+1
+2
+
+# AND keyword.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick AND brown');
+----
+a
+1
+
+# Symbolic && is the AND alias.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick && brown');
+----
+a
+1
+
+# OR keyword across three rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick OR turtle') ORDER BY a;
+----
+a
+1
+2
+3
+
+# +required / -excluded modifiers: must contain quick AND must not
+# contain brown.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('+quick -brown') ORDER BY a;
+----
+a
+2
+
+# Quoted phrase tokenises through the column analyzer.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('"quick brown"');
+----
+a
+1
+
+# Prefix wildcard.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('turt*');
+----
+a
+3
+
+# Parens for grouping.
+query
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('(quick OR turtle) AND fox') ORDER BY a;
+----
+a
+1
+2
+
+# Bad Lucene syntax surfaces as a parse error -- trailing AND with no
+# right-hand operand.
+statement error
+SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick AND');
+
+# ----------------------------------------------------------------------
+# PG-style regex operators on keyword-analyzed VARCHAR columns.
+# DuckDB's regex_range_filter optimizer rewrites `regexp_full_match`
+# into a sibling LogicalFilter holding a coarse `col >= range_min AND
+# col <= range_max` pre-filter, where the bounds are typed BLOB but
+# carry RAW bytes (e.g. 0xF4 0xBF 0xBF 0xC0 for the upper bound of any
+# UTF-8 string starting with 'foo'). Our filter builder must extract
+# those bytes RAW (StringValue::Get) -- not via GetValue<std::string>()
+# which would return the display form "\xF4\xBF\xBF\xC0" as 24 ASCII
+# chars and corrupt the iresearch ByRange upper bound.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE re_idn (a INTEGER PRIMARY KEY, name VARCHAR);
+
+# `name` has no analyzer specified -- defaults to identity, which is
+# what the byte-wise range-and-regex pipeline below assumes.
+statement ok
+CREATE INDEX re_idn_idx ON re_idn USING inverted(a, name);
+
+statement ok
+INSERT INTO re_idn VALUES (1, 'Foo'), (2, 'foobar'), (3, 'BARFOO'), (4, 'baz');
+
+statement ok
+VACUUM (UPDATE_INDEXES) re_idn;
+
+# `~` -- case-sensitive POSIX regex. The literal-prefix range bound
+# pushed by regex_range_filter is upper bound `foo<F4 BF BF C0>`,
+# which (with the BLOB-extraction fix) admits 'foobar' into the range
+# scan and the runtime regex confirms the match.
+query
+SELECT a FROM re_idn_idx WHERE name ~ 'foo.*' ORDER BY a;
+----
+a
+2
+
+# `~*` -- case-insensitive. Note: DuckDB rewrites `~`/`~*` into
+# regexp_full_match (anchored), so to match "contains foo" we use
+# `.*foo.*`. Matches 'Foo', 'foobar', 'BARFOO'.
+query
+SELECT a FROM re_idn_idx WHERE name ~* '.*foo.*' ORDER BY a;
+----
+a
+1
+2
+3
+
+# `!~` -- NOT case-sensitive full-match. 'foobar' is the only string
+# whose full content matches 'foo.*'; the others (1, 3, 4) are not.
+query
+SELECT a FROM re_idn_idx WHERE name !~ 'foo.*' ORDER BY a;
+----
+a
+1
+3
+4
+
+# `!~*` -- NOT case-insensitive contains-foo. Only 'baz' lacks 'foo'.
+query
+SELECT a FROM re_idn_idx WHERE name !~* '.*foo.*' ORDER BY a;
+----
+a
+4
+
+# ----------------------------------------------------------------------
+# Named-tokenizer cast: ::tokenize('<analyzer>') overrides the column's
+# default analyzer for the inner subtree. Inner-most cast wins. The
+# `tsq_english_upper` dictionary uppercases tokens and lets us prove
+# the override actually changes analyzer behaviour: indexed terms are
+# lowercase (via tsq_english), so an upper-cased query won't match.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_english_upper(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    stemming = false,
+    accent = false
+);
+
+# Default ambient analyzer (tsq_english, lowercase): 'Quick' lowercases
+# to 'quick' which is indexed in rows 1 and 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick' ORDER BY a;
+----
+a
+1
+2
+
+# Override to tsq_english_upper: 'Quick' uppercases to 'QUICK', which
+# is NOT in the index (indexed terms are lowercase) -> 0 rows. Confirms
+# the override actually shaped the query terms.
+query
+SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenize('tsq_english_upper');
+----
+a
+
+# Compound expressions: the override applies at each LEAF cast, not at
+# an outer wrapping cast. Wrapping `(... || ...)::tokenize(name)` does
+# nothing because DuckDB elides TSQUERY -> TSQUERY-with-modifier casts
+# (both share the same logical-type alias). To override per leg, apply
+# the cast on each bare-string operand directly.
+
+# Per-leg override on each VARCHAR operand. Both lowercase via the
+# column's ambient analyzer (since `tsq_english` is the column's
+# analyzer); matches rows 1, 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('Quick'::tokenize('tsq_english') || 'BROWN'::tokenize('tsq_english')) ORDER BY a;
+----
+a
+1
+2
+
+# Per-leg override forcing upper on both legs. Indexed terms are
+# lowercase, so neither leg matches -> 0 rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('Quick'::tokenize('tsq_english_upper') || 'BROWN'::tokenize('tsq_english_upper'));
+----
+a
+
+# Mixed per-leg overrides: left lowercases ('quick' matches rows 1, 2),
+# right uppercases ('BROWN' doesn't match). OR -> rows 1, 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('Quick'::tokenize('tsq_english') || 'BROWN'::tokenize('tsq_english_upper')) ORDER BY a;
+----
+a
+1
+2
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tsq_english_upper;
+
+# ----------------------------------------------------------------------
+# Array form: ts_tokenize(text_array[, analyzer]) -> TSQUERY[].
+# Inside ANY_OF / ALL_OF, every element is tokenised through the
+# chosen analyzer (column ambient by default, 'keyword' for raw
+# bytes) and the produced tokens are flattened into a single ByTerms
+# with the appropriate min_match policy.
+# ----------------------------------------------------------------------
+
+# Ambient (1-arg) form: 'Foo Bar' splits on whitespace via the column's
+# `text` analyzer and lowercases. 'BAZ' lowercases to 'baz' (which
+# isn't indexed). Flattened into ANY_OF semantics: tokens [foo, bar,
+# baz], any one matches -> rows 1 (has 'fox'/'brown') ... actually our
+# fixture's 'foo' isn't indexed; we use the indexed lowercase tokens
+# directly here.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['Quick', 'BROWN'])) ORDER BY a;
+----
+a
+1
+2
+
+# 'keyword' form: each element becomes a raw single token (no split,
+# no case fold). Indexed terms are lowercase; uppercase 'QUICK' won't
+# match.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['QUICK', 'BROWN'], 'keyword'));
+----
+a
+
+# 'keyword' with literal lowercase input matches indexed tokens.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'brown'], 'keyword')) ORDER BY a;
+----
+a
+1
+2
+
+# ALL_OF: every flattened token must match. Row 1 has both 'quick' and
+# 'brown'; row 2 has 'quick' but not 'brown'.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_all(ts_tokenize(['quick', 'brown'], 'keyword')) ORDER BY a;
+----
+a
+1
+
+# Multi-token element under ambient: 'Quick Brown' splits to two
+# tokens; combined with 'lazy' the flattened OR matches rows 1, 2
+# (both have 'quick'), 1 (also has 'brown'), and 1+2 (both have
+# 'lazy').
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['Quick Brown', 'lazy'])) ORDER BY a;
+----
+a
+1
+2
+
+# ANY_OF with explicit min_match: rows must have at least 2 of
+# [quick, brown, slow]. Row 1 has quick + brown (2 of 3). Row 2 has
+# only quick. Row 3 has slow (1 of 3). Result: row 1 only.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick','brown','slow'], 'keyword'), 2);
+----
+a
+1
+
+# NOT (array form): exclude any row that would match the OR-set.
+query
+SELECT a FROM tsq_idx WHERE NOT (b @@ ts_any(ts_tokenize(['quick'], 'keyword'))) ORDER BY a;
+----
+a
+3
+4
+
+# NULL element is skipped.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', NULL, 'red'], 'keyword')) ORDER BY a;
+----
+a
+1
+2
+
+# Fixed-size VARCHAR[N] (ARRAY) input -- routes through the unsized
+# ARRAY TOKENIZE overload instead of the LIST one. Same semantics.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'red']::VARCHAR[2], 'keyword')) ORDER BY a;
+----
+a
+1
+2
+
+# Named-analyzer resolution (function form): ts_tokenize(text, name) and
+# ts_tokenize(text_array, name) call ResolveTokenizerAnalyzer at filter
+# build time. Need a real catalog tokenizer registered.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsq_english_upper(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'upper',
+    stemming = false,
+    accent = false
+);
+
+# Scalar TOKENIZE with named analyzer: 'Quick' uppercases to 'QUICK',
+# which isn't in the lowercase index -> 0 rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('Quick', 'tsq_english_upper');
+----
+a
+
+# Scalar TOKENIZE with the column's own analyzer name (lowercase).
+# Confirms the named lookup works alongside identity / ambient.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('Quick', 'tsq_english') ORDER BY a;
+----
+a
+1
+2
+
+# Array TOKENIZE with named analyzer: both elements uppercase, neither
+# matches lowercase index -> 0 rows.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['Quick','BROWN'], 'tsq_english_upper'));
+----
+a
+
+# Array TOKENIZE with column's analyzer (verbose form of the 1-arg call):
+# tokens lowercase to [quick, brown] -> rows 1, 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['Quick','BROWN'], 'tsq_english')) ORDER BY a;
+----
+a
+1
+2
+
+# Unknown analyzer name -> bind-time error.
+statement error tokenizer not found in catalog
+SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('quick', 'nonexistent_analyzer');
+
+# Same for the array form.
+statement error tokenizer not found in catalog
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick'], 'nonexistent_analyzer'));
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tsq_english_upper;
+
+# ----------------------------------------------------------------------
+# `::boost(K)` cast -- composable analogue of `^ K`.
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+# Compound: every leg of the conjunction inherits the boost via the
+# `&&` group's own boost slot.
+query
+SELECT a FROM tsq_idx WHERE b @@ ('quick'::TSQUERY && 'fox'::TSQUERY)::boost(3.0) ORDER BY a;
+----
+a
+1
+2
+
+# Composes with ::tokenize in both orderings -- different aliases
+# (BOOSTED vs TOKENIZED) keep both cast wrappers alive so the walker
+# sees and applies both modifiers.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::tokenize('keyword')::boost(42.0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(42.0)::tokenize('keyword') ORDER BY a;
+----
+a
+1
+2
+
+# Multiplicative compose with `^`: (expr ^ 2)::boost(3) and
+# expr::boost(2) ^ 3 both yield the same row-set as a 6x boost.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') ^ 2.0)::boost(3.0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(2.0) ^ 3.0 ORDER BY a;
+----
+a
+1
+2
+
+# Boost cast on each TSQUERY constructor -- same row-set as the
+# bare constructor, just with score multiplication.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_like('quic%'))::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_starts_with('turt')::boost(2.0) ORDER BY a;
+----
+a
+3
+
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_levenshtein('quikc', 2)::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+# Zero factor: claim succeeds, scoring contribution is zero (same as `^ 0`).
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(0.0) ORDER BY a;
+----
+a
+1
+2
+
+# Numeric coercion: integer literal accepted (cast to DOUBLE in bind).
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(2) ORDER BY a;
+----
+a
+1
+2
+
+# Negative factor: rejected at bind time.
+statement error boost
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(-1.0);
+
+# NULL factor: rejected at bind time.
+statement error boost
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(NULL);
+
+# ----------------------------------------------------------------------
+# Trivial BOOLEAN / NULL constants in TSQUERY context.
+# `true` -> All; `false` -> Empty; NULL goes through SQL NULL
+# semantics (the whole predicate folds to NULL -> 0 rows).
+# ----------------------------------------------------------------------
+
+query
+SELECT a FROM tsq_idx WHERE b @@ true ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+query
+SELECT a FROM tsq_idx WHERE b @@ false;
+----
+a
+
+query
+SELECT a FROM tsq_idx WHERE b @@ NULL;
+----
+a
+
+# Inside compound: All / Empty as a leg of || / &&.
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') || true) ORDER BY a;
+----
+a
+1
+2
+3
+4
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') || false) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') && true) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_idx WHERE b @@ (ts_phrase('quick') && false);
+----
+a
+
+# ----------------------------------------------------------------------
+# `ts_compound(must, must_not, should [, min_should_match])` --
+# Elasticsearch-style bool query.
+# ----------------------------------------------------------------------
+
+# All three buckets populated.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(
+  ts_phrase('quick'),                            -- must
+  ts_phrase('grey'),                              -- must_not
+  [ts_phrase('lazy'), ts_phrase('big')]              -- should
+) ORDER BY a;
+----
+a
+1
+2
+
+# must only -- all clauses required.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound([ts_phrase('quick'), ts_phrase('fox')], NULL, NULL) ORDER BY a;
+----
+a
+1
+2
+
+# must_not only -- exclude rows containing any of the must_not clauses.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(NULL, ts_phrase('quick'), NULL) ORDER BY a;
+----
+a
+3
+4
+
+# should only -- at least one should clause must match.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(NULL, NULL, [ts_phrase('grey'), ts_phrase('quick')]) ORDER BY a;
+----
+a
+1
+2
+3
+
+# Single clause without list wrapping.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(ts_phrase('quick'), NULL, NULL) ORDER BY a;
+----
+a
+1
+2
+
+# min_should_match >= 2.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(NULL, NULL, [ts_phrase('quick'), ts_phrase('fox'), ts_phrase('grey')], 2) ORDER BY a;
+----
+a
+1
+2
+
+# All-empty buckets -> Empty filter (matches no rows). No error;
+# mirrors `b @@ NULL` SQL semantics.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(NULL, NULL, NULL);
+----
+a
+
+# min_should_match without should clauses -> error.
+statement error min_should_match makes no sense
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(ts_phrase('quick'), NULL, NULL, 2);
+
+# min_should_match out of range -> error.
+statement error min_should_match must be in
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(NULL, NULL, [ts_phrase('quick'), ts_phrase('fox')], 5);
+
+# Composes with ::boost(K) (outer boost on the And).
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound(ts_phrase('quick'), NULL, NULL)::boost(2.0) ORDER BY a;
+----
+a
+1
+2
+
+# Per-clause `^` boost inside a must-list.
+query
+SELECT a FROM tsq_idx WHERE b @@ ts_compound([ts_phrase('quick') ^ 2.0, ts_phrase('fox')], NULL, NULL) ORDER BY a;
+----
+a
+1
+2
+
+# ----------------------------------------------------------------------
+# Non-FTS expressions unchanged.
+# ----------------------------------------------------------------------
+
+query
+SELECT 'a' || 'b';
+----
+?column?
+ab
+
+query
+SELECT 2 ^ 3;
+----
+?column?
+8

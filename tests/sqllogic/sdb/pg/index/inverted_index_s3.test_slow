@@ -103,7 +103,7 @@ id	who
 # single-phrase match
 query
 SELECT id, who FROM company_parquet_idx
-WHERE PHRASE(what, 'want a lot of money')
+WHERE what @@ ts_phrase('want a lot of money')
 ORDER BY id;
 ----
 id	who
@@ -113,7 +113,7 @@ id	who
 # single-phrase match inside a longer sentence
 query
 SELECT id, who FROM company_parquet_idx
-WHERE PHRASE(what, 'mass effect')
+WHERE what @@ ts_phrase('mass effect')
 ORDER BY id;
 ----
 id	who
@@ -123,7 +123,7 @@ id	who
 # phrase that appears in almost every row (e.t.c. sprinkled everywhere)
 query
 SELECT id, who FROM company_parquet_idx
-WHERE PHRASE(what, 'deadinside')
+WHERE what @@ ts_phrase('deadinside')
 ORDER BY id;
 ----
 id	who
@@ -140,7 +140,7 @@ id	who
 # OR across two phrases
 query
 SELECT id, who FROM company_parquet_idx
-WHERE PHRASE(what, 'at night') OR PHRASE(what, 'at 3am')
+WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
 ORDER BY id;
 ----
 id	who
@@ -151,7 +151,7 @@ id	who
 # AND across two phrases (one matches `who`, other matches `what`)
 query
 SELECT id, who FROM company_parquet_idx
-WHERE PHRASE(who, 'babsky') AND PHRASE(what, 'parquet')
+WHERE who @@ ts_phrase('babsky') AND what @@ ts_phrase('parquet')
 ORDER BY id;
 ----
 id	who
@@ -163,7 +163,7 @@ query
 SELECT id,
        BM25(company_parquet_idx.tableoid) > 0 AS has_score
 FROM company_parquet_idx
-WHERE PHRASE(what, 'deadinside')
+WHERE what @@ ts_phrase('deadinside')
 ORDER BY id;
 ----
 id	has_score
@@ -211,7 +211,7 @@ id	who
 
 query
 SELECT id, who FROM company_csv_idx
-WHERE PHRASE(what, 'want a lot of money')
+WHERE what @@ ts_phrase('want a lot of money')
 ORDER BY id;
 ----
 id	who
@@ -220,7 +220,7 @@ id	who
 
 query
 SELECT id, who FROM company_csv_idx
-WHERE PHRASE(what, 'mass effect')
+WHERE what @@ ts_phrase('mass effect')
 ORDER BY id;
 ----
 id	who
@@ -229,7 +229,7 @@ id	who
 
 query
 SELECT id, who FROM company_csv_idx
-WHERE PHRASE(what, 'at night') OR PHRASE(what, 'at 3am')
+WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
 ORDER BY id;
 ----
 id	who
@@ -239,7 +239,7 @@ id	who
 
 query
 SELECT id, who FROM company_csv_idx
-WHERE PHRASE(who, 'kostya') OR PHRASE(who, 'pudge')
+WHERE who @@ ts_phrase('kostya') OR who @@ ts_phrase('pudge')
 ORDER BY id;
 ----
 id	who
@@ -252,7 +252,7 @@ query
 SELECT id,
        BM25(company_csv_idx.tableoid) > 0 AS has_score
 FROM company_csv_idx
-WHERE PHRASE(what, 'deadinside')
+WHERE what @@ ts_phrase('deadinside')
 ORDER BY id;
 ----
 id	has_score
@@ -272,7 +272,7 @@ id	has_score
 
 query
 SELECT id, who FROM company_parquet_idx
-WHERE PHRASE(who, 'gayazov') OR PHRASE(who, 'krivda') OR PHRASE(who, 'pavelvi')
+WHERE who @@ ts_phrase('gayazov') OR who @@ ts_phrase('krivda') OR who @@ ts_phrase('pavelvi')
 ORDER BY id;
 ----
 id	who
@@ -283,7 +283,7 @@ id	who
 
 query
 SELECT id, who FROM company_csv_idx
-WHERE PHRASE(who, 'gayazov') OR PHRASE(who, 'krivda') OR PHRASE(who, 'pavelvi')
+WHERE who @@ ts_phrase('gayazov') OR who @@ ts_phrase('krivda') OR who @@ ts_phrase('pavelvi')
 ORDER BY id;
 ----
 id	who

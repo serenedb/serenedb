@@ -453,22 +453,22 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
-  catalog::ColumnAnalyzer&& column_analyzer) {
+  catalog::ColumnTokenizer&& column_analyzer) {
   index_features = column_analyzer.features;
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();
   string_analyzer = std::move(column_analyzer.analyzer);
-  store_attr = irs::get<irs::StoreAttr>(**string_analyzer);
+  store_attr = irs::get<irs::StoreAttr>(*string_analyzer);
 }
 
 void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {
   SDB_ASSERT(analyzer || string_analyzer);
-  SDB_ASSERT((analyzer == nullptr) || !string_analyzer.has_value());
+  SDB_ASSERT(!analyzer || !string_analyzer);
   if (analyzer) {
     auto& sstream = basics::downCast<irs::StringTokenizer>(*analyzer);
     sstream.reset(value);
   } else {
-    string_analyzer.value()->reset(value);
+    string_analyzer->reset(value);
   }
 }
 

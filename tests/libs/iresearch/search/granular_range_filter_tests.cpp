@@ -1908,7 +1908,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order_multiple_sorts) {
     ASSERT_NE(nullptr, writer);
 
     // add segment
-    index().emplace_back(writer->FeatureInfo());
+    index().emplace_back();
     auto& segment = index().back();
 
     {

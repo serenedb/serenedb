@@ -86,14 +86,6 @@ void RawTfIndexTest::BuildFixture() {
               true, false);
 
   irs::IndexWriterOptions opts;
-  opts.features = [&](irs::IndexFeatures id) {
-    irs::ColumnInfo info{irs::Type<irs::compression::Lz4>::get(), {}, false};
-    if (id == irs::IndexFeatures::Norm) {
-      return std::make_pair(info,
-                            irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
-    }
-    return std::make_pair(info, irs::FeatureWriterFactory{});
-  };
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);

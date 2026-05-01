@@ -45,8 +45,8 @@ struct InvertedIndexColumnInfo {
   std::optional<HNSWColumnConfig> hnsw_config;
 };
 
-struct ColumnAnalyzer {
-  Tokenizer::AnalyzerWrapper analyzer;
+struct ColumnTokenizer {
+  Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
 };
 
@@ -74,7 +74,7 @@ class InvertedIndex final : public Index {
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 
-  ColumnAnalyzer GetColumnAnalyzer(
+  ColumnTokenizer GetColumnAnalyzer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 

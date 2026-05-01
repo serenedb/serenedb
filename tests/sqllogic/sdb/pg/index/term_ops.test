@@ -35,26 +35,26 @@ statement ok
 VACUUM (UPDATE_INDEXES) test_term_ops;
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_LIKE(b, 'percent_not_contain') ORDER BY a;
+SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent_not_contain')) ORDER BY a;
 ----
 a
 1
 2
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_LIKE(b, 'percent_not_contain') AND a < 2;
+SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent_not_contain')) AND a < 2;
 ----
 a
 1
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_LIKE(b, 'percent\_not\_contain') ORDER BY a;
+SELECT a FROM test_term_ops_idx WHERE b @@ (ts_like('percent\_not\_contain')) ORDER BY a;
 ----
 a
 2
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_EQ(c, 'd');
+SELECT a FROM test_term_ops_idx WHERE c @@ 'd';
 ----
 a
 4
@@ -67,14 +67,14 @@ a
 
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_GT(c, 'd') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ ts_gt('d') ORDER BY a DESC;
 ----
 a
 6
 5
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_LTE(c, 'd') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ ts_le('d') ORDER BY a DESC;
 ----
 a
 4
@@ -83,7 +83,7 @@ a
 1
 
 query
-SELECT a FROM test_term_ops_idx WHERE NOT TERM_LT(c, 'd') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE NOT (c @@ ts_lt('d')) ORDER BY a DESC;
 ----
 a
 6
@@ -91,7 +91,7 @@ a
 4
 
 query
-SELECT a FROM test_term_ops_idx WHERE TERM_IN(c, 'd', 'a') ORDER BY a DESC;
+SELECT a FROM test_term_ops_idx WHERE c @@ ts_any(['d', 'a']) ORDER BY a DESC;
 ----
 a
 4
@@ -99,3 +99,126 @@ a
 
 statement ok
 DROP TABLE test_term_ops;
+
+# --- Wildcard text dictionary tests ---
+#
+# The wildcard text-search template ngram-tokenises terms at index time.
+# SQL `b LIKE 'pat'` against a wildcard-analyzer column dispatches to the
+# ngram-aware ByWildcardNgram filter (instead of the term-dictionary
+# scanning ByWildcard) so the LIKE pattern is evaluated through the
+# inverted index using the analyzer's ngram tokenization.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_wildcard_dict(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+);
+
+statement ok
+CREATE TABLE test_wildcard_ops (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_wildcard_ops_idx ON test_wildcard_ops USING inverted(a, b test_wildcard_dict);
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (1, 'hello');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (2, 'help');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (3, 'herald');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (4, 'world');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (5, 'testing');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (6, 'ten');
+
+statement ok
+INSERT INTO test_wildcard_ops VALUES (7, 'percent_value');
+
+statement ok
+VACUUM (UPDATE_INDEXES) test_wildcard_ops;
+
+# Match all values starting with 'hel' (hello, help; herald starts with 'her')
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'hel%' ORDER BY a;
+----
+a
+1
+2
+
+# Match values ending with 'ld' (herald, world)
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE '%ld' ORDER BY a;
+----
+a
+3
+4
+
+# Match values with single character wildcard: 'hel_o' matches 'hello'
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'hel_o' ORDER BY a;
+----
+a
+1
+
+# Match all 'he' prefix with any suffix
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'he%' ORDER BY a;
+----
+a
+1
+2
+3
+
+# Match values where prefix is 'te'
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'te%' ORDER BY a;
+----
+a
+5
+6
+
+# Match using _ for each character: 'h____' matches 5-char words starting with h (hello=5, help=4)
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'h____' ORDER BY a;
+----
+a
+1
+
+# Escaped _ is treated as a literal underscore - matches 'percent_value'
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'percent\_value' ORDER BY a;
+----
+a
+7
+
+# Escaped _ - literal underscore, no rows have 'hel_o' with literal underscore
+query
+SELECT a FROM test_wildcard_ops_idx WHERE b LIKE 'hel\_o' ORDER BY a;
+----
+a
+
+# NOT LIKE - exclude all 'hel%' matches (hello, help); herald, world, testing, ten, percent_value remain
+query
+SELECT a FROM test_wildcard_ops_idx WHERE NOT (b LIKE 'hel%') ORDER BY a;
+----
+a
+3
+4
+5
+6
+7
+
+statement ok
+DROP TABLE test_wildcard_ops;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY test_wildcard_dict;

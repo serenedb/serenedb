@@ -176,8 +176,8 @@ db error: ERROR: invalid input syntax for type integer: "three"
 statement error
 CREATE TEXT SEARCH DICTIONARY t_err16(
     template = 'minhash',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = '|',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = '|',
     numhashes = 'two'
 )
 ----
@@ -747,8 +747,8 @@ ts_lexize
 statement ok
 CREATE TEXT SEARCH DICTIONARY t12(
     template = 'minhash',
-    analyzer_template = 'delimiter',
-    analyzer_delimiter = ',',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ',',
     numhashes = 2
 )
 
@@ -775,9 +775,9 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_seg_explicit(
     template = 'minhash',
     numhashes = 3,
-    analyzer_template = 'segmentation',
-    analyzer_break = 'alpha',
-    analyzer_case = 'lower'
+    tokenizer_template = 'segmentation',
+    tokenizer_break = 'alpha',
+    tokenizer_case = 'lower'
 )
 
 
@@ -794,10 +794,10 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_with_text(
     template = 'minhash',
     numhashes = 6,
-    analyzer_template = 'text',
-    analyzer_locale = 'en_US.UTF-8',
-    analyzer_case = 'lower',
-    analyzer_stemming = false
+    tokenizer_template = 'text',
+    tokenizer_locale = 'en_US.UTF-8',
+    tokenizer_case = 'lower',
+    tokenizer_stemming = false
 )
 
 
@@ -1336,7 +1336,7 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY copy_minhash(
     template = 'copy_from',
     from = 'minhash_with_text',
-    analyzer_stopwords = '"fox"'
+    tokenizer_stopwords = '"fox"'
 )
 
 
@@ -1353,7 +1353,7 @@ CREATE TEXT SEARCH DICTIONARY copy_copy_pipe(
     from = 'copy_pipe2',
     step4_template = 'copy_from',
     step4_from = 'copy_minhash',
-    step4_analyzer_stopwords = '"quick"'
+    step4_tokenizer_stopwords = '"quick"'
 )
 
 query
@@ -1401,8 +1401,8 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY minhash_copy5(
     template = 'minhash',
     numHashes = 5,
-    analyzer_template = 'copy_from',
-    analyzer_from = 'too_many_pipes'
+    tokenizer_template = 'copy_from',
+    tokenizer_from = 'too_many_pipes'
 )
 
 
@@ -1643,6 +1643,220 @@ CREATE TEXT SEARCH DICTIONARY union_missing_opt(
 )
 
 
+# WILDCARD TEMPLATE
+
+# --- Valid: defaults (ngramsize defaults to 3), delimiter base analyzer ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_default(
+    template = 'wildcard',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+
+
+# --- Valid: explicit ngramsize=2 (minimum allowed) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_ngram2(
+    template = 'wildcard',
+    ngramsize = 2,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+
+
+# --- Valid: explicit ngramsize=5, segmentation base analyzer ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_ngram5_seg(
+    template = 'wildcard',
+    ngramsize = 5,
+    tokenizer_template = 'segmentation',
+    tokenizer_case = 'lower'
+)
+
+
+# --- Valid: text base analyzer ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY wildcard_text_base(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'text',
+    tokenizer_locale = 'en_US.UTF-8',
+    tokenizer_stemming = false,
+    tokenizer_case = 'lower'
+)
+
+
+# --- Invalid: ngramsize=1 (below minimum 2) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram1(
+    template = 'wildcard',
+    ngramsize = 1,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+----
+db error: ERROR: ngramsize must be at least 2
+HINT: N-gram size for wildcard prefix indexing (minimum 2)
+
+
+# --- Invalid: ngramsize=0 ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram0(
+    template = 'wildcard',
+    ngramsize = 0,
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+----
+db error: ERROR: ngramsize must be at least 2
+HINT: N-gram size for wildcard prefix indexing (minimum 2)
+
+
+# --- Invalid: ngramsize not an integer ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_ngram_str(
+    template = 'wildcard',
+    ngramsize = 'three',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+----
+db error: ERROR: invalid input syntax for type integer: "three"
+
+
+# --- Invalid: option not applicable to wildcard ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_option(
+    template = 'wildcard',
+    ngramsize = 3,
+    locale = 'en_US.UTF-8',
+    tokenizer_template = 'delimiter',
+    tokenizer_delimiter = ' '
+)
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Invalid: missing required tokenizer_template ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_no_analyzer(
+    template = 'wildcard',
+    ngramsize = 3
+)
+----
+db error: ERROR: required parameter "template" was not found
+
+
+# --- Invalid: inner tokenizer missing its required option (delimiter without delimiter param) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY wildcard_bad_inner(
+    template = 'wildcard',
+    ngramsize = 3,
+    tokenizer_template = 'delimiter'
+)
+----
+db error: ERROR: required parameter "delimiter" was not found
+
+
+# --- ts_lexize: wildcard tokens contain 0xFF boundary sentinels.
+# ts_lexize is typed VARCHAR[], but DuckDB's `Value::Value(string)`
+# validates UTF-8 -- so element-wise materialisation through `unnest`
+# would reject the raw bytes. Casting `ts_lexize(...)::BLOB[]` before
+# the unnest routes each token through the BLOB Value path (no
+# validation), and `encode(t, 'escape')` then renders the bytes with
+# `\\377` for the 0xFF sentinel and printable ASCII passed through as-is.
+
+query
+SELECT encode(t, 'escape')
+FROM unnest(ts_lexize('wildcard_default', 'hello')::BLOB[]) AS t
+ORDER BY 1;
+----
+encode
+\\377he
+ell
+hel
+llo
+lo\\377
+o\\377
+
+
+query
+SELECT encode(t, 'escape')
+FROM unnest(ts_lexize('wildcard_ngram2', 'hello')::BLOB[]) AS t
+ORDER BY 1;
+----
+encode
+\\377h
+el
+he
+ll
+lo
+o\\377
+
+
+query
+SELECT encode(t, 'escape')
+FROM unnest(ts_lexize('wildcard_default', 'hello world')::BLOB[]) AS t
+ORDER BY 1;
+----
+encode
+\\377he
+\\377wo
+d\\377
+ell
+hel
+ld\\377
+llo
+lo\\377
+o\\377
+orl
+rld
+wor
+
+
+query
+SELECT encode(t, 'escape')
+FROM unnest(ts_lexize('wildcard_ngram5_seg', 'quick')::BLOB[]) AS t
+ORDER BY 1;
+----
+encode
+\\377quic
+ck\\377
+ick\\377
+k\\377
+quick
+uick\\377
+
+
+query
+SELECT encode(t, 'escape')
+FROM unnest(ts_lexize('wildcard_text_base', 'Fox juMps')::BLOB[]) AS t
+ORDER BY 1;
+----
+encode
+\\377fo
+\\377ju
+fox
+jum
+mps
+ox\\377
+ps\\377
+s\\377
+ump
+x\\377
+
+
 # HELP
 
 statement error
@@ -1694,6 +1908,8 @@ Text Search Dictionary:
     delimiters[required] (string) [default: none] - The list of delimiters(e.g., '",", "|", "!"'
   minhash:
     numhashes (integer) [default: 1] - Number of hash functions to use
+  wildcard:
+    ngramsize (integer) [default: 3] - N-gram size for wildcard prefix indexing (minimum 2)
   norm:
     locale (string) - ICU locale string (e.g. en_US.UTF-8)
     case (string) [default: none] - Text case conversion: none, lower, upper

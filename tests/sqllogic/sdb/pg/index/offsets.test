@@ -47,7 +47,7 @@ VACUUM (UPDATE_INDEXES) offsets_test2;
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -58,7 +58,7 @@ id	bo
 query
 SELECT id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -70,7 +70,7 @@ id	bo
 query
 EXPLAIN SELECT id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 QUERY PLAN
@@ -105,7 +105,7 @@ QUERY PLAN
 query
 SELECT id, OFFSETS(title) AS to_, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	to_	bo
@@ -116,7 +116,7 @@ id	to_	bo
 query
 SELECT id, OFFSETS(body, 0) AS bo
 FROM offsets_test_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ 'fox'
 ORDER BY id;
 ----
 id	bo
@@ -128,7 +128,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE TERM_IN(body, 'fox', 'quick')
+WHERE body @@ ('fox'::TSQUERY || 'quick'::TSQUERY)
 ORDER BY id;
 ----
 id	bo
@@ -141,7 +141,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox') AND PHRASE(body, 'quick')
+WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('quick')
 ORDER BY id;
 ----
 id	bo
@@ -150,7 +150,7 @@ id	bo
 query
 SELECT id, OFFSETS(title) AS to_
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') OR PHRASE(title, 'world')
+WHERE title @@ ts_phrase('hello') OR title @@ ts_phrase('world')
 ORDER BY id;
 ----
 id	to_
@@ -161,7 +161,7 @@ id	to_
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY OFFSETS(body), id;
 ----
 id	bo
@@ -172,7 +172,7 @@ id	bo
 query
 SELECT id, OFFSETS(body) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY bo, id;
 ----
 id	bo
@@ -183,7 +183,7 @@ id	bo
 query
 SELECT id, OFFSETS(body, 3) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -194,7 +194,7 @@ id	bo
 query
 SELECT id, OFFSETS(body, 1) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	bo
@@ -205,7 +205,7 @@ id	bo
 query
 SELECT id, length(OFFSETS(body, 0)) AS num_offsets
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox') AND id = 4;
+WHERE body @@ ts_phrase('fox') AND id = 4;
 ----
 id	num_offsets
 4	24
@@ -213,7 +213,7 @@ id	num_offsets
 query
 SELECT id, OFFSETS(body, 2) AS bo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY OFFSETS(body, 2), id;
 ----
 id	bo
@@ -225,7 +225,7 @@ query
 SELECT id, b_offs FROM (
 SELECT id, OFFSETS(body, 2) AS b_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ) sub ORDER BY id;
 ----
 id	b_offs
@@ -237,7 +237,7 @@ id	b_offs
 query
 SELECT id, OFFSETS(wordcount) AS wo
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id	wo
@@ -252,11 +252,11 @@ id	wo
 query
 SELECT id, OFFSETS(title) AS title_offs, OFFSETS(body) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 UNION ALL
 SELECT id, NULL::bigint[], OFFSETS(body)
 FROM offsets_test_idx
-WHERE PHRASE(body, 'quick')
+WHERE body @@ ts_phrase('quick')
 ORDER BY id, title_offs NULLS LAST;
 ----
 id	title_offs	body_offs
@@ -272,11 +272,11 @@ id	title_offs	body_offs
 query
 SELECT id, NULL::bigint[] AS title_offs, OFFSETS(body) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'quick')
+WHERE body @@ ts_phrase('quick')
 UNION ALL
 SELECT id, OFFSETS(title), OFFSETS(body)
 FROM offsets_test_idx
-WHERE PHRASE(title, 'hello') AND PHRASE(body, 'fox')
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
 ORDER BY id, title_offs NULLS FIRST;
 ----
 id	title_offs	body_offs
@@ -291,11 +291,11 @@ id	title_offs	body_offs
 query
 SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 UNION ALL
 SELECT id, 4, OFFSETS(body, 4)
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
 ----
 id	lim	body_offs
@@ -310,11 +310,11 @@ id	lim	body_offs
 query
 EXPLAIN SELECT id, 2 AS lim, OFFSETS(body, 2) AS body_offs
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 UNION ALL
 SELECT id, 4, OFFSETS(body, 4)
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id, lim;
 ----
 QUERY PLAN
@@ -383,7 +383,7 @@ query
 SELECT offsets_test_idx.id, OFFSETS(offsets_test_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
-WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox')
+WHERE offsets_test_idx.body @@ ts_phrase('fox') AND offsets_test2_idx.body @@ ts_phrase('fox')
 ORDER BY offsets_test_idx.id;
 ----
 id	bo
@@ -394,7 +394,7 @@ query
 SELECT offsets_test_idx.id, OFFSETS(offsets_test2_idx.body) AS bo
 FROM offsets_test_idx
 JOIN offsets_test2_idx ON offsets_test_idx.id = offsets_test2_idx.id
-WHERE PHRASE(offsets_test_idx.body, 'fox') AND PHRASE(offsets_test2_idx.body, 'fox')
+WHERE offsets_test_idx.body @@ ts_phrase('fox') AND offsets_test2_idx.body @@ ts_phrase('fox')
 ORDER BY offsets_test_idx.id;
 ----
 id	bo
@@ -402,33 +402,33 @@ id	bo
 
 
 query error
-SELECT OFFSETS() FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS() FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 
 
 query error
-SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, 5, 'extra') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 
 
 query error
-SELECT OFFSETS('literal') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS('literal') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() first argument must be a column reference
 
 
 query error
-SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, 'five') FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() second argument must be an integer literal
 
 
 query error
-SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() second argument must be an integer literal
 
 
 query error
-SELECT OFFSETS(body, -1) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(body, -1) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() limit must be greater than zero or 0 for no limit
 
@@ -436,20 +436,20 @@ db error: ERROR: OFFSETS() limit must be greater than zero or 0 for no limit
 query error
 SELECT OFFSETS(body, 3) AS bo3, OFFSETS(body, 5) AS bo5
 FROM offsets_test_idx
-WHERE PHRASE(body, 'fox');
+WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS() called multiple times for field 'body' with different limits
 
 
 query error
-SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(nonexistent) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: Referenced column "nonexistent" not found in FROM clause!
 Candidate bindings: "body"
 
 
 query error
-SELECT OFFSETS(id) FROM offsets_test_idx WHERE PHRASE(body, 'fox');
+SELECT OFFSETS(id) FROM offsets_test_idx WHERE body @@ ts_phrase('fox');
 ----
 db error: ERROR: OFFSETS(): column 'id' not found in index
 
@@ -475,7 +475,7 @@ SELECT id, SUBSTRING(body, GREATEST(1, bo[1] - 3), bo[2] - bo[1] + 8) AS context
 FROM (
   SELECT id, body, OFFSETS(body, 1) AS bo
   FROM offsets_test_idx
-  WHERE PHRASE(body, 'fox')
+  WHERE body @@ ts_phrase('fox')
 ) sub
 ORDER BY id;
 ----

@@ -329,27 +329,27 @@ statement ok
 CREATE INDEX json_idx_ext_facts ON json_idx_ext USING inverted(fact test_english, dept test_english);
 
 query
-SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'team member');
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('team member');
 ----
 20000 values hashing to 8fcf7aa336da10e363eea7acf9f4f3b1
 
 query
-SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff has');
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('vedernikoff has');
 ----
 10000 values hashing to 47f855c12594ddca09fc89564abb3814
 
 query
-SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'cutelooked has');
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('cutelooked has');
 ----
 10000 values hashing to 815290c41155518b4b8d9a888682c5c2
 
 query
-SELECT fact FROM json_idx_ext_facts WHERE PHRASE(dept, 'department alpha');
+SELECT fact FROM json_idx_ext_facts WHERE dept @@ ts_phrase('department alpha');
 ----
 3333 values hashing to e940816b15ca4420dabd32a26194d1df
 
 query
-SELECT * FROM json_idx_ext_facts WHERE PHRASE(fact, 'vedernikoff') AND PHRASE(dept, 'department alpha');
+SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('vedernikoff') AND dept @@ ts_phrase('department alpha');
 ----
 3332 values hashing to f6161bae08ed6f91eef7373d3ed74e51
 

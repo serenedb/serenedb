@@ -254,7 +254,9 @@ QUERY PLAN
 │      IRESEARCH_COUNT      │
 │    ────────────────────   │
 │     Table: vedernikoff    │
-│      Lookup: rocksdb      │
+│                           │
+│       Materializer:       │
+│    rocksdb (point Get)    │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -695,7 +697,8 @@ QUERY PLAN
 │           Table:          │
 │     score_parquet_ext     │
 │                           │
-│      Lookup: parquet      │
+│       Materializer:       │
+│ parquet (file_row_number) │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -1028,7 +1031,9 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
-│        Lookup: csv        │
+│                           │
+│       Materializer:       │
+│     counter (re-scan)     │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -1113,7 +1118,7 @@ statement ok
 CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);
 
 query
-SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+SELECT a, b FROM vedernikoff_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
 ----
 a	b
 1	shared term alpha info
@@ -1123,7 +1128,7 @@ a	b
 5	shared term epsilon info
 
 query
-SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(b, 'info') ORDER BY a;
+SELECT a, b, c FROM vedernikoff_idx WHERE b @@ ts_phrase('info') ORDER BY a;
 ----
 a	b	c
 1	shared term alpha info	dept red color
@@ -1133,7 +1138,7 @@ a	b	c
 5	shared term epsilon info	dept red color
 
 query
-SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept red color') ORDER BY a;
+SELECT a, c FROM vedernikoff_idx WHERE c @@ ts_phrase('dept red color') ORDER BY a;
 ----
 a	c
 1	dept red color
@@ -1141,7 +1146,7 @@ a	c
 5	dept red color
 
 query
-SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept blue color') ORDER BY a;
+SELECT a, c FROM vedernikoff_idx WHERE c @@ ts_phrase('dept blue color') ORDER BY a;
 ----
 a	c
 2	dept blue color

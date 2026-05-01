@@ -277,7 +277,7 @@ void SearchEngine::start() {
     SDB_ASSERT(_consolidation_threads);
 
     if (!_skip_wal_recovery) {
-      WalRecovery{}.Run();
+      RunWalRecovery();
     }
 
     _thread_pools->Get(ThreadGroup::Commit)

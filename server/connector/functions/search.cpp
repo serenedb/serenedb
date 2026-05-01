@@ -43,12 +43,7 @@
 #include "pg/sql_collector.h"
 
 namespace sdb::connector {
-
-duckdb::LogicalType MakeTSQueryType() {
-  auto type = duckdb::LogicalType(duckdb::LogicalTypeId::VARCHAR);
-  type.SetAlias(std::string{kTSQueryTypeName});
-  return type;
-}
+namespace {
 
 duckdb::LogicalType MakeTokenizedTSQueryType() {
   auto type = duckdb::LogicalType(duckdb::LogicalTypeId::VARCHAR);
@@ -61,82 +56,6 @@ duckdb::LogicalType MakeBoostedTSQueryType() {
   type.SetAlias(std::string{kBoostedTSQueryTypeName});
   return type;
 }
-
-bool IsTSQueryType(const duckdb::LogicalType& type) {
-  return type.id() == duckdb::LogicalTypeId::VARCHAR &&
-         type.GetAlias() == kTSQueryTypeName;
-}
-
-bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return false;
-  }
-  const auto alias = type.GetAlias();
-  return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName ||
-         alias == kBoostedTSQueryTypeName;
-}
-
-TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type) {
-  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
-    return {};
-  }
-  const auto* ext = type.GetExtensionInfo().get();
-  const auto& mods = ext->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {};
-  }
-  return {.name = duckdb::StringValue::Get(mods[0].value)};
-}
-
-BoostModifier TryGetBoostModifier(const duckdb::LogicalType& type) {
-  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
-    return {};
-  }
-  const auto* ext = type.GetExtensionInfo().get();
-  const auto& mods = ext->modifiers;
-  if (mods.empty() || mods[0].value.IsNull() ||
-      mods[0].value.type().id() != duckdb::LogicalTypeId::DOUBLE) {
-    return {};
-  }
-  return {.factor = mods[0].value.GetValue<double>()};
-}
-
-// Looks up the named catalog tokenizer in the current transaction's
-// snapshot and returns an owned wrapper. No process-wide cache: each
-// call hands the caller a fresh wrapper from the Tokenizer's pool,
-// and the wrapper goes back to the pool when the caller drops it.
-// Lifetime is therefore bounded by the caller's stack frame, which
-// matches the natural use ("hold during filter build, release when
-// done"). Returns a null wrapper if the name doesn't resolve.
-catalog::Tokenizer::TokenizerWrapper ResolveTokenizerAnalyzer(
-  duckdb::ClientContext& context, std::string_view name) {
-  // SereneDB context isn't registered in some bind paths (e.g. unit
-  // tests using a vanilla DuckDB connection). Return an empty
-  // wrapper so the caller surfaces a "tokenizer not found" bind
-  // error rather than crashing.
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  if (!state) {
-    return {};
-  }
-  auto& conn_ctx = state->GetConnectionContext();
-  auto db_id = conn_ctx.GetDatabaseId();
-  auto current_schema = conn_ctx.GetCurrentSchema();
-  auto qualified = pg::ParseObjectName(name, current_schema);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  if (!snapshot) {
-    return {};
-  }
-  auto entry =
-    snapshot->GetTokenizer(db_id, qualified.schema, qualified.relation);
-  if (!entry) {
-    return {};
-  }
-  return entry->GetTokenizer().value_or(catalog::Tokenizer::TokenizerWrapper{});
-}
-
-namespace {
 
 void SearchStubFn(duckdb::DataChunk& /*args*/,
                   duckdb::ExpressionState& /*state*/,
@@ -162,121 +81,8 @@ void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
     "%s() requires an inverted index scan in the same sub-query", fn_name);
 }
 
-// ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
-// Runs `token` through the named text search dictionary and returns
-// the resulting lexemes as a VARCHAR array.
-void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                      duckdb::Vector& result) {
-  auto count = args.size();
-  auto& context = state.GetContext();
-  auto& conn_ctx = GetSereneDBContext(context);
-
-  auto db_id = conn_ctx.GetDatabaseId();
-  auto current_schema = conn_ctx.GetCurrentSchema();
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-
-  duckdb::UnifiedVectorFormat dict_format, text_format;
-  args.data[0].ToUnifiedFormat(count, dict_format);
-  args.data[1].ToUnifiedFormat(count, text_format);
-
-  auto* dict_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(dict_format);
-  auto* text_data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text_format);
-
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::ListVector::SetListSize(result, 0);
-
-  auto* list_entries =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-
-  // Collect tokens per row first (tokenizer output is ephemeral).
-  std::vector<std::vector<std::string>> row_tokens(count);
-  duckdb::idx_t total_tokens = 0;
-
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    auto dict_idx = dict_format.sel->get_index(i);
-    auto text_idx = text_format.sel->get_index(i);
-
-    if (!dict_format.validity.RowIsValid(dict_idx) ||
-        !text_format.validity.RowIsValid(text_idx)) {
-      result_validity.SetInvalid(i);
-      list_entries[i] = {total_tokens, 0};
-      continue;
-    }
-
-    std::string_view dict_name_sv{dict_data[dict_idx].GetData(),
-                                  dict_data[dict_idx].GetSize()};
-    std::string_view text_sv{text_data[text_idx].GetData(),
-                             text_data[text_idx].GetSize()};
-
-    auto name = pg::ParseObjectName(dict_name_sv, current_schema);
-
-    auto dict = snapshot->GetTokenizer(db_id, name.schema, name.relation);
-    if (!dict) {
-      throw duckdb::InvalidInputException(
-        "text search dictionary \"%s\" does not exist",
-        std::string{dict_name_sv});
-    }
-
-    auto tokenizer_result = dict->GetTokenizer();
-    if (!tokenizer_result) {
-      throw duckdb::InvalidInputException(
-        "failed to get tokenizer: %s",
-        std::string{tokenizer_result.error().errorMessage()});
-    }
-
-    auto& tokenizer = *tokenizer_result;
-    if (!tokenizer->reset(text_sv)) {
-      throw duckdb::InvalidInputException("error while preparing tokenizer");
-    }
-
-    auto* term = irs::get<irs::TermAttr>(*tokenizer);
-    while (tokenizer->next()) {
-      auto char_view = irs::ViewCast<char>(term->value);
-      row_tokens[i].emplace_back(char_view.data(), char_view.size());
-    }
-    total_tokens += row_tokens[i].size();
-  }
-
-  // Fill result list vector.
-  duckdb::ListVector::Reserve(result, total_tokens);
-  auto& child = duckdb::ListVector::GetEntry(result);
-  auto* child_data =
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
-
-  duckdb::idx_t offset = 0;
-  for (duckdb::idx_t i = 0; i < count; i++) {
-    if (!result_validity.RowIsValid(i)) {
-      continue;
-    }
-    list_entries[i].offset = offset;
-    list_entries[i].length = row_tokens[i].size();
-    for (const auto& tok : row_tokens[i]) {
-      // AddStringOrBlob: some analyzers (notably wildcard) emit
-      // tokens with non-UTF-8 boundary bytes (\xFF). Callers wanting
-      // those bytes back round-trip them via `ts_lexize(...)::BLOB[]`,
-      // which avoids VARCHAR Value validation; the heap-side path
-      // here still needs the unvalidated insert.
-      child_data[offset++] =
-        duckdb::StringVector::AddStringOrBlob(child, tok.c_str(), tok.size());
-    }
-  }
-  duckdb::ListVector::SetListSize(result, total_tokens);
-}
-
-// Registers the TSQUERY logical type, its constructors, combinators, and the
-// @@ match function. All leaf bodies throw via TSQueryStubFn -- actual
-// iresearch filter construction happens at bind time
-void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
+void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
   const auto tsquery = MakeTSQueryType();
-  const auto varchar = duckdb::LogicalType::VARCHAR;
-  const auto intv = duckdb::LogicalType::INTEGER;
-  const auto dbl = duckdb::LogicalType::DOUBLE;
-  const auto boolv = duckdb::LogicalType::BOOLEAN;
-  const auto int_list = duckdb::LogicalType::LIST(intv);
-  const auto tsq_list = duckdb::LogicalType::LIST(tsquery);
 
   loader.RegisterType(std::string{kTSQueryTypeName}, tsquery);
 
@@ -329,48 +135,6 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       return type;
     });
 
-  // VARCHAR <-> TSQUERY reinterpret casts. Bare string literals in
-  // TSQUERY context get tokenised by the filter builder via the
-  // ambient (@@ column) analyzer. Asymmetric costs keep typed TSQUERY
-  // values from down-casting into competing VARCHAR overloads:
-  // VARCHAR -> TSQUERY is free (cost 0) so bare strings flow into
-  // TSQUERY contexts, but TSQUERY -> VARCHAR is expensive (cost 100)
-  // so a TSQUERY-typed expression always prefers TSQUERY overloads
-  // over VARCHAR mirrors when both exist (e.g. `<TSQ> ## 'b'` picks
-  // (TSQUERY, TSQUERY) not (VARCHAR, VARCHAR)).
-  loader.RegisterCastFunction(tsquery, varchar,
-                              duckdb::DefaultCasts::ReinterpretCast, 100);
-  loader.RegisterCastFunction(varchar, tsquery,
-                              duckdb::DefaultCasts::ReinterpretCast, 0);
-
-  // Casts to/from the TOKENIZED_TSQUERY alias. The bind callback for
-  // `tokenize(...)` returns this alias (instead of TSQUERY) so that:
-  //   - `'foo'::tokenize('x')`     -- VARCHAR -> TOK-mod-x cast survives
-  //   - `ts_phrase('y')::tokenize('x')` -- TSQ -> TOK-mod-x cast survives
-  // (both are different-alias casts so DuckDB doesn't short-circuit).
-  // The TOK->TSQ direction lets a tokenized value flow back into any
-  // TSQUERY-expecting overload (`@@`, `||`, `&&`, `##`, ...) without
-  // duplicate registrations. TOK->VARCHAR mirrors the asymmetric cost
-  // for TSQ->VARCHAR so TOKENIZED values prefer TSQUERY overloads.
-  const auto tokenized = MakeTokenizedTSQueryType();
-  // VARCHAR -> TOK_TSQ at cost 50 (NOT 0): the operator overload set
-  // (`||`, `&&`, `!!`, `^`, `##`) is registered against TOK_TSQ, and a
-  // free VARCHAR -> TOK_TSQ cast would let our overloads tie with
-  // builtin VARCHAR ones for plain VARCHAR operands (e.g. `a::varchar
-  // || b::varchar`), with DuckDB silently picking ours and producing a
-  // TSQUERY value that fires SearchStubFn at runtime. Cost 50 is high
-  // enough that builtin VARCHAR wins for VARCHAR/VARCHAR operands and
-  // low enough that STRING_LITERAL (cost 20 to alias) and TSQ-typed
-  // (cost 0 via TSQ -> TOK below) operands still prefer ours.
-  loader.RegisterCastFunction(varchar, tokenized,
-                              duckdb::DefaultCasts::ReinterpretCast, 50);
-  loader.RegisterCastFunction(tsquery, tokenized,
-                              duckdb::DefaultCasts::ReinterpretCast, 0);
-  loader.RegisterCastFunction(tokenized, tsquery,
-                              duckdb::DefaultCasts::ReinterpretCast, 0);
-  loader.RegisterCastFunction(tokenized, varchar,
-                              duckdb::DefaultCasts::ReinterpretCast, 100);
-
   // `boost(<factor>)` parameterised type: parallel to tokenize, with
   // a DOUBLE modifier instead of VARCHAR. Different alias keeps the
   // cast wrapper alive so the walker can read the factor.
@@ -397,6 +161,55 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       type.SetExtensionInfo(std::move(info));
       return type;
     });
+}
+
+void RegisterTSQueryAliasCasts(duckdb::ExtensionLoader& loader) {
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  const auto tsquery = MakeTSQueryType();
+  const auto tokenized = MakeTokenizedTSQueryType();
+  const auto boosted_tsq = MakeBoostedTSQueryType();
+
+  // VARCHAR <-> TSQUERY reinterpret casts. Bare string literals in
+  // TSQUERY context get tokenised by the filter builder via the
+  // ambient (@@ column) analyzer. Asymmetric costs keep typed TSQUERY
+  // values from down-casting into competing VARCHAR overloads:
+  // VARCHAR -> TSQUERY is free (cost 0) so bare strings flow into
+  // TSQUERY contexts, but TSQUERY -> VARCHAR is expensive (cost 100)
+  // so a TSQUERY-typed expression always prefers TSQUERY overloads
+  // over VARCHAR mirrors when both exist (e.g. `<TSQ> ## 'b'` picks
+  // (TSQUERY, TSQUERY) not (VARCHAR, VARCHAR)).
+  loader.RegisterCastFunction(tsquery, varchar,
+                              duckdb::DefaultCasts::ReinterpretCast, 100);
+  loader.RegisterCastFunction(varchar, tsquery,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+
+  // Casts to/from the TOKENIZED_TSQUERY alias. The bind callback for
+  // `tokenize(...)` returns this alias (instead of TSQUERY) so that:
+  //   - `'foo'::tokenize('x')`     -- VARCHAR -> TOK-mod-x cast survives
+  //   - `ts_phrase('y')::tokenize('x')` -- TSQ -> TOK-mod-x cast survives
+  // (both are different-alias casts so DuckDB doesn't short-circuit).
+  // The TOK->TSQ direction lets a tokenized value flow back into any
+  // TSQUERY-expecting overload (`@@`, `||`, `&&`, `##`, ...) without
+  // duplicate registrations. TOK->VARCHAR mirrors the asymmetric cost
+  // for TSQ->VARCHAR so TOKENIZED values prefer TSQUERY overloads.
+  //
+  // VARCHAR -> TOK_TSQ at cost 50 (NOT 0): the operator overload set
+  // (`||`, `&&`, `!!`, `^`, `##`) is registered against TOK_TSQ, and a
+  // free VARCHAR -> TOK_TSQ cast would let our overloads tie with
+  // builtin VARCHAR ones for plain VARCHAR operands (e.g. `a::varchar
+  // || b::varchar`), with DuckDB silently picking ours and producing a
+  // TSQUERY value that fires SearchStubFn at runtime. Cost 50 is high
+  // enough that builtin VARCHAR wins for VARCHAR/VARCHAR operands and
+  // low enough that STRING_LITERAL (cost 20 to alias) and TSQ-typed
+  // (cost 0 via TSQ -> TOK below) operands still prefer ours.
+  loader.RegisterCastFunction(varchar, tokenized,
+                              duckdb::DefaultCasts::ReinterpretCast, 50);
+  loader.RegisterCastFunction(tsquery, tokenized,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tokenized, tsquery,
+                              duckdb::DefaultCasts::ReinterpretCast, 0);
+  loader.RegisterCastFunction(tokenized, varchar,
+                              duckdb::DefaultCasts::ReinterpretCast, 100);
 
   // BOOSTED <-> {VARCHAR, TSQ, TOK} reinterpret casts. Cost 0 in/out
   // of the TSQ family so BOOSTED args feed the existing TOK-typed
@@ -404,10 +217,9 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   // VARCHAR mirrors the TSQ/TOK -> VARCHAR asymmetry. The cross-edges
   // (TOK <-> BOOSTED) are what let `::tokenize(...)` and `::boost(K)`
   // compose in either order on a compound expression.
-  const auto boosted_tsq = MakeBoostedTSQueryType();
-  // Same rationale as VARCHAR -> TOK_TSQ above: keep plain VARCHAR
-  // operands from being silently swept into the TSQUERY operator
-  // overload set.
+  //
+  // VARCHAR -> BOOSTED at cost 50: same rationale as VARCHAR -> TOK
+  // above (keep plain VARCHAR operands out of the TSQ operator set).
   loader.RegisterCastFunction(varchar, boosted_tsq,
                               duckdb::DefaultCasts::ReinterpretCast, 50);
   loader.RegisterCastFunction(tsquery, boosted_tsq,
@@ -420,6 +232,12 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
                               duckdb::DefaultCasts::ReinterpretCast, 0);
   loader.RegisterCastFunction(boosted_tsq, varchar,
                               duckdb::DefaultCasts::ReinterpretCast, 100);
+}
+
+void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
+  const auto tsquery = MakeTSQueryType();
+  const auto tokenized = MakeTokenizedTSQueryType();
+  const auto boosted_tsq = MakeBoostedTSQueryType();
 
   // BOOLEAN -> {TSQUERY, TOK}: lets `true` / `false` flow into any
   // TSQUERY position. The runtime function throws -- which makes the
@@ -474,13 +292,14 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
   loader.RegisterCastFunction(boosted_tsq, duckdb::LogicalType::BOOLEAN,
                               boost_bool_cast_bind,
                               /*implicit_cast_cost=*/0);
+}
 
-  // VARCHAR[] -> TSQUERY[] -- proper element-wise list cast (NOT a
-  // ReinterpretCast on the LIST itself; see DuckDB list_casts.cpp).
-  // Lets users write `ANY_OF(['a', 'b'])` without per-element
-  // ::TSQUERY casts: the list's declared element type VARCHAR is
-  // recursively cast to TSQUERY at cost 0 per element.
+void RegisterTSQueryListCast(duckdb::ExtensionLoader& loader) {
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  const auto tsquery = MakeTSQueryType();
   const auto varchar_list = duckdb::LogicalType::LIST(varchar);
+  const auto tsq_list = duckdb::LogicalType::LIST(tsquery);
+
   loader.RegisterCastFunction(
     varchar_list, tsq_list,
     +[](duckdb::BindCastInput& input, const duckdb::LogicalType& source,
@@ -491,6 +310,15 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
         duckdb::ListBoundCastData::InitListLocalState);
     },
     /*implicit_cast_cost=*/0);
+}
+
+void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
+  const auto tsquery = MakeTSQueryType();
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  const auto intv = duckdb::LogicalType::INTEGER;
+  const auto dbl = duckdb::LogicalType::DOUBLE;
+  const auto boolv = duckdb::LogicalType::BOOLEAN;
+  const auto tsq_list = duckdb::LogicalType::LIST(tsquery);
 
   // ts_phrase(text [, gap, text, gap, text, ...]) -- tokenises each text
   // pattern via the ambient analyzer and chains them into one
@@ -678,6 +506,15 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
     loader.RegisterFunction(std::move(fn));
   }
+}
+
+// PG-compat tsquery parser functions: to_tsquery, plainto_tsquery,
+// phraseto_tsquery, websearch_to_tsquery, tsquery_phrase. All
+// throwing stubs claimed by the filter builder at bind time.
+void RegisterTSQueryParserFunctions(duckdb::ExtensionLoader& loader) {
+  const auto tsquery = MakeTSQueryType();
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  const auto intv = duckdb::LogicalType::INTEGER;
 
   // to_tsquery(VARCHAR) -> TSQUERY -- Lucene parser, wiring deferred.
   loader.RegisterFunction(duckdb::ScalarFunction(
@@ -699,6 +536,15 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
       duckdb::ScalarFunction({tsquery, tsquery, intv}, tsquery, TSQueryStubFn));
     loader.RegisterFunction(std::move(set));
   }
+}
+
+void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
+  const auto tsquery = MakeTSQueryType();
+  const auto tokenized = MakeTokenizedTSQueryType();
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  const auto intv = duckdb::LogicalType::INTEGER;
+  const auto dbl = duckdb::LogicalType::DOUBLE;
+  const auto int_list = duckdb::LogicalType::LIST(intv);
 
   // PG-style typed-tsquery binary operators: ||, &&. Registered as
   // (TOKENIZED_TSQUERY, TOKENIZED_TSQUERY) -> TOKENIZED_TSQUERY only.
@@ -781,12 +627,29 @@ void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
     duckdb::LogicalType::BOOLEAN, TSQueryStubFn));
 }
 
-}  // namespace
+void RegisterTSQuerySurface(duckdb::ExtensionLoader& loader) {
+  RegisterTSQueryTypes(loader);
+  RegisterTSQueryAliasCasts(loader);
+  RegisterTSQueryBoolCasts(loader);
+  RegisterTSQueryListCast(loader);
+  RegisterTSQueryConstructors(loader);
+  RegisterTSQueryParserFunctions(loader);
+  RegisterTSQueryOperators(loader);
+}
 
 // Functions normally executed by inverted indexes. If rejected by an index the
 // query fails with the "outside inverted index context" message above.
-void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
-  duckdb::ExtensionLoader loader(db, "serenedb");
+// Per-row scorer functions: bm25, tfidf, raw_tf, language models,
+// DFI. All share the shape `name(BIGINT tableoid [, params...]) ->
+// FLOAT` and the ScorerStubFn runtime. The iresearch_plan rule
+// claims each call at compile time and threads the scorer into
+// bind_data; the stub fires only if the call escapes the rule.
+void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
+  const auto bigint = duckdb::LogicalType::BIGINT;
+  const auto flt = duckdb::LogicalType::FLOAT;
+  const auto dbl = duckdb::LogicalType::DOUBLE;
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  const auto boolv = duckdb::LogicalType::BOOLEAN;
 
   // bm25(tableoid) / bm25(tableoid, k1, b) -> DOUBLE -- emits the BM25
   // score per row for the scan identified by tableoid. Parameters are
@@ -794,12 +657,9 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
   {
     duckdb::ScalarFunctionSet set{std::string{kBm25}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE,
-       duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
+    set.AddFunction(
+      duckdb::ScalarFunction({bigint, dbl, dbl}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -807,11 +667,8 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // TF-IDF. `with_norms` toggles length normalisation (default false).
   {
     duckdb::ScalarFunctionSet set{std::string{kTfidf}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BOOLEAN},
-      duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint, boolv}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -820,8 +677,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // claims the call at compile time and threads the scorer into bind_data.
   {
     duckdb::ScalarFunctionSet set{std::string{kRawTf}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -830,11 +686,8 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // lambda in (0, 1]; iresearch default is 0.1.
   {
     duckdb::ScalarFunctionSet set{std::string{kLmJm}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint, dbl}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -843,11 +696,8 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // iresearch default is 2000.
   {
     duckdb::ScalarFunctionSet set{std::string{kLmDirichlet}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint, dbl}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -856,11 +706,8 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
   {
     duckdb::ScalarFunctionSet set{std::string{kIndriDirichlet}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint, dbl}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
 
@@ -869,43 +716,186 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
   {
     duckdb::ScalarFunctionSet set{std::string{kDfi}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::FLOAT, ScorerStubFn));
+    set.AddFunction(duckdb::ScalarFunction({bigint}, flt, ScorerStubFn));
+    set.AddFunction(
+      duckdb::ScalarFunction({bigint, varchar}, flt, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
   }
+}
 
-  // offsets(col [, limit]) -> BIGINT[] -- emit position pairs
-  // (start, end) for matched terms in `col` per row. List elements
-  // alternate start/end (so length is 2*N for N positions). First arg
-  // is ANY so any catalog column type binds; the iresearch_plan rule
-  // rewrites the call to a BoundColumnRef on a virtual offsets column
-  // (or throws a specific error). Wrong arity or a non-integer second
-  // arg is rejected at bind time by the function resolver.
-  {
-    duckdb::ScalarFunctionSet set{std::string{kOffsets}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY},
-      duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::INTEGER},
-      duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
-    loader.RegisterFunction(std::move(set));
+// offsets(col [, limit]) -> BIGINT[] -- emit position pairs
+// (start, end) for matched terms in `col` per row. List elements
+// alternate start/end (so length is 2*N for N positions). First arg
+// is ANY so any catalog column type binds; the iresearch_plan rule
+// rewrites the call to a BoundColumnRef on a virtual offsets column
+// (or throws a specific error). Wrong arity or a non-integer second
+// arg is rejected at bind time by the function resolver.
+void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
+  const auto any = duckdb::LogicalType::ANY;
+  const auto intv = duckdb::LogicalType::INTEGER;
+  const auto bigint_list =
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+
+  duckdb::ScalarFunctionSet set{std::string{kOffsets}};
+  set.AddFunction(duckdb::ScalarFunction({any}, bigint_list, SearchStubFn));
+  set.AddFunction(
+    duckdb::ScalarFunction({any, intv}, bigint_list, SearchStubFn));
+  loader.RegisterFunction(std::move(set));
+}
+
+// ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
+// Runs `token` through the named text search dictionary and returns
+// the resulting lexemes as a VARCHAR array.
+void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                      duckdb::Vector& result) {
+  auto count = args.size();
+  auto& context = state.GetContext();
+  auto& conn_ctx = GetSereneDBContext(context);
+
+  auto db_id = conn_ctx.GetDatabaseId();
+  auto current_schema = conn_ctx.GetCurrentSchema();
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+
+  duckdb::UnifiedVectorFormat dict_format, text_format;
+  args.data[0].ToUnifiedFormat(count, dict_format);
+  args.data[1].ToUnifiedFormat(count, text_format);
+
+  auto* dict_data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(dict_format);
+  auto* text_data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(text_format);
+
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  duckdb::ListVector::SetListSize(result, 0);
+
+  auto* list_entries =
+    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+
+  // Collect tokens per row first (tokenizer output is ephemeral).
+  std::vector<std::vector<std::string>> row_tokens(count);
+  duckdb::idx_t total_tokens = 0;
+
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto dict_idx = dict_format.sel->get_index(i);
+    auto text_idx = text_format.sel->get_index(i);
+
+    if (!dict_format.validity.RowIsValid(dict_idx) ||
+        !text_format.validity.RowIsValid(text_idx)) {
+      result_validity.SetInvalid(i);
+      list_entries[i] = {total_tokens, 0};
+      continue;
+    }
+
+    std::string_view dict_name_sv{dict_data[dict_idx].GetData(),
+                                  dict_data[dict_idx].GetSize()};
+    std::string_view text_sv{text_data[text_idx].GetData(),
+                             text_data[text_idx].GetSize()};
+
+    auto name = pg::ParseObjectName(dict_name_sv, current_schema);
+
+    auto dict = snapshot->GetTokenizer(db_id, name.schema, name.relation);
+    if (!dict) {
+      throw duckdb::InvalidInputException{
+        "text search dictionary \"%s\" does not exist",
+        std::string{dict_name_sv}};
+    }
+
+    auto tokenizer_result = dict->GetTokenizer();
+    if (!tokenizer_result) {
+      throw duckdb::InvalidInputException(
+        "failed to get tokenizer: %s",
+        std::string{tokenizer_result.error().errorMessage()});
+    }
+
+    auto& tokenizer = *tokenizer_result;
+    if (!tokenizer->reset(text_sv)) {
+      throw duckdb::InvalidInputException{"error while preparing tokenizer"};
+    }
+
+    auto* term = irs::get<irs::TermAttr>(*tokenizer);
+    while (tokenizer->next()) {
+      auto char_view = irs::ViewCast<char>(term->value);
+      row_tokens[i].emplace_back(char_view.data(), char_view.size());
+    }
+    total_tokens += row_tokens[i].size();
   }
 
-  // ts_lexize(dict_name, token) -> VARCHAR[]
-  // Runs a single token through the named text search dictionary.
-  {
-    duckdb::ScalarFunction fn(
-      "ts_lexize", {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-      TsLexizeFunction);
-    fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
-    loader.RegisterFunction(std::move(fn));
-  }
+  duckdb::ListVector::Reserve(result, total_tokens);
+  auto& child = duckdb::ListVector::GetEntry(result);
+  auto* child_data =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(child);
 
+  duckdb::idx_t offset = 0;
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    if (!result_validity.RowIsValid(i)) {
+      continue;
+    }
+    list_entries[i].offset = offset;
+    list_entries[i].length = row_tokens[i].size();
+    for (const auto& tok : row_tokens[i]) {
+      // AddStringOrBlob: some analyzers (notably wildcard) emit
+      // tokens with non-UTF-8 boundary bytes (\xFF). Callers wanting
+      // those bytes back round-trip them via `ts_lexize(...)::BLOB[]`,
+      // which avoids VARCHAR Value validation; the heap-side path
+      // here still needs the unvalidated insert.
+      child_data[offset++] =
+        duckdb::StringVector::AddStringOrBlob(child, tok.c_str(), tok.size());
+    }
+  }
+  duckdb::ListVector::SetListSize(result, total_tokens);
+}
+
+// PG-compatible text-search dictionary helpers. ts_lexize runs a
+// single token through a named TS dictionary and returns the
+// resulting lexemes (or empty array for stopwords / unmatched).
+void RegisterTextDictionaryHelpers(duckdb::ExtensionLoader& loader) {
+  const auto varchar = duckdb::LogicalType::VARCHAR;
+  duckdb::ScalarFunction fn{"ts_lexize",
+                            {varchar, varchar},
+                            duckdb::LogicalType::LIST(varchar),
+                            TsLexizeFunction};
+  fn.null_handling = duckdb::FunctionNullHandling::SPECIAL_HANDLING;
+  loader.RegisterFunction(std::move(fn));
+}
+
+}  // namespace
+
+duckdb::LogicalType MakeTSQueryType() {
+  auto type = duckdb::LogicalType(duckdb::LogicalTypeId::VARCHAR);
+  type.SetAlias(std::string{kTSQueryTypeName});
+  return type;
+}
+
+catalog::Tokenizer::TokenizerWrapper ResolveTokenizerAnalyzer(
+  duckdb::ClientContext& context, std::string_view name) {
+  auto state =
+    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
+  if (!state) [[unlikely]] {
+    // TODO(gnusi): should never happen
+    return {};
+  }
+  auto& conn_ctx = state->GetConnectionContext();
+  auto db_id = conn_ctx.GetDatabaseId();
+  auto current_schema = conn_ctx.GetCurrentSchema();
+  auto qualified = pg::ParseObjectName(name, current_schema);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  if (!snapshot) {
+    return {};
+  }
+  auto entry =
+    snapshot->GetTokenizer(db_id, qualified.schema, qualified.relation);
+  if (!entry) {
+    return {};
+  }
+  return entry->GetTokenizer().value_or(catalog::Tokenizer::TokenizerWrapper{});
+}
+
+void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
+  duckdb::ExtensionLoader loader(db, "serenedb");
+  RegisterScorerFunctions(loader);
+  RegisterPositionFunctions(loader);
+  RegisterTextDictionaryHelpers(loader);
   RegisterTSQuerySurface(loader);
 }
 

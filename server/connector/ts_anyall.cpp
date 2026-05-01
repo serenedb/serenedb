@@ -32,6 +32,11 @@
 namespace sdb::connector {
 namespace {
 
+bool IsTSQueryType(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::VARCHAR &&
+         type.GetAlias() == kTSQueryTypeName;
+}
+
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;

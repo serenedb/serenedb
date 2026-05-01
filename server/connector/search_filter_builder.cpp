@@ -24,6 +24,7 @@
 #include <absl/strings/str_join.h>
 #include <iresearch/parser/parser.h>
 
+#include <duckdb/common/extension_type_info.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -132,7 +133,55 @@ customize::enum_name<sdb::connector::TSQueryOp>(
 }
 
 }  // namespace magic_enum
+
 namespace sdb::connector {
+
+// True iff `type` is one of TSQUERY / TOKENIZED_TSQUERY /
+// BOOSTED_TSQUERY -- all valid carriers of TSQUERY-shaped values
+// inside the filter builder.
+bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    return false;
+  }
+  const auto alias = type.GetAlias();
+  return alias == kTSQueryTypeName || alias == kTokenizedTSQueryTypeName ||
+         alias == kBoostedTSQueryTypeName;
+}
+
+// If `type` is a TSQUERY annotated with a `tokenize(name)` modifier,
+// returns the tokenizer name. Resolution to a live analyzer happens
+// at filter-build time via ResolveTokenizerAnalyzer below -- the bind
+// callback intentionally does NOT pre-resolve, because the analyzer
+// is stateful (one tokenization stream per use) and shouldn't be
+// shared across queries.
+std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type) {
+  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
+    return {};
+  }
+  const auto* ext = type.GetExtensionInfo().get();
+  const auto& mods = ext->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return {};
+  }
+  return duckdb::StringValue::Get(mods[0].value);
+}
+
+// If `type` carries a `boost(K)` modifier, returns the factor.
+// Distinguished from TokenizerModifier by the modifier's value type
+// (DOUBLE vs VARCHAR) so the two never alias each other.
+std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
+  if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
+    return {};
+  }
+  const auto* ext = type.GetExtensionInfo().get();
+  const auto& mods = ext->modifiers;
+  if (mods.empty() || mods[0].value.IsNull() ||
+      mods[0].value.type().id() != duckdb::LogicalTypeId::DOUBLE) {
+    return {};
+  }
+  return mods[0].value.GetValue<double>();
+}
 
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(
   const duckdb::Expression& expr) {
@@ -386,7 +435,7 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
   if (cast.return_type.id() != duckdb::LogicalTypeId::BOOLEAN) {
     return expr;
   }
-  if (!TryGetBoostModifier(cast.child->return_type).factor) {
+  if (!TryGetBoostModifier(cast.child->return_type)) {
     return expr;
   }
   return *cast.child;
@@ -402,8 +451,8 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     const auto& target = cast.return_type;
     const auto& source = cast.child->return_type;
     // Stop at modifier-bearing casts; the walker needs to see them.
-    if (!TryGetTokenizerModifier(target).name.empty() ||
-        TryGetBoostModifier(target).factor) {
+    if (!TryGetTokenizerModifier(target).empty() ||
+        TryGetBoostModifier(target)) {
       break;
     }
     // Peel only transit casts within the {VARCHAR, TSQUERY,
@@ -1130,18 +1179,18 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
                           const duckdb::Expression& peeled) {
   if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-    auto mod = TryGetBoostModifier(cast_expr.return_type);
-    if (!mod.factor || !cast_expr.child) {
+    const auto boost = TryGetBoostModifier(cast_expr.return_type);
+    if (!boost || !cast_expr.child) {
       return false;
     }
-    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
+    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
                  column_info, *cast_expr.child);
     return true;
   }
   if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
-    auto mod = TryGetBoostModifier(cv.type());
-    if (!mod.factor) {
+    const auto boost = TryGetBoostModifier(cv.type());
+    if (!boost) {
       return false;
     }
     // Strip the BOOSTED alias before recursing, otherwise we re-enter
@@ -1149,7 +1198,7 @@ bool TryDispatchBoostCast(irs::BooleanFilter& parent, const FilterContext& ctx,
     duckdb::Value cleaned = cv;
     cleaned.Reinterpret(MakeTSQueryType());
     duckdb::BoundConstantExpression cleaned_expr(std::move(cleaned));
-    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*mod.factor)),
+    BuildTSQuery(parent, ctx.WithBoost(static_cast<irs::score_t>(*boost)),
                  column_info, cleaned_expr);
     return true;
   }
@@ -1163,12 +1212,12 @@ bool TryDispatchSqlBoostCast(irs::BooleanFilter& filter,
     return false;
   }
   const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-  auto mod = TryGetBoostModifier(cast_expr.return_type);
-  if (!mod.factor || !cast_expr.child) {
+  const auto boost = TryGetBoostModifier(cast_expr.return_type);
+  if (!boost || !cast_expr.child) {
     return false;
   }
-  auto factor = static_cast<irs::score_t>(*mod.factor);
-  auto r = FromExpression(filter, ctx.WithBoost(factor), *cast_expr.child);
+  auto r = FromExpression(
+    filter, ctx.WithBoost(static_cast<irs::score_t>(*boost)), *cast_expr.child);
   if (!r.ok()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1188,28 +1237,28 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
                              const FilterContext& ctx,
                              const SearchColumnInfo& column_info,
                              const duckdb::Expression& peeled) {
-  TokenizerModifier mod;
+  std::string_view tokenizer;
   const duckdb::Expression* expr = nullptr;
   const duckdb::Value* val = nullptr;
   if (peeled.expression_class == duckdb::ExpressionClass::BOUND_CAST) {
     const auto& cast_expr = peeled.Cast<duckdb::BoundCastExpression>();
-    mod = TryGetTokenizerModifier(cast_expr.return_type);
-    if (!mod.name.empty() && cast_expr.child) {
+    tokenizer = TryGetTokenizerModifier(cast_expr.return_type);
+    if (!tokenizer.empty() && cast_expr.child) {
       expr = cast_expr.child.get();
       val = TryGetConstant(UnwrapTSQueryCast(*expr));
     }
   } else if (peeled.expression_class ==
              duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& cv = peeled.Cast<duckdb::BoundConstantExpression>().value;
-    mod = TryGetTokenizerModifier(cv.type());
-    if (!mod.name.empty()) {
+    tokenizer = TryGetTokenizerModifier(cv.type());
+    if (!tokenizer.empty()) {
       val = &cv;
     }
   }
-  if (mod.name.empty()) {
+  if (tokenizer.empty()) {
     return false;
   }
-  if (mod.name == irs::StringTokenizer::type_name()) {
+  if (tokenizer == irs::StringTokenizer::type_name()) {
     if (val && !val->IsNull() &&
         val->type().id() == duckdb::LogicalTypeId::VARCHAR) {
       BuildFtsTerm(parent, ctx, column_info, *val);
@@ -1226,11 +1275,11 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   }
   // Wrapper lives on this stack frame; releases the analyzer back to
   // the Tokenizer's pool when the scope exits.
-  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, mod.name);
+  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, tokenizer);
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-      ERR_MSG("::tokenize('", mod.name, "'): tokenizer not found in catalog"),
+      ERR_MSG("::tokenize('", tokenizer, "'): tokenizer not found in catalog"),
       ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
                "or use 'identity' for raw bytes."));
   }

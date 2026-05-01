@@ -23,8 +23,6 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/analyzer.hpp>
-#include <optional>
-#include <string>
 
 #include "catalog/tokenizer.h"
 
@@ -108,42 +106,6 @@ inline constexpr std::string_view kTSQueryMatch = "@@";
 // storage/IO paths stay standard; the stubs never run so the byte slot is
 // unused in practice. Mirrors the JSON type convention in DuckDB.
 duckdb::LogicalType MakeTSQueryType();
-
-// Same shape as MakeTSQueryType but with the distinct
-// `TOKENIZED_TSQUERY` alias. Used as the target of `::tokenize(...)`
-// casts so the cast wrapper isn't elided as a same-alias no-op.
-duckdb::LogicalType MakeTokenizedTSQueryType();
-
-// Same shape but with the `BOOSTED_TSQUERY` alias -- target of
-// `::boost(K)` casts.
-duckdb::LogicalType MakeBoostedTSQueryType();
-
-// True iff `type` is the TSQUERY alias (VARCHAR + "TSQUERY" alias).
-bool IsTSQueryType(const duckdb::LogicalType& type);
-
-// True iff `type` is one of TSQUERY / TOKENIZED_TSQUERY /
-// BOOSTED_TSQUERY -- all valid carriers of TSQUERY-shaped values
-// inside the filter builder.
-bool IsAnyTSQueryType(const duckdb::LogicalType& type);
-
-// If `type` is a TSQUERY annotated with a `tokenize(name)` modifier,
-// returns the tokenizer name. Resolution to a live analyzer happens
-// at filter-build time via ResolveTokenizerAnalyzer below -- the bind
-// callback intentionally does NOT pre-resolve, because the analyzer
-// is stateful (one tokenization stream per use) and shouldn't be
-// shared across queries.
-struct TokenizerModifier {
-  std::string_view name;
-};
-TokenizerModifier TryGetTokenizerModifier(const duckdb::LogicalType& type);
-
-// If `type` carries a `boost(K)` modifier, returns the factor.
-// Distinguished from TokenizerModifier by the modifier's value type
-// (DOUBLE vs VARCHAR) so the two never alias each other.
-struct BoostModifier {
-  std::optional<double> factor;
-};
-BoostModifier TryGetBoostModifier(const duckdb::LogicalType& type);
 
 // Looks up the named catalog tokenizer in the current transaction's
 // snapshot and returns an owned AnalyzerWrapper. The caller controls

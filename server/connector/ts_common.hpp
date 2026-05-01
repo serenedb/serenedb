@@ -146,7 +146,6 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
 const SearchColumnInfo* FindColumnInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& column_ref);
 
-
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).
 struct RangeArgs {

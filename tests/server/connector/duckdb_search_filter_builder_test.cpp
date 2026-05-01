@@ -4697,8 +4697,7 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_eq_AtAtTsAllTsTokenize) {
                columns, true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest,
-       test_HasAnyToken_List_eq_AtAtTsAnyTsTokenize) {
+TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_eq_AtAtTsAnyTsTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
@@ -4910,8 +4909,8 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_Negated) {
   auto& not_filter = expected.add<irs::Not>();
   AddNgramSimilarityFilter(not_filter, 1, {"he", "el", "ll", "lo"});
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE NOT ngram_matches(b, 'hello')",
-               columns, true, NgramAnalyzerProvider);
+               "SELECT * FROM foo WHERE NOT ngram_matches(b, 'hello')", columns,
+               true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_AndedWithSelf) {
@@ -4920,11 +4919,10 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_AndedWithSelf) {
   irs::And expected;
   AddNgramSimilarityFilter(expected, 1, {"he", "el", "ll", "lo"});
   AddNgramSimilarityFilter(expected, 1, {"wo", "or", "rl", "ld"}, 0.5f);
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE ngram_matches(b, 'hello') AND "
-    "ngram_matches(b, 'world', 0.5)",
-    columns, true, NgramAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE ngram_matches(b, 'hello') AND "
+               "ngram_matches(b, 'world', 0.5)",
+               columns, true, NgramAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NgramMatches_OredWithSelf) {
@@ -5060,8 +5058,7 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_SingleElementList) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo'])",
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo'])",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -5081,10 +5078,9 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_MultiTokenElement) {
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"baz"}));
   }
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo Bar', 'Baz'])", columns,
-    true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE has_all_tokens(b, ['Foo Bar', 'Baz'])",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_Negated) {
@@ -5100,10 +5096,9 @@ TEST_F(SearchFilterBuilderTest, test_HasAllTokens_Negated) {
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE NOT has_all_tokens(b, ['Foo', 'Bar'])", columns,
-    true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT has_all_tokens(b, ['Foo', 'Bar'])",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAllTokens_AndedWithSelf) {
@@ -5211,10 +5206,9 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_MinMatch1Default) {
   irs::And expected;
   AddTermsFilter<std::string_view>(
     expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE has_any_token(b, ['Foo', 'Bar'], 1)", columns,
-    true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE has_any_token(b, ['Foo', 'Bar'], 1)",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_MinMatchEqualsSize) {
@@ -5230,10 +5224,9 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_List_MinMatchEqualsSize) {
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE has_any_token(b, ['Foo', 'Bar'], 2)", columns,
-    true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE has_any_token(b, ['Foo', 'Bar'], 2)",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_SingleToken) {
@@ -5242,9 +5235,8 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_SingleToken) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE has_any_token(b, 'Foo')", columns,
-               true, SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_any_token(b, 'Foo')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_MultiToken) {
@@ -5255,9 +5247,8 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Text_MultiToken) {
   irs::And expected;
   AddTermsFilter<std::string_view>(
     expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE has_any_token(b, 'Foo Bar')", columns,
-               true, SegmentationAnalyzerProvider);
+  AssertFilter(expected, "SELECT * FROM foo WHERE has_any_token(b, 'Foo Bar')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Negated) {
@@ -5267,10 +5258,9 @@ TEST_F(SearchFilterBuilderTest, test_HasAnyToken_Negated) {
   auto& not_filter = expected.add<irs::Not>();
   AddTermsFilter<std::string_view>(
     not_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE NOT has_any_token(b, ['Foo', 'Bar'])", columns,
-    true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT has_any_token(b, ['Foo', 'Bar'])",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_HasAnyToken_AndedWithSelf) {

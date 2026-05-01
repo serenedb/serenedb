@@ -134,7 +134,6 @@ customize::enum_name<sdb::connector::TSQueryOp>(
 }
 
 }  // namespace magic_enum
-
 namespace sdb::connector {
 namespace {
 

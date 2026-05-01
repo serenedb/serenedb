@@ -242,17 +242,6 @@ class FailingDirectory : public tests::DirectoryMock {
   mutable std::set<FailT, FailLess> _failures;
 };
 
-irs::FeatureInfoProvider DefaultFeatureInfo() {
-  return [](irs::IndexFeatures) {
-    return std::make_pair(
-      irs::ColumnInfo{.compression = irs::Type<irs::compression::None>::get(),
-                      .options = {},
-                      .encryption = true,
-                      .track_prev_doc = false},
-      irs::FeatureWriterFactory{});
-  };
-}
-
 void OpenReader(std::string_view format,
                 std::function<void(FailingDirectory& dir)> failure_registerer) {
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
@@ -305,7 +294,7 @@ void OpenReader(std::string_view format,
 
   // validate index
   tests::index_t expected_index;
-  expected_index.emplace_back(::DefaultFeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(*doc1);
   expected_index.back().insert(*doc2);
   tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
@@ -434,7 +423,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -576,7 +565,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -689,7 +678,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -792,7 +781,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -857,7 +846,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -928,9 +917,9 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -1099,7 +1088,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -1250,7 +1239,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
 
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
@@ -1377,7 +1366,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -1477,9 +1466,9 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -1620,13 +1609,13 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc3);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc4);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -1806,11 +1795,11 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc3);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -1950,11 +1939,11 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc3);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -2097,9 +2086,9 @@ TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -2219,9 +2208,9 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -2409,7 +2398,7 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -2541,7 +2530,7 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -2716,7 +2705,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc3);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -2822,7 +2811,7 @@ TEST(index_death_test_formats_15,
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
 
@@ -3047,7 +3036,7 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     expected_index.back().insert(*doc2);
     tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
@@ -3154,7 +3143,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     expected_index.back().insert(*doc2);
     expected_index.back().insert(*doc3);
@@ -3346,7 +3335,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
 
     // validate index
     tests::index_t expected_index;
-    expected_index.emplace_back(writer->FeatureInfo());
+    expected_index.emplace_back();
     expected_index.back().insert(*doc1);
     expected_index.back().insert(*doc2);
     expected_index.back().insert(*doc3);
@@ -3468,7 +3457,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
   // validate index
   tests::index_t expected_index;
-  expected_index.emplace_back(::DefaultFeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(*doc1);
   expected_index.back().insert(*doc2);
   tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);
@@ -3574,7 +3563,7 @@ TEST(index_death_test_formats_15, fails_in_dup) {
 
   // validate index
   tests::index_t expected_index;
-  expected_index.emplace_back(::DefaultFeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(*doc1);
   expected_index.back().insert(*doc2);
   expected_index.back().insert(*doc3);
@@ -3683,7 +3672,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
   // validate index
   tests::index_t expected_index;
-  expected_index.emplace_back(::DefaultFeatureInfo());
+  expected_index.emplace_back();
   expected_index.back().insert(*doc1);
   expected_index.back().insert(*doc2);
   tests::AssertIndex(reader.GetImpl(), expected_index, kAllFeatures);

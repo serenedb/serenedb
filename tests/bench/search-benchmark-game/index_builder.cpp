@@ -32,14 +32,6 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
-  writer_opts.features = [](irs::IndexFeatures id) {
-    const irs::ColumnInfo info{
-      irs::Type<irs::compression::None>::get(), {}, false};
-    if (irs::IndexFeatures::Norm == id) {
-      return std::make_pair(info, &irs::Norm::MakeWriter);
-    }
-    return std::make_pair(info, irs::FeatureWriterFactory{});
-  };
   return writer_opts;
 }
 

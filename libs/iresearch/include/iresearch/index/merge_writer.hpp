@@ -58,7 +58,6 @@ class MergeWriter : public util::Noncopyable {
     : _dir{dir},
       _readers{{options.resource_manager}},
       _column_info{&options.column_info},
-      _feature_info{&options.feature_info},
       _scorer{options.scorer},
       _comparator{options.comparator},
       _scorers_features{options.scorers_features} {
@@ -98,7 +97,6 @@ class MergeWriter : public util::Noncopyable {
   Directory& _dir;
   ManagedVector<ReaderCtx> _readers;
   const ColumnInfoProvider* _column_info{};
-  const FeatureInfoProvider* _feature_info{};
   ScorerPtr _scorer;
   const Comparer* const _comparator{};
   IndexFeatures _scorers_features{};

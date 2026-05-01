@@ -218,23 +218,6 @@ class SortedIndexTestCase : public tests::IndexTestBase {
  protected:
   bool SupportsPluggableFeatures() const noexcept { return true; }
 
-  irs::FeatureInfoProvider Features() {
-    return [this](irs::IndexFeatures id) {
-      if (SupportsPluggableFeatures()) {
-        if (irs::IndexFeatures::Norm == id) {
-          return std::make_pair(
-            irs::ColumnInfo{
-              irs::Type<irs::compression::None>::get(), {}, false},
-            &irs::Norm::MakeWriter);
-        }
-      }
-
-      return std::make_pair(
-        irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-        irs::FeatureWriterFactory{});
-    };
-  }
-
   irs::IndexFeatures FieldFeatures() {
     return SupportsPluggableFeatures() ? irs::IndexFeatures::Norm
                                        : irs::IndexFeatures::None;
@@ -321,7 +304,6 @@ TEST_P(SortedIndexTestCase, simple_sequential) {
 
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
-  opts.features = Features();
 
   add_segment(gen, irs::kOmCreate, opts);  // add segment
 
@@ -570,7 +552,6 @@ TEST_P(SortedIndexTestCase, simple_sequential_consolidate) {
 
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -750,7 +731,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_consolidate) {
 
     // simulate consolidation
     index().clear();
-    index().emplace_back(writer->FeatureInfo());
+    index().emplace_back();
     auto& segment = index().back();
 
     gen.reset();
@@ -933,7 +914,6 @@ TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
   LongComparer comparer;
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   add_segment(gen, irs::kOmCreate, opts);  // add segment
 
@@ -1080,7 +1060,6 @@ TEST_P(SortedIndexTestCase, europarl) {
 
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   add_segment(gen, irs::kOmCreate, opts);
 
@@ -1095,7 +1074,6 @@ TEST_P(SortedIndexTestCase, europarl_docs_batched) {
 
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   add_segment_batched(gen, 123, irs::kOmCreate, opts);
 
@@ -1126,7 +1104,6 @@ TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
   } comparer;
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -1247,7 +1224,6 @@ TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_dense) {
   // open writer
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -1405,7 +1381,7 @@ TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_dense) {
 
   // Create expected index
   auto& expected_index = index();
-  auto& segment = expected_index.emplace_back(writer->FeatureInfo());
+  auto& segment = expected_index.emplace_back();
   segment.insert(doc0->indexed.begin(), doc0->indexed.end(),
                  doc0->stored.begin(), doc0->stored.end(), doc0->sorted.get());
   segment.insert(doc2->indexed.begin(), doc2->indexed.end(),
@@ -1453,7 +1429,6 @@ TEST_P(SortedIndexTestCase,
   // open writer
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
   ASSERT_EQ(&comparer, writer->Comparator());
@@ -1692,7 +1667,7 @@ TEST_P(SortedIndexTestCase,
 
   // Create expected index
   auto& expected_index = index();
-  auto& segment = expected_index.emplace_back(writer->FeatureInfo());
+  auto& segment = expected_index.emplace_back();
   segment.insert(doc0->indexed.begin(), doc0->indexed.end(),
                  doc0->stored.begin(), doc0->stored.end(), doc0->sorted.get());
   segment.insert(doc1->indexed.begin(), doc1->indexed.end(),
@@ -1731,7 +1706,6 @@ TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx) {
     // open writer
     irs::IndexWriterOptions opts;
     opts.comparator = &comparer;
-    opts.features = Features();
     auto writer = open_writer(irs::kOmCreate, opts);
     ASSERT_NE(nullptr, writer);
     ASSERT_EQ(&comparer, writer->Comparator());
@@ -1814,7 +1788,6 @@ TEST_P(SortedIndexTestCase, doc_removal_same_key_within_trx_flush) {
     // open writer
     irs::IndexWriterOptions opts;
     opts.comparator = &comparer;
-    opts.features = Features();
     auto writer = open_writer(irs::kOmCreate, opts);
     ASSERT_NE(nullptr, writer);
     ASSERT_EQ(&comparer, writer->Comparator());
@@ -1898,7 +1871,6 @@ TEST_P(SortedIndexTestCase,
   StringComparer comparer;
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -2056,7 +2028,7 @@ TEST_P(SortedIndexTestCase,
 
   // Create expected index
   auto& expected_index = index();
-  auto& segment = expected_index.emplace_back(writer->FeatureInfo());
+  auto& segment = expected_index.emplace_back();
   segment.insert(doc2->indexed.begin(), doc2->indexed.end(),
                  doc2->stored.begin(), doc2->stored.end(), &kEmpty);
   segment.insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -2100,7 +2072,6 @@ TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_sparse) {
   StringComparer comparer;
   irs::IndexWriterOptions opts;
   opts.comparator = &comparer;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -2286,7 +2257,7 @@ TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_sparse) {
 
   // Create expected index
   auto& expected_index = index();
-  auto& segment = expected_index.emplace_back(writer->FeatureInfo());
+  auto& segment = expected_index.emplace_back();
   segment.insert(doc2->indexed.begin(), doc2->indexed.end(),
                  doc2->stored.begin(), doc2->stored.end(), &kEmpty);
   segment.insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -2337,7 +2308,6 @@ TEST_P(SortedIndexTestCase,
   StringComparer compare;
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -2525,7 +2495,7 @@ TEST_P(SortedIndexTestCase,
 
   // Create expected index
   auto& expected_index = index();
-  auto& segment = expected_index.emplace_back(writer->FeatureInfo());
+  auto& segment = expected_index.emplace_back();
   segment.insert(doc2->indexed.begin(), doc2->indexed.end(),
                  doc2->stored.begin(), doc2->stored.end(), &kEmpty);
   segment.insert(doc0->indexed.begin(), doc0->indexed.end(),
@@ -2576,7 +2546,6 @@ TEST_P(SortedIndexTestCase,
   StringComparer compare;
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
-  opts.features = Features();
 
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
@@ -2767,7 +2736,7 @@ TEST_P(SortedIndexTestCase,
 
   // Create expected index
   auto& expected_index = index();
-  auto& segment = expected_index.emplace_back(writer->FeatureInfo());
+  auto& segment = expected_index.emplace_back();
   segment.insert(*docs[0].first, 5, false);
   segment.insert(*docs[1].first, 1, true);
   segment.insert(*docs[12].first, 2, false);
@@ -2835,7 +2804,6 @@ TEST_P(SortedIndexStressTestCase, doc_removal_same_key_within_trx) {
         StringComparer compare;
         irs::IndexWriterOptions opts;
         opts.comparator = &compare;
-        opts.features = Features();
         auto writer = open_writer(irs::kOmCreate, opts);
         ASSERT_NE(nullptr, writer);
         ASSERT_EQ(&compare, writer->Comparator());
@@ -2936,7 +2904,6 @@ TEST_P(SortedIndexStressTestCase, commit_on_tick) {
       irs::IndexWriterOptions opts;
       opts.segment_docs_max = 2;
       opts.comparator = &compare;
-      opts.features = Features();
       auto writer = open_writer(irs::kOmCreate, opts);
       ASSERT_NE(nullptr, writer);
       ASSERT_EQ(&compare, writer->Comparator());
@@ -3050,7 +3017,6 @@ TEST_P(SortedIndexStressTestCase, split_empty_commit) {
   StringComparer compare;
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
-  opts.features = Features();
   auto writer = open_writer(irs::kOmCreate, opts);
   auto segment1 = writer->GetBatch();
   auto insert_doc = [&](size_t i) {
@@ -3113,7 +3079,6 @@ TEST_P(SortedIndexStressTestCase, remove_tick) {
   StringComparer compare;
   irs::IndexWriterOptions opts;
   opts.comparator = &compare;
-  opts.features = Features();
   auto writer = open_writer(irs::kOmCreate, opts);
   auto segment1 = writer->GetBatch();
   auto insert_doc = [&](size_t i) {

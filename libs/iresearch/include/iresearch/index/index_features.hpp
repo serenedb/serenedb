@@ -22,13 +22,11 @@
 
 #pragma once
 
-#include <functional>
 #include <map>
 #include <set>
 #include <span>
 
 #include "basics/bit_utils.hpp"
-#include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/type_info.hpp"
 
@@ -87,8 +85,5 @@ struct FeatureWriter : memory::Managed {
 
 using FeatureWriterFactory =
   FeatureWriter::ptr (*)(std::span<const bytes_view>);
-
-using FeatureInfoProvider =
-  std::function<std::pair<ColumnInfo, FeatureWriterFactory>(IndexFeatures)>;
 
 }  // namespace irs

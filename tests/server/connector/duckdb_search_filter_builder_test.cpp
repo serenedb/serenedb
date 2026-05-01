@@ -1470,10 +1470,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQLikeEscape) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "required_field"}};
   irs::And expected;
   AddLikeFilter(expected, 1, "\\%!foo_");
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE required_field @@ ts_like('\\%!foo_')",
-    columns, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE required_field @@ ts_like('\\%!foo_')",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotLike) {
@@ -1732,7 +1731,6 @@ TEST_F(SearchFilterBuilderTest, test_PhraseGap_BroadNumericTypes) {
                  columns, true, SegmentationAnalyzerProvider);
   }
 }
-
 
 // ===========================================================================
 // Term equality / range / IN / LIKE -- migrated from the legacy
@@ -2521,8 +2519,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlComparison) {
   irs::And expected;
   AddRangeFilter<int32_t>(expected, 1, 50, false, std::nullopt, false)
     .boost(2.0f);
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE (b > 50)::boost(2.0)", columns, true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE (b > 50)::boost(2.0)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlEquality) {
@@ -2532,9 +2530,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlEquality) {
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"})
     .boost(0.5f);
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE (b = 'foo')::boost(0.5)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE (b = 'foo')::boost(0.5)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlBetween) {
@@ -2559,8 +2556,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlIn) {
   AddTermsFilter<std::string_view>(
     expected, 1, {std::string_view{"x"}, std::string_view{"y"}})
     .boost(2.0f);
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE (a IN ('x','y'))::boost(2.0)",
+  AssertFilter(expected, "SELECT * FROM foo WHERE (a IN ('x','y'))::boost(2.0)",
                columns, true);
 }
 
@@ -2586,8 +2582,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlLikePrefix) {
   irs::And expected;
   AddPrefixFilter(expected, 1, std::string_view{"pre"}).boost(2.0f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE (col LIKE 'pre%')::boost(2.0)",
-               columns, true);
+               "SELECT * FROM foo WHERE (col LIKE 'pre%')::boost(2.0)", columns,
+               true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_SqlPrefixUnboosted) {
@@ -2600,7 +2596,6 @@ TEST_F(SearchFilterBuilderTest, test_SqlPrefixUnboosted) {
   AssertFilter(expected, "SELECT * FROM foo WHERE col LIKE 'pre%'", columns,
                true);
 }
-
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlEqualityInOr) {
   // Boosted equality inside an OR group -- verifies that the boost
@@ -2658,9 +2653,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlNegated) {
   irs::And expected;
   AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, true)
     .boost(2.0f);
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE NOT (b > 50)::boost(2.0)", columns,
-               true);
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (b > 50)::boost(2.0)",
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlUnclaimable_BindError) {
@@ -2669,9 +2663,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlUnclaimable_BindError) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "indexed_col"}};
   AssertFilter(
-    irs::And{},
-    "SELECT * FROM foo WHERE (unindexed_col > 50)::boost(2.0)", columns, false,
-    IdentityAnalyzerProvider,
+    irs::And{}, "SELECT * FROM foo WHERE (unindexed_col > 50)::boost(2.0)",
+    columns, false, IdentityAnalyzerProvider,
     "::boost(K) used on a predicate the inverted index could not claim");
 }
 
@@ -3291,10 +3284,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsTokenizerCast) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE 'quick fox'::tokenize('identity') @@ b",
-    columns, true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE 'quick fox'::tokenize('identity') @@ b",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeAmbiguousColumns) {
@@ -3381,7 +3373,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpNonVarcharColumn) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
   AssertFilter({}, "SELECT * FROM foo WHERE b @@ ts_regexp('abc')", columns,
-               false, IdentityAnalyzerProvider, "ts_regexp field is not VARCHAR");
+               false, IdentityAnalyzerProvider,
+               "ts_regexp field is not VARCHAR");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RegexpUnderNot) {
@@ -4131,10 +4124,9 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('identity')",
-    columns, true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('identity')",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 // ts_phrase('text')::tokenize('identity') -- the cast wraps a TSQUERY-typed
@@ -4200,10 +4192,10 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNamedNoCatalog) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('english')", columns,
-    false, SegmentationAnalyzerProvider, "tokenizer not found in catalog");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('english')",
+               columns, false, SegmentationAnalyzerProvider,
+               "tokenizer not found in catalog");
 }
 
 TEST_F(SearchFilterBuilderTest,

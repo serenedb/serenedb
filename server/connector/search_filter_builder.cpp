@@ -133,7 +133,6 @@ customize::enum_name<sdb::connector::TSQueryOp>(
 }
 
 }  // namespace magic_enum
-
 namespace sdb::connector {
 
 // True iff `type` is one of TSQUERY / TOKENIZED_TSQUERY /
@@ -1142,7 +1141,7 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
                       const SearchColumnInfo& column_info,
                       const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
-    "Example: ts_phrase('text') ^ 2.0. Factor must be ≥ 0; "
+    "Example: ts_phrase('text') ^ 2.0. Factor must be >= 0; "
     "for composable boost use ::boost(K).";
   if (func.children.size() != 2) {
     THROW_SQL_ERROR(

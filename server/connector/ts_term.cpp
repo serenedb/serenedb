@@ -103,10 +103,10 @@ void FromTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
               const SearchColumnInfo& column_info,
               const duckdb::BoundFunctionExpression& func) {
   if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("bare-string term expects 1 argument (text), got ", func.children.size()),
-      ERR_HINT("Example: 'word' (bare-string literal)."));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("bare-string term expects 1 argument (text), got ",
+                            func.children.size()),
+                    ERR_HINT("Example: 'word' (bare-string literal)."));
   }
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "term text", text); !r.ok()) {

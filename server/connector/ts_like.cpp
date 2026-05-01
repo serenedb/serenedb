@@ -54,12 +54,14 @@ void FromTSQLike(irs::BooleanFilter& parent, const FilterContext& ctx,
   if (func.children.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_like expects 1 argument (pattern), got ", func.children.size()),
+      ERR_MSG("ts_like expects 1 argument (pattern), got ",
+              func.children.size()),
       ERR_HINT("Example: ts_like('foo%bar'). `%` = any sequence, `_` = one "
                "char."));
   }
   std::string pat;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_like pattern", pat); !r.ok()) {
+  if (auto r = GetVarcharArg(*func.children[0], "ts_like pattern", pat);
+      !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()),
                     ERR_HINT("Example: ts_like('foo%bar')."));

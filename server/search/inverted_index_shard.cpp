@@ -306,7 +306,7 @@ void InvertedIndexShard::InitPostRecovery(bool is_new) {
                    "of sync");
         }
 
-        // Lagging shards defer FinishCreation+StartTasks to WalRecovery::Run.
+        // Lagging shards defer FinishCreation+StartTasks to RunWalRecovery.
         if (!is_new) {
           const bool needs_recovery = self->_recovery_tick < recovery_tick;
           if (!needs_recovery) {

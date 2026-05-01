@@ -22,15 +22,13 @@
 
 namespace sdb::search {
 
-// Stateless one-shot. On Run(), walks the catalog snapshot, picks up every
-// inverted-index shard whose persisted iresearch tick lags the engine's
-// recovered tick, then reads the RocksDB WAL once and fans entries out to
-// each lagging shard's accumulator (routing key = table ObjectId).
-class WalRecovery {
- public:
-  // Called once from SearchEngine::start, after CatalogFeature has loaded
-  // every shard and before the search thread pools come up.
-  void Run();
-};
+// Walks the catalog snapshot, picks up every inverted-index shard whose
+// persisted iresearch tick lags the engine's recovered tick, then reads the
+// RocksDB WAL once and fans entries out to each lagging shard's accumulator
+// (routing key = table ObjectId).
+//
+// Called once from SearchEngine::start, after CatalogFeature has loaded
+// every shard and before the search thread pools come up.
+void RunWalRecovery();
 
 }  // namespace sdb::search

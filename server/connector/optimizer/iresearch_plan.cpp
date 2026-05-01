@@ -47,6 +47,7 @@
 #include <duckdb/planner/operator/logical_top_n.hpp>
 
 #include "basics/down_cast.h"
+#include "basics/resource_manager.hpp"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "connector/duckdb_index_scan_entry.h"
@@ -56,6 +57,8 @@
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/proxy_filter.hpp"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
@@ -314,6 +317,92 @@ bool RewriteFilterColumnRefs(
   return ok;
 }
 
+struct SearchColumnContext {
+  duckdb::TableIndex table_index;
+  std::span<const catalog::Column::Id> projected_column_ids;
+  containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
+    column_type_by_id;
+  containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
+  std::function<catalog::ColumnAnalyzer(catalog::Column::Id)> analyzer_provider;
+};
+
+connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
+  return [&ctx](const duckdb::BoundColumnRefExpression& ref)
+           -> std::optional<connector::SearchColumnInfo> {
+    if (ref.binding.table_index != ctx.table_index) {
+      return std::nullopt;
+    }
+    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
+      return std::nullopt;
+    }
+    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
+    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+      return std::nullopt;
+    }
+    if (!ctx.indexed_column_ids.contains(col_id)) {
+      return std::nullopt;
+    }
+    auto type_it = ctx.column_type_by_id.find(col_id);
+    if (type_it == ctx.column_type_by_id.end()) {
+      return std::nullopt;
+    }
+    connector::SearchColumnInfo info;
+    info.column_id = col_id;
+    info.logical_type = type_it->second;
+    info.analyzer = ctx.analyzer_provider(col_id);
+    return info;
+  };
+}
+
+void InitSearchColumnContextForGet(
+  SearchColumnContext& ctx,
+  std::vector<catalog::Column::Id>& projected_ids_storage,
+  const duckdb::LogicalGet& get,
+  const connector::SereneDBScanBindData& bind_data,
+  const ResolvedIresearch& resolved,
+  std::shared_ptr<const catalog::Snapshot> snapshot) {
+  constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
+  projected_ids_storage.clear();
+  projected_ids_storage.reserve(get.GetColumnIds().size());
+  for (const auto& ci : get.GetColumnIds()) {
+    if (!ci.HasPrimaryIndex()) {
+      projected_ids_storage.push_back(kInvalidId);
+      continue;
+    }
+    const auto phys = ci.GetPrimaryIndex();
+    projected_ids_storage.push_back(phys < bind_data.column_ids.size()
+                                      ? bind_data.column_ids[phys]
+                                      : kInvalidId);
+  }
+  ctx.table_index = get.table_index;
+  ctx.projected_column_ids = projected_ids_storage;
+  for (const auto& col : bind_data.table->Columns()) {
+    ctx.column_type_by_id.emplace(col.id, col.type);
+  }
+  for (auto col_id : resolved.index->GetColumnIds()) {
+    ctx.indexed_column_ids.insert(col_id);
+  }
+  auto index_ptr = resolved.index;
+  ctx.analyzer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
+    return index_ptr->GetColumnAnalyzer(snapshot, col_id);
+  };
+}
+
+bool TryClaimIresearchConjunct(
+  irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+  const connector::ColumnGetter& getter) {
+  const auto before = and_root.size();
+  std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
+  auto r = connector::MakeSearchFilter(and_root, single, getter);
+  if (r.ok() && and_root.size() > before) {
+    return true;
+  }
+  while (and_root.size() > before) {
+    and_root.PopBack();
+  }
+  return false;
+}
+
 bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
     return false;
@@ -421,12 +510,39 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
 
+  std::vector<catalog::Column::Id> proj_ids_storage;
+  SearchColumnContext sctx;
+  InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
+                                *resolved, snapshot);
+  auto getter = MakeColumnGetter(sctx);
+
+  auto proxy = std::make_unique<irs::ProxyFilter>();
+  auto proxy_result = proxy->set_filter<irs::And>(irs::IResourceManager::gNoop);
+  auto& and_root = proxy_result.first;
+  bool any_text_claimed = false;
+  std::vector<std::vector<bool>> claimed_per_filter;
+  claimed_per_filter.reserve(residual_filters.size());
+  for (auto* f : residual_filters) {
+    std::vector<bool> claimed(f->expressions.size(), false);
+    for (size_t i = 0; i < f->expressions.size(); ++i) {
+      if (TryClaimIresearchConjunct(and_root, f->expressions[i], getter)) {
+        claimed[i] = true;
+        any_text_claimed = true;
+      }
+    }
+    claimed_per_filter.push_back(std::move(claimed));
+  }
+
   bool pushdown_filter = true;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
   std::vector<catalog::Column::Id> filter_col_ids;
-  for (auto* f : residual_filters) {
-    for (auto& e : f->expressions) {
-      auto copy = e->Copy();
+  for (size_t fi = 0; fi < residual_filters.size(); ++fi) {
+    auto* f = residual_filters[fi];
+    for (size_t i = 0; i < f->expressions.size(); ++i) {
+      if (claimed_per_filter[fi][i]) {
+        continue;
+      }
+      auto copy = f->expressions[i]->Copy();
       if (!RewriteFilterColumnRefs(*copy, get, bind_data, filter_col_ids)) {
         pushdown_filter = false;
         break;
@@ -441,6 +557,9 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     ann->filter_expression =
       CombineFilterExpressions(std::move(rewritten_exprs));
     ann->filter_column_ids = std::move(filter_col_ids);
+    if (any_text_claimed) {
+      ann->text_filter = std::move(proxy);
+    }
   }
 
   bind_data.scan_source = std::move(ann);
@@ -595,12 +714,32 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->radius = radius;
 
   filter.expressions.erase(filter.expressions.begin() + match_idx);
+  std::vector<catalog::Column::Id> proj_ids_storage;
+  SearchColumnContext sctx;
+  InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
+                                *resolved, snapshot);
+  auto getter = MakeColumnGetter(sctx);
+
+  auto proxy = std::make_unique<irs::ProxyFilter>();
+  auto proxy_result = proxy->set_filter<irs::And>(irs::IResourceManager::gNoop);
+  auto& and_root = proxy_result.first;
+  std::vector<bool> claimed(filter.expressions.size(), false);
+  bool any_text_claimed = false;
+  for (size_t i = 0; i < filter.expressions.size(); ++i) {
+    if (TryClaimIresearchConjunct(and_root, filter.expressions[i], getter)) {
+      claimed[i] = true;
+      any_text_claimed = true;
+    }
+  }
 
   bool pushdown_filter = true;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> rewritten_exprs;
   std::vector<catalog::Column::Id> filter_col_ids;
-  for (auto& e : filter.expressions) {
-    auto copy = e->Copy();
+  for (size_t i = 0; i < filter.expressions.size(); ++i) {
+    if (claimed[i]) {
+      continue;
+    }
+    auto copy = filter.expressions[i]->Copy();
     if (!RewriteFilterColumnRefs(*copy, get, bind_data, filter_col_ids)) {
       pushdown_filter = false;
       break;
@@ -611,6 +750,9 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     rss->filter_expression =
       CombineFilterExpressions(std::move(rewritten_exprs));
     rss->filter_column_ids = std::move(filter_col_ids);
+    if (any_text_claimed) {
+      rss->text_filter = std::move(proxy);
+    }
     filter.expressions.clear();
   }
 
@@ -626,52 +768,6 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 // ---------------------------------------------------------------------------
 // Case 1/2: boolean filter via search_filter_builder
 // ---------------------------------------------------------------------------
-
-// Build a SearchColumnInfo for a column ref, if the column belongs to
-// our scan AND it's part of an inverted index. Returns nullopt
-// otherwise (the search builder will then refuse to claim that
-// expression and we leave it on the LogicalFilter).
-//
-// `projected_column_ids` is indexed by binding.column_index after
-// projection pushdown reordering -- same translation we do in
-// rocksdb_plan. `analyzer_provider` queries the InvertedIndex for the
-// per-column analyzer (op_class).
-struct SearchColumnContext {
-  duckdb::TableIndex table_index;
-  std::span<const catalog::Column::Id> projected_column_ids;
-  containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
-    column_type_by_id;
-  containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::ColumnAnalyzer(catalog::Column::Id)> analyzer_provider;
-};
-
-connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
-  return [&ctx](const duckdb::BoundColumnRefExpression& ref)
-           -> std::optional<connector::SearchColumnInfo> {
-    if (ref.binding.table_index != ctx.table_index) {
-      return std::nullopt;
-    }
-    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
-      return std::nullopt;
-    }
-    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
-      return std::nullopt;
-    }
-    if (!ctx.indexed_column_ids.contains(col_id)) {
-      return std::nullopt;
-    }
-    auto type_it = ctx.column_type_by_id.find(col_id);
-    if (type_it == ctx.column_type_by_id.end()) {
-      return std::nullopt;
-    }
-    connector::SearchColumnInfo info;
-    info.column_id = col_id;
-    info.logical_type = type_it->second;
-    info.analyzer = ctx.analyzer_provider(col_id);
-    return info;
-  };
-}
 
 bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {

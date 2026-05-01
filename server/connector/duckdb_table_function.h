@@ -23,6 +23,7 @@
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <iresearch/search/filter.hpp>
+#include <iresearch/search/proxy_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <memory>
 #include <optional>
@@ -285,6 +286,7 @@ struct VectorSearchScan : ScanSource {
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
+  std::unique_ptr<irs::ProxyFilter> text_filter;
 };
 
 // ANN (top-k nearest-neighbour) scan using an HNSW index.

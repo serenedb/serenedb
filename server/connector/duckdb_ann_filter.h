@@ -24,8 +24,11 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <iresearch/search/filter.hpp>
+#include <iresearch/search/proxy_filter.hpp>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include "connector/lookup.h"
 #include "connector/search_pk_lookup.h"
@@ -34,22 +37,50 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
-struct ANNFilterContext {
-  duckdb::ClientContext& context;
-  duckdb::unique_ptr<duckdb::Expression> filter_expr;
-  std::vector<duckdb::LogicalType> filter_types;
+class ScanFilter {
+ public:
+  virtual ~ScanFilter() = default;
 
-  const SereneDBScanBindData& bind_data;
-  const rocksdb::Snapshot* rocksdb_snapshot;
-  std::vector<duckdb::idx_t> filter_projection;
-  std::vector<catalog::Column::Id> filter_column_ids;
+  virtual bool Accept(faiss::idx_t id) const = 0;
+
+  virtual int Cost() const { return 100; }
 };
 
-class ANNFilter final : public faiss::IDSelector {
+class CompositeScanFilter final : public faiss::IDSelector {
+ public:
+  CompositeScanFilter() = default;
+  CompositeScanFilter(std::vector<std::unique_ptr<ScanFilter>> filters)
+    : _filters{std::move(filters)} {
+    absl::c_sort(_filters, [](const auto& a, const auto& b) {
+      return a->Cost() < b->Cost();
+    });
+  }
+
+  bool Empty() const { return _filters.empty(); }
+
+  bool is_member(faiss::idx_t id) const final;
+
+ private:
+  std::vector<std::unique_ptr<ScanFilter>> _filters;
+};
+
+struct VectorSearchScan;
+
+struct ANNFilterContext {
+  duckdb::ClientContext& context;
+  const VectorSearchScan& scan;
+  const SereneDBScanBindData& bind_data;
+  const rocksdb::Snapshot* rocksdb_snapshot;
+
+  std::vector<duckdb::LogicalType> filter_types;
+  std::vector<duckdb::idx_t> filter_projection;
+};
+
+class ANNFilter final : public ScanFilter {
  public:
   ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
 
-  bool is_member(faiss::idx_t id) const override;
+  bool Accept(faiss::idx_t id) const final;
 
  private:
   const ANNFilterContext& _ctx;
@@ -58,18 +89,29 @@ class ANNFilter final : public faiss::IDSelector {
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
 
-  // Cached File-backed lookup session (lazy, reused across is_member calls).
+  // Cached File-backed lookup session (lazy, reused across Accept calls).
   // Empty for RocksDB-backed tables -- LookupRows dispatches to RocksDBLookup
-  // which doesn't need a session. mutable so const is_member can lazily fill.
+  // which doesn't need a session. mutable so const Accept can lazily fill.
   mutable std::shared_ptr<FileLookupSession> _file_lookup_session;
   mutable SegmentPkIterator _it;
 };
 
-void InitAnnFilterContext(
-  std::unique_ptr<ANNFilterContext>& filter, duckdb::ClientContext& context,
-  const duckdb::Expression* filter_expression,
-  const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
-  const rocksdb::Snapshot* rocks_snapshot,
-  const SereneDBScanBindData& bind_data);
+void InitAnnFilterContext(std::unique_ptr<ANNFilterContext>& filter,
+                          duckdb::ClientContext& context,
+                          const VectorSearchScan& scan,
+                          const rocksdb::Snapshot* rocks_snapshot,
+                          const SereneDBScanBindData& bind_data);
+
+class TextScanFilter final : public ScanFilter {
+ public:
+  TextScanFilter(const irs::Filter::Query& proxy_query,
+                 const irs::SubReader& segment);
+
+  bool Accept(faiss::idx_t id) const final;
+  int Cost() const final { return 1; }
+
+ private:
+  mutable irs::DocIterator::ptr _it;
+};
 
 }  // namespace sdb::connector

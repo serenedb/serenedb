@@ -73,7 +73,7 @@ bool ClaimNextLiveSegment(std::atomic_size_t& next_segment,
 }
 
 void ANNSearchSegment(const irs::SubReader& segment_reader,
-                      std::optional<ANNFilter>& filter,
+                      CompositeScanFilter& filter,
                       SearchAnnScanGlobalState& gstate,
                       SearchAnnScanLocalState& lstate,
                       duckdb::ClientContext& context) {
@@ -93,7 +93,7 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
   if (gstate.ef_search > 0) {
     info.params.efSearch = gstate.ef_search;
   }
-  info.params.sel = filter.has_value() ? &*filter : nullptr;
+  info.params.sel = filter.Empty() ? nullptr : &filter;
 
   SDB_ASSERT(reader);
 
@@ -191,8 +191,7 @@ void EmitResult(duckdb::ClientContext& context,
   g.produced_rows.fetch_add(count, std::memory_order_relaxed);
 }
 
-void RangeSearchSegment(const irs::SubReader& sub,
-                        std::optional<ANNFilter>& filter,
+void RangeSearchSegment(const irs::SubReader& sub, CompositeScanFilter& filter,
                         SearchRangeScanGlobalState& g,
                         SearchRangeScanLocalState& l) {
   std::vector<float> dis;
@@ -205,7 +204,7 @@ void RangeSearchSegment(const irs::SubReader& sub,
   if (g.ef_search > 0) {
     info.params.efSearch = static_cast<size_t>(g.ef_search);
   }
-  info.params.sel = filter.has_value() ? &*filter : nullptr;
+  info.params.sel = filter.Empty() ? nullptr : &filter;
   sub.RangeSearch(g.scan->field_name, info, dis, ids);
 
   while (!ids.empty() && ids.back() == -1) {
@@ -241,9 +240,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   gstate->scan = &bind_data.scan_source->Cast<ANNScan>();
   gstate->ef_search = ReadEfSearch(context);
 
-  InitAnnFilterContext(gstate->filter_ctx, context,
-                       gstate->scan->filter_expression.get(),
-                       gstate->scan->filter_column_ids, gstate->scan->index_id,
+  InitAnnFilterContext(gstate->filter_ctx, context, *gstate->scan,
                        gstate->snapshot, bind_data);
 
   auto& snapshot =
@@ -252,6 +249,10 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   gstate->remained_segments = gstate->total_segments;
 
   gstate->reader = &snapshot.reader;
+  if (gstate->scan->text_filter) {
+    gstate->text_filter_query =
+      gstate->scan->text_filter->prepare({.index = snapshot.reader});
+  }
   return gstate;
 }
 
@@ -273,16 +274,20 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   size_t processed = 0;
   size_t segment;
   SDB_ASSERT(g.reader);
-  std::optional<ANNFilter> filter;
   while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
+    std::vector<std::unique_ptr<ScanFilter>> filters;
     const auto& reader = (*g.reader)[segment];
-    if (g.filter_ctx) {
-      filter.emplace(*g.filter_ctx, reader);
+    if (g.text_filter_query) {
+      filters.emplace_back(
+        std::make_unique<TextScanFilter>(*g.text_filter_query, reader));
     }
+    if (g.filter_ctx) {
+      filters.emplace_back(std::make_unique<ANNFilter>(*g.filter_ctx, reader));
+    }
+    CompositeScanFilter filter{std::move(filters)};
     ANNSearchSegment(reader, filter, g, l, context);
     processed++;
-    filter.reset();
   }
   if (!processed) {
     output.SetCardinality(0);
@@ -307,15 +312,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(
   gstate->scan = &bind_data.scan_source->Cast<RangeSearchScan>();
   gstate->ef_search = ReadEfSearch(context);
 
-  InitAnnFilterContext(gstate->filter_ctx, context,
-                       gstate->scan->filter_expression.get(),
-                       gstate->scan->filter_column_ids, gstate->scan->index_id,
+  InitAnnFilterContext(gstate->filter_ctx, context, *gstate->scan,
                        gstate->snapshot, bind_data);
 
   auto& snapshot =
     GetSereneDBContext(context).EnsureSearchSnapshot(gstate->scan->index_id);
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
+  if (gstate->scan->text_filter) {
+    gstate->text_filter_query =
+      gstate->scan->text_filter->prepare({.index = snapshot.reader});
+  }
   return gstate;
 }
 
@@ -333,17 +340,21 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   auto& l = data.local_state->Cast<SearchRangeScanLocalState>();
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
 
-  std::optional<ANNFilter> filter;
   size_t segment;
   while (l.pk_bytes.size() - l.current_idx < STANDARD_VECTOR_SIZE &&
          ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
+    std::vector<std::unique_ptr<ScanFilter>> filters;
     const auto& sub = (*g.reader)[segment];
-    if (g.filter_ctx) {
-      filter.emplace(*g.filter_ctx, sub);
+    if (g.text_filter_query) {
+      filters.emplace_back(
+        std::make_unique<TextScanFilter>(*g.text_filter_query, sub));
     }
+    if (g.filter_ctx) {
+      filters.emplace_back(std::make_unique<ANNFilter>(*g.filter_ctx, sub));
+    }
+    CompositeScanFilter filter{std::move(filters)};
     RangeSearchSegment(sub, filter, g, l);
-    filter.reset();
   }
   if (l.current_idx == l.pk_bytes.size()) {
     output.SetCardinality(0);

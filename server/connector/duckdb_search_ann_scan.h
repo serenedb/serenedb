@@ -37,6 +37,7 @@ namespace sdb::connector {
 struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   const ANNScan* scan = nullptr;
   std::unique_ptr<ANNFilterContext> filter_ctx;
+  irs::Filter::Query::ptr text_filter_query;
 
   const irs::IndexReader* reader = nullptr;
   int ef_search = 0;
@@ -79,6 +80,7 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
 struct SearchRangeScanGlobalState : public CommonScanGlobalState {
   const RangeSearchScan* scan = nullptr;
   std::unique_ptr<ANNFilterContext> filter_ctx;
+  irs::Filter::Query::ptr text_filter_query;
 
   const irs::IndexReader* reader = nullptr;
   int ef_search = 0;

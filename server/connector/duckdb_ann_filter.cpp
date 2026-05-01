@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_ann_filter.h"
 
+#include <algorithm>
 #include <array>
 
 #include "basics/assert.h"
@@ -31,44 +32,47 @@
 
 namespace sdb::connector {
 
-void InitAnnFilterContext(
-  std::unique_ptr<ANNFilterContext>& filter, duckdb::ClientContext& context,
-  const duckdb::Expression* filter_expression,
-  const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
-  const rocksdb::Snapshot* rocks_snapshot,
-  const SereneDBScanBindData& bind_data) {
-  if (!filter_expression || filter_column_ids.empty()) {
+bool CompositeScanFilter::is_member(faiss::idx_t id) const {
+  return absl::c_all_of(_filters,
+                        [id](const auto& f) { return f->Accept(id); });
+}
+
+void InitAnnFilterContext(std::unique_ptr<ANNFilterContext>& filter,
+                          duckdb::ClientContext& context,
+                          const VectorSearchScan& scan,
+                          const rocksdb::Snapshot* rocks_snapshot,
+                          const SereneDBScanBindData& bind_data) {
+  if (!scan.filter_expression || scan.filter_column_ids.empty()) {
     return;
   }
   containers::FlatHashMap<catalog::Column::Id, size_t> columns_to_indexes;
   for (size_t i = 0; i < bind_data.column_ids.size(); ++i) {
     columns_to_indexes[bind_data.column_ids[i]] = i;
   }
-  std::vector<duckdb::idx_t> filter_projection(filter_column_ids.size());
-  std::vector<duckdb::LogicalType> filter_types(filter_column_ids.size());
-  for (size_t i = 0; i < filter_column_ids.size(); ++i) {
+  std::vector<duckdb::idx_t> filter_projection(scan.filter_column_ids.size());
+  std::vector<duckdb::LogicalType> filter_types(scan.filter_column_ids.size());
+  for (size_t i = 0; i < scan.filter_column_ids.size(); ++i) {
     filter_projection[i] = i;
-    const auto cid = filter_column_ids[i];
+    const auto cid = scan.filter_column_ids[i];
     SDB_ASSERT(columns_to_indexes.contains(cid));
     filter_types[i] = bind_data.column_types[columns_to_indexes.at(cid)];
   }
 
-  GetSereneDBContext(context).EnsureSearchSnapshot(index_id);
+  GetSereneDBContext(context).EnsureSearchSnapshot(scan.index_id);
 
   filter = std::make_unique<ANNFilterContext>(ANNFilterContext{
     .context = context,
-    .filter_expr = filter_expression->Copy(),
-    .filter_types = std::move(filter_types),
+    .scan = scan,
     .bind_data = bind_data,
     .rocksdb_snapshot = rocks_snapshot,
+    .filter_types = std::move(filter_types),
     .filter_projection = std::move(filter_projection),
-    .filter_column_ids = filter_column_ids,
   });
 }
 
 ANNFilter::ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment)
   : _ctx{ctx}, _segment{segment}, _executor{ctx.context} {
-  _executor.AddExpression(*ctx.filter_expr);
+  _executor.AddExpression(*ctx.scan.filter_expression);
   duckdb::vector<duckdb::LogicalType> scratch_types{ctx.filter_types.begin(),
                                                     ctx.filter_types.end()};
   _scratch.Initialize(duckdb::Allocator::Get(ctx.context), scratch_types);
@@ -81,7 +85,7 @@ ANNFilter::ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment)
   SDB_ASSERT(opened);
 }
 
-bool ANNFilter::is_member(faiss::idx_t id) const {
+bool ANNFilter::Accept(faiss::idx_t id) const {
   SDB_ASSERT(_it);
   auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
   if (_it.iter->value() > doc_id) {
@@ -98,8 +102,9 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
   // LookupRows fills only real-column slots; ANNFilter projects exclusively
   // real bind columns (no rowid/score/etc), so no virtual-slot cleanup needed.
   LookupRows(_ctx.context, _ctx.bind_data, _ctx.rocksdb_snapshot,
-             _ctx.filter_projection, _ctx.filter_types, _ctx.filter_column_ids,
-             nullptr, pks, _file_lookup_session, _scratch);
+             _ctx.filter_projection, _ctx.filter_types,
+             _ctx.scan.filter_column_ids, nullptr, pks, _file_lookup_session,
+             _scratch);
   _scratch.SetCardinality(1);
 
   _bool_out.Reset();
@@ -108,6 +113,16 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
 
   auto value = _bool_out.data[0].GetValue(0);
   return !value.IsNull() && duckdb::BooleanValue::Get(value);
+}
+
+TextScanFilter::TextScanFilter(const irs::Filter::Query& proxy_query,
+                               const irs::SubReader& segment) {
+  _it = proxy_query.execute({.segment = segment});
+}
+
+bool TextScanFilter::Accept(faiss::idx_t id) const {
+  auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
+  return _it->seek(doc_id) == doc_id;
 }
 
 }  // namespace sdb::connector

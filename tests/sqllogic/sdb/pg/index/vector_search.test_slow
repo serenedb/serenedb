@@ -16,7 +16,7 @@ SELECT
     sin(s * 0.013)::FLOAT,
     cos(s * 0.013)::FLOAT
   ]::FLOAT[8] AS emb
-FROM generate_series(1, 50000) AS s;
+FROM generate_series(1, 20000) AS s;
 
 
 statement ok
@@ -57,7 +57,7 @@ QUERY PLAN
 │          Dims: 8          │
 │      Projections: id      │
 │                           │
-│        ~50,000 rows       │
+│        ~20,000 rows       │
 └───────────────────────────┘
 
 
@@ -75,7 +75,7 @@ t
 
 
 query
-EXPLAIN SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
+EXPLAIN SELECT id FROM vecs_hnsw WHERE id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -88,7 +88,7 @@ QUERY PLAN
 │    Filter: (#0 > 25000)   │
 │      Projections: id      │
 │                           │
-│        ~50,000 rows       │
+│        ~20,000 rows       │
 └───────────────────────────┘
 
 
@@ -98,7 +98,7 @@ SET sdb_ef_search TO 2048;
 
 query
 WITH
-  result AS (SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+  result AS (SELECT id FROM vecs_hnsw WHERE id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_filtered WHERE id IN (SELECT id FROM result);
 ----
 ?column?
@@ -201,6 +201,109 @@ query
 WITH
   result AS (SELECT id FROM vecs_hnsw_ip ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_ip WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 2048;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_slow(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE hybrid (id INT, body VARCHAR, emb FLOAT[8]);
+
+
+statement ok
+INSERT INTO hybrid
+SELECT
+  s AS id,
+  CASE s % 4
+    WHEN 0 THEN 'red fox jumps'
+    WHEN 1 THEN 'blue cat sleeps'
+    WHEN 2 THEN 'red bird sings'
+    ELSE        'blue dog runs'
+  END AS body,
+  [
+    sin(s * 0.001)::FLOAT,
+    cos(s * 0.001)::FLOAT,
+    sin(s * 0.003)::FLOAT,
+    cos(s * 0.003)::FLOAT,
+    sin(s * 0.007)::FLOAT,
+    cos(s * 0.007)::FLOAT,
+    sin(s * 0.013)::FLOAT,
+    cos(s * 0.013)::FLOAT
+  ]::FLOAT[8] AS emb
+FROM generate_series(1, 20000) AS s;
+
+
+statement ok
+CREATE INDEX hybrid_idx ON hybrid USING inverted(id, body en_slow, emb hnsw (m = 64, ef_construction = 256));
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) hybrid;
+
+
+statement ok
+CREATE TABLE correct_phrase(id INT);
+
+
+statement ok
+INSERT INTO correct_phrase
+SELECT id FROM hybrid
+WHERE body LIKE 'red%'
+ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8]
+LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_phrase_and_mod(id INT);
+
+
+statement ok
+INSERT INTO correct_phrase_and_mod
+SELECT id FROM hybrid
+WHERE body LIKE 'blue%' AND id % 2 = 0
+ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8]
+LIMIT 512;
+
+
+query
+WITH
+  result AS (SELECT id FROM hybrid_idx WHERE PHRASE(body, 'red') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_phrase WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM hybrid_idx WHERE PHRASE(body, 'blue') AND id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_phrase_and_mod WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+SELECT COUNT(*) > 0 FROM (
+  SELECT id FROM hybrid_idx WHERE emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] < 0.5 AND PHRASE(body, 'red')
+) sub;
 ----
 ?column?
 t

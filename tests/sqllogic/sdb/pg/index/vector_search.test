@@ -680,7 +680,6 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
-│      Filter: (#0 = 1)     │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -742,7 +741,6 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │     Radius: 200.000000    │
 │          Dims: 3          │
-│      Filter: (#0 = 1)     │
 │      Projections: id      │
 │                           │
 │          ~4 rows          │
@@ -750,7 +748,7 @@ QUERY PLAN
 
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false);
+CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true, norm = true);
 
 
 statement ok
@@ -792,6 +790,35 @@ id
 1
 
 
+query
+SELECT id FROM mixed_idx WHERE PHRASE(body, 'red') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+id
+3
+1
+
+
+query
+SELECT id FROM mixed_idx WHERE PHRASE(body, 'penguin') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+id
+
+
+query
+SELECT id FROM mixed_idx WHERE PHRASE(body, 'blue') AND id > 3 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+id
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE emb <-> [0, 0, 0]::FLOAT[3] < 200 AND PHRASE(body, 'blue') ORDER BY id;
+----
+id
+2
+4
+
+
 statement ok
 CREATE TABLE t_big (id INT, emb FLOAT[3]);
 
@@ -830,14 +857,14 @@ query
 SELECT COUNT(*) FROM (SELECT id FROM big_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 50) sub;
 ----
 count
-50
+32
 
 
 query
 SELECT COUNT(*) FROM (SELECT id FROM big_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5000) sub;
 ----
 count
-1100
+32
 
 
 query

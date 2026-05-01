@@ -60,6 +60,10 @@ constexpr size_t kFlushThreshold = 1 << 15;
 constexpr size_t kKeyPrefixSize =
   sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
+constexpr std::string_view kSkipHint =
+  ". To skip WAL recovery and proceed with stale index content, restart "
+  "with --search.skip-wal-recovery (data loss for the unreplayed delta).";
+
 // Last-op-wins per pk. Invalid is the default after lazy creation; the next
 // PutCF/DeleteCF transitions it. Put after Delete and Delete after Put both
 // just overwrite the field -- no priority logic needed at flush time.
@@ -246,7 +250,7 @@ void FlushShard(ShardState& s,
           SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
                        "WAL recovery: rocksdb Get failed for index '",
                        s.shard->GetId().id(), "' col=", col.id, ": ",
-                       status.ToString());
+                       status.ToString(), kSkipHint);
           rocksdb::Slice slice{value_buffer.data(), value_buffer.size()};
           sink.WriteImpl(std::span{&slice, 1}, row->full_key);
         }
@@ -289,7 +293,8 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
   }
 
   rocksdb::Status DeleteCF(uint32_t cf_id, const rocksdb::Slice& key) final {
-    ForEachMatchingShard(cf_id, key, [&](Row& row, size_t /*col_idx*/) {
+    ForEachMatchingShard(cf_id, key,
+                         [&](ShardState& /*s*/, Row& row, size_t /*col_idx*/) {
                            row.indexed_cols.clear();
                            row.op = RowOp::Delete;
                          });
@@ -303,20 +308,36 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
 
   rocksdb::Status DeleteRangeCF(uint32_t, const rocksdb::Slice&,
                                 const rocksdb::Slice&) final {
-    return rocksdb::Status::OK();
+    SDB_ASSERT(false);
+    // we use it only in case of deletion of the table. we wouldn't get here in
+    // that code in this case. TODO: implement for truncate.
+    return rocksdb::Status::InvalidArgument(
+      "WAL recovery: DeleteRangeCF unexpected (no 2PC)");
   }
 
   void LogData(const rocksdb::Slice&) final {}
+
   rocksdb::Status MarkNoop(bool) final { return rocksdb::Status::OK(); }
-  rocksdb::Status MarkBeginPrepare(bool) final { return rocksdb::Status::OK(); }
+
+  rocksdb::Status MarkBeginPrepare(bool) final {
+    SDB_ASSERT(false);
+    return rocksdb::Status::InvalidArgument(
+      "WAL recovery: MarkBeginPrepare unexpected (no 2PC)");
+  }
   rocksdb::Status MarkEndPrepare(const rocksdb::Slice&) final {
-    return rocksdb::Status::OK();
+    SDB_ASSERT(false);
+    return rocksdb::Status::InvalidArgument(
+      "WAL recovery: MarkEndPrepare unexpected (no 2PC)");
   }
   rocksdb::Status MarkCommit(const rocksdb::Slice&) final {
-    return rocksdb::Status::OK();
+    SDB_ASSERT(false);
+    return rocksdb::Status::InvalidArgument(
+      "WAL recovery: MarkCommit unexpected (no 2PC)");
   }
   rocksdb::Status MarkRollback(const rocksdb::Slice&) final {
-    return rocksdb::Status::OK();
+    SDB_ASSERT(false);
+    return rocksdb::Status::InvalidArgument(
+      "WAL recovery: MarkRollback unexpected (no 2PC)");
   }
 
   bool NeedsFlush() const noexcept { return _needs_flush; }
@@ -415,7 +436,7 @@ void RunWalRecovery() {
                      !ResolveShardMetadata(state, *snapshot),
                      "WAL recovery: could not resolve catalog metadata for "
                      "inverted index '",
-                     state.shard->GetId().id(), "'");
+                     state.shard->GetId().id(), "'", kSkipHint);
         min_start_tick = std::min(min_start_tick, state.start_tick);
         shards.push_back(std::move(state));
       }
@@ -451,7 +472,7 @@ void RunWalRecovery() {
   auto s = db->GetUpdatesSince(min_start_tick, &iter, opts);
   SDB_FATAL_IF("xxxxx", Logger::SEARCH, !s.ok(),
                "WAL recovery: failed to open WAL iterator from tick ",
-               min_start_tick, ": ", s.ToString());
+               min_start_tick, ": ", s.ToString(), kSkipHint);
   SDB_ASSERT(iter);
 
   std::vector<rocksdb::BatchResult> live_batches;
@@ -465,19 +486,20 @@ void RunWalRecovery() {
   while (iter->Valid()) {
     auto status = iter->status();
     SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
-                 "WAL recovery: iterator error: ", status.ToString());
+                 "WAL recovery: iterator error: ", status.ToString(),
+                 kSkipHint);
 
     auto batch = iter->GetBatch();
     SDB_FATAL_IF("xxxxx", Logger::SEARCH, batch.sequence > end_tick,
                  "WAL recovery: WAL produced batch at sequence ",
-                 batch.sequence, " past end_tick ", end_tick);
+                 batch.sequence, " past end_tick ", end_tick, kSkipHint);
 
     WalBatchReplay handler{table2shards, default_cf_id, batch.sequence,
                            kFlushThreshold};
     status = batch.writeBatchPtr->Iterate(&handler);
     SDB_FATAL_IF("xxxxx", Logger::SEARCH, !status.ok(),
                  "WAL recovery: batch iterate failed at seq ", batch.sequence,
-                 ": ", status.ToString());
+                 ": ", status.ToString(), kSkipHint);
 
     live_batches.emplace_back(std::move(batch));
 
@@ -489,9 +511,9 @@ void RunWalRecovery() {
   }
 
   auto status = iter->status();
-  SDB_FATAL_IF(
-    "xxxxx", Logger::SEARCH, !iter->status().ok(),
-    "WAL recovery: iterator error after last batch: ", status.ToString());
+  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !iter->status().ok(),
+               "WAL recovery: iterator error after last batch: ",
+               status.ToString(), kSkipHint);
 
   flush_all();
 
@@ -506,7 +528,7 @@ void RunWalRecovery() {
     auto r = s.shard->CommitUnsafe(/*wait=*/true, nullptr, code);
     SDB_FATAL_IF("xxxxx", Logger::SEARCH, !r.res.ok(),
                  "WAL recovery: commit failed for index '",
-                 s.shard->GetId().id(), "': ", r.res.errorMessage());
+                 s.shard->GetId().id(), "': ", r.res.errorMessage(), kSkipHint);
     SDB_INFO(
       "xxxxx", Logger::SEARCH, "WAL recovery: index '", s.shard->GetId().id(),
       "' replayed (", s.start_tick, ", ", s.end_tick,

@@ -37,7 +37,7 @@ INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <
 
 
 statement ok
-CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw (m = 64, ef_construction = 256));
+CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
 
 
 statement ok

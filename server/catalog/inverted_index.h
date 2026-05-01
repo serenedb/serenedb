@@ -35,7 +35,7 @@ struct HNSWColumnConfig {
   int d = 0;
   int m = 32;
   int ef_construction = 40;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2;
+  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
 struct InvertedIndexColumnInfo {

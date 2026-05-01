@@ -181,10 +181,8 @@ struct ExpectedHNSW {
 };
 
 std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
-  if (name == connector::kL2Distance || name == connector::kL2DistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::L2, duckdb::OrderType::ASCENDING};
-  }
-  if (name == connector::kL2SqrDistance) {
+  if (name == connector::kL2Distance || name == connector::kL2DistanceOp ||
+      name == connector::kL2SqrDistance) {
     return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
   }
   if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
@@ -501,6 +499,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 
   duckdb::idx_t match_idx = duckdb::DConstants::INVALID_INDEX;
   float radius = 0.0f;
+  bool radius_needs_square = false;
   std::vector<float> query_vector;
   catalog::Column::Id col_id = std::numeric_limits<catalog::Column::Id>::max();
 
@@ -578,6 +577,12 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     }
 
     radius = candidate_radius;
+    // The iresearch index stores L2-squared distances. When the user wrote
+    // l2_distance / `<->` (un-squared L2), the radius must be squared before
+    // being compared against stored values. l2_sqr_distance already speaks
+    // in squared units. Other metrics (L1, cosine, IP) are not squared.
+    radius_needs_square = func.function.name == connector::kL2Distance ||
+                          func.function.name == connector::kL2DistanceOp;
     query_vector = std::move(candidate_vector);
     col_id = candidate_col_id;
     match_idx = i;
@@ -593,6 +598,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->field_name = MakeHnswFieldName(col_id);
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
+  rss->effective_radius = radius_needs_square ? radius * radius : radius;
 
   filter.expressions.erase(filter.expressions.begin() + match_idx);
 

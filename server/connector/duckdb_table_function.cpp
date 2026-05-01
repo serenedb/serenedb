@@ -302,7 +302,11 @@ void AppendVectorSearchSummary(
   if (!scan.filter_expression) {
     return;
   }
-  out.insert("Filter", scan.filter_expression->ToString());
+  auto repr = scan.filter_expression->ToString();
+  if (repr.empty()) {
+    return;
+  }
+  out.insert("Filter", std::move(repr));
 }
 
 }  // namespace

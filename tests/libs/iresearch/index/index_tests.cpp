@@ -14567,7 +14567,7 @@ struct SearchTestFeatureBase {
   size_t values_per_segment;
   size_t segments;
   size_t queries;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2;
+  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 
   // Pre-generated data (vectors and queries are created at construction time)
   std::vector<std::pair<uint64_t, std::vector<float>>> vectors;
@@ -14622,7 +14622,7 @@ struct RangeSearchFeature : public SearchTestFeatureBase {
 static float ComputeExpectedDistance(const float* q, const float* v, size_t dim,
                                      irs::HNSWMetric metric) {
   switch (metric) {
-    case irs::HNSWMetric::L2:
+    case irs::HNSWMetric::L2Sqr:
       return faiss::fvec_L2sqr(q, v, dim);
     case irs::HNSWMetric::NegativeIP:
       return -faiss::fvec_inner_product(q, v, dim);
@@ -14658,9 +14658,6 @@ class VectorSearchTestBase
     switch (feat.metric) {
       case irs::HNSWMetric::L2Sqr:
         name += "_L2Sqr";
-        break;
-      case irs::HNSWMetric::L2:
-        name += "_L2";
         break;
       case irs::HNSWMetric::NegativeIP:
         name += "_IP";
@@ -15007,7 +15004,7 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(
     kTestDirs, kTestFormats,
     ::testing::ValuesIn(std::vector<ANNSearchFeature>{
-      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L2, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L2Sqr, 10},
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::NegativeIP, 10},
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::Cosine, 10},
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L1, 10},
@@ -15019,7 +15016,7 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(
     kTestDirs, kTestFormats,
     ::testing::ValuesIn(std::vector<RangeSearchFeature>{
-      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L2},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L2Sqr},
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::NegativeIP},
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::Cosine},
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L1},

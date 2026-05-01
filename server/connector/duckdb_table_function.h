@@ -309,7 +309,13 @@ struct ANNScan : VectorSearchScan {
 struct RangeSearchScan : VectorSearchScan {
   RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
 
+  // Radius as the user wrote it (in the unit of the requested distance
+  // function). Displayed in EXPLAIN.
   float radius = 0.0f;
+  // Radius in the unit the iresearch index actually compares against. Equal
+  // to `radius` for most metrics; squared when the user wrote l2_distance
+  // (`<->`) but the index stores L2-squared distances.
+  float effective_radius = 0.0f;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

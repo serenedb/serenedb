@@ -187,7 +187,7 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
     auto builder = vpack::Parser::fromJson(
       "{ \"tokenizer\": {\"type\":\"wildcard\","
       "\"properties\":{\"ngramSize\":3,"
-      "\"tokenizer\":{\"type\":\"identity\"}}}}");
+      "\"tokenizer\":{\"type\":\"keyword\"}}}}");
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
@@ -680,7 +680,7 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
     AssertFilter(expected, "SELECT * FROM foo WHERE b = true", columns, true);
   }
   {
-    // Non-identity analyzer rejects plain a = 'foo' on a VARCHAR column.
+    // Non-keyword analyzer rejects plain a = 'foo' on a VARCHAR column.
     // Use the TSQUERY surface (`b @@ 'foo'`) for analyzed columns.
     std::vector<ColumnSpec> columns{
       {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -1938,7 +1938,7 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternIdentity) {
 
 TEST_F(SearchFilterBuilderTest, test_TermLike_EscapedPatternSegmentation) {
   // Same escaped pattern through the TSQUERY-surface LIKE
-  // constructor on a non-identity column. LIKE on the TSQUERY
+  // constructor on a non-keyword column. LIKE on the TSQUERY
   // surface does NOT tokenise; the pattern is matched as wildcard
   // bytes against indexed terms exactly like the identity case.
   std::vector<ColumnSpec> columns{
@@ -2100,7 +2100,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramWithThreshold) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_NgramNoFeatures) {
-  // Default identity analyzer doesn't have Pos+Freq features required
+  // Default keyword analyzer doesn't have Pos+Freq features required
   // for NGRAM -- bind-time error.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -2410,7 +2410,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastCaretOnTop) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastTokenizeThenBoost) {
-  // ts_phrase(...)::tokenize('identity')::boost(42) -- inner tokenize
+  // ts_phrase(...)::tokenize('keyword')::boost(42) -- inner tokenize
   // forces raw-bytes phrase parts; outer boost multiplies.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -2422,12 +2422,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastTokenizeThenBoost) {
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
-               "ts_phrase('quick fox')::tokenize('identity')::boost(42.0)",
+               "ts_phrase('quick fox')::tokenize('keyword')::boost(42.0)",
                columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastBoostThenTokenize) {
-  // ts_phrase(...)::boost(42)::tokenize('identity') -- symmetric ordering;
+  // ts_phrase(...)::boost(42)::tokenize('keyword') -- symmetric ordering;
   // both effects must apply (tokenize override + boost 42).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -2439,7 +2439,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastBoostThenTokenize) {
     irs::ViewCast<irs::byte_type>(std::string_view{"quick fox"}));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
-               "ts_phrase('quick fox')::boost(42.0)::tokenize('identity')",
+               "ts_phrase('quick fox')::boost(42.0)::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -2574,7 +2574,7 @@ TEST_F(SearchFilterBuilderTest, test_Boost_SqlLike) {
 
 TEST_F(SearchFilterBuilderTest, test_Boost_SqlLikePrefix) {
   // (col LIKE 'pre%')::boost(2.0) -- DuckDB rewrites this to
-  // `prefix(col, 'pre')`. On identity-analyzed columns we emit the
+  // `prefix(col, 'pre')`. On keyword-analyzed columns we emit the
   // dedicated irs::ByPrefix filter (cheaper than a wildcard pattern
   // scan).
   std::vector<ColumnSpec> columns{
@@ -2958,7 +2958,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundBoostCast) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundTokenizeCast) {
-  // ts_compound(ts_phrase('q f'))::tokenize('identity') -- tokenizer
+  // ts_compound(ts_phrase('q f'))::tokenize('keyword') -- tokenizer
   // override applies to every clause's recursion. Phrase emits one raw-bytes
   // part.
   std::vector<ColumnSpec> columns{
@@ -2972,13 +2972,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundTokenizeCast) {
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ "
-    "ts_compound(ts_phrase('quick fox'), NULL, NULL)::tokenize('identity')",
+    "ts_compound(ts_phrase('quick fox'), NULL, NULL)::tokenize('keyword')",
     columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundPerClauseTokenize) {
   // Per-clause modifier cast applies only to that clause's subtree.
-  // must = ts_phrase('q f')::tokenize('identity') -> raw-bytes phrase part.
+  // must = ts_phrase('q f')::tokenize('keyword') -> raw-bytes phrase part.
   // must_not = ts_phrase('z') -> uses the column analyzer (segmentation).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -2994,7 +2994,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CompoundPerClauseTokenize) {
   AddPhraseFilter(not_filter, 1, {"z"});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_compound("
-               "ts_phrase('quick fox')::tokenize('identity'), "
+               "ts_phrase('quick fox')::tokenize('keyword'), "
                "ts_phrase('z'), NULL)",
                columns, true, SegmentationAnalyzerProvider);
 }
@@ -3278,14 +3278,14 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsToTsquery) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_CommutativeLhsTokenizerCast) {
-  // 'foo'::tokenize('identity') @@ b -- mirrors
+  // 'foo'::tokenize('keyword') @@ b -- mirrors
   // test_TSQueryMatch_TokenizerCastIdentity.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE 'quick fox'::tokenize('identity') @@ b",
+               "SELECT * FROM foo WHERE 'quick fox'::tokenize('keyword') @@ b",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -3585,7 +3585,7 @@ TEST_F(SearchFilterBuilderTest,
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeNonIdentityVarchar) {
-  // VARCHAR column with a non-identity analyzer rejects standalone
+  // VARCHAR column with a non-keyword analyzer rejects standalone
   // RANGE (the indexed tokens are transformed; raw bounds wouldn't
   // line up with them).
   std::vector<ColumnSpec> columns{
@@ -3593,7 +3593,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeNonIdentityVarchar) {
   AssertFilter({},
                "SELECT * FROM foo WHERE b @@ ts_between('a', 'm', true, true)",
                columns, false, SegmentationAnalyzerProvider,
-               "requires identity-analyzed column");
+               "requires keyword-analyzed column");
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseNumericRejected) {
@@ -4105,7 +4105,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeFunction) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeIdentity) {
-  // ts_tokenize(text, 'identity') bypasses the column analyzer entirely
+  // ts_tokenize(text, 'keyword') bypasses the column analyzer entirely
   // and emits a raw ByTerm -- matches the unsplit input string as-is.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -4113,30 +4113,30 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeIdentity) {
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox', 'identity')",
+    "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox', 'keyword')",
     columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {
-  // 'foo'::tokenize('identity') -- parameterized-type cast equivalent
-  // to ts_tokenize(text, 'identity'). Bypasses the column analyzer.
+  // 'foo'::tokenize('keyword') -- parameterized-type cast equivalent
+  // to ts_tokenize(text, 'keyword'). Bypasses the column analyzer.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('identity')",
+               "SELECT * FROM foo WHERE b @@ 'quick fox'::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
-// ts_phrase('text')::tokenize('identity') -- the cast wraps a TSQUERY-typed
+// ts_phrase('text')::tokenize('keyword') -- the cast wraps a TSQUERY-typed
 // expression. Two-alias scheme keeps the cast wrapper alive (TSQUERY ->
 // TOKENIZED_TSQUERY differs in alias, so DuckDB doesn't elide). Walker
 // reads the modifier from the cast's return_type, sets sub_ctx.tokenizer,
 // recurses into PHRASE which uses the override at its leaf. With
-// 'identity' override, PHRASE tokenises 'quick fox' through the identity
+// 'keyword' override, PHRASE tokenises 'quick fox' through the identity
 // analyzer -> single phrase part with raw bytes (vs the segmentation
-// column's split tokens). The non-identity catalog-resolved path is
+// column's split tokens). The non-keyword catalog-resolved path is
 // covered end-to-end in sqllogic.
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseCastIdentity) {
   std::vector<ColumnSpec> columns{
@@ -4152,11 +4152,11 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_PhraseCastIdentity) {
   }
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_phrase('quick "
-               "fox')::tokenize('identity')",
+               "fox')::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
-// (ts_levenshtein(...))::tokenize('identity') -- cast on a TSQUERY-returning
+// (ts_levenshtein(...))::tokenize('keyword') -- cast on a TSQUERY-returning
 // constructor with an analyzer-aware tokeniser inside. Verifies the
 // override flows into LEVENSHTEIN's term-tokenisation step (which
 // normally goes through the column analyzer).
@@ -4167,12 +4167,12 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_LevenshteinCastIdentity) {
   AddEditDistanceFilter(expected, 1, "Quikc", 1);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
-               "ts_levenshtein('Quikc', 1)::tokenize('identity')",
+               "ts_levenshtein('Quikc', 1)::tokenize('keyword')",
                columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastNullSugar) {
-  // 'foo'::tokenize(NULL) is sugar for ::tokenize('identity'): both
+  // 'foo'::tokenize(NULL) is sugar for ::tokenize('keyword'): both
   // bypass the column analyzer and emit a single raw ByTerm.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
@@ -4214,7 +4214,7 @@ TEST_F(SearchFilterBuilderTest,
     false, SegmentationAnalyzerProvider, "tokenizer not found in catalog");
 }
 
-// Array form: ts_any(ts_tokenize([list], 'identity')) -- bypass column
+// Array form: ts_any(ts_tokenize([list], 'keyword')) -- bypass column
 // analyzer, each list element becomes one ByTerm leaf with raw bytes.
 // Two-element input -> ByTerms with min_match=1.
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentity) {
@@ -4225,7 +4225,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListIdentity) {
     expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo', "
-               "'bar'], 'identity'))",
+               "'bar'], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4240,7 +4240,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeArrayIdentity) {
     expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
-               "ts_any(ts_tokenize(['foo', 'bar']::VARCHAR[2], 'identity'))",
+               "ts_any(ts_tokenize(['foo', 'bar']::VARCHAR[2], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4253,7 +4253,7 @@ TEST_F(SearchFilterBuilderTest,
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo"});
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo'], 'identity'))",
+    "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo'], 'keyword'))",
     columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4288,7 +4288,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AllOfTokenizeListIdentity) {
   }
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ ts_all(ts_tokenize(['foo', "
-               "'bar'], 'identity'))",
+               "'bar'], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4308,7 +4308,7 @@ TEST_F(SearchFilterBuilderTest,
                "tokenizer not found in catalog");
 }
 
-// 'identity' preserves multi-word inputs verbatim -- a single 'foo bar'
+// 'keyword' preserves multi-word inputs verbatim -- a single 'foo bar'
 // element becomes a single ByTerm("foo bar"), no tokenisation. Confirms
 // the identity path skips the analyzer split.
 TEST_F(SearchFilterBuilderTest,
@@ -4319,7 +4319,7 @@ TEST_F(SearchFilterBuilderTest,
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"foo bar"});
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo bar'], 'identity'))",
+    "SELECT * FROM foo WHERE b @@ ts_any(ts_tokenize(['foo bar'], 'keyword'))",
     columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4350,7 +4350,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListSkipsNulls) {
     expected, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
-               "ts_any(ts_tokenize(['foo', NULL, 'bar'], 'identity'))",
+               "ts_any(ts_tokenize(['foo', NULL, 'bar'], 'keyword'))",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4386,7 +4386,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListMinMatch) {
   }
   AssertFilter(expected,
                "SELECT * FROM foo WHERE b @@ "
-               "ts_any(ts_tokenize(['foo','bar','baz'], 'identity'), 2)",
+               "ts_any(ts_tokenize(['foo','bar','baz'], 'keyword'), 2)",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -4401,7 +4401,7 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_AnyOfTokenizeListWithNot) {
     not_filter, 1, {std::string_view{"foo"}, std::string_view{"bar"}});
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT(b @@ "
-               "ts_any(ts_tokenize(['foo','bar'], 'identity')))",
+               "ts_any(ts_tokenize(['foo','bar'], 'keyword')))",
                columns, true, SegmentationAnalyzerProvider);
 }
 

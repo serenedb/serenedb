@@ -33,7 +33,7 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info,
                   const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
-    "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'identity').";
+    "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'keyword').";
   if (func.children.empty() || func.children.size() > 2) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -68,7 +68,7 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_MSG("ts_tokenize(text, '", analyzer_name,
                             "'): tokenizer not found in catalog"),
                     ERR_HINT("Create it via CREATE TEXT SEARCH DICTIONARY "
-                             "or use 'identity' for raw bytes."));
+                             "or use 'keyword' for raw bytes."));
   }
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   BuildFtsTokens(parent, sub_ctx, column_info, text, /*require_all=*/false);

@@ -110,7 +110,7 @@ void FromTokenizeListInAnyAllOf(
   }
   // Resolve the analyzer choice:
   //   1-arg form               -> ambient column analyzer
-  //   2-arg with 'identity'    -> raw bytes per element (no analysis)
+  //   2-arg with 'keyword'    -> raw bytes per element (no analysis)
   //   2-arg with named name    -> resolve via catalog at filter-build time
   bool use_identity = false;
   // Hold the wrapper as a stack local so its raw pointer (used by

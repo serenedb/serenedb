@@ -93,33 +93,33 @@ a
 2
 3
 
-# ::tokenize('identity') bypasses the column analyzer and matches the
+# ::tokenize('keyword') bypasses the column analyzer and matches the
 # raw stored token. Row 1's column has lowercase 'quick' as a single
-# token, so 'quick'::tokenize('identity') matches; 'Quick' wouldn't.
+# token, so 'quick'::tokenize('keyword') matches; 'Quick' wouldn't.
 query
-SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize('identity') ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize('keyword') ORDER BY a;
 ----
 a
 1
 2
 
-# Same via ts_tokenize(text, 'identity') -- equivalent surface.
+# Same via ts_tokenize(text, 'keyword') -- equivalent surface.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('quick', 'identity') ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_tokenize('quick', 'keyword') ORDER BY a;
 ----
 a
 1
 2
 
-# 'Quick'::tokenize('identity') won't match because the analyzer
+# 'Quick'::tokenize('keyword') won't match because the analyzer
 # lower-cased the indexed tokens.
 query
-SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenize('identity');
+SELECT a FROM tsq_idx WHERE b @@ 'Quick'::tokenize('keyword');
 ----
 a
 
-# ::tokenize(NULL) is sugar for ::tokenize('identity') -- both opt out
-# of tokenisation. Same row-set as the matching identity case above.
+# ::tokenize(NULL) is sugar for ::tokenize('keyword') -- both opt out
+# of tokenisation. Same row-set as the matching keyword case above.
 query
 SELECT a FROM tsq_idx WHERE b @@ 'quick'::tokenize(NULL) ORDER BY a;
 ----
@@ -406,7 +406,7 @@ SELECT a FROM tsq_idx WHERE a @@ ts_regexp('1');
 # unbounded.
 # ----------------------------------------------------------------------
 
-# Numeric RANGE on the primary-key column `a` (identity-analyzed by
+# Numeric RANGE on the primary-key column `a` (keyword-analyzed by
 # default). [2, 4] inclusive both sides.
 query
 SELECT a FROM tsq_idx WHERE a @@ ts_between(2, 4, true, true) ORDER BY a;
@@ -450,7 +450,7 @@ a
 3
 4
 
-# RANGE on a VARCHAR column with a non-identity analyzer (tsq_english
+# RANGE on a VARCHAR column with a non-keyword analyzer (tsq_english
 # lowercases / stems) is rejected at the standalone level: the indexed
 # tokens don't match the raw bound bytes meaningfully. Use an identity-
 # analyzed column or wrap in `##` (where the bounds are interpreted
@@ -621,7 +621,7 @@ SELECT a FROM tsq_idx WHERE b @@ ('quick' ## ts_between(false, true, true, true)
 # NULL bound are bind-time errors.
 # ----------------------------------------------------------------------
 
-# LESS on the primary-key column `a` (INTEGER, identity-analyzed).
+# LESS on the primary-key column `a` (INTEGER, keyword-analyzed).
 query
 SELECT a FROM tsq_idx WHERE a @@ ts_lt(3) ORDER BY a;
 ----
@@ -959,7 +959,7 @@ a
 
 # ::tokenize cast on LHS.
 query
-SELECT a FROM tsq_idx WHERE 'quick'::tokenize('identity') @@ b ORDER BY a;
+SELECT a FROM tsq_idx WHERE 'quick'::tokenize('keyword') @@ b ORDER BY a;
 ----
 a
 1
@@ -1287,7 +1287,7 @@ statement error
 SELECT a FROM tsq_idx WHERE b @@ to_tsquery('quick AND');
 
 # ----------------------------------------------------------------------
-# PG-style regex operators on identity-analyzed VARCHAR columns.
+# PG-style regex operators on keyword-analyzed VARCHAR columns.
 # DuckDB's regex_range_filter optimizer rewrites `regexp_full_match`
 # into a sibling LogicalFilter holding a coarse `col >= range_min AND
 # col <= range_max` pre-filter, where the bounds are typed BLOB but
@@ -1422,7 +1422,7 @@ DROP TEXT SEARCH DICTIONARY tsq_english_upper;
 # ----------------------------------------------------------------------
 # Array form: ts_tokenize(text_array[, analyzer]) -> TSQUERY[].
 # Inside ANY_OF / ALL_OF, every element is tokenised through the
-# chosen analyzer (column ambient by default, 'identity' for raw
+# chosen analyzer (column ambient by default, 'keyword' for raw
 # bytes) and the produced tokens are flattened into a single ByTerms
 # with the appropriate min_match policy.
 # ----------------------------------------------------------------------
@@ -1440,17 +1440,17 @@ a
 1
 2
 
-# 'identity' form: each element becomes a raw single token (no split,
+# 'keyword' form: each element becomes a raw single token (no split,
 # no case fold). Indexed terms are lowercase; uppercase 'QUICK' won't
 # match.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['QUICK', 'BROWN'], 'identity'));
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['QUICK', 'BROWN'], 'keyword'));
 ----
 a
 
-# 'identity' with literal lowercase input matches indexed tokens.
+# 'keyword' with literal lowercase input matches indexed tokens.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'brown'], 'identity')) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'brown'], 'keyword')) ORDER BY a;
 ----
 a
 1
@@ -1459,7 +1459,7 @@ a
 # ALL_OF: every flattened token must match. Row 1 has both 'quick' and
 # 'brown'; row 2 has 'quick' but not 'brown'.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_all(ts_tokenize(['quick', 'brown'], 'identity')) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_all(ts_tokenize(['quick', 'brown'], 'keyword')) ORDER BY a;
 ----
 a
 1
@@ -1479,14 +1479,14 @@ a
 # [quick, brown, slow]. Row 1 has quick + brown (2 of 3). Row 2 has
 # only quick. Row 3 has slow (1 of 3). Result: row 1 only.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick','brown','slow'], 'identity'), 2);
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick','brown','slow'], 'keyword'), 2);
 ----
 a
 1
 
 # NOT (array form): exclude any row that would match the OR-set.
 query
-SELECT a FROM tsq_idx WHERE NOT (b @@ ts_any(ts_tokenize(['quick'], 'identity'))) ORDER BY a;
+SELECT a FROM tsq_idx WHERE NOT (b @@ ts_any(ts_tokenize(['quick'], 'keyword'))) ORDER BY a;
 ----
 a
 3
@@ -1494,7 +1494,7 @@ a
 
 # NULL element is skipped.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', NULL, 'red'], 'identity')) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', NULL, 'red'], 'keyword')) ORDER BY a;
 ----
 a
 1
@@ -1503,7 +1503,7 @@ a
 # Fixed-size VARCHAR[N] (ARRAY) input -- routes through the unsized
 # ARRAY TOKENIZE overload instead of the LIST one. Same semantics.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'red']::VARCHAR[2], 'identity')) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_any(ts_tokenize(['quick', 'red']::VARCHAR[2], 'keyword')) ORDER BY a;
 ----
 a
 1
@@ -1589,14 +1589,14 @@ a
 # (BOOSTED vs TOKENIZED) keep both cast wrappers alive so the walker
 # sees and applies both modifiers.
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::tokenize('identity')::boost(42.0) ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::tokenize('keyword')::boost(42.0) ORDER BY a;
 ----
 a
 1
 2
 
 query
-SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(42.0)::tokenize('identity') ORDER BY a;
+SELECT a FROM tsq_idx WHERE b @@ ts_phrase('quick')::boost(42.0)::tokenize('keyword') ORDER BY a;
 ----
 a
 1

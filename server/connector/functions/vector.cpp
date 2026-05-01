@@ -48,6 +48,11 @@ enum class Distance {
   NegativeIP,
 };
 
+enum class Norm {
+  L2 = 0,
+  L1,
+};
+
 template<typename T, typename R>
 R ComputeL2Sqr(const T* l, const T* r, size_t size) {
   return irs::vector::L2Space<T, T, R>::Dist(
@@ -62,10 +67,23 @@ R ComputeL2(const T* l, const T* r, size_t size) {
 }
 
 template<typename T, typename R>
+R ComputeL2Norm(const T* x, size_t size) {
+  auto res = irs::vector::L2Space<T, T, R>::Norm(
+    reinterpret_cast<const irs::byte_type*>(x), static_cast<int16_t>(size));
+  return std::sqrt(res);
+}
+
+template<typename T, typename R>
 R ComputeL1(const T* l, const T* r, size_t size) {
   return irs::vector::L1Space<T, T, R>::Dist(
     reinterpret_cast<const irs::byte_type*>(l),
     reinterpret_cast<const irs::byte_type*>(r), static_cast<uint16_t>(size));
+}
+
+template<typename T, typename R>
+R ComputeL1Norm(const T* x, size_t size) {
+  return irs::vector::L1Space<T, T, R>::Norm(
+    reinterpret_cast<const irs::byte_type*>(x), static_cast<int16_t>(size));
 }
 
 template<typename T, typename R>
@@ -89,7 +107,7 @@ R ComputeInnerProduct(const T* l, const T* r, size_t size) {
 }
 
 template<Distance D, typename T, typename R>
-void Execute(R& result, const T* l, const T* r, size_t size) {
+void ExecuteDistance(R& result, const T* l, const T* r, size_t size) {
   if constexpr (D == Distance::L1) {
     result = ComputeL1<T, R>(l, r, size);
   } else if constexpr (D == Distance::L2) {
@@ -104,6 +122,17 @@ void Execute(R& result, const T* l, const T* r, size_t size) {
     result = ComputeL2Sqr<T, R>(l, r, size);
   } else if constexpr (D == Distance::NegativeIP) {
     result = -ComputeInnerProduct<T, R>(l, r, size);
+  } else {
+    SDB_UNREACHABLE();
+  }
+}
+
+template<Norm N, typename T, typename R>
+void ExecuteNorm(R& result, const T* x, size_t size) {
+  if constexpr (N == Norm::L1) {
+    result = ComputeL1Norm<T, R>(x, size);
+  } else if constexpr (N == Norm::L2) {
+    result = ComputeL2Norm<T, R>(x, size);
   } else {
     SDB_UNREACHABLE();
   }
@@ -168,9 +197,83 @@ static void ArrayDistanceExecutor(duckdb::DataChunk& args,
       continue;
     }
 
-    Execute<D, Elem, Res>(result_data[row], left_data + (left_idx * array_size),
-                          right_data + (right_idx * array_size), array_size);
+    ExecuteDistance<D, Elem, Res>(
+      result_data[row], left_data + (left_idx * array_size),
+      right_data + (right_idx * array_size), array_size);
   }
+}
+
+template<Norm N, typename Elem, typename Res>
+static void ArrayNormExecutor(duckdb::DataChunk& args,
+                              duckdb::ExpressionState& state,
+                              duckdb::Vector& result) {
+  auto& input_vector = args.data[0];
+  duckdb::idx_t batch_size = args.size();
+
+  duckdb::idx_t array_size = duckdb::ArrayType::GetSize(input_vector.GetType());
+  if (array_size == 0) {
+    throw duckdb::InvalidInputException(
+      "Norm operators require non-empty arrays");
+  }
+
+  duckdb::UnifiedVectorFormat input_vdata;
+  input_vector.ToUnifiedFormat(batch_size, input_vdata);
+
+  auto& input_child = duckdb::ArrayVector::GetEntry(input_vector);
+  const Elem* input_data = duckdb::FlatVector::GetData<Elem>(input_child);
+  auto& input_child_validity = duckdb::FlatVector::Validity(input_child);
+
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  Res* result_data = duckdb::FlatVector::GetDataMutable<Res>(result);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+
+  for (duckdb::idx_t row = 0; row < batch_size; row++) {
+    auto input_idx = input_vdata.sel->get_index(row);
+
+    if (!input_vdata.validity.RowIsValid(input_idx)) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
+
+    bool has_null = false;
+    for (duckdb::idx_t i = 0; i < array_size; i++) {
+      if (!input_child_validity.RowIsValid(input_idx * array_size + i)) {
+        has_null = true;
+        break;
+      }
+    }
+    if (has_null) {
+      result_validity.SetInvalid(row);
+      continue;
+    }
+
+    ExecuteNorm<N, Elem, Res>(
+      result_data[row], input_data + (input_idx * array_size), array_size);
+  }
+}
+
+template<Norm N>
+void RegisterNorm(duckdb::ExtensionLoader& loader) {
+  std::string name;
+  if constexpr (N == Norm::L1) {
+    name = kL1Norm;
+  } else if constexpr (N == Norm::L2) {
+    name = kL2Norm;
+  } else {
+    SDB_UNREACHABLE();
+  }
+  const duckdb::ScalarFunction float_fn(
+    {duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
+                                duckdb::optional_idx{})},
+    duckdb::LogicalType::FLOAT, ArrayNormExecutor<N, float, float>);
+  const duckdb::ScalarFunction double_fn(
+    {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
+                                duckdb::optional_idx{})},
+    duckdb::LogicalType::DOUBLE, ArrayNormExecutor<N, double, double>);
+  duckdb::ScalarFunctionSet norm{name};
+  norm.AddFunction(float_fn);
+  norm.AddFunction(double_fn);
+  loader.RegisterFunction(std::move(norm));
 }
 
 template<Distance D>
@@ -233,6 +336,8 @@ void RegisterVectorFunctions(duckdb::DatabaseInstance& db) {
   RegisterDistance<Distance::IP>(loader);
   RegisterDistance<Distance::NegativeIP>(loader);
   RegisterDistance<Distance::L2Sqr>(loader);
+  RegisterNorm<Norm::L1>(loader);
+  RegisterNorm<Norm::L2>(loader);
 }
 
 }  // namespace sdb::connector

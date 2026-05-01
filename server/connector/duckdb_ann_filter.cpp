@@ -49,8 +49,10 @@ void InitAnnFilterContext(
   for (size_t i = 0; i < filter_column_ids.size(); ++i) {
     filter_projection[i] = i;
     const auto cid = filter_column_ids[i];
-    SDB_ASSERT(columns_to_indexes.contains(cid));
-    filter_types[i] = bind_data.column_types[columns_to_indexes.at(cid)];
+    auto it = columns_to_indexes.find(cid);
+    SDB_ASSERT(it != columns_to_indexes.end());
+    SDB_ASSERT(it->second < bind_data.column_types.size());
+    filter_types[i] = bind_data.column_types[it->second];
   }
 
   GetSereneDBContext(context).EnsureSearchSnapshot(index_id);

@@ -204,7 +204,17 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
     return ExpectedHNSW{irs::HNSWMetric::NegativeIP,
                         duckdb::OrderType::ASCENDING};
   }
+  if (name == connector::kL2Norm) {
+    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
+  }
+  if (name == connector::kL1Norm) {
+    return ExpectedHNSW{irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING};
+  }
   return std::nullopt;
+}
+
+bool IsNormFunction(std::string_view name) {
+  return name == connector::kL2Norm || name == connector::kL1Norm;
 }
 
 // Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
@@ -352,7 +362,15 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   }
   auto& func_expr = dist_expr.Cast<duckdb::BoundFunctionExpression>();
   auto expected_func = ExpectedHNSWForFunction(func_expr.function.name);
-  if (!expected_func || func_expr.children.size() < 2) {
+  if (!expected_func) {
+    return false;
+  }
+  const bool is_norm = IsNormFunction(func_expr.function.name);
+  if (is_norm) {
+    if (func_expr.children.size() != 1) {
+      return false;
+    }
+  } else if (func_expr.children.size() < 2) {
     return false;
   }
 
@@ -385,15 +403,26 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  auto args = ExtractDistanceArgs(func_expr);
-  if (!args.col_arg || !args.const_arg) {
-    return false;
-  }
+  duckdb::Expression* col_arg = nullptr;
   std::vector<float> query_vector;
-  if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
-    return false;
+  if (is_norm) {
+    auto* child = func_expr.children[0].get();
+    if (child->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF &&
+        child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+      return false;
+    }
+    col_arg = child;
+  } else {
+    auto args = ExtractDistanceArgs(func_expr);
+    if (!args.col_arg || !args.const_arg) {
+      return false;
+    }
+    if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
+      return false;
+    }
+    col_arg = args.col_arg;
   }
-  auto col_id = ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+  auto col_id = ColumnIdByName(*bind_data.table, col_arg->GetName());
   if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
     return false;
   }
@@ -405,8 +434,12 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   }
 
   auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
-  if (!hnsw_info || hnsw_info->metric != expected_func->metric ||
-      static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
+  if (!hnsw_info || hnsw_info->metric != expected_func->metric) {
+    return false;
+  }
+  if (is_norm) {
+    query_vector.assign(hnsw_info->d, 0.0f);
+  } else if (static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
     return false;
   }
   if (order_type != expected_func->order) {
@@ -531,7 +564,15 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     }
     auto& func = func_side->Cast<duckdb::BoundFunctionExpression>();
     auto expected_current = ExpectedHNSWForFunction(func.function.name);
-    if (!expected_current || func.children.size() < 2) {
+    if (!expected_current) {
+      continue;
+    }
+    const bool is_norm = IsNormFunction(func.function.name);
+    if (is_norm) {
+      if (func.children.size() != 1) {
+        continue;
+      }
+    } else if (func.children.size() < 2) {
       continue;
     }
     if (expected_current->order != duckdb::OrderType::ASCENDING) {
@@ -557,32 +598,50 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       default:
         continue;
     }
-    auto args = ExtractDistanceArgs(func);
-    if (!args.col_arg || !args.const_arg) {
-      continue;
-    }
+    duckdb::Expression* col_expr = nullptr;
     std::vector<float> candidate_vector;
-    if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
-      continue;
+    if (is_norm) {
+      auto* child = func.children[0].get();
+      if (child->expression_class !=
+            duckdb::ExpressionClass::BOUND_COLUMN_REF &&
+          child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+        continue;
+      }
+      col_expr = child;
+    } else {
+      auto args = ExtractDistanceArgs(func);
+      if (!args.col_arg || !args.const_arg) {
+        continue;
+      }
+      if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
+        continue;
+      }
+      col_expr = args.col_arg;
     }
     auto candidate_col_id =
-      ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+      ColumnIdByName(*bind_data.table, col_expr->GetName());
     if (candidate_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
       continue;
     }
     auto hnsw_info = resolved->index->GetColumnHNSWInfo(candidate_col_id);
-    if (!hnsw_info || hnsw_info->metric != expected_current->metric ||
-        static_cast<size_t>(hnsw_info->d) != candidate_vector.size()) {
+    if (!hnsw_info || hnsw_info->metric != expected_current->metric) {
+      continue;
+    }
+    if (is_norm) {
+      candidate_vector.assign(hnsw_info->d, 0.0f);
+    } else if (static_cast<size_t>(hnsw_info->d) != candidate_vector.size()) {
       continue;
     }
 
     radius = candidate_radius;
     // The iresearch index stores L2-squared distances. When the user wrote
-    // l2_distance / `<->` (un-squared L2), the radius must be squared before
-    // being compared against stored values. l2_sqr_distance already speaks
-    // in squared units. Other metrics (L1, cosine, IP) are not squared.
+    // l2_distance / `<->` / l2_norm (un-squared L2), the radius must be
+    // squared before being compared against stored values. l2_sqr_distance
+    // already speaks in squared units. Other metrics (L1, cosine, IP) are
+    // not squared.
     radius_needs_square = func.function.name == connector::kL2Distance ||
-                          func.function.name == connector::kL2DistanceOp;
+                          func.function.name == connector::kL2DistanceOp ||
+                          func.function.name == connector::kL2Norm;
     query_vector = std::move(candidate_vector);
     col_id = candidate_col_id;
     match_idx = i;

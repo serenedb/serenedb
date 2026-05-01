@@ -4644,7 +4644,8 @@ TEST_F(SearchFilterBuilderTest, test_NgramMatches_eq_AtAtTsNgram) {
                columns, true, NgramAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NgramMatches_WithThreshold_eq_AtAtTsNgram) {
+TEST_F(SearchFilterBuilderTest,
+       test_NgramMatches_WithThreshold_eq_AtAtTsNgram) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
@@ -4696,7 +4697,8 @@ TEST_F(SearchFilterBuilderTest, test_TokensMatchAll_eq_AtAtTsAllTsTokenize) {
                columns, true, SegmentationAnalyzerProvider);
 }
 
-TEST_F(SearchFilterBuilderTest, test_TokensMatchAny_List_eq_AtAtTsAnyTsTokenize) {
+TEST_F(SearchFilterBuilderTest,
+       test_TokensMatchAny_List_eq_AtAtTsAnyTsTokenize) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   irs::And expected;
@@ -4751,10 +4753,9 @@ TEST_F(SearchFilterBuilderTest,
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"foo"}));
     opts.terms.emplace(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}));
   }
-  AssertFilter(
-    expected,
-    "SELECT * FROM foo WHERE tokens_match_any(b, 'Foo Bar', 2)", columns,
-    true, SegmentationAnalyzerProvider);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE tokens_match_any(b, 'Foo Bar', 2)",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_PhraseMatches_BoostCastWraps) {

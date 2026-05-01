@@ -34,7 +34,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) wal_rec_t;
 
 query
-SELECT a, b FROM wal_rec_idx WHERE PHRASE(b, 'alpha bravo');
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('alpha bravo');
 ----
 a	b
 1	alpha bravo charlie
@@ -63,7 +63,7 @@ VACUUM (UPDATE_INDEXES) wal_rec_t;
 # Pre-crash row survives
 connection wal_after
 query
-SELECT a, b FROM wal_rec_idx WHERE PHRASE(b, 'alpha');
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('alpha');
 ----
 a	b
 1	alpha bravo charlie
@@ -71,14 +71,14 @@ a	b
 # Rows that were only in WAL are recovered
 connection wal_after
 query
-SELECT a, b FROM wal_rec_idx WHERE PHRASE(b, 'delta echo');
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('delta echo');
 ----
 a	b
 2	delta echo foxtrot
 
 connection wal_after
 query
-SELECT a, b FROM wal_rec_idx WHERE PHRASE(b, 'golf hotel');
+SELECT a, b FROM wal_rec_idx WHERE b @@ ts_phrase('golf hotel');
 ----
 a	b
 3	golf hotel india

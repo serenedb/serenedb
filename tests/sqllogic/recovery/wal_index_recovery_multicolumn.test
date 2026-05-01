@@ -30,7 +30,7 @@ VACUUM (UPDATE_INDEXES) wal_mc_t;
 
 # All 3 columns searchable pre-crash
 query
-SELECT pk FROM wal_mc_idx WHERE PHRASE(name, 'seeded');
+SELECT pk FROM wal_mc_idx WHERE name @@ ts_phrase('seeded');
 ----
 pk
 1
@@ -71,7 +71,7 @@ VACUUM (UPDATE_INDEXES) wal_mc_t;
 # TEXT column recovered
 connection mc_after
 query
-SELECT pk, name FROM wal_mc_idx WHERE PHRASE(name, 'recovered bravo');
+SELECT pk, name FROM wal_mc_idx WHERE name @@ ts_phrase('recovered bravo');
 ----
 pk	name
 2	recovered bravo

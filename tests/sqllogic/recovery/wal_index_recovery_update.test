@@ -34,7 +34,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) wal_upd_t;
 
 query
-SELECT a FROM wal_upd_idx WHERE PHRASE(b, 'old cat');
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
 ----
 a
 1
@@ -66,14 +66,14 @@ VACUUM (UPDATE_INDEXES) wal_upd_t;
 # Old values for updated rows must be gone
 connection upd_after
 query
-SELECT COUNT(*) FROM wal_upd_idx WHERE PHRASE(b, 'old cat');
+SELECT COUNT(*) FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
 ----
 count
 0
 
 connection upd_after
 query
-SELECT COUNT(*) FROM wal_upd_idx WHERE PHRASE(b, 'old dog');
+SELECT COUNT(*) FROM wal_upd_idx WHERE b @@ ts_phrase('old dog');
 ----
 count
 0
@@ -81,14 +81,14 @@ count
 # New values searchable
 connection upd_after
 query
-SELECT a FROM wal_upd_idx WHERE PHRASE(b, 'new tiger');
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('new tiger');
 ----
 a
 1
 
 connection upd_after
 query
-SELECT a FROM wal_upd_idx WHERE PHRASE(b, 'new wolf');
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('new wolf');
 ----
 a
 2
@@ -96,7 +96,7 @@ a
 # Untouched row survived unchanged
 connection upd_after
 query
-SELECT a FROM wal_upd_idx WHERE PHRASE(b, 'old fish');
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old fish');
 ----
 a
 3

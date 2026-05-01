@@ -70,21 +70,21 @@ VACUUM (UPDATE_INDEXES) wal_mi_b;
 # Table A: id=1 deleted, id=2 and id=3 added by recovery
 connection mi_after
 query
-SELECT COUNT(*) FROM wal_mi_a_idx WHERE PHRASE(txt, 'ayylmao one');
+SELECT COUNT(*) FROM wal_mi_a_idx WHERE txt @@ ts_phrase('ayylmao one');
 ----
 count
 0
 
 connection mi_after
 query
-SELECT id FROM wal_mi_a_idx WHERE PHRASE(txt, 'ayylmao two');
+SELECT id FROM wal_mi_a_idx WHERE txt @@ ts_phrase('ayylmao two');
 ----
 id
 2
 
 connection mi_after
 query
-SELECT id FROM wal_mi_a_idx WHERE PHRASE(txt, 'ayylmao three');
+SELECT id FROM wal_mi_a_idx WHERE txt @@ ts_phrase('ayylmao three');
 ----
 id
 3
@@ -92,21 +92,21 @@ id
 # Table B: id=1 kept, id=2 and id=3 added by recovery
 connection mi_after
 query
-SELECT id FROM wal_mi_b_idx WHERE PHRASE(txt, 'beebop one');
+SELECT id FROM wal_mi_b_idx WHERE txt @@ ts_phrase('beebop one');
 ----
 id
 1
 
 connection mi_after
 query
-SELECT id FROM wal_mi_b_idx WHERE PHRASE(txt, 'beebop two');
+SELECT id FROM wal_mi_b_idx WHERE txt @@ ts_phrase('beebop two');
 ----
 id
 2
 
 connection mi_after
 query
-SELECT id FROM wal_mi_b_idx WHERE PHRASE(txt, 'beebop three');
+SELECT id FROM wal_mi_b_idx WHERE txt @@ ts_phrase('beebop three');
 ----
 id
 3

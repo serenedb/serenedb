@@ -74,7 +74,7 @@ VACUUM (UPDATE_INDEXES) wal_mix_t;
 # pk=1 untouched
 connection mix_after
 query
-SELECT a FROM wal_mix_idx WHERE PHRASE(b, 'persistent');
+SELECT a FROM wal_mix_idx WHERE b @@ ts_phrase('persistent');
 ----
 a
 1
@@ -82,7 +82,7 @@ a
 # pk=2 deleted
 connection mix_after
 query
-SELECT COUNT(*) FROM wal_mix_idx WHERE PHRASE(b, 'goner');
+SELECT COUNT(*) FROM wal_mix_idx WHERE b @@ ts_phrase('goner');
 ----
 count
 0
@@ -90,14 +90,14 @@ count
 # pk=3 flip-flopped: old content gone, new content present
 connection mix_after
 query
-SELECT COUNT(*) FROM wal_mix_idx WHERE PHRASE(b, 'flipflop');
+SELECT COUNT(*) FROM wal_mix_idx WHERE b @@ ts_phrase('flipflop');
 ----
 count
 0
 
 connection mix_after
 query
-SELECT a FROM wal_mix_idx WHERE PHRASE(b, 'reborn');
+SELECT a FROM wal_mix_idx WHERE b @@ ts_phrase('reborn');
 ----
 a
 3
@@ -105,7 +105,7 @@ a
 # pk=4 newly inserted
 connection mix_after
 query
-SELECT a FROM wal_mix_idx WHERE PHRASE(b, 'brand');
+SELECT a FROM wal_mix_idx WHERE b @@ ts_phrase('brand');
 ----
 a
 4
@@ -113,7 +113,7 @@ a
 # pk=5 insert+delete in same window → must not exist
 connection mix_after
 query
-SELECT COUNT(*) FROM wal_mix_idx WHERE PHRASE(b, 'ephemeral');
+SELECT COUNT(*) FROM wal_mix_idx WHERE b @@ ts_phrase('ephemeral');
 ----
 count
 0

@@ -29,7 +29,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) wal_nop_t;
 
 query
-SELECT COUNT(*) FROM wal_nop_idx WHERE PHRASE(b, 'caught');
+SELECT COUNT(*) FROM wal_nop_idx WHERE b @@ ts_phrase('caught');
 ----
 count
 2
@@ -53,14 +53,14 @@ count
 
 connection nop_after
 query
-SELECT a FROM wal_nop_idx WHERE PHRASE(b, 'caught up one');
+SELECT a FROM wal_nop_idx WHERE b @@ ts_phrase('caught up one');
 ----
 a
 1
 
 connection nop_after
 query
-SELECT a FROM wal_nop_idx WHERE PHRASE(b, 'caught up two');
+SELECT a FROM wal_nop_idx WHERE b @@ ts_phrase('caught up two');
 ----
 a
 2

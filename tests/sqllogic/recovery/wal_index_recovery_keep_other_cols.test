@@ -37,19 +37,19 @@ VACUUM (UPDATE_INDEXES) ko_t;
 
 # Pre-crash: every token searchable.
 query
-SELECT id FROM ko_t WHERE PHRASE(a, 'apple');
+SELECT id FROM ko_t WHERE a @@ ts_phrase('apple');
 ----
 id
 1
 
 query
-SELECT id FROM ko_t WHERE PHRASE(b, 'banana');
+SELECT id FROM ko_t WHERE b @@ ts_phrase('banana');
 ----
 id
 1
 
 query
-SELECT id FROM ko_t WHERE PHRASE(c, 'grape');
+SELECT id FROM ko_t WHERE c @@ ts_phrase('grape');
 ----
 id
 1
@@ -81,28 +81,28 @@ VACUUM (UPDATE_INDEXES) ko_t;
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(b, 'blueberry');
+SELECT id FROM ko_t WHERE b @@ ts_phrase('blueberry');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT COUNT(*) FROM ko_t WHERE PHRASE(b, 'banana');
+SELECT COUNT(*) FROM ko_t WHERE b @@ ts_phrase('banana');
 ----
 count
 0
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(c, 'watermelon');
+SELECT id FROM ko_t WHERE c @@ ts_phrase('watermelon');
 ----
 id
 2
 
 connection ko_after
 query
-SELECT COUNT(*) FROM ko_t WHERE PHRASE(c, 'zucchini');
+SELECT COUNT(*) FROM ko_t WHERE c @@ ts_phrase('zucchini');
 ----
 count
 0
@@ -113,42 +113,42 @@ count
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(a, 'apple');
+SELECT id FROM ko_t WHERE a @@ ts_phrase('apple');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(a, 'alpha');
+SELECT id FROM ko_t WHERE a @@ ts_phrase('alpha');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(c, 'grape');
+SELECT id FROM ko_t WHERE c @@ ts_phrase('grape');
 ----
 id
 1
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(a, 'delta');
+SELECT id FROM ko_t WHERE a @@ ts_phrase('delta');
 ----
 id
 2
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(b, 'epsilon');
+SELECT id FROM ko_t WHERE b @@ ts_phrase('epsilon');
 ----
 id
 2
 
 connection ko_after
 query
-SELECT id FROM ko_t WHERE PHRASE(b, 'elder');
+SELECT id FROM ko_t WHERE b @@ ts_phrase('elder');
 ----
 id
 2

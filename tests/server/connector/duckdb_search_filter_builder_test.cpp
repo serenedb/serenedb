@@ -5410,4 +5410,326 @@ TEST_F(SearchFilterBuilderTest, test_Predicate_NonColumnFirstArg) {
                columns, false, SegmentationAnalyzerProvider, "@@");
 }
 
+// ===========================================================================
+// DuckDB built-in claims (contains / starts_with / ^@ / ends_with /
+// suffix / regexp_matches / regexp_like). All require a keyword-
+// analyzed column; lower to `col @@ ts_*(...)`. Each asserts the
+// produced filter equals what `col @@ ts_*` would build directly.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// contains
+// ---------------------------------------------------------------------------
+
+TEST_F(SearchFilterBuilderTest, test_Contains_eq_AtAtTsLikeWrapped) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo%");
+  AssertFilter(expected, "SELECT * FROM foo WHERE contains(b, 'foo')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_EscapesSpecialChars) {
+  // '50%' should become LIKE '%50\%%' so the user-literal `%` is
+  // matched, not interpreted as a wildcard.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%50\\%%");
+  AssertFilter(expected, "SELECT * FROM foo WHERE contains(b, '50%')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_AndedWithSelf) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo%");
+  AddLikeFilter(expected, 1, "%bar%");
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE contains(b, 'foo') AND contains(b, 'bar')",
+    columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_OredWithSelf) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddLikeFilter(or_filter, 1, "%foo%");
+  AddLikeFilter(or_filter, 1, "%bar%");
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE contains(b, 'foo') OR contains(b, 'bar')", columns,
+    true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_Negated) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddLikeFilter(not_filter, 1, "%foo%");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT contains(b, 'foo')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_BoostCastWraps) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo%").boost(2.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (contains(b, 'foo'))::boost(2.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_RejectsNonKeywordAnalyzer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE contains(b, 'foo')",
+               columns, false, SegmentationAnalyzerProvider,
+               "requires a keyword-analyzed column");
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_DeclinesListShape) {
+  // contains([1,2,3]::INT[], 2) -- LIST shape; our claim declines.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE contains([1, 2, 3]::INT[], 2)", columns,
+               false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_Contains_DeclinesNonConstant) {
+  // contains(b, b) -- pattern is a column ref, not constant; declines.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE contains(b, b)", columns,
+               false);
+}
+
+// ---------------------------------------------------------------------------
+// starts_with / ^@
+// ---------------------------------------------------------------------------
+
+TEST_F(SearchFilterBuilderTest, test_StartsWith_eq_AtAtTsStartsWith) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE starts_with(b, 'foo')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_StartsWith_OperatorAlias) {
+  // `b ^@ 'foo'` lowers to the same function as `starts_with`.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b ^@ 'foo'", columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_StartsWith_AndedWithSelf) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo");
+  AddPrefixFilter(expected, 1, "ba");
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE starts_with(b, 'foo') AND starts_with(b, 'ba')",
+    columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_StartsWith_Negated) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddPrefixFilter(not_filter, 1, "foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT starts_with(b, 'foo')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_StartsWith_BoostCastWraps) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddPrefixFilter(expected, 1, "foo").boost(3.0f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (starts_with(b, 'foo'))::boost(3.0)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_StartsWith_RejectsNonKeywordAnalyzer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE starts_with(b, 'foo')",
+               columns, false, SegmentationAnalyzerProvider,
+               "requires a keyword-analyzed column");
+}
+
+// ---------------------------------------------------------------------------
+// ends_with / suffix
+// ---------------------------------------------------------------------------
+
+TEST_F(SearchFilterBuilderTest, test_EndsWith_eq_AtAtTsLikeAnchored) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE ends_with(b, 'foo')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_EndsWith_AliasSuffix) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE suffix(b, 'foo')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_EndsWith_EscapesSpecialChars) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%a\\_b");
+  AssertFilter(expected, "SELECT * FROM foo WHERE ends_with(b, 'a_b')", columns,
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_EndsWith_Negated) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddLikeFilter(not_filter, 1, "%foo");
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT ends_with(b, 'foo')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_EndsWith_RejectsNonKeywordAnalyzer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter(irs::And{}, "SELECT * FROM foo WHERE ends_with(b, 'foo')",
+               columns, false, SegmentationAnalyzerProvider,
+               "requires a keyword-analyzed column");
+}
+
+// ---------------------------------------------------------------------------
+// regexp_matches / regexp_like
+// ---------------------------------------------------------------------------
+
+// DuckDB's regex_range_filter optimizer rewrites simple regex patterns
+// (like `^foo`, `bar$`) into starts_with / LIKE before our claim sees
+// them. Use patterns with character classes / quantifiers that survive
+// the optimizer so we test the real ts_regexp claim path.
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_eq_AtAtTsRegexp) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+[0-9]+')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AliasRegexpLike) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE regexp_like(b, '[a-z]+[0-9]+')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_AndedWithSelf) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+");
+  AddRegexpFilter(expected, 1, "[0-9]+");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+') AND "
+               "regexp_matches(b, '[0-9]+')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_Negated) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddRegexpFilter(not_filter, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT regexp_matches(b, '[a-z]+[0-9]+')",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_BoostCastWraps) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddRegexpFilter(expected, 1, "[a-z]+[0-9]+").boost(1.5f);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (regexp_matches(b, "
+               "'[a-z]+[0-9]+'))::boost(1.5)",
+               columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesThreeArg) {
+  // 3-arg form (with options) -- not claimed.
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+', 'i')",
+               columns, false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_RejectsNonKeywordAnalyzer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  AssertFilter(irs::And{},
+               "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+[0-9]+')",
+               columns, false, SegmentationAnalyzerProvider,
+               "requires a keyword-analyzed column");
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting: mixing built-ins with each other and with sugar
+// ---------------------------------------------------------------------------
+
+TEST_F(SearchFilterBuilderTest, test_BuiltinMix_ContainsAndStartsWith) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  AddLikeFilter(expected, 1, "%bar%");
+  AddPrefixFilter(expected, 1, "foo");
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE contains(b, 'bar') AND starts_with(b, 'foo')",
+    columns, true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_BuiltinMix_OrEndsWithRegexp) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddLikeFilter(or_filter, 1, "%bar");
+  AddRegexpFilter(or_filter, 1, "[a-z]+[0-9]+");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE ends_with(b, 'bar') OR "
+               "regexp_matches(b, '[a-z]+[0-9]+')",
+               columns, true);
+}
+
 }  // namespace

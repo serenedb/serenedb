@@ -325,7 +325,8 @@ const duckdb::Expression& UnwrapBoostBoolCoercion(
 Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& expr);
 void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
-                      const duckdb::BoundFunctionExpression& func);
+                      const duckdb::Expression& lhs,
+                      const duckdb::Expression& rhs);
 
 template<typename Filter>
 Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
@@ -728,6 +729,20 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
+// Appends `s` to `out` with `\`, `%`, `_` backslash-escaped so the
+// result is a LIKE pattern that matches `s` literally. Caller reserves
+// up front (worst-case +1 char per input byte). Used by the `contains`
+// / `ends_with` claim paths to splice user input safely into a LIKE
+// pattern without leaking wildcards.
+void AppendEscapedLikePattern(std::string_view s, std::string& out) {
+  for (char c : s) {
+    if (c == '\\' || c == '%' || c == '_') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
+}
+
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
   std::string_view ts_name, duckdb::LogicalType return_type,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> children) {
@@ -825,25 +840,103 @@ Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER, func.function.name,
             " requires a column reference as the first argument"};
   }
-  auto column = func.children[0]->Copy();
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> tail;
-  tail.reserve(func.children.size() - 1);
-  for (size_t i = 1; i < func.children.size(); ++i) {
-    tail.emplace_back(func.children[i]->Copy());
-  }
+  // Tail must be copied because the builder takes ownership (it splices
+  // the args into a synthesised ts_* call).
+  auto tail = func.children | std::views::drop(1) |
+              std::views::transform([](const auto& e) { return e->Copy(); }) |
+              std::ranges::to<std::vector>();
   auto inner = build_inner(std::move(tail));
+  FromTSQueryMatch(filter, ctx, *func.children[0], *inner);
+  return {};
+}
 
-  // Synthesise `column @@ inner` and reuse FromTSQueryMatch -- it
-  // resolves the column, sets up the tokenizer ctx, and dispatches
-  // the inner ts_* via BuildTSQuery's name switch.
-  duckdb::ScalarFunction match_fn(std::string{kTSQueryMatch}, {},
-                                  duckdb::LogicalType::BOOLEAN, nullptr);
-  duckdb::BoundFunctionExpression at_at(
-    duckdb::LogicalType::BOOLEAN, std::move(match_fn),
-    MakeChildren(std::move(column), std::move(inner)), nullptr);
-  at_at.function.name = std::string{kTSQueryMatch};
+using StringBuiltinBuilder =
+  duckdb::unique_ptr<duckdb::BoundFunctionExpression> (*)(
+    std::string_view literal);
 
-  FromTSQueryMatch(filter, ctx, at_at);
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWith(
+  std::string_view literal) {
+  return MakeTSQueryCall(
+    kTSQPrefix, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                  duckdb::Value(std::string{literal}))));
+}
+
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSContainsLike(
+  std::string_view literal) {
+  std::string pattern;
+  pattern.reserve(literal.size() * 2 + 2);
+  pattern.push_back('%');
+  AppendEscapedLikePattern(literal, pattern);
+  pattern.push_back('%');
+  return MakeTSQueryCall(
+    kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value(std::move(pattern)))));
+}
+
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSEndsWithLike(
+  std::string_view literal) {
+  std::string pattern;
+  pattern.reserve(literal.size() * 2 + 1);
+  pattern.push_back('%');
+  AppendEscapedLikePattern(literal, pattern);
+  return MakeTSQueryCall(
+    kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value(std::move(pattern)))));
+}
+
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
+  std::string_view literal) {
+  return MakeTSQueryCall(
+    kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                  duckdb::Value(std::string{literal}))));
+}
+
+// `<builtin>(col, literal)` -> `col @@ <inner>(literal)` for keyword-
+// analyzed columns. Decline (no claim) when the call shape doesn't
+// match: wrong arity, non-VARCHAR column type, non-column LHS, non-
+// constant or NULL pattern. Throw with a helpful hint when the column
+// is indexed but uses a non-keyword analyzer (semantics would diverge
+// from DuckDB's whole-string predicate).
+Result RewriteAsTSQueryMatch(irs::BooleanFilter& filter,
+                             const FilterContext& ctx,
+                             const duckdb::BoundFunctionExpression& func,
+                             StringBuiltinBuilder build_inner,
+                             std::string_view ts_form_hint) {
+  if (func.children.size() != 2) {
+    return {ERROR_NOT_IMPLEMENTED, func.function.name,
+            ": expected 2 args, got ", func.children.size()};
+  }
+  if (func.children[0]->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    return {ERROR_NOT_IMPLEMENTED, func.function.name,
+            ": VARCHAR overload only -- declined for ",
+            func.children[0]->return_type.ToString()};
+  }
+  const auto* column_ref = TryGetColumnRef(*func.children[0]);
+  if (!column_ref) {
+    return {ERROR_NOT_IMPLEMENTED, func.function.name,
+            ": first arg is not a column reference"};
+  }
+  const auto* literal_val = TryGetConstant(*func.children[1]);
+  if (!literal_val || literal_val->IsNull() ||
+      literal_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return {ERROR_NOT_IMPLEMENTED, func.function.name,
+            ": pattern must be a non-NULL VARCHAR constant"};
+  }
+  const auto* column_info = FindColumnInfo(ctx, *column_ref);
+  if (!column_info) {
+    return {ERROR_BAD_PARAMETER, "Column is not indexed"};
+  }
+  if (column_info->tokenizer.analyzer->type() !=
+      irs::Type<irs::StringTokenizer>::id()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(func.function.name,
+              " requires a keyword-analyzed column on inverted-indexed "
+              "inputs"),
+      ERR_HINT("Use `", ts_form_hint, "` for non-keyword analyzers."));
+  }
+  auto inner = build_inner(literal_val->GetValue<std::string>());
+  FromTSQueryMatch(filter, ctx, *func.children[0], *inner);
   return {};
 }
 
@@ -856,7 +949,8 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
     // the runtime stub and surface the generic "TSQUERY expression
     // evaluated outside @@" error -- losing the specific cause. Throw
     // at this boundary so users see the actual reason + a hint.
-    FromTSQueryMatch(filter, ctx, func);
+    SDB_ASSERT(func.children.size() == 2);
+    FromTSQueryMatch(filter, ctx, *func.children[0], *func.children[1]);
     return {};
   }
 
@@ -895,8 +989,21 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
                     /*generic_version=*/true, escape_char);
   }
 
-  if (name == "prefix") {
-    return FromFuncPrefix(filter, ctx, func);
+  if (name == "contains") {
+    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSContainsLike,
+                                 "col @@ ts_like('%pattern%')");
+  }
+  if (name == "^@" || name == "starts_with" || name == "prefix") {
+    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSStartsWith,
+                                 "col @@ ts_starts_with('p')");
+  }
+  if (name == "suffix" || name == "ends_with") {
+    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSEndsWithLike,
+                                 "col @@ ts_like('%suffix')");
+  }
+  if (name == "regexp_matches" || name == "regexp_like") {
+    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSRegexp,
+                                 "col @@ ts_regexp('re')");
   }
 
   if (auto build = kPredicateBuilders.TryFindByFirst(name)) {
@@ -1111,13 +1218,16 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   return true;
 }
 
+// Resolves an `@@` match against its two operand expressions. Called
+// directly with the bound `@@` function's two children, and from the
+// predicate-sugar / built-in claim paths with one column expression
+// and a computed inner. `@@` is commutative -- either side may be
+// the column.
 void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
-                      const duckdb::BoundFunctionExpression& func) {
-  SDB_ASSERT(func.children.size() == 2);
-  // @@ is commutative: either side can be the column. Try LHS first,
-  // then the cast-stripped RHS. Matches PG `doc @@ q` / `q @@ doc`.
-  const auto* left_col = TryGetColumnRef(UnwrapTSQueryCast(*func.children[0]));
-  const auto* right_col = TryGetColumnRef(UnwrapTSQueryCast(*func.children[1]));
+                      const duckdb::Expression& lhs,
+                      const duckdb::Expression& rhs) {
+  const auto* left_col = TryGetColumnRef(UnwrapTSQueryCast(lhs));
+  const auto* right_col = TryGetColumnRef(UnwrapTSQueryCast(rhs));
   const duckdb::BoundColumnRefExpression* column = nullptr;
   const duckdb::Expression* expr = nullptr;
   if (left_col && right_col) {
@@ -1131,13 +1241,13 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                  "(ts_phrase, ts_like, ...)."));
     }
     column = left_info ? left_col : right_col;
-    expr = left_info ? func.children[1].get() : func.children[0].get();
+    expr = left_info ? &rhs : &lhs;
   } else if (left_col) {
     column = left_col;
-    expr = func.children[1].get();
+    expr = &rhs;
   } else if (right_col) {
     column = right_col;
-    expr = func.children[0].get();
+    expr = &lhs;
   } else {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("@@ requires a column reference on one side"),

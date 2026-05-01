@@ -146,8 +146,6 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
 const SearchColumnInfo* FindColumnInfo(
   const FilterContext& ctx, const duckdb::BoundColumnRefExpression& column_ref);
 
-Result FromFuncPrefix(irs::BooleanFilter& filter, const FilterContext& ctx,
-                      const duckdb::BoundFunctionExpression& func);
 
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).

@@ -2296,6 +2296,145 @@ a
 # 4
 
 # ----------------------------------------------------------------------
+# DuckDB built-in claims (contains / starts_with / ^@ / ends_with /
+# suffix / regexp_matches / regexp_like) -- require a keyword-
+# analyzed column. Each pair below is a row-equivalence check vs the
+# canonical `col @@ ts_*` form on a keyword-only fixture.
+# ----------------------------------------------------------------------
+
+statement ok
+CREATE TABLE tsq_kw (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX tsq_kw_idx ON tsq_kw USING inverted(a, b);
+
+statement ok
+INSERT INTO tsq_kw VALUES (1, 'foo'), (2, 'foobar'), (3, 'bar'), (4, ''), (5, '50%'), (6, 'abc123');
+
+statement ok
+VACUUM (UPDATE_INDEXES) tsq_kw;
+
+# contains
+query
+SELECT a FROM tsq_kw_idx WHERE contains(b, 'oo') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_kw_idx WHERE b @@ ts_like('%oo%') ORDER BY a;
+----
+a
+1
+2
+
+# contains -- literal '%' must not behave as a wildcard.
+query
+SELECT a FROM tsq_kw_idx WHERE contains(b, '50%') ORDER BY a;
+----
+a
+5
+
+# starts_with
+query
+SELECT a FROM tsq_kw_idx WHERE starts_with(b, 'foo') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_kw_idx WHERE b @@ ts_starts_with('foo') ORDER BY a;
+----
+a
+1
+2
+
+# ^@ operator (alias for starts_with).
+query
+SELECT a FROM tsq_kw_idx WHERE b ^@ 'foo' ORDER BY a;
+----
+a
+1
+2
+
+# ends_with
+query
+SELECT a FROM tsq_kw_idx WHERE ends_with(b, 'bar') ORDER BY a;
+----
+a
+2
+3
+
+query
+SELECT a FROM tsq_kw_idx WHERE b @@ ts_like('%bar') ORDER BY a;
+----
+a
+2
+3
+
+# suffix (alias for ends_with).
+query
+SELECT a FROM tsq_kw_idx WHERE suffix(b, 'bar') ORDER BY a;
+----
+a
+2
+3
+
+# regexp_matches -- use a pattern complex enough that DuckDB's
+# regex_range_filter optimizer doesn't pre-rewrite it to
+# starts_with / LIKE.
+query
+SELECT a FROM tsq_kw_idx WHERE regexp_matches(b, '[a-z]+[0-9]+') ORDER BY a;
+----
+a
+6
+
+query
+SELECT a FROM tsq_kw_idx WHERE b @@ ts_regexp('[a-z]+[0-9]+') ORDER BY a;
+----
+a
+6
+
+# regexp_like (alias for regexp_matches).
+query
+SELECT a FROM tsq_kw_idx WHERE regexp_like(b, '[a-z]+[0-9]+') ORDER BY a;
+----
+a
+6
+
+# Non-keyword analyzer rejected: the same call against the segmenting
+# `tsq_idx.b` errors with the documented hint.
+statement error
+SELECT a FROM tsq_idx WHERE contains(b, 'foo');
+
+statement error
+SELECT a FROM tsq_idx WHERE starts_with(b, 'foo');
+
+statement error
+SELECT a FROM tsq_idx WHERE ends_with(b, 'foo');
+
+statement error
+SELECT a FROM tsq_idx WHERE regexp_matches(b, '[a-z]+[0-9]+');
+
+# Mixing built-ins.
+query
+SELECT a FROM tsq_kw_idx WHERE contains(b, 'oo') AND starts_with(b, 'foo') ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM tsq_kw_idx WHERE ends_with(b, 'bar') OR regexp_matches(b, '[a-z]+[0-9]+') ORDER BY a;
+----
+a
+2
+3
+6
+
+# ----------------------------------------------------------------------
 # Non-FTS expressions unchanged.
 # ----------------------------------------------------------------------
 

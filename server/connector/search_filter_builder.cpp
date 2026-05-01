@@ -1003,9 +1003,6 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
   return MakeTSQueryCall(ts_name, MakeTSQueryType(), std::move(children));
 }
 
-// ts_tokenize taking a list returns LIST(TSQUERY); the array-form
-// dispatch (FromTokenizeListInAnyAllOf) keys on this via
-// IsTokenizeListCall.
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryTokenizeList(
   duckdb::unique_ptr<duckdb::Expression> list) {
   return MakeTSQueryCall(kTSQTokenize,
@@ -1013,10 +1010,10 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryTokenizeList(
                          MakeChildren(std::move(list)));
 }
 
-template<const std::string_view& kTsName>
+template<const std::string_view& Name>
 duckdb::unique_ptr<duckdb::Expression> BuildPassthrough(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
-  return MakeTSQueryCall(kTsName, std::move(args));
+  return MakeTSQueryCall(Name, std::move(args));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAllTokens(
@@ -1073,12 +1070,11 @@ using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
 
 constexpr containers::TrivialBiMap kPredicateBuilders = [](auto selector) {
   return selector()
-    .Case(kPhraseMatches, PredicateInnerBuilder{&BuildPassthrough<kTSQPhrase>})
-    .Case(kNgramMatches, PredicateInnerBuilder{&BuildPassthrough<kTSQNgram>})
-    .Case(kLevenshteinMatches,
-          PredicateInnerBuilder{&BuildPassthrough<kTSQLevenshtein>})
-    .Case(kHasAllTokens, PredicateInnerBuilder{&BuildAllTokens})
-    .Case(kHasAnyToken, PredicateInnerBuilder{&BuildAnyToken});
+    .Case(kPhraseMatches, BuildPassthrough<kTSQPhrase>)
+    .Case(kNgramMatches, BuildPassthrough<kTSQNgram>)
+    .Case(kLevenshteinMatches, BuildPassthrough<kTSQLevenshtein>)
+    .Case(kHasAllTokens, BuildAllTokens)
+    .Case(kHasAnyToken, BuildAnyToken);
 };
 
 Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,

@@ -1,0 +1,137 @@
+control substitution on
+
+# CREATE INDEX (inverted) inside the WAL recovery range.
+#
+# The whole CREATE INDEX lives between the moment we block search commits
+# and the crash. Rocksdb keeps advancing past CREATE INDEX (the catalog
+# write itself, plus pre/post-create table writes), but the search side
+# never gets to commit. On restart the catalog has the new index — recovery
+# must build its iresearch state from the WAL delta starting at the index's
+# persisted recovery tick, ending up with every row that's currently in the
+# table.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ci_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ci_t(id INTEGER PRIMARY KEY, body TEXT);
+
+# Pre-fault rows: live in rocksdb, no index yet.
+statement ok
+INSERT INTO ci_t VALUES
+  (1, 'seed alpha bravo'),
+  (2, 'seed charlie delta');
+
+# Block search commits before any inverted index exists.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Post-fault, pre-create rows: still no index, just table writes.
+statement ok
+INSERT INTO ci_t VALUES
+  (3, 'post fault echo'),
+  (4, 'post fault foxtrot');
+
+# Create the index DURING the blocked window.
+statement ok
+CREATE INDEX ci_idx ON ci_t USING inverted(id, body ci_dict);
+
+# Post-create rows: now the search sink writes for these too, but commits
+# are still blocked.
+statement ok
+INSERT INTO ci_t VALUES (5, 'post create golf');
+
+statement ok
+UPDATE ci_t SET body = 'post create CHANGED' WHERE id = 2;
+
+statement ok
+DELETE FROM ci_t WHERE id = 3;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ci_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ci_t;
+
+# Final state: pks 1, 2, 4, 5 (3 deleted), pk=2 body changed.
+connection ci_after
+query
+SELECT COUNT(*) FROM ci_t;
+----
+count
+4
+
+connection ci_after
+query
+SELECT COUNT(*) FROM ci_idx;
+----
+count
+4
+
+# Pre-fault row searchable.
+connection ci_after
+query
+SELECT id FROM ci_t WHERE body @@ ts_phrase('seed alpha');
+----
+id
+1
+
+# Pre-fault row whose body got updated post-create — old body gone.
+connection ci_after
+query
+SELECT COUNT(*) FROM ci_t WHERE body @@ ts_phrase('seed charlie');
+----
+count
+0
+
+connection ci_after
+query
+SELECT id FROM ci_t WHERE body @@ ts_phrase('post create CHANGED');
+----
+id
+2
+
+# Post-fault, pre-create row.
+connection ci_after
+query
+SELECT id FROM ci_t WHERE body @@ ts_phrase('post fault foxtrot');
+----
+id
+4
+
+# Deleted pk=3 truly gone from the index.
+connection ci_after
+query
+SELECT COUNT(*) FROM ci_t WHERE body @@ ts_phrase('post fault echo');
+----
+count
+0
+
+connection ci_after
+query
+SELECT COUNT(*) FROM ci_t WHERE id = 3;
+----
+count
+0
+
+# Post-create row.
+connection ci_after
+query
+SELECT id FROM ci_t WHERE body @@ ts_phrase('post create golf');
+----
+id
+5

@@ -1,0 +1,271 @@
+control substitution on
+
+# Mixed DDL inside the WAL recovery range, plus a pre-fault DROP for
+# contrast.
+#
+#   md_pre   : index dropped BEFORE the fault. The WAL replay window starts
+#              at min(persisted_recovery_tick) of the survivors, so md_pre's
+#              entries (if any) fall outside; catalog has no shard. Sanity:
+#              recovery must not trip over its absence.
+#
+#   md_alpha : index lives across the whole window, gets writes pre- and
+#              post-fault. Survives the crash, must be fully recovered.
+#
+#   md_beta  : DROP INDEX inside the recovery range (post-fault). Catalog
+#              lacks the index on restart; its earlier writes are in the
+#              WAL window but the snapshot has no shard for them.
+#
+#   md_gamma : table created post-fault, with index also created post-fault.
+#              All of its rows live entirely inside the WAL window. Recovery
+#              must rebuild it from scratch.
+#
+#   md_delta : table created post-fault, then DROPPED post-fault. Catalog
+#              has nothing on restart. No fan-out should happen for it.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY md_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# md_pre: dropped before the fault is set.
+statement ok
+CREATE TABLE md_pre(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO md_pre VALUES (1, 'pre seed one'), (2, 'pre seed two');
+
+statement ok
+CREATE INDEX md_pre_idx ON md_pre USING inverted(id, body md_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) md_pre;
+
+# md_alpha and md_beta: built and committed before the fault.
+statement ok
+CREATE TABLE md_alpha(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE md_beta(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO md_alpha VALUES
+  (1, 'alpha seed one'),
+  (2, 'alpha seed two');
+
+statement ok
+INSERT INTO md_beta VALUES
+  (1, 'beta seed one'),
+  (2, 'beta seed two');
+
+statement ok
+CREATE INDEX md_alpha_idx ON md_alpha USING inverted(id, body md_dict);
+
+statement ok
+CREATE INDEX md_beta_idx ON md_beta USING inverted(id, body md_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) md_alpha;
+
+statement ok
+VACUUM (UPDATE_INDEXES) md_beta;
+
+# Drop md_pre BEFORE the fault — its entries (if any later) won't be in
+# the recovery window, and the catalog won't have the index either way.
+statement ok
+DROP TABLE md_pre;
+
+# === Block search commits — recovery range begins from here. ===
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# md_alpha: writes that must survive recovery.
+statement ok
+INSERT INTO md_alpha VALUES (3, 'alpha post fault three');
+
+statement ok
+UPDATE md_alpha SET body = 'alpha CHANGED two' WHERE id = 2;
+
+# md_beta: writes that should NOT be in the index after recovery (we'll
+# drop the index inside the window).
+statement ok
+INSERT INTO md_beta VALUES (3, 'beta post fault three');
+
+statement ok
+DROP INDEX md_beta_idx;
+
+# More writes on md_beta after the index is gone — these only touch the
+# table, no fan-out.
+statement ok
+INSERT INTO md_beta VALUES (4, 'beta post drop four');
+
+# md_gamma: brand new table + index inside the window.
+statement ok
+CREATE TABLE md_gamma(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO md_gamma VALUES
+  (1, 'gamma born one'),
+  (2, 'gamma born two');
+
+statement ok
+CREATE INDEX md_gamma_idx ON md_gamma USING inverted(id, body md_dict);
+
+statement ok
+INSERT INTO md_gamma VALUES (3, 'gamma after create three');
+
+# md_delta: created and dropped entirely inside the window.
+statement ok
+CREATE TABLE md_delta(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX md_delta_idx ON md_delta USING inverted(id, body md_dict);
+
+statement ok
+INSERT INTO md_delta VALUES (1, 'delta ephemeral');
+
+statement ok
+DROP TABLE md_delta;
+
+# More writes on md_alpha after the other DDL settles.
+statement ok
+INSERT INTO md_alpha VALUES (4, 'alpha tail four');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection md_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) md_alpha;
+
+connection md_after
+statement ok
+VACUUM (UPDATE_INDEXES) md_gamma;
+
+# md_pre: nothing left.
+connection md_after
+query
+SELECT COUNT(*) FROM pg_class
+WHERE relname IN ('md_pre', 'md_pre_idx');
+----
+count
+0
+
+# md_beta: table is here, index is gone.
+connection md_after
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'md_beta_idx';
+----
+count
+0
+
+connection md_after
+query
+SELECT COUNT(*) FROM md_beta;
+----
+count
+4
+
+# md_delta: gone.
+connection md_after
+query
+SELECT COUNT(*) FROM pg_class
+WHERE relname IN ('md_delta', 'md_delta_idx');
+----
+count
+0
+
+# md_alpha: pks 1, 2, 3, 4 with id=2 body changed.
+connection md_after
+query
+SELECT COUNT(*) FROM md_alpha;
+----
+count
+4
+
+connection md_after
+query
+SELECT COUNT(*) FROM md_alpha_idx;
+----
+count
+4
+
+connection md_after
+query
+SELECT id FROM md_alpha WHERE body @@ ts_phrase('CHANGED');
+----
+id
+2
+
+connection md_after
+query
+SELECT COUNT(*) FROM md_alpha WHERE body @@ ts_phrase('alpha seed two');
+----
+count
+0
+
+connection md_after
+query
+SELECT id FROM md_alpha WHERE body @@ ts_phrase('post fault three');
+----
+id
+3
+
+connection md_after
+query
+SELECT id FROM md_alpha WHERE body @@ ts_phrase('alpha tail four');
+----
+id
+4
+
+# md_gamma: born inside the window with 3 rows.
+connection md_after
+query
+SELECT COUNT(*) FROM md_gamma;
+----
+count
+3
+
+connection md_after
+query
+SELECT COUNT(*) FROM md_gamma_idx;
+----
+count
+3
+
+connection md_after
+query
+SELECT id FROM md_gamma WHERE body @@ ts_phrase('gamma born one');
+----
+id
+1
+
+connection md_after
+query
+SELECT id FROM md_gamma WHERE body @@ ts_phrase('after create three');
+----
+id
+3
+
+# Sanity: dropping md_alpha and md_gamma post-recovery still works.
+connection md_after
+statement ok
+DROP TABLE md_alpha;
+
+connection md_after
+statement ok
+DROP TABLE md_gamma;
+
+connection md_after
+statement ok
+DROP TABLE md_beta;

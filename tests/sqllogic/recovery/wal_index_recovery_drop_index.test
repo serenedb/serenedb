@@ -1,0 +1,116 @@
+control substitution on
+
+# DROP INDEX inside the WAL recovery range.
+#
+# Setup: create an inverted index, vacuum it, then block search commits and
+# write rows that the search side never sees. Drop the index (still in the
+# recovery range, since rocksdb keeps advancing) and crash. On restart the
+# catalog no longer has the index, so RunWalRecovery must not try to replay
+# anything for it — and the table data must still come back via the regular
+# rocksdb WAL path.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY di_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE di_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO di_t VALUES (1, 'seed alpha bravo'), (2, 'seed charlie delta');
+
+statement ok
+CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) di_t;
+
+# Sanity: the seed row is searchable before we touch anything.
+query
+SELECT id FROM di_idx WHERE body @@ ts_phrase('alpha bravo');
+----
+id
+1
+
+# Block search commits — rocksdb keeps advancing, iresearch falls behind.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# These rows enter the WAL but never reach iresearch.
+statement ok
+INSERT INTO di_t VALUES (3, 'after fault echo'), (4, 'after fault foxtrot');
+
+# Drop the index while the search side is still behind. After this point the
+# catalog has no inverted index for this table, but the WAL has both pre-drop
+# index writes and post-drop table writes.
+statement ok
+DROP INDEX di_idx;
+
+# Writes after the drop — these only touch the table, no index.
+statement ok
+INSERT INTO di_t VALUES (5, 'post drop golf');
+
+statement ok
+UPDATE di_t SET body = 'post drop hotel' WHERE id = 1;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection di_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Index is gone from the catalog.
+connection di_after
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'di_idx';
+----
+count
+0
+
+# Table data still recovered via rocksdb WAL replay.
+connection di_after
+query
+SELECT id, body FROM di_t ORDER BY id;
+----
+id	body
+1	post drop hotel
+2	seed charlie delta
+3	after fault echo
+4	after fault foxtrot
+5	post drop golf
+
+# Recreating the index on the same table works post-recovery.
+connection di_after
+statement ok
+CREATE INDEX di_idx ON di_t USING inverted(id, body di_dict);
+
+connection di_after
+statement ok
+VACUUM (UPDATE_INDEXES) di_t;
+
+connection di_after
+query
+SELECT id FROM di_idx WHERE body @@ ts_phrase('post drop hotel');
+----
+id
+1
+
+connection di_after
+query
+SELECT id FROM di_idx WHERE body @@ ts_phrase('after fault echo');
+----
+id
+3

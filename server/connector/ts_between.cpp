@@ -276,8 +276,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
         irs::Type<irs::StringTokenizer>::id()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(
-          "ts_between on VARCHAR field requires keyword-analyzed column"),
+        ERR_MSG("ts_between on VARCHAR field requires keyword-analyzed column"),
         ERR_HINT("Recreate the inverted index with the keyword tokenizer "
                  "for this column, or use ts_lt/ts_le/ts_gt/ts_ge for "
                  "analyzed-text bounds."));

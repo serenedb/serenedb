@@ -4113,8 +4113,8 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizeIdentity) {
   AddTermFilter<std::string_view>(expected, 1, std::string_view{"quick fox"});
   AssertFilter(
     expected,
-    "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox', 'keyword')",
-    columns, true, SegmentationAnalyzerProvider);
+    "SELECT * FROM foo WHERE b @@ ts_tokenize('quick fox', 'keyword')", columns,
+    true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_TokenizerCastIdentity) {

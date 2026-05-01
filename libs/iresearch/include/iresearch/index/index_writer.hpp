@@ -29,7 +29,11 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <semaphore>
 #include <string_view>
+#include <yaclib/async/future.hpp>
+#include <yaclib/exe/executor.hpp>
+#include <yaclib/exe/submit.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
@@ -48,6 +52,7 @@
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
+#include "yaclib/async/contract.hpp"
 
 namespace irs {
 
@@ -166,6 +171,9 @@ struct IndexWriterOptions : public SegmentOptions {
   // corruption from multiple index_writers
   bool lock_repository{true};
 
+  yaclib::IExecutorPtr executor;
+  size_t max_in_flight_flushes{std::thread::hardware_concurrency()};
+
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
 
@@ -187,6 +195,8 @@ class IndexWriter : private util::Noncopyable {
 
   using FlushContextPtr =
     std::unique_ptr<FlushContext, void (*)(FlushContext*)>;
+
+  struct AsyncFlush;
 
   // Disallow using public constructor
   struct ConstructToken {
@@ -241,55 +251,56 @@ class IndexWriter : private util::Noncopyable {
 
     QueryContext() = default;
 
-    static constexpr uintptr_t kDone = 0;
-    static constexpr uintptr_t kReplace = std::numeric_limits<uintptr_t>::max();
-
-    QueryContext(FilterPtr filter, uint64_t tick, uintptr_t data)
-      : filter{std::move(filter)}, tick{tick}, _data{data} {
+    QueryContext(FilterPtr filter, uint64_t tick)
+      : filter{std::move(filter)}, tick{tick} {
       SDB_ASSERT(this->filter != nullptr);
     }
-    QueryContext(const irs::Filter& filter, uint64_t tick, size_t data)
-      : QueryContext{{FilterPtr{}, &filter}, tick, data} {}
-    QueryContext(irs::Filter::ptr&& filter, uint64_t tick, size_t data)
-      : QueryContext{FilterPtr{std::move(filter)}, tick, data} {}
+    QueryContext(const irs::Filter& filter, uint64_t tick)
+      : QueryContext{{FilterPtr{}, &filter}, tick} {}
+    QueryContext(irs::Filter::ptr&& filter, uint64_t tick)
+      : QueryContext{FilterPtr{std::move(filter)}, tick} {}
 
     // keep a handle to the filter for the case when this object has ownership
     FilterPtr filter;
     uint64_t tick;
-
-    bool IsDone() const noexcept { return _data == kDone; }
-    void ForceDone() noexcept { _data = kDone; }
-    void Done() noexcept {
-      SDB_ASSERT(!IsDone());
-      Done(this);
-    }
-    void DependsOn(QueryContext& query) noexcept {
-      SDB_ASSERT(!IsDone());
-      if (query._data == kDone) {
-        Done(this);
-      } else {
-        SDB_ASSERT(query._data == kReplace);
-        query._data = reinterpret_cast<uintptr_t>(this);
-      }
-    }
-
-   private:
-    uintptr_t _data{kDone};
-
-    static void Done(QueryContext* query) noexcept {
-      while (true) {
-        auto next = std::exchange(query->_data, kDone);
-        SDB_ASSERT(next != kDone);
-        if (next == kReplace) {
-          return;
-        }
-        query = reinterpret_cast<QueryContext*>(next);
-        SDB_ASSERT(query != nullptr);
-      }
-    }
   };
   static_assert(std::is_nothrow_move_constructible_v<QueryContext>);
 
+  enum class DeletePacketKind : uint8_t {
+    KRemove,
+    KReplace,
+  };
+
+  struct DeletePacket {
+    uint64_t id{0};
+    uint64_t tick{writer_limits::kMinTick};
+    DeletePacketKind kind{DeletePacketKind::KRemove};
+    QueryContext::FilterPtr filter;
+  };
+
+ private:
+  struct PendingDeletePacketRef {
+    size_t query_index{writer_limits::kInvalidOffset};
+    DeletePacketKind kind{DeletePacketKind::KRemove};
+  };
+
+  struct DeletePacketQueue {
+    void AppendBatch(std::vector<DeletePacket>&& batch);
+    size_t Size() const noexcept;
+    std::vector<DeletePacket> Snapshot() const;
+    void PruneUpTo(uint64_t barrier_delete_packet_id);
+
+   private:
+    mutable absl::Mutex _mutex;
+    std::vector<DeletePacket> _packets;
+    uint64_t _next_id{0};
+  };
+
+  void EnqueueDeletePackets(const SegmentContext& segment,
+                            std::span<const PendingDeletePacketRef> refs);
+  DeletePacketQueue _delete_packets;
+
+ public:
   // A context allowing index modification operations.
   // The object is non-thread-safe, each thread should use its own
   // separate instance.
@@ -405,8 +416,13 @@ class IndexWriter : private util::Noncopyable {
     template<bool TickBound = true, typename Filter>
     void Remove(Filter&& filter) {
       UpdateSegment(/*disable_flush=*/true);
-      _active.Segment()->queries.emplace_back(std::forward<Filter>(filter),
-                                              _queries, QueryContext::kDone);
+      auto& segment = *_active.Segment();
+      segment.queries.emplace_back(std::forward<Filter>(filter), _queries);
+      _pending_delete_packets.emplace_back(PendingDeletePacketRef{
+        .query_index = segment.queries.size() - 1,
+        .kind = DeletePacketKind::KRemove,
+      });
+
       if constexpr (TickBound) {
         ++_queries;
       }
@@ -424,8 +440,12 @@ class IndexWriter : private util::Noncopyable {
     Document Replace(Filter&& filter, bool disable_flush = false) {
       UpdateSegment(disable_flush);
       auto& segment = *_active.Segment();
-      auto& query = segment.queries.emplace_back(
-        std::forward<Filter>(filter), _queries, QueryContext::kReplace);
+      auto& query =
+        segment.queries.emplace_back(std::forward<Filter>(filter), _queries);
+      _pending_delete_packets.emplace_back(PendingDeletePacketRef{
+        .query_index = segment.queries.size() - 1,
+        .kind = DeletePacketKind::KReplace,
+      });
       segment.has_replace = true;
       return {segment,
               SegmentWriter::DocContext{++_queries, segment.queries.size() - 1},
@@ -468,7 +488,7 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return false;
       }
-      return _writer->FlushRequired(*segment->writer);
+      return _writer->FlushRequired(*segment->active.writer);
     }
 
     bool Valid() const noexcept { return _writer != nullptr; }
@@ -487,6 +507,7 @@ class IndexWriter : private util::Noncopyable {
     ActiveSegmentContext _active;
     // We can use active_.Segment()->queries_.size() for same purpose
     uint64_t _queries{0};
+    std::vector<PendingDeletePacketRef> _pending_delete_packets;
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
   static_assert(std::is_nothrow_move_assignable_v<Transaction>);
@@ -614,7 +635,8 @@ class IndexWriter : private util::Noncopyable {
               const ColumnInfoProvider& column_info,
               const FeatureInfoProvider& feature_info,
               const PayloadProvider& meta_payload_provider,
-              std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
+              std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+              yaclib::IExecutorPtr executor, size_t remaining_flushes_slots);
 
  private:
   struct ConsolidationContext : util::Noncopyable {
@@ -668,11 +690,13 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, size_t docs_begin) noexcept
+                            DocsMask&& docs_mask, size_t docs_begin,
+                            FileRefs&& refs) noexcept
       : IndexSegment{std::move(segment)},
         old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
         document_mask{{this->docs_mask.set.get_allocator()}},
+        refs{std::move(refs)},
         _docs_begin{docs_begin},
         _docs_end{_docs_begin + meta.docs_count} {}
 
@@ -691,7 +715,9 @@ class IndexWriter : private util::Noncopyable {
     // Flushed segment removals
     DocsMask docs_mask;
     DocumentMask document_mask;
+    FileRefs refs;
     bool was_flush = false;
+    uint64_t applied_delete_packet_id{0};
 
    private:
     // starting doc_id that should be added to docs_mask
@@ -706,11 +732,44 @@ class IndexWriter : private util::Noncopyable {
     using segment_meta_generator_t = std::function<SegmentMeta()>;
     using ptr = std::unique_ptr<SegmentContext>;
 
+    struct ActiveGeneration {
+      // ref tracking for SegmentWriter to allow for easy ref removal on
+      // SegmentWriter reset
+      RefTrackingDirectory::ptr dir;
+
+      std::unique_ptr<SegmentWriter> writer;
+      // the SegmentMeta this writer was initialized with
+      IndexSegment writer_meta;
+
+      size_t committed_buffered_docs{0};
+
+      ActiveGeneration(Directory& dir, const SegmentWriterOptions& options)
+        : dir{std::make_unique<RefTrackingDirectory>(dir)},
+          writer{SegmentWriter::make(*this->dir, options)} {}
+    };
+
+    using SealedGeneration = ActiveGeneration;
+
+    struct FlushOutput {
+      DocMap old2new;
+      DocsMask docs_mask;
+    };
+
+    struct PendingFlush {
+      SealedGeneration sealed;
+      yaclib::Future<FlushOutput> output;
+
+      PendingFlush(SealedGeneration&& sealed,
+                   yaclib::Future<FlushOutput>&& future)
+        : sealed{std::move(sealed)}, output(std::move(future)) {}
+    };
+
+    ActiveGeneration active;
+    SegmentWriterOptions options;
+    std::optional<PendingFlush> pending_flush;
+
     // for use with index_writer::buffered_docs(), asynchronous call
     std::atomic_size_t buffered_docs{0};
-    // ref tracking for SegmentWriter to allow for easy ref removal on
-    // SegmentWriter reset
-    RefTrackingDirectory dir;
 
     // sequential list of pending modification
     ManagedVector<QueryContext> queries;
@@ -728,15 +787,12 @@ class IndexWriter : private util::Noncopyable {
     size_t flushed_queries{0};
     // Transaction::Commit was not called for these:
     size_t committed_queries{0};
-    size_t committed_buffered_docs{0};
+
     size_t committed_flushed_docs{0};
 
     uint64_t first_tick{writer_limits::kMaxTick};
     uint64_t last_tick{writer_limits::kMinTick};
 
-    std::unique_ptr<SegmentWriter> writer;
-    // the SegmentMeta this writer was initialized with
-    IndexSegment writer_meta;
     // TODO(mbkkt) Better to be per FlushedSegment
     bool has_replace{false};
 
@@ -747,9 +803,26 @@ class IndexWriter : private util::Noncopyable {
     SegmentContext(Directory& dir, segment_meta_generator_t&& meta_generator,
                    const SegmentWriterOptions& options);
 
+    [[nodiscard]] ActiveGeneration TakeActiveGeneration() {
+      ActiveGeneration result =
+        std::exchange(active, ActiveGeneration{**active.dir, options});
+      return result;
+    }
+
     void Rollback() noexcept;
 
     void Commit(uint64_t queries, uint64_t last_tick);
+
+    [[nodiscard]] FlushOutput RunPhysicalFlush(SealedGeneration& sealed);
+    void HarvestFlushOutput(SealedGeneration&& sealed,
+                            IndexWriter::SegmentContext::FlushOutput&& output,
+                            std::span<SegmentWriter::DocContext> docs_context);
+
+    void StartFlush(AsyncFlush& async_flush);
+    void HarvestPendingFlush();
+
+    void DiscardPendingFlush() noexcept;
+    void DrainPendingFlush();
 
     // Flush current writer state into a materialized segment.
     // Return tick of last committed transaction.
@@ -875,7 +948,8 @@ class IndexWriter : private util::Noncopyable {
     // but not to freelist. So this segment would be waited upon flushing
     void AddToPending(ActiveSegmentContext& active);
 
-    uint64_t FlushPending(uint64_t committed_tick, uint64_t tick);
+    uint64_t FlushPending(uint64_t committed_tick, uint64_t tick,
+                          AsyncFlush& async_flush);
 
     void Reset() noexcept;
   };
@@ -886,6 +960,7 @@ class IndexWriter : private util::Noncopyable {
     // Reference to flush context held until end of commit
     FlushContextPtr ctx{nullptr, nullptr};
     uint64_t tick{writer_limits::kMinTick};
+    uint64_t delete_barrier_id{0};
 
     void StartReset(IndexWriter& writer, bool keep_next = false) noexcept {
       auto* curr = ctx.get();
@@ -896,6 +971,8 @@ class IndexWriter : private util::Noncopyable {
     }
   };
 
+  using SegmentDeleteStateShadow = uint64_t;
+
   struct PendingContext : PendingBase {
     // Index meta of the next commit
     IndexMeta meta;
@@ -903,6 +980,7 @@ class IndexWriter : private util::Noncopyable {
     std::vector<SegmentReader> readers;
     // Files to sync
     std::vector<std::string_view> files_to_sync;
+    std::vector<SegmentDeleteStateShadow> delete_state_shadow;
 
     bool Empty() const noexcept { return !ctx; }
   };
@@ -913,12 +991,14 @@ class IndexWriter : private util::Noncopyable {
   struct PendingState : PendingBase {
     // meta + references of next commit
     std::shared_ptr<const DirectoryReaderImpl> commit;
+    std::vector<SegmentDeleteStateShadow> delete_state_shadow;
 
     bool Valid() const noexcept { return ctx && commit; }
 
     void FinishReset() noexcept {
       ctx.reset();
       commit.reset();
+      delete_state_shadow.clear();
     }
 
     void Reset(IndexWriter& writer) noexcept {
@@ -929,6 +1009,19 @@ class IndexWriter : private util::Noncopyable {
 
   static_assert(std::is_nothrow_move_constructible_v<PendingState>);
   static_assert(std::is_nothrow_move_assignable_v<PendingState>);
+
+  void ResolveDeleteStateShadow(std::span<const DeletePacket> packets,
+                                std::span<SegmentDeleteStateShadow> states,
+                                uint64_t barrier_delete_packet_id);
+
+  struct DeleteBarrierPlan {
+    uint64_t committed_floor_id{0};
+    uint64_t barrier_id{0};
+    std::vector<DeletePacket> commit_packets;
+  };
+  DeleteBarrierPlan BuildDeleteBarrierPlan(uint64_t commit_tick);
+  void AdvanceCommittedDeleteFloor(uint64_t barrier_id,
+                                   std::span<SegmentDeleteStateShadow> states);
 
   PendingContext PrepareFlush(const CommitInfo& info);
   void ApplyFlush(PendingContext&& context);
@@ -981,6 +1074,7 @@ class IndexWriter : private util::Noncopyable {
   std::shared_ptr<const DirectoryReaderImpl> _committed_reader;
   // current state awaiting commit completion
   PendingState _pending_state;
+  std::vector<SegmentDeleteStateShadow> _committed_delete_state_shadow;
   // limits for use with respect to segments
   SegmentLimits _segment_limits;
   // a cache of segments available for reuse
@@ -1000,6 +1094,56 @@ class IndexWriter : private util::Noncopyable {
   // Flushed contexts, while one commiting another writing
   // TODO(mbkkt) Code maybe not ready to more than 2 FlushContext.
   std::array<FlushContext, 2> _flush_contexts;
+
+  struct AsyncFlush {
+    yaclib::IExecutorPtr executor;
+    std::counting_semaphore<> flush_semaphore{0};
+
+    template<typename Func>
+      requires std::is_nothrow_invocable_r_v<void, Func>
+    void Run(Func&& func) {
+      Run(std::forward<Func>(func), []() { return true; });
+    }
+
+    template<typename Func, typename Pred>
+      requires std::is_nothrow_invocable_r_v<void, Func> && std::predicate<Pred>
+    void Run(Func&& func, Pred&& pred) {
+      if (executor != nullptr && pred() && flush_semaphore.try_acquire()) {
+        yaclib::Submit(*executor, [this, f = std::move(func)]() mutable {
+          f();
+          flush_semaphore.release();
+        });
+      } else {
+        func();
+      }
+    }
+
+    template<typename Func>
+      requires std::invocable<Func>
+    yaclib::Future<std::invoke_result_t<Func>> Submit(Func&& func) {
+      return Submit(std::forward<Func>(func), []() { return true; });
+    }
+
+    template<typename Func, typename Pred>
+      requires std::predicate<Pred> && std::invocable<Func>
+    yaclib::Future<std::invoke_result_t<Func>> Submit(Func&& func,
+                                                      Pred&& pred) {
+      using Out = std::invoke_result_t<Func>;
+      auto [f, p] = yaclib::MakeContract<Out>();
+
+      auto task = [func = std::forward<Func>(func),
+                   p = std::move(p)]() mutable noexcept {
+        try {
+          std::move(p).Set(func());
+        } catch (...) {
+          std::move(p).Set(std::current_exception());
+        }
+      };
+
+      Run(std::move(task), std::forward<Pred>(pred));
+      return std::move(f);
+    }
+  } _async_flush;
 };
 
 }  // namespace irs

@@ -24,11 +24,13 @@
 #include "index_writer.hpp"
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
+#include <yaclib/async/make.hpp>
 
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
@@ -74,8 +76,13 @@ struct FlushedSegmentContext {
   FlushedSegmentContext(std::shared_ptr<const SegmentReaderImpl>&& reader,
                         IndexWriter::SegmentContext& segment,
                         IndexWriter::FlushedSegment& flushed,
-                        const ResourceManagementOptions& rm)
-    : reader{std::move(reader)}, segment{segment}, flushed{flushed} {
+                        const ResourceManagementOptions& rm,
+                        absl::flat_hash_set<uint64_t>& matched_replace_ticks)
+    : reader{std::move(reader)},
+      segment{segment},
+      flushed{flushed},
+      replace_hits(segment.queries.size(), 0),
+      matched_replace_ticks{matched_replace_ticks} {
     SDB_ASSERT(this->reader != nullptr);
     if (flushed.docs_mask.count != doc_limits::eof()) {
       SDB_ASSERT(flushed.document_mask.empty());
@@ -86,6 +93,82 @@ struct FlushedSegmentContext {
   std::shared_ptr<const SegmentReaderImpl> reader;
   IndexWriter::SegmentContext& segment;
   IndexWriter::FlushedSegment& flushed;
+  std::vector<uint8_t> replace_hits;
+  absl::flat_hash_set<uint64_t>& matched_replace_ticks;
+
+  void RemoveByPacket(const IndexWriter::DeletePacket& packet) {
+    if (!packet.filter) {
+      return;
+    }
+
+    auto prepared = packet.filter->prepare({.index = *reader});
+    if (!prepared) {
+      return;
+    }
+
+    auto itr = prepared->execute(
+      {.segment = *reader, .pending_docs_mask = &flushed.document_mask});
+    if (!itr) {
+      return;
+    }
+
+    bool matched_any = false;
+    auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
+    while (itr->next()) {
+      const auto new_doc = itr->value();
+      const auto old_doc = New2Old(new_doc);
+      const auto& doc = flushed_docs[old_doc - doc_limits::min()];
+
+      if (packet.tick < doc.tick) {
+        continue;
+      }
+
+      bool source_replace_matched = false;
+      if (doc.query_id != writer_limits::kInvalidOffset) {
+        SDB_ASSERT(doc.query_id < segment.queries.size());
+        SDB_ASSERT(doc.query_id < replace_hits.size());
+        source_replace_matched =
+          replace_hits[doc.query_id] ||
+          matched_replace_ticks.contains(segment.queries[doc.query_id].tick);
+      }
+
+      // Preserve old replace dependency semantics: a replace packet should not
+      // match docs produced by an unresolved replace.
+      if (packet.kind == IndexWriter::DeletePacketKind::KReplace &&
+          doc.query_id != writer_limits::kInvalidOffset &&
+          !source_replace_matched) {
+        continue;
+      }
+
+      if (!flushed.document_mask.insert(new_doc).second) {
+        continue;
+      }
+
+      matched_any = true;
+
+      if (packet.kind == IndexWriter::DeletePacketKind::KReplace &&
+          doc.query_id != writer_limits::kInvalidOffset) {
+        replace_hits[doc.query_id] = 1;
+      }
+    }
+
+    if (packet.kind != IndexWriter::DeletePacketKind::KReplace ||
+        !matched_any) {
+      return;
+    }
+
+    matched_replace_ticks.emplace(packet.tick);
+
+    // If replace removed a non-replace document, mark the originating replace
+    // query by packet identity to preserve old Done/DependsOn semantics.
+    for (size_t i = 0; i < segment.queries.size(); ++i) {
+      const auto& query = segment.queries[i];
+      if (query.tick == packet.tick && query.filter == packet.filter) {
+        replace_hits[i] = 1;
+        break;
+      }
+    }
+  }
 
   bool MakeDocumentMask(uint64_t tick, DocumentMask& document_mask,
                         IndexSegment& index) {
@@ -117,8 +200,7 @@ struct FlushedSegmentContext {
     return false;
   }
 
-  void Remove(IndexWriter::QueryContext& query);
-  void MaskUnusedReplace(uint64_t first_tick, uint64_t last_tick);
+  void MaskUnusedReplace(uint64_t first_tick, uint64_t last_tick) const;
 
  private:
   void Init(const ResourceManagementOptions& rm) {
@@ -198,26 +280,27 @@ struct FlushedSegmentContext {
 // readers readers by segment name
 // meta key used to get reader for the segment to evaluate
 // Return if any new records were added (modification_queries_ modified).
-void RemoveFromExistingSegment(DocumentMask& deleted_docs,
-                               IndexWriter::QueryContext& query,
-                               const SubReader& reader) {
-  if (query.filter == nullptr) {
-    return;
+bool RemoveFromExistingSegmentByPacket(DocumentMask& deleted_docs,
+                                       const IndexWriter::DeletePacket& packet,
+                                       const SubReader& reader) {
+  if (packet.filter == nullptr) {
+    return false;
   }
 
-  auto prepared = query.filter->prepare({.index = reader});
+  auto prepared = packet.filter->prepare({.index = reader});
 
   if (!prepared) [[unlikely]] {
-    return;  // skip invalid prepared filters
+    return false;  // skip invalid prepared filters
   }
 
   auto itr =
     prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
-    return;  // skip invalid iterators
+    return false;  // skip invalid iterators
   }
 
+  bool matched = false;
   const auto* docs_mask = reader.docs_mask();
   while (itr->next()) {
     const auto doc_id = itr->value();
@@ -227,19 +310,20 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
       continue;  // the current modification query does not match any records
     }
     if (deleted_docs.insert(doc_id).second) {
-      query.ForceDone();
+      matched = true;
     }
   }
+  return matched;
 }
 
-bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
-                               IndexWriter::QueryContext& query,
-                               const SubReader& reader) {
-  if (query.filter == nullptr) {
+bool RemoveFromImportedSegmentByPacket(DocumentMask& deleted_docs,
+                                       const IndexWriter::DeletePacket& packet,
+                                       const SubReader& reader) {
+  if (packet.filter == nullptr) {
     return false;
   }
 
-  auto prepared = query.filter->prepare({.index = reader});
+  auto prepared = packet.filter->prepare({.index = reader});
   if (!prepared) [[unlikely]] {
     return false;  // skip invalid prepared filters
   }
@@ -253,66 +337,17 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
   bool modified = false;
   while (itr->next()) {
     const auto doc_id = itr->value();
-
-    // if the indexed doc_id was already masked then it should be skipped
-    if (!deleted_docs.insert(doc_id).second) {
-      continue;  // the current modification query does not match any records
+    if (deleted_docs.insert(doc_id).second) {
+      modified = true;
     }
-
-    query.ForceDone();
-    modified = true;
   }
 
   return modified;
 }
 
-// Apply any document removals based on filters in the segment.
-// modifications where to get document update_contexts from
-// segment where to apply document removals to
-// min_doc_id staring doc_id that should be considered
-// readers readers by segment name
-void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
-  if (query.filter == nullptr) {
-    return;
-  }
-
-  auto& document_mask = flushed.document_mask;
-
-  auto prepared = query.filter->prepare({.index = *reader});
-
-  if (!prepared) [[unlikely]] {
-    return;  // Skip invalid prepared filters
-  }
-
-  auto itr = prepared->execute(
-    {.segment = *reader, .pending_docs_mask = &document_mask});
-
-  if (!itr) [[unlikely]] {
-    return;  // Skip invalid iterators
-  }
-
-  auto* flushed_docs = segment.flushed_docs.data() + flushed.GetDocsBegin();
-  while (itr->next()) {
-    const auto new_doc = itr->value();
-    const auto old_doc = New2Old(new_doc);
-
-    const auto& doc = flushed_docs[old_doc - doc_limits::min()];
-
-    if (query.tick < doc.tick || !document_mask.insert(new_doc).second ||
-        query.IsDone()) {
-      continue;
-    }
-    if (doc.query_id == writer_limits::kInvalidOffset) {
-      query.Done();
-    } else {
-      query.DependsOn(segment.queries[doc.query_id]);
-    }
-  }
-}
-
 // Mask documents created by replace which did not have any matches.
 void FlushedSegmentContext::MaskUnusedReplace(uint64_t first_tick,
-                                              uint64_t last_tick) {
+                                              uint64_t last_tick) const {
   const auto begin = flushed.GetDocsBegin();
   const auto end = flushed.GetDocsEnd();
   const std::span docs{segment.flushed_docs.data() + begin,
@@ -327,8 +362,13 @@ void FlushedSegmentContext::MaskUnusedReplace(uint64_t first_tick,
     if (doc.query_id == writer_limits::kInvalidOffset) {
       continue;
     }
-    SDB_ASSERT(doc.query_id < segment.queries.size());
-    if (!segment.queries[doc.query_id].IsDone()) {
+
+    SDB_ASSERT(doc.query_id < replace_hits.size());
+
+    const bool matched_outside =
+      matched_replace_ticks.contains(segment.queries[doc.query_id].tick);
+
+    if (!replace_hits[doc.query_id] && !matched_outside) {
       const auto new_doc =
         Old2New(static_cast<size_t>(&doc - docs.data()) + doc_limits::min());
       flushed.document_mask.insert(new_doc);
@@ -658,11 +698,76 @@ IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
   return *this;
 }
 
+void IndexWriter::DeletePacketQueue::AppendBatch(
+  std::vector<DeletePacket>&& batch) {
+  if (batch.empty()) {
+    return;
+  }
+
+  std::lock_guard lock{_mutex};
+  _packets.reserve(_packets.size() + batch.size());
+  for (auto& packet : batch) {
+    packet.id = ++_next_id;
+#ifdef SDB_DEV
+    if (!_packets.empty()) {
+      SDB_ASSERT(_packets.back().id < packet.id);
+    }
+#endif
+    _packets.emplace_back(std::move(packet));
+  }
+}
+
+size_t IndexWriter::DeletePacketQueue::Size() const noexcept {
+  std::lock_guard lock{_mutex};
+  return _packets.size();
+}
+
+std::vector<IndexWriter::DeletePacket>
+IndexWriter::DeletePacketQueue::Snapshot() const {
+  std::lock_guard lock{_mutex};
+  return _packets;
+}
+
+void IndexWriter::DeletePacketQueue::PruneUpTo(
+  uint64_t barrier_delete_packet_id) {
+  std::lock_guard lock{_mutex};
+  auto it =
+    std::find_if(_packets.begin(), _packets.end(),
+                 [barrier_delete_packet_id](const DeletePacket& packet) {
+                   return packet.id > barrier_delete_packet_id;
+                 });
+  _packets.erase(_packets.begin(), it);
+}
+
+void IndexWriter::EnqueueDeletePackets(
+  const SegmentContext& segment, std::span<const PendingDeletePacketRef> refs) {
+  std::vector<DeletePacket> batch;
+  batch.reserve(refs.size());
+
+  for (const auto& ref : refs) {
+    SDB_ASSERT(ref.query_index < segment.queries.size());
+    const auto& query = segment.queries[ref.query_index];
+
+    if (query.filter == nullptr) {
+      continue;
+    }
+
+    batch.emplace_back(DeletePacket{
+      .tick = query.tick,
+      .kind = ref.kind,
+      .filter = query.filter,
+    });
+    SDB_ASSERT(writer_limits::kMinTick < query.tick);
+  }
+
+  _delete_packets.AppendBatch(std::move(batch));
+}
+
 IndexWriter::Document::Document(SegmentContext& segment,
                                 SegmentWriter::DocContext doc,
                                 doc_id_t batch_size, QueryContext* query)
-  : _writer{*segment.writer}, _query{query} {
-  SDB_ASSERT(segment.writer != nullptr);
+  : _writer{*segment.active.writer}, _query{query} {
+  SDB_ASSERT(segment.active.writer != nullptr);
   // ensure Reset() will be noexcept
   _doc_id = _writer.begin(doc, batch_size);
   SDB_ASSERT(irs::doc_limits::valid(_doc_id));
@@ -685,8 +790,10 @@ void IndexWriter::Document::Finish() noexcept {
 }
 
 void IndexWriter::Transaction::Reset() noexcept {
+  _pending_delete_packets.clear();
   // TODO(mbkkt) rename Reset() to Rollback()
   if (auto* segment = _active.Segment(); segment != nullptr) {
+    segment->DiscardPendingFlush();
     segment->Rollback();
   }
 }
@@ -700,22 +807,35 @@ void IndexWriter::Transaction::RegisterFlush() noexcept {
 bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
   auto* segment = _active.Segment();
   SDB_ASSERT(segment != nullptr);
+
+  // Ensure segment registration is done before packet enqueue,
+  // so CommitImpl has no throwing steps after queue mutation.
+  RegisterFlush();
+
   segment->Commit(_queries, last_tick);
+
+  _writer->EnqueueDeletePackets(*segment, _pending_delete_packets);
+  _pending_delete_packets.clear();
+
   _writer->GetFlushContext()->Emplace(std::move(_active));
   SDB_ASSERT(_active.Segment() == nullptr);
   return true;
 } catch (...) {
-  SDB_ASSERT(_active.Segment() != nullptr);
-  // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
-  Abort();
+  _pending_delete_packets.clear();
+  if (_active.Segment() != nullptr) {
+    // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
+    Abort();
+  }
   return false;
 }
 
 void IndexWriter::Transaction::Abort() noexcept {
+  _pending_delete_packets.clear();
   auto* segment = _active.Segment();
   if (segment == nullptr) {
     return;  // nothing to do
   }
+  segment->DiscardPendingFlush();
   if (_active.Flush() == nullptr) {
     segment->Reset();  // reset before returning to pool
     _active = {};      // back to pool no needed Rollback
@@ -734,7 +854,8 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
   }
 
   auto& segment = *_active.Segment();
-  auto& writer = *segment.writer;
+  auto& writer = *segment.active.writer;
+  auto& async_flush = _writer->_async_flush;
 
   if (writer.initialized()) [[likely]] {
     if (disable_flush || !_writer->FlushRequired(writer)) {
@@ -747,13 +868,13 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush) {
               ", docs limit=", _writer->_segment_limits.Docs(),
               ", memory limit=", _writer->_segment_limits.Memory());
 
+    auto meta_name = segment.active.writer_meta.meta.name;
     try {
-      segment.Flush();
+      segment.StartFlush(async_flush);
     } catch (...) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("while flushing segment '", segment.writer_meta.meta.name,
-                     "', error: failed to flush segment"));
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                absl::StrCat("while flushing segment '", meta_name,
+                             "', error: failed to flush segment"));
       // TODO(mbkkt) What the goal are we want to achieve
       //  with keeping already flushed data?
       segment.Reset(true);
@@ -851,7 +972,8 @@ void IndexWriter::Cleanup(FlushContext& curr, FlushContext* next) noexcept {
 }
 
 uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
-                                                 uint64_t tick) {
+                                                 uint64_t tick,
+                                                 AsyncFlush& async_flush) {
   // if tick is not equal uint64_max, as result of bad_alloc it's possible here
   // that not all segments which should be committed by next FlushContext
   // (fully or partially) will be moved to it.
@@ -884,7 +1006,8 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
       // Commit will has greater first tick than committed tick.
       SDB_ASSERT(committed_tick < first_tick);
       flushed_tick = std::max(flushed_tick, last_tick);
-      segment->Flush();
+      segment->StartFlush(async_flush);
+      // segment->Flush();
       if (tick < last_tick) {
         next_segments.push_back(segment);
       }
@@ -918,39 +1041,37 @@ uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
 IndexWriter::SegmentContext::SegmentContext(
   Directory& dir, segment_meta_generator_t&& meta_generator,
   const SegmentWriterOptions& options)
-  : dir{dir},
+  : active(dir, options),
+    options(options),
     queries{{options.resource_manager}},
     flushed{{options.resource_manager}},
     flushed_docs{{options.resource_manager}},
-    meta_generator{std::move(meta_generator)},
-    writer{SegmentWriter::make(this->dir, options)} {
+    meta_generator{std::move(meta_generator)} {
   SDB_ASSERT(this->meta_generator);
 }
 
-void IndexWriter::SegmentContext::Flush() {
-  if (!writer->initialized() || writer->buffered_docs() == 0) {
-    flushed_queries = queries.size();
-    SDB_ASSERT(committed_buffered_docs == 0);
-    return;  // Skip flushing an empty writer
-  }
-  SDB_ASSERT(writer->buffered_docs() <= doc_limits::eof());
-
-  Finally reset_writer = [&]() noexcept {
-    writer->reset();
-    committed_buffered_docs = 0;
-  };
-
+IndexWriter::SegmentContext::FlushOutput
+IndexWriter::SegmentContext::RunPhysicalFlush(SealedGeneration& sealed) {
   DocsMask docs_mask{.set{flushed_docs.get_allocator()}};
-  auto old2new = writer->flush(writer_meta, docs_mask);
-  if (writer_meta.meta.live_docs_count == 0) {
+  auto old2new = sealed.writer->flush(sealed.writer_meta, docs_mask);
+  return {std::move(old2new), std::move(docs_mask)};
+}
+
+void IndexWriter::SegmentContext::HarvestFlushOutput(
+  SealedGeneration&& sealed, FlushOutput&& output,
+  std::span<SegmentWriter::DocContext> docs_context) {
+  if (sealed.writer_meta.meta.live_docs_count == 0) {
     return;
   }
-  const auto docs_context = writer->docs_context();
-  SDB_ASSERT(writer_meta.meta.live_docs_count <= writer_meta.meta.docs_count);
-  SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
-  flushed.emplace_back(std::move(writer_meta), std::move(old2new),
-                       std::move(docs_mask), flushed_docs.size());
+  SDB_ASSERT(sealed.writer_meta.meta.live_docs_count <=
+             sealed.writer_meta.meta.docs_count);
+  SDB_ASSERT(sealed.writer_meta.meta.docs_count == docs_context.size());
+
+  auto refs = sealed.dir->GetRefs();
+  flushed.emplace_back(std::move(sealed.writer_meta), std::move(output.old2new),
+                       std::move(output.docs_mask), flushed_docs.size(),
+                       std::move(refs));
   try {
     flushed_docs.insert(flushed_docs.end(), docs_context.begin(),
                         docs_context.end());
@@ -959,7 +1080,73 @@ void IndexWriter::SegmentContext::Flush() {
     throw;
   }
   flushed_queries = queries.size();
-  committed_flushed_docs += committed_buffered_docs;
+  committed_flushed_docs += sealed.committed_buffered_docs;
+}
+
+void IndexWriter::SegmentContext::StartFlush(
+  IndexWriter::AsyncFlush& async_flush) {
+  if (pending_flush.has_value()) {
+    HarvestPendingFlush();
+  }
+
+  if (!active.writer->initialized() || active.writer->buffered_docs() == 0) {
+    flushed_queries = queries.size();
+    SDB_ASSERT(active.committed_buffered_docs == 0);
+    return;
+  }
+  SDB_ASSERT(active.writer->buffered_docs() <= doc_limits::eof());
+  SDB_ASSERT(!pending_flush.has_value());
+
+  auto [f, p] = yaclib::MakeContract<FlushOutput>();
+  pending_flush.emplace(TakeActiveGeneration(), std::move(f));
+
+  auto run_flush = [this, &sealed = pending_flush->sealed,
+                    promise = std::move(p)] mutable noexcept {
+    try {
+      auto res = RunPhysicalFlush(sealed);
+      std::move(promise).Set(std::move(res));
+    } catch (...) {
+      std::move(promise).Set(std::current_exception());
+    }
+  };
+
+  async_flush.Run(std::move(run_flush), [&] {
+    return pending_flush->sealed.committed_buffered_docs == 0;
+  });
+}
+
+void IndexWriter::SegmentContext::HarvestPendingFlush() {
+  SDB_ASSERT(pending_flush.has_value());
+  auto pending = std::exchange(pending_flush, std::nullopt);
+
+  Finally reset_writer = [&]() noexcept {
+    pending->sealed.writer->reset();
+    pending->sealed.dir->clear_refs();
+  };
+
+  yaclib::Wait(pending->output);
+  auto output = std::move(pending->output).Get().Ok();
+
+  const auto docs_context = pending->sealed.writer->docs_context();
+  HarvestFlushOutput(std::move(pending->sealed), std::move(output),
+                     docs_context);
+}
+
+void IndexWriter::SegmentContext::DiscardPendingFlush() noexcept {
+  if (!pending_flush.has_value()) {
+    return;
+  }
+  try {
+    HarvestPendingFlush();
+  } catch (...) {
+    // Best effort in noexcept path: ignore flush errors and continue rollback.
+  }
+}
+
+void IndexWriter::SegmentContext::DrainPendingFlush() {
+  if (pending_flush.has_value()) {
+    HarvestPendingFlush();
+  }
 }
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
@@ -970,13 +1157,16 @@ IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
 }
 
 void IndexWriter::SegmentContext::Prepare() {
-  SDB_ASSERT(!writer->initialized());
-  writer_meta.filename.clear();
-  writer_meta.meta = meta_generator();
-  writer->reset(writer_meta.meta);
+  SDB_ASSERT(!active.writer->initialized());
+
+  active.writer_meta.filename.clear();
+  active.writer_meta.meta = meta_generator();
+  active.writer->reset(active.writer_meta.meta);
 }
 
 void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
+  SDB_ASSERT(!pending_flush.has_value());
+
   buffered_docs.store(0, std::memory_order_relaxed);
 
   if (store_flushed) [[unlikely]] {
@@ -997,19 +1187,21 @@ void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
     last_tick = writer_limits::kMinTick;
     has_replace = false;
   }
-  committed_buffered_docs = 0;
+  active.committed_buffered_docs = 0;
 
-  if (writer->initialized()) {
-    writer->reset();  // try to reduce number of files flushed below
+  if (active.writer->initialized()) {
+    active.writer->reset();  // try to reduce number of files flushed below
   }
 
   // TODO(mbkkt) Is it ok to release refs in case of store_flushed?
   // release refs only after clearing writer state to ensure
   // 'writer_' does not hold any files
-  dir.clear_refs();
+  active.dir->clear_refs();
 }
 
 void IndexWriter::SegmentContext::Rollback() noexcept {
+  SDB_ASSERT(!pending_flush.has_value());
+
   // rollback modification queries
   SDB_ASSERT(committed_queries <= queries.size());
   queries.resize(committed_queries);
@@ -1022,7 +1214,7 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   });
   if (it != end) {
     // because committed docs point to flushed
-    SDB_ASSERT(committed_buffered_docs == 0);
+    SDB_ASSERT(active.committed_buffered_docs == 0);
     const auto docs_end = it->GetDocsEnd();
     if (it->SetCommitted(committed_flushed_docs)) {
       flushed.erase(it + 1, end);
@@ -1036,17 +1228,18 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   }
 
   // rollback inserts located inside the writer
-  if (committed_buffered_docs == 0) {
-    writer->reset();
+  if (active.committed_buffered_docs == 0) {
+    active.writer->reset();
     return;
   }
-  const auto buffered_docs = writer->buffered_docs();
-  for (auto doc_id = buffered_docs - 1 + doc_limits::min(),
-            doc_id_rend = committed_buffered_docs - 1 + doc_limits::min();
+  const auto buffered_docs = active.writer->buffered_docs();
+  for (auto
+         doc_id = buffered_docs - 1 + doc_limits::min(),
+         doc_id_rend = active.committed_buffered_docs - 1 + doc_limits::min();
        doc_id > doc_id_rend; --doc_id) {
     SDB_ASSERT(doc_limits::invalid() < doc_id);
     SDB_ASSERT(doc_id <= doc_limits::eof());
-    writer->remove(static_cast<doc_id_t>(doc_id));
+    active.writer->remove(static_cast<doc_id_t>(doc_id));
   }
 
   // If it will be first or last part of flushed segment in future,
@@ -1054,19 +1247,22 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   // TODO(mbkkt) Maybe we can just move docs_begin/end when FlushedSegment
   //  will be ready? Also what about assign last_committed_tick
   //  only for first and last value in range?
-  const auto docs = writer->docs_context();
-  const auto last_committed_tick = docs[committed_buffered_docs - 1].tick;
-  std::for_each(docs.begin() + committed_buffered_docs, docs.end(),
+  const auto docs = active.writer->docs_context();
+  const auto last_committed_tick =
+    docs[active.committed_buffered_docs - 1].tick;
+  std::for_each(docs.begin() + active.committed_buffered_docs, docs.end(),
                 [&](auto& doc) {
                   doc.tick = last_committed_tick;
                   doc.query_id = writer_limits::kInvalidOffset;
                 });
 
-  committed_buffered_docs = buffered_docs;
+  active.committed_buffered_docs = buffered_docs;
 }
 
 void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
                                          uint64_t commit_last_tick) {
+  DrainPendingFlush();
+
   SDB_ASSERT(commit_last_tick < writer_limits::kMaxTick);
   SDB_ASSERT(commit_queries <= commit_last_tick);
   const auto commit_first_tick = commit_last_tick - commit_queries;
@@ -1084,10 +1280,10 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
                 flushed_docs.end(), update_tick);
   committed_flushed_docs = flushed_docs.size();
 
-  const auto docs = writer->docs_context();
-  std::for_each(docs.begin() + committed_buffered_docs, docs.end(),
+  const auto docs = active.writer->docs_context();
+  std::for_each(docs.begin() + active.committed_buffered_docs, docs.end(),
                 update_tick);
-  committed_buffered_docs = docs.size();
+  active.committed_buffered_docs = docs.size();
 
   if (first_tick == writer_limits::kMaxTick) {
     first_tick = commit_first_tick;
@@ -1103,7 +1299,8 @@ IndexWriter::IndexWriter(
   const ColumnInfoProvider& column_info,
   const FeatureInfoProvider& feature_info,
   const PayloadProvider& meta_payload_provider,
-  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
+  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+  yaclib::IExecutorPtr executor, size_t remaining_flushes_slots)
   : _feature_info{feature_info},
     _column_info{column_info},
     _meta_payload_provider{meta_payload_provider},
@@ -1117,7 +1314,10 @@ IndexWriter::IndexWriter(
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
-    _write_lock_file_ref{std::move(lock_file_ref)} {
+    _write_lock_file_ref{std::move(lock_file_ref)},
+    _async_flush{
+      .executor{std::move(executor)},
+      .flush_semaphore{static_cast<ptrdiff_t>(remaining_flushes_slots)}} {
   SDB_ASSERT(column_info);   // ensured by 'make'
   SDB_ASSERT(feature_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
@@ -1126,6 +1326,10 @@ IndexWriter::IndexWriter(
   if (_wand_scorer) {
     _wand_features |= _wand_scorer->GetIndexFeatures();
   }
+
+  _committed_delete_state_shadow.resize(_committed_reader->size());
+  SDB_ASSERT(_committed_delete_state_shadow.size() ==
+             _committed_reader->size());
 
   _flush_context.store(_flush_contexts.data());
 
@@ -1169,7 +1373,7 @@ void IndexWriter::Clear(uint64_t tick) {
     return;  // Already empty
   }
 
-  PendingContext to_commit{PendingBase{.tick = tick}, {}, {}, {}};
+  PendingContext to_commit{PendingBase{.tick = tick}, {}, {}, {}, {}};
   InitMeta(to_commit.meta, tick);
   to_commit.ctx = std::move(ctx);
 
@@ -1250,7 +1454,9 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.features ? options.features : kDefaultFeatureInfo,
-    options.meta_payload_provider, std::move(reader));
+    options.meta_payload_provider, std::move(reader), options.executor,
+    options.max_in_flight_flushes);
+
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1658,8 +1864,10 @@ IndexWriter::ActiveSegmentContext IndexWriter::GetSegmentContext() try {
     options);
 
   // recreate writer if it reserved more memory than allowed by current limits
-  if (_segment_limits.Memory() < segment_ctx->writer->memory_reserved()) {
-    segment_ctx->writer = SegmentWriter::make(segment_ctx->dir, options);
+  if (_segment_limits.Memory() <
+      segment_ctx->active.writer->memory_reserved()) {
+    segment_ctx->active.writer =
+      SegmentWriter::make(*segment_ctx->active.dir, options);
   }
 
   return {segment_ctx, _segments_active};
@@ -1681,20 +1889,85 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   };
 }
 
+void IndexWriter::ResolveDeleteStateShadow(
+  std::span<const DeletePacket> packets,
+  std::span<SegmentDeleteStateShadow> states,
+  uint64_t barrier_delete_packet_id) {
+#ifdef SDB_DEV
+  uint64_t prev_id = 0;
+  for (const auto& packet : packets) {
+    SDB_ASSERT(prev_id < packet.id);
+    SDB_ASSERT(packet.id <= barrier_delete_packet_id);
+    prev_id = packet.id;
+  }
+#endif
+  for (auto& applied_delete_packet_id : states) {
+    SDB_ASSERT(applied_delete_packet_id <= barrier_delete_packet_id);
+    applied_delete_packet_id = barrier_delete_packet_id;
+  }
+}
+
+IndexWriter::DeleteBarrierPlan IndexWriter::BuildDeleteBarrierPlan(
+  uint64_t commit_tick) {
+  auto packets = _delete_packets.Snapshot();
+
+  uint64_t floor = 0;
+  if (!_committed_delete_state_shadow.empty()) {
+    const auto it = std::min_element(_committed_delete_state_shadow.begin(),
+                                     _committed_delete_state_shadow.end());
+    floor = *it;
+  }
+
+  DeleteBarrierPlan plan{.committed_floor_id = floor, .barrier_id = floor};
+
+  for (const auto& p : packets) {
+    if (p.id <= floor) {
+      continue;
+    }
+    if (p.tick > commit_tick) {
+      continue;
+    }
+    plan.barrier_id = p.id;
+    plan.commit_packets.push_back(p);
+  }
+
+#ifdef SDB_DEV
+  SDB_ASSERT(plan.barrier_id >= plan.committed_floor_id);
+  if (plan.commit_packets.empty()) {
+    SDB_ASSERT(plan.barrier_id == plan.committed_floor_id);
+  }
+#endif
+
+  return plan;
+}
+
+void IndexWriter::AdvanceCommittedDeleteFloor(
+  uint64_t barrier_id, std::span<SegmentDeleteStateShadow> states) {
+  for (auto& applied_delete_packet_id : states) {
+    applied_delete_packet_id = std::max(applied_delete_packet_id, barrier_id);
+  }
+  _delete_packets.PruneUpTo(barrier_id);
+}
+
 IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
-  const auto tick = info.tick;
-  SDB_ASSERT(writer_limits::kMinTick < tick);
-  SDB_ASSERT(_committed_tick <= tick);
-  SDB_ASSERT(tick <= writer_limits::kMaxTick);
+  SDB_ASSERT(writer_limits::kMinTick < info.tick);
+  SDB_ASSERT(_committed_tick <= info.tick);
+  SDB_ASSERT(info.tick <= writer_limits::kMaxTick);
 
   // noexcept block: I'm not sure is it really necessary or not
-  auto ctx = SwitchFlushContext();
+  PendingContext to_commit;
+  to_commit.ctx = SwitchFlushContext();
+  to_commit.tick = info.tick;
+  auto& ctx = to_commit.ctx;
+  const auto& tick = to_commit.tick;
+
   // ensure there are no active struct update operations
   ctx->pending.Wait();
   // Stage 0
   // wait for any outstanding segments to settle to ensure that any rollbacks
   // are properly tracked in 'modification_queries_'
-  const auto flushed_tick = ctx->FlushPending(_committed_tick, tick);
+  const auto flushed_tick =
+    ctx->FlushPending(_committed_tick, tick, _async_flush);
 
   std::unique_lock cleanup_lock{_consolidating.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
@@ -1710,9 +1983,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto& progress =
     (info.progress != nullptr ? info.progress : kNoProgress);
 
-  IndexMeta pending_meta;
+  IndexMeta& pending_meta = to_commit.meta;
   std::vector<PartialSync> partial_sync;
-  std::vector<SegmentReader> readers;
+  std::vector<SegmentReader>& readers = to_commit.readers;
+  auto& delete_state_shadow = to_commit.delete_state_shadow;
 
   auto& dir = *ctx->dir;
   const auto& committed_reader = *_committed_reader;
@@ -1721,25 +1995,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // If there is no index we shall initialize it
   bool modified = IsInitialCommit(committed_meta);
+  auto plan = BuildDeleteBarrierPlan(info.tick);
+  to_commit.delete_barrier_id = plan.barrier_id;
 
-  auto apply_queries = [&](SegmentContext& segment, const auto& func) {
-    // TODO(mbkkt) binary search for begin?
-    for (auto& query : segment.queries) {
-      if (query.tick <= _committed_tick) {
-        continue;  // skip queries from previous Commit
-      }
-      if (tick < query.tick) {
-        break;  // skip queries from next Commit
-      }
-      func(query);
-    }
-  };
-  auto apply_all_queries = [&](const auto& func) {
-    for (auto& segment : ctx->segments) {
-      SDB_ASSERT(segment != nullptr);
-      apply_queries(*segment, func);
-    }
-  };
+  absl::flat_hash_set<uint64_t> matched_replace_ticks;
 
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
@@ -1754,6 +2013,32 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
+
+  struct Out {
+    SegmentReader segment_reader;
+    IndexSegment index_segment;
+    bool add_to_part_sync{false};
+    std::optional<uint64_t> applied_delete_packet_id{std::nullopt};
+  };
+
+  auto process_futures = [&](std::span<yaclib::Future<Out>> futures) {
+    yaclib::Wait(futures.begin(), futures.end());
+    for (auto& future : futures) {
+      auto output = std::move(future).Get().Ok();
+
+      if (output.add_to_part_sync) {
+        partial_sync.emplace_back(readers.size());
+      }
+      readers.emplace_back(std::move(output.segment_reader));
+      pending_meta.segments.emplace_back(std::move(output.index_segment));
+      if (output.applied_delete_packet_id.has_value()) {
+        delete_state_shadow.emplace_back(
+          output.applied_delete_packet_id.value());
+      }
+    }
+  };
+
+  std::vector<yaclib::Future<Out>> futures1;
 
   for (DocumentMask deleted_docs{{*dir.ResourceManager().transactions}};
        const auto& existing_segment : committed_reader.GetReaders()) {
@@ -1772,10 +2057,13 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
-    apply_all_queries([&](QueryContext& query) {
-      // FIXME(gnusi): optimize PK queries
-      RemoveFromExistingSegment(deleted_docs, query, existing_segment);
-    });
+    for (const auto& packet : plan.commit_packets) {
+      const bool matched = RemoveFromExistingSegmentByPacket(
+        deleted_docs, packet, existing_segment);
+      if (packet.kind == DeletePacketKind::KReplace && matched) {
+        matched_replace_ticks.emplace(packet.tick);
+      }
+    }
 
     // Write docs_mask if masks added
     if (const size_t num_removals = deleted_docs.size(); num_removals) {
@@ -1799,18 +2087,39 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }();
       deleted_docs.clear();
 
-      index_utils::FlushIndexSegment(dir, segment);  // Write with new mask
-      auto new_segment =
-        existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
+      auto process = [&dir, segment = std::move(segment),
+                      &existing_segment] mutable noexcept -> Out {
+        index_utils::FlushIndexSegment(dir, segment);  // Write with new mask
+        auto new_segment =
+          existing_segment.GetImpl()->UpdateMeta(dir, segment.meta);
 
-      partial_sync.emplace_back(readers.size());
-      readers.emplace_back(std::move(new_segment));
-      pending_meta.segments.emplace_back(std::move(segment));
+        return Out{.segment_reader{std::move(new_segment)},
+                   .index_segment{std::move(segment)},
+                   .add_to_part_sync = true,
+                   .applied_delete_packet_id = std::nullopt};
+      };
+
+      futures1.emplace_back(_async_flush.Submit(std::move(process)));
+
     } else {
-      readers.emplace_back(existing_segment.GetImpl());
-      pending_meta.segments.emplace_back(index_segment);
+      auto f = yaclib::MakeFuture(
+        Out{.segment_reader{std::move(existing_segment.GetImpl())},
+            .index_segment{std::move(index_segment)}});
+      futures1.emplace_back(std::move(f));
     }
   }
+  process_futures(futures1);
+
+  // yaclib::Wait(futures.begin(), futures.end());
+  // for (auto& future : futures) {
+  //   auto res = std::move(future).Get().Ok();
+
+  //   if (res.add_to_part_sync) {
+  //     partial_sync.emplace_back(readers.size());
+  //   }
+  //   readers.emplace_back(std::move(res.segment_reader));
+  //   pending_meta.segments.emplace_back(std::move(res.index_segment));
+  // }
 
   // Stage 2
   // Add pending complete segments registered by import or consolidation
@@ -1820,6 +2129,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   size_t import_candidates_count = 0;
   size_t partial_sync_threshold = readers.size();
 
+  std::vector<yaclib::Future<Out>> futures2;
   for (auto& import : ctx->imports) {
     progress("Stage 2: Handling consolidated/imported segments",
              current_imports_index++, ctx->imports.size());
@@ -1897,14 +2207,17 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // merged segment. Pending already imported/consolidated segment, apply
       // removals mask documents matching filters from segment_contexts
       // (i.e. from new operations)
-      apply_all_queries([&](QueryContext& query) {
-        // skip queries which not affect this
-        if (import.tick <= query.tick) {
-          // FIXME(gnusi): optimize PK queries
-          docs_mask_modified |=
-            RemoveFromImportedSegment(*import_docs_mask, query, *import_reader);
+
+      for (const auto& packet : plan.commit_packets) {
+        if (import.tick <= packet.tick) {
+          const bool matched = RemoveFromImportedSegmentByPacket(
+            *import_docs_mask, packet, *import_reader);
+          docs_mask_modified |= matched;
+          if (packet.kind == DeletePacketKind::KReplace && matched) {
+            matched_replace_ticks.emplace(packet.tick);
+          }
         }
-      });
+      }
     }
 
     // Skip empty segments
@@ -1919,17 +2232,35 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
 
     if (docs_mask_modified || pending_consolidation) {
-      index_utils::FlushIndexSegment(dir, import.segment,
-                                     !pending_consolidation);
+      auto process = [&dir, &import, pending_consolidation,
+                      docs_mask_modified] mutable -> Out {
+        index_utils::FlushIndexSegment(dir, import.segment,
+                                       !pending_consolidation);
+
+        if (docs_mask_modified) {
+          import.reader = import.reader->UpdateMeta(dir, import.segment.meta);
+        }
+
+        return Out{.segment_reader{std::move(import.reader)},
+                   .index_segment{std::move(import.segment)}};
+      };
+
+      futures2.emplace_back(_async_flush.Submit(std::move(process)));
+
+    } else {
+      if (docs_mask_modified) {
+        import_reader = import_reader->UpdateMeta(dir, meta);
+      }
+      auto f =
+        yaclib::MakeFuture(Out{.segment_reader{std::move(import_reader)},
+                               .index_segment{std::move(import.segment)}});
+      futures2.emplace_back(std::move(f));
     }
 
-    if (docs_mask_modified) {
-      import_reader = import_reader->UpdateMeta(dir, meta);
-    }
-
-    readers.emplace_back(std::move(import_reader));
-    pending_meta.segments.emplace_back(std::move(import.segment));
+    // readers.emplace_back(std::move(import_reader));
+    // pending_meta.segments.emplace_back(std::move(import.segment));
   }
+  process_futures(futures2);
 
   // For pending consolidation we need to filter out consolidation
   // candidates after applying them
@@ -1990,6 +2321,18 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     next_cached.clear();
   }
 
+  delete_state_shadow.clear();
+  delete_state_shadow.reserve(to_commit.meta.segments.size());
+
+  for (size_t i = 0; i < to_commit.meta.segments.size(); ++i) {
+    delete_state_shadow.emplace_back(plan.barrier_id);
+  }
+
+  for (const auto& segment : ctx->segments) {
+    SDB_ASSERT(segment != nullptr);
+    segment->DrainPendingFlush();
+  }
+
   // Stage 3
   // create new segments
   {
@@ -2009,7 +2352,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       SDB_ASSERT(segment);
 
       // was updated after flush
-      SDB_ASSERT(segment->committed_buffered_docs == 0);
+      SDB_ASSERT(segment->active.committed_buffered_docs == 0);
       SDB_ASSERT(segment->committed_flushed_docs ==
                  segment->flushed_docs.size());
       // process individually each flushed SegmentMeta from the SegmentContext
@@ -2053,23 +2396,24 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         }
 
         auto& segment_ctx = segment_ctxs.emplace_back(
-          std::move(reader), *segment, flushed, dir.ResourceManager());
+          std::move(reader), *segment, flushed, dir.ResourceManager(),
+          matched_replace_ticks);
 
         // mask documents matching filters from all flushed segment_contexts
         // (i.e. from new operations)
-        apply_all_queries([&](QueryContext& query) {
-          // skip queries which not affect this FlushedSegment
-          if (flushed_first_tick <= query.tick) {
-            // FIXME(gnusi): optimize PK queries
-            segment_ctx.Remove(query);
+
+        for (const auto& packet : plan.commit_packets) {
+          if (flushed_first_tick <= packet.tick) {
+            segment_ctx.RemoveByPacket(packet);
           }
-        });
+        }
       }
     }
 
     // write docs_mask if !empty(), if all docs are masked then remove segment
     // altogether
     size_t current_segment_ctxs = 0;
+    std::vector<yaclib::Future<Out>> futures3;
     for (auto& segment_ctx : segment_ctxs) {
       // note: from the code, we are still a part of 'Stage 3',
       // but we need to report something different here, i.e. 'Stage 4'
@@ -2097,15 +2441,36 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         new_segment.meta.docs_mask =
           std::make_shared<DocumentMask>(std::move(document_mask));
       }
-      index_utils::FlushIndexSegment(dir, new_segment, false);
-      if (need_flush) {
-        segment_ctx.reader =
-          segment_ctx.reader->UpdateMeta(dir, new_segment.meta);
-      }
-      readers.emplace_back(std::move(segment_ctx.reader));
-      pending_meta.segments.emplace_back(std::move(new_segment));
+
+      auto process = [&segment_ctx, &dir, new_segment = std::move(new_segment),
+                      need_flush,
+                      barrier_id = plan.barrier_id]() mutable -> Out {
+        index_utils::FlushIndexSegment(dir, new_segment, false);
+        if (need_flush) {
+          segment_ctx.reader =
+            segment_ctx.reader->UpdateMeta(dir, new_segment.meta);
+        }
+        SDB_ASSERT(segment_ctx.flushed.applied_delete_packet_id <= barrier_id);
+        segment_ctx.flushed.applied_delete_packet_id = barrier_id;
+
+        return Out{.segment_reader{std::move(segment_ctx.reader)},
+                   .index_segment = std::move(new_segment),
+                   .applied_delete_packet_id =
+                     segment_ctx.flushed.applied_delete_packet_id};
+      };
+
+      futures3.emplace_back(_async_flush.Submit(std::move(process)));
     }
+    process_futures(futures3);
   }
+
+  if (!plan.commit_packets.empty()) {
+    ResolveDeleteStateShadow(plan.commit_packets, delete_state_shadow,
+                             plan.barrier_id);
+  }
+
+  SDB_ASSERT(readers.size() == pending_meta.segments.size());
+  SDB_ASSERT(delete_state_shadow.size() == pending_meta.segments.size());
 
 #ifdef SDB_DEV
   {
@@ -2140,6 +2505,12 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       std::atomic_store_explicit(&_committed_reader, std::move(new_reader),
                                  std::memory_order_release);
     }
+    if (!plan.commit_packets.empty()) {
+      ResolveDeleteStateShadow(plan.commit_packets,
+                               _committed_delete_state_shadow, plan.barrier_id);
+      AdvanceCommittedDeleteFloor(plan.barrier_id,
+                                  _committed_delete_state_shadow);
+    }
     return {};
   }
 
@@ -2154,13 +2525,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
   }
 
-  return {
-    PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
-                .tick = LimitTick(tick, _committed_tick)},
-    std::move(pending_meta),  // Retain meta pending flush
-    std::move(readers),
-    std::move(files_to_sync),
-  };
+  to_commit.tick = LimitTick(tick, _committed_tick);
+  to_commit.files_to_sync = std::move(files_to_sync);
+  return to_commit;
 }
 
 void IndexWriter::ApplyFlush(PendingContext&& context) {
@@ -2202,6 +2569,9 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   // Update file name so that directory reader holds a reference
   to_commit.filename = std::move(index_meta_file);
   // Assemble directory reader
+  _pending_state.delete_state_shadow = std::move(context.delete_state_shadow);
+  SDB_ASSERT(_pending_state.delete_state_shadow.size() ==
+             to_commit.index_meta.segments.size());
   _pending_state.commit = std::make_shared<const DirectoryReaderImpl>(
     dir, _codec, _committed_reader->Options(), std::move(to_commit),
     std::move(context.readers));
@@ -2248,10 +2618,23 @@ void IndexWriter::Finish() {
     throw IllegalState{"Failed to commit index metadata"};
   }
 
+  auto& delete_state_shadow = _pending_state.delete_state_shadow;
+  try {
+    AdvanceCommittedDeleteFloor(_pending_state.delete_barrier_id,
+                                delete_state_shadow);
+  } catch (...) {
+    // cleanup-only path, commit already successful
+  }
   // noexcept part!
   _pending_state.StartReset(*this, true);
   SDB_ASSERT(_pending_state.tick != writer_limits::kMaxTick);
   _committed_tick = _pending_state.tick;
+
+  _committed_delete_state_shadow =
+    std::move(_pending_state.delete_state_shadow);
+  SDB_ASSERT(_committed_delete_state_shadow.size() ==
+             _pending_state.commit->size());
+
   // after this line transaction is successful (only noexcept operations below)
   std::atomic_store_explicit(&_committed_reader,
                              std::move(_pending_state.commit),

@@ -77,18 +77,18 @@ PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
       error(" interval gap must be a 2-element list [min, max], got ",
             children.size(), " elements");
     }
-    auto lo = coerce(children[0]);
-    auto hi = coerce(children[1]);
-    if (lo > hi) {
-      error(" interval gap must satisfy 0 <= min <= max, got [", lo, ", ", hi,
+    auto min = coerce(children[0]);
+    auto max = coerce(children[1]);
+    if (min > max) {
+      error(" interval gap must satisfy 0 <= min <= max, got [", min, ", ", max,
             "]");
     }
-    return {.offs_min = static_cast<size_t>(lo) + 1,
-            .offs_max = static_cast<size_t>(hi) + 1};
+    return {.min = static_cast<size_t>(min) + 1,
+            .max = static_cast<size_t>(max) + 1};
   }
   auto raw = coerce(val);
-  return {.offs_min = static_cast<size_t>(raw) + 1,
-          .offs_max = static_cast<size_t>(raw) + 1};
+  return {.min = static_cast<size_t>(raw) + 1,
+          .max = static_cast<size_t>(raw) + 1};
 }
 
 }  // namespace
@@ -122,7 +122,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   search::mangling::MangleString(field_name);
 
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
@@ -149,8 +149,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
         if (pending_gap) {
           // First token of a new text pattern: apply pending gap.
           opts
-            ->push_back<irs::ByTermOptions>(pending_gap->offs_min,
-                                            pending_gap->offs_max)
+            ->push_back<irs::ByTermOptions>(pending_gap->min, pending_gap->max)
             .term.assign(token->value);
         } else {
           // No pending gap: first term or adjacent token within same
@@ -205,7 +204,7 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
   bool first = true;
   while (analyzer.next()) {
     const PhraseGap g = first ? base_gap : PhraseGap{1, 1};
-    auto& part = options.push_back<irs::ByTermOptions>(g.offs_min, g.offs_max);
+    auto& part = options.push_back<irs::ByTermOptions>(g.min, g.max);
     part.term.assign(token->value);
     first = false;
   }
@@ -240,7 +239,7 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   search::mangling::MangleString(field_name);
   *phrase.mutable_field() = field_name;
   phrase.boost(ctx.boost);
@@ -385,7 +384,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   search::mangling::MangleString(field_name);
 
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
@@ -456,20 +455,20 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
     switch (leaf_op) {
       case TSQueryOp::Term: {
         auto text = get_text_arg();
-        options->push_back<irs::ByTermOptions>(gap.offs_min, gap.offs_max)
+        options->push_back<irs::ByTermOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
         break;
       }
       case TSQueryOp::Prefix: {
         auto text = get_text_arg();
-        options->push_back<irs::ByPrefixOptions>(gap.offs_min, gap.offs_max)
+        options->push_back<irs::ByPrefixOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
         break;
       }
       case TSQueryOp::Like: {
         auto text = get_text_arg();
         auto pattern = LikeEscapePattern(text, '\\');
-        options->push_back<irs::ByWildcardOptions>(gap.offs_min, gap.offs_max)
+        options->push_back<irs::ByWildcardOptions>(gap.min, gap.max)
           .term.assign(
             irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
         break;
@@ -477,8 +476,8 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
       case TSQueryOp::Fuzzy: {
         auto args = ParseLevenshteinArgs(*f);
         FillByEditDistanceOptions(
-          args, options->push_back<irs::ByEditDistanceOptions>(gap.offs_min,
-                                                               gap.offs_max));
+          args,
+          options->push_back<irs::ByEditDistanceOptions>(gap.min, gap.max));
         break;
       }
       case TSQueryOp::Phrase: {
@@ -526,7 +525,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
             ERR_HINT("Drop the min_match argument or set it to 1."));
         }
         auto& terms_opts =
-          options->push_back<irs::ByTermsOptions>(gap.offs_min, gap.offs_max);
+          options->push_back<irs::ByTermsOptions>(gap.min, gap.max);
         terms_opts.min_match = 1;
         for (const auto* arg : sub_args) {
           std::string term_text;
@@ -555,18 +554,18 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
         // analyzed text field, so numeric / boolean ranges (which would
         // target separate fields) make no sense at a phrase position.
         auto args = ParseRangeArgs(*f);
-        if ((args.min_val &&
-             args.min_val->type().id() != duckdb::LogicalTypeId::VARCHAR) ||
-            (args.max_val &&
-             args.max_val->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
+        if ((args.min &&
+             args.min->type().id() != duckdb::LogicalTypeId::VARCHAR) ||
+            (args.max &&
+             args.max->type().id() != duckdb::LogicalTypeId::VARCHAR)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
             ERR_MSG("## ts_between phrase part requires VARCHAR bounds"),
             ERR_HINT("Phrase parts live on the analyzed VARCHAR field; "
                      "numeric / BOOLEAN ranges target other fields."));
         }
-        FillByRangeOptionsVarchar(args, options->push_back<irs::ByRangeOptions>(
-                                          gap.offs_min, gap.offs_max));
+        FillByRangeOptionsVarchar(
+          args, options->push_back<irs::ByRangeOptions>(gap.min, gap.max));
         break;
       }
       default:

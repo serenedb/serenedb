@@ -41,7 +41,7 @@ void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,
                "analyzer."));
   }
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   search::mangling::MangleString(field_name);
   EmitLikeFilter(parent, ctx, column_info, std::move(field_name), like_pattern);
 }

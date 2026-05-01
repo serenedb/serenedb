@@ -50,7 +50,7 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
                       ERR_HINT(kSyntaxHint));
     }
     if (!val->IsNull()) {
-      (i == 0 ? out.min_val : out.max_val) = val;
+      (i == 0 ? out.min : out.max) = val;
     }
   }
   if (auto r =
@@ -65,27 +65,26 @@ RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
-  if (out.min_val && out.max_val &&
-      out.min_val->type().id() != out.max_val->type().id()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_between bounds have mismatched types: ",
-                            out.min_val->type().ToString(), " vs ",
-                            out.max_val->type().ToString()),
-                    ERR_HINT("Both bounds must share the same type family."));
+  if (out.min && out.max && out.min->type().id() != out.max->type().id()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_between bounds have mismatched types: ",
+              out.min->type().ToString(), " vs ", out.max->type().ToString()),
+      ERR_HINT("Both bounds must share the same type family."));
   }
   return out;
 }
 
 void FillByRangeOptionsVarchar(const RangeArgs& args,
                                irs::ByRangeOptions& out) {
-  if (args.min_val) {
-    auto sv = args.min_val->GetValue<std::string>();
+  if (args.min) {
+    auto sv = args.min->GetValue<std::string>();
     out.range.min.assign(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
     out.range.min_type =
       args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
   }
-  if (args.max_val) {
-    auto sv = args.max_val->GetValue<std::string>();
+  if (args.max) {
+    auto sv = args.max->GetValue<std::string>();
     out.range.max.assign(irs::ViewCast<irs::byte_type>(std::string_view{sv}));
     out.range.max_type =
       args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
@@ -151,7 +150,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   if (auto r = MangleForType(col_type, field_name); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
@@ -246,7 +245,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
                  const duckdb::BoundFunctionExpression& func) {
   auto args = ParseRangeArgs(func);
   // Both bounds NULL -> unbounded on both sides; matches every doc.
-  if (!args.min_val && !args.max_val) {
+  if (!args.min && !args.max) {
     if (ctx.negated) {
       AddFilter<irs::Empty>(parent);
     } else {
@@ -256,7 +255,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   const auto col_type = column_info.logical_type.id();
-  const auto* val_sample = args.min_val ? args.min_val : args.max_val;
+  const auto* val_sample = args.min ? args.min : args.max;
   const auto val_type = val_sample->type().id();
 
   // Validate value type matches column type family.
@@ -300,7 +299,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   if (auto r = MangleForType(col_type, field_name); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
@@ -322,15 +321,15 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
     auto* options = range.mutable_options();
     options->scored_terms_limit = ctx.scored_terms_limit;
     auto& rng = options->range;
-    if (args.min_val) {
+    if (args.min) {
       rng.min.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.min_val->GetValue<bool>())));
+        irs::BooleanTokenizer::value(args.min->GetValue<bool>())));
       rng.min_type =
         args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
-    if (args.max_val) {
+    if (args.max) {
       rng.max.assign(irs::ViewCast<irs::byte_type>(
-        irs::BooleanTokenizer::value(args.max_val->GetValue<bool>())));
+        irs::BooleanTokenizer::value(args.max->GetValue<bool>())));
       rng.max_type =
         args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     }
@@ -353,11 +352,11 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
       irs::SetGranularTerm(boundary, stream);
       bt = incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
     };
-    if (args.min_val) {
-      emit_bound(*args.min_val, rng.min, rng.min_type, args.min_incl);
+    if (args.min) {
+      emit_bound(*args.min, rng.min, rng.min_type, args.min_incl);
     }
-    if (args.max_val) {
-      emit_bound(*args.max_val, rng.max, rng.max_type, args.max_incl);
+    if (args.max) {
+      emit_bound(*args.max, rng.max, rng.max_type, args.max_incl);
     }
   }
 }

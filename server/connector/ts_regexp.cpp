@@ -60,7 +60,7 @@ void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
     throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
   }
   std::string field_name;
-  MakeFieldName(column_info, field_name);
+  MakeFieldName(column_info.column_id, field_name);
   search::mangling::MangleString(field_name);
   auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
                              : AddFilter<irs::ByRegexp>(parent);

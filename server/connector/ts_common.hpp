@@ -105,7 +105,6 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr);
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name);
-void MakeFieldName(const SearchColumnInfo& column, std::string& field_name);
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
@@ -153,8 +152,8 @@ Result FromFuncPrefix(irs::BooleanFilter& filter, const FilterContext& ctx,
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).
 struct RangeArgs {
-  const duckdb::Value* min_val = nullptr;
-  const duckdb::Value* max_val = nullptr;
+  const duckdb::Value* min = nullptr;
+  const duckdb::Value* max = nullptr;
   bool min_incl = false;
   bool max_incl = false;
 };
@@ -190,8 +189,8 @@ void ExtractAnyAllOfArgs(
 // Phrase-sequence representation, shared between FromTSQueryPhraseSeq
 // (the `##` operator) and tsquery_phrase
 struct PhraseGap {
-  size_t offs_min{0};
-  size_t offs_max{0};
+  size_t min = 0;
+  size_t max = 0;
 };
 
 struct PhraseSeq {

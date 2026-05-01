@@ -232,10 +232,6 @@ void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
   absl::big_endian::Store(field_name.data(), column_id);
 }
 
-void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
-  MakeFieldName(column.column_id, field_name);
-}
-
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name) {
   switch (type_id) {
     case duckdb::LogicalTypeId::VARCHAR:
@@ -595,7 +591,7 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->column_id, field_name);
   search::mangling::MangleNull(field_name);
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
@@ -645,7 +641,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   term_filter.boost(ctx.boost);
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->column_id, field_name);
   return SetupTermFilter(term_filter, field_name, *column_info, *const_val);
 }
 
@@ -689,7 +685,7 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->column_id, field_name);
 
   auto type_id = column_info->logical_type.id();
 
@@ -855,7 +851,7 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->column_id, field_name);
 
   auto type_id = column_info->logical_type.id();
   auto r = MangleForType(type_id, field_name);
@@ -923,7 +919,7 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(*column_info, field_name);
+  MakeFieldName(column_info->column_id, field_name);
 
   if (generic_version) {
     if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {

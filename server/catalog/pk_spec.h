@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,19 +18,29 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/file_options.h"
+#pragma once
 
-#include "pg/errcodes.h"
-#include "pg/sql_exception_macro.h"
+#include <cstdint>
 
-namespace sdb::pg::file_options {
+namespace sdb::catalog {
 
-void CheckRejectLimit(int value) {
-  if (value < 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("REJECT_LIMIT (", value, ") must be greater than zero"));
-  }
+enum class PkSpec : uint8_t {
+  FileRowNumber,
+  FileIndexPlusRowNumber,
+  FileOffset,
+  FileIndexPlusOffset,
+  RocksDBExplicitPK,
+  RocksDBGeneratedRowId,
+};
+
+constexpr bool IsGlobPK(PkSpec spec) noexcept {
+  return spec == PkSpec::FileIndexPlusRowNumber ||
+         spec == PkSpec::FileIndexPlusOffset;
 }
 
-}  // namespace sdb::pg::file_options
+constexpr bool IsRocksPK(PkSpec spec) noexcept {
+  return spec == PkSpec::RocksDBExplicitPK ||
+         spec == PkSpec::RocksDBGeneratedRowId;
+}
+
+}  // namespace sdb::catalog

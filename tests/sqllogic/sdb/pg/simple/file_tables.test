@@ -15,13 +15,8 @@ COPY (
 
 
 statement ok
-CREATE TABLE vedernikoff_company(
-  iq INT8,
-  salary TEXT,
-  fact TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
+CREATE VIEW vedernikoff_company AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_vedernikoff_company.parquet');
 
 
 # all filters are supposed to be pushdowned — no FilterNode in the plan
@@ -40,21 +35,6 @@ WHERE
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│             iq            │
-│           salary          │
-│            fact           │
-│             iq            │
-│           salary          │
-│            fact           │
-│             iq            │
-│           salary          │
-│            fact           │
-│                           │
-│      ~4,000,000 rows      │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
 │       CROSS_PRODUCT       ├───────────────────────────────────────────┐
 └─────────────┬─────────────┘                                           │
 ┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
@@ -65,8 +45,8 @@ QUERY PLAN
 │                           │                             │                           │
 │                           │                             │        Projections:       │
 │                           │                             │             iq            │
-│                           │                             │            fact           │
-│                           ├──────────────┐              │           salary          │
+│                           │                             │           salary          │
+│                           ├──────────────┐              │            fact           │
 │                           │              │              │                           │
 │                           │              │              │          Filters:         │
 │                           │              │              │ (iq >= 90) AND (iq <= 100)│
@@ -349,12 +329,8 @@ COPY (
 
 
 statement ok
-CREATE TABLE nullable_data(
-  id INT8,
-  name TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_nullable_data.parquet'
-);
+CREATE VIEW nullable_data AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_nullable_data.parquet');
 
 
 query
@@ -540,13 +516,8 @@ COPY (
 
 
 statement ok
-CREATE TABLE malandin_company(
-  iq INT8,
-  salary TEXT,
-  fact TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.csv'
-);
+CREATE VIEW malandin_company AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_vedernikoff_company.csv');
 
 
 query
@@ -772,12 +743,8 @@ COPY (
 
 
 statement ok
-CREATE TABLE clickclack(
-  id INT8,
-  name TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_nullable_data.csv'
-);
+CREATE VIEW clickclack AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_nullable_data.csv');
 
 
 query
@@ -958,96 +925,10 @@ val_13
 val_14
 
 
-statement error
-CREATE TABLE babsky(
-  iq INT8 PRIMARY KEY,
-  salary TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
-----
-db error: ERROR: primary keys are not supported for external tables
-
-
-statement error
-CREATE TABLE babsky(
-  iq INT8,
-  salary TEXT,
-  PRIMARY KEY (iq)
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
-----
-db error: ERROR: primary keys are not supported for external tables
-
-
-statement error
-CREATE TABLE babsky(
-  iq INT8,
-  salary TEXT CHECK (iq > 0)
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
-----
-db error: ERROR: check constraints are not supported for external tables
-
-
-statement error
-CREATE TABLE babsky(
-  iq INT8,
-  salary TEXT,
-  CHECK (iq > 0)
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
-----
-db error: ERROR: check constraints are not supported for external tables
-
-
-statement error
-CREATE TABLE babsky(
-  iq INTEGER DEFAULT 42,
-  salary TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
-----
-db error: ERROR: default values are not supported for external tables
-
-
-statement error
-CREATE TABLE babsky(
-  iq INT8,
-  doubled INT8 GENERATED ALWAYS AS (iq * 2) STORED
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
-);
-----
-db error: ERROR: generated columns are not supported for external tables
-
-
-# TODO(Pasha): re-enable when HELP output is stabilised. The refactor dropped the
-# per-option / per-format tree for WITH(HELP) in favour of a short pointer to
-# DuckDB's reader docs; the assertion below still reflects the new message
-# shape so flipping the skipif off should not require further edits.
-skipif serenedb # TODO(Pasha) better options support
-skipif pg-wire-simple
-statement error
-CREATE TABLE babsky(
-  iq INT8,
-  salary TEXT
-) WITH (
-  HELP
-);
-----
-db error: ERROR:
-External (file-backed) table options:
-  path (string, required) - file path; extension picks the reader (.parquet -> read_parquet, .csv/.tsv/.txt -> read_csv_auto, .json/.jsonl/.ndjson -> read_json_auto)
-  Any other WITH option is forwarded verbatim to that reader; see DuckDB docs for per-reader options.
-  Remote storage (s3://, https://, ...) authenticates via DuckDB's CREATE SECRET.
-
-
-# parquet type casting: external table type differs from parquet physical type
+# Type casting on the indexed relation: views derive types from the
+# underlying source. To exercise wider/narrower types the view body
+# carries an explicit cast (the engine's external-table column-override
+# mechanism is gone; the cast lives in SQL where it's visible).
 
 statement ok
 CREATE TABLE vedernikoff_src (weight INTEGER);
@@ -1059,13 +940,10 @@ statement ok
 COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.parquet' (FORMAT PARQUET);
 
 
-# vedernikoff: same type (INT4 -> INT4)
+# vedernikoff: same type (INT4 parquet column -> INT4 view column)
 statement ok
-CREATE TABLE vedernikoff(
-  weight INTEGER
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
-);
+CREATE VIEW vedernikoff AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_vedernikoff.parquet');
 
 query
 SELECT * FROM vedernikoff;
@@ -1075,13 +953,12 @@ weight
 2
 
 
-# fatter_vedernikoff: wider type (INT4 parquet -> INT8 external)
+# fatter_vedernikoff: wider type (INT4 parquet column -> INT8 view column,
+# via explicit cast in the view body).
 statement ok
-CREATE TABLE fatter_vedernikoff(
-  weight INT8
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff.parquet'
-);
+CREATE VIEW fatter_vedernikoff AS
+  SELECT weight::INT8 AS weight
+  FROM read_parquet('/tmp/${__DATABASE__}_vedernikoff.parquet');
 
 query
 SELECT * FROM fatter_vedernikoff;

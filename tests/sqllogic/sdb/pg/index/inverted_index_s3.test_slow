@@ -1,10 +1,10 @@
 control substitution on
 
-# Inverted index on S3-backed external tables (parquet + csv). Mirrors the
+# Inverted index on S3-backed views over parquet + csv files. Mirrors the
 # file_tables_s3.test_slow setup (MinIO secret, seed a rocksdb table, COPY
-# to s3://..., re-attach as an external table) and layers CREATE INDEX +
-# PHRASE + BM25 on top. DuckDB's httpfs picks the reader by URL extension
-# (.parquet -> read_parquet, .csv -> read_csv_auto).
+# to s3://..., expose as `CREATE VIEW v AS SELECT * FROM read_*('s3://...')`)
+# and layers CREATE INDEX + PHRASE + BM25 on top. DuckDB's httpfs resolves
+# the secret at scan time.
 
 
 statement ok
@@ -71,13 +71,8 @@ WITH (FORMAT csv, HEADER true);
 
 
 statement ok
-CREATE TABLE company_parquet_ext (
-  id INT8,
-  who TEXT,
-  what TEXT
-) WITH (
-  PATH = 's3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.parquet'
-);
+CREATE VIEW company_parquet_ext AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.parquet');
 
 
 statement ok
@@ -181,13 +176,8 @@ id	has_score
 
 
 statement ok
-CREATE TABLE company_csv_ext (
-  id INT8,
-  who TEXT,
-  what TEXT
-) WITH (
-  PATH = 's3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.csv'
-);
+CREATE VIEW company_csv_ext AS
+  SELECT * FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.csv');
 
 
 statement ok
@@ -304,11 +294,11 @@ id	who
 
 
 statement ok
-DROP TABLE company_parquet_ext;
+DROP VIEW company_parquet_ext;
 
 
 statement ok
-DROP TABLE company_csv_ext;
+DROP VIEW company_csv_ext;
 
 
 statement ok

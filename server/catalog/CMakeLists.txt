@@ -10,8 +10,6 @@ target_sources(
         catalog.cpp
         object.cpp
         table_options.cpp
-        format_options.cpp
-        storage_options.cpp
         key_generator.cpp
         search_analyzer_impl.cpp
         table.cpp

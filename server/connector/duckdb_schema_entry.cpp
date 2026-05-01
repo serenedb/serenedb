@@ -44,11 +44,9 @@
 #include "app/app_server.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
-#include "catalog/format_options.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/secondary_index.h"
-#include "catalog/storage_options.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/user_type.h"
@@ -65,66 +63,6 @@
 #include "storage_engine/secondary_index_shard.h"
 
 namespace sdb::connector {
-namespace {
-
-// Folds a WITH-clause option value into its string form. DuckDB's parser
-// leaves string / number literals as ConstantExpression, bare identifiers
-// (`path`, `vhost`, `gzip`, ...) as ColumnRefExpression, and bool literals
-// `true` / `false` as CAST('t'|'f' AS BOOLEAN). We normalise each of these
-// into a plain std::string so the catalog can persist them and the reader
-// (read_parquet / read_csv_auto / read_json_auto) can re-parse them.
-std::string FoldToString(const duckdb::ParsedExpression& expr,
-                         std::string_view key) {
-  switch (expr.GetExpressionType()) {
-    case duckdb::ExpressionType::VALUE_CONSTANT:
-      return expr.Cast<duckdb::ConstantExpression>().value.ToString();
-    case duckdb::ExpressionType::COLUMN_REF:
-      return expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
-    case duckdb::ExpressionType::OPERATOR_CAST:
-      return FoldToString(*expr.Cast<duckdb::CastExpression>().child, key);
-    default:
-      throw duckdb::InvalidInputException(
-        "value for option \"%s\" must be a literal (got %s)", key,
-        duckdb::ExpressionTypeToString(expr.GetExpressionType()));
-  }
-}
-
-// Parses CREATE TABLE ... WITH (...) reloptions into a catalog::FileInfo.
-// Only `path` is interpreted by us; every other option is lowered to a
-// string and forwarded verbatim to DuckDB's reader at scan time.
-catalog::FileInfo ParseExternalTableOptions(
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& options) {
-  std::string path;
-  std::vector<std::pair<std::string, std::string>> passthrough;
-  passthrough.reserve(options.size());
-
-  for (const auto& [key, expr] : options) {
-    if (!expr) {
-      throw duckdb::InvalidInputException("option \"%s\" requires a value",
-                                          key);
-    }
-    auto value = FoldToString(*expr, key);
-    if (duckdb::StringUtil::CIEquals(key, "path")) {
-      path = std::move(value);
-    } else {
-      passthrough.emplace_back(duckdb::StringUtil::Lower(key),
-                               std::move(value));
-    }
-  }
-
-  if (path.empty()) {
-    throw duckdb::InvalidInputException(
-      "required parameter \"path\" was not found");
-  }
-
-  return {
-    .storage_options = std::make_shared<LocalStorageOptions>(std::move(path)),
-    .format_options = std::make_shared<FormatOptions>(std::move(passthrough)),
-  };
-}
-
-}  // namespace
 
 ObjectId SereneDBSchemaEntry::GetDatabaseId() const {
   return catalog.Cast<SereneDBCatalog>().GetDatabaseId();
@@ -164,9 +102,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   // Build SereneDB CreateTableRequest from DuckDB types
   catalog::CreateTableRequest request;
   request.name = table_info.table;
-
-  // External (file-backed) tables: CREATE TABLE t(...) WITH (PATH='...').
-  const bool is_external = !table_info.options.empty();
 
   // Convert columns (Logical includes generated columns)
   catalog::Column::Id next_col_id = 0;
@@ -322,29 +257,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       default:
         break;
     }
-  }
-
-  if (is_external) {
-    for (const auto& col : request.columns) {
-      if (col.generated_type != catalog::Column::GeneratedType::kNone) {
-        throw duckdb::CatalogException(
-          "generated columns are not supported for external tables");
-      }
-      if (col.expr) {
-        throw duckdb::CatalogException(
-          "default values are not supported for external tables");
-      }
-    }
-    if (!request.pkColumns.empty()) {
-      throw duckdb::CatalogException(
-        "primary keys are not supported for external tables");
-    }
-    if (!request.checkConstraints.empty()) {
-      throw duckdb::CatalogException(
-        "check constraints are not supported for external tables");
-    }
-    request.file_info = ParseExternalTableOptions(table_info.options);
-    request.type = std::to_underlying(TableType::File);
   }
 
   // Get database info

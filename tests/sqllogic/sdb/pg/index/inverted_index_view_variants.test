@@ -1,0 +1,552 @@
+hash-threshold 100
+
+# Per-format reader variant coverage (read_parquet vs parquet_scan,
+# csv/json _auto aliases) -- each must classify into the same fast-path.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY variants_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement count 2
+COPY (SELECT 1 AS a, 'shared term alpha info' AS b
+      UNION ALL SELECT 2, 'shared term beta info')
+TO '/tmp/${__DATABASE__}_variants.jsonl' (FORMAT json);
+
+statement count 2
+COPY (SELECT 1 AS a, 'shared term alpha info' AS b
+      UNION ALL SELECT 2, 'shared term beta info')
+TO '/tmp/${__DATABASE__}_variants.parquet' (FORMAT parquet);
+
+statement count 2
+COPY (SELECT 1 AS a, 'shared term alpha info' AS b
+      UNION ALL SELECT 2, 'shared term beta info')
+TO '/tmp/${__DATABASE__}_variants.csv' (FORMAT csv, HEADER);
+
+
+# ---- parquet variants ----
+
+statement ok
+CREATE VIEW v_read_parquet AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_read_parquet_idx ON v_read_parquet USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_parquet_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_parquet_scan AS SELECT * FROM parquet_scan('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_parquet_scan_idx ON v_parquet_scan USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_parquet_scan_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+
+# ---- csv variants ----
+
+statement ok
+CREATE VIEW v_read_csv AS SELECT * FROM read_csv('/tmp/${__DATABASE__}_variants.csv');
+
+statement ok
+CREATE INDEX v_read_csv_idx ON v_read_csv USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_csv_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_read_csv_auto AS SELECT * FROM read_csv_auto('/tmp/${__DATABASE__}_variants.csv');
+
+statement ok
+CREATE INDEX v_read_csv_auto_idx ON v_read_csv_auto USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_csv_auto_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+
+# ---- json variants (records mode) ----
+
+statement ok
+CREATE VIEW v_read_json AS SELECT * FROM read_json('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_json_idx ON v_read_json USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_json_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_read_json_auto AS SELECT * FROM read_json_auto('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_json_auto_idx ON v_read_json_auto USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_json_auto_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_read_ndjson AS SELECT * FROM read_ndjson('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_ndjson_idx ON v_read_ndjson USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_ndjson_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_read_ndjson_auto AS SELECT * FROM read_ndjson_auto('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_ndjson_auto_idx ON v_read_ndjson_auto USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_read_ndjson_auto_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+
+# ---- json variants (objects mode) ----
+# objects mode emits a single 'json' VARCHAR column; PHRASE works via
+# the search-filter-builder cast-peel.
+
+statement ok
+CREATE VIEW v_read_json_objects AS SELECT * FROM read_json_objects('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_json_objects_idx ON v_read_json_objects USING inverted(json variants_en);
+
+query
+SELECT json FROM v_read_json_objects_idx WHERE json @@ ts_phrase('shared term') ORDER BY json;
+----
+json
+{"a":1,"b":"shared term alpha info"}
+{"a":2,"b":"shared term beta info"}
+
+statement ok
+CREATE VIEW v_read_json_objects_auto AS SELECT * FROM read_json_objects_auto('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_json_objects_auto_idx ON v_read_json_objects_auto USING inverted(json variants_en);
+
+query
+SELECT json FROM v_read_json_objects_auto_idx WHERE json @@ ts_phrase('shared term') ORDER BY json;
+----
+json
+{"a":1,"b":"shared term alpha info"}
+{"a":2,"b":"shared term beta info"}
+
+statement ok
+CREATE VIEW v_read_ndjson_objects AS SELECT * FROM read_ndjson_objects('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_read_ndjson_objects_idx ON v_read_ndjson_objects USING inverted(json variants_en);
+
+query
+SELECT json FROM v_read_ndjson_objects_idx WHERE json @@ ts_phrase('shared term') ORDER BY json;
+----
+json
+{"a":1,"b":"shared term alpha info"}
+{"a":2,"b":"shared term beta info"}
+
+
+# ---- projection shapes (subset / reorder / rename / cast) ----
+
+statement ok
+CREATE VIEW v_subset AS SELECT b FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_subset_idx ON v_subset USING inverted(b variants_en);
+
+query
+SELECT b FROM v_subset_idx WHERE b @@ ts_phrase('shared term') ORDER BY b;
+----
+b
+shared term alpha info
+shared term beta info
+
+statement ok
+CREATE VIEW v_reorder AS SELECT b, a FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_reorder_idx ON v_reorder USING inverted(b variants_en, a);
+
+query
+SELECT a, b FROM v_reorder_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_rename AS SELECT a AS x, b AS y FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_rename_idx ON v_rename USING inverted(x, y variants_en);
+
+query
+SELECT x, y FROM v_rename_idx WHERE y @@ ts_phrase('shared term') ORDER BY x;
+----
+x	y
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_cast AS SELECT a::BIGINT AS a, b FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_cast_idx ON v_cast USING inverted(a, b variants_en);
+
+query
+SELECT a, b FROM v_cast_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+statement ok
+CREATE VIEW v_cast_rename AS SELECT a::BIGINT AS x, b AS y FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet');
+
+statement ok
+CREATE INDEX v_cast_rename_idx ON v_cast_rename USING inverted(x, y variants_en);
+
+query
+SELECT x, y FROM v_cast_rename_idx WHERE y @@ ts_phrase('shared term') ORDER BY x;
+----
+x	y
+1	shared term alpha info
+2	shared term beta info
+
+# JSON cast (records mode)
+statement ok
+CREATE VIEW v_json_cast AS SELECT a::BIGINT AS x, b AS y FROM read_json('/tmp/${__DATABASE__}_variants.jsonl');
+
+statement ok
+CREATE INDEX v_json_cast_idx ON v_json_cast USING inverted(x, y variants_en);
+
+query
+SELECT x, y FROM v_json_cast_idx WHERE y @@ ts_phrase('shared term') ORDER BY x;
+----
+x	y
+1	shared term alpha info
+2	shared term beta info
+
+# CSV reorder + cast
+statement ok
+CREATE VIEW v_csv_reorder_cast AS SELECT b AS y, a::BIGINT AS x FROM read_csv('/tmp/${__DATABASE__}_variants.csv');
+
+statement ok
+CREATE INDEX v_csv_reorder_cast_idx ON v_csv_reorder_cast USING inverted(y variants_en, x);
+
+query
+SELECT x, y FROM v_csv_reorder_cast_idx WHERE y @@ ts_phrase('shared term') ORDER BY x;
+----
+x	y
+1	shared term alpha info
+2	shared term beta info
+
+
+# View body modifiers: backfill applies WHERE/ORDER/LIMIT, so the index
+# only captures rows the view emits; non-matching rows are never added.
+
+# WHERE only
+statement ok
+CREATE VIEW v_where AS
+  SELECT a, b FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet')
+  WHERE a <= 2;
+
+statement ok
+CREATE INDEX v_where_idx ON v_where USING inverted(b variants_en, a);
+
+query
+SELECT count(*) FROM v_where_idx;
+----
+count
+2
+
+query
+SELECT a, b FROM v_where_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+
+# ORDER BY only -- order doesn't change index contents; just verify
+# the body still classifies as fast-path.
+statement ok
+CREATE VIEW v_order AS
+  SELECT a, b FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet')
+  ORDER BY a;
+
+statement ok
+CREATE INDEX v_order_idx ON v_order USING inverted(b variants_en, a);
+
+query
+SELECT count(*) FROM v_order_idx WHERE b @@ ts_phrase('shared term');
+----
+count
+2
+
+# LIMIT only -- index captures only the first row of v_limit.
+statement ok
+CREATE VIEW v_limit AS
+  SELECT a, b FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet')
+  ORDER BY a LIMIT 1;
+
+statement ok
+CREATE INDEX v_limit_idx ON v_limit USING inverted(b variants_en, a);
+
+query
+SELECT count(*) FROM v_limit_idx;
+----
+count
+1
+
+query
+SELECT a FROM v_limit_idx WHERE b @@ ts_phrase('shared term');
+----
+a
+1
+
+# WHERE + ORDER BY + LIMIT combined
+statement ok
+CREATE VIEW v_filter_order_limit AS
+  SELECT b AS y, a::BIGINT AS x
+  FROM read_parquet('/tmp/${__DATABASE__}_variants.parquet')
+  WHERE a >= 1
+  ORDER BY a
+  LIMIT 2;
+
+statement ok
+CREATE INDEX v_filter_order_limit_idx ON v_filter_order_limit USING inverted(y variants_en, x);
+
+query
+SELECT count(*) FROM v_filter_order_limit_idx;
+----
+count
+2
+
+query
+SELECT x, y FROM v_filter_order_limit_idx WHERE y @@ ts_phrase('shared term') ORDER BY x;
+----
+x	y
+1	shared term alpha info
+2	shared term beta info
+
+
+# Cleanup
+statement ok
+DROP INDEX v_read_parquet_idx;
+
+
+statement ok
+DROP INDEX v_parquet_scan_idx;
+
+
+statement ok
+DROP INDEX v_read_csv_idx;
+
+
+statement ok
+DROP INDEX v_read_csv_auto_idx;
+
+
+statement ok
+DROP INDEX v_read_json_idx;
+
+
+statement ok
+DROP INDEX v_read_json_auto_idx;
+
+
+statement ok
+DROP INDEX v_read_ndjson_idx;
+
+
+statement ok
+DROP INDEX v_read_ndjson_auto_idx;
+
+
+statement ok
+DROP INDEX v_read_json_objects_idx;
+
+
+statement ok
+DROP INDEX v_read_json_objects_auto_idx;
+
+
+statement ok
+DROP INDEX v_read_ndjson_objects_idx;
+
+
+statement ok
+DROP INDEX v_subset_idx;
+
+
+statement ok
+DROP INDEX v_reorder_idx;
+
+
+statement ok
+DROP INDEX v_rename_idx;
+
+
+statement ok
+DROP INDEX v_cast_idx;
+
+
+statement ok
+DROP INDEX v_cast_rename_idx;
+
+
+statement ok
+DROP INDEX v_json_cast_idx;
+
+
+statement ok
+DROP INDEX v_csv_reorder_cast_idx;
+
+
+statement ok
+DROP INDEX v_where_idx;
+
+
+statement ok
+DROP INDEX v_order_idx;
+
+
+statement ok
+DROP INDEX v_limit_idx;
+
+
+statement ok
+DROP INDEX v_filter_order_limit_idx;
+
+
+statement ok
+DROP VIEW v_subset;
+
+
+statement ok
+DROP VIEW v_reorder;
+
+
+statement ok
+DROP VIEW v_rename;
+
+
+statement ok
+DROP VIEW v_cast;
+
+
+statement ok
+DROP VIEW v_cast_rename;
+
+
+statement ok
+DROP VIEW v_json_cast;
+
+
+statement ok
+DROP VIEW v_csv_reorder_cast;
+
+
+statement ok
+DROP VIEW v_where;
+
+
+statement ok
+DROP VIEW v_order;
+
+
+statement ok
+DROP VIEW v_limit;
+
+
+statement ok
+DROP VIEW v_filter_order_limit;
+
+
+statement ok
+DROP VIEW v_read_parquet;
+
+
+statement ok
+DROP VIEW v_parquet_scan;
+
+
+statement ok
+DROP VIEW v_read_csv;
+
+
+statement ok
+DROP VIEW v_read_csv_auto;
+
+
+statement ok
+DROP VIEW v_read_json;
+
+
+statement ok
+DROP VIEW v_read_json_auto;
+
+
+statement ok
+DROP VIEW v_read_ndjson;
+
+
+statement ok
+DROP VIEW v_read_ndjson_auto;
+
+
+statement ok
+DROP VIEW v_read_json_objects;
+
+
+statement ok
+DROP VIEW v_read_json_objects_auto;
+
+
+statement ok
+DROP VIEW v_read_ndjson_objects;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY variants_en;

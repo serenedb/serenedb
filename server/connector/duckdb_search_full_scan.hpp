@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
 #include "connector/search_pk_lookup.h"
 
@@ -48,17 +49,20 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   irs::ColumnArgsFetcher score_fetcher;
   irs::ScoreFunction score_function;
 
-  // Top-K precomputed results (score_top_k path only)
-  std::vector<std::pair<float, std::string>> topk_hits;  // (score, pk) DESC
+  // Reused per call; default-constructed to std::monostate and switched to
+  // the matching alternative on first use via index_source->CreatePkBatch().
+  // Streaming and top-K paths are mutually exclusive and share this slot.
+  PrimaryKeyBatch pk_batch;
+
+  // Top-K state -- score_top_k path only.
+  std::vector<float> topk_scores;
   size_t topk_offset = 0;
   bool topk_executed = false;
 
-  // Offsets state (populated only when bind_data carries OFFSETS requests).
-  // offsets_output_idx[i] is the DataChunk slot for SearchScan.offsets[i];
-  // offsets_field_state[i] holds per-segment sub-filter state rebuilt on
-  // every segment transition (position iterators are cached inside).
+  // Populated only when SearchScan requests OFFSETS columns.
   std::vector<duckdb::idx_t> offsets_output_idx;
   std::vector<PerFieldState> offsets_field_state;
+  std::vector<std::vector<int64_t>> offsets_doc_scratch;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

@@ -25,7 +25,6 @@ add_library(
     duckdb_client_state.cpp
     duckdb_catalog.cpp
     duckdb_entry_cache.cpp
-    duckdb_external_scan.cpp
     duckdb_schema_entry.cpp
     duckdb_system_table_entry.cpp
     duckdb_table_entry.cpp
@@ -45,8 +44,11 @@ add_library(
     duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
-    lookup.cpp
-    rocksdb_lookup.cpp
+    index_source_factory.cpp
+    index_source_rocksdb.cpp
+    index_source_view_file.cpp
+    index_source_view_rocksdb.cpp
+    view_fast_path.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_sst_insert.cpp
@@ -75,6 +77,15 @@ target_link_libraries(
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?
 # we need rocksdb utils and logical collection but sereneserver is a single monolithic target without proper include dirs setup
 target_include_directories(serene_connector PUBLIC "${CMAKE_SOURCE_DIR}/server")
+
+# view_fast_path.cpp reads iceberg-bound snapshot ids; iceberg's REST
+# headers include yyjson unprefixed.
+target_include_directories(
+    serene_connector
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
+)
 
 add_subdirectory(functions)
 add_subdirectory(optimizer)

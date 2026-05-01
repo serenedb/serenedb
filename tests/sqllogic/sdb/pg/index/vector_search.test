@@ -17,7 +17,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -34,7 +34,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 10         │
 │          Dims: 3          │
@@ -75,7 +75,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │     IRESEARCH_FULLSCAN    │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -108,7 +109,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │      Radius: 0.700000     │
 │          Dims: 3          │
@@ -140,7 +141,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │     IRESEARCH_FULLSCAN    │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │            emb            │
@@ -165,7 +167,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │      Radius: 1.000000     │
 │          Dims: 3          │
@@ -190,7 +192,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │     Radius: 100.000000    │
 │          Dims: 3          │
@@ -279,7 +281,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
-│        Table: t_cos       │
+│      Index: cos_index     │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -316,7 +318,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
-│        Table: t_ip        │
+│      Index: ip_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -383,7 +385,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │   IRESEARCH_ANN_FULLSCAN  │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │

@@ -163,9 +163,13 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes]
   gstate.row_keys.clear();
   gstate.row_keys.reserve(num_rows);
+
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
+      pk_formats, gstate.pk_columns, row, gstate.table_key, [](auto) {},
       gstate.row_keys.emplace_back());
   }
 

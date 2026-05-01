@@ -34,8 +34,11 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source.h"
+#include "connector/index_source_factory.h"
 #include "connector/key_utils.hpp"
-#include "connector/lookup.h"
+#include "connector/pk_batch_helpers.h"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -47,12 +50,14 @@ namespace sdb::connector {
 namespace {
 
 void ANNSearchImpl(SearchAnnScanGlobalState& state,
-                   duckdb::ClientContext& context) {
+                   duckdb::ClientContext& context,
+                   const SereneDBScanBindData& bind_data) {
   auto& snapshot =
     GetSereneDBContext(context).EnsureSearchSnapshot(state.scan->index_id);
   auto& reader = snapshot.reader;
   if (reader.size() == 0) {
     state.finished = true;
+    state.results_ready = true;
     return;
   }
 
@@ -74,18 +79,53 @@ void ANNSearchImpl(SearchAnnScanGlobalState& state,
   const size_t n = static_cast<size_t>(new_end - ids.begin());
   ids.resize(n);
 
-  auto segments =
-    ids | std::views::transform([](int64_t id) {
-      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
-    });
-  auto doc_ids =
-    ids | std::views::transform([](int64_t id) {
-      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
-    });
+  bool has_real =
+    std::any_of(state.projected_columns.begin(), state.projected_columns.end(),
+                [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
 
-  state.pk_bytes.assign(n, std::string{});
-  LookupSegmentsValues(segments, doc_ids, reader, state.pk_bytes);
-  std::erase_if(state.pk_bytes, [](const auto& pk) { return pk.empty(); });
+  if (has_real && n > 0) {
+    if (!state.index_source) {
+      state.index_source = MakeIndexSource(
+        context, bind_data, state.snapshot, state.txn, state.projected_columns,
+        state.projected_types, bind_data.column_ids);
+    }
+    if (std::holds_alternative<std::monostate>(state.pk_batch)) {
+      state.pk_batch = state.index_source->CreatePkBatch();
+    }
+
+    auto segments =
+      ids | std::views::transform([](int64_t id) {
+        return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
+      });
+    auto doc_ids =
+      ids | std::views::transform([](int64_t id) {
+        return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
+      });
+
+    state.total_results = std::visit(
+      [&](auto& pk) -> size_t {
+        using T = std::decay_t<decltype(pk)>;
+        if constexpr (std::is_same_v<T, std::monostate>) {
+          SDB_ASSERT(false, "pk_batch must be initialised");
+          return 0;
+        } else {
+          pk.Reset();
+          if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
+            pk.EnsureInit(duckdb::Allocator::DefaultAllocator());
+          }
+          pk.Resize(n);
+          LookupSegmentsValues(segments, doc_ids, reader, n,
+                               [&](size_t orig, std::string_view pk_bytes) {
+                                 SetPrimaryKey(pk, orig, pk_bytes);
+                               });
+          return PkCompactResolved(pk, n);
+        }
+      },
+      state.pk_batch);
+  } else {
+    state.total_results = n;
+  }
+  state.results_ready = true;
 }
 
 }  // namespace
@@ -118,11 +158,11 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
 
   SDB_ASSERT(gstate.scan);
 
-  if (gstate.pk_bytes.empty()) {
-    ANNSearchImpl(gstate, context);
+  if (!gstate.results_ready) {
+    ANNSearchImpl(gstate, context, bind_data);
   }
 
-  const size_t total = gstate.pk_bytes.size();
+  const size_t total = gstate.total_results;
   const size_t batch_start = gstate.current_idx;
 
   if (batch_start >= total) {
@@ -134,7 +174,6 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   const size_t batch_size =
     std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
 
-  // Virtual-column slots (rowid / tableoid): handled inline here.
   for (duckdb::idx_t proj = 0; proj < gstate.projected_columns.size(); ++proj) {
     if (gstate.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
       continue;
@@ -150,16 +189,10 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
     }
   }
 
-  // Real columns: look up directly per batch. The HNSW result PKs were
-  // collected in InitGlobal; we just stream them through LookupRows.
-  std::vector<std::string_view> pk_batch;
-  pk_batch.reserve(batch_size);
-  for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-    pk_batch.emplace_back(gstate.pk_bytes[batch_start + i]);
+  if (!std::holds_alternative<std::monostate>(gstate.pk_batch)) {
+    gstate.index_source->Materialize(context, gstate.pk_batch, batch_start,
+                                     batch_size, output);
   }
-  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
-             gstate.projected_types, bind_data.column_ids, gstate.txn, pk_batch,
-             gstate.file_lookup_session, output);
 
   gstate.current_idx += batch_size;
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));

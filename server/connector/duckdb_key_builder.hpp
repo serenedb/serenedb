@@ -41,7 +41,7 @@
 namespace sdb::connector {
 
 // Encode a duckdb::Value into a binary-sortable RocksDB key suffix.
-// Matches the encoding produced by AppendPKValueFromDuckDB (write path).
+// Matches the encoding produced by AppendPKValue (write path).
 inline void AppendDuckDBValueToKey(std::string& key, const duckdb::Value& v) {
   switch (v.type().id()) {
     case duckdb::LogicalTypeId::BOOLEAN:

@@ -34,7 +34,6 @@
 #include <duckdb/storage/table_storage_info.hpp>
 
 #include "basics/assert.h"
-#include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_table_function.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -44,6 +43,10 @@
 namespace sdb::connector {
 
 SereneDBTableEntry& RequireBaseTable(duckdb::TableCatalogEntry& table) {
+  // RTTI is unavoidable here: the caller hands us a generic
+  // TableCatalogEntry that may be a SereneDBTableEntry, a
+  // SereneDBIndexScanEntry, or an entry from another attached catalog --
+  // duckdb::TableCatalogEntry doesn't expose a tag we can extend.
   auto* base = dynamic_cast<SereneDBTableEntry*>(&table);
   if (!base) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
@@ -69,10 +72,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SereneDBTableEntry::GetStatistics(
 duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   duckdb::ClientContext& context,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  if (_sdb_table->GetTableType() == TableType::File) {
-    return MakeExternalScanFunction(context, _sdb_table, this, bind_data);
-  }
-  auto data = duckdb::make_uniq<SereneDBScanBindData>();
+  auto data = duckdb::make_uniq<TableScanBindData>();
   data->table = _sdb_table;
   for (const auto& col : _sdb_table->Columns()) {
     if (col.id == catalog::Column::kGeneratedPKId) {
@@ -84,6 +84,7 @@ duckdb::TableFunction SereneDBTableEntry::GetScanFunction(
   // Always include rowid (PK bytes) as the last column for DELETE/UPDATE
   data->has_rowid = true;
   data->table_entry = this;
+  data->entry_kind = ScanEntryKind::BaseTable;
 
   bind_data = std::move(data);
   return CreateTableFullscanFunction();

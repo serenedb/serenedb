@@ -28,6 +28,7 @@
 #include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source.h"
 
 namespace sdb::connector {
 
@@ -37,8 +38,13 @@ namespace sdb::connector {
 struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   const ANNScan* scan = nullptr;
   std::unique_ptr<ANNFilter> filter;
-  std::vector<std::string> pk_bytes;
+  // HNSW result PKs collected once in score-sorted order; per-call scan
+  // slices [current_idx, current_idx + batch_size). Default-constructed to
+  // std::monostate; switched on first ANNSearchImpl call.
+  PrimaryKeyBatch pk_batch;
+  size_t total_results = 0;
   size_t current_idx = 0;
+  bool results_ready = false;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(

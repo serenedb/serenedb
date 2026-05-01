@@ -27,20 +27,21 @@
 #include <limits>
 #include <memory>
 
-#include "connector/lookup.h"
+#include "connector/index_source.h"
 #include "connector/search_pk_lookup.h"
 
+namespace rocksdb {
+
+class Snapshot;
+class Transaction;
+
+}  // namespace rocksdb
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
-// faiss IDSelector that materializes the candidate row's filter columns and
-// evaluates per-row filter expressions to gate HNSW result inclusion.
-//
-// Per is_member call: pulls the row's PK from iresearch via SegmentPkIterator,
-// invokes LookupRows (dispatches File/RocksDB internally) to fetch just the
-// filter columns into a reusable scratch chunk, and runs the cached
-// ExpressionExecutor.
+// faiss IDSelector: per HNSW candidate, materializes the row's filter
+// columns and evaluates the filter expressions to gate inclusion.
 class ANNFilter final : public faiss::IDSelector {
  public:
   ANNFilter(duckdb::ClientContext& context, const irs::IndexReader& reader,
@@ -60,9 +61,8 @@ class ANNFilter final : public faiss::IDSelector {
   const rocksdb::Snapshot* _snapshot;
   rocksdb::Transaction* _txn;
 
-  // Projection metadata for the FILTER columns (a subset of the table's
-  // columns -- only what filter expressions reference). Different from the
-  // outer scan's projection because the filter only needs its own inputs.
+  // Filter expressions reference only a subset of the table's columns;
+  // this projection is independent of the outer scan's projection.
   std::vector<duckdb::idx_t> _filter_projected_columns;
   std::vector<duckdb::LogicalType> _filter_types;
   std::vector<catalog::Column::Id> _filter_bind_column_ids;
@@ -72,10 +72,10 @@ class ANNFilter final : public faiss::IDSelector {
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
 
-  // Cached File-backed lookup session (lazy, reused across is_member calls).
-  // Empty for RocksDB-backed tables -- LookupRows dispatches to RocksDBLookup
-  // which doesn't need a session. mutable so const is_member can lazily fill.
-  mutable std::shared_ptr<FileLookupSession> _file_lookup_session;
+  // Default-constructed to std::monostate; switched on first is_member call.
+  mutable PrimaryKeyBatch _pk_batch;
+
+  mutable std::shared_ptr<IndexSource> _index_source;
 
   // TODO(codeworse): Will be erased, because filter should be per-segment
   // using parallel index execution.

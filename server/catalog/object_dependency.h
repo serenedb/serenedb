@@ -35,22 +35,31 @@ struct ObjectDependencyBase {
   virtual std::shared_ptr<ObjectDependencyBase> Clone() const = 0;
 };
 
-struct TableDependency : public ObjectDependencyBase {
-  ObjectId shard_id;
+struct RelationDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> indexes;
+};
+
+struct TableDependency : RelationDependency {
+  ObjectId shard_id;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TableDependency>(*this);
   }
 };
 
-struct IndexDependency : public ObjectDependencyBase {
+struct ViewDependency : RelationDependency {
+  std::shared_ptr<ObjectDependencyBase> Clone() const final {
+    return std::make_shared<ViewDependency>(*this);
+  }
+};
+
+struct IndexDependency : ObjectDependencyBase {
   ObjectId shard_id;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<IndexDependency>(*this);
   }
 };
 
-struct SchemaDependency : public ObjectDependencyBase {
+struct SchemaDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> tables;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
@@ -65,14 +74,14 @@ struct SchemaDependency : public ObjectDependencyBase {
   }
 };
 
-struct DatabaseDependency : public ObjectDependencyBase {
+struct DatabaseDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<DatabaseDependency>(*this);
   }
 };
 
-struct TokenizerDependency : public ObjectDependencyBase {
+struct TokenizerDependency : ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> indexes;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TokenizerDependency>(*this);

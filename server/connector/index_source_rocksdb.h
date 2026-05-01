@@ -26,6 +26,7 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/vector.hpp>
 #include <functional>
 #include <memory>
 #include <span>
@@ -33,74 +34,63 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "catalog/types.h"
+#include "connector/index_source.h"
 #include "connector/multiget_context.hpp"
 
 namespace sdb::connector {
 
-// Resolves PK bytes into row values from RocksDB. Picks one of three
-// strategies per batch:
-//
-// - batch > kSeekThreshold (100): per-column `rocksdb::Iterator::Seek`
-//   over the sorted pks, with iterators CACHED across batches so a
-//   multi-batch query amortises the iterator setup + warms the block
-//   cache sequentially.
-// - batch > MultiGetContext::kMultiGetThreshold: `rocksdb::MultiGet`
-//   over a sorted key batch -- fans out block reads in parallel and
-//   shares filter-block lookups.
-// - small batches: a plain `db->Get(...)` loop.
-//
-// All strategies pre-sort `pk_bytes` once per batch and reuse a single
-// contiguous key buffer (`_multi_get_buffer`) so keys are laid out for
-// streaming reads. The caller's original pk order is restored via a
-// permutation vector (`_read_idxs`).
-class RocksDBLookup {
+// Resolves PK bytes into row values from RocksDB. Per call we pick a strategy
+// by batch size: Seek over sorted PKs (large), MultiGet (medium), or plain
+// per-row Get (small). The sorted strategies stamp [ObjectId][ColumnId] into
+// each PK's pre-reserved kPrefixGap region (PrimaryKeysBytes::Append leaves
+// 16 bytes before the pk bytes) so no staging copy of pk bytes is needed.
+class RocksDBIndexSource : public IndexSource {
  public:
-  RocksDBLookup(ObjectId table_id, const rocksdb::Snapshot* snapshot,
-                std::span<const duckdb::idx_t> projected_columns,
-                std::span<const duckdb::LogicalType> projected_types,
-                std::span<const catalog::Column::Id> bind_column_ids,
-                rocksdb::Transaction* txn);
+  RocksDBIndexSource(ObjectId table_id, const rocksdb::Snapshot* snapshot,
+                     std::span<const duckdb::idx_t> projected_columns,
+                     std::span<const duckdb::LogicalType> projected_types,
+                     std::span<const catalog::Column::Id> bind_column_ids,
+                     rocksdb::Transaction* txn);
 
-  // `pk_bytes.size()` rows, one-to-one by position into `output`.
-  void Lookup(std::span<const std::string_view> pk_bytes,
-              duckdb::DataChunk& output);
+  PrimaryKeyBatch CreatePkBatch() const override {
+    return PrimaryKeyBatch{std::in_place_type<PrimaryKeysBytes>};
+  }
+  void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
+                   duckdb::idx_t start, duckdb::idx_t count,
+                   duckdb::DataChunk& output) override;
+
+  // View-caller path: writes each projected column into the matching slot of
+  // `per_col_targets` rather than into an output DataChunk.
+  void LookupInto(std::span<const std::string_view> pk_bytes,
+                  std::span<duckdb::Vector* const> per_col_targets);
 
  private:
   using DecodeFn =
     std::function<void(size_t original_idx, std::string_view value)>;
 
-  // Dispatch the per-column read to the best strategy for `pk_bytes`'s
-  // size. `column_key_prefix` = `[ObjectId][ColumnId]`, exactly
-  // `kColumnKeySize` bytes.
+  // `column_key_prefix` is exactly kPrefixGap bytes ([ObjectId][ColumnId]).
   void DispatchColumnRead(std::string_view column_key_prefix,
                           catalog::Column::Id column_id,
                           std::span<const std::string_view> pk_bytes,
                           const DecodeFn& decode);
 
-  // Simple loop: one `db->Get(...)` per pk. Smallest batches.
   void IterateColumnKeys(std::string_view column_key_prefix,
                          std::span<const std::string_view> pk_bytes,
                          const DecodeFn& decode);
 
-  // MultiGet of up to `MultiGetContext::kBatchSize` sorted keys at a
-  // time. `_multi_get_buffer` must have been prepared.
   void MultiGetIterateColumnKeys(std::string_view column_key_prefix,
                                  std::span<const std::string_view> pk_bytes,
                                  const DecodeFn& decode);
 
-  // Seek on a per-column `rocksdb::Iterator`, kept alive across
-  // Lookup() calls so sequential batches skip setup. Large batches.
   void SeekIterateColumnKeys(std::string_view column_key_prefix,
                              catalog::Column::Id column_id,
                              std::span<const std::string_view> pk_bytes,
                              const DecodeFn& decode);
 
-  // Sort `pk_bytes` indices into `_read_idxs` and stage sorted pk bytes
-  // into `_multi_get_buffer`, leaving `kColumnKeySize` gaps at the head
-  // of each entry for the column-key prefix. Idempotent within a batch.
-  void PrepareSortedBatch(std::span<const std::string_view> pk_bytes);
+  // Idempotent within a batch (`_new_batch` guards).
+  void EnsureSortedBatch(std::span<const std::string_view> pk_bytes);
 
   ObjectId _table_id;
   rocksdb::ReadOptions _read_options;
@@ -109,21 +99,17 @@ class RocksDBLookup {
   rocksdb::Transaction* _txn = nullptr;
   MultiGetContext _multiget_ctx;
 
-  // Projection layout (fixed at construction).
   std::vector<duckdb::idx_t> _projected_columns;
   std::vector<duckdb::LogicalType> _projected_types;
   std::vector<catalog::Column::Id> _bind_column_ids;
 
-  // Simple-get scratch buffer (single-value reads).
   std::string _value_buffer;
 
-  // Per-batch sort + arena.
   bool _new_batch = true;
   std::vector<size_t> _read_idxs;
-  std::string _multi_get_buffer;
   std::vector<rocksdb::Slice> _key_slices;
 
-  // Iterator cache across batches (one per column_id).
+  // Cached iterators across batches, keyed by column_id.
   containers::FlatHashMap<catalog::Column::Id,
                           std::unique_ptr<rocksdb::Iterator>>
     _iterators;

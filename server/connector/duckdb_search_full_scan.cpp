@@ -25,11 +25,18 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/bm25.hpp>
+#include <iresearch/search/dfi.hpp>
 #include <iresearch/search/doc_collector.hpp>
+#include <iresearch/search/indri_dirichlet.hpp>
+#include <iresearch/search/lm_dirichlet.hpp>
+#include <iresearch/search/lm_jelinek_mercer.hpp>
+#include <iresearch/search/raw_tf.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <iresearch/utils/string.hpp>
+#include <ranges>
+#include <span>
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
@@ -38,8 +45,9 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
-#include "connector/rocksdb_row_materializer.h"
+#include "connector/lookup.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -220,29 +228,9 @@ static void SearchScanMaterialize(duckdb::ClientContext& context,
     }
   }
 
-  // Real columns: delegate to the storage-specific materializer.
-  //
-  // Unlike ann/range scans which eagerly collect ALL pks in InitGlobal,
-  // full_scan's iresearch loop interleaves scoring / offsets work per
-  // batch, so we only know THIS batch's pks here. The materializer is
-  // built fresh each call with this batch's pks as `all_pks`. RocksDB
-  // doesn't care (stateless per batch). Parquet / CSV pay a per-batch
-  // re-init cost; a cleaner fix would fold the whole scoring+offsets
-  // loop into InitGlobal too, but that's a separate refactor.
-  //
-  // NOTE: preserves existing behavior of reading without a snapshot
-  // (pre-refactor SearchScanMaterialize did not set ro.snapshot; the
-  // ANN / range paths do).
-  std::vector<std::string> pk_storage_owned;
-  pk_storage_owned.reserve(pk_bytes.size());
-  for (auto pk : pk_bytes) {
-    pk_storage_owned.emplace_back(pk);
-  }
-  auto materializer =
-    MakeRowMaterializer(context, bind_data, /*snapshot=*/nullptr,
-                        pk_storage_owned, gstate.projected_columns,
-                        gstate.projected_types, bind_data.column_ids, nullptr);
-  materializer->Materialize(pk_bytes, output);
+  LookupRows(context, bind_data, /*snapshot=*/nullptr, gstate.projected_columns,
+             gstate.projected_types, bind_data.column_ids, /*txn=*/nullptr,
+             pk_bytes, gstate.file_lookup_session, output);
 
   output.SetCardinality(num_rows);
 }
@@ -260,13 +248,44 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
   switch (ss.scorer.kind) {
     case SK::Bm25:
       state->scorer_obj =
-        std::make_unique<irs::BM25>(static_cast<float>(ss.scorer.bm25_k1),
-                                    static_cast<float>(ss.scorer.bm25_b));
+        std::make_unique<irs::BM25>(static_cast<float>(ss.scorer.bm25.k1),
+                                    static_cast<float>(ss.scorer.bm25.b));
       break;
     case SK::Tfidf:
       state->scorer_obj =
-        std::make_unique<irs::TFIDF>(ss.scorer.tfidf_with_norms);
+        std::make_unique<irs::TFIDF>(ss.scorer.tfidf.with_norms);
       break;
+    case SK::RawTf:
+      state->scorer_obj = std::make_unique<irs::RawTF>();
+      break;
+    case SK::LmJm:
+      state->scorer_obj = std::make_unique<irs::LMJelinekMercer>(
+        static_cast<float>(ss.scorer.lm_jm.lambda));
+      break;
+    case SK::LmDirichlet:
+      state->scorer_obj = std::make_unique<irs::LMDirichlet>(
+        static_cast<float>(ss.scorer.lm_dirichlet.mu));
+      break;
+    case SK::IndriDirichlet:
+      state->scorer_obj = std::make_unique<irs::IndriDirichlet>(
+        static_cast<float>(ss.scorer.indri_dirichlet.mu));
+      break;
+    case SK::Dfi: {
+      irs::DFIMeasure m;
+      switch (ss.scorer.dfi.measure) {
+        case SearchScan::DfiMeasure::Standardized:
+          m = irs::DFIMeasure::Standardized;
+          break;
+        case SearchScan::DfiMeasure::Saturated:
+          m = irs::DFIMeasure::Saturated;
+          break;
+        case SearchScan::DfiMeasure::ChiSquared:
+          m = irs::DFIMeasure::ChiSquared;
+          break;
+      }
+      state->scorer_obj = std::make_unique<irs::DFI>(m);
+      break;
+    }
     case SK::None:
       break;
   }
@@ -355,26 +374,34 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       }
       collector.Finalize();
 
+      size_t valid = 0;
       for (size_t i = 0; i < k; ++i) {
-        auto& sd = hits[i];
+        const auto& sd = hits[i];
         if (irs::doc_limits::eof(sd.doc) || sd.segment_idx >= reader.size()) {
           break;
         }
-        auto& seg = reader[sd.segment_idx];
-        const auto* pk_col = seg.column(kPkFieldName);
-        if (!pk_col) {
-          continue;
-        }
-        auto pk_iter = pk_col->iterator(irs::ColumnHint::Normal);
-        auto* pk_val = irs::get<irs::PayAttr>(*pk_iter);
-        if (!pk_val || irs::doc_limits::eof(pk_iter->seek(sd.doc))) {
-          continue;
-        }
-        auto pk_view = pk_val->value;
-        gstate.topk_hits.emplace_back(
-          sd.score, std::string(reinterpret_cast<const char*>(pk_view.data()),
-                                pk_view.size()));
+        ++valid;
       }
+
+      auto valid_hits = std::span<const irs::ScoreDoc>{hits.data(), valid};
+      auto segments =
+        valid_hits | std::views::transform(
+                       [](const irs::ScoreDoc& sd) { return sd.segment_idx; });
+      auto doc_ids =
+        valid_hits |
+        std::views::transform([](const irs::ScoreDoc& sd) { return sd.doc; });
+
+      gstate.topk_hits.resize(valid);
+      for (size_t i = 0; i < valid; ++i) {
+        gstate.topk_hits[i].first = valid_hits[i].score;
+      }
+      auto pk_view =
+        gstate.topk_hits |
+        std::views::transform([](auto& p) -> std::string& { return p.second; });
+      LookupSegmentsValues(segments, doc_ids, reader, pk_view);
+      std::erase_if(gstate.topk_hits,
+                    [](const auto& p) { return p.second.empty(); });
+
       gstate.topk_executed = true;
     }
 
@@ -453,13 +480,10 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         .segment = segment,
         .scorer = gstate.scorer_obj.get(),
       }));
-      const auto* pk_column = segment.column(kPkFieldName);
-      if (!pk_column) {
+      if (!OpenSegmentPkIterator(segment, gstate.search_segment_pk)) {
         gstate.search_doc.reset();
         continue;
       }
-      gstate.search_pk_iter = pk_column->iterator(irs::ColumnHint::Normal);
-      gstate.search_pk_value = irs::get<irs::PayAttr>(*gstate.search_pk_iter);
 
       if (gstate.scan_score) {
         gstate.score_fetcher.Clear();
@@ -498,8 +522,8 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       }
     }
 
-    SDB_ASSERT(doc_id == gstate.search_pk_iter->seek(doc_id));
-    auto pk_view = gstate.search_pk_value->value;
+    SDB_ASSERT(doc_id == gstate.search_segment_pk.iter->seek(doc_id));
+    auto pk_view = gstate.search_segment_pk.value->value;
     pk_storage.emplace_back(reinterpret_cast<const char*>(pk_view.data()),
                             pk_view.size());
     if (search.emit_offsets()) {

@@ -26,7 +26,7 @@
 #include "connector/duckdb_key_builder.hpp"
 #include "connector/duckdb_range_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
-#include "connector/row_materializer.h"
+#include "connector/lookup.h"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -65,10 +65,10 @@ void BuildSkRangeBounds(ObjectId shard_id, const ResolvedRange& range,
   upper = lower;  // upper shares the same prefix
 
   const auto& range_column = range.range_column;
-  SDB_ASSERT(!range_column.MaybeNull() || range_column.IsNullOnly(),
-             "range column invariant violated: MaybeNull implies IsNullOnly");
+  // kIsNull is exclusive (enforced in ColumnRange::Make), so no separate
+  // invariant check is needed here.
 
-  if (range_column.IsNullOnly()) {
+  if (range_column.IsNull()) {
     // col IS NULL -> scan the null bucket only.
     secondary_key::AppendNullMarker(lower);     // start at 0x01
     secondary_key::AppendNotNullMarker(upper);  // exclusive end at 0x02
@@ -206,10 +206,9 @@ void SKRangeScanFunction(duckdb::ClientContext& context,
 
   const auto num_rows = pk_bytes.size();
   std::vector<std::string_view> views(pk_bytes.begin(), pk_bytes.end());
-  auto materializer = MakeRowMaterializer(
-    context, bind_data, gstate.snapshot, pk_bytes, gstate.projected_columns,
-    gstate.projected_types, bind_data.column_ids, gstate.txn);
-  materializer->Materialize(views, output);
+  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
+             gstate.projected_types, bind_data.column_ids, gstate.txn, views,
+             gstate.file_lookup_session, output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

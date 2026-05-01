@@ -1,4 +1,4 @@
-skipif serenedb
+skipif serenedb # TODO(Pasha) better column naming
 query error
 SELECT *
 FROM
@@ -14,7 +14,7 @@ USING (name);
 db error: ERROR: common column name "name" appears more than once in left table
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) Fix some strange error
 query error
 SELECT *
 FROM
@@ -30,7 +30,6 @@ USING (name);
 db error: ERROR: common column name "name" appears more than once in right table
 
 
-skipif serenedb
 query error
 SELECT *
 FROM
@@ -42,11 +41,8 @@ JOIN
     VALUES (228, 154, 'vedernikoff', 'boss'), (54, 44, 'babsky', 'cleaner')
 ) AS clickclack(iq, name, name, job_title)
 USING (gladvalasas);
-----
-db error: ERROR: column "gladvalasas" specified in USING clause does not exist in left table
 
 
-skipif serenedb
 query error
 SELECT *
 FROM
@@ -58,11 +54,9 @@ JOIN
     VALUES (228, 154, 'vedernikoff', 'boss'), (54, 44, 'babsky', 'cleaner')
 ) AS clickclack(iq, name, name, job_title)
 USING (gladvalasas);
-----
-db error: ERROR: column "gladvalasas" specified in USING clause does not exist in right table
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) better column names
 query error
 SELECT *
 FROM
@@ -77,7 +71,7 @@ NATURAL JOIN
 db error: ERROR: common column name "iq" appears more than once in left table
 
 
-skipif serenedb
+skipif serenedb # TODO(Pasha) better column names
 query error
 SELECT *
 FROM

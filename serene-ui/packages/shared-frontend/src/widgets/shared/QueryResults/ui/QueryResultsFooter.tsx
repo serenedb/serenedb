@@ -19,7 +19,9 @@ import { ConsoleContext } from "../../../console/Console/model/ConsoleContext";
 interface QueryResultsFooterProps {
     children: React.ReactNode;
     results: {
+        jobId?: number;
         status: "success" | "failed" | "pending" | "running" | "";
+        statementIndex?: number;
         statementQuery?: string;
     }[];
     selectedResultIndex: number;
@@ -30,8 +32,23 @@ interface QueryResultsFooterProps {
     execution_finished_at?: string;
     received_at?: string;
     showJsonByDefault?: boolean;
+    viewerLabel?: string;
     sourcePanelId?: string;
 }
+
+const getExecutionHistoryEntryId = (
+    panelId: string,
+    result: Pick<
+        QueryResultsFooterProps["results"][number],
+        "jobId" | "statementIndex"
+    >,
+) => {
+    if (result.jobId == null) {
+        return null;
+    }
+
+    return `${panelId}:${result.jobId}:${result.statementIndex ?? -1}`;
+};
 
 export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
     children,
@@ -44,6 +61,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
     execution_finished_at,
     received_at,
     showJsonByDefault = false,
+    viewerLabel = "Viewer",
     sourcePanelId,
 }) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -68,9 +86,6 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
             : 0;
 
     const executionTime = execTime > 0 ? execTime : null;
-    const canGoPrevious = selectedResultIndex > 0;
-    const canGoNext = selectedResultIndex < results.length - 1;
-
     const timelineItems: TimelineItem[] = [
         { name: "Queue", time: queueTime, color: "rgb(234, 179, 8)" },
         { name: "Execution", time: execTime, color: "rgb(34, 197, 94)" },
@@ -81,25 +96,122 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
     const canOpenExecutionHistorySidebar = Boolean(
         consoleContext?.openExecutionHistorySidebar && sourcePanelId,
     );
+    const visibleResults = useMemo(() => {
+        const indexedResults = results.map((result, index) => ({
+            result,
+            index,
+        }));
+
+        if (!sourcePanelId || !consoleContext?.executionHistoryEntries) {
+            return indexedResults.map((item, position) => ({
+                ...item,
+                position,
+            }));
+        }
+
+        const historyEntryIds = new Set(
+            consoleContext.executionHistoryEntries
+                .filter((entry) => entry.panelId === sourcePanelId)
+                .map(
+                    (entry) =>
+                        `${entry.panelId}:${entry.jobId}:${entry.statementIndex ?? -1}`,
+                ),
+        );
+        const resultsFromHistory = indexedResults.filter(({ result }) => {
+            const entryId = getExecutionHistoryEntryId(sourcePanelId, result);
+            return entryId ? historyEntryIds.has(entryId) : false;
+        });
+        const lastResult = indexedResults[indexedResults.length - 1];
+
+        if (!resultsFromHistory.length) {
+            return lastResult ? [{ ...lastResult, position: 0 }] : [];
+        }
+
+        if (!lastResult) {
+            return resultsFromHistory.map((item, position) => ({
+                ...item,
+                position,
+            }));
+        }
+
+        const lastResultEntryId = getExecutionHistoryEntryId(
+            sourcePanelId,
+            lastResult.result,
+        );
+        const includesLastResult = lastResultEntryId
+            ? resultsFromHistory.some(
+                  ({ result }) =>
+                      getExecutionHistoryEntryId(sourcePanelId, result) ===
+                      lastResultEntryId,
+              )
+            : resultsFromHistory.some(
+                  ({ index }) => index === lastResult.index,
+              );
+        const nextVisibleResults = includesLastResult
+            ? resultsFromHistory
+            : [...resultsFromHistory, lastResult];
+
+        return nextVisibleResults.map((item, position) => ({
+            ...item,
+            position,
+        }));
+    }, [consoleContext?.executionHistoryEntries, results, sourcePanelId]);
 
     useEffect(() => {
         setViewMode(showJsonByDefault ? "json" : "viewer");
     }, [showJsonByDefault]);
 
+    useEffect(() => {
+        if (!visibleResults.length || !onSelectResult) {
+            return;
+        }
+
+        const isSelectedResultVisible = visibleResults.some(
+            ({ index }) => index === selectedResultIndex,
+        );
+
+        if (isSelectedResultVisible) {
+            return;
+        }
+
+        const fallbackResultIndex =
+            visibleResults[visibleResults.length - 1]?.index;
+
+        if (
+            fallbackResultIndex != null &&
+            fallbackResultIndex !== selectedResultIndex
+        ) {
+            onSelectResult(fallbackResultIndex);
+        }
+    }, [onSelectResult, selectedResultIndex, visibleResults]);
+
     const filteredResults = useMemo(() => {
         const normalizedSearch = searchValue.trim().toLowerCase();
         if (!normalizedSearch) {
-            return results.map((result, index) => ({ result, index }));
+            return visibleResults;
         }
 
-        return results
-            .map((result, index) => ({ result, index }))
-            .filter(({ result }) =>
-                (result.statementQuery || "")
-                    .toLowerCase()
-                    .includes(normalizedSearch),
-            );
-    }, [results, searchValue]);
+        return visibleResults.filter(({ result }) =>
+            (result.statementQuery || "")
+                .toLowerCase()
+                .includes(normalizedSearch),
+        );
+    }, [searchValue, visibleResults]);
+
+    const selectedVisibleResultIndex = visibleResults.findIndex(
+        ({ index }) => index === selectedResultIndex,
+    );
+    const activeVisibleResultIndex =
+        selectedVisibleResultIndex >= 0
+            ? selectedVisibleResultIndex
+            : Math.max(0, visibleResults.length - 1);
+    const activeVisibleResult =
+        visibleResults[activeVisibleResultIndex]?.result ||
+        results[selectedResultIndex];
+    const canGoPrevious = activeVisibleResultIndex > 0;
+    const canGoNext = activeVisibleResultIndex < visibleResults.length - 1;
+    const showResultNavigation =
+        visibleResults.length > 1 || canOpenExecutionHistorySidebar;
 
     const getResultButtonClassName = (
         status: QueryResultsFooterProps["results"][number]["status"],
@@ -195,7 +307,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                         key="to-viewer"
                                         className="dark:bg-transparent dark:hover:bg-accent duration-300 px-3 text-xs w-max rounded-none h-full border-0 border-l-[0.5px] border-border"
                                         value="viewer">
-                                        Viewer
+                                        {viewerLabel}
                                     </TabsTrigger>
                                 )}
                             </div>
@@ -204,7 +316,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                         )}
 
                         <DownloadResultsButton rows={rows} />
-                        {results.length > 1 && (
+                        {showResultNavigation && (
                             <div className="flex items-center h-full">
                                 <Button
                                     variant="ghost"
@@ -214,7 +326,9 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                     onClick={() => {
                                         if (canGoPrevious) {
                                             onSelectResult?.(
-                                                selectedResultIndex - 1,
+                                                visibleResults[
+                                                    activeVisibleResultIndex - 1
+                                                ]!.index,
                                             );
                                         }
                                     }}>
@@ -227,8 +341,8 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                         className={cn(
                                             "min-w-18 px-2 rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]",
                                             getResultButtonClassName(
-                                                results[selectedResultIndex]
-                                                    ?.status || "",
+                                                activeVisibleResult?.status ||
+                                                    "",
                                                 true,
                                             ),
                                         )}
@@ -244,8 +358,8 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                                 },
                                             );
                                         }}>
-                                        {selectedResultIndex + 1} /{" "}
-                                        {results.length}
+                                        {activeVisibleResultIndex + 1} /{" "}
+                                        {visibleResults.length}
                                     </Button>
                                 ) : (
                                     <Popover
@@ -263,14 +377,13 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                                 className={cn(
                                                     "min-w-18 px-2 rounded-none h-full border-l-[0.5px] w-9 border-r-[0.5px]",
                                                     getResultButtonClassName(
-                                                        results[
-                                                            selectedResultIndex
-                                                        ]?.status || "",
+                                                        activeVisibleResult?.status ||
+                                                            "",
                                                         true,
                                                     ),
                                                 )}>
-                                                {selectedResultIndex + 1} /{" "}
-                                                {results.length}
+                                                {activeVisibleResultIndex + 1} /{" "}
+                                                {visibleResults.length}
                                             </Button>
                                         </PopoverTrigger>
                                         <PopoverContent
@@ -301,14 +414,15 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                                                 ({
                                                                     result,
                                                                     index,
+                                                                    position,
                                                                 }) => (
                                                                     <button
                                                                         key={`${result.status}-${index}`}
                                                                         type="button"
                                                                         className={cn(
                                                                             "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
-                                                                            index ===
-                                                                                selectedResultIndex &&
+                                                                            position ===
+                                                                                activeVisibleResultIndex &&
                                                                                 "bg-accent text-accent-foreground",
                                                                         )}
                                                                         onClick={() => {
@@ -321,7 +435,7 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                                                         }}>
                                                                         <div className="flex min-w-0 items-center gap-2">
                                                                             <span className="w-6 shrink-0 text-xs text-muted-foreground">
-                                                                                {index +
+                                                                                {position +
                                                                                     1}
                                                                             </span>
                                                                             <span className="truncate">
@@ -358,7 +472,9 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
                                     onClick={() => {
                                         if (canGoNext) {
                                             onSelectResult?.(
-                                                selectedResultIndex + 1,
+                                                visibleResults[
+                                                    activeVisibleResultIndex + 1
+                                                ]!.index,
                                             );
                                         }
                                     }}>

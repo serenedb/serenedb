@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { invalidateSchemaMetadata } from "@serene-ui/shared-frontend/shared";
 import {
     QueryResultsContext,
+    type ExecuteQueryBatchOptions,
     type ExecuteQueryResult,
     type ExecuteQueryBatchResult,
     type ExecuteQueryBatchJob,
@@ -23,6 +24,7 @@ import {
     validateJobId,
 } from "./utils/validation";
 import {
+    getSingleStatementType,
     getSchemaMetadataInvalidationTargets,
     splitQueries,
     toStatementRange,
@@ -105,6 +107,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                 QueryResult,
                 | "statementIndex"
                 | "statementQuery"
+                | "statementType"
                 | "statementRange"
                 | "sourceQuery"
             >
@@ -135,6 +138,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                 bind_vars: normalizeBindVars(bind_vars),
                 statementIndex: metadata?.statementIndex,
                 statementQuery: metadata?.statementQuery,
+                statementType: metadata?.statementType,
                 statementRange: metadata?.statementRange,
                 sourceQuery: metadata?.sourceQuery,
             };
@@ -170,7 +174,16 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
             return validationError;
         }
 
-        const result = await startQueryJob(query, bind_vars, limit);
+        const statementType = await getSingleStatementType(query);
+        const result = await startQueryJob(query, bind_vars, limit, {
+            statementQuery: query,
+            statementType,
+            statementRange: {
+                startOffset: 0,
+                endOffset: query.length,
+            },
+            sourceQuery: query,
+        });
         if (result.success && saveToHistory) {
             await saveQueryToHistory(query, bind_vars);
         }
@@ -184,6 +197,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
         saveToHistory = false,
         limit = 1000,
         onJobStarted?: (job: ExecuteQueryBatchJob) => void,
+        options?: ExecuteQueryBatchOptions,
     ): Promise<ExecuteQueryBatchResult | ExecuteQueryError> => {
         const validationError = validateExecutionInput(query, limit);
         if (validationError) {
@@ -200,6 +214,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
 
         const jobs: ExecuteQueryBatchJob[] = [];
         let stoppedOnError: ExecuteQueryBatchResult["stoppedOnError"];
+        const continueOnError = options?.continueOnError ?? false;
 
         const waitForQueryCompletion = (jobId: number) =>
             new Promise<QueryResult>((resolve) => {
@@ -225,6 +240,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                 {
                     statementIndex: statement.statementIndex,
                     statementQuery: statement.query,
+                    statementType: statement.statementType,
                     statementRange: toStatementRange(statement),
                     sourceQuery: query,
                 },
@@ -249,6 +265,7 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                 jobId: result.jobId,
                 statementIndex: statement.statementIndex,
                 statementQuery: statement.query,
+                statementType: statement.statementType,
                 sourceQuery: query,
                 statementRange: toStatementRange(statement),
             };
@@ -257,6 +274,10 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
 
             const finalResult = await waitForQueryCompletion(result.jobId);
             if (finalResult.status === "failed") {
+                if (continueOnError) {
+                    continue;
+                }
+
                 stoppedOnError = {
                     statementIndex: statement.statementIndex,
                     error: finalResult.error,
@@ -315,6 +336,8 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                                 results: result.results || [],
                                 statementIndex:
                                     currentQueryResult?.statementIndex,
+                                statementType:
+                                    currentQueryResult?.statementType,
                                 statementRange:
                                     currentQueryResult?.statementRange,
                                 statementQuery:
@@ -335,6 +358,8 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                                 error: result.error || "Unknown error",
                                 statementIndex:
                                     currentQueryResult?.statementIndex,
+                                statementType:
+                                    currentQueryResult?.statementType,
                                 statementRange:
                                     currentQueryResult?.statementRange,
                                 statementQuery:
@@ -354,6 +379,8 @@ export const QueryResultsProvider = ({ children }: PropsWithChildren) => {
                                 bind_vars: currentQueryResult?.bind_vars,
                                 statementIndex:
                                     currentQueryResult?.statementIndex,
+                                statementType:
+                                    currentQueryResult?.statementType,
                                 statementRange:
                                     currentQueryResult?.statementRange,
                                 statementQuery:

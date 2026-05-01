@@ -32,11 +32,7 @@
 
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/offsets_collector.hpp"
-
-namespace irs {
-
-struct PayAttr;
-}
+#include "connector/search_pk_lookup.h"
 
 namespace sdb::connector {
 
@@ -44,8 +40,7 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   // IResearch streaming state
   size_t search_segment_idx = 0;
   irs::DocIterator::ptr search_doc;
-  irs::DocIterator::ptr search_pk_iter;
-  const irs::PayAttr* search_pk_value = nullptr;
+  SegmentPkIterator search_segment_pk;
 
   // Scorer state
   std::unique_ptr<irs::Scorer> scorer_obj;

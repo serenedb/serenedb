@@ -39,6 +39,8 @@ struct DuckDBStatement {
     extracted.clear();
     current_stmt_idx = 0;
     param_oids.clear();
+    resolved_types.clear();
+    resolved_names.clear();
   }
 
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
@@ -47,6 +49,9 @@ struct DuckDBStatement {
   uint32_t current_stmt_idx = 0;
   // Parameter type OIDs from Parse message
   std::vector<int32_t> param_oids;
+
+  std::vector<duckdb::LogicalType> resolved_types;
+  std::vector<std::string> resolved_names;
 };
 
 struct DuckDBBindInfo {

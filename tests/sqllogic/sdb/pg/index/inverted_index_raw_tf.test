@@ -1,0 +1,114 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO docs VALUES (1, 'the quick brown fox jumps over the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (2, 'the quick fox');
+
+
+statement count 1
+INSERT INTO docs VALUES (3, 'the lazy dog');
+
+
+statement count 1
+INSERT INTO docs VALUES (4, 'the fox runs fast');
+
+
+statement count 1
+INSERT INTO docs VALUES (5, 'a quick brown rabbit and a fox');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body en);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# raw_tf: per-doc score is just the term frequency. All matching docs have
+# freq('fox') == 1, so every score equals 1.
+query
+SELECT id, raw_tf(docs_idx.tableoid) AS s FROM docs_idx
+  WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	s
+1	1
+2	1
+4	1
+5	1
+
+
+# Only doc 1 has two 'the' occurrences. raw_tf must separate by raw count:
+# doc 1 scores 2, every other matching doc scores 1.
+query
+SELECT id, raw_tf(docs_idx.tableoid) AS s FROM docs_idx
+  WHERE PHRASE(body, 'the') ORDER BY id;
+----
+id	s
+1	2
+2	1
+3	1
+4	1
+
+
+# Ordering with raw_tf: for 'lazy' both docs have freq 1 so ordering falls
+# back to id ASC tiebreak.
+query
+SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy')
+  ORDER BY raw_tf(docs_idx.tableoid) DESC, id;
+----
+id
+1
+3
+
+
+# Calling raw_tf without an inverted-index scan should surface the stub error.
+statement error
+SELECT raw_tf(42::BIGINT);
+
+
+# Second segment: reinvoke after more data to exercise multi-segment scoring.
+statement count 1
+INSERT INTO docs VALUES (6, 'another fox entered the room');
+
+
+statement count 1
+INSERT INTO docs VALUES (7, 'fox runs fast fox');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) docs;
+
+
+# raw_tf across segments: doc 7 has two 'fox' occurrences.
+query
+SELECT id, raw_tf(docs_idx.tableoid) AS s FROM docs_idx
+  WHERE PHRASE(body, 'fox') ORDER BY id;
+----
+id	s
+1	1
+2	1
+4	1
+5	1
+6	1
+7	2

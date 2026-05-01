@@ -40,6 +40,7 @@ export const ConsoleExplorer = ({ explorerRef }: ConsoleExplorerProps) => {
                 searchTerm={searchTerm}
                 initialData={initialData || []}
                 isDataFetched={isDataFetched && !isDataLoading}
+                sidebarSectionId="entities"
                 enablePinning
                 isNodePinned={isNodePinned}
                 onTogglePinned={togglePinnedNode}

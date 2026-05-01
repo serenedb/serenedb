@@ -161,7 +161,7 @@ column1	column2	column3
 1	2	3
 
 
-skipif serenedb
+skipif serenedb # DuckDB supports integer to boolean implicit cast
 query error
 SELECT 1 AND 2;
 ----
@@ -1752,8 +1752,7 @@ statement ok
 CREATE FUNCTION test_coerce_pos_typeof(bigint) RETURNS text LANGUAGE SQL AS 'SELECT pg_typeof($1)::text'
 
 
-# TODO(Pasha) Add cast from regtype to text
-skipif serenedb
+skipif serenedb # TODO(Pasha) Add cast from regtype to text
 query
 SELECT test_coerce_pos_typeof(1);
 ----
@@ -1771,8 +1770,7 @@ statement ok
 CREATE FUNCTION test_coerce_named_typeof(a bigint) RETURNS text LANGUAGE SQL AS 'SELECT pg_typeof(a)::text'
 
 
-# TODO(Pasha) Add cast from regtype to text
-skipif serenedb
+skipif serenedb # TODO(Pasha) Add cast from regtype to text
 query
 SELECT test_coerce_named_typeof(1);
 ----

@@ -32,7 +32,7 @@ import {
     createEditorPanelParams,
     createPanelId,
     createPanelTitle,
-    getNextEditorPanelTitle,
+    useConsoleEditorHotkeys,
 } from "../model";
 import { useConsole } from "../../Console/model";
 import { EditorPanel } from "./EditorPanel";
@@ -262,12 +262,7 @@ const LeftHeaderActions: FC<IDockviewHeaderActionsProps> = (props) => (
         <HeaderActionButton
             title="Add tab"
             onClick={() => {
-                props.containerApi.addPanel({
-                    id: createPanelId(),
-                    component: CONSOLE_EDITOR_PANEL_COMPONENT,
-                    tabComponent: CONSOLE_EDITOR_PANEL_COMPONENT,
-                    title: getNextEditorPanelTitle(props.containerApi),
-                    params: createEditorPanelParams(),
+                addEditorPanel(props.containerApi, {}, {
                     position: {
                         referenceGroup: props.group,
                     },
@@ -423,6 +418,8 @@ export const ConsoleEditor: FC = () => {
         useConsole();
     const [api, setApi] = useState<DockviewReadyEvent["api"]>();
     const containerRef = useDockviewLayoutSync<HTMLDivElement>(api);
+
+    useConsoleEditorHotkeys(api);
 
     const onReady = (event: DockviewReadyEvent) => {
         setApi(event.api);
@@ -666,7 +663,10 @@ export const ConsoleEditor: FC = () => {
     }, [api, selectRelatedResultOnTabChange]);
 
     return (
-        <div ref={containerRef} className="relative flex h-dvh w-full flex-col">
+        <div
+            ref={containerRef}
+            className="relative flex h-dvh w-full flex-col"
+            data-console-editor-root="true">
             <ConsoleEditorTopbar />
             <div className="flex-1 min-h-0">
                 <DockviewReact

@@ -81,9 +81,15 @@ struct ScanSource {
 
   // Covers SearchScan / CountScan / ANNScan / RangeSearchScan -- the four
   // that need stricter transaction isolation in duckdb_scan_base.
-  bool IsSearchLike() const {
+  bool IsSearchLike() const noexcept {
     return _kind == ScanSourceKind::Search || _kind == ScanSourceKind::Count ||
            _kind == ScanSourceKind::Ann || _kind == ScanSourceKind::RangeSearch;
+  }
+
+  // Covers SecondaryIndexScan / SkPointScan / SkRangeScan.
+  bool IsSkLike() const noexcept {
+    return _kind == ScanSourceKind::SecondaryIndex ||
+           _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
   }
 
   template<class T>
@@ -160,14 +166,58 @@ struct SearchScan : ScanSource {
   // extracts the scorer kind + parameters from the projection's
   // bm25(...) / tfidf(...) call and stores them here so the runtime
   // executor can build an irs::Scorer without re-parsing expressions.
-  enum class ScorerKind : uint8_t { None, Bm25, Tfidf };
+  enum class ScorerKind : uint8_t {
+    None,
+    Bm25,
+    Tfidf,
+    RawTf,
+    LmJm,
+    LmDirichlet,
+    IndriDirichlet,
+    Dfi,
+  };
+  // DFI independence measure. Must stay in sync with irs::DFIMeasure.
+  enum class DfiMeasure : uint8_t {
+    Standardized,
+    Saturated,
+    ChiSquared,
+  };
+  // Scorer parameters are tagged by `kind`: only the matching union arm is
+  // live. All variants are trivial types so the union is trivially
+  // constructible; one arm (RawTf -- empty) carries the default-member
+  // initializer so ScorerParams is itself default-constructible.
+  // Writers set `kind` and assign into the matching arm; readers switch on
+  // `kind` before accessing any arm.
   struct ScorerParams {
+    struct Bm25 {
+      double k1 = 1.2;
+      double b = 0.75;
+    };
+    struct Tfidf {
+      bool with_norms = false;
+    };
+    struct LmJm {
+      double lambda = 0.1;
+    };
+    struct LmDirichlet {
+      double mu = 2000.0;
+    };
+    struct IndriDirichlet {
+      double mu = 2000.0;
+    };
+    struct Dfi {
+      DfiMeasure measure = DfiMeasure::Standardized;
+    };
+
     ScorerKind kind = ScorerKind::None;
-    // bm25(k1, b) -- iresearch defaults per Bm25.
-    double bm25_k1 = 1.2;
-    double bm25_b = 0.75;
-    // tfidf(with_norms) -- default false = no length normalisation.
-    bool tfidf_with_norms = false;
+    union {
+      Bm25 bm25{};
+      Tfidf tfidf;
+      LmJm lm_jm;
+      LmDirichlet lm_dirichlet;
+      IndriDirichlet indri_dirichlet;
+      Dfi dfi;
+    };
   };
   ScorerParams scorer;
   std::optional<size_t> score_top_k;
@@ -227,18 +277,25 @@ struct SecondaryIndexScan : ScanSource {
   std::unique_ptr<ScanSource> Clone() const override;
 };
 
+struct VectorSearchScan : ScanSource {
+  VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
+
+  ObjectId index_id;
+  std::string field_name;
+  std::vector<float> query_vector;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> filter_expressions;
+  std::vector<catalog::Column::Id> filter_column_ids;
+};
+
 // ANN (top-k nearest-neighbour) scan using an HNSW index.
 // Populated by iresearch_plan (previously ann_search_plan) when it
 // detects the pattern:
 //   ORDER BY distance_func(col, const_vector) ASC LIMIT k
-struct ANNScan : ScanSource {
-  ANNScan() : ScanSource(ScanSourceKind::Ann) {}
+struct ANNScan : VectorSearchScan {
+  ANNScan() : VectorSearchScan{ScanSourceKind::Ann} {}
 
-  ObjectId index_id;
-  // Field name: big-endian catalog::Column::Id bytes, no MangleString
-  std::string field_name;
-  std::vector<float> query_vector;
   size_t top_k = 0;
+  int ef_search = 0;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -250,12 +307,9 @@ struct ANNScan : ScanSource {
 // Populated by iresearch_plan (previously range_search_plan) when it
 // detects the pattern:
 //   WHERE distance_func(col, const_vector) < radius
-struct RangeSearchScan : ScanSource {
-  RangeSearchScan() : ScanSource(ScanSourceKind::RangeSearch) {}
+struct RangeSearchScan : VectorSearchScan {
+  RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
 
-  ObjectId index_id;
-  std::string field_name;
-  std::vector<float> query_vector;
   float radius = 0.0f;
 
   void AppendSummary(

@@ -37,15 +37,14 @@
 #include "connector/duckdb_pk_point_lookup.hpp"
 #include "connector/duckdb_pk_range_scan.hpp"
 #include "connector/duckdb_scan_base.hpp"
-#include "connector/duckdb_search_ann_scan.hpp"
+#include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_count_scan.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_search_range_scan.hpp"
+#include "connector/duckdb_search_range_scan.h"
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
 #include "connector/rocksdb_filter.hpp"
-#include "connector/row_materializer.h"
 #include "functions/search.h"
 #include "pg/connection_context.h"
 
@@ -231,16 +230,12 @@ static std::string FormatResolvedRange(
 template<typename PointsOrRanges, typename FormatOne>
 static std::string FormatClaimList(const PointsOrRanges& items,
                                    FormatOne&& format_one) {
-  constexpr size_t kMaxShown = 8;
   std::string out;
-  for (size_t i = 0; i < items.size() && i < kMaxShown; ++i) {
+  for (size_t i = 0; i < items.size(); ++i) {
     if (i) {
-      absl::StrAppend(&out, ", ");
+      absl::StrAppend(&out, "\n");
     }
     absl::StrAppend(&out, format_one(items[i]));
-  }
-  if (items.size() > kMaxShown) {
-    absl::StrAppend(&out, ", ... (+", items.size() - kMaxShown, " more)");
   }
   return out;
 }
@@ -304,6 +299,16 @@ void ANNScan::AppendSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("TopK", std::to_string(top_k));
   out.insert("Dims", std::to_string(query_vector.size()));
+  if (!filter_expressions.empty()) {
+    std::string summary;
+    for (const auto& expr : filter_expressions) {
+      if (!summary.empty()) {
+        summary += " AND ";
+      }
+      summary += expr->ToString();
+    }
+    out.insert("Filter", summary);
+  }
 }
 
 void RangeSearchScan::AppendSummary(
@@ -311,6 +316,16 @@ void RangeSearchScan::AppendSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("Radius", std::to_string(radius));
   out.insert("Dims", std::to_string(query_vector.size()));
+  if (!filter_expressions.empty()) {
+    std::string summary;
+    for (const auto& expr : filter_expressions) {
+      if (!summary.empty()) {
+        summary += " AND ";
+      }
+      summary += expr->ToString();
+    }
+    out.insert("Filter", summary);
+  }
 }
 
 void CountScan::AppendSummary(
@@ -328,14 +343,46 @@ void SearchScan::AppendSummary(
   }
   switch (scorer.kind) {
     case SearchScan::ScorerKind::Bm25:
-      out.insert("Score", absl::StrCat("bm25(k1=", scorer.bm25_k1,
-                                       ", b=", scorer.bm25_b, ")"));
+      out.insert("Score", absl::StrCat("bm25(k1=", scorer.bm25.k1,
+                                       ", b=", scorer.bm25.b, ")"));
       break;
     case SearchScan::ScorerKind::Tfidf:
       out.insert("Score",
                  absl::StrCat("tfidf(with_norms=",
-                              scorer.tfidf_with_norms ? "true" : "false", ")"));
+                              scorer.tfidf.with_norms ? "true" : "false", ")"));
       break;
+    case SearchScan::ScorerKind::RawTf:
+      out.insert("Score", "raw_tf()");
+      break;
+    case SearchScan::ScorerKind::LmJm:
+      out.insert("Score",
+                 absl::StrCat("lm_jm(lambda=", scorer.lm_jm.lambda, ")"));
+      break;
+    case SearchScan::ScorerKind::LmDirichlet:
+      out.insert("Score",
+                 absl::StrCat("lm_dirichlet(mu=", scorer.lm_dirichlet.mu, ")"));
+      break;
+    case SearchScan::ScorerKind::IndriDirichlet:
+      out.insert(
+        "Score",
+        absl::StrCat("indri_dirichlet(mu=", scorer.indri_dirichlet.mu, ")"));
+      break;
+    case SearchScan::ScorerKind::Dfi: {
+      const char* m = "standardized";
+      switch (scorer.dfi.measure) {
+        case SearchScan::DfiMeasure::Standardized:
+          m = "standardized";
+          break;
+        case SearchScan::DfiMeasure::Saturated:
+          m = "saturated";
+          break;
+        case SearchScan::DfiMeasure::ChiSquared:
+          m = "chi_squared";
+          break;
+      }
+      out.insert("Score", absl::StrCat("dfi(measure=", m, ")"));
+      break;
+    }
     case SearchScan::ScorerKind::None:
       break;
   }
@@ -364,11 +411,32 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   if (bind.table) {
     result.insert("Table", std::string{bind.table->GetName()});
   }
-  // Surface which RowMaterializer the search-scan path will use to
-  // resolve PKs from the iresearch index. Only emit for strategies
-  // that actually run the iresearch pk -> row pipeline.
+  // Surface which lookup backend the search-scan path will use to resolve
+  // PKs from the iresearch index. Only emit for strategies that actually
+  // run the iresearch pk -> row pipeline.
   if (bind.scan_source->IsSearchLike()) {
-    result.insert("Materializer", std::string{RowMaterializerName(bind)});
+    const auto& table = *bind.table;
+    auto name = [&]() -> std::string {
+      switch (table.GetTableType()) {
+        using enum TableType;
+        case File: {
+          const auto& fi = table.GetFileInfo();
+          SDB_ASSERT(fi.storage_options);
+          std::string_view path = fi.storage_options->Path();
+          auto dot = path.rfind('.');
+          if (dot == std::string_view::npos) {
+            return "file";
+          }
+          return std::string{path.substr(dot + 1)};
+        }
+        case RocksDB:
+          return "rocksdb";
+        case Unknown:
+          SDB_UNREACHABLE();
+      }
+    }();
+
+    result.insert("Lookup", std::move(name));
   }
   bind.scan_source->AppendSummary(bind, result);
   return result;

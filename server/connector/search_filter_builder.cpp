@@ -50,6 +50,8 @@
 #include "catalog/mangling.h"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
 
 namespace sdb::connector {
@@ -722,23 +724,43 @@ Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
 // sdb_phrase
 // ---------------------------------------------------------------------------
 
+std::optional<size_t> ReadGapValue(const duckdb::Value& value) {
+  if (value.IsNull()) {
+    return std::nullopt;
+  }
+  int64_t raw;
+  switch (value.type().id()) {
+    case duckdb::LogicalTypeId::TINYINT:
+      raw = value.GetValue<int8_t>();
+      break;
+    case duckdb::LogicalTypeId::SMALLINT:
+      raw = value.GetValue<int16_t>();
+      break;
+    case duckdb::LogicalTypeId::INTEGER:
+      raw = value.GetValue<int32_t>();
+      break;
+    case duckdb::LogicalTypeId::BIGINT:
+      raw = value.GetValue<int64_t>();
+      break;
+    default:
+      return std::nullopt;
+  }
+  if (raw < 0) {
+    return std::nullopt;
+  }
+  return static_cast<size_t>(raw);
+}
+
 Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
                   const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 2) {
-    return {ERROR_BAD_PARAMETER, "PHRASE has ", func.children.size(),
-            " inputs but 2 expected"};
-  }
+  // PHRASE is registered with 2 fixed VARCHAR args (plus variadic ANY
+  // tail), so DuckDB's function resolver rejects anything shorter at
+  // bind time before we get here.
+  SDB_ASSERT(func.children.size() >= 2);
   const auto* col_ref = TryGetColumnRef(*func.children[0]);
   if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* const_val = TryGetConstant(*func.children[1]);
-  if (!const_val) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
-  }
-  if (const_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as VARCHAR"};
+    return {ERROR_BAD_PARAMETER,
+            "PHRASE first argument must be a column reference"};
   }
 
   const auto* column_info = FindColumnInfo(ctx, *col_ref);
@@ -749,9 +771,6 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "PHRASE field is not VARCHAR"};
   }
 
-  std::string field_name;
-  MakeFieldName(*column_info, field_name);
-
   if ((column_info->analyzer.features &
        irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) !=
       irs::PhraseQuery<irs::FixedPhraseState>::kRequiredFeatures) {
@@ -760,18 +779,130 @@ Result FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
             "enabled"};
   }
 
+  std::string field_name;
+  MakeFieldName(*column_info, field_name);
+  search::mangling::MangleString(field_name);
+
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
                              : AddFilter<irs::ByPhrase>(filter);
-  auto text = const_val->GetValue<std::string>();
-  column_info->analyzer.analyzer->reset(std::string_view{text});
+  phrase.boost(ctx.boost);
+  *phrase.mutable_field() = field_name;
+  auto* opts = phrase.mutable_options();
   const irs::TermAttr* token =
     irs::get<irs::TermAttr>(*column_info->analyzer.analyzer);
-  search::mangling::MangleString(field_name);
-  *phrase.mutable_field() = field_name;
-  phrase.boost(ctx.boost);
-  while (column_info->analyzer.analyzer->next()) {
-    phrase.mutable_options()->push_back<irs::ByTermOptions>().term.assign(
-      token->value);
+
+  bool has_gap = false;
+  size_t gap_min = 0;
+  size_t gap_max = 0;
+
+  // A non-constant argument is an index-only restriction -- a future
+  // full-scan PHRASE executor could handle it -- so we return Result
+  // and let the caller roll back any partially-built phrase filter so
+  // this predicate falls through to regular execution. All OTHER
+  // violations below are gap-grammar errors: the PHRASE call is
+  // malformed and no executor can satisfy it, so they throw with a
+  // specific message rather than letting SearchStubFn surface its
+  // generic "outside inverted index context" error.
+  for (size_t i = 1; i < func.children.size(); ++i) {
+    const auto* const_val = TryGetConstant(*func.children[i]);
+    if (!const_val) {
+      return {ERROR_BAD_PARAMETER, "PHRASE argument ", i,
+              " must be a constant"};
+    }
+    switch (const_val->type().id()) {
+      case duckdb::LogicalTypeId::VARCHAR: {
+        auto text = const_val->GetValue<std::string>();
+        column_info->analyzer.analyzer->reset(std::string_view{text});
+        while (column_info->analyzer.analyzer->next()) {
+          if (has_gap) {
+            // First token of a new text pattern: apply pending gap.
+            // push_back(offs_min, offs_max) has no implicit +1 unlike
+            // push_back(offs), so add 1 to convert "N words between" to
+            // "N+1 position offset".
+            opts->push_back<irs::ByTermOptions>(gap_min + 1, gap_max + 1)
+              .term.assign(token->value);
+          } else {
+            // No pending gap: first term or adjacent token within same
+            // pattern.
+            opts->push_back<irs::ByTermOptions>().term.assign(token->value);
+          }
+          has_gap = false;
+        }
+      } break;
+      case duckdb::LogicalTypeId::LIST:
+      case duckdb::LogicalTypeId::ARRAY: {
+        if (opts->empty()) {
+          THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG("PHRASE gap at argument ", i,
+                                  " must be preceded by a text pattern"));
+        }
+        if (has_gap) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE has consecutive gaps at argument ", i));
+        }
+        const auto& elements =
+          const_val->type().id() == duckdb::LogicalTypeId::ARRAY
+            ? duckdb::ArrayValue::GetChildren(*const_val)
+            : duckdb::ListValue::GetChildren(*const_val);
+        if (elements.size() != 2) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE gap array at argument ", i,
+                    " must have exactly 2 elements [min, max], got ",
+                    elements.size()));
+        }
+        const auto min_val = ReadGapValue(elements[0]);
+        const auto max_val = ReadGapValue(elements[1]);
+        if (!min_val || !max_val) {
+          THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG("PHRASE gap array at argument ", i,
+                                  " elements must be non-negative integers"));
+        }
+        if (*min_val > *max_val) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE gap array at argument ", i, " min (", *min_val,
+                    ") must not exceed max (", *max_val, ")"));
+        }
+        gap_min = *min_val;
+        gap_max = *max_val;
+        has_gap = true;
+      } break;
+      default: {
+        const auto gap = ReadGapValue(*const_val);
+        if (!gap) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE argument ", i,
+                    " has unsupported type; expected text, non-negative "
+                    "integer, or non-negative integer array"));
+        }
+        if (opts->empty()) {
+          THROW_SQL_ERROR(ERR_CODE(ERROR_BAD_PARAMETER),
+                          ERR_MSG("PHRASE gap at argument ", i,
+                                  " must be preceded by a text pattern"));
+        }
+        if (has_gap) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERROR_BAD_PARAMETER),
+            ERR_MSG("PHRASE has consecutive gaps at argument ", i));
+        }
+        gap_min = gap_max = gap.value();
+        has_gap = true;
+      } break;
+    }
+  }
+
+  if (has_gap) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERROR_BAD_PARAMETER),
+      ERR_MSG("PHRASE ends with a gap; a text pattern must follow each gap"));
+  }
+  if (opts->empty()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERROR_BAD_PARAMETER),
+      ERR_MSG("PHRASE text arguments produced no searchable terms"));
   }
   return {};
 }

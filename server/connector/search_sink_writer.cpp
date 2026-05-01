@@ -235,7 +235,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     };
 
   if constexpr (Kind == duckdb::LogicalTypeId::SQLNULL) {
-    _current_writer = MakeIndexWriter<irs::Action::INDEX>(
+    _current_writer = MakeIndexWriter(
       [&](std::string_view full_key,
           std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
         SDB_ASSERT(cell_slices.size() == 1);
@@ -247,31 +247,36 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_analyzer_provider(column_id));
-    if (have_nulls) {
-      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
-        make_nullable_writer_func(&WriteStringValue));
+    const bool has_store = _field.store_attr != nullptr;
+    if (has_store) {
+      _current_writer =
+        have_nulls
+          ? MakeIndexStoreWriter(make_nullable_writer_func(&WriteStringValue))
+          : MakeIndexStoreWriter(&WriteStringValue);
     } else {
-      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteStringValue);
+      _current_writer =
+        have_nulls
+          ? MakeIndexWriter(make_nullable_writer_func(&WriteStringValue))
+          : MakeIndexWriter(&WriteStringValue);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::BOOLEAN) {
     search::mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
     if (have_nulls) {
-      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
-        make_nullable_writer_func(&WriteBooleanValue));
+      _current_writer =
+        MakeIndexWriter(make_nullable_writer_func(&WriteBooleanValue));
     } else {
-      _current_writer = MakeIndexWriter<irs::Action::INDEX>(&WriteBooleanValue);
+      _current_writer = MakeIndexWriter(&WriteBooleanValue);
     }
   } else if constexpr (kIsNumericKind<Kind>) {
     search::mangling::MangleNumeric(_name_buffer);
     _field.PrepareForNumericValue();
     using T = NumericSliceType<Kind>;
     if (have_nulls) {
-      _current_writer = MakeIndexWriter<irs::Action::INDEX>(
-        make_nullable_writer_func(&WriteNumericValue<T>));
-    } else {
       _current_writer =
-        MakeIndexWriter<irs::Action::INDEX>(&WriteNumericValue<T>);
+        MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
+    } else {
+      _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
     // HNSW vector field: stored as raw float32 bytes via Action::STORE.
@@ -280,10 +285,10 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     // Null vectors are skipped (not stored) so they never appear in HNSW.
     _field.PrepareForVectorValue();
     if (have_nulls) {
-      _current_writer = MakeIndexWriter<irs::Action::STORE>(
-        make_nullable_writer_func(&WriteVectorValue));
+      _current_writer =
+        MakeStoreWriter(make_nullable_writer_func(&WriteVectorValue));
     } else {
-      _current_writer = MakeIndexWriter<irs::Action::STORE>(&WriteVectorValue);
+      _current_writer = MakeStoreWriter(&WriteVectorValue);
     }
   } else {
     // Defensive: SwitchColumnImpl only calls this for Kinds handled above.
@@ -302,7 +307,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
-      _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
+      _pk_field.own_store.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
       // We need indexed PK for removes
       const bool r =
@@ -318,19 +323,31 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   }
 }
 
-template<irs::Action Action, typename WriteFunc>
-SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
+template<bool HasStore, irs::Action NonNullAction, typename WriteFunc>
+SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeWriterImpl(
   WriteFunc&& write_func) {
-  return [&, func = std::forward<WriteFunc>(write_func)](
-           std::string_view full_key,
-           std::span<const rocksdb::Slice> cell_slices) {
-    const bool r =
-      _document->template Insert<Action>(&func(full_key, cell_slices, _field));
-    if (!r) {
-      SDB_THROW(ERROR_INTERNAL,
-                "Failed to insert field into IResearch document");
-    }
-  };
+  return
+    [&, func = std::forward<WriteFunc>(write_func)](
+      std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
+      auto& field = func(full_key, cell_slices, _field);
+      bool r;
+      if constexpr (HasStore) {
+        // Force INDEX only for NULLs so
+        // IS NULL queries find them via the null-stream tokens.
+        r = field.store_attr
+              ? _document->template Insert<NonNullAction>(&field)
+              : _document->template Insert<irs::Action::INDEX>(&field);
+      } else {
+        // Column never stores -- skip the per-row check.
+        static_assert(NonNullAction == irs::Action::INDEX,
+                      "No-store action should be only INDEX");
+        r = _document->template Insert<NonNullAction>(&field);
+      }
+      if (!r) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert field into IResearch document");
+      }
+    };
 }
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
@@ -375,7 +392,7 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
   //   [last] raw float data  (count * sizeof(float) bytes)
   // Always use the last slice to get the actual float bytes.
   SDB_ASSERT(!cell_slices.empty());
-  field.value = irs::bytes_view{
+  field.own_store.value = irs::bytes_view{
     reinterpret_cast<const irs::byte_type*>(cell_slices.back().data()),
     cell_slices.back().size()};
   return field;
@@ -423,13 +440,16 @@ void SearchSinkInsertBaseImpl::Field::PrepareForVectorValue() {
   string_analyzer.reset();
   analyzer.reset();
   index_features = irs::IndexFeatures::None;
-  value = {};
+  own_store.value = {};
+  store_attr = &own_store;
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {
   string_analyzer.reset();
   index_features = irs::IndexFeatures::None;
   analyzer = gStringStreamPool.emplace(search::AnalyzerImpl::StringStreamTag{});
+  own_store.value = {};
+  store_attr = &own_store;
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
@@ -438,6 +458,7 @@ void SearchSinkInsertBaseImpl::Field::PrepareForStringValue(
   SDB_ASSERT(column_analyzer.analyzer);
   analyzer.reset();
   string_analyzer = std::move(column_analyzer.analyzer);
+  store_attr = irs::get<irs::StoreAttr>(**string_analyzer);
 }
 
 void SearchSinkInsertBaseImpl::Field::SetStringValue(std::string_view value) {

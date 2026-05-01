@@ -83,6 +83,141 @@ a	b	c
 4	quick brown fox jumps over big dog	value b
 
 statement ok
+INSERT INTO foo values (5, 'quick brown lazy fox runs over big dog', 'value c');
+
+statement ok
+INSERT INTO foo values (6, 'quick fox over big dog', 'value c');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+# Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+# Exact gap: 2 words between 'quick' and 'fox' -- matches only row 5 ('quick brown lazy fox')
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 2, 'fox') ORDER BY a;
+----
+a	b
+5	quick brown lazy fox runs over big dog
+
+# Exact gap: 0 words between (adjacent) -- matches only row 6 ('quick fox')
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 0, 'fox') ORDER BY a;
+----
+a	b
+6	quick fox over big dog
+
+# Range gap [0,1]: 0 or 1 words between 'quick' and 'fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[0,1], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+6	quick fox over big dog
+
+# Range gap [1,2]: 1 or 2 words between 'quick' and 'fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[1,2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Range gap with bracket-literal syntax [1,2] -- also binds to LIST,
+# same as ARRAY[1,2] above.
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Range gap with explicit fixed-size ARRAY cast -- exercises the ARRAY
+# branch of FromPhrase (unadorned ARRAY[..] / [..] bind to LIST, only an
+# explicit INTEGER[n] cast produces a fixed-size ARRAY value).
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2]::INTEGER[2], 'fox') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+5	quick brown lazy fox runs over big dog
+
+# Multi-token pattern with gap: 'quick brown' then 1 word then 'fox' -- only row 5 has 'brown lazy fox'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick brown', 1, 'fox') ORDER BY a;
+----
+a	b
+5	quick brown lazy fox runs over big dog
+
+# Multiple gaps: 'quick' +1 word+ 'fox' +3 words+ 'dog'
+query
+SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox', 3, 'dog') ORDER BY a;
+----
+a	b
+1	quick brown fox jumps over lazy dog
+2	quick red fox jumps over lazy dog
+3	quick red fox jumps over big dog
+4	quick brown fox jumps over big dog
+
+# Error: leading text pattern tokenizes to nothing (empty string) so the
+# following integer gap has no preceding text -- covers the opts->empty()
+# check in the integer gap branch of FromPhrase.
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, '', 1, 'fox');
+----
+db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+
+
+# Same as above but via a range gap -- covers the opts->empty() check
+# in the LIST/ARRAY gap branch of FromPhrase.
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, '', ARRAY[1,2], 'fox');
+----
+db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+
+
+# Error: gap at end with no following text pattern
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1);
+----
+db error: ERROR: PHRASE ends with a gap; a text pattern must follow each gap
+
+
+# Error: two consecutive gaps
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1, 2, 'fox');
+----
+db error: ERROR: PHRASE has consecutive gaps at argument 3
+
+
+# Error: range gap with min > max
+query error
+SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[3,1], 'fox');
+----
+db error: ERROR: PHRASE gap array at argument 2 min (3) must not exceed max (1)
+
+
+statement ok
 DROP TABLE foo;
 
 control substitution on
@@ -129,9 +264,7 @@ QUERY PLAN
 │      IRESEARCH_COUNT      │
 │    ────────────────────   │
 │     Table: vedernikoff    │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -572,8 +705,7 @@ QUERY PLAN
 │           Table:          │
 │     score_parquet_ext     │
 │                           │
-│       Materializer:       │
-│ parquet (file_row_number) │
+│      Lookup: parquet      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -906,9 +1038,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
-│                           │
-│       Materializer:       │
-│     counter (re-scan)     │
+│        Lookup: csv        │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -963,6 +1093,75 @@ DROP TABLE dense_csv_ext;
 
 statement ok
 DROP TABLE dense_csv_src;
+
+
+statement ok
+CREATE TABLE vedernikoff_src (a INTEGER PRIMARY KEY, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO vedernikoff_src VALUES
+  (1, 'shared term alpha info', 'dept red color'),
+  (2, 'shared term beta info', 'dept blue color'),
+  (3, 'shared term gamma info', 'dept red color'),
+  (4, 'shared term delta info', 'dept blue color'),
+  (5, 'shared term epsilon info', 'dept red color');
+
+statement count 5
+COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.jsonl' (FORMAT json);
+
+statement ok
+CREATE TABLE vedernikoff_ext(
+  a INT8,
+  b TEXT,
+  c TEXT
+)
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff.jsonl'
+);
+
+statement ok
+CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);
+
+query
+SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+----
+a	b
+1	shared term alpha info
+2	shared term beta info
+3	shared term gamma info
+4	shared term delta info
+5	shared term epsilon info
+
+query
+SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(b, 'info') ORDER BY a;
+----
+a	b	c
+1	shared term alpha info	dept red color
+2	shared term beta info	dept blue color
+3	shared term gamma info	dept red color
+4	shared term delta info	dept blue color
+5	shared term epsilon info	dept red color
+
+query
+SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept red color') ORDER BY a;
+----
+a	c
+1	dept red color
+3	dept red color
+5	dept red color
+
+query
+SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept blue color') ORDER BY a;
+----
+a	c
+2	dept blue color
+4	dept blue color
+
+statement ok
+DROP TABLE vedernikoff_ext;
+
+statement ok
+DROP TABLE vedernikoff_src;
 
 
 statement ok

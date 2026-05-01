@@ -34,9 +34,9 @@
 namespace irs {
 namespace {
 
-// Convert a SQL LIKE pattern to an ICU regex pattern.
+// Convert a SQL LIKE pattern to a RE2 regex pattern.
 // '%' -> '.*', '_' -> '.', backslash escapes, all other regex chars escaped.
-std::shared_ptr<icu::RegexMatcher> BuildLikeMatcher(std::string_view pattern) {
+std::shared_ptr<RE2> BuildLikeMatcher(std::string_view pattern) {
   std::string regex;
   regex.reserve(pattern.size() * 2);
   regex += "\\A";  // anchor start
@@ -64,33 +64,30 @@ std::shared_ptr<icu::RegexMatcher> BuildLikeMatcher(std::string_view pattern) {
     }
   }
   regex += "\\z";  // anchor end
-  auto unicode = icu::UnicodeString::fromUTF8(regex);
-  UErrorCode status = U_ZERO_ERROR;
-  auto matcher =
-    std::make_shared<icu::RegexMatcher>(unicode, UREGEX_DOTALL, status);
-  if (U_FAILURE(status)) {
+  RE2::Options opts;
+  opts.set_dot_nl(true);  // '.' matches newline, equivalent to UREGEX_DOTALL
+  auto re = std::make_shared<RE2>(regex, opts);
+  if (!re->ok()) {
     return nullptr;
   }
-  return matcher;
+  return re;
 }
 
 class WildcardIterator : public DocIterator {
  public:
-  WildcardIterator(icu::RegexMatcher* matcher, DocIterator::ptr&& approx,
+  // Takes shared ownership of the RE2 matcher to guarantee it outlives the
+  // iterator. RE2 is immutable and thread-safe for concurrent matching, so
+  // no per-iterator clone is needed (unlike icu::RegexMatcher).
+  WildcardIterator(std::shared_ptr<RE2> matcher, DocIterator::ptr&& approx,
                    DocIterator::ptr&& column_it)
-    : _approx{std::move(approx)}, _column_it{std::move(column_it)} {
+    : _matcher{std::move(matcher)},
+      _approx{std::move(approx)},
+      _column_it{std::move(column_it)} {
     SDB_ASSERT(_approx);
     SDB_ASSERT(_column_it);
-    _stored = irs::get<PayAttr>(*_column_it);
-    SDB_ASSERT(matcher);
-    // Create our own matcher to avoid data race
-    auto status = U_ZERO_ERROR;
-    _matcher = matcher->pattern().matcher(status);
     SDB_ASSERT(_matcher);
-    SDB_ASSERT(status == U_ZERO_ERROR);
+    _stored = irs::get<PayAttr>(*_column_it);
   }
-
-  ~WildcardIterator() override { delete _matcher; }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _approx->GetMutable(type);
@@ -99,16 +96,16 @@ class WildcardIterator : public DocIterator {
   doc_id_t advance() final {
     while (!doc_limits::eof(_approx->advance())) {
       if (Check(_approx->value())) {
-        return _approx->value();
+        return _doc = _approx->value();
       }
     }
-    return doc_limits::eof();
+    return _doc = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t target) final {
     target = _approx->seek(target);
     if (Check(target)) {
-      return target;
+      return _doc = target;
     }
     return advance();
   }
@@ -125,14 +122,9 @@ class WildcardIterator : public DocIterator {
       auto size = vread<uint32_t>(terms_begin);
       ++terms_begin;  // skip begin marker
 
-      auto term = icu::UnicodeString::fromUTF8(
-        icu::StringPiece{reinterpret_cast<const char*>(terms_begin),
-                         static_cast<int32_t>(size)});
-
-      _matcher->reset(term);
-
-      auto status = U_ZERO_ERROR;
-      if (_matcher->matches(status)) {
+      re2::StringPiece term{reinterpret_cast<const char*>(terms_begin),
+                            static_cast<size_t>(size)};
+      if (RE2::PartialMatch(term, *_matcher)) {
         return true;
       }
 
@@ -142,7 +134,7 @@ class WildcardIterator : public DocIterator {
     return false;
   }
 
-  icu::RegexMatcher* _matcher;
+  std::shared_ptr<RE2> _matcher;
   DocIterator::ptr _approx;
   DocIterator::ptr _column_it;
   const PayAttr* _stored{};
@@ -150,8 +142,8 @@ class WildcardIterator : public DocIterator {
 
 class WildcardQuery : public Filter::Query {
  public:
-  WildcardQuery(std::shared_ptr<icu::RegexMatcher> matcher,
-                std::string_view field, Query::ptr&& approx)
+  WildcardQuery(std::shared_ptr<RE2> matcher, std::string_view field,
+                Query::ptr&& approx)
     : _matcher{std::move(matcher)}, _field{field}, _approx{std::move(approx)} {
     SDB_ASSERT(_approx);
   }
@@ -166,8 +158,8 @@ class WildcardQuery : public Filter::Query {
       return DocIterator::empty();
     }
     auto column_it = column->iterator(ColumnHint::Normal);
-    return memory::make_managed<WildcardIterator>(
-      _matcher.get(), std::move(approx), std::move(column_it));
+    return memory::make_managed<WildcardIterator>(_matcher, std::move(approx),
+                                                  std::move(column_it));
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {}
@@ -175,7 +167,7 @@ class WildcardQuery : public Filter::Query {
   score_t Boost() const noexcept final { return kNoBoost; }
 
  private:
-  std::shared_ptr<icu::RegexMatcher> _matcher;
+  std::shared_ptr<RE2> _matcher;
   std::string _field;
   Query::ptr _approx;
 };
@@ -184,9 +176,9 @@ constexpr size_t kDefaultScoredTermsLimit = 1024;
 
 }  // namespace
 
-Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
-                                           std::string_view field,
-                                           const WildcardFilterOptions& opts) {
+Filter::Query::ptr ByWildcardNgram::Prepare(
+  const PrepareContext& ctx, std::string_view field,
+  const ByWildcardNgramOptions& opts) {
   auto& parts = opts.parts;
   auto size = parts.size();
   Filter::Query::ptr p;
@@ -242,7 +234,7 @@ Filter::Query::ptr WildcardFilter::Prepare(const PrepareContext& ctx,
     ctx.memory, opts.matcher, std::string_view{field}, std::move(conjunction));
 }
 
-WildcardFilterOptions::WildcardFilterOptions(
+ByWildcardNgramOptions::ByWildcardNgramOptions(
   std::string_view pattern, analysis::WildcardAnalyzer& analyzer,
   bool has_positions) {
   auto& ngram = analyzer.ngram();

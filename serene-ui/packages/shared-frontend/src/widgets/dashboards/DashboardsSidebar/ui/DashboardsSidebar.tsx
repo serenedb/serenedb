@@ -255,7 +255,10 @@ export const DashboardsSidebar: React.FC<DashboardsSidebarProps> = ({
     return (
         <DashboardsSidebarFavoriteSavedQueriesProvider>
             <DashboardsSidebarContext.Provider value={contextValue}>
-                <div ref={containerRef} className="flex flex-col h-full w-full">
+                <div
+                    ref={containerRef}
+                    className="flex flex-col h-full w-full"
+                    data-dashboards-sidebar-root="true">
                     <DashboardsSidebarTopbar />
                     <PaneviewReact
                         onReady={onReady}

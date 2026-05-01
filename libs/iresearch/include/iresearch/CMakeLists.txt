@@ -122,6 +122,7 @@ set(IResearch_core_sources
     ./search/column_existence_filter.cpp
     ./search/same_position_filter.cpp
     ./search/wildcard_filter.cpp
+    ./search/regexp_filter.cpp
     ./search/wildcard_ngram_filter.cpp
     ./search/levenshtein_filter.cpp
     ./search/multiterm_query.cpp
@@ -135,6 +136,12 @@ set(IResearch_core_sources
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
+    ./search/raw_tf.cpp
+    ./search/lm_similarity.cpp
+    ./search/lm_jelinek_mercer.cpp
+    ./search/lm_dirichlet.cpp
+    ./search/indri_dirichlet.cpp
+    ./search/dfi.cpp
     ./store/data_input.cpp
     ./store/directory.cpp
     ./store/directory_attributes.cpp
@@ -155,6 +162,7 @@ set(IResearch_core_sources
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
+    ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
     ./utils/numeric_utils.cpp

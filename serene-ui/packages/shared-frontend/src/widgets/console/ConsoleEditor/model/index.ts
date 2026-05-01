@@ -1,6 +1,7 @@
 export * from "./consts";
 export * from "./types";
 export * from "./utils";
+export * from "./useConsoleEditorHotkeys";
 export * from "./useConsoleQueryExecution";
 export * from "./useEditorPanelState";
 export * from "./useResultsPanelManager";

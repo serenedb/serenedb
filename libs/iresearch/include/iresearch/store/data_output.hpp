@@ -51,7 +51,7 @@ class DataOutput {
  protected:
   IRS_FORCE_INLINE void WriteNumU(auto n) {
     // TODO(mbkkt) change to little endian!
-    n = absl::big_endian::FromHost(n);
+    n = absl::little_endian::FromHost(n);
     WriteBytes(reinterpret_cast<byte_type*>(&n), sizeof(n));
   }
 
@@ -141,7 +141,7 @@ class BufferedOutput : public DataOutput {
   IRS_FORCE_INLINE void WriteNumU(auto n) {
     static constexpr size_t kNeeded = sizeof(n);
     // TODO(mbkkt) change to little endian!
-    n = absl::big_endian::FromHost(n);
+    n = absl::little_endian::FromHost(n);
     const auto* b = reinterpret_cast<const byte_type*>(&n);
     // We assume buffer size > kNeeded, so double buffering is impossible
     // and we can use < instead of <=

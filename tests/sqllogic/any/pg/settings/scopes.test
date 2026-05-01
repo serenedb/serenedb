@@ -185,7 +185,7 @@ statement ok
 BEGIN;
 
 
-skipif postgres # TODO(gnusi) not supported syntax in pg
+skipif postgres # SET GLOBAL is not supported syntax in pg
 statement ok
 SET GLOBAL default_transaction_read_only TO true;
 
@@ -203,7 +203,7 @@ default_transaction_read_only
 on
 
 
-skipif postgres # TODO(gnusi) not supported syntax in pg
+skipif postgres # SET GLOBAL is not supported syntax in pg
 statement ok
 SET GLOBAL default_transaction_read_only TO false;
 

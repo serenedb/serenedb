@@ -61,6 +61,39 @@ void TfidfStubFn(duckdb::DataChunk& /*args*/,
     "tfidf() requires an inverted index scan in the same sub-query");
 }
 
+void RawTfStubFn(duckdb::DataChunk& /*args*/,
+                 duckdb::ExpressionState& /*state*/,
+                 duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "raw_tf() requires an inverted index scan in the same sub-query");
+}
+
+void LmJmStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& /*state*/,
+                duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "lm_jm() requires an inverted index scan in the same sub-query");
+}
+
+void LmDirichletStubFn(duckdb::DataChunk& /*args*/,
+                       duckdb::ExpressionState& /*state*/,
+                       duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "lm_dirichlet() requires an inverted index scan in the same sub-query");
+}
+
+void IndriDirichletStubFn(duckdb::DataChunk& /*args*/,
+                          duckdb::ExpressionState& /*state*/,
+                          duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "indri_dirichlet() requires an inverted index scan in the same sub-query");
+}
+
+void DfiStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& /*state*/,
+               duckdb::Vector& /*result*/) {
+  throw duckdb::InvalidInputException(
+    "dfi() requires an inverted index scan in the same sub-query");
+}
+
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
 // Runs `token` through the named text search dictionary and returns
 // the resulting lexemes as a VARCHAR array. Mirrors pg_catalog.ts_lexize().
@@ -167,11 +200,17 @@ void TsLexizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
 
-  // phrase(field, target) -> bool
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    std::string{kPhrase},
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-    duckdb::LogicalType::BOOLEAN, SearchStubFn));
+  // phrase(field, target[, gap, target, ...]) -> bool
+  // Variadic tail accepts text patterns, exact-gap integers, and
+  // [min, max] gap-range arrays (see FromPhrase for the full grammar).
+  {
+    duckdb::ScalarFunction fn(
+      std::string{kPhrase},
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::BOOLEAN, SearchStubFn);
+    fn.varargs = duckdb::LogicalType::ANY;
+    loader.RegisterFunction(std::move(fn));
+  }
 
   // term_eq/lt/lte/gte/gt/like(field, target) -> bool
   for (auto name : {kTermEq, kTermLt, kTermLe, kTermGe, kTermGt, kTermLike}) {
@@ -258,6 +297,70 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT, duckdb::LogicalType::BOOLEAN},
       duckdb::LogicalType::FLOAT, TfidfStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // raw_tf(tableoid) -> FLOAT -- emits raw term frequency per matched doc.
+  // Shape mirrors bm25/tfidf: anchor is tableoid; the iresearch_plan rule
+  // claims the call at compile time and threads the scorer into bind_data.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kRawTf}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, RawTfStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // lm_jm(tableoid) / lm_jm(tableoid, lambda) -> FLOAT.
+  // Language model with Jelinek-Mercer (linear interpolation) smoothing.
+  // lambda in (0, 1]; iresearch default is 0.1.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kLmJm}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, LmJmStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, LmJmStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // lm_dirichlet(tableoid) / lm_dirichlet(tableoid, mu) -> FLOAT.
+  // Language model with Bayesian (Dirichlet) smoothing. mu >= 0;
+  // iresearch default is 2000.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kLmDirichlet}};
+    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::BIGINT},
+                                           duckdb::LogicalType::FLOAT,
+                                           LmDirichletStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, LmDirichletStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // indri_dirichlet(tableoid) / indri_dirichlet(tableoid, mu) -> FLOAT.
+  // Indri-style Dirichlet: same smoothing as lm_dirichlet but without the
+  // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
+  {
+    duckdb::ScalarFunctionSet set{std::string{kIndriDirichlet}};
+    set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::BIGINT},
+                                           duckdb::LogicalType::FLOAT,
+                                           IndriDirichletStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE},
+      duckdb::LogicalType::FLOAT, IndriDirichletStubFn));
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // dfi(tableoid) / dfi(tableoid, measure) -> FLOAT.
+  // Divergence-From-Independence. `measure` selects the independence
+  // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kDfi}};
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, DfiStubFn));
+    set.AddFunction(duckdb::ScalarFunction(
+      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
+      duckdb::LogicalType::FLOAT, DfiStubFn));
     loader.RegisterFunction(std::move(set));
   }
 

@@ -118,6 +118,10 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
+httpfs_connection_caching	off	Enable connection caching for HTTP requests
+iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
+iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
+iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
@@ -185,6 +189,7 @@ scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multipl
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	on	Controls whether queries can see uncommitted writes from the current transaction.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
@@ -202,6 +207,7 @@ temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	1	The number of total threads used by the system.
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
+unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 user	(empty)	The username to use. Ignored for legacy compatibility.
 username	(empty)	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
@@ -341,6 +347,10 @@ http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
 http_retry_wait_ms	100	Time between retries
 http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
 httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
+httpfs_connection_caching	off	Enable connection caching for HTTP requests
+iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
+iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
+iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
@@ -408,6 +418,7 @@ scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multipl
 scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
 schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
 scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	on	Controls whether queries can see uncommitted writes from the current transaction.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
@@ -425,6 +436,7 @@ temp_file_encryption	off	Encrypt all temporary files if database is encrypted
 threads	1	The number of total threads used by the system.
 transaction_isolation	read committed	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
+unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 user	(empty)	The username to use. Ignored for legacy compatibility.
 username	(empty)	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.

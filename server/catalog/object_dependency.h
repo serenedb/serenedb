@@ -55,9 +55,10 @@ struct SchemaDependency : public ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
   containers::FlatHashSet<ObjectId> tokenizers;
+  containers::FlatHashSet<ObjectId> types;
   bool Empty() const {
     return tables.empty() && functions.empty() && views.empty() &&
-           tokenizers.empty();
+           tokenizers.empty() && types.empty();
   }
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<SchemaDependency>(*this);

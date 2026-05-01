@@ -28,6 +28,13 @@ add_bench(json_functions)
 add_bench(config_var_lookup)
 add_bench(norm_gather)
 add_bench(path_hierarchy_tokenizer)
+add_bench(regexp_vs_wildcard)
+
+target_include_directories(
+    serenedb-bench-micro-regexp_vs_wildcard
+    SYSTEM
+    PRIVATE $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+)
 
 # vector distances
 add_executable(vector-distances-bench vector_distances.cpp)

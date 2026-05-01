@@ -19,14 +19,14 @@ INSERT INTO vedernikoff_unique VALUES (3, 'crookface', 30);
 
 #TODO(mkornaukhov) add detail for errors eventually
 
-onlyif serenedb
+onlyif serenedb # DuckdDB error
 statement error
 INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
 
 
-skipif serenedb
+skipif serenedb # Postgres error
 statement error
 INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
@@ -373,28 +373,17 @@ EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│         PROJECTION        │
-│    ────────────────────   │
-│            pid            │
-│          district         │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│           FILTER          │
-│    ────────────────────   │
-│     (code IS NOT NULL)    │
-│                           │
-│           ~1 row          │
-└─────────────┬─────────────┘
-┌─────────────┴─────────────┐
-│   ROCKSDB_TABLE_FULLSCAN  │
+│   ROCKSDB_SK_RANGES_SCAN  │
 │    ────────────────────   │
 │           Table:          │
 │   vedernikoff_safehouse   │
 │                           │
+│          Filter:          │
+│    {code=(-inf, +inf)}    │
+│                           │
+│        Unique: true       │
+│                           │
 │        Projections:       │
-│            code           │
 │            pid            │
 │          district         │
 │                           │
@@ -885,14 +874,14 @@ SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 99;
 pid	nickname
 
 
-onlyif serenedb
+onlyif serenedb # DuckDB error
 statement error
 INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
 
 
-skipif serenedb
+skipif serenedb # Postgres error
 statement error
 INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
 ----
@@ -1005,14 +994,14 @@ SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 99;
 pid	nickname
 
 
-onlyif serenedb
+onlyif serenedb # DuckDB error
 statement error
 INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
 
 
-skipif serenedb
+skipif serenedb # Postgres error
 statement error
 INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
 ----
@@ -1266,8 +1255,8 @@ QUERY PLAN
 ┌───────────────────────────┐
 │         PROJECTION        │
 │    ────────────────────   │
-│           pid             │
-│           note            │
+│            pid            │
+│            note           │
 │                           │
 │          ~3 rows          │
 └─────────────┬─────────────┘
@@ -1413,7 +1402,8 @@ QUERY PLAN
 │   Table: babsky_uniq_in   │
 │                           │
 │          Filter:          │
-│   (code=100), (code=300)  │
+│         (code=100)        │
+│         (code=300)        │
 │                           │
 │        Unique: true       │
 │                           │

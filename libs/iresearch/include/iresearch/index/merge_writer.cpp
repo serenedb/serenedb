@@ -44,7 +44,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/utils/bytes_output.hpp"
-#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -1356,31 +1355,29 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
     }
 
     std::optional<field_id> res;
-    if (feature_writer) {
-      auto write_values = [&]<typename T>(T&& value_writer) {
-        return cs.insert(feature_itr, info,
-                         ColumnFinalizer{
-                           [feature_writer = std::move(feature_writer)](
-                             DataOutput& out) { feature_writer->finish(out); },
-                           [] { return std::string_view{}; },
-                         },
-                         std::forward<T>(value_writer));
-      };
+    auto write_values = [&]<typename T>(T&& value_writer) {
+      return cs.insert(feature_itr, info,
+                       ColumnFinalizer{
+                         [feature_writer = std::move(feature_writer)](
+                           DataOutput& out) { feature_writer->finish(out); },
+                         [] { return std::string_view{}; },
+                       },
+                       std::forward<T>(value_writer));
+    };
 
-      if (buffered_column) {
-        buffered_column->SetFeatureWriter(*feature_writer);
-        res = write_values(*buffered_column);
-      } else {
-        res =
-          write_values([writer = feature_writer.get()](
-                         ColumnOutput& out, doc_id_t doc, bytes_view payload) {
-            out.Prepare(doc);
-            writer->write(out, payload);
-          });
-      }
+    if (buffered_column) {
+      buffered_column->SetFeatureWriter(*feature_writer);
+      res = write_values(*buffered_column);
+    } else {
+      res =
+        write_values([writer = feature_writer.get()](
+                       ColumnOutput& out, doc_id_t doc, bytes_view payload) {
+          out.Prepare(doc);
+          writer->write(out, payload);
+        });
     }
 
-    if (!res.has_value()) {
+    if (!res) {
       return false;  // Failed to insert all values
     }
 

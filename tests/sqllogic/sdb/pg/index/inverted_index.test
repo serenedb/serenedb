@@ -254,9 +254,7 @@ QUERY PLAN
 │      IRESEARCH_COUNT      │
 │    ────────────────────   │
 │     Table: vedernikoff    │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -697,8 +695,7 @@ QUERY PLAN
 │           Table:          │
 │     score_parquet_ext     │
 │                           │
-│       Materializer:       │
-│ parquet (file_row_number) │
+│      Lookup: parquet      │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │
@@ -1031,9 +1028,7 @@ QUERY PLAN
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │    Table: dense_csv_ext   │
-│                           │
-│       Materializer:       │
-│     counter (re-scan)     │
+│        Lookup: csv        │
 │                           │
 │          Filter:          │
 │  AND[PHRASE[b(string) =   │

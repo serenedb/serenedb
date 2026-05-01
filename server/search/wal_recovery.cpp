@@ -195,7 +195,7 @@ void FlushShard(ShardState& s,
   // don't need to keep it alongside the Row pointer.
   std::vector<const Row*> insert_entries;
   insert_entries.reserve(s.pk2row.size());
-  for (const auto& [_pk, row] : s.pk2row) {
+  for (const auto& [_, row] : s.pk2row) {
     switch (row.op) {
       case RowOp::Put:
         insert_entries.push_back(&row);
@@ -212,7 +212,7 @@ void FlushShard(ShardState& s,
   // Put-affected pks get a remove first to mirror SearchSinkUpdateWriter
   // (clear stale fields from the prior doc).
   s.delete_sink->InitImpl(s.pk2row.size());
-  for (const auto& [pk, _row] : s.pk2row) {
+  for (const auto& [pk, _] : s.pk2row) {
     s.delete_sink->DeleteRowImpl(pk);
   }
   s.delete_sink->FinishImpl();

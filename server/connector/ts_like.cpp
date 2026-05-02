@@ -20,14 +20,50 @@
 
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/search/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/string.hpp>
 
+#include "basics/down_cast.h"
 #include "catalog/mangling.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
+
+// Picks ByWildcardNgram for WildcardAnalyzer-indexed columns -- those
+// columns ngram-tokenise terms at index time, so the pattern matches
+// through the inverted index instead of a brute-force term-dictionary
+// scan -- and ByWildcard otherwise.
+void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
+                    const SearchColumnInfo& column_info, std::string field_name,
+                    std::string_view pattern) {
+  if (column_info.tokenizer.analyzer->type() ==
+      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
+    auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(parent)
+                           : AddFilter<irs::ByWildcardNgram>(parent);
+    wf.boost(ctx.boost);
+    *wf.mutable_field() = std::move(field_name);
+    *wf.mutable_options() = {
+      pattern,
+      basics::downCast<irs::analysis::WildcardAnalyzer>(
+        *column_info.tokenizer.analyzer.get()),
+      (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
+        irs::IndexFeatures::Pos};
+    return;
+  }
+  auto& filter = ctx.negated ? Negate<irs::ByWildcard>(parent)
+                             : AddFilter<irs::ByWildcard>(parent);
+  filter.boost(ctx.boost);
+  *filter.mutable_field() = std::move(field_name);
+  auto& wild_opts = *filter.mutable_options();
+  wild_opts.scored_terms_limit = ctx.scored_terms_limit;
+  wild_opts.term.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+}
+
 namespace {
 
 void BuildFtsLike(irs::BooleanFilter& parent, const FilterContext& ctx,

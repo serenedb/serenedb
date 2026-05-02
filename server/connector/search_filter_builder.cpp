@@ -33,6 +33,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <expected>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/all_filter.hpp>
@@ -58,7 +59,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/trivial_map.h"
-#include "basics/down_cast.h"
+#include "basics/errors.h"
 #include "basics/string_utils.h"
 #include "catalog/mangling.h"
 #include "functions/search.h"
@@ -191,6 +192,15 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
 }
 
 namespace {
+
+ResultOr<std::string> TryGetString(const duckdb::Expression& expr) {
+  const auto* value = TryGetConstant(expr);
+  if (!value || value->IsNull() ||
+      value->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return std::unexpected{ERROR_BAD_PARAMETER};
+  }
+  return value->GetValue<std::string>();
+}
 
 ComparisonOp InvertComparisonOp(ComparisonOp op) {
   switch (op) {
@@ -670,64 +680,6 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-// `generic_version` selects the call-site contract:
-//  - true: SQL `b LIKE 'pat'` operator -- the column may be any
-//    indexed type; the function returns a Result so the optimizer
-//    can leave the filter unclaimed when the column rejects the
-//    LIKE shape (non-VARCHAR, non-keyword / non-wildcard analyzer).
-//  - false: TSQUERY-surface entry where the binder has already
-//    constrained the column to VARCHAR. Validate via SDB_ASSERT
-//    instead of returning a Result -- the failure mode is a bind-
-//    time programmer error, not a user-recoverable predicate
-//    mismatch.
-Result FromLike(irs::BooleanFilter& filter, const FilterContext& ctx,
-                const duckdb::Expression& field_expr,
-                const duckdb::Expression& pattern_expr, bool generic_version,
-                char escape_char = '\\') {
-  const auto* column_ref = TryGetColumnRef(field_expr);
-  if (!column_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* const_val = TryGetConstant(pattern_expr);
-  if (!const_val) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate LIKE pattern as constant"};
-  }
-
-  if (const_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate LIKE pattern as VARCHAR"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column is not indexed"};
-  }
-
-  std::string field_name;
-  MakeFieldName(column_info->column_id, field_name);
-
-  if (generic_version) {
-    if (column_info->logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-      return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
-    }
-    const auto analyzer_type = column_info->tokenizer.analyzer->type();
-    if (analyzer_type != irs::Type<irs::StringTokenizer>::id() &&
-        analyzer_type != irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-      return {ERROR_BAD_PARAMETER,
-              "Field is not indexed by identity or wildcard analyzer. Use "
-              "`col @@ ts_like('pattern')`."};
-    }
-  } else {
-    SDB_ASSERT(column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR,
-               ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR");
-  }
-
-  search::mangling::MangleString(field_name);
-  EmitLikeFilter(filter, ctx, *column_info, std::move(field_name),
-                 const_val->GetValue<std::string>(), escape_char);
-  return {};
-}
-
 // Appends `s` to `out` with `\`, `%`, `_` backslash-escaped so the
 // result is a LIKE pattern that matches `s` literally. Caller reserves
 // up front (worst-case +1 char per input byte). Used by the `contains`
@@ -823,7 +775,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
 
-constexpr containers::TrivialBiMap kPredicateBuilders = [](auto selector) {
+constexpr containers::TrivialBiMap kSugarBuilders = [](auto selector) {
   return selector()
     .Case(kPhraseMatches, BuildPassthrough<kTSQPhrase>)
     .Case(kNgramMatches, BuildPassthrough<kTSQNgram>)
@@ -835,10 +787,8 @@ constexpr containers::TrivialBiMap kPredicateBuilders = [](auto selector) {
 Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
                      PredicateInnerBuilder build_inner,
                      const duckdb::BoundFunctionExpression& func) {
-  if (func.children.empty()) {
-    return {ERROR_BAD_PARAMETER, func.function.name,
-            " requires a column reference as the first argument"};
-  }
+  SDB_ASSERT(!func.children.empty());
+
   // Tail must be copied because the builder takes ownership (it splices
   // the args into a synthesised ts_* call).
   auto tail = func.children | std::views::drop(1) |
@@ -890,123 +840,125 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
                   duckdb::Value(std::string{literal}))));
 }
 
-// `<builtin>(col, literal)` -> `col @@ <inner>(literal)` for keyword-
-// analyzed columns. Decline (no claim) when the call shape doesn't
-// match: wrong arity, non-VARCHAR column type, non-column LHS, non-
-// constant or NULL pattern. Throw with a helpful hint when the column
-// is indexed but uses a non-keyword analyzer (semantics would diverge
-// from DuckDB's whole-string predicate).
+duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
+  std::string_view literal) {
+  return MakeTSQueryCall(
+    kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value(std::string{literal}))));
+}
+
+using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);
+
+bool IsKeywordAnalyzer(irs::TypeInfo::type_id t) {
+  return t == irs::Type<irs::StringTokenizer>::id();
+}
+
+bool IsLikeCompatibleAnalyzer(irs::TypeInfo::type_id t) {
+  return t == irs::Type<irs::StringTokenizer>::id() ||
+         t == irs::Type<irs::analysis::WildcardAnalyzer>::id();
+}
+
+constexpr containers::TrivialBiMap kBuiltinBuilder = [](auto selector) {
+  return selector()
+    .Case("contains", &BuildTSContainsLike)
+    .Case("^@", &BuildTSStartsWith)
+    .Case("starts_with", &BuildTSStartsWith)
+    .Case("prefix", &BuildTSStartsWith)
+    .Case("suffix", &BuildTSEndsWithLike)
+    .Case("ends_with", &BuildTSEndsWithLike)
+    .Case("regexp_matches", &BuildTSRegexp)
+    .Case("regexp_like", &BuildTSRegexp)
+    .Case("~~", &BuildTSLike);
+};
+
+// Pre-extracted variant: validates column ref + indexed + analyzer
+// predicate, then synthesises `col @@ build_inner(pattern)` and
+// dispatches via FromTSQueryMatch. Used by callers that already
+// extracted the literal pattern (e.g. LIKE which also needs to
+// normalise via LikeEscapePattern).
 Result RewriteAsTSQueryMatch(irs::BooleanFilter& filter,
                              const FilterContext& ctx,
-                             const duckdb::BoundFunctionExpression& func,
+                             const duckdb::Expression& column_expr,
+                             std::string_view pattern,
                              StringBuiltinBuilder build_inner,
-                             std::string_view ts_form_hint) {
-  if (func.children.size() != 2) {
-    return {ERROR_NOT_IMPLEMENTED, func.function.name,
-            ": expected 2 args, got ", func.children.size()};
-  }
-  if (func.children[0]->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_NOT_IMPLEMENTED, func.function.name,
-            ": VARCHAR overload only -- declined for ",
-            func.children[0]->return_type.ToString()};
-  }
-  const auto* column_ref = TryGetColumnRef(*func.children[0]);
+                             AnalyzerPredicate analyzer_ok,
+                             std::string_view func_name) {
+  const auto* column_ref = TryGetColumnRef(column_expr);
   if (!column_ref) {
-    return {ERROR_NOT_IMPLEMENTED, func.function.name,
+    return {ERROR_NOT_IMPLEMENTED, func_name,
             ": first arg is not a column reference"};
-  }
-  const auto* literal_val = TryGetConstant(*func.children[1]);
-  if (!literal_val || literal_val->IsNull() ||
-      literal_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-    return {ERROR_NOT_IMPLEMENTED, func.function.name,
-            ": pattern must be a non-NULL VARCHAR constant"};
   }
   const auto* column_info = FindColumnInfo(ctx, *column_ref);
   if (!column_info) {
     return {ERROR_BAD_PARAMETER, "Column is not indexed"};
   }
-  if (column_info->tokenizer.analyzer->type() !=
-      irs::Type<irs::StringTokenizer>::id()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(func.function.name,
-              " requires a keyword-analyzed column on inverted-indexed "
-              "inputs"),
-      ERR_HINT("Use `", ts_form_hint, "` for non-keyword analyzers."));
+  if (!analyzer_ok(column_info->tokenizer.analyzer->type())) {
+    return {ERROR_BAD_PARAMETER, func_name, ": column analyzer not supported"};
   }
-  auto inner = build_inner(literal_val->GetValue<std::string>());
-  FromTSQueryMatch(filter, ctx, *func.children[0], *inner);
+  auto inner = build_inner(pattern);
+  FromTSQueryMatch(filter, ctx, column_expr, *inner);
   return {};
 }
 
 Result FromFunctionExpression(irs::BooleanFilter& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.function.name;
+  std::string_view name = func.function.name;
+  std::span args = func.children;
+
   if (name == kTSQueryMatch) {
     // Anything that fails inside `@@` would otherwise fall through to
     // the runtime stub and surface the generic "TSQUERY expression
     // evaluated outside @@" error -- losing the specific cause. Throw
     // at this boundary so users see the actual reason + a hint.
-    SDB_ASSERT(func.children.size() == 2);
-    FromTSQueryMatch(filter, ctx, *func.children[0], *func.children[1]);
+    SDB_ASSERT(args.size() == 2);
+    FromTSQueryMatch(filter, ctx, *args[0], *args[1]);
     return {};
   }
 
-  // DuckDB turns LIKE into a BoundFunctionExpression with function.name
-  // "~~" or "like_escape".  Handle it as generic LIKE.
-  //
-  // We deliberately do NOT add a `regexp_full_match` claimer here even
-  // though Postgres `~ / ~* / !~ / !~*` rewrite to it. DuckDB's own
-  // regex_range_filter optimizer runs first and wraps any
-  // `regexp_full_match(col, pat)` call in a sibling LogicalFilter that
-  // adds `col >= range_min AND col <= range_max` (computed from the
-  // pattern's literal prefix). After our walker recursively claims
-  // the inner range filter and rewrites the LogicalGet into an
-  // iresearch scan, the outer filter (still holding the original
-  // regexp_full_match) no longer matches our claim shape -- the Get
-  // has scan_source.Kind() != FullTable -- so the regexp_full_match
-  // would silently fall back to the DuckDB regex executor anyway.
-  if (name == "~~" || name == "like_escape") {
-    if (func.children.size() < 2) {
-      return {ERROR_BAD_PARAMETER, "LIKE has ", func.children.size(),
-              " inputs but at least 2 expected"};
+  char escape_char = '\\';
+  if (name == "like_escape") {
+    SDB_ASSERT(args.size() == 3);
+    auto escape_str = TryGetString(*args[2]);
+    if (!escape_str) {
+      return std::move(escape_str).error();
     }
-    char escape_char = '\\';
-    if (name == "like_escape" && func.children.size() >= 3) {
-      const auto* esc_val = TryGetConstant(*func.children[2]);
-      if (!esc_val || esc_val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-        return {ERROR_BAD_PARAMETER, "LIKE ESCAPE must be a VARCHAR constant"};
-      }
-      auto esc_str = esc_val->GetValue<std::string>();
-      if (esc_str.size() != 1) {
-        return {ERROR_BAD_PARAMETER, "LIKE ESCAPE must be a single character"};
-      }
-      escape_char = esc_str[0];
+    if (escape_str->size() != 1) {
+      return {ERROR_BAD_PARAMETER, "LIKE ESCAPE must be a single character"};
     }
-    return FromLike(filter, ctx, *func.children[0], *func.children[1],
-                    /*generic_version=*/true, escape_char);
+    escape_char = escape_str->front();
+    args = args.subspan(0, 2);
+    name = "~~";
   }
 
-  if (name == "contains") {
-    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSContainsLike,
-                                 "col @@ ts_like('%pattern%')");
-  }
-  if (name == "^@" || name == "starts_with" || name == "prefix") {
-    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSStartsWith,
-                                 "col @@ ts_starts_with('p')");
-  }
-  if (name == "suffix" || name == "ends_with") {
-    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSEndsWithLike,
-                                 "col @@ ts_like('%suffix')");
-  }
-  if (name == "regexp_matches" || name == "regexp_like") {
-    return RewriteAsTSQueryMatch(filter, ctx, func, &BuildTSRegexp,
-                                 "col @@ ts_regexp('re')");
+  if (args.size() == 2) {
+    // some functions like regexp_matches/regexp_like have optional third args
+    // for flags; ignore those here since we don't support
+    if (auto builder = kBuiltinBuilder.TryFindByFirst(name).value_or(nullptr)) {
+      SDB_ASSERT(args.size() == 2);
+      if (args[0]->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+        return {ERROR_NOT_IMPLEMENTED, func.function.name,
+                ": VARCHAR overload only -- declined for ",
+                args[0]->return_type.ToString()};
+      }
+      auto pattern = TryGetString(*args[1]);
+      if (!pattern) {
+        return std::move(pattern).error();
+      }
+      auto validator = &IsKeywordAnalyzer;
+
+      if (builder == &BuildTSLike) {
+        *pattern = LikeEscapePattern(*pattern, escape_char);
+        validator = &IsLikeCompatibleAnalyzer;
+      }
+
+      return RewriteAsTSQueryMatch(filter, ctx, *args[0], *pattern, builder,
+                                   validator, name);
+    }
   }
 
-  if (auto build = kPredicateBuilders.TryFindByFirst(name)) {
-    return FromPredicate(filter, ctx, *build, func);
+  if (auto builder = kSugarBuilders.TryFindByFirst(name)) {
+    return FromPredicate(filter, ctx, *builder, func);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported function: ", name};
@@ -1590,38 +1542,6 @@ Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
     default:
       return {ERROR_BAD_PARAMETER, label, " must be a numeric constant"};
   }
-}
-
-// Picks ByWildcardNgram for WildcardAnalyzer-indexed columns -- those
-// columns ngram-tokenise terms at index time, so the pattern matches
-// through the inverted index instead of a brute-force term-dictionary
-// scan -- and ByWildcard otherwise.
-void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info, std::string field_name,
-                    std::string_view raw_pattern, char escape_char) {
-  auto pattern = LikeEscapePattern(raw_pattern, escape_char);
-  if (column_info.tokenizer.analyzer->type() ==
-      irs::Type<irs::analysis::WildcardAnalyzer>::id()) {
-    auto& wf = ctx.negated ? Negate<irs::ByWildcardNgram>(parent)
-                           : AddFilter<irs::ByWildcardNgram>(parent);
-    wf.boost(ctx.boost);
-    *wf.mutable_field() = std::move(field_name);
-    *wf.mutable_options() = {
-      pattern,
-      basics::downCast<irs::analysis::WildcardAnalyzer>(
-        *column_info.tokenizer.analyzer.get()),
-      (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
-        irs::IndexFeatures::Pos};
-    return;
-  }
-  auto& wild = ctx.negated ? Negate<irs::ByWildcard>(parent)
-                           : AddFilter<irs::ByWildcard>(parent);
-  wild.boost(ctx.boost);
-  *wild.mutable_field() = std::move(field_name);
-  auto& wild_opts = *wild.mutable_options();
-  wild_opts.scored_terms_limit = ctx.scored_terms_limit;
-  wild_opts.term.assign(
-    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
 }
 
 // Per-type TSQUERY entry points -- each defined in ts_<name>.cpp and

@@ -2404,19 +2404,36 @@ SELECT a FROM tsq_kw_idx WHERE regexp_like(b, '[a-z]+[0-9]+') ORDER BY a;
 a
 6
 
-# Non-keyword analyzer rejected: the same call against the segmenting
-# `tsq_idx.b` errors with the documented hint.
-statement error
-SELECT a FROM tsq_idx WHERE contains(b, 'foo');
+# Non-keyword analyzer: the claim path silently declines and DuckDB
+# evaluates the predicate per-row against the column projection. The
+# query still works (just without index acceleration); these checks
+# confirm the fallback returns the correct row set.
+query
+SELECT a FROM tsq_idx WHERE contains(b, 'quick') ORDER BY a;
+----
+a
+1
+2
 
-statement error
-SELECT a FROM tsq_idx WHERE starts_with(b, 'foo');
+query
+SELECT a FROM tsq_idx WHERE starts_with(b, 'quick') ORDER BY a;
+----
+a
+1
+2
 
-statement error
-SELECT a FROM tsq_idx WHERE ends_with(b, 'foo');
+query
+SELECT a FROM tsq_idx WHERE ends_with(b, 'dog') ORDER BY a;
+----
+a
+1
+2
 
-statement error
-SELECT a FROM tsq_idx WHERE regexp_matches(b, '[a-z]+[0-9]+');
+query
+SELECT a FROM tsq_idx WHERE regexp_matches(b, 'sl[a-z]+') ORDER BY a;
+----
+a
+3
 
 # Mixing built-ins.
 query

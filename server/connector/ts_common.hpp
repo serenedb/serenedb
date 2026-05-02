@@ -136,9 +136,11 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
 void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
+// `pattern` must already be normalised to `\`-escape form (callers
+// can use LikeEscapePattern() to normalise from a custom escape char).
 void EmitLikeFilter(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string field_name,
-                    std::string_view raw_pattern, char escape_char = '\\');
+                    std::string_view pattern);
 
 // SQL-surface helpers shared with cross-TU claimers.
 const duckdb::BoundColumnRefExpression* TryGetColumnRef(

@@ -5476,12 +5476,13 @@ TEST_F(SearchFilterBuilderTest, test_Contains_BoostCastWraps) {
                columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_Contains_RejectsNonKeywordAnalyzer) {
+TEST_F(SearchFilterBuilderTest, test_Contains_DeclinesNonKeywordAnalyzer) {
+  // Non-keyword analyzer -> claim silently declines so DuckDB evaluates
+  // the predicate per row.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(irs::And{}, "SELECT * FROM foo WHERE contains(b, 'foo')",
-               columns, false, SegmentationAnalyzerProvider,
-               "requires a keyword-analyzed column");
+               columns, false, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Contains_DeclinesListShape) {
@@ -5556,12 +5557,11 @@ TEST_F(SearchFilterBuilderTest, test_StartsWith_BoostCastWraps) {
                columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_StartsWith_RejectsNonKeywordAnalyzer) {
+TEST_F(SearchFilterBuilderTest, test_StartsWith_DeclinesNonKeywordAnalyzer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(irs::And{}, "SELECT * FROM foo WHERE starts_with(b, 'foo')",
-               columns, false, SegmentationAnalyzerProvider,
-               "requires a keyword-analyzed column");
+               columns, false, SegmentationAnalyzerProvider);
 }
 
 // ---------------------------------------------------------------------------
@@ -5605,12 +5605,11 @@ TEST_F(SearchFilterBuilderTest, test_EndsWith_Negated) {
                columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_EndsWith_RejectsNonKeywordAnalyzer) {
+TEST_F(SearchFilterBuilderTest, test_EndsWith_DeclinesNonKeywordAnalyzer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(irs::And{}, "SELECT * FROM foo WHERE ends_with(b, 'foo')",
-               columns, false, SegmentationAnalyzerProvider,
-               "requires a keyword-analyzed column");
+               columns, false, SegmentationAnalyzerProvider);
 }
 
 // ---------------------------------------------------------------------------
@@ -5684,13 +5683,12 @@ TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesThreeArg) {
                columns, false);
 }
 
-TEST_F(SearchFilterBuilderTest, test_RegexpMatches_RejectsNonKeywordAnalyzer) {
+TEST_F(SearchFilterBuilderTest, test_RegexpMatches_DeclinesNonKeywordAnalyzer) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
   AssertFilter(irs::And{},
                "SELECT * FROM foo WHERE regexp_matches(b, '[a-z]+[0-9]+')",
-               columns, false, SegmentationAnalyzerProvider,
-               "requires a keyword-analyzed column");
+               columns, false, SegmentationAnalyzerProvider);
 }
 
 // ---------------------------------------------------------------------------

@@ -35,13 +35,7 @@ LevenshteinArgs ParseLevenshteinArgs(
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
     "(0-3 with transpositions). Optional `prefix` matches exactly.";
-  if (func.children.empty() || func.children.size() > 4) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_levenshtein expects 1 to 4 arguments "
-                            "(text, distance?, transpositions?, prefix?), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 2 && func.children.size() <= 4);
   LevenshteinArgs out;
   if (auto r =
         GetVarcharArg(*func.children[0], "ts_levenshtein text", out.text);
@@ -117,14 +111,7 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  if (func.children.empty() || func.children.size() > 4) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_levenshtein expects 1 to 4 arguments "
-                            "(text, distance?, transpositions?, prefix?), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
-  }
-
+  // Arity already enforced by ParseLevenshteinArgs's assertion.
   auto args = ParseLevenshteinArgs(func);
 
   std::string field_name;

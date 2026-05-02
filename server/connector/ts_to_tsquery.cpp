@@ -184,36 +184,12 @@ void ParseWebsearchQuery(std::string_view text,
 
 }  // namespace
 
-void FromPhrase(irs::BooleanFilter&, const FilterContext&,
-                const SearchColumnInfo&,
-                const duckdb::BoundFunctionExpression&);
-
-void FromPhraseToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
-                         const SearchColumnInfo& column_info,
-                         const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("phraseto_tsquery expects 1 argument (text), got ",
-              func.children.size()),
-      ERR_HINT("Example: phraseto_tsquery('quick fox'). The text is "
-               "tokenised through the column analyzer and emitted as a "
-               "phrase."));
-  }
-  FromPhrase(parent, ctx, column_info, func);
-}
-
 void FromPlainToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                         const SearchColumnInfo& column_info,
                         const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: plainto_tsquery('quick fox'). AND-semantics over tokens.";
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("plainto_tsquery expects 1 argument (text), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() == 1);
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "plainto_tsquery text", text);
       !r.ok()) {
@@ -231,13 +207,7 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
                             const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: websearch_to_tsquery('\"quick fox\" -slow OR fast').";
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("websearch_to_tsquery expects 1 argument (text), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() == 1);
   std::string text;
   if (auto r =
         GetVarcharArg(*func.children[0], "websearch_to_tsquery text", text);
@@ -254,16 +224,7 @@ void FromWebsearchToTsquery(irs::BooleanFilter& parent,
 void FromTsqueryPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::BoundFunctionExpression& func) {
-  static constexpr std::string_view kSyntaxHint =
-    "Example: tsquery_phrase(ts_phrase('hello'), 'world', 1). Same as "
-    "ts_phrase('hello') ## 1 ## 'world'.";
-  if (func.children.size() < 2 || func.children.size() > 3) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("tsquery_phrase expects 2 or 3 arguments "
-                            "(q1, q2[, distance]), got ",
-                            func.children.size()),
-                    ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 2 && func.children.size() <= 3);
   PhraseSeq seq;
   FlattenPhraseSeq(*func.children[0], seq);
   if (func.children.size() == 3) {
@@ -279,13 +240,8 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: to_tsquery('field:foo AND bar*'). Lucene syntax: "
     "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N.";
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("to_tsquery expects 1 argument (lucene-string), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  // to_tsquery registred as (VARCHAR); binder enforces arity.
+  SDB_ASSERT(func.children.size() == 1);
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "to_tsquery text", text);
       !r.ok()) {

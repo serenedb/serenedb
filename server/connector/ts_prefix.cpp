@@ -29,11 +29,18 @@
 #include "ts_common.hpp"
 
 namespace sdb::connector {
-namespace {
 
-void BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    std::string_view prefix) {
+void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
+                const SearchColumnInfo& column_info,
+                const duckdb::BoundFunctionExpression& func) {
+  SDB_ASSERT(func.children.size() == 1);
+  std::string prefix;
+  if (auto r = GetVarcharArg(*func.children[0], "ts_starts_with text", prefix);
+      !r.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(r.errorMessage()),
+                    ERR_HINT("Example: ts_starts_with('pre')."));
+  }
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_starts_with field is not VARCHAR"),
@@ -46,33 +53,10 @@ void BuildFtsPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& filter = ctx.negated ? Negate<irs::ByPrefix>(parent)
                              : AddFilter<irs::ByPrefix>(parent);
   filter.boost(ctx.boost);
-  *filter.mutable_field() = field_name;
+  *filter.mutable_field() = std::move(field_name);
   auto& pf_opts = *filter.mutable_options();
   pf_opts.scored_terms_limit = ctx.scored_terms_limit;
-  pf_opts.term.assign(irs::ViewCast<irs::byte_type>(prefix));
-}
-
-}  // namespace
-
-void FromPrefix(irs::BooleanFilter& parent, const FilterContext& ctx,
-                const SearchColumnInfo& column_info,
-                const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_starts_with expects 1 argument (text), got ",
-              func.children.size()),
-      ERR_HINT("Example: ts_starts_with('pre'). For mid-string wildcards use "
-               "ts_like('foo%bar')."));
-  }
-  std::string prefix;
-  if (auto r = GetVarcharArg(*func.children[0], "ts_starts_with text", prefix);
-      !r.ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(r.errorMessage()),
-                    ERR_HINT("Example: ts_starts_with('pre')."));
-  }
-  BuildFtsPrefix(parent, ctx, column_info, prefix);
+  pf_opts.term.assign(irs::ViewCast<irs::byte_type>(std::string_view{prefix}));
 }
 
 }  // namespace sdb::connector

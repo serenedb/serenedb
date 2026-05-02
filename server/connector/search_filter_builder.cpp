@@ -372,10 +372,8 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
                   const duckdb::BoundOperatorExpression& op_expr) {
-  if (op_expr.children.size() != 1) {
-    return {ERROR_NOT_IMPLEMENTED, "IS NULL has ", op_expr.children.size(),
-            " inputs but 1 expected"};
-  }
+  // OPERATOR_IS_NULL / IS_NOT_NULL are unary by construction.
+  SDB_ASSERT(op_expr.children.size() == 1);
   const auto* column_ref = TryGetColumnRef(*op_expr.children[0]);
   if (!column_ref) {
     return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
@@ -601,10 +599,7 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
 template<bool GenericVersion>
 Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
               const duckdb::BoundOperatorExpression& op_expr) {
-  if (op_expr.children.size() < 2) {
-    return {ERROR_NOT_IMPLEMENTED, "IN has ", op_expr.children.size(),
-            " inputs but at least 2 expected"};
-  }
+  SDB_ASSERT(op_expr.children.size() >= 2);
 
   const auto* column_ref = TryGetColumnRef(*op_expr.children[0]);
   if (!column_ref) {
@@ -969,12 +964,8 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func,
                             bool is_and) {
-  if (func.children.size() != 2) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("TSQUERY ", is_and ? "&&" : "||",
-                            " expects 2 operands, got ", func.children.size()),
-                    ERR_HINT("Example: ts_phrase('a') && 'b'."));
-  }
+  // `||` / `&&` registered as (TOK, TOK) -> TOK; binder enforces arity.
+  SDB_ASSERT(func.children.size() == 2);
   irs::BooleanFilter* group;
   if (is_and) {
     group =
@@ -998,12 +989,8 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
 void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::BoundFunctionExpression& func) {
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("TSQUERY !! expects 1 operand, got ", func.children.size()),
-      ERR_HINT("Example: !!ts_phrase('text')."));
-  }
+  // `!!` registered as (TOK) -> TOK; binder enforces arity.
+  SDB_ASSERT(func.children.size() == 1);
   auto neg = ctx;
   neg.negated = !ctx.negated;
   BuildTSQuery(parent, neg, column_info, *func.children[0]);
@@ -1017,13 +1004,8 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('text') ^ 2.0. Factor must be >= 0; "
     "for composable boost use ::boost(K).";
-  if (func.children.size() != 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("TSQUERY ^ expects 2 operands (query ^ factor), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  // `^` registered as (TOK, DOUBLE) -> TSQ; binder enforces arity.
+  SDB_ASSERT(func.children.size() == 2);
   double factor_d;
   if (auto r = GetDoubleArg(*func.children[1], "boost factor", factor_d);
       !r.ok()) {
@@ -1557,9 +1539,8 @@ void FromLevenshtein(irs::BooleanFilter&, const FilterContext&,
                      const duckdb::BoundFunctionExpression&);
 void FromTerm(irs::BooleanFilter&, const FilterContext&,
               const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
-void FromTSQLike(irs::BooleanFilter&, const FilterContext&,
-                 const SearchColumnInfo&,
-                 const duckdb::BoundFunctionExpression&);
+void FromLike(irs::BooleanFilter&, const FilterContext&,
+              const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
 void FromPrefix(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
@@ -1585,9 +1566,6 @@ void FromAnyAllOf(irs::BooleanFilter&, const FilterContext&,
 void FromPlainToTsquery(irs::BooleanFilter&, const FilterContext&,
                         const SearchColumnInfo&,
                         const duckdb::BoundFunctionExpression&);
-void FromPhraseToTsquery(irs::BooleanFilter&, const FilterContext&,
-                         const SearchColumnInfo&,
-                         const duckdb::BoundFunctionExpression&);
 void FromTsqueryPhrase(irs::BooleanFilter&, const FilterContext&,
                        const SearchColumnInfo&,
                        const duckdb::BoundFunctionExpression&);
@@ -1681,7 +1659,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     case TSQueryOp::Term:
       return FromTerm(parent, ctx, column_info, func);
     case TSQueryOp::Like:
-      return FromTSQLike(parent, ctx, column_info, func);
+      return FromLike(parent, ctx, column_info, func);
     case TSQueryOp::Prefix:
       return FromPrefix(parent, ctx, column_info, func);
     case TSQueryOp::Ngram:
@@ -1701,7 +1679,7 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
     case TSQueryOp::PhraseSeq:
       return FromTSQueryPhraseSeq(parent, ctx, column_info, func);
     case TSQueryOp::PhraseToTsquery:
-      return FromPhraseToTsquery(parent, ctx, column_info, func);
+      return FromPhrase(parent, ctx, column_info, func);
     case TSQueryOp::Any:
       return FromAnyAllOf(parent, ctx, column_info, func, /*is_any=*/true);
     case TSQueryOp::All:

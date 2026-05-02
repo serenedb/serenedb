@@ -225,17 +225,7 @@ irs::IndexWriterOptions WandTestCase::GetWriterOptions(irs::ScorerPtr scorer,
                                                        bool write_norms) {
   irs::IndexWriterOptions writer_options;
   writer_options.reader_options.scorer = scorer;
-  writer_options.features = [write_norms](irs::IndexFeatures id) {
-    if (write_norms && irs::IndexFeatures::Norm == id) {
-      return std::make_pair(
-        irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-        &irs::Norm::MakeWriter);
-    }
-
-    return std::make_pair(
-      irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-      irs::FeatureWriterFactory{});
-  };
+  (void)write_norms;
 
   return writer_options;
 }

@@ -63,7 +63,6 @@ struct IteratorOptions : WandContext {};
 
 struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;
-  const FeatureInfoProvider& feature_info;
   const IndexFeatures scorers_features;
   ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};

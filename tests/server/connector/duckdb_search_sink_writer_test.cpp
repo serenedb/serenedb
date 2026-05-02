@@ -71,17 +71,8 @@ class DuckDBSearchSinkWriterTest : public ::testing::Test {
         .track_prev_doc = false};
     };
 
-    auto feature_provider = [](irs::IndexFeatures) {
-      return std::make_pair(
-        irs::ColumnInfo{.compression = irs::Type<irs::compression::None>::get(),
-                        .options = {},
-                        .encryption = false,
-                        .track_prev_doc = false},
-        irs::FeatureWriterFactory{});
-    };
     irs::IndexWriterOptions options;
     options.column_info = column_info_provider;
-    options.features = feature_provider;
     _codec = irs::formats::Get("1_5simd");
     _data_writer =
       irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
@@ -729,17 +720,8 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       .track_prev_doc = false};
   };
 
-  auto feature_provider = [](irs::IndexFeatures) {
-    return std::make_pair(
-      irs::ColumnInfo{.compression = irs::Type<irs::compression::None>::get(),
-                      .options = {},
-                      .encryption = false,
-                      .track_prev_doc = false},
-      irs::FeatureWriterFactory{});
-  };
   irs::IndexWriterOptions options;
   options.column_info = column_info_provider;
-  options.features = feature_provider;
   // force writer to make flushes every 2 documents
   options.segment_docs_max = 2;
   // local block is needed as reader/writer should not outlive directory

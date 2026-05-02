@@ -331,7 +331,8 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::ColumnAnalyzer(catalog::Column::Id)> analyzer_provider;
+  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
+    analyzer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -357,7 +358,7 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
     connector::SearchColumnInfo info;
     info.column_id = col_id;
     info.logical_type = type_it->second;
-    info.analyzer = ctx.analyzer_provider(col_id);
+    info.tokenizer = ctx.analyzer_provider(col_id);
     return info;
   };
 }
@@ -398,10 +399,11 @@ void InitSearchColumnContextForGet(
 
 bool TryClaimIresearchConjunct(
   irs::And& and_root, const duckdb::unique_ptr<duckdb::Expression>& conjunct,
-  const connector::ColumnGetter& getter) {
+  const connector::ColumnGetter& getter,
+  const connector::SearchFilterOptions& options) {
   const auto before = and_root.size();
   std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&conjunct, 1};
-  auto r = connector::MakeSearchFilter(and_root, single, getter);
+  auto r = connector::MakeSearchFilter(and_root, single, getter, options);
   if (r.ok() && and_root.size() > before) {
     return true;
   }
@@ -411,7 +413,8 @@ bool TryClaimIresearchConjunct(
   return false;
 }
 
-bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                const connector::SearchFilterOptions& options) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
     return false;
   }
@@ -556,7 +559,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   for (auto* f : residual_filters) {
     std::vector<bool> claimed(f->expressions.size(), false);
     for (size_t i = 0; i < f->expressions.size(); ++i) {
-      if (TryClaimIresearchConjunct(and_root, f->expressions[i], getter)) {
+      if (TryClaimIresearchConjunct(and_root, f->expressions[i], getter,
+                                    options)) {
         claimed[i] = true;
         any_text_claimed = true;
       }
@@ -610,7 +614,8 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 // LogicalGet)
 // ---------------------------------------------------------------------------
 
-bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                 const connector::SearchFilterOptions& options) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {
     return false;
   }
@@ -791,7 +796,8 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   std::vector<bool> claimed(filter.expressions.size(), false);
   bool any_text_claimed = false;
   for (size_t i = 0; i < filter.expressions.size(); ++i) {
-    if (TryClaimIresearchConjunct(and_root, filter.expressions[i], getter)) {
+    if (TryClaimIresearchConjunct(and_root, filter.expressions[i], getter,
+                                  options)) {
       claimed[i] = true;
       any_text_claimed = true;
     }
@@ -843,43 +849,6 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 // projection pushdown reordering -- same translation we do in
 // rocksdb_plan. `analyzer_provider` queries the InvertedIndex for the
 // per-column analyzer (op_class).
-struct SearchColumnContext {
-  duckdb::TableIndex table_index;
-  std::span<const catalog::Column::Id> projected_column_ids;
-  containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
-    column_type_by_id;
-  containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
-    analyzer_provider;
-};
-
-connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
-  return [&ctx](const duckdb::BoundColumnRefExpression& ref)
-           -> std::optional<connector::SearchColumnInfo> {
-    if (ref.binding.table_index != ctx.table_index) {
-      return std::nullopt;
-    }
-    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
-      return std::nullopt;
-    }
-    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
-    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
-      return std::nullopt;
-    }
-    if (!ctx.indexed_column_ids.contains(col_id)) {
-      return std::nullopt;
-    }
-    auto type_it = ctx.column_type_by_id.find(col_id);
-    if (type_it == ctx.column_type_by_id.end()) {
-      return std::nullopt;
-    }
-    connector::SearchColumnInfo info;
-    info.column_id = col_id;
-    info.logical_type = type_it->second;
-    info.tokenizer = ctx.analyzer_provider(col_id);
-    return info;
-  };
-}
 
 bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
                      const connector::SearchFilterOptions& options) {
@@ -2233,7 +2202,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     const connector::SearchFilterOptions& options) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-      if (TryAnnTopk(plan)) {
+      if (TryAnnTopk(plan, options)) {
         return true;
       }
       bool changed = TryAttachScoreTopK(plan);
@@ -2267,7 +2236,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       return changed;
     }
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
-      if (TryAnnRange(plan)) {
+      if (TryAnnRange(plan, options)) {
         return true;
       }
       bool changed = TrySearchFilter(plan, options);
@@ -2331,22 +2300,23 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   }
 
   static bool TopDownAnnPass(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                             bool in_mutation) {
+                             bool in_mutation,
+                             const connector::SearchFilterOptions& options) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     bool changed = false;
     if (!subtree_in_mutation) {
       if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-        if (TryAnnTopk(plan)) {
+        if (TryAnnTopk(plan, options)) {
           changed = true;
         }
       } else if (plan->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
-        if (TryAnnRange(plan)) {
+        if (TryAnnRange(plan, options)) {
           changed = true;
         }
       }
     }
     for (auto& child : plan->children) {
-      changed |= TopDownAnnPass(child, subtree_in_mutation);
+      changed |= TopDownAnnPass(child, subtree_in_mutation, options);
     }
     return changed;
   }
@@ -2408,7 +2378,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
         options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
       }
     }
-    bool changed = TopDownAnnPass(plan, /*in_mutation=*/false);
+    bool changed = TopDownAnnPass(plan, /*in_mutation=*/false, options);
     changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, options);
     changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, options);
 

@@ -210,10 +210,12 @@ CREATE INDEX index_ts on tstest USING inverted(b);
 ----
 db error: ERROR: Failed to create index: Column b has unsupported kind TIMESTAMP and can not be indexed
 
+
 statement error
 CREATE INDEX index_ts on tstest USING inverted(d);
 ----
 db error: ERROR: Failed to create index: Column d has unsupported kind HUGEINT and can not be indexed
+
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(e);

@@ -29,6 +29,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
@@ -103,32 +104,10 @@ bool Config::GetReadYourOwnWrites() const {
   return duckdb::BooleanValue::Get(value);
 }
 
-bool Config::HasSetting(std::string_view key) const {
-  // Mirror TryGetCurrentSetting's existence semantics without paying for the
-  // value fetch (string copy + Value allocation). A setting is known when
-  // TryGetSettingIndex returns a valid index (extension, or built-in with an
-  // index), or when a legacy built-in without an index still exposes a
-  // get_setting callback or a default value.
-  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
-  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  auto setting_index = db_config.TryGetSettingIndex(
-    duckdb::String::Reference(key.data(), key.size()), option);
-  if (setting_index.IsValid()) {
-    return true;
-  }
-  return option && (option->get_setting || option->default_value);
-}
-
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
-    if (value.type().id() == duckdb::LogicalTypeId::BOOLEAN) {
-      // PostgreSQL protocol uses on/off not true/false. And some client tools
-      // like JDBC expects exactly on/off
-      return duckdb::BooleanValue::Get(value) ? "on" : "off";
-    } else {
-      return value.ToString();
-    }
+    return duckdb::Settings::FormatDisplayValue(_client_ctx, value).ToString();
   }
   return std::nullopt;
 }

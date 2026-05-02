@@ -26,7 +26,6 @@
 #include <absl/time/civil_time.h>
 
 #include <duckdb/common/extension_type_info.hpp>
-#include <duckdb/common/types.hpp>
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 
@@ -608,10 +607,6 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       }
     } break;
     case BIGINT: {
-      // OID-family types travel as 4-byte unsigned on the PG wire (typsend =
-      // oidsend) but are stored as BIGINT in DuckDB; plain int8 is 8 bytes.
-      // Client OIDs are pinned at Parse via type hints, so the wire shape
-      // always matches the declared type -- mismatches are protocol errors.
       if (IsOidLike(type)) {
         if (data.size() == 4) {
           return duckdb::Value::BIGINT(

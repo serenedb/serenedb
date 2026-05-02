@@ -49,6 +49,7 @@
 #include "basics/assert.h"
 #include "basics/dtoa.h"
 #include "basics/endian.h"
+#include "basics/exceptions.h"
 #include "basics/global_resource_monitor.h"
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
@@ -366,16 +367,20 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
       // Apply all user settings from startup packet
       for (const auto& user_setting : _client_parameters) {
-        try {
-          if (_connection_ctx->HasSetting(user_setting.first)) {
-            _connection_ctx->SetSettingChecked(user_setting.first,
-                                               user_setting.second, false);
-          }
-        } catch (const duckdb::Exception& e) {
+        if (user_setting.first == kDatabaseParameter ||
+            user_setting.first == kUserParameter) {
+          // skip non-setting part of startup packet.
+          continue;
+        }
+        auto res = basics::SafeCall([&] -> Result {
+          _connection_ctx->SetSettingChecked(user_setting.first,
+                                             user_setting.second, false);
+          return {};
+        });
+        if (res.fail()) {
           // As per protocol description  - encountered during client hello
           // error aborts connection.
-          return SendError(duckdb::ErrorData(e).RawMessage(),
-                           ERRCODE_INVALID_PARAMETER_VALUE);
+          return SendError(res.errorMessage(), res.errorNumber());
         }
       }
       // TODO:
@@ -1578,6 +1583,10 @@ void PgSQLCommTaskBase::ParseClientParameters(std::string_view data) {
       return;
     }
     const std::string_view name{data.data(), name_end};
+    if (name.empty()) {
+      // psql at least adds \0 as termintaion flag and we get empty name.
+      return;
+    }
     data.remove_prefix(name_end + 1);
 
     const auto value_end = data.find('\0');

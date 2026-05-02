@@ -276,14 +276,12 @@ void SearchEngine::start() {
     SDB_ASSERT(_commit_threads);
     SDB_ASSERT(_consolidation_threads);
 
-    if (!_skip_wal_recovery) {
-      RunWalRecovery();
-    }
-
     _thread_pools->Get(ThreadGroup::Commit)
       .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
     _thread_pools->Get(ThreadGroup::Consolidation)
       .start(_consolidation_threads, IR_NATIVE_STRING("search:compact"));
+
+    InitInvertedIndexes(_skip_wal_recovery);
 
     SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
              "..", _commit_threads, "] commit thread(s), [",

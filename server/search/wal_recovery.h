@@ -22,13 +22,8 @@
 
 namespace sdb::search {
 
-// Walks the catalog snapshot, picks up every inverted-index shard whose
-// persisted iresearch tick lags the engine's recovered tick, then reads the
-// RocksDB WAL once and fans entries out to each lagging shard's accumulator
-// (routing key = table ObjectId).
-//
 // Called once from SearchEngine::start, after CatalogFeature has loaded
-// every shard and before the search thread pools come up.
-void RunWalRecovery();
+// every shard and after the search thread pools have started.
+void InitInvertedIndexes(bool skip_wal_recovery);
 
 }  // namespace sdb::search

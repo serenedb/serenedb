@@ -35,6 +35,7 @@
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
@@ -55,8 +56,6 @@ namespace {
 
 constexpr size_t kFlushThreshold = 1 << 15;
 
-// RocksDB inverted-index value keys are [ObjectId(8 BE)][ColumnId(8 BE)][pk].
-// The pk slice starts at this offset in the full key.
 constexpr size_t kKeyPrefixSize =
   sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
@@ -64,9 +63,6 @@ constexpr std::string_view kSkipHint =
   ". To skip WAL recovery and proceed with stale index content, restart "
   "with --search.skip-wal-recovery (data loss for the unreplayed delta).";
 
-// Last-op-wins per pk. Invalid is the default after lazy creation; the next
-// PutCF/DeleteCF transitions it. Put after Delete and Delete after Put both
-// just overwrite the field -- no priority logic needed at flush time.
 enum class RowOp : uint8_t {
   Invalid,
   Put,
@@ -85,8 +81,8 @@ struct ShardState {
   std::shared_ptr<const catalog::InvertedIndex> index;
   std::shared_ptr<const catalog::Table> table;
   ObjectId table_object_id;
+
   Tick start_tick = 0;
-  Tick end_tick = 0;
 
   std::vector<catalog::Column::Id> indexed_column_ids;
   containers::FlatHashMap<catalog::Column::Id, size_t> col2index;
@@ -97,17 +93,12 @@ struct ShardState {
   };
   std::vector<IndexedColumn> indexed_columns;
 
-  // pk -> state. Keys are string_view into live_batches; valid until flush.
   containers::FlatHashMap<std::string_view, Row> pk2row;
 
-  // Lazy: only opened on first matching WAL entry, so shards with no entries
-  // in the scanned range never touch iresearch.
   std::optional<irs::IndexWriter::Transaction> trx;
   std::optional<connector::SearchSinkInsertBaseImpl> insert_sink;
   std::optional<connector::SearchSinkDeleteBaseImpl> delete_sink;
 
-  // [ObjectId(8 BE)][ColumnId(8 BE)] prefix; pk gets appended then
-  // truncated per col during flush.
   std::string full_key_prefix;
 
   uint64_t total_inserted = 0;
@@ -185,16 +176,14 @@ void EnsureTrxOpen(ShardState& s,
 
 void FlushShard(ShardState& s,
                 const std::shared_ptr<const catalog::Snapshot>& snapshot,
-                rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf) {
+                rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+                Tick last_tick) {
   if (s.pk2row.empty()) {
     return;
   }
 
   irs::Finally _ = [&] noexcept { s.pk2row.clear(); };
 
-  // Materialise put-affected rows for the column-major insert phase. The pk
-  // is the suffix of full_key after the [ObjectId][ColumnId] prefix, so we
-  // don't need to keep it alongside the Row pointer.
   std::vector<const Row*> insert_entries;
   insert_entries.reserve(s.pk2row.size());
   for (const auto& [_, row] : s.pk2row) {
@@ -211,8 +200,6 @@ void FlushShard(ShardState& s,
 
   EnsureTrxOpen(s, snapshot);
 
-  // Put-affected pks get a remove first to mirror SearchSinkUpdateWriter
-  // (clear stale fields from the prior doc).
   s.delete_sink->InitImpl(s.pk2row.size());
   for (const auto& [pk, _] : s.pk2row) {
     s.delete_sink->DeleteRowImpl(pk);
@@ -260,6 +247,16 @@ void FlushShard(ShardState& s,
   }
 
   s.total_inserted += insert_entries.size();
+
+  s.delete_sink.reset();
+  s.insert_sink.reset();
+  SDB_ASSERT(s.trx.has_value());
+  SDB_ASSERT(last_tick != 0);
+  const bool committed = s.trx->Commit(last_tick);
+  SDB_FATAL_IF("xxxxx", Logger::SEARCH, !committed,
+               "WAL recovery: iresearch trx Commit failed for index '",
+               s.shard->GetId().id(), "' last_tick=", last_tick, kSkipHint);
+  s.trx.reset();
 }
 
 struct PerTableShards {
@@ -394,69 +391,17 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
   bool _needs_flush = false;
 };
 
-}  // namespace
-
-void RunWalRecovery() {
-  auto recovery_begin = std::chrono::steady_clock::now();
-
-  auto& server = SerenedServer::Instance();
-  auto& engine = server.getFeature<EngineFeature>().engine();
-  auto& rdb = basics::downCast<RocksDBEngineCatalog>(engine);
-  SDB_ASSERT(!rdb.inRecovery());
-  const Tick end_tick = rdb.recoveryTick();
-
-  auto& catalog_feature = server.getFeature<catalog::CatalogFeature>();
-  auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
-  SDB_ASSERT(snapshot);
-
-  std::vector<ShardState> shards;
-  Tick min_start_tick = std::numeric_limits<Tick>::max();
-  for (const auto& database : snapshot->GetDatabases()) {
-    for (const auto& schema : snapshot->GetSchemas(database->GetId())) {
-      for (const auto& idx :
-           snapshot->GetIndexes(database->GetId(), schema->GetName())) {
-        if (idx->GetType() != catalog::ObjectType::InvertedIndex) {
-          continue;
-        }
-        auto raw_shard = snapshot->GetIndexShard(idx->GetId());
-        auto inv_shard =
-          std::dynamic_pointer_cast<InvertedIndexShard>(raw_shard);
-        if (!inv_shard) {
-          continue;
-        }
-        const Tick persisted = inv_shard->GetRecoveryTick();
-        if (persisted >= end_tick) {
-          continue;
-        }
-        ShardState state;
-        state.shard = std::move(inv_shard);
-        state.start_tick = persisted;
-        state.end_tick = end_tick;
-        SDB_FATAL_IF("xxxxx", Logger::SEARCH,
-                     !ResolveShardMetadata(state, *snapshot),
-                     "WAL recovery: could not resolve catalog metadata for "
-                     "inverted index '",
-                     state.shard->GetId().id(), "'", kSkipHint);
-        min_start_tick = std::min(min_start_tick, state.start_tick);
-        shards.push_back(std::move(state));
-      }
-    }
-  }
-
-  if (shards.empty()) {
-    return;
-  }
-
+void RunWalRecovery(std::vector<ShardState>& shards,
+                    const std::shared_ptr<const catalog::Snapshot>& snapshot,
+                    rocksdb::DB& db, Tick min_start_tick, Tick end_tick) {
   TableToShards table2shards;
   for (auto& s : shards) {
-    table2shards[s.table_object_id].shards.push_back(&s);
+    table2shards[s.table_object_id].shards.emplace_back(&s);
   }
   for (auto& [_, shards] : table2shards) {
     std::ranges::sort(shards.shards, ShardState::ByStartTick());
   }
 
-  auto* db = rdb.db();
-  SDB_ASSERT(db);
   auto* default_cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Default);
   SDB_ASSERT(default_cf);
@@ -467,18 +412,18 @@ void RunWalRecovery() {
            "\"--search.skip-wal-recovery\"");
 
   std::unique_ptr<rocksdb::TransactionLogIterator> iter;
-
   rocksdb::TransactionLogIterator::ReadOptions opts{true};
-  auto s = db->GetUpdatesSince(min_start_tick, &iter, opts);
+  auto s = db.GetUpdatesSince(min_start_tick, &iter, opts);
   SDB_FATAL_IF("xxxxx", Logger::SEARCH, !s.ok(),
                "WAL recovery: failed to open WAL iterator from tick ",
                min_start_tick, ": ", s.ToString(), kSkipHint);
   SDB_ASSERT(iter);
 
   std::vector<rocksdb::BatchResult> live_batches;
+  Tick latest_seq = 0;
   auto flush_all = [&] {
-    for (auto& s : shards) {
-      FlushShard(s, snapshot, *db, *default_cf);
+    for (auto& shard : shards) {
+      FlushShard(shard, snapshot, db, *default_cf, latest_seq);
     }
     live_batches.clear();
   };
@@ -490,10 +435,7 @@ void RunWalRecovery() {
                  kSkipHint);
 
     auto batch = iter->GetBatch();
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, batch.sequence > end_tick,
-                 "WAL recovery: WAL produced batch at sequence ",
-                 batch.sequence, " past end_tick ", end_tick, kSkipHint);
-
+    latest_seq = batch.sequence;
     WalBatchReplay handler{table2shards, default_cf_id, batch.sequence,
                            kFlushThreshold};
     status = batch.writeBatchPtr->Iterate(&handler);
@@ -517,35 +459,97 @@ void RunWalRecovery() {
 
   flush_all();
 
-  for (auto& s : shards) {
-    s.delete_sink.reset();
-    s.insert_sink.reset();
-    s.trx.reset();
+  std::vector<yaclib::Future<>> commits;
+  commits.reserve(shards.size());
+  for (auto& shard : shards) {
+    SDB_ASSERT(shard.start_tick < end_tick);
+    commits.emplace_back(shard.shard->CommitWait());
+  }
+  yaclib::Wait(commits.begin(), commits.end());
 
-    s.shard->SetRecoveredTick(s.end_tick);
+  for (auto& shard : shards) {
+    SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: index '",
+             shard.shard->GetId().id(), "' replayed (", shard.start_tick, ", ",
+             end_tick, "], inserted=", shard.total_inserted,
+             ", deleted=", shard.total_deleted);
+  }
+}
 
-    CommitResult code = CommitResult::Undefined;
-    auto r = s.shard->CommitUnsafe(/*wait=*/true, nullptr, code);
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, !r.res.ok(),
-                 "WAL recovery: commit failed for index '",
-                 s.shard->GetId().id(), "': ", r.res.errorMessage(), kSkipHint);
-    SDB_INFO(
-      "xxxxx", Logger::SEARCH, "WAL recovery: index '", s.shard->GetId().id(),
-      "' replayed (", s.start_tick, ", ", s.end_tick,
-      "], inserted=", s.total_inserted, ", deleted=", s.total_deleted,
-      ", commit_code=", static_cast<int>(code), ", commit_time_ms=", r.time_ms);
+}  // namespace
+
+void InitInvertedIndexes(bool skip_wal_recovery) {
+  auto begin = std::chrono::steady_clock::now();
+
+  auto& server = SerenedServer::Instance();
+  auto& engine = server.getFeature<EngineFeature>().engine();
+  auto& rdb = basics::downCast<RocksDBEngineCatalog>(engine);
+  SDB_ASSERT(!rdb.inRecovery());
+  const Tick end_tick = rdb.recoveryTick();
+
+  auto& catalog_feature = server.getFeature<catalog::CatalogFeature>();
+  auto snapshot = catalog_feature.Global().GetCatalogSnapshot();
+  SDB_ASSERT(snapshot);
+
+  std::vector<ShardState> recovery_shards;
+  Tick min_start_tick = std::numeric_limits<Tick>::max();
+  for (const auto& database : snapshot->GetDatabases()) {
+    for (const auto& schema : snapshot->GetSchemas(database->GetId())) {
+      for (const auto& idx :
+           snapshot->GetIndexes(database->GetId(), schema->GetName())) {
+        if (idx->GetType() != catalog::ObjectType::InvertedIndex) {
+          continue;
+        }
+        auto inv_shard = basics::downCast<InvertedIndexShard>(
+          snapshot->GetIndexShard(idx->GetId()));
+        SDB_ASSERT(inv_shard);
+        const Tick persisted = inv_shard->GetRecoveryTick();
+        if (persisted > end_tick) {
+          SDB_WARN("xxxxx", Logger::SEARCH, "Inverted index '",
+                   inv_shard->GetId().id(), "' is recovered at tick ",
+                   persisted, " greater than storage engine tick ", end_tick,
+                   ", it seems WAL tail was lost and index is out of sync");
+        }
+        inv_shard->StartTasks();
+
+        if (skip_wal_recovery || persisted >= end_tick) {
+          inv_shard->FinishCreation();
+          continue;
+        }
+
+        inv_shard->StartRecovery();
+        ShardState state;
+        state.shard = std::move(inv_shard);
+        state.start_tick = persisted;
+        SDB_FATAL_IF("xxxxx", Logger::SEARCH,
+                     !ResolveShardMetadata(state, *snapshot),
+                     "WAL recovery: could not resolve catalog metadata for "
+                     "inverted index '",
+                     state.shard->GetId().id(), "'", kSkipHint);
+        min_start_tick = std::min(min_start_tick, persisted);
+        recovery_shards.push_back(std::move(state));
+      }
+    }
   }
 
-  for (auto& s : shards) {
-    s.shard->FinishCreation();
-    s.shard->StartTasks();
+  irs::Finally finish_recovering = [&] noexcept {
+    for (auto& s : recovery_shards) {
+      s.shard->FinishCreation();
+    }
+  };
+
+  if (recovery_shards.empty()) {
+    return;
   }
 
-  const auto recovery_duration =
-    absl::FromChrono(std::chrono::steady_clock::now() - recovery_begin);
+  auto* db = rdb.db();
+  SDB_ASSERT(db);
+  RunWalRecovery(recovery_shards, snapshot, *db, min_start_tick, end_tick);
+
+  const auto duration =
+    absl::FromChrono(std::chrono::steady_clock::now() - begin);
   SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: completed in ",
-           absl::FormatDuration(recovery_duration),
-           ", indexes=", shards.size());
+           absl::FormatDuration(duration),
+           ", indexes=", recovery_shards.size());
 }
 
 }  // namespace sdb::search

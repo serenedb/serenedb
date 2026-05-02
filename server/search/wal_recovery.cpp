@@ -303,13 +303,19 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
     return DeleteCF(cf_id, key);
   }
 
-  rocksdb::Status DeleteRangeCF(uint32_t, const rocksdb::Slice&,
+  rocksdb::Status DeleteRangeCF(uint32_t cf_id, const rocksdb::Slice& begin,
                                 const rocksdb::Slice&) final {
-    SDB_ASSERT(false);
-    // we use it only in case of deletion of the table. we wouldn't get here in
-    // that code in this case. TODO: implement for truncate.
-    return rocksdb::Status::InvalidArgument(
-      "WAL recovery: DeleteRangeCF unexpected (no 2PC)");
+    if (cf_id != _default_cf_id) {
+      return rocksdb::Status::OK();
+    }
+    // We meet this only when we delete the table.
+    // So we are not supposed to find a shard because
+    // table is deleted -> indexes too.
+    ObjectId id{absl::big_endian::Load64(begin.data())};
+    SDB_FATAL_IF("xxxxx", Logger::SEARCH, _table2shards.contains(id),
+                 "WAL recovery: DeleteRangeCF for live table ", id.id(),
+                 " (TRUNCATE not implemented)", kSkipHint);
+    return rocksdb::Status::OK();
   }
 
   void LogData(const rocksdb::Slice&) final {}

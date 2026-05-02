@@ -48,7 +48,7 @@ VACUUM (UPDATE_INDEXES) docs;
 # LM Jelinek-Mercer with default lambda (0.1): strictly positive for matches.
 query
 SELECT id, lm_jm(docs_idx.tableoid) > 0 AS has_score
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -60,7 +60,7 @@ id	has_score
 # LM Jelinek-Mercer with explicit lambda (must be in (0, 1]).
 query
 SELECT id, lm_jm(docs_idx.tableoid, 0.7) > 0 AS has_score
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	has_score
 1	t
@@ -74,7 +74,7 @@ id	has_score
 # scores and verify the floor never goes below zero.
 query
 SELECT id, lm_dirichlet(docs_idx.tableoid, 5.0) >= 0 AS nonneg
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	nonneg
 1	t
@@ -86,7 +86,7 @@ id	nonneg
 # LM JM ordering: 'lazy' appears in doc 1 (dl=9) and doc 3 (dl=3).
 # Higher tf/dl ratio -> higher score, so doc 3 must outrank doc 1.
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy')
   ORDER BY lm_jm(docs_idx.tableoid) DESC, id;
 ----
 id
@@ -96,25 +96,25 @@ id
 
 # Invalid params should raise. lambda must be in (0, 1].
 statement error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY lm_jm(docs_idx.tableoid, 0) DESC, id;
 
 
 statement error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY lm_jm(docs_idx.tableoid, 1.5) DESC, id;
 
 
 # mu must be non-negative.
 statement error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY lm_dirichlet(docs_idx.tableoid, -1.0) DESC, id;
 
 
 # Mixing scorers on the same scan -- the optimizer should reject it.
 statement error
 SELECT id, bm25(docs_idx.tableoid) AS a, lm_jm(docs_idx.tableoid) AS b
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 
 
 # Calling LM scorers without an inverted-index scan should surface stub errors.
@@ -142,7 +142,7 @@ VACUUM (UPDATE_INDEXES) docs;
 # LM JM across segments: positive for every match, doc 7 (higher tf) strictly
 # outranks its siblings with tf=1 on comparable dl.
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY lm_jm(docs_idx.tableoid) DESC, id LIMIT 1;
 ----
 id

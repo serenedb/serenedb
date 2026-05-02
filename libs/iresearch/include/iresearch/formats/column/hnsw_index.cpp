@@ -64,15 +64,8 @@ float ComputeCosine(const byte_type* l, const byte_type* r, uint16_t d) {
   return denom == 0.f ? 1.f : 1.f - lr / denom;
 }
 
-float ComputeL2(const byte_type* l, const byte_type* r, uint16_t d) {
-  auto res = irs::vector::L2Space<float, float, float>::Dist(l, r, d);
-  return std::sqrt(res);
-}
-
 auto ResolveDistanceFunction(HNSWMetric metric) {
   switch (metric) {
-    case HNSWMetric::L2:
-      return ComputeL2;
     case HNSWMetric::L2Sqr:
       return irs::vector::L2Space<float, float, float>::Dist;
     case HNSWMetric::NegativeIP:

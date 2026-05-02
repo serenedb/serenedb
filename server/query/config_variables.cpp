@@ -174,6 +174,26 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_scored_terms_limit",
+      {
+        LogicalTypeId::INTEGER,
+        "The maximum number of terms to consider for scoring in multi-term "
+        "filters. Higher values give more accurate IDF-style scoring at the "
+        "cost of memory and per-query work. 0 disables scored-term collection "
+        "entirely.",
+        [] { return duckdb::Value::INTEGER(1024); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          auto n = value.GetValue<int32_t>();
+          if (n < 0) {
+            throw duckdb::InvalidInputException{
+              "invalid value for parameter \"sdb_scored_terms_limit\": "
+              "\"%s\"",
+              value.ToString()};
+          }
+        },
+      },
+    },
+    {
       "extra_float_digits",
       {
         LogicalTypeId::INTEGER,

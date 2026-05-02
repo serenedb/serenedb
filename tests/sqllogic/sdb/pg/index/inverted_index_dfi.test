@@ -47,7 +47,7 @@ VACUUM (UPDATE_INDEXES) docs;
 # match must have a strictly positive score.
 query
 SELECT id, dfi(docs_idx.tableoid) >= 0 AS nonneg
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	nonneg
 1	t
@@ -59,7 +59,7 @@ id	nonneg
 # Per-measure: all three kernels accepted, same non-negativity guarantee.
 query
 SELECT id, dfi(docs_idx.tableoid, 'standardized') >= 0 AS nonneg
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	nonneg
 1	t
@@ -70,7 +70,7 @@ id	nonneg
 
 query
 SELECT id, dfi(docs_idx.tableoid, 'saturated') >= 0 AS nonneg
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	nonneg
 1	t
@@ -81,7 +81,7 @@ id	nonneg
 
 query
 SELECT id, dfi(docs_idx.tableoid, 'chi_squared') >= 0 AS nonneg
-  FROM docs_idx WHERE PHRASE(body, 'fox') ORDER BY id;
+  FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	nonneg
 1	t
@@ -93,7 +93,7 @@ id	nonneg
 # Doc 1 has the highest freq-above-expected for 'fox', so it must be
 # top-ranked under all three measures.
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY dfi(docs_idx.tableoid, 'standardized') DESC, id LIMIT 1;
 ----
 id
@@ -101,7 +101,7 @@ id
 
 
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY dfi(docs_idx.tableoid, 'saturated') DESC, id LIMIT 1;
 ----
 id
@@ -109,7 +109,7 @@ id
 
 
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY dfi(docs_idx.tableoid, 'chi_squared') DESC, id LIMIT 1;
 ----
 id
@@ -118,7 +118,7 @@ id
 
 # Invalid measure: stub or optimizer should reject.
 statement error
-SELECT id FROM docs_idx WHERE PHRASE(body, 'fox')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox')
   ORDER BY dfi(docs_idx.tableoid, 'bogus') DESC, id;
 
 

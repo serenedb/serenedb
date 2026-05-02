@@ -192,6 +192,7 @@ scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	on	Controls whether queries can see uncommitted writes from the current transaction.
+sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
 search_path	<slt:ignore>	Sets <slt:ignore>
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
@@ -421,6 +422,7 @@ scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
 sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
 sdb_read_your_own_writes	on	Controls whether queries can see uncommitted writes from the current transaction.
+sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
 search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored

@@ -187,16 +187,6 @@ struct MergeWriterTestCase : public tests::DirectoryTestCaseBase<std::string> {
     };
   }
 
-  static irs::FeatureInfoProvider DefaultFeatureInfo() {
-    return [](irs::IndexFeatures) {
-      return std::make_pair(
-        irs::ColumnInfo{.compression = irs::Type<irs::compression::Lz4>::get(),
-                        .options = {},
-                        .encryption = true},
-        irs::FeatureWriterFactory{});
-    };
-  }
-
   void EnsureDocBlocksNotMixed(bool primary_sort);
 };
 
@@ -382,12 +372,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
 
   const auto column_info = DefaultColumnInfo();
   ASSERT_TRUE(column_info);
-  const auto feature_info = DefaultFeatureInfo();
-  ASSERT_TRUE(feature_info);
 
   auto reader = irs::DirectoryReader(dir, codec_ptr);
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
   irs::MergeWriter writer(dir, options);
 
@@ -797,12 +784,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns) {
 
   const auto column_info = DefaultColumnInfo();
   ASSERT_TRUE(column_info);
-  const auto feature_info = DefaultFeatureInfo();
-  ASSERT_TRUE(feature_info);
 
   auto reader = irs::DirectoryReader(dir, codec_ptr);
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
   irs::MergeWriter writer(dir, options);
 
@@ -1136,13 +1120,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
   {
     const auto column_info = DefaultColumnInfo();
     ASSERT_TRUE(column_info);
-    const auto feature_info = DefaultFeatureInfo();
-    ASSERT_TRUE(feature_info);
 
     irs::MemoryDirectory dir;
     irs::SegmentMeta index_segment;
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
     writer.Reset(reader.begin(), reader.end());
@@ -1192,8 +1173,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
 
   const auto column_info = DefaultColumnInfo();
   ASSERT_TRUE(column_info);
-  const auto feature_info = DefaultFeatureInfo();
-  ASSERT_TRUE(feature_info);
 
   // test default progress (false)
   {
@@ -1201,7 +1180,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress;
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
 
@@ -1226,7 +1204,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
     irs::SegmentMeta index_segment;
     irs::MergeWriter::FlushProgress progress = []() -> bool { return false; };
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
 
@@ -1258,7 +1235,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return true;
     };
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
 
@@ -1290,7 +1266,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {
       return --call_count;
     };
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
 
@@ -1356,8 +1331,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
 
   const auto column_info = DefaultColumnInfo();
   ASSERT_TRUE(column_info);
-  const auto feature_info = DefaultFeatureInfo();
-  ASSERT_TRUE(feature_info);
 
   // test merge existing with feature subset (success)
   {
@@ -1367,7 +1340,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
@@ -1385,7 +1357,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer_field_features) {
     };
 
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MergeWriter writer(dir, options);
     writer.Reset(segments.begin(), segments.end());
@@ -1479,11 +1450,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer_sorted) {
 
   const auto column_info = DefaultColumnInfo();
   ASSERT_TRUE(column_info);
-  const auto feature_info = DefaultFeatureInfo();
-  ASSERT_TRUE(feature_info);
 
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {},
                                           .comparator = &test_comparer};
   irs::MergeWriter writer(dir, options);
@@ -1714,19 +1682,6 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     "doc_text", text3, true));
 
   irs::IndexWriterOptions opts;
-  opts.features = [](irs::IndexFeatures type) {
-    irs::FeatureWriterFactory handler{};
-    if (type == irs::IndexFeatures::Norm) {
-      handler =
-        [](std::span<const irs::bytes_view>) -> irs::FeatureWriter::ptr {
-        return irs::memory::make_managed<TestFeatureWriter>(0U);
-      };
-    }
-
-    return std::make_pair(
-      irs::ColumnInfo{irs::Type<irs::compression::Lz4>::get(), {}, false},
-      std::move(handler));
-  };
 
   // populate directory
   {
@@ -2493,11 +2448,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   const auto column_info = DefaultColumnInfo();
   ASSERT_TRUE(column_info);
-  const auto feature_info = DefaultFeatureInfo();
-  ASSERT_TRUE(feature_info);
 
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
   irs::MergeWriter writer(dir, options);
   writer.Reset(reader.begin(), reader.end());

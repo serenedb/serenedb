@@ -23,7 +23,9 @@
 #include <absl/strings/ascii.h>
 #include <vpack/serializer.h>
 
+#include <array>
 #include <duckdb/common/exception.hpp>
+#include <string>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
@@ -89,10 +91,30 @@ ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
 
 constexpr std::string_view kHnswKind = "hnsw";
 
+constexpr std::array<std::string_view, 1> kKnownOpclassTypes{kHnswKind};
+
+std::string DescribeHNSWOptions() {
+  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
+         "m (int >= 2, default 32), "
+         "ef_construction (int >= 1, default 40, must be >= m)";
+}
+
+std::string DescribeKnownOpclassTypes() {
+  std::string out;
+  for (size_t i = 0; i < kKnownOpclassTypes.size(); ++i) {
+    if (i) {
+      out += ", ";
+    }
+    out += kKnownOpclassTypes[i];
+  }
+  return out;
+}
+
 Result ApplyHNSWOptions(
   std::string_view column_name,
   const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
   HNSWColumnConfig& cfg) {
+  bool metric_set = false;
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
       auto str = GetIndexStringOption(kHnswKind, column_name, key, raw_val);
@@ -102,7 +124,7 @@ Result ApplyHNSWOptions(
       std::string v = std::move(*str);
       absl::AsciiStrToLower(&v);
       if (v == kL2Metric) {
-        cfg.metric = irs::HNSWMetric::L2;
+        cfg.metric = irs::HNSWMetric::L2Sqr;
       } else if (v == kL1Metric) {
         cfg.metric = irs::HNSWMetric::L1;
       } else if (v == kCosineMetric) {
@@ -124,6 +146,7 @@ Result ApplyHNSWOptions(
                 " ",
                 kIPMetric};
       }
+      metric_set = true;
     } else if (key == kMField) {
       auto n = GetIndexIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
@@ -155,18 +178,19 @@ Result ApplyHNSWOptions(
       }
       cfg.ef_construction = static_cast<int>(*n);
     } else {
-      return {ERROR_BAD_PARAMETER,
-              "Column '",
-              column_name,
-              "': unknown hnsw option '",
-              key,
-              "'. Accepted options: ",
-              kMetricField,
-              " ",
-              kMField,
-              " ",
-              kEfConstructionField};
+      return {ERROR_BAD_PARAMETER,        "Column '", column_name,
+              "': unknown hnsw option '", key,        "'. Accepted options: ",
+              DescribeHNSWOptions()};
     }
+  }
+  if (!metric_set) {
+    return {ERROR_BAD_PARAMETER, "Column '",
+            column_name,         "': hnsw opclass requires the '",
+            kMetricField,        "' option (one of: ",
+            kL2Metric,           ", ",
+            kL1Metric,           ", ",
+            kCosineMetric,       ", ",
+            kIPMetric,           "). Example: hnsw (metric = 'l2')"};
   }
   if (cfg.ef_construction < cfg.m) {
     return {ERROR_BAD_PARAMETER,
@@ -266,16 +290,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         }
         index_col.hnsw_config = cfg;
       } else {
-        if (!c.opclass_options.empty()) {
-          return std::unexpected<Result>{
-            std::in_place,
-            ERROR_BAD_PARAMETER,
-            "Opclass '",
-            c.opclass,
-            "' does not accept options (used on column '",
-            c.name,
-            "')"};
-        }
         auto object_name = pg::ParseObjectName(c.opclass, schema_name);
         if (object_name.schema != schema_name) {
           // Technically nothing prevents us from allowing so.
@@ -291,14 +305,29 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
                                            object_name.relation);
         if (!dict) {
-          return std::unexpected<Result>{std::in_place,
-                                         ERROR_BAD_PARAMETER,
-                                         "Text search dictionary '",
-                                         c.opclass,
-                                         "' does not exist.",
-                                         " Required by column '",
-                                         c.name,
-                                         "'"};
+          return std::unexpected<Result>{
+            std::in_place,
+            ERROR_BAD_PARAMETER,
+            "Unknown opclass '",
+            c.opclass,
+            "' on column '",
+            c.name,
+            "': not a built-in type (known: ",
+            DescribeKnownOpclassTypes(),
+            ") and no text dictionary by that name in schema '",
+            schema_name,
+            "'"};
+        }
+        if (!c.opclass_options.empty()) {
+          return std::unexpected<Result>{
+            std::in_place,
+            ERROR_BAD_PARAMETER,
+            "Opclass '",
+            c.opclass,
+            "' refers to text dictionary and does not accept options "
+            "(used on column '",
+            c.name,
+            "')"};
         }
         index_col.text_dictionary = dict->GetId();
         index_col.features = dict->GetFeatures();

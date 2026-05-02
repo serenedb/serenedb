@@ -75,6 +75,63 @@ negative_inner_product
 -1
 
 
+query
+SELECT l2_norm([0.0, 3.0, 4.0]::FLOAT[3]);
+----
+l2_norm
+5
+
+
+query
+SELECT l2_norm([0.0, 3.0, 4.0]::DOUBLE[3]);
+----
+l2_norm
+5
+
+
+query
+SELECT l1_norm([0.0, -3.0, 4.0]::FLOAT[3]);
+----
+l1_norm
+7
+
+
+query
+SELECT l1_norm([0.0, -3.0, 4.0]::DOUBLE[3]);
+----
+l1_norm
+7
+
+
+query
+SELECT l2_norm([0.0, 0.0, 0.0]::FLOAT[3]);
+----
+l2_norm
+0
+
+
+query
+SELECT l2_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l2_norm
+NULL
+
+
+query
+SELECT l1_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l1_norm
+NULL
+
+
+query error
+SELECT l2_norm(ARRAY[]);
+
+
+query error
+SELECT l1_norm(ARRAY[]);
+
+
 query error
 SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <=> [2.0, 1.0, 0.0]::FLOAT[3];
 

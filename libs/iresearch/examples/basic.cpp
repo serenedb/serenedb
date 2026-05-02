@@ -70,20 +70,6 @@ struct TextField {
   }
 };
 
-// Configure the index writer to handle Norm features (needed for BM25).
-irs::IndexWriterOptions MakeWriterOptions() {
-  irs::IndexWriterOptions opts;
-  opts.features = [](irs::IndexFeatures id) {
-    const irs::ColumnInfo info{
-      irs::Type<irs::compression::None>::get(), {}, false};
-    if (irs::IndexFeatures::Norm == id) {
-      return std::make_pair(info, &irs::Norm::MakeWriter);
-    }
-    return std::make_pair(info, irs::FeatureWriterFactory{});
-  };
-  return opts;
-}
-
 // Helper: index a single document with two text fields.
 void IndexDocument(irs::IndexWriter::Transaction& ctx, TextField& title_field,
                    TextField& body_field, std::string_view title,
@@ -352,8 +338,7 @@ int main() {
     "segmentation", irs::Type<irs::text_format::Json>::get(), "{}");
 
   irs::MemoryDirectory dir;
-  auto writer =
-    irs::IndexWriter::Make(dir, format, irs::kOmCreate, MakeWriterOptions());
+  auto writer = irs::IndexWriter::Make(dir, format, irs::kOmCreate, {});
 
   BuildIndex(*writer);
 

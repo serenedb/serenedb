@@ -311,7 +311,13 @@ struct ANNScan : VectorSearchScan {
 struct RangeSearchScan : VectorSearchScan {
   RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
 
+  // Radius as the user wrote it (in the unit of the requested distance
+  // function). Displayed in EXPLAIN.
   float radius = 0.0f;
+  // Radius in the unit the iresearch index actually compares against. Equal
+  // to `radius` for most metrics; squared when the user wrote l2_distance
+  // (`<->`) but the index stores L2-squared distances.
+  float effective_radius = 0.0f;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -442,9 +448,11 @@ duckdb::TableFunction CreateSKRangesScanFunction();
 // when the corresponding predicates fire.
 duckdb::TableFunction CreateIResearchFullscanFunction();
 
-// Iresearch phrase / term_eq search. Swapped in by iresearch_plan when
-// the filter contains one or more sdb_phrase/sdb_term_eq predicates over
-// the inverted index. bind_data.scan_source becomes SearchScan with the
+// Iresearch search scan. Swapped in by iresearch_plan when the filter
+// contains one or more inverted-index-claimable predicates -- standard
+// SQL operators (= / < / <= / > / >= / IN / BETWEEN / LIKE / IS NULL)
+// on keyword-analyzed columns or the TSQUERY surface (col @@ ...) on
+// analyzed text. bind_data.scan_source becomes SearchScan with the
 // prepared iresearch query.
 duckdb::TableFunction CreateIResearchScanFunction();
 

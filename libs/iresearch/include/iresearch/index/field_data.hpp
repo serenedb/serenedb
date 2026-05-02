@@ -114,9 +114,9 @@ class FieldData : util::Noncopyable {
   using CachedColumns =
     std::deque<CachedColumn, ManagedTypedAllocator<CachedColumn>>;
 
-  FieldData(std::string_view name, const FeatureInfoProvider& feature_columns,
-            CachedColumns& cached_columns, IndexFeatures cached_features,
-            ColumnstoreWriter& columns, byte_block_pool::inserter& byte_writer,
+  FieldData(std::string_view name, CachedColumns& cached_columns,
+            IndexFeatures cached_features, ColumnstoreWriter& columns,
+            byte_block_pool::inserter& byte_writer,
             int_block_pool::inserter& int_writer, IndexFeatures index_features,
             bool random_access);
 
@@ -221,8 +221,7 @@ class FieldsData : util::Noncopyable {
  public:
   using postings_ref_t = std::vector<const Posting*>;
 
-  explicit FieldsData(const FeatureInfoProvider& feature_info,
-                      FieldData::CachedColumns& cached_columns,
+  explicit FieldsData(FieldData::CachedColumns& cached_columns,
                       IndexFeatures cached_features,
                       const Comparer* comparator);
 
@@ -247,7 +246,6 @@ class FieldsData : util::Noncopyable {
 
  private:
   const Comparer* _comparator;
-  const FeatureInfoProvider* _feature_info;
   Fields _fields;                             // pointers remain valid
   FieldData::CachedColumns* _cached_columns;  // pointers remain valid
   FieldsMap _fields_map;

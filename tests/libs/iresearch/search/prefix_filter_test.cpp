@@ -146,16 +146,6 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::BM25 bm25;
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
-    opts.features = [](irs::IndexFeatures id) {
-      if (irs::IndexFeatures::Norm == id) {
-        return std::pair{
-          irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-          &irs::Norm::MakeWriter};
-      }
-      return std::pair{
-        irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
-        irs::FeatureWriterFactory{}};
-    };
     if (codec()->type()().name().starts_with("1_5simd") && wand) {
       opts.reader_options.scorer = score;
     }

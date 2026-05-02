@@ -54,8 +54,10 @@ void InitAnnFilterContext(std::unique_ptr<ANNFilterContext>& filter,
   for (size_t i = 0; i < scan.filter_column_ids.size(); ++i) {
     filter_projection[i] = i;
     const auto cid = scan.filter_column_ids[i];
-    SDB_ASSERT(columns_to_indexes.contains(cid));
-    filter_types[i] = bind_data.column_types[columns_to_indexes.at(cid)];
+    auto it = columns_to_indexes.find(cid);
+    SDB_ASSERT(it != columns_to_indexes.end());
+    SDB_ASSERT(it->second < bind_data.column_types.size());
+    filter_types[i] = bind_data.column_types[it->second];
   }
 
   GetSereneDBContext(context).EnsureSearchSnapshot(scan.index_id);

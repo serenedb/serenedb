@@ -90,9 +90,12 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
     .top_k = top_k,
     .global_threshold = gstate.global_kth_dis.load(std::memory_order_relaxed),
   };
-  if (gstate.ef_search > 0) {
-    info.params.efSearch = gstate.ef_search;
-  }
+  // faiss caps the search at efSearch candidates with do_dis_check=true (the
+  // default), so an efSearch lower than top_k yields fewer than top_k results.
+  // Make sure the search has at least enough budget to return top_k.
+  const int requested_ef =
+    gstate.ef_search > 0 ? gstate.ef_search : info.params.efSearch;
+  info.params.efSearch = std::max(requested_ef, static_cast<int>(top_k));
   info.params.sel = filter.Empty() ? nullptr : &filter;
 
   SDB_ASSERT(reader);
@@ -199,7 +202,7 @@ void RangeSearchSegment(const irs::SubReader& sub, CompositeScanFilter& filter,
   irs::HNSWRangeSearchInfo info{
     .query =
       reinterpret_cast<const irs::byte_type*>(g.scan->query_vector.data()),
-    .radius = g.scan->radius,
+    .radius = g.scan->effective_radius,
   };
   if (g.ef_search > 0) {
     info.params.efSearch = static_cast<size_t>(g.ef_search);

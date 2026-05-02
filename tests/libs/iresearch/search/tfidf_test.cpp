@@ -87,15 +87,6 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
       });
 
     irs::IndexWriterOptions opts;
-    opts.features = [&](irs::IndexFeatures id) {
-      irs::ColumnInfo info{irs::Type<irs::compression::Lz4>::get(), {}, false};
-
-      if (id == irs::IndexFeatures::Norm) {
-        return std::make_pair(info, handler);
-      }
-
-      return std::make_pair(info, irs::FeatureWriterFactory{});
-    };
 
     add_segment(gen, irs::kOmCreate, opts);
   }

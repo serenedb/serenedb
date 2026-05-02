@@ -184,10 +184,8 @@ struct ExpectedHNSW {
 };
 
 std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
-  if (name == connector::kL2Distance || name == connector::kL2DistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::L2, duckdb::OrderType::ASCENDING};
-  }
-  if (name == connector::kL2SqrDistance) {
+  if (name == connector::kL2Distance || name == connector::kL2DistanceOp ||
+      name == connector::kL2SqrDistance) {
     return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
   }
   if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
@@ -209,7 +207,17 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
     return ExpectedHNSW{irs::HNSWMetric::NegativeIP,
                         duckdb::OrderType::ASCENDING};
   }
+  if (name == connector::kL2Norm) {
+    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
+  }
+  if (name == connector::kL1Norm) {
+    return ExpectedHNSW{irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING};
+  }
   return std::nullopt;
+}
+
+bool IsNormFunction(std::string_view name) {
+  return name == connector::kL2Norm || name == connector::kL1Norm;
 }
 
 // Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
@@ -443,7 +451,15 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   }
   auto& func_expr = dist_expr.Cast<duckdb::BoundFunctionExpression>();
   auto expected_func = ExpectedHNSWForFunction(func_expr.function.name);
-  if (!expected_func || func_expr.children.size() < 2) {
+  if (!expected_func) {
+    return false;
+  }
+  const bool is_norm = IsNormFunction(func_expr.function.name);
+  if (is_norm) {
+    if (func_expr.children.size() != 1) {
+      return false;
+    }
+  } else if (func_expr.children.size() < 2) {
     return false;
   }
 
@@ -476,15 +492,26 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
 
-  auto args = ExtractDistanceArgs(func_expr);
-  if (!args.col_arg || !args.const_arg) {
-    return false;
-  }
+  duckdb::Expression* col_arg = nullptr;
   std::vector<float> query_vector;
-  if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
-    return false;
+  if (is_norm) {
+    auto* child = func_expr.children[0].get();
+    if (child->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF &&
+        child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+      return false;
+    }
+    col_arg = child;
+  } else {
+    auto args = ExtractDistanceArgs(func_expr);
+    if (!args.col_arg || !args.const_arg) {
+      return false;
+    }
+    if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
+      return false;
+    }
+    col_arg = args.col_arg;
   }
-  auto col_id = ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+  auto col_id = ColumnIdByName(*bind_data.table, col_arg->GetName());
   if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
     return false;
   }
@@ -496,8 +523,12 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   }
 
   auto hnsw_info = resolved->index->GetColumnHNSWInfo(col_id);
-  if (!hnsw_info || hnsw_info->metric != expected_func->metric ||
-      static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
+  if (!hnsw_info || hnsw_info->metric != expected_func->metric) {
+    return false;
+  }
+  if (is_norm) {
+    query_vector.assign(hnsw_info->d, 0.0f);
+  } else if (static_cast<size_t>(hnsw_info->d) != query_vector.size()) {
     return false;
   }
   if (order_type != expected_func->order) {
@@ -620,6 +651,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 
   duckdb::idx_t match_idx = duckdb::DConstants::INVALID_INDEX;
   float radius = 0.0f;
+  bool radius_needs_square = false;
   std::vector<float> query_vector;
   catalog::Column::Id col_id = std::numeric_limits<catalog::Column::Id>::max();
 
@@ -651,7 +683,15 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     }
     auto& func = func_side->Cast<duckdb::BoundFunctionExpression>();
     auto expected_current = ExpectedHNSWForFunction(func.function.name);
-    if (!expected_current || func.children.size() < 2) {
+    if (!expected_current) {
+      continue;
+    }
+    const bool is_norm = IsNormFunction(func.function.name);
+    if (is_norm) {
+      if (func.children.size() != 1) {
+        continue;
+      }
+    } else if (func.children.size() < 2) {
       continue;
     }
     if (expected_current->order != duckdb::OrderType::ASCENDING) {
@@ -677,26 +717,50 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       default:
         continue;
     }
-    auto args = ExtractDistanceArgs(func);
-    if (!args.col_arg || !args.const_arg) {
-      continue;
-    }
+    duckdb::Expression* col_expr = nullptr;
     std::vector<float> candidate_vector;
-    if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
-      continue;
+    if (is_norm) {
+      auto* child = func.children[0].get();
+      if (child->expression_class !=
+            duckdb::ExpressionClass::BOUND_COLUMN_REF &&
+          child->expression_class != duckdb::ExpressionClass::BOUND_REF) {
+        continue;
+      }
+      col_expr = child;
+    } else {
+      auto args = ExtractDistanceArgs(func);
+      if (!args.col_arg || !args.const_arg) {
+        continue;
+      }
+      if (!TryExtractQueryVector(args.const_arg->value, candidate_vector)) {
+        continue;
+      }
+      col_expr = args.col_arg;
     }
     auto candidate_col_id =
-      ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+      ColumnIdByName(*bind_data.table, col_expr->GetName());
     if (candidate_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
       continue;
     }
     auto hnsw_info = resolved->index->GetColumnHNSWInfo(candidate_col_id);
-    if (!hnsw_info || hnsw_info->metric != expected_current->metric ||
-        static_cast<size_t>(hnsw_info->d) != candidate_vector.size()) {
+    if (!hnsw_info || hnsw_info->metric != expected_current->metric) {
+      continue;
+    }
+    if (is_norm) {
+      candidate_vector.assign(hnsw_info->d, 0.0f);
+    } else if (static_cast<size_t>(hnsw_info->d) != candidate_vector.size()) {
       continue;
     }
 
     radius = candidate_radius;
+    // The iresearch index stores L2-squared distances. When the user wrote
+    // l2_distance / `<->` / l2_norm (un-squared L2), the radius must be
+    // squared before being compared against stored values. l2_sqr_distance
+    // already speaks in squared units. Other metrics (L1, cosine, IP) are
+    // not squared.
+    radius_needs_square = func.function.name == connector::kL2Distance ||
+                          func.function.name == connector::kL2DistanceOp ||
+                          func.function.name == connector::kL2Norm;
     query_vector = std::move(candidate_vector);
     col_id = candidate_col_id;
     match_idx = i;
@@ -712,6 +776,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   rss->field_name = MakeHnswFieldName(col_id);
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
+  rss->effective_radius = radius_needs_square ? radius * radius : radius;
 
   filter.expressions.erase(filter.expressions.begin() + match_idx);
   std::vector<catalog::Column::Id> proj_ids_storage;
@@ -769,7 +834,55 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 // Case 1/2: boolean filter via search_filter_builder
 // ---------------------------------------------------------------------------
 
-bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+// Build a SearchColumnInfo for a column ref, if the column belongs to
+// our scan AND it's part of an inverted index. Returns nullopt
+// otherwise (the search builder will then refuse to claim that
+// expression and we leave it on the LogicalFilter).
+//
+// `projected_column_ids` is indexed by binding.column_index after
+// projection pushdown reordering -- same translation we do in
+// rocksdb_plan. `analyzer_provider` queries the InvertedIndex for the
+// per-column analyzer (op_class).
+struct SearchColumnContext {
+  duckdb::TableIndex table_index;
+  std::span<const catalog::Column::Id> projected_column_ids;
+  containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
+    column_type_by_id;
+  containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
+  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
+    analyzer_provider;
+};
+
+connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
+  return [&ctx](const duckdb::BoundColumnRefExpression& ref)
+           -> std::optional<connector::SearchColumnInfo> {
+    if (ref.binding.table_index != ctx.table_index) {
+      return std::nullopt;
+    }
+    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
+      return std::nullopt;
+    }
+    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
+    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+      return std::nullopt;
+    }
+    if (!ctx.indexed_column_ids.contains(col_id)) {
+      return std::nullopt;
+    }
+    auto type_it = ctx.column_type_by_id.find(col_id);
+    if (type_it == ctx.column_type_by_id.end()) {
+      return std::nullopt;
+    }
+    connector::SearchColumnInfo info;
+    info.column_id = col_id;
+    info.logical_type = type_it->second;
+    info.tokenizer = ctx.analyzer_provider(col_id);
+    return info;
+  };
+}
+
+bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                     const connector::SearchFilterOptions& options) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {
     return false;
   }
@@ -857,7 +970,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     const auto before = root->size();
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
-    auto result = connector::MakeSearchFilter(*root, single, getter);
+    auto result = connector::MakeSearchFilter(*root, single, getter, options);
     if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {
@@ -2002,7 +2115,8 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 //
 // We trigger at the AGGREGATE node (not the GET) because projection-pushdown
 // runs before our extension and may leave filter-only columns (e.g. `b` in
-// WHERE PHRASE(b,...)) in get.column_ids even after we claimed the filter.
+// WHERE b @@ ts_phrase(...)) in get.column_ids even after we claimed the
+// filter.
 // Detecting at aggregate level lets us verify the output shape is truly
 // "no columns needed" and then strip column_ids ourselves.
 // ---------------------------------------------------------------------------
@@ -2116,7 +2230,8 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // for BM25/TFIDF in projections.
   static bool TryOptimizePass1(
     duckdb::unique_ptr<duckdb::LogicalOperator>& root,
-    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+    const connector::SearchFilterOptions& options) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
       if (TryAnnTopk(plan)) {
         return true;
@@ -2155,7 +2270,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       if (TryAnnRange(plan)) {
         return true;
       }
-      bool changed = TrySearchFilter(plan);
+      bool changed = TrySearchFilter(plan, options);
       // Simplify `BM25/TFIDF(tableoid) > 0` predicates to TRUE: a scorer's
       // value is always positive for matching docs, so the comparison adds
       // no filtering. This lets scorer selection stay controlled by the
@@ -2240,15 +2355,16 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // `plan` is the current node being visited.
   static bool Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
                    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                   bool in_mutation, int pass) {
+                   bool in_mutation, int pass,
+                   const connector::SearchFilterOptions& options) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     bool changed = false;
     for (auto& child : plan->children) {
-      changed |= Walk(root, child, subtree_in_mutation, pass);
+      changed |= Walk(root, child, subtree_in_mutation, pass, options);
     }
     if (!subtree_in_mutation) {
       if (pass == 1) {
-        changed |= TryOptimizePass1(root, plan);
+        changed |= TryOptimizePass1(root, plan, options);
       } else {
         changed |= TryOptimizePass2(root, plan);
       }
@@ -2284,9 +2400,17 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     // Pass 2: pull top-K limits (now scorer is set) and rewrite
     // BM25/TFIDF in Filter/TopN ORDER BY contexts (bottom-up, so by
     // the time we visit Projection the scorer may already be set).
+    connector::SearchFilterOptions options{.client_context = input.context};
+    {
+      duckdb::Value v;
+      if (input.context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
+          !v.IsNull()) {
+        options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
+      }
+    }
     bool changed = TopDownAnnPass(plan, /*in_mutation=*/false);
-    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1);
-    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, options);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, options);
 
     if (changed) {
       FlattenSwappedGets(*plan, plan);

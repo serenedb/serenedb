@@ -14,7 +14,18 @@ statement ok
 CREATE SCHEMA ds_drop;
 
 statement ok
-CREATE TEXT SEARCH DICTIONARY ds_dict(
+CREATE TEXT SEARCH DICTIONARY ds_keep.ds_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ds_drop.ds_dict(
     template = 'text',
     locale = 'en_US.UTF-8',
     case = 'none',
@@ -113,7 +124,7 @@ count
 
 connection ds_after
 query
-SELECT COUNT(*) FROM ds_keep_idx;
+SELECT COUNT(*) FROM ds_keep.ds_keep_idx;
 ----
 count
 3

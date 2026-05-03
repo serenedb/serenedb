@@ -33,7 +33,6 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
-#include <expected>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/search/all_filter.hpp>
@@ -192,15 +191,6 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
 }
 
 namespace {
-
-ResultOr<std::string> TryGetString(const duckdb::Expression& expr) {
-  const auto* value = TryGetConstant(expr);
-  if (!value || value->IsNull() ||
-      value->type().id() != duckdb::LogicalTypeId::VARCHAR) {
-    return std::unexpected{ERROR_BAD_PARAMETER};
-  }
-  return value->GetValue<std::string>();
-}
 
 ComparisonOp InvertComparisonOp(ComparisonOp op) {
   switch (op) {
@@ -844,14 +834,14 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   char escape_char = '\\';
   if (name == "like_escape") {
     SDB_ASSERT(args.size() == 3);
-    auto escape_str = TryGetString(*args[2]);
-    if (!escape_str) {
-      return std::move(escape_str).error();
+    std::string escape_str;
+    if (auto r = GetVarcharArg(*args[2], "LIKE ESCAPE", escape_str); !r.ok()) {
+      return r;
     }
-    if (escape_str->size() != 1) {
+    if (escape_str.size() != 1) {
       return {ERROR_BAD_PARAMETER, "LIKE ESCAPE must be a single character"};
     }
-    escape_char = escape_str->front();
+    escape_char = escape_str.front();
     args = args.subspan(0, 2);
     name = "~~";
   }
@@ -864,14 +854,14 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
                 ": VARCHAR overload only -- declined for ",
                 args[0]->return_type.ToString()};
       }
-      auto pattern = TryGetString(*args[1]);
-      if (!pattern) {
-        return std::move(pattern).error();
+      std::string pattern;
+      if (auto r = GetVarcharArg(*args[1], name, pattern); !r.ok()) {
+        return r;
       }
       auto validator = &IsKeywordAnalyzer;
 
       if (builder == &BuildTSLike) {
-        *pattern = LikeEscapePattern(*pattern, escape_char);
+        pattern = LikeEscapePattern(pattern, escape_char);
         validator = &IsLikeCompatibleAnalyzer;
       }
 
@@ -883,7 +873,7 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
       if (!validator(column_info->tokenizer.analyzer->type())) {
         return {ERROR_BAD_PARAMETER, name, ": column analyzer not supported"};
       }
-      auto inner = builder(*pattern);
+      auto inner = builder(pattern);
       FromTSQueryMatch(filter, ctx, *args[0], *inner);
       return {};
     }

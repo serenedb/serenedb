@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <iresearch/search/scorer.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
+#include "basics/assert.h"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -39,8 +43,11 @@ using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
 template<typename FormatTraits, bool Root, bool Pos, bool Offs,
          typename InputType>
 class SingleWandIterator : public DocIterator {
+  class WandReadSkip;
+
   using IteratorTraits = WandTraits<FormatTraits>;
   using FieldTraits = IteratorTraitsImpl<FormatTraits, true, Pos, Offs>;
+  using SkipReaderType = NewSkipReader<FieldTraits, IteratorTraits, true, InputType, WandReadSkip>;
 
   class DefaultWandSource final : public WandSource {
    public:
@@ -50,14 +57,16 @@ class SingleWandIterator : public DocIterator {
         in.ReadByte();
       }
     }
+    void ReadFromWandData(const WandWriter::WandData& data) final {
+      // nop
+    }
   };
 
  public:
   static_assert(doc_limits::kBlockSize % kScoreBlock == 0,
                 "kBlockSize must be a multiple of kScoreBlock");
 
-  explicit SingleWandIterator()
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, true} {}
+  SingleWandIterator() = default;
 
   ~SingleWandIterator() {
     if (_doc_in) {
@@ -75,10 +84,12 @@ class SingleWandIterator : public DocIterator {
         .stats = _stats,
         .boost = _boost,
       });
-      _skip.Reader().SetWandScore(std::move(wand_func), std::move(wand_source));
+      auto& reader = _new_skip_reader.Reader();
+      reader.SetWandScore(std::move(wand_func), std::move(wand_source));
+      reader.SetGlobalMaxScore(reader.ReadFromWandRoot());
     }
     if (_deferred_skip_offs) {
-      PrepareSkipReader(_deferred_skip_offs, _deferred_skip_docs_count);
+      // PrepareSkipReader(_deferred_skip_offs, _deferred_skip_docs_count);
       _deferred_skip_offs = 0;
     }
     return ctx.scorer->PrepareScorer({
@@ -94,12 +105,12 @@ class SingleWandIterator : public DocIterator {
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in);
 
   void SetSkipWandBelow(doc_id_t max) noexcept {
-    _skip.Reader().SetSkipWandBelow(max);
+    _new_skip_reader.Reader().SetSkipWandBelow(max);
   }
 
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == irs::Type<ScoreThresholdAttr>::id()) {
-      return &_skip.Reader().Threshold();
+      return &_new_skip_reader.Reader().Threshold();
     }
     return irs::GetMutable(_attrs, type);
   }
@@ -138,9 +149,16 @@ class SingleWandIterator : public DocIterator {
  private:
   class WandReadSkip {
    public:
-    explicit WandReadSkip(bool)
-      : _skip_levels(1), _skip_scores(1, std::numeric_limits<score_t>::max()) {
-      Disable();
+    static constexpr bool kWandScoringEnabled = true;
+  
+    WandReadSkip() {
+      _skip_scores.fill(std::numeric_limits<score_t>::max());
+    }
+
+    void ReadWandRoot(InputType& in) {
+      SDB_ASSERT(!_wand_root_set);
+      _wand_root_set = true;
+      _wand_root = SkipReaderType::ReadWandRoot(in);
     }
 
     void SetWandScore(ScoreFunction func,
@@ -153,164 +171,171 @@ class SingleWandIterator : public DocIterator {
 
     ScoreThresholdAttr& Threshold() noexcept { return _threshold; }
 
-    void EnsureSorted() const noexcept {
-      SDB_ASSERT(absl::c_is_sorted(
-        _skip_levels,
-        [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
-      if constexpr (Root) {
-        SDB_ASSERT(absl::c_is_sorted(_skip_scores, std::greater<>{}));
-      }
-    }
-
-    void Disable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::eof();
-    }
-
-    void Enable(const TermMetaImpl& state) noexcept {
-      SDB_ASSERT(state.docs_count > doc_limits::kBlockSize);
-      auto& top = _skip_levels.front();
-      CopyState<IteratorTraits>(top, state);
-      Enable();
-    }
-
-    void Init(size_t num_levels, score_t max_score) {
-      SDB_ASSERT(num_levels);
-      _skip_levels.resize(num_levels);
-      _skip_scores.resize(num_levels, std::numeric_limits<score_t>::max());
+    void SetGlobalMaxScore(score_t max_score) {
+      SDB_ASSERT(_wand_root_set);
       _global_max_score = max_score;
     }
 
-    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
-      if constexpr (Root) {
-        return _skip_levels[level].doc < target ||
-               _skip_scores[level] <= _threshold.value;
-      } else {
-        return _skip_levels[level].doc < target;
-      }
-    }
-    IRS_FORCE_INLINE bool IsLessThanUpperBound(doc_id_t target) const noexcept {
-      if constexpr (Root) {
-        return _skip_levels.back().doc < target ||
-               _skip_scores.back() <= _threshold.value;
-      } else {
-        return _skip_levels.back().doc < target;
-      }
+    void SetScore(size_t level, score_t score) {
+      _skip_scores[level] = score;
     }
 
-    IRS_FORCE_INLINE void MoveDown(size_t level) noexcept {
-      auto& next = _skip_levels[level];
-      CopyState<IteratorTraits>(next, _prev_skip);
+    bool IsBlockSuits(size_t level) const {
+      return _skip_scores[level] > _threshold.value;
     }
+
+    // IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
+    //   if constexpr (Root) {
+    //     return _skip_levels[level].doc < target ||
+    //            _skip_scores[level] <= _threshold.value;
+    //   } else {
+    //     return _skip_levels[level].doc < target;
+    //   }
+    // }
+    // IRS_FORCE_INLINE bool IsLessThanUpperBound(doc_id_t target) const noexcept {
+    //   if constexpr (Root) {
+    //     return _skip_levels.back().doc < target ||
+    //            _skip_scores.back() <= _threshold.value;
+    //   } else {
+    //     return _skip_levels.back().doc < target;
+    //   }
+    // }
 
     IRS_FORCE_INLINE void Read(size_t level, InputType& in) {
-      auto& next = _skip_levels[level];
-      CopyState<IteratorTraits>(_prev_skip, next);
-      ReadState<FieldTraits>(next, in);
-      if (_skip_wand_below && next.doc < _skip_wand_below) [[unlikely]] {
-        SkipWandData(in);
-      } else {
-        _skip_scores[level] = ReadWandScore(in);
-      }
+      // auto& next = _skip_levels[level];
+      // CopyState<IteratorTraits>(_prev_skip, next);
+      // ReadState<FieldTraits>(next, in);
+      // if (_skip_wand_below && next.doc < _skip_wand_below) [[unlikely]] {
+      //   SkipWandData(in);
+      // } else {
+      //   _skip_scores[level] = ReadWandScore(in);
+      // }
     }
 
     void Seal(size_t level) {
-      auto& next = _skip_levels[level];
+      // auto& next = _skip_levels[level];
 
-      // Store previous step on the same level
-      CopyState<IteratorTraits>(_prev_skip, next);
+      // // Store previous step on the same level
+      // CopyState<IteratorTraits>(_prev_skip, next);
 
-      // Stream exhausted
-      next.doc = doc_limits::eof();
-      _skip_scores[level] = std::numeric_limits<score_t>::max();
+      // // Stream exhausted
+      // next.doc = doc_limits::eof();
+      // _skip_scores[level] = std::numeric_limits<score_t>::max();
     }
 
     IRS_FORCE_INLINE size_t AdjustLevel(size_t level) const noexcept {
-      if constexpr (Root) {
-        while (level &&
-               _skip_levels[level].doc >= _skip_levels[level - 1].doc) {
-          SDB_ASSERT(_skip_levels[level - 1].doc != doc_limits::eof());
-          --level;
-        }
-      }
-      return level;
+      // if constexpr (Root) {
+      //   while (level &&
+      //          _skip_levels[level].doc >= _skip_levels[level - 1].doc) {
+      //     SDB_ASSERT(_skip_levels[level - 1].doc != doc_limits::eof());
+      //     --level;
+      //   }
+      // }
+      // return level;
     }
 
-    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      return _skip_levels.back().doc;
+    // IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
+    //   SDB_ASSERT(!_skip_levels.empty());
+    //   return _skip_levels.back().doc;
+    // }
+
+    void ReadWand(size_t level, InputType& in) {
+      SDB_ASSERT(level == 1);
+      _skip_scores[level] = ReadWandScore(in);
+    }
+
+    void SetWandScore(size_t level, const WandWriter::WandData& data) {
+      _skip_scores[level] = ReadWandScore(data);
     }
 
     IRS_FORCE_INLINE score_t ReadWandScore(IndexInput& in) {
       return CommonReadWandData(_wand_func, *_wand_source, in);
     }
 
-    IRS_FORCE_INLINE void SkipWandData(InputType& in) {
-      CommonSkipWandData(true, in);
+    IRS_FORCE_INLINE score_t ReadWandScore(const WandWriter::WandData& data) {
+      _wand_source->ReadFromWandData(data);
+      return _wand_func.Score();
+    }
+    IRS_FORCE_INLINE score_t ReadFromWandRoot() {
+      return ReadWandScore(_wand_root);
     }
 
-    SkipState& State() noexcept { return _prev_skip; }
-    SkipState& Next() noexcept { return _skip_levels.back(); }
+    // IRS_FORCE_INLINE void SkipWandData(InputType& in) {
+    //   CommonSkipWandData(true, in);
+    // }
 
-    IRS_FORCE_INLINE score_t GetMaxScore(doc_id_t doc) noexcept {
-      for (size_t i = _skip_levels.size(); i--;) {
-        if (_skip_levels[i].doc >= doc) {
-          return _skip_scores[i];
-        }
-      }
+    IRS_FORCE_INLINE score_t GetScore(size_t level) const {
+      return _skip_scores[level];
+    }
+
+    IRS_FORCE_INLINE score_t GetGlobalMaxScore() const {
       return _global_max_score;
     }
 
-    doc_id_t GetUpperBound(size_t i) noexcept {
-      SDB_ASSERT(i < _skip_levels.size());
-      return _skip_levels[i].doc;
-    }
+    // doc_id_t GetUpperBound(size_t i) noexcept {
+    //   SDB_ASSERT(i < _skip_levels.size());
+    //   return _skip_levels[i].doc;
+    // }
 
    private:
-    void Enable() noexcept {
-      SDB_ASSERT(!_skip_levels.empty());
-      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::invalid();
-    }
 
-    std::vector<SkipState> _skip_levels;
-    std::vector<score_t> _skip_scores;
-    score_t _global_max_score = std::numeric_limits<score_t>::max();
-    SkipState _prev_skip;
+    // std::vector<SkipState> _skip_levels;
+    // SkipState _prev_skip;
+    doc_id_t _skip_wand_below = 0;
+
+    std::array<score_t, NewSkipWriter::kMaxLevels> _skip_scores;
+    bool _wand_root_set = false;
+    WandWriter::WandData _wand_root;
     ScoreFunction _wand_func;
     WandSource::ptr _wand_source;
     ScoreThresholdAttr _threshold;
-    doc_id_t _skip_wand_below = 0;
+    score_t _global_max_score = std::numeric_limits<score_t>::max();
   };
 
  public:
   score_t GetMaxScore(doc_id_t doc) noexcept {
-    return _skip.Reader().GetMaxScore(doc);
+    return _new_skip_reader.GetMaxScore(doc);
   }
 
   doc_id_t SeekToBlock(doc_id_t target) {
-    target = ShallowSeekToBlock(target);
-    if (!doc_limits::eof(target)) {
-      _doc = _skip.Reader().State().doc;
+    if (target <= this->_max_in_leaf && _new_skip_reader.Reader().IsBlockSuits(0)) {
+      return this->_max_in_leaf;
     }
-    return target;
+
+    bool found = _new_skip_reader.SeekAndReadNewBlock(target, GetDocIn(), _enc_buf, _docs, _freqs);
+    this->_left_in_list = _new_skip_reader.LeftDocsCount();
+
+    if (!found) {
+      SDB_ASSERT(this->_left_in_list < doc_limits::kBlockSize);
+      ReadBlock(_new_skip_reader.GetMaxDocInInlineBlock());
+      return this->_max_in_leaf;
+    }
+
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = doc_limits::kBlockSize;
+    return this->_max_in_leaf;
+
+    // target = ShallowSeekToBlock(target);
+    // if (!doc_limits::eof(target)) {
+    //   _doc = _skip.Reader().State().doc;
+    // }
+    // return target;
   }
 
-  doc_id_t ShallowSeekToBlock(doc_id_t target) {
-    if (!_skip.NumLevels()) [[unlikely]] {
-      return doc_limits::eof();
-    }
-    _skip.Reader().EnsureSorted();
-    const auto upper_bound = _skip.Reader().UpperBound();
-    if (upper_bound >= target) {
-      return upper_bound;
-    }
-    _left_in_list = _skip.Seek(target);
-    _left_in_leaf = 0;
-    _needs_reposition = true;
-    return _skip.Reader().UpperBound();
-  }
+  // doc_id_t ShallowSeekToBlock(doc_id_t target) {
+  //   if (!_skip.NumLevels()) [[unlikely]] {
+  //     return doc_limits::eof();
+  //   }
+  //   _skip.Reader().EnsureSorted();
+  //   const auto upper_bound = _skip.Reader().UpperBound();
+  //   if (upper_bound >= target) {
+  //     return upper_bound;
+  //   }
+  //   _left_in_list = _skip.Seek(target);
+  //   _left_in_leaf = 0;
+  //   _needs_reposition = true;
+  //   return _skip.Reader().UpperBound();
+  // }
 
   std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
                                       uint64_t* IRS_RESTRICT const doc_mask,
@@ -367,7 +392,8 @@ class SingleWandIterator : public DocIterator {
   bool _needs_reposition = false;
   IndexInput::ptr _doc_in;
   Attributes _attrs;
-  SkipReader<WandReadSkip, InputType> _skip;
+  // SkipReader<WandReadSkip, InputType> _skip;
+  SkipReaderType _new_skip_reader;
   uint64_t _deferred_skip_offs = 0;
   uint32_t _deferred_skip_docs_count = 0;
 };
@@ -430,14 +456,17 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::Collect(
     SDB_ASSERT(_left_in_leaf == 0);
     while (_left_in_list != 0) {
       auto last_doc = *(std::end(_docs) - 1);
-      if (last_doc + 1 > _skip.Reader().UpperBound()) {
-        _left_in_list = _skip.Seek(last_doc + 1);
-        auto& state = _skip.Reader().State();
-        if (state.doc_ptr) [[likely]] {
-          GetDocIn().Seek(state.doc_ptr);
-        }
-        last_doc = state.doc;
-      }
+      /*
+        TODO(afigor2701): should we just read next block??
+      */
+      // if (last_doc + 1 > _skip.Reader().UpperBound()) {
+      //   _left_in_list = _skip.Seek(last_doc + 1);
+      //   auto& state = _skip.Reader().State();
+      //   if (state.doc_ptr) [[likely]] {
+      //     GetDocIn().Seek(state.doc_ptr);
+      //   }
+      //   last_doc = state.doc;
+      // }
       ReadBlock(last_doc);
       if (_left_in_leaf == kPostingBlock) {
         process_block.template operator()<kPostingBlock>(kPostingBlock);
@@ -523,24 +552,27 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs,
     }
   };
 
+  /*
+    TODO(afigor2701): I think I always read documents in seek so it is irrelevant
+  */
   // ShallowSeekToBlock may have repositioned the skip reader without
   // updating the doc stream.  Reposition and decode the first block.
-  if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
-    _needs_reposition = false;
-    auto& state = _skip.Reader().State();
-    if (state.doc_ptr) [[likely]] {
-      GetDocIn().Seek(state.doc_ptr);
-    }
-    ReadBlock(state.doc);
-    // The decoded block may contain docs before value()/min.
-    // Find the first doc >= min and use that as our leftover range.
-    const auto* first_valid =
-      std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
-                   [&](doc_id_t doc) { return doc >= min; });
-    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first_valid);
-    // Now _left_in_leaf points to docs >= min.  Fall through to the
-    // normal leftover path which will handle the remaining logic.
-  }
+  // if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
+  //   _needs_reposition = false;
+  //   auto& state = _skip.Reader().State();
+  //   if (state.doc_ptr) [[likely]] {
+  //     GetDocIn().Seek(state.doc_ptr);
+  //   }
+  //   ReadBlock(state.doc);
+  //   // The decoded block may contain docs before value()/min.
+  //   // Find the first doc >= min and use that as our leftover range.
+  //   const auto* first_valid =
+  //     std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
+  //                  [&](doc_id_t doc) { return doc >= min; });
+  //   _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first_valid);
+  //   // Now _left_in_leaf points to docs >= min.  Fall through to the
+  //   // normal leftover path which will handle the remaining logic.
+  // }
 
   SDB_ASSERT(_left_in_leaf <= kPostingBlock);
 
@@ -612,7 +644,7 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs,
   SDB_ASSERT(!cand_docs.empty());
 
   size_t out = 0;  // compacted output index (used when required=true)
-  SetSkipWandBelow(window_max);
+  SetSkipWandBelow(window_max);  // TODO(afigor2701): I guess now it is irrelevant because it just optimization to not read varints
 
   Finally unset = [&] noexcept {
     SetSkipWandBelow(0);
@@ -697,19 +729,22 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs,
     }
   };
 
+  /*
+    TODO(afigor2701): I think it is irrelevant now because I always read documents in seek
+  */
   // Reposition if needed (same logic as CollectRange).
-  if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
-    _needs_reposition = false;
-    auto& state = _skip.Reader().State();
-    if (state.doc_ptr) [[likely]] {
-      GetDocIn().Seek(state.doc_ptr);
-    }
-    ReadBlock(state.doc);
-    const auto* first_valid =
-      std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
-                   [&](doc_id_t doc) { return doc >= cand_docs[0]; });
-    _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first_valid);
-  }
+  // if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
+  //   _needs_reposition = false;
+  //   auto& state = _skip.Reader().State();
+  //   if (state.doc_ptr) [[likely]] {
+  //     GetDocIn().Seek(state.doc_ptr);
+  //   }
+  //   ReadBlock(state.doc);
+  //   const auto* first_valid =
+  //     std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
+  //                  [&](doc_id_t doc) { return doc >= cand_docs[0]; });
+  //   _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first_valid);
+  // }
 
   SDB_ASSERT(_left_in_leaf <= kPostingBlock);
 
@@ -741,18 +776,19 @@ void SingleWandIterator<IteratorTraits, Root, Pos, Offs,
     // Skip ahead if next candidate is beyond the current block's upper bound.
     {
       const doc_id_t next_cand = cand_docs[cand_idx];
-      const doc_id_t last_doc = *(std::end(_docs) - 1);
-      if (next_cand > last_doc + kPostingBlock &&
-          next_cand > _skip.Reader().UpperBound()) {
-        _left_in_list = _skip.Seek(next_cand);
-        auto& state = _skip.Reader().State();
-        if (state.doc_ptr) [[likely]] {
-          GetDocIn().Seek(state.doc_ptr);
-        }
-        ReadBlock(state.doc);
-      } else {
-        ReadBlock(last_doc);
-      }
+      seek(next_cand);
+      // const doc_id_t last_doc = *(std::end(_docs) - 1);
+      // if (next_cand > last_doc + kPostingBlock &&
+      //     next_cand > _skip.Reader().UpperBound()) {
+      //   _left_in_list = _skip.Seek(next_cand);
+      //   auto& state = _skip.Reader().State();
+      //   if (state.doc_ptr) [[likely]] {
+      //     GetDocIn().Seek(state.doc_ptr);
+      //   }
+      //   ReadBlock(state.doc);
+      // } else {
+      //   ReadBlock(last_doc);
+      // }
     }
     if (*(std::end(_docs) - 1) >= max || _left_in_leaf != kPostingBlock) {
       goto score_cand_tail;
@@ -812,24 +848,27 @@ SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::FillBlock(
   return ResolveBool(doc_mask != nullptr, [&]<bool FillMask> {
     bool empty = true;
 
+    /*
+      TODO(afigor2701): I think i always read documents in seek so this case is irrelevant
+    */
     // ShallowSeekToBlock may have repositioned the skip reader without
     // updating the doc stream.  Reposition and decode the first block.
-    if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
-      _needs_reposition = false;
-      auto& state = _skip.Reader().State();
-      if (state.doc_ptr) [[likely]] {
-        GetDocIn().Seek(state.doc_ptr);
-      }
-      ReadBlock(state.doc);
-      // The decoded block may contain docs before value()/min.
-      // Find the first doc >= min and use that as our leftover range.
-      const auto* first_valid =
-        std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
-                     [&](doc_id_t doc) { return doc >= min; });
-      _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first_valid);
-      // Now _left_in_leaf points to docs >= min.  Fall through to the
-      // normal leftover path which will handle the remaining logic.
-    }
+    // if (_needs_reposition && _left_in_list != 0) [[unlikely]] {
+    //   _needs_reposition = false;
+    //   auto& state = _skip.Reader().State();
+    //   if (state.doc_ptr) [[likely]] {
+    //     GetDocIn().Seek(state.doc_ptr);
+    //   }
+    //   ReadBlock(state.doc);
+    //   // The decoded block may contain docs before value()/min.
+    //   // Find the first doc >= min and use that as our leftover range.
+    //   const auto* first_valid =
+    //     std::find_if(std::end(_docs) - _left_in_leaf, std::end(_docs),
+    //                  [&](doc_id_t doc) { return doc >= min; });
+    //   _left_in_leaf = static_cast<uint32_t>(std::end(_docs) - first_valid);
+    //   // Now _left_in_leaf points to docs >= min.  Fall through to the
+    //   // normal leftover path which will handle the remaining logic.
+    // }
 
     SDB_ASSERT(_left_in_leaf <= kPostingBlock);
 
@@ -900,49 +939,73 @@ template<typename IteratorTraits, bool Root, bool Pos, bool Offs,
 doc_id_t SingleWandIterator<IteratorTraits, Root, Pos, Offs, InputType>::seek(
   doc_id_t target) {
   if (target <= _doc) [[unlikely]] {
+    // TODO(afigor2701) - maybe we should move the block anyway to find a block with score > treshold 
     return _doc;
   }
 
-  if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
-    SeekToBlock(target);
-  }
 
-  // Position from skip state if no decoded docs remain.
-  if (_left_in_leaf == 0) [[unlikely]] {
-    if (_left_in_list == 0) [[unlikely]] {
+  if (_max_in_leaf < target || _new_skip_reader.Reader().IsBlockSuits(0)) {
+    if (SeekToBlock(target) < target) {
+      _left_in_leaf = 0;
       return _doc = doc_limits::eof();
     }
-
-    if (_needs_reposition) {
-      _needs_reposition = false;
-      auto& state = _skip.Reader().State();
-      if (state.doc_ptr) [[likely]] {
-        GetDocIn().Seek(state.doc_ptr);
-      }
-      _doc = state.doc;
-    }
-    ReadBlock(_doc);
   }
 
-  for (;;) {
-    while (_left_in_leaf != 0) {
-      const auto doc = *(std::end(_docs) - _left_in_leaf);
+  for (auto left_in_leaf = _left_in_leaf; left_in_leaf != 0; --left_in_leaf) {
+    const auto doc = *(std::end(_docs) - left_in_leaf);
 
-      --_left_in_leaf;
-
-      if (target <= doc) {
-        return _doc = doc;
-      }
+    if (target <= doc) {
+      _left_in_leaf = left_in_leaf - 1;
+      return _doc = doc;
     }
-
-    // Block exhausted without finding target. Read next block from doc
-    // stream. Handles the case where ShallowSeekToBlock advanced the skip
-    // reader past the current decoded block.
-    if (_left_in_list == 0) [[unlikely]] {
-      return _doc = doc_limits::eof();
-    }
-    ReadBlock(*(std::end(_docs) - 1));
   }
+  SDB_ASSERT(false); // It seems that we should find 
+
+  SDB_ASSERT(_left_in_list == 0); // It seems that it should be tail
+
+  _left_in_leaf = 0;
+  return _doc = doc_limits::eof();
+
+  // if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+  //   SeekToBlock(target);
+  // }
+
+  // // Position from skip state if no decoded docs remain.
+  // if (_left_in_leaf == 0) [[unlikely]] {
+  //   if (_left_in_list == 0) [[unlikely]] {
+  //     return _doc = doc_limits::eof();
+  //   }
+
+  //   if (_needs_reposition) {
+  //     _needs_reposition = false;
+  //     auto& state = _skip.Reader().State();
+  //     if (state.doc_ptr) [[likely]] {
+  //       GetDocIn().Seek(state.doc_ptr);
+  //     }
+  //     _doc = state.doc;
+  //   }
+  //   ReadBlock(_doc);
+  // }
+
+  // for (;;) {
+  //   while (_left_in_leaf != 0) {
+  //     const auto doc = *(std::end(_docs) - _left_in_leaf);
+
+  //     --_left_in_leaf;
+
+  //     if (target <= doc) {
+  //       return _doc = doc;
+  //     }
+  //   }
+
+  //   // Block exhausted without finding target. Read next block from doc
+  //   // stream. Handles the case where ShallowSeekToBlock advanced the skip
+  //   // reader past the current decoded block.
+  //   if (_left_in_list == 0) [[unlikely]] {
+  //     return _doc = doc_limits::eof();
+  //   }
+  //   ReadBlock(*(std::end(_docs) - 1));
+  // }
 }
 
 template<typename FormatTraits, bool Root, bool Pos, bool Offs,
@@ -952,7 +1015,7 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
   Init(meta);
 
   // Set default wand state with max score so no blocks are ever pruned
-  _skip.Reader().SetWandScore(
+  _new_skip_reader.Reader().SetWandScore(
     ScoreFunction::Constant(std::numeric_limits<score_t>::max()),
     std::make_unique<DefaultWandSource>());
 
@@ -1000,12 +1063,14 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::Prepare(
   SDB_ASSERT(term_state.freq);
 
   if (term_state.docs_count > doc_limits::kBlockSize) {
-    _skip.Reader().Enable(term_state);
+    // _new_skip_reader.Reader().Enable(term_state);
+    _new_skip_reader.Prepare(term_state, GetDocIn());
     _deferred_skip_offs = term_state.doc_start + term_state.e_skip_start;
     _deferred_skip_docs_count = term_state.docs_count;
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < doc_limits::kBlockSize) {
-    _skip.Reader().SkipWandData(GetDocIn());
+    SkipReaderType::ReadWandRoot(GetDocIn());
+   // _new_skip_reader.Reader().SkipWandData(GetDocIn());
   }
 }
 
@@ -1015,12 +1080,13 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(
   doc_id_t prev_doc) {
   if (const auto tail = _left_in_list; tail >= doc_limits::kBlockSize)
     [[likely]] {
-    IteratorTraits::ReadBlockDelta(GetDocIn(), _enc_buf, _docs, prev_doc);
-    _max_in_leaf = *(std::end(_docs) - 1);
-    _left_in_leaf = doc_limits::kBlockSize;
-    _left_in_list -= doc_limits::kBlockSize;
-    IteratorTraits::ReadBlock(GetDocIn(), _enc_buf, _freqs);
+    _new_skip_reader.ReadInlineBlock(GetDocIn(), this->_enc_buf, this->_docs, this->_freqs, prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = doc_limits::kBlockSize;
+    this->_left_in_list -= doc_limits::kBlockSize;
+    SDB_ASSERT(this->_left_in_list == _new_skip_reader.LeftDocsCount());
   } else {
+    SDB_ASSERT(tail > 0);
     IteratorTraits::ReadTailDelta(tail, GetDocIn(), _enc_buf, _docs, prev_doc);
     _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = tail;
@@ -1029,37 +1095,37 @@ void SingleWandIterator<FormatTraits, Root, Pos, Offs, InputType>::ReadBlock(
   }
 }
 
-template<typename FormatTraits, bool Root, bool Pos, bool Offs,
-         typename InputType>
-void SingleWandIterator<FormatTraits, Root, Pos, Offs,
-                        InputType>::PrepareSkipReader(uint64_t skip_offs,
-                                                      uint32_t docs_count) {
-  SDB_ASSERT(docs_count > 0);
+// template<typename FormatTraits, bool Root, bool Pos, bool Offs,
+//          typename InputType>
+// void SingleWandIterator<FormatTraits, Root, Pos, Offs,
+//                         InputType>::PrepareSkipReader(uint64_t skip_offs,
+//                                                       uint32_t docs_count) {
+//   SDB_ASSERT(docs_count > 0);
 
-  std::unique_ptr<InputType> skip_in_ptr{
-    sdb::basics::downCast<InputType>(GetDocIn().Dup().release())};
-  if (!skip_in_ptr) {
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to duplicate document input");
-    throw IoError("Failed to duplicate document input");
-  }
-  auto& skip_in = *skip_in_ptr;
+//   std::unique_ptr<InputType> skip_in_ptr{
+//     sdb::basics::downCast<InputType>(GetDocIn().Dup().release())};
+//   if (!skip_in_ptr) {
+//     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+//               "Failed to duplicate document input");
+//     throw IoError("Failed to duplicate document input");
+//   }
+//   auto& skip_in = *skip_in_ptr;
 
-  SDB_ASSERT(!_skip.NumLevels());
-  skip_in.Seek(skip_offs);
-  const auto global_max_score = _skip.Reader().ReadWandScore(skip_in);
-  _skip.Prepare(std::move(skip_in_ptr), docs_count);
+//   SDB_ASSERT(!_skip.NumLevels());
+//   skip_in.Seek(skip_offs);
+//   const auto global_max_score = _skip.Reader().ReadWandScore(skip_in);
+//   _skip.Prepare(std::move(skip_in_ptr), docs_count);
 
-  if (const auto num_levels = _skip.NumLevels();
-      0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels) [[likely]] {
-    SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
-    _skip.Reader().Init(num_levels, global_max_score);
-  } else {
-    SDB_ASSERT(false);
-    throw IndexError{absl::StrCat("Invalid number of skip levels ", num_levels,
-                                  ", must be in range of [1, ",
-                                  doc_limits::kMaxSkipLevels, "].")};
-  }
-}
+//   if (const auto num_levels = _skip.NumLevels();
+//       0 < num_levels && num_levels <= doc_limits::kMaxSkipLevels) [[likely]] {
+//     SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
+//     _skip.Reader().Init(num_levels, global_max_score);
+//   } else {
+//     SDB_ASSERT(false);
+//     throw IndexError{absl::StrCat("Invalid number of skip levels ", num_levels,
+//                                   ", must be in range of [1, ",
+//                                   doc_limits::kMaxSkipLevels, "].")};
+//   }
+// }
 
 }  // namespace irs

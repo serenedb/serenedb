@@ -136,8 +136,6 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
 void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
-// Returns the indexed column info if `expr` is a BoundColumnRef to an
-// indexed column, nullptr otherwise.
 const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
                                           const duckdb::Expression& expr);
 

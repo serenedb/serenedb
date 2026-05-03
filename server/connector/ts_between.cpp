@@ -91,8 +91,6 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_lt('m') or ts_ge(42). Bound must be non-null; "
     "use ts_between(NULL, ...) for unbounded.";
-  // ts_lt / ts_le / ts_gt / ts_ge registered as single-bound ANY;
-  // binder enforces arity.
   SDB_ASSERT(func.children.size() == 1);
   const auto* bound_val = TryGetConstant(*func.children[0]);
   if (!bound_val) {

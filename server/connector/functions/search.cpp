@@ -646,13 +646,10 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
     duckdb::LogicalType::BOOLEAN, TSQueryStubFn));
 }
 
-// SQL-native predicate sugar: `<name>(col, args...)` -> BOOLEAN.
-// Each is a synonym for `col @@ <inner ts_*(...)>`. The filter
-// builder rewrites the call at bind time and dispatches through the
-// existing @@ handler. First arg is ANY so any indexed column type
-// binds; remaining args mirror the inner ts_* shape.
+// Stub registrations for sugar predicates -- the filter builder
+// rewrites each `<name>(col, args...)` call to `col @@ ts_*(args...)`
+// at bind time, so these never execute as scalar functions.
 void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
-  // phrase_matches(col, text [, gap, text, ...]) -- mirrors ts_phrase.
   {
     duckdb::ScalarFunction fn(
       std::string{kPhraseMatches},
@@ -662,7 +659,6 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(fn));
   }
 
-  // ngram_matches(col, text [, threshold]).
   {
     duckdb::ScalarFunctionSet set{std::string{kNgramMatches}};
     set.AddFunction(duckdb::ScalarFunction(
@@ -675,7 +671,6 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // levenshtein_matches(col, term, distance [, transpositions [, prefix]]).
   {
     duckdb::ScalarFunctionSet set{std::string{kLevenshteinMatches}};
     set.AddFunction(duckdb::ScalarFunction(
@@ -694,14 +689,12 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // has_all_tokens(col, list).
   loader.RegisterFunction(duckdb::ScalarFunction(
     std::string{kHasAllTokens},
     {duckdb::LogicalType::ANY,
      duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
     duckdb::LogicalType::BOOLEAN, SearchStubFn));
 
-  // has_any_token(col, list [, n]) and (col, text [, n]).
   {
     duckdb::ScalarFunctionSet set{std::string{kHasAnyToken}};
     set.AddFunction(duckdb::ScalarFunction(

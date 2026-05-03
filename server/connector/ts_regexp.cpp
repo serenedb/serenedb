@@ -53,8 +53,6 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). "
     "Syntax is 'perl' (default) or 'posix'.";
-  // ts_regexp registered as (VARCHAR) and (VARCHAR, VARCHAR); binder
-  // enforces arity.
   SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
   std::string pattern;
   if (auto r = GetVarcharArg(*func.children[0], "ts_regexp pattern", pattern);

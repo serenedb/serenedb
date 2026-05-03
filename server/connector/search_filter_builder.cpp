@@ -242,9 +242,6 @@ std::vector<duckdb::unique_ptr<duckdb::Expression>> MakeChildren(
   return v;
 }
 
-// True iff `type` is one of TSQUERY / TOKENIZED_TSQUERY /
-// BOOSTED_TSQUERY -- all valid carriers of TSQUERY-shaped values
-// inside the filter builder.
 bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
   if (type.id() != duckdb::LogicalTypeId::VARCHAR) {
     return false;
@@ -254,12 +251,9 @@ bool IsAnyTSQueryType(const duckdb::LogicalType& type) {
          alias == kBoostedTSQueryTypeName;
 }
 
-// If `type` is a TSQUERY annotated with a `tokenize(name)` modifier,
-// returns the tokenizer name. Resolution to a live analyzer happens
-// at filter-build time via ResolveTokenizerAnalyzer below -- the bind
-// callback intentionally does NOT pre-resolve, because the analyzer
-// is stateful (one tokenization stream per use) and shouldn't be
-// shared across queries.
+// Bind does NOT pre-resolve the tokenizer name to a live analyzer
+// because the analyzer is stateful (one tokenization stream per use)
+// and can't be shared across queries.
 std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type) {
   if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
     return {};
@@ -273,8 +267,7 @@ std::string_view TryGetTokenizerModifier(const duckdb::LogicalType& type) {
   return duckdb::StringValue::Get(mods[0].value);
 }
 
-// If `type` carries a `boost(K)` modifier, returns the factor.
-// Distinguished from TokenizerModifier by the modifier's value type
+// Boost and tokenizer modifiers are distinguished by value type
 // (DOUBLE vs VARCHAR) so the two never alias each other.
 std::optional<double> TryGetBoostModifier(const duckdb::LogicalType& type) {
   if (!IsAnyTSQueryType(type) || !type.HasExtensionInfo()) {
@@ -372,7 +365,6 @@ Result MakeGroup(irs::BooleanFilter& parent, const FilterContext& ctx,
 
 Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
                   const duckdb::BoundOperatorExpression& op_expr) {
-  // OPERATOR_IS_NULL / IS_NOT_NULL are unary by construction.
   SDB_ASSERT(op_expr.children.size() == 1);
   const auto* column_info = TryFindColumnInfo(ctx, *op_expr.children[0]);
   if (!column_info) {
@@ -688,10 +680,6 @@ duckdb::unique_ptr<duckdb::Expression> BuildAllTokens(
     kTSQAllOf, MakeChildren(MakeTSQueryTokenizeList(std::move(args.at(0)))));
 }
 
-// Wraps a single VARCHAR expression in a constant LIST(VARCHAR) so it
-// flows through ts_tokenize array form. The text must be a constant;
-// non-constant text is rejected (matches the existing ts_tokenize
-// array-form constraint).
 duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
   duckdb::unique_ptr<duckdb::Expression> text) {
   const auto* val = TryGetConstant(*text);
@@ -748,8 +736,6 @@ Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,
                      const duckdb::BoundFunctionExpression& func) {
   SDB_ASSERT(!func.children.empty());
 
-  // Tail must be copied because the builder takes ownership (it splices
-  // the args into a synthesised ts_* call).
   auto tail = func.children | std::views::drop(1) |
               std::views::transform([](const auto& e) { return e->Copy(); }) |
               std::ranges::to<std::vector>();
@@ -769,11 +755,6 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWith(
                   duckdb::Value(std::string{literal}))));
 }
 
-// Appends `s` to `out` with `\`, `%`, `_` backslash-escaped so the
-// result is a LIKE pattern that matches `s` literally. Caller reserves
-// up front (worst-case +1 char per input byte). Used by the `contains`
-// / `ends_with` claim paths to splice user input safely into a LIKE
-// pattern without leaking wildcards.
 void AppendEscapedLikePattern(std::string_view s, std::string& out) {
   for (char c : s) {
     if (c == '\\' || c == '%' || c == '_') {
@@ -876,8 +857,6 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
   }
 
   if (args.size() == 2) {
-    // some functions like regexp_matches/regexp_like have optional third args
-    // for flags; ignore those here since we don't support
     if (auto builder = kBuiltinBuilder.TryFindByFirst(name).value_or(nullptr)) {
       SDB_ASSERT(args.size() == 2);
       if (args[0]->return_type.id() != duckdb::LogicalTypeId::VARCHAR) {
@@ -922,7 +901,6 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
                             const SearchColumnInfo& column_info,
                             const duckdb::BoundFunctionExpression& func,
                             bool is_and) {
-  // `||` / `&&` registered as (TOK, TOK) -> TOK; binder enforces arity.
   SDB_ASSERT(func.children.size() == 2);
   irs::BooleanFilter* group;
   if (is_and) {
@@ -947,7 +925,6 @@ void FromTSQueryConjunction(irs::BooleanFilter& parent,
 void FromTSQueryNot(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info,
                     const duckdb::BoundFunctionExpression& func) {
-  // `!!` registered as (TOK) -> TOK; binder enforces arity.
   SDB_ASSERT(func.children.size() == 1);
   auto neg = ctx;
   neg.negated = !ctx.negated;
@@ -962,7 +939,6 @@ void FromTSQueryBoost(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_phrase('text') ^ 2.0. Factor must be >= 0; "
     "for composable boost use ::boost(K).";
-  // `^` registered as (TOK, DOUBLE) -> TSQ; binder enforces arity.
   SDB_ASSERT(func.children.size() == 2);
   double factor_d;
   if (auto r = GetDoubleArg(*func.children[1], "boost factor", factor_d);
@@ -1082,8 +1058,6 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
       ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
-  // Wrapper lives on this stack frame; releases the analyzer back to
-  // the Tokenizer's pool when the scope exits.
   auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, tokenizer);
   if (!wrapper) {
     THROW_SQL_ERROR(
@@ -1094,8 +1068,8 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   }
   auto sub_ctx = ctx.WithTokenizer(*wrapper);
   if (val) {
-    // Cannot recurse on a folded constant -- its type still carries
-    // the modifier and would re-enter this branch.
+    // Don't recurse on a folded constant: its type still carries the
+    // modifier and would re-enter this branch.
     if (val->IsNull() || val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("::tokenize(<name>): inner value must be "
@@ -1109,11 +1083,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
   return true;
 }
 
-// Resolves an `@@` match against its two operand expressions. Called
-// directly with the bound `@@` function's two children, and from the
-// predicate-sugar / built-in claim paths with one column expression
-// and a computed inner. `@@` is commutative -- either side may be
-// the column.
+// `@@` is commutative -- either side may be the column.
 void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs) {
@@ -1199,10 +1169,8 @@ Result FromOperatorExpression(irs::BooleanFilter& filter,
 
 Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& expr) {
-  // Peel the BOOSTED_TSQUERY -> BOOLEAN coercion the WHERE-binder
-  // inserts when a `(predicate)::boost(K)` cast appears at the
-  // predicate root, then dispatch the boost cast itself. If the
-  // inner predicate can't be claimed, this throws.
+  // Peel the BOOSTED_TSQUERY -> BOOLEAN coercion that the WHERE-binder
+  // inserts around `(predicate)::boost(K)` at the predicate root.
   if (TryDispatchSqlBoostCast(filter, ctx, UnwrapBoostBoolCoercion(expr))) {
     return {};
   }
@@ -1250,11 +1218,8 @@ const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
     return nullptr;
   }
-  // Two-step lookup: first resolve via column_getter to get the
-  // column_id, then check cache. The column_getter itself may be cheap
-  // (just a span lookup), but caching avoids repeated analyzer copies.
-  // We cannot cache by binding alone (table_index + column_index)
-  // because different bindings may map to the same catalog column_id.
+  // Cache by catalog column_id, not by binding (table_index +
+  // column_index): different bindings may map to the same column_id.
   auto info = ctx.column_getter(expr.Cast<duckdb::BoundColumnRefExpression>());
   if (!info) {
     return nullptr;
@@ -1343,14 +1308,10 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   }
 }
 
-// Looser numeric check used by RANGE / LESS / LESS_EQ / GREATER /
-// GREATER_EQ bound validation: accepts the same set as
-// IsNumericTypeId plus DECIMAL. The TSQUERY range constructors cast
-// bound values to the column's logical type before tokenising, so
-// DECIMAL bounds on a DOUBLE/INT/BIGINT column work as expected. We
-// don't fold DECIMAL into IsNumericTypeId itself because the legacy
-// FromComparison / SetupTermFilter paths feed `type_id` directly into
-// ResetNumericStream, which doesn't handle DECIMAL.
+// Accepts numeric + DECIMAL. Range constructors cast DECIMAL bounds
+// to the column's logical type before tokenising; the comparison/term
+// paths can't because they feed `type_id` straight into
+// ResetNumericStream which doesn't handle DECIMAL.
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id) {
   return IsNumericTypeId(id) || id == duckdb::LogicalTypeId::DECIMAL;
 }
@@ -1364,15 +1325,13 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
     }
     const auto& target = cast.return_type;
     const auto& source = cast.child->return_type;
-    // Stop at modifier-bearing casts; the walker needs to see them.
+    // Modifier-bearing casts must be preserved so the walker sees them.
     if (!TryGetTokenizerModifier(target).empty() ||
         TryGetBoostModifier(target)) {
       break;
     }
-    // Peel only transit casts within the {VARCHAR, TSQUERY,
-    // TOKENIZED_TSQUERY} family: both sides VARCHAR-backed, with at
-    // least one carrying a TSQUERY alias (otherwise it's a plain
-    // VARCHAR->VARCHAR cast we shouldn't strip).
+    // Peel transit casts within {VARCHAR, TSQUERY, TOKENIZED_TSQUERY}
+    // only -- a plain VARCHAR->VARCHAR cast must stay.
     if (target.id() != duckdb::LogicalTypeId::VARCHAR ||
         source.id() != duckdb::LogicalTypeId::VARCHAR) {
       break;
@@ -1455,9 +1414,7 @@ Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
   }
 }
 
-// Per-type TSQUERY entry points -- each defined in ts_<name>.cpp and
-// dispatched to from BuildTSQuery's switch below. All throw
-// THROW_SQL_ERROR on any failure (with operator-specific hints).
+// All From* entry points throw THROW_SQL_ERROR on failure.
 void FromPhrase(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);

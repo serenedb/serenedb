@@ -111,7 +111,6 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  // Arity already enforced by ParseLevenshteinArgs's assertion.
   auto args = ParseLevenshteinArgs(func);
 
   std::string field_name;

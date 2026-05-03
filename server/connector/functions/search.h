@@ -102,9 +102,7 @@ inline constexpr std::string_view kTSQueryPhraseSeq = "##";
 // side resolves to a column reference.
 inline constexpr std::string_view kTSQueryMatch = "@@";
 
-// SQL-native predicate sugar. Each rewrites at filter-build time to
-// `col @@ <inner ts_*(...)>` and dispatches through the existing @@
-// handler -- no per-predicate filter logic.
+// Sugar predicates: rewritten to `col @@ ts_*(...)` at filter-build time.
 inline constexpr std::string_view kPhraseMatches = "phrase_matches";
 inline constexpr std::string_view kNgramMatches = "ngram_matches";
 inline constexpr std::string_view kLevenshteinMatches = "levenshtein_matches";

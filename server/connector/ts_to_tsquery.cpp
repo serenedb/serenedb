@@ -240,7 +240,6 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: to_tsquery('field:foo AND bar*'). Lucene syntax: "
     "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N.";
-  // to_tsquery registred as (VARCHAR); binder enforces arity.
   SDB_ASSERT(func.children.size() == 1);
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "to_tsquery text", text);

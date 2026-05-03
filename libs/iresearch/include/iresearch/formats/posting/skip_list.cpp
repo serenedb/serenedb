@@ -148,23 +148,20 @@ void NewSkipWriter::WriteInlineSkipEntry(const InlineSkipEntry& skip_entry, Inde
 
 void NewSkipWriter::WriteInlinePosPayMetadata(const PosPayMetadata& meta, const Features& features, IndexOutput& out) {
   if (features.HasPosition()) {
-    out.WriteByte(meta.pos_block_idx);
 
     uint32_t pos_pay_enc = 0;
     uint32_t pos_ptr_size = ByteSize1234(meta.pos_ptr);
     pos_pay_enc |= (pos_ptr_size - 1);
+    out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pos_ptr), pos_ptr_size);
 
     uint32_t pay_ptr_size = ByteSize1234(meta.pay_ptr);
     if (features.HasOffset()) {
       pos_pay_enc |= ((pay_ptr_size - 1) << 2);
-    }
-    out.WriteByte(pos_pay_enc);
-
-    out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pos_ptr), pos_ptr_size);
-
-    if (features.HasOffset()) {
       out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pay_ptr), pay_ptr_size);
     }
+
+    out.WriteByte(meta.pos_block_idx);
+    out.WriteByte(pos_pay_enc);
   }
 }
 
@@ -194,6 +191,16 @@ void NewSkipWriter::WriteSkipEntry(const SkipEntry& skip_entry, const Features& 
   }
 }
 
+void NewSkipWriter::WriteWandData(WandWriter::WandData data, IndexOutput& out) {
+  uint32_t freq_size = ByteSize1234(data.freq);
+  uint32_t norm_code = (data.norm ? ByteSize124ForSkipEntry(*data.norm) : 0);
+  out.WriteByte((freq_size - 1) | (norm_code << 2));
+
+  SerializeFor1234(freq_size, data.freq, out);
+  if (norm_code > 0)
+    Serialize124ForSkipEntry(norm_code, *data.norm, out);
+}
+
 size_t NewSkipWriter::CalculatePosPayMetaSize(PosPayMetadata meta, const Features& features) {
   size_t byte_count = 0;
   if (features.HasPosition()) {
@@ -213,7 +220,7 @@ void NewSkipWriter::FlushLevel(size_t num_levels, IndexOutput& out) {
     auto& stream = _level1.stream;
     stream.Flush();  // update length of each buffer
 
-    out.WriteU16(_count_entries_level1); // TODO(afigor2701): maybe delete this
+    out.WriteU32(_count_entries_level1); // TODO(afigor2701): maybe delete this
     _level1.file >> out;
   }
 }

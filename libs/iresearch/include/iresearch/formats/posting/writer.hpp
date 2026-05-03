@@ -304,9 +304,9 @@ inline SkipEntry PostingsWriterBase::GetSkipEntryAndRecalcDelta()  {
     }
     SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
     result.meta.pos_block_idx = _pos.size;
-
-    return result;
   }
+
+  return result;
 }
 
 inline void PostingsWriterBase::Prepare(IndexOutput& out,
@@ -406,11 +406,10 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
 
   const bool has_skip_list = NewSkipWriter::Skip0() < meta.docs_count;
   auto write_max_score = [&](size_t level) {
-    ApplyToWriter([&](auto& writer) {
-      const uint8_t size = writer.SizeRoot(level);
-      _doc_out->WriteByte(size);
-    });
-    ApplyToWriter([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
+    if (HasValidWandWriter()) {
+      auto wand_data = _valid_writer->CalculateAndGetWandDataRoot(level);
+      NewSkipWriter::WriteWandData(wand_data, *_doc_out);
+    }
   };
 
   if (1 == meta.docs_count) {
@@ -601,7 +600,7 @@ void PostingsWriterImpl<FormatTraits>::EndDocument(size_t processed_docs) {
     }
 
     auto [best_encoding_doc, best_size_doc] = FormatTraits::CalculateBestEncodingAndSizeBlockDelta(_doc.docs.data(), _doc.block_last, _buf);
-    auto best_encoding_freq_opt = _features.HasFrequency() ? std::optional(FormatTraits::CalculateBestEncodingAndSizeBlock(_doc.freqs.data(), _buf)) : std::nullopt;
+    auto best_encoding_freq_opt = _features.HasFrequency() ? std::optional(FormatTraits::CalculateBestEncodingBlock(_doc.freqs.data(), _buf)) : std::nullopt;
 
     PosPayMetadata meta;
     if (_features.HasPosition()) {
@@ -628,14 +627,14 @@ void PostingsWriterImpl<FormatTraits>::EndDocument(size_t processed_docs) {
 
       FormatTraits::WriteBlockDelta(best_encoding_doc, best_size_doc, *_doc_out, _doc.docs.data(), _doc.block_last, _buf);
       if (_features.HasFrequency()) {
-        FormatTraits::WriteBlock(*best_encoding_freq_opt, _doc.freqs.data(), _buf);
+        FormatTraits::WriteBlock(*best_encoding_freq_opt, *_doc_out, _doc.freqs.data(), _buf);
       }
 
       NewSkipWriter::WriteInlinePosPayMetadata(meta, _features, *_doc_out);
     }
 
     _new_skip.AddLevel1IfNeed(processed_docs, [this](MemoryIndexOutput& out) {
-      NewSkipWriter::WriteSkipEntry(GetSkipEntryAndRecalcDelta(), out);
+      NewSkipWriter::WriteSkipEntry(GetSkipEntryAndRecalcDelta(), _features, out);
 
       ApplyToWriter([&](auto& writer) {
         const uint8_t size = writer.Size(1);

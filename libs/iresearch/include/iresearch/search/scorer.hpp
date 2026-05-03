@@ -109,12 +109,6 @@ struct TermCollector {
   virtual void write(DataOutput& out) const = 0;
 };
 
-struct WandSource : AttributeProvider {
-  using ptr = std::unique_ptr<WandSource>;
-
-  virtual void Read(DataInput& in, size_t size) = 0;
-};
-
 struct WandWriter {
   using ptr = std::unique_ptr<WandWriter>;
 
@@ -136,11 +130,20 @@ struct WandWriter {
   virtual void Update() = 0;
 
   virtual WandData CalculateAndGetWandData(size_t level) = 0;
+  virtual WandData CalculateAndGetWandDataRoot(size_t level) = 0;
   virtual void Write(size_t level, MemoryIndexOutput& out) = 0;
-  virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
+  // virtual void WriteRoot(size_t level, IndexOutput& out) = 0;
 
   virtual byte_type Size(size_t level) const = 0;
   virtual byte_type SizeRoot(size_t level) = 0;
+};
+
+struct WandSource : AttributeProvider {
+  using ptr = std::unique_ptr<WandSource>;
+
+  virtual void Read(DataInput& in, size_t size) = 0;
+
+  virtual void ReadFromWandData(const WandWriter::WandData& data) = 0;
 };
 
 struct ScoreContext {

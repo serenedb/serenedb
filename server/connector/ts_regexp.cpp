@@ -98,7 +98,8 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   *filter.mutable_field() = std::move(field_name);
   auto* opts = filter.mutable_options();
   opts->scored_terms_limit = ctx.scored_terms_limit;
-  opts->pattern.assign(irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+  opts->pattern.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
   opts->syntax = syntax;
 }
 

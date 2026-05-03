@@ -769,81 +769,6 @@ void LikeEscapeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// similar_to_escape(pattern[, escape]) -> varchar
-// Converts a SQL SIMILAR TO pattern into a POSIX regex.
-// Ported from PG's similar_escape in regexp.c.
-std::string SimilarToEscapePattern(std::string_view pattern, char escape_char) {
-  std::string result;
-  result.reserve(pattern.size() + 6);
-
-  bool afterescape = false;
-  int nquotes = 0;
-  int bracket_depth = 0;
-  int charclass_pos = 0;
-
-  result += "^(?:";
-
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    char pchar = pattern[i];
-
-    if (afterescape) {
-      if (pchar == '"' && bracket_depth < 1) {
-        if (nquotes == 0) {
-          result += "){1,1}?(";
-        } else if (nquotes == 1) {
-          result += "){1,1}(?:";
-        } else {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER),
-            ERR_MSG("SQL regular expression may not contain more than "
-                    "two escape-double-quote separators"));
-        }
-        nquotes++;
-      } else {
-        result += '\\';
-        result += pchar;
-        charclass_pos = 3;
-      }
-      afterescape = false;
-    } else if (pchar == escape_char) {
-      afterescape = true;
-    } else if (bracket_depth > 0) {
-      if (pchar == '\\') {
-        result += '\\';
-      }
-      result += pchar;
-      if (pchar == ']' && charclass_pos > 2) {
-        bracket_depth--;
-      } else if (pchar == '[') {
-        bracket_depth++;
-        charclass_pos = 3;
-      } else if (pchar == '^') {
-        charclass_pos++;
-      } else {
-        charclass_pos = 3;
-      }
-    } else if (pchar == '[') {
-      result += pchar;
-      bracket_depth = 1;
-      charclass_pos = 1;
-    } else if (pchar == '%') {
-      result += ".*";
-    } else if (pchar == '_') {
-      result += '.';
-    } else if (pchar == '(') {
-      result += "(?:";
-    } else if (pchar == '\\' || pchar == '.' || pchar == '^' || pchar == '$') {
-      result += '\\';
-      result += pchar;
-    } else {
-      result += pchar;
-    }
-  }
-
-  result += ")$";
-  return result;
-}
-
 void SimilarToEscapeFunction2(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
@@ -1112,14 +1037,6 @@ void RegexpMatchFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
 }  // namespace
 
-// like_escape(pattern, escape) -> varchar
-// Normalizes a LIKE pattern's escape character to backslash.
-// If escape is already '\', returns pattern unchanged.
-// Otherwise replaces escape_char sequences with '\' sequences and escapes
-// literal backslashes. A doubled escape char (e.g. "!!") in the source
-// pattern becomes "\!" in the output -- semantically equivalent to a plain
-// "!" as far as iresearch's wildcard filter is concerned (see
-// ComputeWildcardType / FromWildcard / Unescape).
 std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
   if (escape_char == '\\') {
     return std::string{pattern};
@@ -1138,6 +1055,78 @@ std::string LikeEscapePattern(std::string_view pattern, char escape_char) {
     result += c;
     afterescape = false;
   }
+  return result;
+}
+
+std::string SimilarToEscapePattern(std::string_view pattern, char escape_char) {
+  std::string result;
+  result.reserve(pattern.size() + 6);
+
+  bool afterescape = false;
+  int nquotes = 0;
+  int bracket_depth = 0;
+  int charclass_pos = 0;
+
+  result += "^(?:";
+
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    char pchar = pattern[i];
+
+    if (afterescape) {
+      if (pchar == '"' && bracket_depth < 1) {
+        if (nquotes == 0) {
+          result += "){1,1}?(";
+        } else if (nquotes == 1) {
+          result += "){1,1}(?:";
+        } else {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_USE_OF_ESCAPE_CHARACTER),
+            ERR_MSG("SQL regular expression may not contain more than "
+                    "two escape-double-quote separators"));
+        }
+        nquotes++;
+      } else {
+        result += '\\';
+        result += pchar;
+        charclass_pos = 3;
+      }
+      afterescape = false;
+    } else if (pchar == escape_char) {
+      afterescape = true;
+    } else if (bracket_depth > 0) {
+      if (pchar == '\\') {
+        result += '\\';
+      }
+      result += pchar;
+      if (pchar == ']' && charclass_pos > 2) {
+        bracket_depth--;
+      } else if (pchar == '[') {
+        bracket_depth++;
+        charclass_pos = 3;
+      } else if (pchar == '^') {
+        charclass_pos++;
+      } else {
+        charclass_pos = 3;
+      }
+    } else if (pchar == '[') {
+      result += pchar;
+      bracket_depth = 1;
+      charclass_pos = 1;
+    } else if (pchar == '%') {
+      result += ".*";
+    } else if (pchar == '_') {
+      result += '.';
+    } else if (pchar == '(') {
+      result += "(?:";
+    } else if (pchar == '\\' || pchar == '.' || pchar == '^' || pchar == '$') {
+      result += '\\';
+      result += pchar;
+    } else {
+      result += pchar;
+    }
+  }
+
+  result += ")$";
   return result;
 }
 

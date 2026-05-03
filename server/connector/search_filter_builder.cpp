@@ -653,20 +653,6 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
   return {};
 }
 
-// Appends `s` to `out` with `\`, `%`, `_` backslash-escaped so the
-// result is a LIKE pattern that matches `s` literally. Caller reserves
-// up front (worst-case +1 char per input byte). Used by the `contains`
-// / `ends_with` claim paths to splice user input safely into a LIKE
-// pattern without leaking wildcards.
-void AppendEscapedLikePattern(std::string_view s, std::string& out) {
-  for (char c : s) {
-    if (c == '\\' || c == '%' || c == '_') {
-      out.push_back('\\');
-    }
-    out.push_back(c);
-  }
-}
-
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryCall(
   std::string_view ts_name, duckdb::LogicalType return_type,
   std::vector<duckdb::unique_ptr<duckdb::Expression>> children) {
@@ -781,6 +767,20 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWith(
   return MakeTSQueryCall(
     kTSQPrefix, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
                   duckdb::Value(std::string{literal}))));
+}
+
+// Appends `s` to `out` with `\`, `%`, `_` backslash-escaped so the
+// result is a LIKE pattern that matches `s` literally. Caller reserves
+// up front (worst-case +1 char per input byte). Used by the `contains`
+// / `ends_with` claim paths to splice user input safely into a LIKE
+// pattern without leaking wildcards.
+void AppendEscapedLikePattern(std::string_view s, std::string& out) {
+  for (char c : s) {
+    if (c == '\\' || c == '%' || c == '_') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSContainsLike(
@@ -1143,8 +1143,6 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
       ERR_HINT("Reindex the VARCHAR column with a text-search analyzer."));
   }
   auto sub_ctx = ctx.WithTokenizer(*tokenizer);
-  // BuildTSQuery throws THROW_SQL_ERROR with the standard hint on any
-  // dispatch failure, so we don't wrap its result here.
   BuildTSQuery(filter, sub_ctx, *column_info, expr);
 }
 

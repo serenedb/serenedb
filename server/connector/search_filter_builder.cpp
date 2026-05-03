@@ -1289,9 +1289,6 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
     case duckdb::LogicalTypeId::BIGINT:
     case duckdb::LogicalTypeId::FLOAT:
     case duckdb::LogicalTypeId::DOUBLE:
-    case duckdb::LogicalTypeId::DATE:
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       return true;
     default:
       return false;

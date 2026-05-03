@@ -374,14 +374,10 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
                   const duckdb::BoundOperatorExpression& op_expr) {
   // OPERATOR_IS_NULL / IS_NOT_NULL are unary by construction.
   SDB_ASSERT(op_expr.children.size() == 1);
-  const auto* column_ref = TryGetColumnRef(*op_expr.children[0]);
-  if (!column_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
+  const auto* column_info = TryFindColumnInfo(ctx, *op_expr.children[0]);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "IS NULL input is not a reference to an indexed column"};
   }
   std::string field_name;
   MakeFieldName(column_info->column_id, field_name);
@@ -399,23 +395,19 @@ template<bool GenericVersion>
 Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
-  const auto* column_ref = TryGetColumnRef(left_expr);
+  const auto* column_info = TryFindColumnInfo(ctx, left_expr);
   const auto* const_val = TryGetConstant(right_expr);
 
-  if (!column_ref || !const_val) {
+  if (!column_info || !const_val) {
     return {ERROR_BAD_PARAMETER,
-            "Expected column reference on the left and constant on the right"};
+            "Expected indexed column reference on the left and constant on "
+            "the right"};
   }
 
   if (const_val->IsNull()) {
     // foo == NULL is always false and foo != NULL is false too.
     AddFilter<irs::Empty>(filter);
     return {};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
   if constexpr (GenericVersion) {
     if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
@@ -446,22 +438,17 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
     op = InvertComparisonOp(op);
   }
 
-  const auto* column_ref = TryGetColumnRef(field_expr);
+  const auto* column_info = TryFindColumnInfo(ctx, field_expr);
   const auto* const_val = TryGetConstant(value_expr);
 
-  if (!column_ref || !const_val) {
+  if (!column_info || !const_val) {
     return {ERROR_BAD_PARAMETER,
-            "Expected column reference and constant for comparison"};
+            "Expected indexed column reference and constant for comparison"};
   }
 
   if (const_val->IsNull()) {
     AddFilter<irs::Empty>(filter);
     return {};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
   }
   if constexpr (GenericVersion) {
     if (column_info->logical_type.id() == duckdb::LogicalTypeId::VARCHAR &&
@@ -543,11 +530,6 @@ Result FromBetween(irs::BooleanFilter& filter, const FilterContext& ctx,
   // Decompose BETWEEN into conjunction of two range comparisons.
   // BETWEEN a AND b  =>  field >= a (or >) AND field <= b (or <)
   // NOT BETWEEN       =>  field < a (or <=) OR field > b (or >=)
-
-  const auto* column_ref = TryGetColumnRef(*between.input);
-  if (!column_ref) {
-    return {ERROR_BAD_PARAMETER, "BETWEEN input is not a column reference"};
-  }
   const auto* lower_val = TryGetConstant(*between.lower);
   const auto* upper_val = TryGetConstant(*between.upper);
   if (!lower_val || !upper_val) {
@@ -601,14 +583,10 @@ Result FromIn(irs::BooleanFilter& filter, const FilterContext& ctx,
               const duckdb::BoundOperatorExpression& op_expr) {
   SDB_ASSERT(op_expr.children.size() >= 2);
 
-  const auto* column_ref = TryGetColumnRef(*op_expr.children[0]);
-  if (!column_ref) {
-    return {ERROR_BAD_PARAMETER, "Input is not a column reference"};
-  }
-
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
+  const auto* column_info = TryFindColumnInfo(ctx, *op_expr.children[0]);
   if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column was not found"};
+    return {ERROR_BAD_PARAMETER,
+            "IN input is not a reference to an indexed column"};
   }
 
   if constexpr (GenericVersion) {
@@ -866,35 +844,6 @@ constexpr containers::TrivialBiMap kBuiltinBuilder = [](auto selector) {
     .Case("~~", &BuildTSLike);
 };
 
-// Pre-extracted variant: validates column ref + indexed + analyzer
-// predicate, then synthesises `col @@ build_inner(pattern)` and
-// dispatches via FromTSQueryMatch. Used by callers that already
-// extracted the literal pattern (e.g. LIKE which also needs to
-// normalise via LikeEscapePattern).
-Result RewriteAsTSQueryMatch(irs::BooleanFilter& filter,
-                             const FilterContext& ctx,
-                             const duckdb::Expression& column_expr,
-                             std::string_view pattern,
-                             StringBuiltinBuilder build_inner,
-                             AnalyzerPredicate analyzer_ok,
-                             std::string_view func_name) {
-  const auto* column_ref = TryGetColumnRef(column_expr);
-  if (!column_ref) {
-    return {ERROR_NOT_IMPLEMENTED, func_name,
-            ": first arg is not a column reference"};
-  }
-  const auto* column_info = FindColumnInfo(ctx, *column_ref);
-  if (!column_info) {
-    return {ERROR_BAD_PARAMETER, "Column is not indexed"};
-  }
-  if (!analyzer_ok(column_info->tokenizer.analyzer->type())) {
-    return {ERROR_BAD_PARAMETER, func_name, ": column analyzer not supported"};
-  }
-  auto inner = build_inner(pattern);
-  FromTSQueryMatch(filter, ctx, column_expr, *inner);
-  return {};
-}
-
 Result FromFunctionExpression(irs::BooleanFilter& filter,
                               const FilterContext& ctx,
                               const duckdb::BoundFunctionExpression& func) {
@@ -947,8 +896,17 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
         validator = &IsLikeCompatibleAnalyzer;
       }
 
-      return RewriteAsTSQueryMatch(filter, ctx, *args[0], *pattern, builder,
-                                   validator, name);
+      const auto* column_info = TryFindColumnInfo(ctx, *args[0]);
+      if (!column_info) {
+        return {ERROR_NOT_IMPLEMENTED, name,
+                ": first arg is not a reference to an indexed column"};
+      }
+      if (!validator(column_info->tokenizer.analyzer->type())) {
+        return {ERROR_BAD_PARAMETER, name, ": column analyzer not supported"};
+      }
+      auto inner = builder(*pattern);
+      FromTSQueryMatch(filter, ctx, *args[0], *inner);
+      return {};
     }
   }
 
@@ -1159,39 +1117,24 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
 void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& lhs,
                       const duckdb::Expression& rhs) {
-  const auto* left_col = TryGetColumnRef(UnwrapTSQueryCast(lhs));
-  const auto* right_col = TryGetColumnRef(UnwrapTSQueryCast(rhs));
-  const duckdb::BoundColumnRefExpression* column = nullptr;
-  const duckdb::Expression* expr = nullptr;
-  if (left_col && right_col) {
-    const auto* left_info = FindColumnInfo(ctx, *left_col);
-    const auto* right_info = FindColumnInfo(ctx, *right_col);
-    if (left_info && right_info) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("@@ has column references on both sides"),
-        ERR_HINT("Wrap one side in 'word'::TSQUERY or a constructor "
-                 "(ts_phrase, ts_like, ...)."));
-    }
-    column = left_info ? left_col : right_col;
-    expr = left_info ? &rhs : &lhs;
-  } else if (left_col) {
-    column = left_col;
-    expr = &rhs;
-  } else if (right_col) {
-    column = right_col;
-    expr = &lhs;
-  } else {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("@@ requires a column reference on one side"),
-                    ERR_HINT("Use: <col> @@ <tsquery_expr>."));
+  const auto* left_info = TryFindColumnInfo(ctx, UnwrapTSQueryCast(lhs));
+  const auto* right_info = TryFindColumnInfo(ctx, UnwrapTSQueryCast(rhs));
+  if (left_info && right_info) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("@@ has column references on both sides"),
+      ERR_HINT("Wrap one side in 'word'::TSQUERY or a constructor "
+               "(ts_phrase, ts_like, ...)."));
   }
-  const auto* column_info = FindColumnInfo(ctx, *column);
+  const auto* column_info = left_info ? left_info : right_info;
   if (!column_info) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("@@ column not found in inverted index"),
-                    ERR_HINT("CREATE INDEX ... USING inverted(<col>)."));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("@@ requires an inverted-indexed column on one side"),
+      ERR_HINT("Use: <indexed_col> @@ <tsquery_expr>. CREATE INDEX ... "
+               "USING inverted(<col>) if missing."));
   }
+  const auto& expr = left_info ? rhs : lhs;
   auto* tokenizer = column_info->tokenizer.analyzer.get();
   if (!tokenizer) {
     THROW_SQL_ERROR(
@@ -1202,7 +1145,7 @@ void FromTSQueryMatch(irs::BooleanFilter& filter, const FilterContext& ctx,
   auto sub_ctx = ctx.WithTokenizer(*tokenizer);
   // BuildTSQuery throws THROW_SQL_ERROR with the standard hint on any
   // dispatch failure, so we don't wrap its result here.
-  BuildTSQuery(filter, sub_ctx, *column_info, *expr);
+  BuildTSQuery(filter, sub_ctx, *column_info, expr);
 }
 
 Result FromComparisonExpression(irs::BooleanFilter& filter,
@@ -1297,14 +1240,6 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
 
 }  // namespace
 
-const duckdb::BoundColumnRefExpression* TryGetColumnRef(
-  const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-    return nullptr;
-  }
-  return &expr.Cast<duckdb::BoundColumnRefExpression>();
-}
-
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
@@ -1312,30 +1247,26 @@ const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
 }
 
-const SearchColumnInfo* FindColumnInfo(
-  const FilterContext& ctx, const duckdb::BoundColumnRefExpression& ref) {
-  // Try cache first -- keyed on column_id from a previous resolution.
-  // We do a two-step lookup: first resolve via column_getter to get the
-  // column_id, then check cache.  The column_getter itself may be cheap
+const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
+                                          const duckdb::Expression& expr) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return nullptr;
+  }
+  // Two-step lookup: first resolve via column_getter to get the
+  // column_id, then check cache. The column_getter itself may be cheap
   // (just a span lookup), but caching avoids repeated analyzer copies.
-
-  // We cannot cache by binding alone (table_index + column_index) because
-  // different bindings may map to the same catalog column_id.  Instead
-  // we resolve first, then cache by column_id.
-
-  auto info = ctx.column_getter(ref);
+  // We cannot cache by binding alone (table_index + column_index)
+  // because different bindings may map to the same catalog column_id.
+  auto info = ctx.column_getter(expr.Cast<duckdb::BoundColumnRefExpression>());
   if (!info) {
     return nullptr;
   }
-
-  auto cache_it = ctx.column_cache.find(info->column_id);
-  if (cache_it != ctx.column_cache.end()) {
-    SDB_ASSERT(cache_it->second.logical_type.id() !=
-                 duckdb::LogicalTypeId::VARCHAR ||
-               cache_it->second.tokenizer.analyzer);
-    return &cache_it->second;
+  if (auto it = ctx.column_cache.find(info->column_id);
+      it != ctx.column_cache.end()) {
+    SDB_ASSERT(it->second.logical_type.id() != duckdb::LogicalTypeId::VARCHAR ||
+               it->second.tokenizer.analyzer);
+    return &it->second;
   }
-
   auto column_id = info->column_id;
   return &ctx.column_cache.emplace(column_id, std::move(info.value()))
             .first->second;

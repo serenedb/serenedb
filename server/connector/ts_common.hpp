@@ -136,11 +136,10 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
 void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
-// SQL-surface helpers shared with cross-TU claimers.
-const duckdb::BoundColumnRefExpression* TryGetColumnRef(
-  const duckdb::Expression& expr);
-const SearchColumnInfo* FindColumnInfo(
-  const FilterContext& ctx, const duckdb::BoundColumnRefExpression& column_ref);
+// Returns the indexed column info if `expr` is a BoundColumnRef to an
+// indexed column, nullptr otherwise.
+const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
+                                          const duckdb::Expression& expr);
 
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).

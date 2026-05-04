@@ -375,3 +375,49 @@ SELECT id FROM prim_types_idx WHERE content->>'val' IS NULL;
 ----
 id
 6
+
+# Same JSON path indexed once, but two tokenizers are in flight at the
+# same time: the user-configured keyword tokenizer for string
+# leaves, and the built-in NumericTokenizer for integer/float leaves.
+# Both work without re-declaring the path -- the sink dispatches per leaf
+# type to the matching pre-emitted iresearch field.
+
+statement ok
+CREATE TABLE mixed_tok (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX mixed_tok_idx ON mixed_tok USING inverted(
+    id, (content->>'val') verbatim_dict);
+
+statement ok
+INSERT INTO mixed_tok VALUES
+    (1, '{"val":"hello"}'::json),
+    (2, '{"val":42}'::json),
+    (3, '{"val":"world"}'::json),
+    (4, '{"val":7}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) mixed_tok;
+
+# Keyword tokenizer side: exact-match string lookup hits the string-mangled
+# field.
+query
+SELECT id FROM mixed_tok_idx WHERE content->>'val' = 'hello';
+----
+id
+1
+
+# Numeric tokenizer side: integer cast routes to the numeric-mangled field
+# without ever evaluating the cast on string-leaf rows.
+query
+SELECT id FROM mixed_tok_idx WHERE (content->>'val')::int = 42;
+----
+id
+2
+
+# Range filter on the numeric side.
+query
+SELECT id FROM mixed_tok_idx WHERE (content->>'val')::double > 10 ORDER BY id;
+----
+id
+2

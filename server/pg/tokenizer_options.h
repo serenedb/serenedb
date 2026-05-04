@@ -348,7 +348,7 @@ inline constexpr OptionGroup kUnionGroup{
   {},
   {},
 };
-inline constexpr OptionGroup kIdentityGroup{
+inline constexpr OptionGroup kKeywordGroup{
   irs::StringTokenizer::type_name(),
   {},
   {},
@@ -364,7 +364,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kNormGroup,           kSegmentationGroup,
   kPipelineGroup,       kPatternGroup,
   kPathHierarchyGroup,  kUnionGroup,
-  kCopyFromGroup,       kIdentityGroup,
+  kCopyFromGroup,       kKeywordGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

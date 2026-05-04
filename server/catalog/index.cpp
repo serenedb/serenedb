@@ -92,6 +92,18 @@ ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
 }
 
 constexpr std::string_view kHnswKind = "hnsw";
+constexpr std::array<std::string_view, 1> kKnownOpclassTypes{kHnswKind};
+
+std::string DescribeKnownOpclassTypes() {
+  std::string out;
+  for (size_t i = 0; i < kKnownOpclassTypes.size(); ++i) {
+    if (i) {
+      out += ", ";
+    }
+    out += kKnownOpclassTypes[i];
+  }
+  return out;
+}
 
 std::string DescribeHNSWOptions() {
   return "metric (string: l2|l1|cosine|ip, REQUIRED), "
@@ -313,11 +325,15 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     if (!dict) {
       return std::unexpected<Result>{std::in_place,
                                      ERROR_BAD_PARAMETER,
-                                     "Text search dictionary '",
+                                     "Unknown opclass '",
                                      opclass,
-                                     "' does not exist.",
-                                     " Required by column '",
+                                     "' on column '",
                                      col_name,
+                                     "': not a built-in type (known: ",
+                                     DescribeKnownOpclassTypes(),
+                                     ") and no text dictionary by that name "
+                                     "in schema '",
+                                     schema_name,
                                      "'"};
     }
     return std::make_pair(dict->GetId(), dict->GetFeatures());
@@ -372,19 +388,20 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         }
         index_col.hnsw_config = cfg;
       } else {
+        auto dict = resolve_dict(c.name, c.opclass);
+        if (!dict) {
+          return std::unexpected<Result>{std::move(dict.error())};
+        }
         if (!c.opclass_options.empty()) {
           return std::unexpected<Result>{
             std::in_place,
             ERROR_BAD_PARAMETER,
             "Opclass '",
             c.opclass,
-            "' does not accept options (used on column '",
+            "' refers to text dictionary and does not accept options "
+            "(used on column '",
             c.name,
             "')"};
-        }
-        auto dict = resolve_dict(c.name, c.opclass);
-        if (!dict) {
-          return std::unexpected<Result>{std::move(dict.error())};
         }
         index_col.text_dictionary = dict->first;
         index_col.features = dict->second;

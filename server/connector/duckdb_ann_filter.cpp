@@ -109,7 +109,7 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
   if (!_index_source) {
     _index_source = MakeIndexSource(
       _ctx.context, _ctx.bind_data, _ctx.rocksdb_snapshot, _ctx.rocksdb_txn,
-      _ctx.filter_projection, _ctx.filter_types, _ctx.filter_column_ids);
+      _ctx.filter_projection, _ctx.filter_types, _ctx.bind_data.column_ids);
   }
   if (std::holds_alternative<std::monostate>(_pk_batch)) {
     _pk_batch = _index_source->CreatePkBatch();

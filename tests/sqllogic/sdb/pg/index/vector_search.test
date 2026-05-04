@@ -32,9 +32,9 @@ EXPLAIN SELECT id FROM l2_index ORDER BY l2_norm(emb) LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 5          │
 │          Dims: 3          │
@@ -311,9 +311,9 @@ EXPLAIN SELECT id FROM l1_index ORDER BY l1_norm(emb) LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_l1        │
+│      Index: l1_index      │
 │      Lookup: rocksdb      │
 │          TopK: 5          │
 │          Dims: 3          │
@@ -329,9 +329,9 @@ EXPLAIN SELECT id FROM l1_index ORDER BY emb <+> [0, 1, 0]::FLOAT[3] LIMIT 5;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_l1        │
+│      Index: l1_index      │
 │      Lookup: rocksdb      │
 │          TopK: 5          │
 │          Dims: 3          │
@@ -404,9 +404,9 @@ EXPLAIN SELECT id FROM cos_index ORDER BY cosine_similarity(emb, [1.0, 0.0, 0.0]
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_cos       │
+│      Index: cos_index     │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -421,9 +421,9 @@ EXPLAIN SELECT id FROM cos_index ORDER BY cosine_distance(emb, [1.0, 0.0, 0.0]::
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_cos       │
+│      Index: cos_index     │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -440,7 +440,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│        Table: t_cos       │
+│      Index: cos_index     │
 │      Lookup: rocksdb      │
 │      Radius: 0.500000     │
 │          Dims: 3          │
@@ -470,9 +470,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: t_cos       │
+│      Index: cos_index     │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │            emb            │
@@ -524,9 +525,9 @@ EXPLAIN SELECT id FROM ip_index ORDER BY negative_inner_product(emb, [1.0, 0.0, 
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_ip        │
+│      Index: ip_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -541,9 +542,9 @@ EXPLAIN SELECT id FROM ip_index ORDER BY inner_product(emb, [1.0, 0.0, 0.0]::FLO
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_ip        │
+│      Index: ip_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -560,7 +561,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│        Table: t_ip        │
+│      Index: ip_index      │
 │      Lookup: rocksdb      │
 │      Radius: 0.000000     │
 │          Dims: 3          │
@@ -590,9 +591,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: t_ip        │
+│      Index: ip_index      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │            emb            │
@@ -811,9 +813,9 @@ EXPLAIN SELECT id FROM proj_idx WHERE category = 1 ORDER BY emb <-> [0, 0, 0]::F
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│       Table: t_proj       │
+│      Index: proj_idx      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -831,7 +833,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │     Radius: 200.000000    │
 │          Dims: 3          │
@@ -853,7 +855,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │     Radius: 200.000000    │
 │          Dims: 3          │
@@ -875,7 +877,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│       Table: t_proj       │
+│      Index: proj_idx      │
 │      Lookup: rocksdb      │
 │     Radius: 200.000000    │
 │          Dims: 3          │

@@ -23,8 +23,6 @@
 #include <duckdb.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/prepared_statement.hpp>
-#include <memory>
-#include <string>
 #include <vector>
 
 #include "pg/serialize.h"
@@ -38,17 +36,12 @@ struct DuckDBStatement {
     prepared.reset();
     extracted.clear();
     current_stmt_idx = 0;
-    resolved_types.clear();
-    resolved_names.clear();
   }
 
   duckdb::unique_ptr<duckdb::PreparedStatement> prepared;
   // For simple protocol multi-statement support
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> extracted;
   uint32_t current_stmt_idx = 0;
-
-  std::vector<duckdb::LogicalType> resolved_types;
-  std::vector<std::string> resolved_names;
 };
 
 struct DuckDBBindInfo {

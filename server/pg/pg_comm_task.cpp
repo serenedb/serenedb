@@ -576,51 +576,41 @@ void PgSQLCommTaskBase::DescribePortal(const DuckDBPortal& portal) {
 void PgSQLCommTaskBase::DescribeStatement(DuckDBStatement& statement) {
   SDB_ASSERT(statement.prepared);
   DescribeParameters(statement, _send);
-  const auto return_type =
-    statement.prepared->GetStatementProperties().return_type;
-  DescribeAnalyzedQuery(return_type, statement.resolved_types,
-                        statement.resolved_names, {});
-}
+  auto& prepared = *statement.prepared;
+  const auto return_type = prepared.GetStatementProperties().return_type;
+  const auto* types = &prepared.GetTypes();
+  const auto* names = &prepared.GetNames();
 
-void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
-  SDB_ASSERT(stmt.prepared);
-  auto& prepared = *stmt.prepared;
-  stmt.resolved_types = prepared.GetTypes();
-  stmt.resolved_names = prepared.GetNames();
-
-  if (prepared.GetStatementProperties().return_type !=
-      duckdb::StatementReturnType::QUERY_RESULT) {
-    return;
-  }
-  const auto nparams = prepared.named_param_map.size();
-  if (nparams == 0) {
-    return;
-  }
-  const bool all_resolved =
-    absl::c_none_of(stmt.resolved_types, [](const duckdb::LogicalType& t) {
-      return t.id() == duckdb::LogicalTypeId::UNKNOWN ||
-             t.id() == duckdb::LogicalTypeId::INVALID;
-    });
-  if (all_resolved) {
-    return;
-  }
-
-  duckdb::vector<duckdb::Value> dummy;
-  dummy.reserve(nparams);
-  for (size_t i = 0; i < nparams; ++i) {
-    auto type = ResolveExpectedType(prepared.data->value_map, i);
-    duckdb::Value v{"1"};
-    if (!v.DefaultTryCastAs(type)) {
-      v = duckdb::Value{type};
+  // For QUERY_RESULT statements with parameters, column types may still be
+  // UNKNOWN/INVALID if the binder couldn't infer them at Parse. Drive a
+  // dummy bind with hint-derived values to coerce concrete types -- this
+  // path only exists for Describe-before-Bind; once Bind happens the portal
+  // carries fully resolved types.
+  duckdb::unique_ptr<duckdb::PendingQueryResult> pending;
+  if (return_type == duckdb::StatementReturnType::QUERY_RESULT &&
+      !prepared.named_param_map.empty() &&
+      absl::c_any_of(*types, [](const duckdb::LogicalType& t) {
+        return t.id() == duckdb::LogicalTypeId::UNKNOWN ||
+               t.id() == duckdb::LogicalTypeId::INVALID;
+      })) {
+    duckdb::vector<duckdb::Value> dummy;
+    dummy.reserve(prepared.named_param_map.size());
+    for (size_t i = 0; i < prepared.named_param_map.size(); ++i) {
+      auto type = ResolveExpectedType(prepared.data->value_map, i);
+      duckdb::Value v{"1"};
+      if (!v.DefaultTryCastAs(type)) {
+        v = duckdb::Value{type};
+      }
+      dummy.emplace_back(std::move(v));
     }
-    dummy.emplace_back(std::move(v));
+    pending = prepared.PendingQuery(dummy, true);
+    if (!pending->HasError()) {
+      types = &pending->types;
+      names = &pending->names;
+    }
   }
-  auto pending = prepared.PendingQuery(dummy, true);
-  if (pending->HasError()) {
-    return;
-  }
-  stmt.resolved_types = pending->types;
-  stmt.resolved_names = pending->names;
+
+  DescribeAnalyzedQuery(return_type, *types, *names, {});
 }
 
 void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
@@ -1085,7 +1075,6 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
     return;
   }
   _current_query = stmt.prepared->query;
-  ResolveStatementTypes(stmt);
 
   it = _statements.end();
   _send.Write(ToBuffer(kParseComplete), true);

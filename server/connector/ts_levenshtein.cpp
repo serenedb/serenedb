@@ -114,7 +114,7 @@ void FromLevenshtein(irs::BooleanFilter& filter, const FilterContext& ctx,
   auto args = ParseLevenshteinArgs(func);
 
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
 
   auto& edit_filter = ctx.negated ? Negate<irs::ByEditDistance>(filter)

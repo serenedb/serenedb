@@ -168,9 +168,12 @@ void EnsureTrxOpen(ShardState& s,
     return;
   }
   s.trx.emplace(s.shard->GetTransaction());
-  auto analyzer_provider = connector::MakeAnalyzerProvider(snapshot, *s.index);
-  s.insert_sink.emplace(*s.trx, std::move(analyzer_provider),
-                        s.indexed_column_ids);
+  auto tokenizer_provider =
+    connector::MakeTokenizerProvider(snapshot, *s.index);
+  auto json_paths_provider =
+    connector::MakeJsonPathsProvider(snapshot, *s.index);
+  s.insert_sink.emplace(*s.trx, std::move(tokenizer_provider),
+                        std::move(json_paths_provider), s.indexed_column_ids);
   s.delete_sink.emplace(*s.trx);
 }
 

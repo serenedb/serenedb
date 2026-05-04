@@ -600,8 +600,8 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 //
 // `projected_column_ids` is indexed by binding.column_index after
 // projection pushdown reordering -- same translation we do in
-// rocksdb_plan. `analyzer_provider` queries the InvertedIndex for the
-// per-column analyzer (op_class).
+// rocksdb_plan. `tokenizer_provider` queries the InvertedIndex for the
+// per-column tokenizer (op_class).
 struct SearchColumnContext {
   duckdb::TableIndex table_index;
   std::span<const catalog::Column::Id> projected_column_ids;
@@ -609,7 +609,13 @@ struct SearchColumnContext {
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
   std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
-    analyzer_provider;
+    tokenizer_provider;
+  // Optional JSON-path tokenizer lookup: returns the per-path tokenizer
+  // resolved against the catalog, or nullopt if the column is not
+  // indexed at `path`.
+  std::function<std::optional<catalog::ColumnTokenizer>(
+    catalog::Column::Id, std::span<const std::string>)>
+    json_path_tokenizer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -635,7 +641,41 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
     connector::SearchColumnInfo info;
     info.column_id = col_id;
     info.logical_type = type_it->second;
-    info.tokenizer = ctx.analyzer_provider(col_id);
+    info.tokenizer = ctx.tokenizer_provider(col_id);
+    return info;
+  };
+}
+
+connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx) {
+  return [&ctx](const duckdb::BoundColumnRefExpression& ref,
+                std::span<const std::string> path)
+           -> std::optional<connector::SearchColumnInfo> {
+    if (ref.binding.table_index != ctx.table_index) {
+      return std::nullopt;
+    }
+    if (ref.binding.column_index >= ctx.projected_column_ids.size()) {
+      return std::nullopt;
+    }
+    const auto col_id = ctx.projected_column_ids[ref.binding.column_index];
+    if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
+      return std::nullopt;
+    }
+    if (!ctx.json_path_tokenizer_provider) {
+      return std::nullopt;
+    }
+    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, path);
+    if (!tokenizer) {
+      return std::nullopt;
+    }
+    connector::SearchColumnInfo info;
+    info.column_id = col_id;
+    // The default leaf type is VARCHAR (the string-leaf path); the filter
+    // builder may override this when the user wraps the path in an
+    // explicit cast like `(content->>'val')::int`, so numeric/bool/null
+    // queries hit the right pre-emitted per-type field.
+    info.logical_type = duckdb::LogicalType::VARCHAR;
+    info.tokenizer = *std::move(tokenizer);
+    info.json_path.assign(path.begin(), path.end());
     return info;
   };
 }
@@ -713,11 +753,17 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
   auto index_ptr = resolved->index;
   auto snapshot_for_analyzer = snapshot;
-  ctx.analyzer_provider = [index_ptr,
-                           snapshot_for_analyzer](catalog::Column::Id col_id) {
-    return index_ptr->GetColumnAnalyzer(snapshot_for_analyzer, col_id);
+  ctx.tokenizer_provider = [index_ptr,
+                            snapshot_for_analyzer](catalog::Column::Id col_id) {
+    return index_ptr->GetColumnTokenizer(snapshot_for_analyzer, col_id);
+  };
+  ctx.json_path_tokenizer_provider = [index_ptr, snapshot_for_analyzer](
+                                       catalog::Column::Id col_id,
+                                       std::span<const std::string> path) {
+    return index_ptr->GetJsonPathTokenizer(snapshot_for_analyzer, col_id, path);
   };
   auto getter = MakeColumnGetter(ctx);
+  auto json_getter = MakeJsonPathGetter(ctx);
 
   // Per-expression claim: try each filter expression individually so we
   // can leave non-iresearch predicates on the LogicalFilter. The
@@ -729,7 +775,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     const auto before = root->size();
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
-    auto result = connector::MakeSearchFilter(*root, single, getter, options);
+    auto result =
+      connector::MakeSearchFilter(*root, single, getter, options, json_getter);
     if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {

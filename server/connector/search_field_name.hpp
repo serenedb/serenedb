@@ -32,14 +32,16 @@ namespace sdb::connector {
 // Builds the iresearch field name for a column, optionally qualified by a
 // JSON path.
 //
-// Layout: [8 bytes BE column_id] + "/" + escape(path[0]) + "/" +
-// escape(path[1])
-//                                + ... + (caller-applied mangle byte)
+// Layout:
+//   [8 bytes BE column_id]      -- fixed-width column identifier
+//   [JSON Pointer (RFC 6901)]   -- empty when no path; "/k1/k2/..." otherwise
+//   [type mangle byte]          -- caller-applied
 //
-// The path-segment portion is a valid RFC 6901 JSON Pointer, so the sink can
-// pass `name.substr(sizeof(column_id), name.size() - sizeof(column_id) - 1)`
-// directly to `simdjson::ondemand::document::at_pointer` without rebuilding
-// any string. Each key has `~` escaped as `~0` and `/` as `~1`, so keys
+// No separator is needed between column_id and the pointer because column_id
+// is fixed-width: the leading "/" of the pointer is the RFC 6901 prefix, not
+// a delimiter. Encoding the pointer in the field name lets the sink pass it
+// straight to `simdjson::ondemand::document::at_pointer` without rebuilding
+// any string. Each key escapes `~` as `~0` and `/` as `~1`, so keys
 // containing those characters round-trip cleanly.
 //
 // Caller is expected to apply the appropriate `search::mangling::Mangle*` on
@@ -61,18 +63,6 @@ inline void MakeColumnFieldName(catalog::Column::Id column_id,
       }
     }
   }
-}
-
-// Returns the JSON Pointer view of a field name produced by
-// MakeColumnFieldName + a 1-byte type-mangle suffix. The view is valid as
-// long as the underlying field-name string is.
-inline std::string_view JsonPointerOf(std::string_view field_name) {
-  constexpr size_t kPrefix = sizeof(catalog::Column::Id);
-  constexpr size_t kMangle = 1;
-  if (field_name.size() < kPrefix + kMangle) {
-    return {};
-  }
-  return field_name.substr(kPrefix, field_name.size() - kPrefix - kMangle);
 }
 
 }  // namespace sdb::connector

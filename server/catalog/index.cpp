@@ -181,7 +181,7 @@ Result ValidateInvertedIndexColumns(
   // there, otherwise inserts/updates would silently drop the column at write
   // time. TIMESTAMP is supported by the writer but not by the search filter
   // path yet, so it stays rejected explicitly.
-  for (auto c : indexed_columns) {
+  for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
     if (!c.json_path.empty()) {
@@ -315,8 +315,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
           "column '",
           c.name, "')"};
       }
-      JsonPathInfo path_info;
-      path_info.path = c.json_path;
+      JsonPathInfo path_info{.path = c.json_path};
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
@@ -325,7 +324,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         path_info.text_dictionary = dict->first;
         path_info.features = dict->second;
       }
-      index_col.json_paths.push_back(std::move(path_info));
+      index_col.json_paths.emplace_back(std::move(path_info));
       continue;
     }
 

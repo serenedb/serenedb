@@ -26,12 +26,41 @@
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
+#include "absl/algorithm/container.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
+namespace {
+
+// Builds a ColumnTokenizer for either a whole-column or a JSON-path entry.
+// `text_dictionary` may be unset, in which case a fresh StringTokenizer is
+// returned (the iresearch-side keyword analyser).
+ResultOr<ColumnTokenizer> BuildColumnTokenizer(
+  const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
+  search::Features features) {
+  if (!text_dictionary.isSet()) {
+    auto analyzer = std::make_unique<irs::StringTokenizer>();
+    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
+                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+  }
+  auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
+  if (!dict) {
+    return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
+                                   "Dictionary for inverted index does not "
+                                   "exists"};
+  }
+  auto tokenizer = dict->GetTokenizer();
+  if (!tokenizer) {
+    return std::unexpected<Result>(std::move(tokenizer.error()));
+  }
+  return ColumnTokenizer{.analyzer = *std::move(tokenizer),
+                         .features = features.GetIndexFeatures()};
+}
+
+}  // namespace
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   bool is_new, ObjectId id, IndexShardOptions& options) const {
@@ -76,7 +105,7 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
-ColumnTokenizer InvertedIndex::GetColumnAnalyzer(
+ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
   auto it = _columns.find(column_id);
@@ -84,22 +113,13 @@ ColumnTokenizer InvertedIndex::GetColumnAnalyzer(
     SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
               " not found in the index definition");
   }
-
-  if (!it->second.text_dictionary.isSet()) {
-    auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return {.analyzer = {analyzer.release(), Tokenizer::Deleter{nullptr}}};
-  }
-
-  auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);
-  SDB_ENSURE(dict, ERROR_INTERNAL,
-             "Dictionary for inverted index does not exists");
-  auto tokenizer = dict->GetTokenizer();
+  auto tokenizer = BuildColumnTokenizer(snapshot, it->second.text_dictionary,
+                                        it->second.features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-  return {.analyzer = *std::move(tokenizer),
-          .features = it->second.features.GetIndexFeatures()};
+  return *std::move(tokenizer);
 }
 
-std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathAnalyzer(
+std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id, std::span<const std::string> path) const {
   auto it = _columns.find(column_id);
@@ -107,26 +127,13 @@ std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathAnalyzer(
     return std::nullopt;
   }
   for (const auto& path_info : it->second.json_paths) {
-    if (path_info.path.size() != path.size()) {
+    if (!absl::c_equal(path_info.path, path)) {
       continue;
     }
-    if (!std::equal(path_info.path.begin(), path_info.path.end(),
-                    path.begin())) {
-      continue;
-    }
-    if (!path_info.text_dictionary.isSet()) {
-      auto analyzer = std::make_unique<irs::StringTokenizer>();
-      return ColumnTokenizer{
-        .analyzer = Tokenizer::TokenizerWrapper{analyzer.release(),
-                                                Tokenizer::Deleter{nullptr}}};
-    }
-    auto dict = snapshot->GetObject<Tokenizer>(path_info.text_dictionary);
-    SDB_ENSURE(dict, ERROR_INTERNAL,
-               "Dictionary for inverted index does not exists");
-    auto tokenizer = dict->GetTokenizer();
+    auto tokenizer = BuildColumnTokenizer(snapshot, path_info.text_dictionary,
+                                          path_info.features);
     SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-    return ColumnTokenizer{.analyzer = *std::move(tokenizer),
-                           .features = path_info.features.GetIndexFeatures()};
+    return *std::move(tokenizer);
   }
   return std::nullopt;
 }

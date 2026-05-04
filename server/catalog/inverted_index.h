@@ -43,8 +43,10 @@ struct HNSWColumnConfig {
 };
 
 // One configured JSON path inside a JSON-typed column of an inverted index.
-// Each path effectively becomes a separate iresearch field named
-// [column_id BE] + "." + path[0] + "." + path[1] + ... (+ type mangle).
+// Each path effectively becomes a separate iresearch field whose name is
+// [column_id BE] + JSON Pointer of path + type mangle byte. The column id is
+// fixed-width (8 bytes BE), so no separator between it and the pointer is
+// needed -- the pointer's leading "/" is the RFC 6901 prefix, not a separator.
 struct JsonPathInfo {
   std::vector<std::string> path;
   ObjectId text_dictionary = ObjectId::none();
@@ -88,11 +90,11 @@ class InvertedIndex final : public Index {
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 
-  ColumnTokenizer GetColumnAnalyzer(
+  ColumnTokenizer GetColumnTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 
-  std::optional<ColumnTokenizer> GetJsonPathAnalyzer(
+  std::optional<ColumnTokenizer> GetJsonPathTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id column_id, std::span<const std::string> path) const;
 

@@ -62,7 +62,7 @@ inline AnalyzerProvider MakeAnalyzerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
   return [snapshot, &index](catalog::Column::Id column_id) {
-    return index.GetColumnAnalyzer(snapshot, column_id);
+    return index.GetColumnTokenizer(snapshot, column_id);
   };
 }
 
@@ -79,7 +79,7 @@ inline JsonPathsProvider MakeJsonPathsProvider(
         continue;
       }
       for (const auto& p : col.second.json_paths) {
-        auto analyzer = index.GetJsonPathAnalyzer(snapshot, column_id, p.path);
+        auto analyzer = index.GetJsonPathTokenizer(snapshot, column_id, p.path);
         if (!analyzer) {
           continue;
         }

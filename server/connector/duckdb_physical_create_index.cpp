@@ -20,9 +20,9 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -102,12 +102,12 @@ bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
     }
     const auto key_type = key_const.value.type().id();
     if (key_type == duckdb::LogicalTypeId::VARCHAR) {
-      out_path.push_back(key_const.value.GetValue<std::string>());
+      out_path.emplace_back(key_const.value.GetValue<std::string>());
     } else if (key_type == duckdb::LogicalTypeId::TINYINT ||
                key_type == duckdb::LogicalTypeId::SMALLINT ||
                key_type == duckdb::LogicalTypeId::INTEGER ||
                key_type == duckdb::LogicalTypeId::BIGINT) {
-      out_path.push_back(absl::StrCat(key_const.value.GetValue<int64_t>()));
+      out_path.emplace_back(absl::StrCat(key_const.value.GetValue<int64_t>()));
     } else {
       return false;
     }
@@ -116,7 +116,7 @@ bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
 
   col_name = cur->Cast<duckdb::ColumnRefExpression>().GetColumnName();
   // We collected leaf-to-root; flip to root-to-leaf for downstream code.
-  std::reverse(out_path.begin(), out_path.end());
+  absl::c_reverse(out_path);
   return true;
 }
 
@@ -277,7 +277,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
-      idx_columns.push_back(catalog::CreateIndexColumn{
+      idx_columns.emplace_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->name,
         .opclass = std::move(opclass),
@@ -299,7 +299,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       throw duckdb::CatalogException("column \"%s\" not found in table",
                                      col_name);
     }
-    idx_columns.push_back(catalog::CreateIndexColumn{
+    idx_columns.emplace_back(catalog::CreateIndexColumn{
       .catalog_column = cat_col,
       .name = cat_col->name,
       .opclass = std::move(opclass),

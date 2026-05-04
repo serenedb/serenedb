@@ -23,7 +23,6 @@
 #include <span>
 #include <string>
 
-#include "basics/endian.h"
 #include "basics/string_utils.h"
 #include "catalog/table_options.h"
 
@@ -36,13 +35,6 @@ namespace sdb::connector {
 //   [8 bytes BE column_id]      -- fixed-width column identifier
 //   [JSON Pointer (RFC 6901)]   -- empty when no path; "/k1/k2/..." otherwise
 //   [type mangle byte]          -- caller-applied
-//
-// No separator is needed between column_id and the pointer because column_id
-// is fixed-width: the leading "/" of the pointer is the RFC 6901 prefix, not
-// a delimiter. Encoding the pointer in the field name lets the sink pass it
-// straight to `simdjson::ondemand::document::at_pointer` without rebuilding
-// any string. Each key escapes `~` as `~0` and `/` as `~1`, so keys
-// containing those characters round-trip cleanly.
 //
 // Caller is expected to apply the appropriate `search::mangling::Mangle*` on
 // the result before using it as an iresearch field name.

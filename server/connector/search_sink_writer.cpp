@@ -385,9 +385,13 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
     _json_fields.emplace_back().Init(column_id, p.path, std::move(p.tokenizer));
   }
 
+  // TODO(mkornaukhov): index SQL-NULL cells and missing keys into every
+  // configured path's null_field so `WHERE col->>'path' IS NULL` finds them
+  // through the index. Now only the JSON `null` leaf is indexed; SQL NULL
+  // cells and missing keys are silently skipped, producing index/scan
+  // divergence on IS NULL.
   _current_writer = [this](std::string_view /*full_key*/,
                            std::span<const rocksdb::Slice> cell_slices) {
-    // Treat a missing / empty JSON cell as "no paths to emit".
     if (cell_slices.size() == 1 && cell_slices.front().empty()) {
       return;
     }
@@ -415,8 +419,7 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
     simdjson::padded_string_view padded_view{
       _json_buffer.data(), json_str.size(), _json_buffer.size()};
 
-    // DuckDB validates JSON at cast time, so by the time bytes reach the
-    // sink they are guaranteed parseable.
+    // DuckDB validates JSON at cast time; failure here is an upstream bug.
     simdjson::ondemand::document doc;
     auto res = _json_parser.iterate(padded_view).get(doc);
     SDB_ASSERT(res == simdjson::SUCCESS);
@@ -432,7 +435,6 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
     for (auto& jpf : _json_fields) {
       simdjson::ondemand::value val;
       if (doc.at_pointer(jpf.pointer).get(val) != simdjson::SUCCESS) {
-        // Document doesn't have this path, just skip it.
         continue;
       }
       simdjson::ondemand::json_type t;

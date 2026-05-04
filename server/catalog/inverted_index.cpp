@@ -54,7 +54,7 @@ ResultOr<ColumnTokenizer> BuildColumnTokenizer(
   }
   auto tokenizer = dict->GetTokenizer();
   if (!tokenizer) {
-    return std::unexpected<Result>(std::move(tokenizer.error()));
+    return std::unexpected<Result>{std::move(tokenizer.error())};
   }
   return ColumnTokenizer{.analyzer = *std::move(tokenizer),
                          .features = features.GetIndexFeatures()};
@@ -132,15 +132,18 @@ std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
   if (!info) {
     return std::nullopt;
   }
-  for (const auto& path_info : info->json_paths) {
-    if (!absl::c_equal(path_info.path, path)) {
-      continue;
-    }
-    auto tokenizer = BuildColumnTokenizer(snapshot, path_info.text_dictionary,
-                                          path_info.features);
+
+  if (auto it = absl::c_find_if(info->json_paths,
+                                [&](const auto& path_info) {
+                                  return absl::c_equal(path_info.path, path);
+                                });
+      it != info->json_paths.end()) {
+    auto tokenizer =
+      BuildColumnTokenizer(snapshot, it->text_dictionary, it->features);
     SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
     return *std::move(tokenizer);
   }
+
   return std::nullopt;
 }
 

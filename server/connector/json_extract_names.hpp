@@ -39,10 +39,6 @@ namespace sdb::connector {
 //                                              json_extract_field,
 //                                              json_extract_index)
 // They are disjoint; together they cover every name we accept.
-//
-// Both _field variants take a VARCHAR key (object lookup) and both _index
-// variants take a BIGINT key (array lookup). The operator forms `->` / `->>`
-// are polymorphic and accept either kind of key.
 
 inline bool IsJsonExtractString(std::string_view name) noexcept {
   return name == "->>" || name == "json_extract_field_text" ||

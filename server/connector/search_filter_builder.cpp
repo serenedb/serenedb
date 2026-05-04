@@ -1248,18 +1248,6 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
 }
 
-bool IsIntegerTypeId(duckdb::LogicalTypeId id) {
-  switch (id) {
-    case duckdb::LogicalTypeId::TINYINT:
-    case duckdb::LogicalTypeId::SMALLINT:
-    case duckdb::LogicalTypeId::INTEGER:
-    case duckdb::LogicalTypeId::BIGINT:
-      return true;
-    default:
-      return false;
-  }
-}
-
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   switch (id) {
     case duckdb::LogicalTypeId::TINYINT:
@@ -1284,13 +1272,13 @@ const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
     return nullptr;
   }
 
-  // Walk the chain: every node must be some JSON-extract until we reach a
-  // column ref. Inner nodes can be either text- or JSON-returning. Both
-  // VARCHAR (object-key) and integer (array-index) constants are accepted
-  // for the second argument; integer keys are stringified for the path.
+  // Walk the chain: every node must be some JSON-extract
+  // until we reach a column ref.
   const duckdb::Expression* cur = &expr;
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
+    // TODO(mkornaukhov) first must be extracting string,
+    // all the others should be extracing json
     if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
       return nullptr;
     }
@@ -1321,9 +1309,8 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
   return {c.child.get(), c.return_type};
 }
 
-// Full column info resolver that supports both bare column refs and JSON
-// path expressions (e.g. `content->'host'`). On success the returned pointer
-// is owned by `ctx.column_cache`.
+// Bare column ref or JSON-path extract (optionally cast-wrapped).
+// Returned pointer lives in ctx.column_cache.
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
@@ -1344,9 +1331,8 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     return nullptr;
   }
 
-  // Cast target overrides the leaf logical type. Numeric casts are
-  // normalised to DOUBLE because all JSON numbers go through
-  // NumericTokenizer.reset(double) at write time.
+  // Cast overrides leaf type. Normalise numerics to DOUBLE -- writer side
+  // tokenises every JSON number through NumericTokenizer.reset(double).
   if (unwrapped.override_type.has_value()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
       info->logical_type = duckdb::LogicalType::DOUBLE;
@@ -1355,19 +1341,19 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  // The cache key needs to incorporate the (possibly overridden) type so
-  // numeric and string lookups against the same path don't collide.
+  // Key by mangle byte (not LogicalTypeId) so types that fold to the same
+  // iresearch field share an entry: INTEGER and BIGINT both -> Numeric.
   auto& cache_key = ctx.cache_key;
   cache_key.clear();
   MakeColumnFieldName(info->column_id, info->json_path, cache_key);
-  cache_key.push_back(static_cast<char>(info->logical_type.id()));
+  if (auto r = MangleForType(info->logical_type.id(), cache_key); !r.ok()) {
+    return nullptr;
+  }
   auto it = ctx.column_cache.find(cache_key);
   if (it != ctx.column_cache.end()) {
     return &it->second;
   }
-  // Copy the key (don't move) so the scratch buffer retains its capacity
-  // across calls. Cache misses are rare (once per unique col+path+type),
-  // so the extra allocation here is amortised.
+
   return &ctx.column_cache.emplace(cache_key, std::move(info.value()))
             .first->second;
 }
@@ -1376,8 +1362,6 @@ void MakeFieldName(const SearchColumnInfo& column, std::string& field_name) {
   MakeColumnFieldName(column.column_id, column.json_path, field_name);
 }
 
-// Convenience overload for sites that don't need JSON-path support:
-// produce a field name from just a column_id (8 BE bytes, no path).
 void MakeFieldName(catalog::Column::Id column_id, std::string& field_name) {
   MakeColumnFieldName(column_id, {}, field_name);
 }

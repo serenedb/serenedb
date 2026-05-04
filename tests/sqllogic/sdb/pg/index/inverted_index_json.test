@@ -378,6 +378,9 @@ id
 # Null leaf via SQL IS NULL. FromIsNull always uses MangleNull regardless
 # of the column's logical type, so this hits the null-mangled field
 # directly without needing a cast.
+# TODO(mkornaukhov): also surface SQL-NULL JSON cells and missing keys via
+# the index (requires the matching write-side change in
+# SearchSinkInsertBaseImpl::SetupJsonColumnWriter).
 query
 SELECT id FROM prim_types_idx WHERE content->>'val' IS NULL;
 ----

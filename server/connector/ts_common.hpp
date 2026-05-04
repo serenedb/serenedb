@@ -49,15 +49,10 @@ struct FilterContext {
   // Optional resolver for JSON-path expressions (`content->>'host'`).
   // nullptr = JSON-path lookups are disabled for this filter pass.
   const JsonPathGetter* json_path_getter = nullptr;
-  // Cache key is the same byte sequence as the iresearch field name before
-  // mangling (see MakeColumnFieldName): `[8 BE col_id] + /key.../ + type`.
-  // This lets whole-column and JSON-path entries with different leaf types
-  // coexist in one map. NodeHashMap because SearchColumnInfo carries
-  // analyzer state large enough to trip FlatHashMap's size cap.
+  // Memo of resolved (column, path, mangle) -> SearchColumnInfo. Key is
+  // the iresearch field name. NodeHashMap so refs survive insertions.
   containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
-  // Reusable scratch buffers for JSON-path resolution. Cleared at the start
-  // of every FindColumnInfoForExpr call; carrying them on the context lets
-  // back-to-back path lookups reuse the allocated capacity.
+  // Scratch buffers reused across FindColumnInfoForExpr calls.
   std::vector<std::string>& json_path;
   std::string& cache_key;
   irs::analysis::Analyzer& identity;
@@ -131,7 +126,6 @@ void MakeFieldName(const SearchColumnInfo& column, std::string& field_name);
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
-bool IsIntegerTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
 
 Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,

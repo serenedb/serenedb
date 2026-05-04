@@ -1,0 +1,202 @@
+control substitution on
+
+# One table has an inverted index. Several other tables don't have any
+# index at all. All tables receive heavy writes interleaved in the WAL
+# while search commits are blocked. Recovery must replay only the
+# inverted-indexed table's records and not be confused by writes to
+# the unrelated tables.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ni2_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# Indexed table.
+statement ok
+CREATE TABLE ni2_main(id INTEGER PRIMARY KEY, body TEXT);
+
+# Several unrelated tables that never get an inverted index.
+statement ok
+CREATE TABLE ni2_other_a(id INTEGER PRIMARY KEY, payload TEXT);
+
+statement ok
+CREATE TABLE ni2_other_b(k INTEGER PRIMARY KEY, v INTEGER, label TEXT);
+
+statement ok
+CREATE TABLE ni2_other_c(id INTEGER PRIMARY KEY, name TEXT, qty INTEGER);
+
+statement ok
+INSERT INTO ni2_main VALUES (1, 'main seed one'), (2, 'main seed two');
+
+statement ok
+INSERT INTO ni2_other_a SELECT i, 'other_a_' || i FROM range(0, 100) AS t(i);
+
+statement ok
+INSERT INTO ni2_other_b SELECT i, i * 10, 'b_' || i FROM range(0, 100) AS t(i);
+
+statement ok
+CREATE INDEX ni2_main_idx ON ni2_main USING inverted(id, body ni2_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ni2_main;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Interleave writes: lots of unrelated activity surrounding the inverted
+# inserts. Recovery must filter to ni2_main only.
+statement ok
+INSERT INTO ni2_other_c SELECT i, 'c_name_' || i, i FROM range(0, 200) AS t(i);
+
+statement ok
+INSERT INTO ni2_main VALUES (3, 'main added three');
+
+statement ok
+UPDATE ni2_other_a SET payload = 'updated_' || id WHERE id < 50;
+
+statement ok
+INSERT INTO ni2_main VALUES (4, 'main added four'), (5, 'main added five');
+
+statement ok
+DELETE FROM ni2_other_b WHERE v >= 500;
+
+statement ok
+INSERT INTO ni2_main VALUES (6, 'main added six');
+
+statement ok
+UPDATE ni2_other_c SET qty = qty + 1000 WHERE id >= 100;
+
+statement ok
+DELETE FROM ni2_main WHERE id = 1;
+
+statement ok
+INSERT INTO ni2_other_a VALUES (1000, 'tail_a');
+
+statement ok
+UPDATE ni2_main SET body = 'main UPDATED two' WHERE id = 2;
+
+statement ok
+INSERT INTO ni2_other_b VALUES (1000, 9999, 'tail_b');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ni2_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ni2_main;
+
+# Inverted index counts only the indexed table.
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_main;
+----
+count
+5
+
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_main_idx;
+----
+count
+5
+
+# Row 1 deleted.
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('main seed one');
+----
+count
+0
+
+# Row 2 updated — old token gone, new searchable.
+connection ni2_after
+query
+SELECT id FROM ni2_main WHERE body @@ ts_phrase('UPDATED');
+----
+id
+2
+
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('main seed two');
+----
+count
+0
+
+# Newly inserted rows are searchable.
+connection ni2_after
+query
+SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added three');
+----
+id
+3
+
+connection ni2_after
+query
+SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added four');
+----
+id
+4
+
+connection ni2_after
+query
+SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added five');
+----
+id
+5
+
+connection ni2_after
+query
+SELECT id FROM ni2_main WHERE body @@ ts_phrase('main added six');
+----
+id
+6
+
+# Other tables — sanity check, their rocksdb data is intact.
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_other_a;
+----
+count
+101
+
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_other_b;
+----
+count
+51
+
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_other_c;
+----
+count
+200
+
+# Make sure unrelated tokens never made it into the inverted index
+# (defensive — they're in different tables).
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('tail_a');
+----
+count
+0
+
+connection ni2_after
+query
+SELECT COUNT(*) FROM ni2_main WHERE body @@ ts_phrase('updated_5');
+----
+count
+0

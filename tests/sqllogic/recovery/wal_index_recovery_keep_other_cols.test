@@ -1,0 +1,154 @@
+control substitution on
+
+# Targets the Get-fallback in FlushShard. Non-PK UPDATE writes only the
+# updated column to WAL; the other indexed columns must be preserved in
+# iresearch by reading their current value from rocksdb during recovery.
+#
+# This test specifically verifies that BEHAVIOUR: after a non-PK UPDATE
+# of one column, every other indexed column on that row still resolves
+# via PHRASE.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ko_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# Table with three text columns, all indexed.
+statement ok
+CREATE TABLE ko_t(id INTEGER PRIMARY KEY, a TEXT, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO ko_t VALUES
+  (1, 'alpha apple', 'beta banana', 'gamma grape'),
+  (2, 'delta date', 'epsilon elder', 'zeta zucchini');
+
+statement ok
+CREATE INDEX ko_idx ON ko_t
+  USING inverted(id, a ko_dict, b ko_dict, c ko_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ko_t;
+
+# Pre-crash: every token searchable.
+query
+SELECT id FROM ko_t WHERE a @@ ts_phrase('apple');
+----
+id
+1
+
+query
+SELECT id FROM ko_t WHERE b @@ ts_phrase('banana');
+----
+id
+1
+
+query
+SELECT id FROM ko_t WHERE c @@ ts_phrase('grape');
+----
+id
+1
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Update ONLY column b on row 1. a and c not touched.
+statement ok
+UPDATE ko_t SET b = 'beta blueberry' WHERE id = 1;
+
+# Update ONLY column c on row 2. a and b not touched.
+statement ok
+UPDATE ko_t SET c = 'zeta watermelon' WHERE id = 2;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart, recovery runs ---
+
+connection ko_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ko_t;
+
+# Updated columns: new tokens findable, old gone.
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE b @@ ts_phrase('blueberry');
+----
+id
+1
+
+connection ko_after
+query
+SELECT COUNT(*) FROM ko_t WHERE b @@ ts_phrase('banana');
+----
+count
+0
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE c @@ ts_phrase('watermelon');
+----
+id
+2
+
+connection ko_after
+query
+SELECT COUNT(*) FROM ko_t WHERE c @@ ts_phrase('zucchini');
+----
+count
+0
+
+# Crucial: NON-updated columns must still be searchable. Without the
+# Get-fallback they would be NULL in iresearch and these queries would
+# return zero rows.
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE a @@ ts_phrase('apple');
+----
+id
+1
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE a @@ ts_phrase('alpha');
+----
+id
+1
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE c @@ ts_phrase('grape');
+----
+id
+1
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE a @@ ts_phrase('delta');
+----
+id
+2
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE b @@ ts_phrase('epsilon');
+----
+id
+2
+
+connection ko_after
+query
+SELECT id FROM ko_t WHERE b @@ ts_phrase('elder');
+----
+id
+2

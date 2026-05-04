@@ -1,0 +1,117 @@
+control substitution on
+
+# WAL index recovery: DELETE handling
+#
+# Rows are inserted and committed into the search index; then more rows are
+# inserted and some existing rows are deleted with the search commit blocked.
+# After crash, WAL recovery must remove the deleted docs and add the new ones.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY del_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_del_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO wal_del_t VALUES
+  (10, 'red apple'),
+  (20, 'blue berry'),
+  (30, 'green pear'),
+  (40, 'yellow banana');
+
+statement ok
+CREATE INDEX wal_del_idx ON wal_del_t USING inverted(a, b del_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_del_t;
+
+query
+SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('apple');
+----
+a
+10
+
+# Block search commit — the changes below stay only in WAL
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Delete existing rows (must be removed by recovery)
+statement ok
+DELETE FROM wal_del_t WHERE a IN (10, 30);
+
+# Insert brand-new rows (must be added by recovery)
+statement ok
+INSERT INTO wal_del_t VALUES (50, 'purple plum'), (60, 'orange mango');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection del_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_del_t;
+
+# Deleted rows are gone from the index
+connection del_after
+query
+SELECT COUNT(*) FROM wal_del_idx WHERE b @@ ts_phrase('apple');
+----
+count
+0
+
+connection del_after
+query
+SELECT COUNT(*) FROM wal_del_idx WHERE b @@ ts_phrase('pear');
+----
+count
+0
+
+# Surviving rows still searchable
+connection del_after
+query
+SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('berry');
+----
+a
+20
+
+connection del_after
+query
+SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('banana');
+----
+a
+40
+
+# New rows are searchable
+connection del_after
+query
+SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('plum');
+----
+a
+50
+
+connection del_after
+query
+SELECT a FROM wal_del_idx WHERE b @@ ts_phrase('mango');
+----
+a
+60
+
+# Final row count at the table level
+connection del_after
+query
+SELECT COUNT(*) FROM wal_del_t;
+----
+count
+4

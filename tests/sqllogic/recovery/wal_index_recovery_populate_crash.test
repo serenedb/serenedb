@@ -1,0 +1,113 @@
+control substitution on
+
+# Port of view-search-alias-populate-crash-after-release.js / view-serenesearch-
+# link-populate-crash-after-release.js from the cluster JS recovery suite.
+#
+# Original scenario: view + inverted-index link freshly created, fault arms the
+# crash to fire after the flush released the min tick, then 10k–100k inserts
+# stream in until crash. On restart the view must end up consistent with the
+# underlying collection.
+#
+# Adapted: we don't have the FlushCrashAfterReleasingMinTick fault here, but we
+# can reproduce the same shape — block search commits, ingest a large batch,
+# crash. Recovery must replay the entire delta. Big enough to stress
+# multi-flush across many WAL batches.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pop_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE pop_t(c INTEGER PRIMARY KEY, a TEXT, b TEXT);
+
+statement ok
+CREATE INDEX pop_idx ON pop_t USING inverted(c, a pop_dict, b pop_dict);
+
+# Make sure index is fully caught up before we block commits.
+statement ok
+VACUUM (UPDATE_INDEXES) pop_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# 10k rows. Every row's a/b carry a unique token so we can probe specific docs
+# after recovery without scanning everything.
+statement ok
+INSERT INTO pop_t SELECT i, 'foo_' || i, 'bar_' || i FROM range(0, 10000) AS t(i);
+
+# Insert one final row marked 'crashme' — mirrors the original test's marker.
+statement ok
+INSERT INTO pop_t VALUES (10000, 'crashme', 'crashme');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart, recovery runs ---
+
+connection pop_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) pop_t;
+
+# All 10001 rows must be retrievable through iresearch (count goes via
+# IRESEARCH_COUNT operator → reads iresearch reader directly).
+connection pop_after
+query
+SELECT COUNT(*) FROM pop_idx;
+----
+count
+10001
+
+# Underlying RocksDB count must match.
+connection pop_after
+query
+SELECT COUNT(*) FROM pop_t;
+----
+count
+10001
+
+# Spot-check tokens at various offsets across the bulk insert.
+connection pop_after
+query
+SELECT c FROM pop_t WHERE a @@ ts_phrase('foo_0');
+----
+c
+0
+
+connection pop_after
+query
+SELECT c FROM pop_t WHERE a @@ ts_phrase('foo_4321');
+----
+c
+4321
+
+connection pop_after
+query
+SELECT c FROM pop_t WHERE a @@ ts_phrase('foo_9876');
+----
+c
+9876
+
+connection pop_after
+query
+SELECT c FROM pop_t WHERE b @@ ts_phrase('bar_5000');
+----
+c
+5000
+
+# The marker doc.
+connection pop_after
+query
+SELECT c FROM pop_t WHERE a @@ ts_phrase('crashme');
+----
+c
+10000

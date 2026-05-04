@@ -1,0 +1,146 @@
+control substitution on
+
+# DROP TABLE inside the WAL recovery range.
+#
+# Two tables, both with inverted indexes and both falling behind the rocksdb
+# tick. We DROP one of them mid-window; recovery must skip the dropped
+# table's index entirely (no shard exists) and still replay WAL deltas for
+# the surviving table.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dt_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE dt_keep(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE dt_drop(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO dt_keep VALUES (1, 'keep seed alpha'), (2, 'keep seed bravo');
+
+statement ok
+INSERT INTO dt_drop VALUES (1, 'drop seed one'), (2, 'drop seed two');
+
+statement ok
+CREATE INDEX dt_keep_idx ON dt_keep USING inverted(id, body dt_dict);
+
+statement ok
+CREATE INDEX dt_drop_idx ON dt_drop USING inverted(id, body dt_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) dt_keep;
+
+statement ok
+VACUUM (UPDATE_INDEXES) dt_drop;
+
+# Block search commits — rocksdb keeps advancing.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Writes to BOTH tables that never reach iresearch.
+statement ok
+INSERT INTO dt_keep VALUES (3, 'keep after fault charlie');
+
+statement ok
+INSERT INTO dt_drop VALUES (3, 'drop after fault delta');
+
+statement ok
+UPDATE dt_keep SET body = 'keep CHANGED bravo' WHERE id = 2;
+
+statement ok
+UPDATE dt_drop SET body = 'drop CHANGED two' WHERE id = 2;
+
+# Drop the table (and its inverted index by cascade) mid-window.
+statement ok
+DROP TABLE dt_drop;
+
+# More writes to the surviving table after the drop.
+statement ok
+INSERT INTO dt_keep VALUES (4, 'keep post drop echo');
+
+statement ok
+DELETE FROM dt_keep WHERE id = 1;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection dt_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) dt_keep;
+
+# Dropped table and its index are gone.
+connection dt_after
+query
+SELECT COUNT(*) FROM pg_class WHERE relname IN ('dt_drop', 'dt_drop_idx');
+----
+count
+0
+
+# Surviving table replayed correctly: pks 2, 3, 4 (1 deleted).
+connection dt_after
+query
+SELECT COUNT(*) FROM dt_keep;
+----
+count
+3
+
+connection dt_after
+query
+SELECT COUNT(*) FROM dt_keep_idx;
+----
+count
+3
+
+# pk=1 deleted post-drop.
+connection dt_after
+query
+SELECT COUNT(*) FROM dt_keep WHERE id = 1;
+----
+count
+0
+
+# pk=2 body updated.
+connection dt_after
+query
+SELECT id FROM dt_keep WHERE body @@ ts_phrase('CHANGED');
+----
+id
+2
+
+# pk=2 old body gone.
+connection dt_after
+query
+SELECT COUNT(*) FROM dt_keep WHERE body @@ ts_phrase('keep seed bravo');
+----
+count
+0
+
+# pk=3 inserted post-fault.
+connection dt_after
+query
+SELECT id FROM dt_keep WHERE body @@ ts_phrase('after fault charlie');
+----
+id
+3
+
+# pk=4 inserted after the drop.
+connection dt_after
+query
+SELECT id FROM dt_keep WHERE body @@ ts_phrase('post drop echo');
+----
+id
+4

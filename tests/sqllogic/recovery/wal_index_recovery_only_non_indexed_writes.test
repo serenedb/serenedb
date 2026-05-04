@@ -1,0 +1,122 @@
+control substitution on
+
+# Inverted-indexed table is fully caught up. After that, only non-indexed
+# tables receive writes (with search commits blocked). On crash + restart,
+# recovery should be a no-op for the inverted shard — the lagging check
+# must conclude there's no work to do, despite there being plenty of WAL
+# records for unrelated tables.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY oni_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE oni_inv_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE oni_plain_a(id INTEGER PRIMARY KEY, payload TEXT);
+
+statement ok
+CREATE TABLE oni_plain_b(id INTEGER PRIMARY KEY, x INTEGER);
+
+statement ok
+INSERT INTO oni_inv_t VALUES
+  (1, 'phrase one alpha'),
+  (2, 'phrase two beta'),
+  (3, 'phrase three gamma');
+
+statement ok
+CREATE INDEX oni_inv_idx ON oni_inv_t USING inverted(id, body oni_dict);
+
+# Get inverted index fully caught up — nothing pending.
+statement ok
+VACUUM (UPDATE_INDEXES) oni_inv_t;
+
+# === Block search commits, but never write to the indexed table. ===
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO oni_plain_a SELECT i, 'plain_a_' || i FROM range(0, 1000) AS t(i);
+
+statement ok
+INSERT INTO oni_plain_b SELECT i, i * 2 FROM range(0, 1000) AS t(i);
+
+statement ok
+UPDATE oni_plain_a SET payload = payload || '_x' WHERE id < 500;
+
+statement ok
+DELETE FROM oni_plain_b WHERE x >= 1000;
+
+statement ok
+INSERT INTO oni_plain_a VALUES (10000, 'tail_value');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection oni_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) oni_inv_t;
+
+# Inverted index is exactly as before the crash.
+connection oni_after
+query
+SELECT COUNT(*) FROM oni_inv_t;
+----
+count
+3
+
+connection oni_after
+query
+SELECT COUNT(*) FROM oni_inv_idx;
+----
+count
+3
+
+connection oni_after
+query
+SELECT id FROM oni_inv_t WHERE body @@ ts_phrase('phrase one alpha');
+----
+id
+1
+
+connection oni_after
+query
+SELECT id FROM oni_inv_t WHERE body @@ ts_phrase('phrase two beta');
+----
+id
+2
+
+connection oni_after
+query
+SELECT id FROM oni_inv_t WHERE body @@ ts_phrase('phrase three gamma');
+----
+id
+3
+
+# Non-indexed tables — sanity check rocksdb replay.
+connection oni_after
+query
+SELECT COUNT(*) FROM oni_plain_a;
+----
+count
+1001
+
+connection oni_after
+query
+SELECT COUNT(*) FROM oni_plain_b;
+----
+count
+500

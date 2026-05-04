@@ -20,22 +20,10 @@
 
 #pragma once
 
-#include <duckdb/main/database.hpp>
-#include <string>
-#include <string_view>
+namespace sdb::search {
 
-namespace sdb::connector {
+// Called once from SearchEngine::start, after CatalogFeature has loaded
+// every shard and after the search thread pools have started.
+void InitInvertedIndexes(bool skip_wal_recovery);
 
-void RegisterPgStringFunctions(duckdb::DatabaseInstance& db);
-
-// Rewrites a LIKE pattern that uses a custom escape character to one that
-// uses backslash -- the form iresearch's wildcard filter expects. Used by
-// both the runtime `like_escape` scalar and the iresearch search filter
-// builder when it translates `LIKE ... ESCAPE` predicates.
-std::string LikeEscapePattern(std::string_view pattern, char escape_char);
-
-// Converts a SQL SIMILAR TO pattern into a POSIX regex.
-// Ported from PG's similar_escape in regexp.c.
-std::string SimilarToEscapePattern(std::string_view pattern, char escape_char);
-
-}  // namespace sdb::connector
+}  // namespace sdb::search

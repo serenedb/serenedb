@@ -533,7 +533,7 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
   // (and the binder's inference for OID-0 slots). Fall back to text when the
   // binder couldn't infer.
   const auto& prepared = *stmt.prepared;
-  const auto expected_types = prepared.GetExpectedParameterTypes();
+  const auto& expected_types = prepared.GetExpectedParameterTypes();
   const uint16_t num_fields =
     static_cast<uint16_t>(prepared.named_param_map.size());
 
@@ -602,7 +602,7 @@ void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
   // Build dummy values typed from expected_types so the rebind resolves any
   // remaining UNKNOWN output columns. Slots the binder couldn't infer (OID-0
   // with no expression context) fall back to VARCHAR.
-  const auto expected_types = prepared.GetExpectedParameterTypes();
+  const auto& expected_types = prepared.GetExpectedParameterTypes();
   duckdb::vector<duckdb::Value> dummy;
   dummy.reserve(nparams);
   for (size_t i = 0; i < nparams; ++i) {
@@ -882,7 +882,7 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
   // Resolve expected param types from the prepared statement's positional
   // parameter map ("1", "2", ...). GetTypes() returns output column types,
   // not parameter types, so it's unusable here.
-  const auto expected_types = stmt.prepared->GetExpectedParameterTypes();
+  const auto& expected_types = stmt.prepared->GetExpectedParameterTypes();
 
   if (input_formats.size() > 1 && input_formats.size() != params) {
     SendError(absl::StrCat("bind message has ", input_formats.size(),

@@ -319,7 +319,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
-          return std::unexpected<Result>(std::move(dict.error()));
+          return std::unexpected<Result>{std::move(dict.error())};
         }
         path_info.text_dictionary = dict->first;
         path_info.features = dict->second;
@@ -364,7 +364,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         }
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
-          return std::unexpected<Result>(std::move(dict.error()));
+          return std::unexpected<Result>{std::move(dict.error())};
         }
         index_col.text_dictionary = dict->first;
         index_col.features = dict->second;

@@ -1306,12 +1306,12 @@ const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
     }
     const auto key_type = key_val->type().id();
     if (key_type == duckdb::LogicalTypeId::VARCHAR) {
-      out_path.push_back(key_val->GetValue<std::string>());
+      out_path.emplace_back(key_val->GetValue<std::string>());
     } else if (IsNumericTypeId(key_type)) {
       // Integer/array-index key like `content->0`: stringify so the path
       // segment becomes "0", which `simdjson::at_pointer` interprets as
       // array index 0 when the parent is an array.
-      out_path.push_back(absl::StrCat(key_val->GetValue<int64_t>()));
+      out_path.emplace_back(absl::StrCat(key_val->GetValue<int64_t>()));
     } else {
       return nullptr;
     }

@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/types.hpp>
 #include <duckdb/execution/executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -142,6 +143,16 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 };
 
 // clang-format on
+
+duckdb::LogicalType ResolveExpectedType(const auto& expected_types,
+                                        uint16_t id) {
+  auto type_it = expected_types.find(absl::StrCat(id + 1));
+  return (type_it != expected_types.end() &&
+          type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
+          type_it->second.id() != duckdb::LogicalTypeId::INVALID)
+           ? type_it->second
+           : duckdb::LogicalTypeId::VARCHAR;
+}
 
 }  // namespace
 
@@ -542,13 +553,8 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
   prefix_data[0] = PQ_MSG_PARAMETER_DESCRIPTION;
   absl::big_endian::Store16(prefix_data + 5, num_fields);
 
-  for (uint16_t i = 1; i <= num_fields; ++i) {
-    auto type_it = expected_types.find(absl::StrCat(i));
-    int32_t oid = (type_it != expected_types.end() &&
-                   type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-                   type_it->second.id() != duckdb::LogicalTypeId::INVALID)
-                    ? Type2Oid(type_it->second)
-                    : static_cast<int32_t>(PgTypeOID::kText);
+  for (uint16_t i = 0; i < num_fields; ++i) {
+    int32_t oid = Type2Oid(ResolveExpectedType(expected_types, i));
     absl::big_endian::Store32(buffer.GetContiguousData(4), oid);
   }
 
@@ -606,12 +612,7 @@ void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
   duckdb::vector<duckdb::Value> dummy;
   dummy.reserve(nparams);
   for (size_t i = 0; i < nparams; ++i) {
-    auto type_it = expected_types.find(absl::StrCat(i + 1));
-    auto type = (type_it != expected_types.end() &&
-                 type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-                 type_it->second.id() != duckdb::LogicalTypeId::INVALID)
-                  ? type_it->second
-                  : duckdb::LogicalType::VARCHAR;
+    auto type = ResolveExpectedType(expected_types, i);
     duckdb::Value v{"1"};
     if (!v.DefaultTryCastAs(type)) {
       v = duckdb::Value{type};
@@ -921,13 +922,7 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
       // Parameter types are pinned at Parse via the type-hints API, so
       // expected_types is authoritative. VARCHAR remains the fallback for
       // the OID-0 case where the binder genuinely couldn't infer a type.
-      auto type_it = expected_types.find(absl::StrCat(i + 1));
-      duckdb::LogicalType param_type =
-        (type_it != expected_types.end() &&
-         type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-         type_it->second.id() != duckdb::LogicalTypeId::INVALID)
-          ? type_it->second
-          : duckdb::LogicalType::VARCHAR;
+      duckdb::LogicalType param_type = ResolveExpectedType(expected_types, i);
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
       auto param_value = DeserializeParameter(

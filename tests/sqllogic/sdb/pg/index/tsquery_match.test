@@ -1912,9 +1912,9 @@ a
 1
 2
 
-# has_any_token list-form.
+# has_any_tokens list-form.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, ['turtle', 'fox']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, ['turtle', 'fox']) ORDER BY a;
 ----
 a
 1
@@ -1929,9 +1929,9 @@ a
 2
 3
 
-# has_any_token list-form with min_match.
+# has_any_tokens list-form with min_match.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, ['quick', 'fox', 'lazy'], 2) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, ['quick', 'fox', 'lazy'], 2) ORDER BY a;
 ----
 a
 1
@@ -1944,9 +1944,9 @@ a
 1
 2
 
-# has_any_token single-string form (no min_match -> bare-string @@).
+# has_any_tokens single-string form (no min_match -> bare-string @@).
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, 'Quick Turtle') ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, 'Quick Turtle') ORDER BY a;
 ----
 a
 1
@@ -1961,10 +1961,10 @@ a
 2
 3
 
-# has_any_token single-string form with min_match -- both tokens
+# has_any_tokens single-string form with min_match -- both tokens
 # of 'quick fox' must match.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, 'quick fox', 2) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, 'quick fox', 2) ORDER BY a;
 ----
 a
 1
@@ -2188,68 +2188,68 @@ a
 1
 2
 
-# has_any_token list with min_match equal to list size = has_all_tokens.
+# has_any_tokens list with min_match equal to list size = has_all_tokens.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, ['quick', 'fox'], 2) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, ['quick', 'fox'], 2) ORDER BY a;
 ----
 a
 1
 2
 
-# has_any_token single-token text -> bare-string @@ -> ByTerm.
+# has_any_tokens single-token text -> bare-string @@ -> ByTerm.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, 'quick') ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, 'quick') ORDER BY a;
 ----
 a
 1
 2
 
-# has_any_token AND has_any_token.
+# has_any_tokens AND has_any_tokens.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, ['quick', 'red']) AND has_any_token(b, ['fox', 'turtle']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, ['quick', 'red']) AND has_any_tokens(b, ['fox', 'turtle']) ORDER BY a;
 ----
 a
 1
 2
 
-# has_any_token OR has_any_token.
+# has_any_tokens OR has_any_tokens.
 query
-SELECT a FROM tsq_idx WHERE has_any_token(b, ['turtle']) OR has_any_token(b, ['something']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE has_any_tokens(b, ['turtle']) OR has_any_tokens(b, ['something']) ORDER BY a;
 ----
 a
 3
 4
 
-# NOT has_any_token.
+# NOT has_any_tokens.
 query
-SELECT a FROM tsq_idx WHERE NOT has_any_token(b, ['quick', 'red']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE NOT has_any_tokens(b, ['quick', 'red']) ORDER BY a;
 ----
 a
 3
 4
 
-# has_any_token::boost(K) on the list form.
+# has_any_tokens::boost(K) on the list form.
 query
-SELECT a FROM tsq_idx WHERE (has_any_token(b, ['turtle', 'fox']))::boost(0.5) ORDER BY a;
+SELECT a FROM tsq_idx WHERE (has_any_tokens(b, ['turtle', 'fox']))::boost(0.5) ORDER BY a;
 ----
 a
 1
 2
 3
 
-# has_any_token::boost(K) on the single-string form (no min_match
+# has_any_tokens::boost(K) on the single-string form (no min_match
 # lowers to bare `col @@ text`, which wraps cleanly).
 query
-SELECT a FROM tsq_idx WHERE (has_any_token(b, 'turtle fox'))::boost(0.5) ORDER BY a;
+SELECT a FROM tsq_idx WHERE (has_any_tokens(b, 'turtle fox'))::boost(0.5) ORDER BY a;
 ----
 a
 1
 2
 3
 
-# Mixed predicates: phrase_matches AND has_any_token.
+# Mixed predicates: phrase_matches AND has_any_tokens.
 query
-SELECT a FROM tsq_idx WHERE phrase_matches(b, 'lazy dog') AND has_any_token(b, ['quick', 'red']) ORDER BY a;
+SELECT a FROM tsq_idx WHERE phrase_matches(b, 'lazy dog') AND has_any_tokens(b, ['quick', 'red']) ORDER BY a;
 ----
 a
 1
@@ -2264,9 +2264,9 @@ a
 2
 3
 
-# Mixed: phrase_matches on column b, has_any_token on column c.
+# Mixed: phrase_matches on column b, has_any_tokens on column c.
 query
-SELECT a FROM tsq_idx WHERE phrase_matches(b, 'quick brown') OR has_any_token(c, 'goodbye') ORDER BY a;
+SELECT a FROM tsq_idx WHERE phrase_matches(b, 'quick brown') OR has_any_tokens(c, 'goodbye') ORDER BY a;
 ----
 a
 1

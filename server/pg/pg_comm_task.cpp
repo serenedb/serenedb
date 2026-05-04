@@ -144,13 +144,14 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
-duckdb::LogicalType ResolveExpectedType(const auto& expected_types,
-                                        uint16_t id) {
-  auto type_it = expected_types.find(absl::StrCat(id + 1));
-  return (type_it != expected_types.end() &&
-          type_it->second.id() != duckdb::LogicalTypeId::UNKNOWN &&
-          type_it->second.id() != duckdb::LogicalTypeId::INVALID)
-           ? type_it->second
+duckdb::LogicalType ResolveExpectedType(const auto& value_map, uint16_t id) {
+  auto type_it = value_map.find(absl::StrCat(id + 1));
+  return (type_it != value_map.end() &&
+          type_it->second->GetValue().type().id() !=
+            duckdb::LogicalTypeId::UNKNOWN &&
+          type_it->second->GetValue().type().id() !=
+            duckdb::LogicalTypeId::INVALID)
+           ? type_it->second->GetValue().type()
            : duckdb::LogicalTypeId::VARCHAR;
 }
 
@@ -544,7 +545,6 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
   // (and the binder's inference for OID-0 slots). Fall back to text when the
   // binder couldn't infer.
   const auto& prepared = *stmt.prepared;
-  const auto& expected_types = prepared.GetExpectedParameterTypes();
   const uint16_t num_fields =
     static_cast<uint16_t>(prepared.named_param_map.size());
 
@@ -554,7 +554,7 @@ void DescribeParameters(const DuckDBStatement& stmt, message::Buffer& buffer) {
   absl::big_endian::Store16(prefix_data + 5, num_fields);
 
   for (uint16_t i = 0; i < num_fields; ++i) {
-    int32_t oid = Type2Oid(ResolveExpectedType(expected_types, i));
+    int32_t oid = Type2Oid(ResolveExpectedType(prepared.data->value_map, i));
     absl::big_endian::Store32(buffer.GetContiguousData(4), oid);
   }
 
@@ -605,14 +605,10 @@ void PgSQLCommTaskBase::ResolveStatementTypes(DuckDBStatement& stmt) {
     return;
   }
 
-  // Build dummy values typed from expected_types so the rebind resolves any
-  // remaining UNKNOWN output columns. Slots the binder couldn't infer (OID-0
-  // with no expression context) fall back to VARCHAR.
-  const auto& expected_types = prepared.GetExpectedParameterTypes();
   duckdb::vector<duckdb::Value> dummy;
   dummy.reserve(nparams);
   for (size_t i = 0; i < nparams; ++i) {
-    auto type = ResolveExpectedType(expected_types, i);
+    auto type = ResolveExpectedType(prepared.data->value_map, i);
     duckdb::Value v{"1"};
     if (!v.DefaultTryCastAs(type)) {
       v = duckdb::Value{type};
@@ -880,11 +876,6 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
   uint16_t params = absl::big_endian::Load16(packet.data());
   packet.remove_prefix(sizeof(int16_t));
 
-  // Resolve expected param types from the prepared statement's positional
-  // parameter map ("1", "2", ...). GetTypes() returns output column types,
-  // not parameter types, so it's unusable here.
-  const auto& expected_types = stmt.prepared->GetExpectedParameterTypes();
-
   if (input_formats.size() > 1 && input_formats.size() != params) {
     SendError(absl::StrCat("bind message has ", input_formats.size(),
                            " parameter formats but ", params, " parameters"),
@@ -919,10 +910,11 @@ std::optional<DuckDBBindInfo> PgSQLCommTaskBase::ParseBindVars(
         format = input_formats[i];
       }
 
-      // Parameter types are pinned at Parse via the type-hints API, so
-      // expected_types is authoritative. VARCHAR remains the fallback for
+      // Parameter types are pinned at Parse via the type-hints API.
+      // VARCHAR remains the fallback for
       // the OID-0 case where the binder genuinely couldn't infer a type.
-      duckdb::LogicalType param_type = ResolveExpectedType(expected_types, i);
+      duckdb::LogicalType param_type =
+        ResolveExpectedType(stmt.prepared->data->value_map, i);
 
       std::string_view param{packet.data(), static_cast<size_t>(length)};
       auto param_value = DeserializeParameter(

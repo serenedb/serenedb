@@ -25,6 +25,7 @@
 #include <string>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/index_source.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/slice.h"
 
@@ -36,6 +37,11 @@ struct SKFullScanGlobalState : public CommonScanGlobalState {
   std::unique_ptr<rocksdb::Iterator> sk_iterator;
   std::string sk_upper_bound;
   rocksdb::Slice sk_upper_bound_slice;
+  // Reused PK batch across batches. Default state is std::monostate;
+  // switched on first call to index_source->CreatePkBatch() (rocksdb
+  // table: PrimaryKeysBytes; file-backed view: PrimaryKeyI64 /
+  // PrimaryKeyI64I64).
+  PrimaryKeyBatch pk_batch;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SKFullScanInitGlobal(

@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_entry_cache.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -255,7 +257,7 @@ TableInfoAndIndices BuildTableInfoAndIndices(
   }
 
   // Indexed columns
-  auto indexes = snapshot.GetIndexesByTable(table.GetId());
+  auto indexes = snapshot.GetIndexesByRelation(table.GetId());
   const auto& cols = table.Columns();
   containers::FlatHashSet<size_t> idx_set;
   for (auto& index : indexes) {
@@ -294,10 +296,54 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema, ObjectId db_id,
   std::string_view schema_name, std::string_view name,
   const catalog::Index& index, const catalog::Snapshot& snapshot) {
-  auto table = snapshot.GetObject<catalog::Table>(index.GetRelationId());
-  if (!table) {
+  auto relation_obj = snapshot.GetObject(index.GetRelationId());
+  if (!relation_obj) {
     return nullptr;
   }
+  if (relation_obj->GetType() == catalog::ObjectType::PgSqlView) {
+    auto view =
+      std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
+    const auto& vinfo = view->GetInfo();
+    auto info = duckdb::make_uniq<duckdb::CreateTableInfo>();
+    info->table = std::string{name};
+    info->schema = std::string{schema.name};
+    for (size_t i = 0; i < vinfo.names.size(); ++i) {
+      info->columns.AddColumn(
+        duckdb::ColumnDefinition(vinfo.names[i], vinfo.types[i]));
+    }
+    auto col_ids = index.GetColumnIds();
+    std::vector<size_t> indexed_col_indices(col_ids.begin(), col_ids.end());
+    if (index.GetType() == catalog::ObjectType::InvertedIndex) {
+      auto inverted_index_ptr =
+        snapshot.GetObject<catalog::InvertedIndex>(index.GetId());
+      if (!inverted_index_ptr) {
+        return nullptr;
+      }
+      return duckdb::make_uniq<ViewInvertedIndexScanEntry>(
+        catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
+        std::move(inverted_index_ptr));
+    }
+    if (index.GetType() == catalog::ObjectType::SecondaryIndex) {
+      const auto& sec_index =
+        basics::downCast<const catalog::SecondaryIndex>(index);
+      const auto& shards = snapshot.GetIndexShardsByRelation(view->GetId());
+      auto it = absl::c_find_if(shards, [&](const auto& shard) {
+        return shard->GetIndexId() == index.GetId();
+      });
+      if (it == shards.end()) {
+        return nullptr;
+      }
+      return duckdb::make_uniq<ViewSecondaryIndexScanEntry>(
+        catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
+        (*it)->GetId(), sec_index.IsUnique());
+    }
+    return nullptr;
+  }
+
+  if (relation_obj->GetType() != catalog::ObjectType::Table) {
+    return nullptr;
+  }
+  auto table = std::static_pointer_cast<catalog::Table>(relation_obj);
   auto built = BuildTableInfoAndIndices(name, schema.name, *table, snapshot);
 
   if (index.GetType() == catalog::ObjectType::InvertedIndex) {
@@ -306,7 +352,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     if (!inverted_index_ptr) {
       return nullptr;
     }
-    return SereneDBIndexScanEntry::ForInvertedIndex(
+    return duckdb::make_uniq<TableInvertedIndexScanEntry>(
       catalog, schema, *built.info, std::move(table),
       std::move(built.indexed_col_indices), std::move(inverted_index_ptr));
   }
@@ -315,7 +361,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   const auto& sec_index =
     basics::downCast<const catalog::SecondaryIndex>(index);
   ObjectId sk_shard_id;
-  for (auto& shard : snapshot.GetIndexShardsByTable(table->GetId())) {
+  for (auto& shard : snapshot.GetIndexShardsByRelation(table->GetId())) {
     if (shard->GetIndexId() == index.GetId()) {
       sk_shard_id = shard->GetId();
       break;
@@ -324,7 +370,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
   if (sk_shard_id == ObjectId{}) {
     return nullptr;
   }
-  return SereneDBIndexScanEntry::ForSecondaryIndex(
+  return duckdb::make_uniq<TableSecondaryIndexScanEntry>(
     catalog, schema, *built.info, std::move(table),
     std::move(built.indexed_col_indices), sk_shard_id, sec_index.IsUnique());
 }

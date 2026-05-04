@@ -696,7 +696,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::LogicalType::BOOLEAN, SearchStubFn));
 
   {
-    duckdb::ScalarFunctionSet set{std::string{kHasAnyToken}};
+    duckdb::ScalarFunctionSet set{std::string{kHasAnyTokens}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::ANY,
        duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},

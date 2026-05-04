@@ -26,6 +26,7 @@
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 #include "catalog/table.h"
 
 namespace sdb::connector {
@@ -44,8 +45,14 @@ class SereneDBSchemaEntry;
 //   On error:           destructor drops the index (rollback)
 class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
  public:
+  // `relation` is the SereneDB-catalog object the index is built on: either
+  // a `catalog::Table` (native rocksdb) or a `catalog::PgSqlView`
+  // (foreign-source-backed). `view_columns` is the synthesised column list
+  // when `relation` is a view (Tables expose Columns() directly); ignored
+  // for tables.
   SereneDBPhysicalCreateIndex(duckdb::PhysicalPlan& plan,
-                              std::shared_ptr<catalog::Table> table,
+                              std::shared_ptr<catalog::SchemaObject> relation,
+                              std::vector<catalog::Column> view_columns,
                               ObjectId database_id,
                               duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
                               SereneDBSchemaEntry& schema_entry,
@@ -72,7 +79,17 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
   bool IsSource() const override { return true; }
 
  private:
-  std::shared_ptr<catalog::Table> _table;
+  // Returns the columns of the relation. For tables: `Table::Columns()`;
+  // for views: the `_view_columns` list synthesised from the view's bound
+  // output schema.
+  const std::vector<catalog::Column>& Columns() const noexcept;
+
+  // Returns the `_relation` cast to a Table when it is one; nullptr for views.
+  catalog::Table* TableOrNull() const noexcept;
+
+  std::shared_ptr<catalog::SchemaObject> _relation;
+  // Empty when `_relation` is a Table (use Columns()); populated when view.
+  std::vector<catalog::Column> _view_columns;
   ObjectId _database_id;
   duckdb::unique_ptr<duckdb::CreateIndexInfo> _info;
   SereneDBSchemaEntry& _schema_entry;

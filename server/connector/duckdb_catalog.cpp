@@ -22,6 +22,7 @@
 
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/execution/operator/order/physical_order.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
@@ -34,6 +35,7 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -43,14 +45,17 @@
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/planner/operator/logical_merge_into.hpp>
+#include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
+#include <ranges>
 
 #include "catalog/catalog.h"
+#include "catalog/pk_spec.h"
 #include "catalog/schema.h"
+#include "catalog/view.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
-#include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
 #include "connector/duckdb_physical_insert.h"
@@ -58,6 +63,7 @@
 #include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -829,17 +835,137 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanMergeInto(
 
 duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
-  duckdb::TableCatalogEntry& table,
+  duckdb::CatalogEntry& target,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
-  // Create LogicalCreateIndex directly without IndexBinder
-  // (IndexBinder::BindCreateIndex casts bind_data to TableScanBindData
-  // which fails for our SereneDBScanBindData).
+  // View-backed indexes are STATIC -- captured at CREATE INDEX, no DML refresh.
+  duckdb::optional_ptr<duckdb::TableCatalogEntry> resolved_table;
+  bool view_backed = false;
+  std::optional<ViewFastPath> view_fast_path;
+  int64_t pinned_iceberg_snapshot_id = 0;
+  if (target.type == duckdb::CatalogType::VIEW_ENTRY) {
+    view_backed = true;
+    auto is_fast_path_wrapper = [](duckdb::LogicalOperator& op) -> bool {
+      switch (op.type) {
+        case duckdb::LogicalOperatorType::LOGICAL_FILTER:
+        case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
+        case duckdb::LogicalOperatorType::LOGICAL_LIMIT:
+        case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
+        case duckdb::LogicalOperatorType::LOGICAL_PROJECTION:
+          return true;
+        default:
+          return false;
+      }
+    };
+    auto snapshot = GetSereneDBContext(binder.context).EnsureCatalogSnapshot();
+    auto relation_obj = snapshot->GetRelation(
+      GetDatabaseId(), target.ParentSchema().name, target.name);
+    std::optional<ViewFastPath> fp;
+    if (relation_obj &&
+        relation_obj->GetType() == catalog::ObjectType::PgSqlView) {
+      auto view =
+        std::static_pointer_cast<const catalog::PgSqlView>(relation_obj);
+      fp = ResolveViewFastPath(binder.context, *view);
+    }
+    duckdb::LogicalOperator* leaf_parent_chain_root = plan.get();
+    duckdb::LogicalGet* leaf_get = nullptr;
+    {
+      duckdb::LogicalOperator* cur = plan.get();
+      bool ok = true;
+      while (cur && cur->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+        if (!is_fast_path_wrapper(*cur) || cur->children.size() != 1) {
+          ok = false;
+          break;
+        }
+        cur = cur->children[0].get();
+      }
+      if (ok && cur) {
+        leaf_get = &cur->Cast<duckdb::LogicalGet>();
+      }
+    }
+    if (fp && leaf_get) {
+      view_fast_path = std::move(fp);
+      auto vcols = BackfillPkVirtualColumns(*view_fast_path);
+      const auto leaf_orig_size = leaf_get->GetColumnIds().size();
+      duckdb::vector<duckdb::LogicalType> pk_types;
+      pk_types.reserve(vcols.size());
+      if (view_fast_path->pk_spec == catalog::PkSpec::RocksDBExplicitPK) {
+        const auto& base_cols = view_fast_path->base_table->Columns();
+        for (auto vcol : vcols) {
+          SDB_ASSERT(vcol < base_cols.size());
+          pk_types.push_back(base_cols[vcol].type);
+        }
+      } else if (view_fast_path->pk_spec ==
+                 catalog::PkSpec::RocksDBGeneratedRowId) {
+        SDB_ASSERT(vcols.size() == 1);
+        pk_types.push_back(duckdb::LogicalType::BIGINT);
+      } else {
+        for (auto vcol : vcols) {
+          if (vcol == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+            pk_types.push_back(duckdb::LogicalType::UBIGINT);
+          } else {
+            pk_types.push_back(duckdb::LogicalType::BIGINT);
+          }
+        }
+      }
+      leaf_get->types.clear();
+      for (duckdb::idx_t i = 0; i < leaf_orig_size; ++i) {
+        leaf_get->types.push_back(
+          leaf_get->GetColumnType(leaf_get->GetColumnIds()[i]));
+      }
+      for (size_t i = 0; i < vcols.size(); ++i) {
+        leaf_get->AddColumnId(vcols[i]);
+        leaf_get->types.push_back(pk_types[i]);
+        // Iceberg's get_virtual_columns omits file_index even though the
+        // reader produces it -- patch the map.
+        if (leaf_get->virtual_columns.find(vcols[i]) ==
+            leaf_get->virtual_columns.end()) {
+          if (vcols[i] ==
+              duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+            leaf_get->virtual_columns.emplace(
+              vcols[i],
+              duckdb::TableColumn("file_index", duckdb::LogicalType::UBIGINT));
+          } else if (vcols[i] == duckdb::MultiFileReader::
+                                   COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+            leaf_get->virtual_columns.emplace(
+              vcols[i], duckdb::TableColumn("file_row_number",
+                                            duckdb::LogicalType::BIGINT));
+          }
+        }
+      }
+      auto thread_pk_through = [&](auto& self,
+                                   duckdb::LogicalOperator& op) -> void {
+        if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
+          return;
+        }
+        SDB_ASSERT(op.children.size() == 1);
+        self(self, *op.children[0]);
+        if (op.type != duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
+          return;
+        }
+        auto& proj = op.Cast<duckdb::LogicalProjection>();
+        auto child_bindings = op.children[0]->GetColumnBindings();
+        const auto child_orig_size = child_bindings.size() - vcols.size();
+        for (size_t i = 0; i < vcols.size(); ++i) {
+          proj.expressions.push_back(
+            duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+              pk_types[i], child_bindings[child_orig_size + i]));
+        }
+      };
+      thread_pk_through(thread_pk_through, *leaf_parent_chain_root);
+      if (leaf_get->bind_data) {
+        pinned_iceberg_snapshot_id =
+          ExtractIcebergSnapshotId(*leaf_get->bind_data);
+      }
+    }
+  } else {
+    resolved_table = &target.Cast<duckdb::TableCatalogEntry>();
+  }
+  // IndexBinder casts bind_data to TableScanBindData -- doesn't fit ours.
   auto create_index_info =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateIndexInfo>(
       std::move(stmt.info));
 
-  // Normalize index type to our registered types ("secondary" / "inverted").
-  // DuckDB defaults to empty or "ART", PG defaults to "btree".
+  // DuckDB defaults to "" or "ART"; PG defaults to "btree".
   {
     auto& idx_type = create_index_info->index_type;
     auto type = absl::AsciiStrToLower(idx_type);
@@ -853,74 +979,125 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     }
   }
 
-  // Fill in column IDs and scan types from table columns + parsed expressions
-  auto& sdb_entry = RequireBaseTable(table);
-  auto sdb_table = sdb_entry.GetSereneDBTable();
-  const auto& columns = sdb_table->Columns();
+  std::vector<std::pair<std::string, duckdb::LogicalType>> rel_columns;
+  bool use_generated_pk_rowid_col = false;
+  if (view_backed) {
+    auto& view_entry = target.Cast<duckdb::ViewCatalogEntry>();
+    auto column_info = view_entry.GetColumnInfo();
+    if (!column_info) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("view \"", target.name,
+                              "\" must be bound before it can be indexed"));
+    }
+    rel_columns.assign_range(
+      std::views::iota(size_t{0}, column_info->names.size()) |
+      std::views::transform([&](size_t i) {
+        return std::pair{column_info->names[i], column_info->types[i]};
+      }));
+  } else {
+    auto& sdb_entry = RequireBaseTable(*resolved_table);
+    auto sdb_table = sdb_entry.GetSereneDBTable();
+    const auto& columns = sdb_table->Columns();
+    rel_columns.assign_range(columns | std::views::transform([](const auto& c) {
+                               return std::pair{c.name, c.type};
+                             }));
+    use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
+  }
 
-  // Map column names from parsed expressions to column indices
   for (auto& expr : create_index_info->parsed_expressions) {
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
-      for (size_t i = 0; i < columns.size(); ++i) {
-        if (columns[i].name == col_name) {
+      for (size_t i = 0; i < rel_columns.size(); ++i) {
+        if (rel_columns[i].first == col_name) {
           create_index_info->column_ids.push_back(i);
-          create_index_info->scan_types.push_back(columns[i].type);
+          create_index_info->scan_types.push_back(rel_columns[i].second);
           break;
         }
       }
     }
   }
   create_index_info->scan_types.emplace_back(duckdb::LogicalType::ROW_TYPE);
-  auto& get = plan->Cast<duckdb::LogicalGet>();
 
-  const bool use_generated_pk_rowid_col =
-    sdb_table->GetTableType() != TableType::File &&
-    sdb_table->PKColumns().empty();
-
-  // The binder creates an empty LogicalGet. Populate column_ids for all
-  // table columns so the scan outputs everything the backfill needs. For
-  // external readers that expose file_row_number (parquet, csv, json),
-  // add the trailing file_row_number virtual column. For RocksDB tables
-  // with no declared PK, add the trailing row_id virtual column instead.
-  if (get.GetColumnIds().empty()) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      get.AddColumnId(static_cast<duckdb::column_t>(i));
+  auto leaf_get_from_plan =
+    [](duckdb::LogicalOperator& root) -> duckdb::LogicalGet& {
+    auto* cur = &root;
+    while (cur->type != duckdb::LogicalOperatorType::LOGICAL_GET) {
+      cur = cur->children[0].get();
     }
-    get.types.clear();
-    for (size_t i = 0; i < columns.size(); ++i) {
-      get.types.push_back(columns[i].type);
-    }
-    if (sdb_table->GetTableType() == TableType::File) {
-      get.AddColumnId(
-        duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
-      get.types.push_back(duckdb::LogicalType::BIGINT);
-    } else if (use_generated_pk_rowid_col) {
-      get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
-      get.types.push_back(duckdb::LogicalType::BIGINT);
-    }
-  }
-  create_index_info->names = get.names;
-  create_index_info->schema = table.schema.name;
-  create_index_info->catalog = table.catalog.GetName();
-
-  // Build BoundColumnRefExpression for ALL table columns so DuckDB's
-  // column pruning keeps them in the scan. The backfill needs all columns
-  // (PK bytes + index column values + serialization for the writer). The
-  // file_row_number column (external tables) is NOT added here -- the
-  // BindContext doesn't know about it, so a bound column ref can't
-  // resolve. It's kept in the scan via column_ids and read by the sink
-  // from the trailing chunk position.
+    return cur->Cast<duckdb::LogicalGet>();
+  };
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
-  for (size_t i = 0; i < columns.size(); ++i) {
-    expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-      columns[i].type,
-      duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
+  if (!view_backed) {
+    auto& get = leaf_get_from_plan(*plan);
+    if (get.GetColumnIds().empty()) {
+      for (size_t i = 0; i < rel_columns.size(); ++i) {
+        get.AddColumnId(static_cast<duckdb::column_t>(i));
+      }
+      get.types.clear();
+      for (size_t i = 0; i < rel_columns.size(); ++i) {
+        get.types.push_back(rel_columns[i].second);
+      }
+      if (use_generated_pk_rowid_col) {
+        get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        get.types.push_back(duckdb::LogicalType::BIGINT);
+      }
+    }
+    create_index_info->names = get.names;
+    create_index_info->schema = resolved_table->schema.name;
+    create_index_info->catalog = resolved_table->catalog.GetName();
+    for (size_t i = 0; i < rel_columns.size(); ++i) {
+      expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        rel_columns[i].second,
+        duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
+    }
+  } else {
+    create_index_info->names.assign_range(rel_columns | std::views::keys);
+    create_index_info->schema = target.ParentSchema().name;
+    create_index_info->catalog = target.ParentCatalog().GetName();
+    if (view_fast_path) {
+      switch (view_fast_path->pk_spec) {
+        case catalog::PkSpec::RocksDBExplicitPK:
+          create_index_info->options["_sdb_view_fast_path_pk"] =
+            duckdb::Value("rocksdb_explicit_pk");
+          break;
+        case catalog::PkSpec::RocksDBGeneratedRowId:
+          create_index_info->options["_sdb_view_fast_path_pk"] =
+            duckdb::Value("rocksdb_rowid");
+          break;
+        default: {
+          const auto vcols = BackfillPkVirtualColumns(*view_fast_path);
+          if (vcols.size() == 1) {
+            create_index_info->options["_sdb_view_fast_path_pk"] =
+              duckdb::Value("file_row_number");
+          } else if (vcols.size() == 2) {
+            create_index_info->options["_sdb_view_fast_path_pk"] =
+              duckdb::Value("file_index_plus_row_number");
+          }
+          break;
+        }
+      }
+      if (pinned_iceberg_snapshot_id != 0) {
+        create_index_info->options["_sdb_iceberg_snapshot_id"] =
+          duckdb::Value::BIGINT(pinned_iceberg_snapshot_id);
+      }
+    }
+    // column_binding_resolver synthesises (TableIndex(0), i) for
+    // LOGICAL_CREATE_INDEX.
+    for (size_t i = 0; i < rel_columns.size(); ++i) {
+      expressions.push_back(duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+        rel_columns[i].second,
+        duckdb::ColumnBinding(duckdb::TableIndex(0),
+                              duckdb::ProjectionIndex(i))));
+    }
   }
 
+  auto& target_for_op = view_backed
+                          ? static_cast<duckdb::CatalogEntry&>(target)
+                          : static_cast<duckdb::CatalogEntry&>(*resolved_table);
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
-    std::move(create_index_info), std::move(expressions), table, nullptr);
+    std::move(create_index_info), std::move(expressions), target_for_op,
+    nullptr);
   result->children.push_back(std::move(plan));
   return result;
 }

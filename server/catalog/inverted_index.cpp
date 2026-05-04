@@ -26,12 +26,41 @@
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
+#include "absl/algorithm/container.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
+namespace {
+
+// Builds a ColumnTokenizer for either a whole-column or a JSON-path entry.
+// `text_dictionary` may be unset, in which case a fresh StringTokenizer is
+// returned (the iresearch-side keyword analyser).
+ResultOr<ColumnTokenizer> BuildColumnTokenizer(
+  const std::shared_ptr<const Snapshot>& snapshot, ObjectId text_dictionary,
+  search::Features features) {
+  if (!text_dictionary.isSet()) {
+    auto analyzer = std::make_unique<irs::StringTokenizer>();
+    return ColumnTokenizer{.analyzer = Tokenizer::TokenizerWrapper{
+                             analyzer.release(), Tokenizer::Deleter{nullptr}}};
+  }
+  auto dict = snapshot->GetObject<Tokenizer>(text_dictionary);
+  if (!dict) {
+    return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
+                                   "Dictionary for inverted index does not "
+                                   "exists"};
+  }
+  auto tokenizer = dict->GetTokenizer();
+  if (!tokenizer) {
+    return std::unexpected<Result>{std::move(tokenizer.error())};
+  }
+  return ColumnTokenizer{.analyzer = *std::move(tokenizer),
+                         .features = features.GetIndexFeatures()};
+}
+
+}  // namespace
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   bool is_new, ObjectId id, IndexShardOptions& options) const {
@@ -76,36 +105,55 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
-ColumnTokenizer InvertedIndex::GetColumnAnalyzer(
+const InvertedIndexColumnInfo* InvertedIndex::FindColumnInfo(
+  catalog::Column::Id column_id) const noexcept {
+  auto it = _columns.find(column_id);
+  return it == _columns.end() ? nullptr : &it->second;
+}
+
+ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
-  auto it = _columns.find(column_id);
-  if (it == _columns.end()) {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info) {
     SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
               " not found in the index definition");
   }
+  auto tokenizer =
+    BuildColumnTokenizer(snapshot, info->text_dictionary, info->features);
+  SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+  return *std::move(tokenizer);
+}
 
-  if (!it->second.text_dictionary.isSet()) {
-    auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return {.analyzer = {analyzer.release(), Tokenizer::Deleter{nullptr}}};
+std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
+  const std::shared_ptr<const Snapshot>& snapshot,
+  catalog::Column::Id column_id, std::span<const std::string> path) const {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info) {
+    return std::nullopt;
   }
 
-  auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);
-  SDB_ENSURE(dict, ERROR_INTERNAL,
-             "Dictionary for inverted index does not exists");
-  auto tokenizer = dict->GetTokenizer();
-  SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-  return {.analyzer = *std::move(tokenizer),
-          .features = it->second.features.GetIndexFeatures()};
+  if (auto it = absl::c_find_if(info->json_paths,
+                                [&](const auto& path_info) {
+                                  return absl::c_equal(path_info.path, path);
+                                });
+      it != info->json_paths.end()) {
+    auto tokenizer =
+      BuildColumnTokenizer(snapshot, it->text_dictionary, it->features);
+    SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
+    return *std::move(tokenizer);
+  }
+
+  return std::nullopt;
 }
 
 std::optional<irs::HNSWInfo> InvertedIndex::GetColumnHNSWInfo(
   catalog::Column::Id column_id) const {
-  auto it = _columns.find(column_id);
-  if (it == _columns.end() || !it->second.hnsw_config) {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info || !info->hnsw_config) {
     return std::nullopt;
   }
-  const auto& cfg = *it->second.hnsw_config;
+  const auto& cfg = *info->hnsw_config;
   return irs::HNSWInfo{
     .max_doc = 0,
     .d = cfg.d,

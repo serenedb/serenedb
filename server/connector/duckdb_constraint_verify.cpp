@@ -63,7 +63,7 @@ using DetailPositions = std::vector<std::pair<duckdb::idx_t, duckdb::idx_t>>;
 // but throws our PG-compatible error.
 void VerifyNotNullConstraint(const catalog::Table& table,
                              duckdb::Vector& vector, duckdb::idx_t count,
-                             const std::string& col_name,
+                             std::string_view col_name,
                              duckdb::DataChunk& chunk_for_detail,
                              const DetailPositions& detail_positions) {
   if (!duckdb::VectorOperations::HasNull(vector, count)) {
@@ -89,7 +89,7 @@ void VerifyNotNullConstraint(const catalog::Table& table,
 void VerifyCheckConstraint(duckdb::ClientContext& context,
                            const catalog::Table& table,
                            duckdb::Expression& expr, duckdb::DataChunk& chunk,
-                           const std::string& constraint_name,
+                           std::string_view constraint_name,
                            duckdb::DataChunk& chunk_for_detail,
                            const DetailPositions& detail_positions) {
   duckdb::ExpressionExecutor executor(context, expr);
@@ -190,8 +190,10 @@ void VerifyAppendConstraints(
       case duckdb::ConstraintType::NOT_NULL: {
         auto& bound_nn = constraint->Cast<duckdb::BoundNotNullConstraint>();
         auto phys_idx = bound_nn.index.index;
-        std::string col_name =
-          phys_idx < columns.size() ? columns[phys_idx].name : "unknown";
+        std::string_view col_name = "unknown";
+        if (phys_idx < columns.size()) {
+          col_name = columns[phys_idx].name;
+        }
         VerifyNotNullConstraint(table, chunk.data[phys_idx], chunk.size(),
                                 col_name, chunk, detail);
         catalog_check_idx++;
@@ -199,7 +201,7 @@ void VerifyAppendConstraints(
       }
       case duckdb::ConstraintType::CHECK: {
         auto& bound_check = constraint->Cast<duckdb::BoundCheckConstraint>();
-        std::string constraint_name;
+        std::string_view constraint_name;
         if (catalog_check_idx < check_constraints.size()) {
           constraint_name = check_constraints[catalog_check_idx].name;
         }

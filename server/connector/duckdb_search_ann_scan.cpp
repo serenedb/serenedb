@@ -37,8 +37,11 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source.h"
+#include "connector/index_source_factory.h"
 #include "connector/key_utils.hpp"
-#include "connector/lookup.h"
+#include "connector/pk_batch_helpers.h"
+#include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/db.h"
@@ -120,9 +123,22 @@ void EmitLocalData(SearchAnnScanGlobalState& g, SearchAnnScanLocalState& l) {
   g.ids.emplace_back(std::move(l.ids));
 }
 
-void EmitResult(duckdb::ClientContext& context,
-                const SereneDBScanBindData& bind_data,
-                SearchAnnScanGlobalState& g, duckdb::DataChunk& output) {
+size_t LocalPkSize(const PrimaryKeyBatch& b) {
+  return std::visit(
+    [](const auto& v) -> size_t {
+      using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, std::monostate>) {
+        return 0;
+      } else {
+        return PrimaryKeysSize(v);
+      }
+    },
+    b);
+}
+
+void MergeResult(duckdb::ClientContext& context,
+                 const SereneDBScanBindData& bind_data,
+                 SearchAnnScanGlobalState& g) {
   const size_t k = g.scan->top_k;
   const size_t num_lists = g.dis.size();
 
@@ -134,16 +150,13 @@ void EmitResult(duckdb::ClientContext& context,
     }
   }
 
-  std::vector<float> top_dis;
   std::vector<int64_t> top_ids;
-  top_dis.reserve(k);
   top_ids.reserve(k);
   while (!heap.empty() && top_ids.size() < k) {
     auto [d, li, pi] = heap.top();
     heap.pop();
     const auto id = g.ids[li][pi];
     SDB_ASSERT(id != -1);
-    top_dis.push_back(d);
     top_ids.push_back(id);
     const auto next = pi + 1;
     if (next < g.dis[li].size() && g.ids[li][next] != -1) {
@@ -151,7 +164,25 @@ void EmitResult(duckdb::ClientContext& context,
     }
   }
 
-  const auto n = top_ids.size();
+  const size_t n = top_ids.size();
+  const bool has_real =
+    std::any_of(g.projected_columns.begin(), g.projected_columns.end(),
+                [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
+
+  if (!has_real || n == 0) {
+    g.total_results = n;
+    return;
+  }
+
+  if (!g.index_source) {
+    g.index_source = MakeIndexSource(context, bind_data, g.snapshot, g.txn,
+                                     g.projected_columns, g.projected_types,
+                                     bind_data.column_ids);
+  }
+  if (std::holds_alternative<std::monostate>(g.pk_batch)) {
+    g.pk_batch = g.index_source->CreatePkBatch();
+  }
+
   auto segments =
     top_ids | std::views::transform([](int64_t id) {
       return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
@@ -160,16 +191,42 @@ void EmitResult(duckdb::ClientContext& context,
     top_ids | std::views::transform([](int64_t id) {
       return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
     });
-  std::vector<std::string> pk_storage(n);
-  LookupSegmentsValues(segments, doc_ids, *g.reader, pk_storage);
 
-  std::vector<std::string_view> pk_views;
-  pk_views.reserve(n);
-  for (size_t i = 0; i < n; ++i) {
-    SDB_ASSERT(!pk_storage[i].empty());
-    pk_views.emplace_back(pk_storage[i]);
+  g.total_results = std::visit(
+    [&](auto& pk) -> size_t {
+      using T = std::decay_t<decltype(pk)>;
+      if constexpr (std::is_same_v<T, std::monostate>) {
+        SDB_ASSERT(false, "pk_batch must be initialised");
+        return 0;
+      } else {
+        pk.Reset();
+        if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
+          pk.EnsureInit(duckdb::Allocator::DefaultAllocator());
+        }
+        PkResize(pk, n);
+        LookupSegmentsValues(segments, doc_ids, *g.reader, n,
+                             [&](size_t orig, std::string_view pk_bytes) {
+                               SetPrimaryKey(pk, orig, pk_bytes);
+                             });
+        return PkCompactResolved(pk, n);
+      }
+    },
+    g.pk_batch);
+}
+
+void EmitResult(duckdb::ClientContext& context,
+                const SereneDBScanBindData& bind_data,
+                SearchAnnScanGlobalState& g, duckdb::DataChunk& output) {
+  std::lock_guard lock{g.m};
+  const size_t total = g.total_results;
+  const size_t batch_start = g.current_idx;
+  if (g.finished || batch_start >= total) {
+    g.finished = true;
+    output.SetCardinality(0);
+    return;
   }
-  const auto count = static_cast<duckdb::idx_t>(pk_views.size());
+  const size_t batch_size =
+    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
 
   for (duckdb::idx_t proj = 0; proj < g.projected_columns.size(); ++proj) {
     if (g.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
@@ -180,21 +237,27 @@ void EmitResult(duckdb::ClientContext& context,
     } else {
       auto* data_ptr =
         duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        data_ptr[i] = static_cast<int64_t>(i);
+      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
+        data_ptr[i] = static_cast<int64_t>(batch_start + i);
       }
     }
   }
 
-  LookupRows(context, bind_data, g.snapshot, g.projected_columns,
-             g.projected_types, bind_data.column_ids, g.txn, pk_views,
-             g.file_lookup_session, output);
+  if (!std::holds_alternative<std::monostate>(g.pk_batch)) {
+    g.index_source->Materialize(context, g.pk_batch, batch_start, batch_size,
+                                output);
+  }
+  g.current_idx += batch_size;
+  output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
+  SDB_ASSERT(batch_size > 0);
+  g.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);
 
-  output.SetCardinality(count);
-  g.produced_rows.fetch_add(count, std::memory_order_relaxed);
+  g.finished = g.current_idx >= total;
 }
 
-void RangeSearchSegment(const irs::SubReader& sub,
+void RangeSearchSegment(duckdb::ClientContext& context,
+                        const SereneDBScanBindData& bind_data,
+                        const irs::SubReader& sub,
                         std::optional<ANNFilter>& filter,
                         SearchRangeScanGlobalState& g,
                         SearchRangeScanLocalState& l) {
@@ -220,6 +283,21 @@ void RangeSearchSegment(const irs::SubReader& sub,
     return;
   }
 
+  if (!g.index_source) {
+    // Worker-side lazy init. MakeIndexSource is deterministic for a given
+    // bind_data + snapshot/txn, so a benign race between workers produces
+    // equivalent objects.
+    g.index_source = MakeIndexSource(context, bind_data, g.snapshot, g.txn,
+                                     g.projected_columns, g.projected_types,
+                                     bind_data.column_ids);
+  }
+  if (std::holds_alternative<std::monostate>(l.pk_batch)) {
+    l.pk_batch = g.index_source->CreatePkBatch();
+    if (auto* p = std::get_if<PrimaryKeysBytes>(&l.pk_batch)) {
+      p->EnsureInit(duckdb::Allocator::DefaultAllocator());
+    }
+  }
+
   auto segments =
     ids | std::views::transform([](int64_t id) {
       return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
@@ -228,10 +306,22 @@ void RangeSearchSegment(const irs::SubReader& sub,
     ids | std::views::transform([](int64_t id) {
       return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
     });
-  const size_t base = l.pk_bytes.size();
-  l.pk_bytes.resize(base + n);
-  std::span<std::string> tail{l.pk_bytes.data() + base, n};
-  LookupSegmentsValues(segments, doc_ids, *g.reader, tail);
+
+  std::visit(
+    [&](auto& pk) {
+      using T = std::decay_t<decltype(pk)>;
+      if constexpr (std::is_same_v<T, std::monostate>) {
+        SDB_ASSERT(false, "pk_batch must be initialised");
+      } else {
+        LookupSegmentsValues(segments, doc_ids, *g.reader, n,
+                             [&](size_t /*orig*/, std::string_view pk_bytes) {
+                               AppendPrimaryKey(pk, pk_bytes);
+                             });
+      }
+    },
+    l.pk_batch);
+
+  g.total_results.fetch_add(n, std::memory_order_relaxed);
 }
 
 }  // namespace
@@ -277,6 +367,10 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   size_t segment;
   SDB_ASSERT(g.reader);
   std::optional<ANNFilter> filter;
+  if (g.search_finished.load(std::memory_order_acquire)) {
+    EmitResult(context, bind_data, g, output);
+    return;
+  }
   while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
     const auto& reader = (*g.reader)[segment];
@@ -298,7 +392,9 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
     output.SetCardinality(0);
     return;
   }
+  g.search_finished.store(true, std::memory_order_release);
   // Merge result in a single thread
+  MergeResult(context, bind_data, g);
   EmitResult(context, bind_data, g, output);
 }
 
@@ -338,23 +434,24 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
 
   std::optional<ANNFilter> filter;
   size_t segment;
-  while (l.pk_bytes.size() - l.current_idx < STANDARD_VECTOR_SIZE &&
+  while (LocalPkSize(l.pk_batch) - l.current_idx < STANDARD_VECTOR_SIZE &&
          ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
     const auto& sub = (*g.reader)[segment];
     if (g.filter_ctx) {
       filter.emplace(*g.filter_ctx, sub);
     }
-    RangeSearchSegment(sub, filter, g, l);
+    RangeSearchSegment(context, bind_data, sub, filter, g, l);
     filter.reset();
   }
-  if (l.current_idx == l.pk_bytes.size()) {
+
+  const size_t total = LocalPkSize(l.pk_batch);
+  const size_t batch_start = l.current_idx;
+  if (batch_start >= total) {
     output.SetCardinality(0);
     return;
   }
 
-  const size_t total = l.pk_bytes.size();
-  const size_t batch_start = l.current_idx;
   const size_t batch_size =
     std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
 
@@ -373,17 +470,11 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     }
   }
 
-  // Real columns: look up directly per batch. The HNSW result PKs were
-  // collected in InitGlobal; we just stream them through LookupRows.
-  std::vector<std::string_view> pk_batch;
-  pk_batch.reserve(batch_size);
-  for (size_t i = 0; i < batch_size; ++i) {
-    pk_batch.emplace_back(l.pk_bytes[batch_start + i]);
+  if (!std::holds_alternative<std::monostate>(l.pk_batch) && g.index_source) {
+    g.index_source->Materialize(context, l.pk_batch, batch_start, batch_size,
+                                output);
   }
 
-  LookupRows(context, bind_data, g.snapshot, g.projected_columns,
-             g.projected_types, bind_data.column_ids, g.txn, pk_batch,
-             l.file_lookup_session, output);
   output.SetCardinality(static_cast<duckdb::idx_t>(batch_size));
   l.current_idx += batch_size;
   g.produced_rows.fetch_add(batch_size, std::memory_order_relaxed);

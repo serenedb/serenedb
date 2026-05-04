@@ -15,9 +15,9 @@ EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -50,9 +50,9 @@ EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance([0, 0, 0]::FLOAT[3], emb) L
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 10         │
 │          Dims: 3          │
@@ -91,9 +91,10 @@ QUERY PLAN
 │          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -103,8 +104,10 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-query error db error: ERROR: Array dimensions must be equal: left has 3, right has 2
+query ?
 SELECT id FROM l2_index ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 1;
+----
+id
 
 
 statement ok
@@ -134,7 +137,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │      Radius: 0.700000     │
 │          Dims: 3          │
@@ -164,9 +167,10 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │            emb            │
@@ -191,7 +195,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │      Radius: 1.000000     │
 │          Dims: 3          │
@@ -216,7 +220,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │  IRESEARCH_ANN_RANGE_SCAN │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │     Radius: 100.000000    │
 │          Dims: 3          │
@@ -375,9 +379,9 @@ EXPLAIN SELECT id FROM cos_index ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMI
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_cos       │
+│      Index: cos_index     │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -495,9 +499,9 @@ EXPLAIN SELECT id FROM ip_index ORDER BY emb <#> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│        Table: t_ip        │
+│      Index: ip_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │
@@ -724,9 +728,9 @@ EXPLAIN SELECT id FROM l2_index WHERE id % 2 = 0 ORDER BY emb <-> [0, 0, 0]::FLO
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
-│          Table: t         │
+│      Index: l2_index      │
 │      Lookup: rocksdb      │
 │          TopK: 2          │
 │          Dims: 3          │

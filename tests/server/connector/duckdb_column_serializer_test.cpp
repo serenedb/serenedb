@@ -101,10 +101,14 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     duckdb_primary_key::PKColumn pk_col{0, duckdb::LogicalType::INTEGER};
     std::span<const duckdb_primary_key::PKColumn> pk_cols(&pk_col, 1);
 
+    // Build the per-column UnifiedVectorFormats once, reuse across rows.
+    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+    duckdb_primary_key::PreparePKFormats(pk_chunk, pk_cols, pk_formats);
+
     std::vector<std::string> row_keys(num_rows);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       duckdb_primary_key::MakeColumnKey(
-        pk_chunk, pk_cols, row, _table_key,
+        pk_formats, pk_cols, row, _table_key,
         [](std::string_view) {},  // no locking in tests
         row_keys[row]);
     }

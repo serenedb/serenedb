@@ -27,9 +27,15 @@
 #include <limits>
 #include <memory>
 
-#include "connector/lookup.h"
+#include "connector/index_source.h"
 #include "connector/search_pk_lookup.h"
 
+namespace rocksdb {
+
+class Snapshot;
+class Transaction;
+
+}  // namespace rocksdb
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
@@ -41,10 +47,13 @@ struct ANNFilterContext {
 
   const SereneDBScanBindData& bind_data;
   const rocksdb::Snapshot* rocksdb_snapshot;
+  rocksdb::Transaction* rocksdb_txn;
   std::vector<duckdb::idx_t> filter_projection;
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
+// faiss IDSelector: per HNSW candidate, materializes the row's filter
+// columns and evaluates the filter expressions to gate inclusion.
 class ANNFilter final : public faiss::IDSelector {
  public:
   ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
@@ -58,10 +67,11 @@ class ANNFilter final : public faiss::IDSelector {
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
 
-  // Cached File-backed lookup session (lazy, reused across is_member calls).
-  // Empty for RocksDB-backed tables -- LookupRows dispatches to RocksDBLookup
-  // which doesn't need a session. mutable so const is_member can lazily fill.
-  mutable std::shared_ptr<FileLookupSession> _file_lookup_session;
+  // Default-constructed to std::monostate; switched on first is_member call.
+  mutable PrimaryKeyBatch _pk_batch;
+
+  mutable std::shared_ptr<IndexSource> _index_source;
+
   mutable SegmentPkIterator _it;
 };
 

@@ -1,0 +1,416 @@
+hash-threshold 100
+
+# View-backed inverted index queries that don't require materialisation:
+# count(*), count(1), BM25/TFIDF score, offsets, tableoid all flow from the
+# iresearch index without touching the source.
+#
+# Materialisation (selecting real source columns through the index entry) is
+# wired in a follow-up; today such queries surface a "not yet supported"
+# error.
+
+statement count 3
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga'
+      UNION ALL SELECT 3, 'pudge plays again')
+TO '/tmp/${__DATABASE__}_view_idx.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_idx_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE VIEW pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_idx.parquet');
+
+# CREATE INDEX on a view over read_parquet auto-detects file_row_number as
+# PK (fast-path); no WITH (pk = ...) needed.
+statement ok
+CREATE INDEX pq_idx ON pq_v USING inverted(id, body view_idx_en);
+
+# count(*) over a view-backed inverted index goes through IRESEARCH_COUNT --
+# no materialisation, just iresearch doc-id counting.
+query
+SELECT count(*) FROM pq_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(1) FROM pq_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+# BM25 score is emitted by iresearch directly (virtual column).
+query
+SELECT BM25(pq_idx.tableoid) > 0 AS has_score FROM pq_idx WHERE body @@ ts_phrase('pudge') ORDER BY BM25(pq_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+# Selecting a real view column flows through ViewFileIndexSource: the
+# scan op gets PK bytes from iresearch, sorts/decodes them to int64
+# file_row_number, and pushes the lookup down through MakeFastPathLookupFunction.
+query
+SELECT id, body FROM pq_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
+# Generic-view case: view body is a UNION ALL of inline VALUES -- no leaf
+# relation to fast-path. The view body has no auto-detectable PK and no
+# specialised lookup TF; only the generic full-scan + hash-join path can
+# materialise. Today no-materialisation queries still work.
+
+statement ok
+CREATE VIEW union_v AS
+  SELECT 1 AS id, 'pudge goes mid' AS body
+  UNION ALL SELECT 2, 'anchin reads manga'
+  UNION ALL SELECT 3, 'pudge plays again';
+
+statement ok
+CREATE INDEX union_idx ON union_v USING inverted(id, body view_idx_en) WITH (pk = 'id');
+
+query
+SELECT count(*) FROM union_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT count(1) FROM union_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT BM25(union_idx.tableoid) > 0 AS has_score FROM union_idx WHERE body @@ ts_phrase('pudge') ORDER BY BM25(union_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+# UNION ALL view body has no fast-path source, so real-column reads fall
+# back to the generic materialisation path -- not yet wired.
+statement error
+SELECT id FROM union_idx WHERE body @@ ts_phrase('pudge');
+----
+db error: ERROR: materialising real columns from this view-backed inverted index is not yet supported -- view body must be a simple `SELECT * FROM <reader>(literal_args)` over a recognised fast-path source (read_parquet/csv/json/...)
+
+
+# View over a serenedb rocksdb table -- static, no DML refresh.
+
+statement ok
+CREATE TABLE base_t (id INTEGER PRIMARY KEY, body TEXT, extra TEXT);
+
+statement ok
+INSERT INTO base_t VALUES
+  (1, 'pudge goes mid', 'a'),
+  (2, 'anchin reads manga', 'b'),
+  (3, 'pudge plays again', 'c');
+
+statement ok
+CREATE VIEW v_star AS SELECT * FROM base_t;
+
+statement ok
+CREATE INDEX i_star ON v_star USING inverted(body view_idx_en);
+
+query
+SELECT count(*) FROM i_star WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT id, body, extra FROM i_star WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body	extra
+1	pudge goes mid	a
+3	pudge plays again	c
+
+# Reordered projection.
+statement ok
+CREATE VIEW v_proj AS SELECT body, id FROM base_t;
+
+statement ok
+CREATE INDEX i_proj ON v_proj USING inverted(body view_idx_en);
+
+query
+SELECT count(*) FROM i_proj WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT id, body FROM i_proj WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+query
+SELECT body FROM i_proj WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body
+pudge goes mid
+pudge plays again
+
+
+# Cast (id INTEGER -> id_b BIGINT). Search-filter builder peels cast so
+# PHRASE binds through it.
+statement ok
+CREATE VIEW v_cast AS SELECT id::BIGINT AS id_b, body FROM base_t;
+
+statement ok
+CREATE INDEX i_cast ON v_cast USING inverted(body view_idx_en);
+
+query
+SELECT count(*) FROM i_cast WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT id_b, body FROM i_cast WHERE body @@ ts_phrase('pudge') ORDER BY id_b;
+----
+id_b	body
+1	pudge goes mid
+3	pudge plays again
+
+
+# No-PK base table -- PK source is the hidden rowid.
+statement ok
+CREATE TABLE base_nopk (body TEXT, extra TEXT);
+
+statement ok
+INSERT INTO base_nopk VALUES
+  ('pudge goes mid', 'a'),
+  ('anchin reads manga', 'b'),
+  ('pudge plays again', 'c');
+
+statement ok
+CREATE VIEW v_nopk AS SELECT * FROM base_nopk;
+
+statement ok
+CREATE INDEX i_nopk ON v_nopk USING inverted(body view_idx_en);
+
+query
+SELECT count(*) FROM i_nopk WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT body, extra FROM i_nopk WHERE body @@ ts_phrase('pudge') ORDER BY body;
+----
+body	extra
+pudge goes mid	a
+pudge plays again	c
+
+
+# Parquet glob.
+statement count 2
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 2, 'anchin reads manga')
+TO '/tmp/${__DATABASE__}_glob_a.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 3 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 4, 'krivda writes sql')
+TO '/tmp/${__DATABASE__}_glob_b.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW pq_glob AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_glob_*.parquet');
+
+statement ok
+CREATE INDEX pq_glob_idx ON pq_glob USING inverted(id, body view_idx_en);
+
+query
+SELECT count(*) FROM pq_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT BM25(pq_glob_idx.tableoid) > 0 AS has_score FROM pq_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY BM25(pq_glob_idx.tableoid) DESC LIMIT 1;
+----
+has_score
+t
+
+query
+SELECT id, body FROM pq_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
+# CSV glob.
+statement count 2
+COPY (SELECT 10 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 11, 'anchin reads manga')
+TO '/tmp/${__DATABASE__}_glob_a.csv';
+
+statement count 2
+COPY (SELECT 12 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 13, 'krivda writes sql')
+TO '/tmp/${__DATABASE__}_glob_b.csv';
+
+statement ok
+CREATE VIEW csv_glob AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_glob_*.csv');
+
+statement ok
+CREATE INDEX csv_glob_idx ON csv_glob USING inverted(id, body view_idx_en);
+
+query
+SELECT count(*) FROM csv_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT id, body FROM csv_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+10	pudge goes mid
+12	pudge plays again
+
+
+# JSON glob.
+statement count 2
+COPY (SELECT 20 AS id, 'pudge goes mid' AS body
+      UNION ALL SELECT 21, 'anchin reads manga')
+TO '/tmp/${__DATABASE__}_glob_a.jsonl' (FORMAT json);
+
+statement count 2
+COPY (SELECT 22 AS id, 'pudge plays again' AS body
+      UNION ALL SELECT 23, 'krivda writes sql')
+TO '/tmp/${__DATABASE__}_glob_b.jsonl' (FORMAT json);
+
+statement ok
+CREATE VIEW json_glob AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_glob_*.jsonl');
+
+statement ok
+CREATE INDEX json_glob_idx ON json_glob USING inverted(id, body view_idx_en);
+
+query
+SELECT count(*) FROM json_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+query
+SELECT id, body FROM json_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+20	pudge goes mid
+22	pudge plays again
+
+
+# Multi-row-group parquet -- the lookup TF prunes row groups by sorted
+# pk_lookups; this exercises hits landing in a non-leading group.
+statement count 6
+COPY (SELECT 100 AS id, 'one alpha' AS body
+      UNION ALL SELECT 101, 'two beta'
+      UNION ALL SELECT 102, 'three gamma'
+      UNION ALL SELECT 103, 'four delta'
+      UNION ALL SELECT 104, 'pudge appears late'
+      UNION ALL SELECT 105, 'six epsilon')
+TO '/tmp/${__DATABASE__}_multi_rg.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2);
+
+statement ok
+CREATE VIEW pq_multi_rg AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_multi_rg.parquet');
+
+statement ok
+CREATE INDEX pq_multi_rg_idx ON pq_multi_rg USING inverted(id, body view_idx_en);
+
+# With ROW_GROUP_SIZE=2 the file has 3 groups; hit is in group 2.
+query
+SELECT id, body FROM pq_multi_rg_idx WHERE body @@ ts_phrase('pudge');
+----
+id	body
+104	pudge appears late
+
+
+# TopK by BM25 + real-column projection. Designed so iresearch returns
+# pks in score-DESC order that DOES NOT match pk-ascending order (doc
+# with pk=2 has TF=4, ranks above pk=0 with TF=1). The materializer
+# sorts internally for parquet row-group skipping but must permute the
+# result back to the caller-positional score/rowid arrays' order.
+statement count 3
+COPY (SELECT 1 AS id, 'foo' AS body
+      UNION ALL SELECT 2, 'bar baz'
+      UNION ALL SELECT 3, 'foo foo foo foo')
+TO '/tmp/${__DATABASE__}_topk.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW topk_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_topk.parquet');
+
+statement ok
+CREATE INDEX topk_idx ON topk_v USING inverted(id, body view_idx_en);
+
+query
+SELECT id, body
+FROM topk_idx
+WHERE body @@ ts_phrase('foo')
+ORDER BY BM25(topk_idx.tableoid) DESC
+LIMIT 2;
+----
+id	body
+3	foo foo foo foo
+1	foo
+
+
+# Bare `SELECT * FROM idx;` -- must walk the iresearch index and
+# materialize, NOT fall back to a PK rocksdb scan. Covers all view-backed
+# pk_specs to confirm the bare-scan path uses the index everywhere.
+
+statement ok
+CREATE VIEW bare_pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_idx.parquet');
+
+statement ok
+CREATE INDEX bare_pq_idx ON bare_pq_v USING inverted(id, body view_idx_en);
+
+query
+SELECT id, body FROM bare_pq_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+3	pudge plays again
+
+statement count 4
+COPY (SELECT 10 AS id, 'one' AS body
+      UNION ALL SELECT 11, 'two'
+      UNION ALL SELECT 12, 'three'
+      UNION ALL SELECT 13, 'four')
+TO '/tmp/${__DATABASE__}_bare.csv';
+
+statement ok
+CREATE VIEW bare_csv_v AS SELECT * FROM read_csv('/tmp/${__DATABASE__}_bare.csv');
+
+statement ok
+CREATE INDEX bare_csv_idx ON bare_csv_v USING inverted(id, body view_idx_en);
+
+query
+SELECT id, body FROM bare_csv_idx ORDER BY id;
+----
+id	body
+10	one
+11	two
+12	three
+13	four
+
+
+# Iceberg view-fast-path tests live in inverted_index_view_iceberg.test_slow
+# (REST catalog + MinIO fixture).

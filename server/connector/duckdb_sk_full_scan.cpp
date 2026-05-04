@@ -24,7 +24,9 @@
 
 #include "basics/assert.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/lookup.h"
+#include "connector/index_source.h"
+#include "connector/index_source_factory.h"
+#include "connector/pk_batch_helpers.h"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -95,37 +97,58 @@ void SKFullScanFunction(duckdb::ClientContext& context,
   const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
   auto& it = *gstate.sk_iterator;
 
-  std::vector<std::string> pk_bytes;
-  pk_bytes.reserve(batch_size);
-
-  while (pk_bytes.size() < batch_size && it.Valid()) {
-    auto key = it.key();
-    auto val = it.value();
-
-    SDB_ASSERT(val.size() >= 2);
-    if (val[0] == secondary_key::kPKInValue) {
-      pk_bytes.emplace_back(val.data() + 1, val.size() - 1);
-    } else {
-      SDB_ASSERT(val[0] == secondary_key::kPKInKey);
-      uint8_t pk_size = static_cast<uint8_t>(val[1]);
-      SDB_ASSERT(key.size() >= pk_size);
-      pk_bytes.emplace_back(key.data() + key.size() - pk_size, pk_size);
-    }
-    it.Next();
+  if (!gstate.index_source) {
+    gstate.index_source = MakeIndexSource(
+      context, bind_data, gstate.snapshot, gstate.txn, gstate.projected_columns,
+      gstate.projected_types, bind_data.column_ids);
   }
+  if (std::holds_alternative<std::monostate>(gstate.pk_batch)) {
+    gstate.pk_batch = gstate.index_source->CreatePkBatch();
+  }
+
+  size_t num_rows = std::visit(
+    [&](auto& pk) -> size_t {
+      using T = std::decay_t<decltype(pk)>;
+      if constexpr (std::is_same_v<T, std::monostate>) {
+        SDB_ASSERT(false, "pk_batch must be initialised");
+        return 0;
+      } else {
+        pk.Reset();
+        if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
+          pk.EnsureInit(duckdb::Allocator::DefaultAllocator());
+        }
+        while (PrimaryKeysSize(pk) < batch_size && it.Valid()) {
+          auto key = it.key();
+          auto val = it.value();
+
+          SDB_ASSERT(val.size() >= 2);
+          std::string_view pk_bytes;
+          if (val[0] == secondary_key::kPKInValue) {
+            pk_bytes = std::string_view{val.data() + 1, val.size() - 1};
+          } else {
+            SDB_ASSERT(val[0] == secondary_key::kPKInKey);
+            uint8_t pk_size = static_cast<uint8_t>(val[1]);
+            SDB_ASSERT(key.size() >= pk_size);
+            pk_bytes =
+              std::string_view{key.data() + key.size() - pk_size, pk_size};
+          }
+          AppendPrimaryKey(pk, pk_bytes);
+          it.Next();
+        }
+        return PrimaryKeysSize(pk);
+      }
+    },
+    gstate.pk_batch);
   rocksutils::CheckIteratorStatus(it);
 
-  if (pk_bytes.empty()) {
+  if (num_rows == 0) {
     gstate.finished = true;
     output.SetCardinality(0);
     return;
   }
 
-  const auto num_rows = pk_bytes.size();
-  std::vector<std::string_view> views(pk_bytes.begin(), pk_bytes.end());
-  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
-             gstate.projected_types, bind_data.column_ids, gstate.txn, views,
-             gstate.file_lookup_session, output);
+  gstate.index_source->Materialize(context, gstate.pk_batch, 0, num_rows,
+                                   output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

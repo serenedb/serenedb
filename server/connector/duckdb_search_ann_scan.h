@@ -31,6 +31,7 @@
 #include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source.h"
 
 namespace sdb::connector {
 
@@ -41,6 +42,14 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   const irs::IndexReader* reader = nullptr;
   int ef_search = 0;
 
+  std::atomic_bool search_finished = false;
+
+  // Variables for sending the result
+  PrimaryKeyBatch pk_batch;
+  size_t current_idx = 0;
+  size_t total_results = 0;
+
+  // Variables for stoging partial (unmerged) results
   std::vector<std::vector<float>> dis;
   std::vector<std::vector<int64_t>> ids;
   std::atomic<float> global_kth_dis{std::numeric_limits<float>::max()};
@@ -85,6 +94,7 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
 
   size_t total_segments = 0;
   std::atomic_size_t next_segment = 0;
+  std::atomic_size_t total_results = 0;
 
   duckdb::idx_t MaxThreads() const override {
     return std::max<duckdb::idx_t>(1, total_segments);
@@ -92,11 +102,8 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
 };
 
 struct SearchRangeScanLocalState : public CommonScanLocalState {
-  std::vector<std::string> pk_bytes;
+  PrimaryKeyBatch pk_batch;
   size_t current_idx = 0;
-  // Per-worker materialization session: avoids cross-worker contention on
-  // LookupRows. Lazy-built on first call; null for RocksDB tables.
-  std::shared_ptr<FileLookupSession> file_lookup_session;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

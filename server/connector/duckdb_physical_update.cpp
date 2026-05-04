@@ -281,7 +281,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   // chunk and must not be added here.
   {
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByTable(state->table_id);
+    auto indexes = snapshot->GetIndexesByRelation(state->table_id);
     containers::FlatHashSet<catalog::Column::Id> pk_id_set(pk_col_ids.begin(),
                                                            pk_col_ids.end());
     containers::FlatHashSet<catalog::Column::Id> indexed_col_ids;
@@ -408,8 +408,6 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
   auto* txn = gstate.txn;
 
-  chunk.Flatten();
-
   // chunk layout: [resolved SET vals, pk_virtuals, idx_virtuals, rowid].
   // _update_columns names the leading SET slots; _pk_col_indices tells the
   // verifier where to find each PK for the "Failing row contains" detail.
@@ -424,6 +422,13 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
   if (gstate.update_pk) {
     // --- UPDATE PK path: delete old rows, then write all columns at new keys.
 
+    std::vector<duckdb::UnifiedVectorFormat> new_pk_formats;
+    duckdb_primary_key::PreparePKFormats(chunk, gstate.new_pk_columns,
+                                         new_pk_formats);
+    std::vector<duckdb::UnifiedVectorFormat> old_pk_formats;
+    duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns,
+                                         old_pk_formats);
+
     // 1. Build NEW keys, check intra-batch duplicates, lock new rows.
     gstate.new_row_keys.clear();
     gstate.new_row_keys.reserve(num_rows);
@@ -433,7 +438,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       auto& key_buffer = gstate.new_row_keys.emplace_back();
       duckdb_primary_key::MakeColumnKey(
-        chunk, gstate.new_pk_columns, row, gstate.table_key,
+        new_pk_formats, gstate.new_pk_columns, row, gstate.table_key,
         [&](std::string_view row_key) {
           auto pk_bytes = row_key.substr(sizeof(ObjectId));
           if (!gstate.batch_keys.emplace(std::string(pk_bytes)).second) {
@@ -462,7 +467,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       auto& key_buffer = gstate.row_keys.emplace_back();
       duckdb_primary_key::MakeColumnKey(
-        chunk, gstate.pk_columns, row, gstate.table_key,
+        old_pk_formats, gstate.pk_columns, row, gstate.table_key,
         [&](std::string_view row_key) {
           auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
           if (!status.ok()) {
@@ -592,10 +597,14 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     // 1. Build row keys, lock rows, delete old index entries
     gstate.row_keys.clear();
     gstate.row_keys.reserve(num_rows);
+
+    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+    duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       auto& key_buffer = gstate.row_keys.emplace_back();
       duckdb_primary_key::MakeColumnKey(
-        chunk, gstate.pk_columns, row, gstate.table_key,
+        pk_formats, gstate.pk_columns, row, gstate.table_key,
         [&](std::string_view row_key) {
           auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
           if (!status.ok()) {

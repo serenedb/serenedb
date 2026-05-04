@@ -104,7 +104,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   if (option == "update_indexes" || option.empty()) {
     // Commit inverted indexes
     for (const auto& table : tables) {
-      for (auto shard : snapshot->GetIndexShardsByTable(table->GetId())) {
+      for (auto shard : snapshot->GetIndexShardsByRelation(table->GetId())) {
         if (shard &&
             shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
           auto& inverted = basics::downCast<search::InvertedIndexShard>(*shard);

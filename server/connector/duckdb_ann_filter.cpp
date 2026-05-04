@@ -25,7 +25,9 @@
 #include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/lookup.h"
+#include "connector/index_source.h"
+#include "connector/index_source_factory.h"
+#include "connector/pk_batch_helpers.h"
 #include "connector/search_pk_lookup.h"
 #include "pg/connection_context.h"
 
@@ -47,12 +49,21 @@ void InitAnnFilterContext(
   std::vector<duckdb::idx_t> filter_projection(filter_column_ids.size());
   std::vector<duckdb::LogicalType> filter_types(filter_column_ids.size());
   for (size_t i = 0; i < filter_column_ids.size(); ++i) {
-    filter_projection[i] = i;
-    const auto cid = filter_column_ids[i];
-    auto it = columns_to_indexes.find(cid);
-    SDB_ASSERT(it != columns_to_indexes.end());
-    SDB_ASSERT(it->second < bind_data.column_types.size());
-    filter_types[i] = bind_data.column_types[it->second];
+    const auto cat_id = filter_column_ids[i];
+    const auto it = absl::c_find(bind_data.column_ids, cat_id);
+    if (it == bind_data.column_ids.end()) {
+      filter_projection.clear();
+      break;
+    }
+    // Filter scratch slot i = bind-column index for filter_column_ids[i];
+    // IndexSource::Materialize projects bind_column_ids[bind_col] onto the
+    // matching source column and writes into output.data[i].
+    filter_projection[i] =
+      static_cast<duckdb::idx_t>(it - bind_data.column_ids.begin());
+    filter_types[i] = bind_data.column_types[filter_projection[i]];
+  }
+  if (filter_projection.empty()) {
+    return;
   }
 
   GetSereneDBContext(context).EnsureSearchSnapshot(index_id);
@@ -94,22 +105,53 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
   }
 
   std::string_view pk = irs::ViewCast<char>(_it.value->value);
-  std::array<std::string_view, 1> pks{pk};
+
+  if (!_index_source) {
+    _index_source = MakeIndexSource(_context, _bind_data, _snapshot, _txn,
+                                    _filter_projected_columns, _filter_types,
+                                    _filter_bind_column_ids);
+  }
+  if (std::holds_alternative<std::monostate>(_pk_batch)) {
+    _pk_batch = _index_source->CreatePkBatch();
+  }
+
+  std::visit(
+    [&](auto& pk_alt) {
+      using T = std::decay_t<decltype(pk_alt)>;
+      if constexpr (std::is_same_v<T, std::monostate>) {
+        SDB_ASSERT(false, "_pk_batch must be initialised");
+      } else {
+        pk_alt.Reset();
+        if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
+          pk_alt.EnsureInit(duckdb::Allocator::DefaultAllocator());
+        }
+        AppendPrimaryKey(pk_alt, pk);
+      }
+    },
+    _pk_batch);
 
   _scratch.Reset();
-  // LookupRows fills only real-column slots; ANNFilter projects exclusively
-  // real bind columns (no rowid/score/etc), so no virtual-slot cleanup needed.
-  LookupRows(_ctx.context, _ctx.bind_data, _ctx.rocksdb_snapshot,
-             _ctx.filter_projection, _ctx.filter_types, _ctx.filter_column_ids,
-             nullptr, pks, _file_lookup_session, _scratch);
+  _index_source->Materialize(_context, _pk_batch, 0, 1, _scratch);
   _scratch.SetCardinality(1);
 
   _bool_out.Reset();
   _bool_out.SetCardinality(1);
   _executor.Execute(_scratch, _bool_out);
 
-  auto value = _bool_out.data[0].GetValue(0);
-  return !value.IsNull() && duckdb::BooleanValue::Get(value);
+  // TODO(mbkkt) Maybe store as member?
+  duckdb::UnifiedVectorFormat fmt;
+  for (duckdb::idx_t i = 0; i < _bool_out.ColumnCount(); ++i) {
+    auto& vec = _bool_out.data[i];
+    vec.ToUnifiedFormat(1, fmt);
+    const auto idx = fmt.sel->get_index(0);
+    if (!fmt.validity.RowIsValid(idx)) {
+      return false;
+    }
+    if (!duckdb::UnifiedVectorFormat::GetData<bool>(fmt)[idx]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace sdb::connector

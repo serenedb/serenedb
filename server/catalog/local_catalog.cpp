@@ -230,7 +230,7 @@ class SnapshotImpl : public Snapshot {
       if (!r.ok()) {
         return r;
       }
-      return AddObjectDefinition(parent_id, std::move(object));
+      return AddObjectDefinition<ViewDependency>(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       auto r = AddToResolution<ResolveType::Function>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -369,8 +369,9 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
-        auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
-        table_deps->indexes.insert(object->GetId());
+        auto relation_deps =
+          GetDependencyForWrite<RelationDependency>(parent_id);
+        relation_deps->indexes.insert(object->GetId());
         const auto& index = basics::downCast<Index>(*object);
         for (auto tokenizer_id : index.GetTokenizers()) {
           auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
@@ -501,6 +502,14 @@ class SnapshotImpl : public Snapshot {
             result.push_back(basics::downCast<Index>(*it));
           }
         }
+        for (const auto view_id : schema_deps->views) {
+          const auto& view_deps = GetDependency<ViewDependency>(view_id);
+          for (const auto index_id : view_deps->indexes) {
+            auto it = _objects.find(index_id);
+            SDB_ASSERT(it != _objects.end());
+            result.push_back(basics::downCast<Index>(*it));
+          }
+        }
         return result;
       })
       .value_or(std::vector<std::shared_ptr<Index>>{});
@@ -565,6 +574,14 @@ class SnapshotImpl : public Snapshot {
     for (const auto table_id : schema_deps->tables) {
       const auto& table_deps = GetDependency<TableDependency>(table_id);
       for (const auto index_id : table_deps->indexes) {
+        auto it = _objects.find(index_id);
+        SDB_ASSERT(it != _objects.end());
+        visitor(basics::downCast<Index>(**it));
+      }
+    }
+    for (const auto view_id : schema_deps->views) {
+      const auto& view_deps = GetDependency<ViewDependency>(view_id);
+      for (const auto index_id : view_deps->indexes) {
         auto it = _objects.find(index_id);
         SDB_ASSERT(it != _objects.end());
         visitor(basics::downCast<Index>(**it));
@@ -693,8 +710,8 @@ class SnapshotImpl : public Snapshot {
     return basics::downCast<Table>(rel);
   }
 
-  bool HasIndexes(ObjectId table_id) const final {
-    return !GetDependency<TableDependency>(table_id)->indexes.empty();
+  bool HasIndexes(ObjectId relation_id) const final {
+    return !GetDependency<RelationDependency>(relation_id)->indexes.empty();
   }
 
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
@@ -721,19 +738,19 @@ class SnapshotImpl : public Snapshot {
     return GetObject<IndexShard>(index_deps->shard_id);
   }
 
-  std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
-    ObjectId id) const final {
-    auto table_dep = GetDependency<TableDependency>(id);
-    return table_dep->indexes | std::views::transform([&](auto index_id) {
+  std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByRelation(
+    ObjectId relation_id) const final {
+    auto relation_deps = GetDependency<RelationDependency>(relation_id);
+    return relation_deps->indexes | std::views::transform([&](auto index_id) {
              return GetIndexShard(index_id);
            }) |
            std::ranges::to<std::vector>();
   }
 
-  std::vector<std::shared_ptr<Index>> GetIndexesByTable(
-    ObjectId id) const final {
-    auto table_dep = GetDependency<TableDependency>(id);
-    return table_dep->indexes | std::views::transform([&](auto index_id) {
+  std::vector<std::shared_ptr<Index>> GetIndexesByRelation(
+    ObjectId relation_id) const final {
+    auto relation_deps = GetDependency<RelationDependency>(relation_id);
+    return relation_deps->indexes | std::views::transform([&](auto index_id) {
              return GetObject<Index>(index_id);
            }) |
            std::ranges::to<std::vector>();
@@ -855,9 +872,9 @@ class SnapshotImpl : public Snapshot {
         } break;
         case ObjectType::SecondaryIndex:
         case ObjectType::InvertedIndex: {
-          auto table_deps = GetDependencyForWrite<TableDependency>(parent_id);
-          SDB_ASSERT(table_deps);
-          table_deps->indexes.erase(id);
+          auto relation_deps =
+            GetDependencyForWrite<RelationDependency>(parent_id);
+          relation_deps->indexes.erase(id);
           const auto& index = basics::downCast<Index>(*obj);
           for (auto tokenizer_id : index.GetTokenizers()) {
             auto dep = GetDependencyForWrite<TokenizerDependency>(tokenizer_id);
@@ -909,17 +926,22 @@ class SnapshotImpl : public Snapshot {
         drop_childs(schema_deps->views);
         drop_childs(schema_deps->tables);
       } break;
-      case ObjectType::Table: {
-        auto table_deps = GetDependency<TableDependency>(id);
-        if (table_deps->shard_id.isSet()) {
-          RemoveObjectDefinition(id, table_deps->shard_id);
+      case ObjectType::Table:
+      case ObjectType::PgSqlView: {
+        auto relation_deps = GetDependency<RelationDependency>(id);
+        if (obj->GetType() == ObjectType::Table) {
+          const auto& table_deps =
+            basics::downCast<TableDependency>(*relation_deps);
+          if (table_deps.shard_id.isSet()) {
+            RemoveObjectDefinition(id, table_deps.shard_id);
+          }
         }
-        auto index_ids = table_deps->indexes;
+        // TODO(codeworse): Avoid copy, maybe erase_if?
+        auto index_ids = relation_deps->indexes;
         for (auto index_id : index_ids) {
           if (root) {
-            // While `DROP TABLE` statement indexes were not deleted from
-            // resolution table, because they were nested in schema scope.
-            // Therefore, we have to explicitly erase them here.
+            // Indexes are not erased from the resolution table during DROP --
+            // they're nested in schema scope. Erase explicitly.
             auto index = GetObject<Index>(index_id);
             UnregisterObject(index, id, false);
           } else {
@@ -937,7 +959,6 @@ class SnapshotImpl : public Snapshot {
       } break;
       case ObjectType::PgSqlFunction:
       case ObjectType::PgSqlType:
-      case ObjectType::PgSqlView:
       case ObjectType::Tokenizer:
         break;
       case ObjectType::TableShard:
@@ -1237,6 +1258,44 @@ Result LocalCatalog::CreateIndexImpl(
     });
 }
 
+namespace {
+
+struct ResolvedIndexRelation {
+  ObjectId relation_id;
+  std::vector<Column> columns;
+};
+
+ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
+  const std::shared_ptr<SchemaObject>& relation) {
+  if (relation->GetType() == ObjectType::Table) {
+    auto& table = basics::downCast<Table>(*relation);
+    return ResolvedIndexRelation{
+      .relation_id = table.GetId(),
+      .columns = table.Columns(),
+    };
+  } else if (relation->GetType() == ObjectType::PgSqlView) {
+    auto& view = basics::downCast<PgSqlView>(*relation);
+    const auto& view_info = view.GetInfo();
+    auto columns = std::views::iota(size_t{0}, view_info.names.size()) |
+                   std::views::transform([&](size_t i) {
+                     return Column{
+                       .id = static_cast<Column::Id>(i),
+                       .type = view_info.types[i],
+                       .name = view_info.names[i],
+                     };
+                   }) |
+                   std::ranges::to<std::vector>();
+    return ResolvedIndexRelation{
+      .relation_id = view.GetId(),
+      .columns = std::move(columns),
+    };
+  }
+  return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
+                                 "Only table or view indexes are supported"};
+}
+
+}  // namespace
+
 Result LocalCatalog::CreateSecondaryIndex(
   ObjectId database_id, std::string_view schema, std::string_view relation,
   std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
@@ -1256,22 +1315,22 @@ Result LocalCatalog::CreateSecondaryIndex(
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
             "\" does not exist"};
   }
-  if (rel->GetType() != ObjectType::Table) {
-    return Result{ERROR_NOT_IMPLEMENTED, "Only table indexes are supported"};
+  auto resolved = ResolveIndexRelation(rel);
+  if (!resolved) {
+    return std::move(resolved).error();
   }
-  auto& table = basics::downCast<Table>(*rel);
   for (auto& c : columns) {
     auto it = absl::c_find_if(
-      table.Columns(), [&](const Column& col) { return col.name == c.name; });
-    if (it == table.Columns().end()) {
+      resolved->columns, [&](const Column& col) { return col.name == c.name; });
+    if (it == resolved->columns.end()) {
       return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
     }
     c.catalog_column = &*it;
   }
   auto index = catalog::CreateSecondaryIndex(
-    database_id, *schema_id, ObjectId{0}, table.GetId(), std::move(name),
-    std::move(columns), unique);
+    database_id, *schema_id, ObjectId{0}, resolved->relation_id,
+    std::move(name), std::move(columns), unique);
   if (!index) {
     return std::move(index).error();
   }
@@ -1300,21 +1359,21 @@ Result LocalCatalog::CreateInvertedIndex(
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation,
             "\" does not exist"};
   }
-  if (rel->GetType() != ObjectType::Table) {
-    return Result{ERROR_NOT_IMPLEMENTED, "Only table indexes are supported"};
+  auto resolved = ResolveIndexRelation(rel);
+  if (!resolved) {
+    return std::move(resolved).error();
   }
-  auto& table = basics::downCast<Table>(*rel);
   for (auto& c : columns) {
     auto it = absl::c_find_if(
-      table.Columns(), [&](const Column& col) { return col.name == c.name; });
-    if (it == table.Columns().end()) {
+      resolved->columns, [&](const Column& col) { return col.name == c.name; });
+    if (it == resolved->columns.end()) {
       return Result{ERROR_BAD_PARAMETER, "column \"", c.name,
                     "\" does not exist"};
     }
     c.catalog_column = &*it;
   }
   auto index = catalog::CreateInvertedIndex(
-    database_id, schema, *schema_id, ObjectId{0}, table.GetId(),
+    database_id, schema, *schema_id, ObjectId{0}, resolved->relation_id,
     std::move(name), std::move(columns), _snapshot);
   if (!index) {
     return std::move(index).error();

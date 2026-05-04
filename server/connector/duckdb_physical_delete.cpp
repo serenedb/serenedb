@@ -144,7 +144,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     // They're the non-PK indexed columns in sorted order
     std::vector<catalog::Column::Id> non_pk_idx_col_ids;
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByTable(state->table_id);
+    auto indexes = snapshot->GetIndexesByRelation(state->table_id);
     containers::FlatHashSet<size_t> pk_table_indices;
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
@@ -218,10 +218,13 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     writer->Init(num_rows, chunk);
   }
 
+  std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+  duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
+
   std::string key_buffer;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key,
+      pk_formats, gstate.pk_columns, row, gstate.table_key,
       [&](std::string_view row_key) {
         auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
         if (!status.ok()) {

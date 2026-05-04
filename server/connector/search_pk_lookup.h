@@ -26,9 +26,8 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <numeric>
-#include <optional>
 #include <ranges>
-#include <string>
+#include <string_view>
 #include <vector>
 
 #include "connector/search_remove_filter.hpp"
@@ -52,48 +51,40 @@ struct SegmentPkIterator {
 bool OpenSegmentPkIterator(const irs::SubReader& segment,
                            SegmentPkIterator& out);
 
-void LookupSegmentsValues(const auto& segments, const auto& doc_ids,
-                          const irs::IndexReader& reader, auto& result) {
-  SDB_ASSERT(result.size() == segments.size());
-  SDB_ASSERT(result.size() == doc_ids.size());
-  const size_t n = result.size();
-  if (n == 0) {
-    return;
-  }
-
-  struct Entry {
-    uint32_t seg;
-    irs::doc_id_t doc;
-    uint32_t idx;
-  };
-  std::vector<Entry> entries(n);
-  for (size_t i = 0; i < n; ++i) {
-    entries[i] = {static_cast<uint32_t>(segments[i]),
-                  static_cast<irs::doc_id_t>(doc_ids[i]),
-                  static_cast<uint32_t>(i)};
-  }
-  absl::c_sort(entries, [](const Entry& a, const Entry& b) noexcept {
-    return a.seg < b.seg || (a.seg == b.seg && a.doc < b.doc);
-  });
+// Walks segments + doc_ids (parallel ranges) in (segment, doc_id) sorted
+// order, calling `sink(orig_idx, pk_view)` per resolved row. Unresolved rows
+// (segment open or seek failure) are silently dropped -- caller fills its
+// own sentinel if needed.
+template<typename Segments, typename DocIds, typename Sink>
+void LookupSegmentsValues(const Segments& segments, const DocIds& doc_ids,
+                          const irs::IndexReader& reader, size_t n,
+                          Sink&& sink) {
+  std::vector<size_t> idx(n);
+  std::iota(idx.begin(), idx.end(), 0);
+  std::ranges::sort(
+    idx, {}, [&](size_t i) { return std::pair{segments[i], doc_ids[i]}; });
 
   size_t i = 0;
   while (i < n) {
-    const auto seg_id = entries[i].seg;
+    const auto seg_id = segments[idx[i]];
     SegmentPkIterator it;
     const bool opened = OpenSegmentPkIterator(reader[seg_id], it);
     if (!opened) {
-      while (i < n && entries[i].seg == seg_id) {
+      while (i < n && segments[idx[i]] == seg_id) {
         ++i;
       }
       continue;
     }
-    auto* iter = it.iter.get();
-    const auto* pay = it.value;
-    while (i < n && entries[i].seg == seg_id) {
-      const auto doc_id = entries[i].doc;
-      if (iter->seek(doc_id) == doc_id) {
-        result[entries[i].idx] = irs::ViewCast<char>(pay->value);
+    while (i < n && segments[idx[i]] == seg_id) {
+      const auto doc_id = doc_ids[idx[i]];
+      const bool seeked = it.iter->seek(doc_id) == doc_id;
+      if (!seeked) {
+        ++i;
+        continue;
       }
+      const auto& val = it.value->value;
+      sink(idx[i], std::string_view{reinterpret_cast<const char*>(val.data()),
+                                    val.size()});
       ++i;
     }
   }

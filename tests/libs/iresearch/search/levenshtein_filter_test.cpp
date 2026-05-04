@@ -550,16 +550,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       });
 
     irs::IndexWriterOptions opts;
-    opts.features = [](irs::IndexFeatures id) {
-      const irs::ColumnInfo info{
-        irs::Type<irs::compression::Lz4>::get(), {}, false};
-
-      if (irs::IndexFeatures::Norm == id) {
-        return std::make_pair(info, &irs::Norm::MakeWriter);
-      }
-
-      return std::make_pair(info, irs::FeatureWriterFactory{});
-    };
 
     add_segment(gen, irs::kOmCreate, opts);
   }

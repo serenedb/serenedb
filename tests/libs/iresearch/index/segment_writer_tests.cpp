@@ -48,17 +48,6 @@ class SegmentWriterTests : public TestBase {
     };
   }
 
-  static irs::FeatureInfoProvider DefaultFeatureInfo() {
-    return [](irs::IndexFeatures) {
-      return std::make_pair(
-        irs::ColumnInfo{.compression = irs::Type<irs::compression::Lz4>::get(),
-                        .options = {},
-                        .encryption = true,
-                        .track_prev_doc = false},
-        irs::FeatureWriterFactory{});
-    };
-  }
-
   static auto DefaultCodec() { return irs::formats::Get("1_5simd"); }
 };
 
@@ -96,20 +85,15 @@ TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
   Comparator compare;
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
   irs::MemoryDirectory dir;
 
   const irs::SegmentWriterOptions options_with_comparer{
-    .column_info = column_info,
-    .feature_info = feature_info,
-    .scorers_features = {},
-    .comparator = &compare};
+    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
   auto writer_sorted = irs::SegmentWriter::make(dir, options_with_comparer);
   ASSERT_EQ(0, writer_sorted->memory_active());
 
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
   auto writer_unsorted = irs::SegmentWriter::make(dir, options);
   ASSERT_EQ(0, writer_unsorted->memory_active());
@@ -165,9 +149,7 @@ TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
       irs::Type<irs::compression::Lz4>::get(),
       irs::compression::Options(irs::compression::Options::Hint::Speed), true};
   };
-  auto feature_info = DefaultFeatureInfo();
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
 
   irs::MemoryDirectory dir;
@@ -210,12 +192,9 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
   Comparator compare;
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
-                                          .scorers_features = {},
-                                          .comparator = &compare};
+  const irs::SegmentWriterOptions options{
+    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
   {
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
@@ -296,12 +275,9 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
   Comparator compare;
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
-                                          .scorers_features = {},
-                                          .comparator = &compare};
+  const irs::SegmentWriterOptions options{
+    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
   {
     TokenizerMock stream;
     FieldT field(stream);
@@ -391,12 +367,9 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
   Comparator compare;
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
-  const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
-                                          .scorers_features = {},
-                                          .comparator = &compare};
+  const irs::SegmentWriterOptions options{
+    .column_info = column_info, .scorers_features = {}, .comparator = &compare};
   {
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
@@ -466,10 +439,8 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
   } field;
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
   {
     irs::MemoryDirectory dir;
@@ -548,10 +519,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   };
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
   {
     TokenizerMock stream;
@@ -643,9 +612,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   FieldT field(stream);
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
   const irs::SegmentWriterOptions options{.column_info = column_info,
-                                          .feature_info = feature_info,
                                           .scorers_features = {}};
 
   {
@@ -718,7 +685,6 @@ TEST_F(SegmentWriterTests, index_field) {
   };
 
   auto column_info = DefaultColumnInfo();
-  auto feature_info = DefaultFeatureInfo();
 
   // test missing token_stream attributes (increment)
   {
@@ -728,7 +694,6 @@ TEST_F(SegmentWriterTests, index_field) {
     ASSERT_NE(nullptr, segment.codec);
 
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
@@ -757,7 +722,6 @@ TEST_F(SegmentWriterTests, index_field) {
     ASSERT_NE(nullptr, segment.codec);
 
     const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
                                             .scorers_features = {}};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
@@ -850,13 +814,10 @@ TEST_F(SegmentWriterTests, reorder) {
     Reorder(docs, ctxs, order);
 
     auto column_info = DefaultColumnInfo();
-    auto feature_info = DefaultFeatureInfo();
     StringComparer less;
 
-    const irs::SegmentWriterOptions options{.column_info = column_info,
-                                            .feature_info = feature_info,
-                                            .scorers_features = {},
-                                            .comparator = &less};
+    const irs::SegmentWriterOptions options{
+      .column_info = column_info, .scorers_features = {}, .comparator = &less};
     irs::MemoryDirectory dir;
     auto writer = irs::SegmentWriter::make(dir, options);
     ASSERT_EQ(0, writer->memory_active());

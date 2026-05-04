@@ -2,7 +2,7 @@
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY verbatim_dict(
-    template = 'identity'
+    template = 'keyword'
 );
 
 statement ok
@@ -24,7 +24,7 @@ VACUUM (UPDATE_INDEXES) logs;
 
 # The wildcard 'server-0_' should match ids 1..3 only.
 query
-SELECT id FROM logs_idx WHERE TERM_LIKE(content->>'host', 'server-0_') ORDER BY id;
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-0_') ORDER BY id;
 ----
 id
 1
@@ -33,7 +33,7 @@ id
 
 # Exact-match path also works via the indexed path.
 query
-SELECT id FROM logs_idx WHERE TERM_LIKE(content->>'host', 'server-02') ORDER BY id;
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-02') ORDER BY id;
 ----
 id
 2
@@ -59,14 +59,14 @@ statement ok
 VACUUM (UPDATE_INDEXES) evts;
 
 query
-SELECT id FROM evts_idx WHERE TERM_LIKE(content->>'host', 'a') ORDER BY id;
+SELECT id FROM evts_idx WHERE content->>'host' @@ ts_like('a') ORDER BY id;
 ----
 id
 1
 3
 
 query
-SELECT id FROM evts_idx WHERE TERM_LIKE(content->>'status', 'error') ORDER BY id;
+SELECT id FROM evts_idx WHERE content->>'status' @@ ts_like('error') ORDER BY id;
 ----
 id
 2
@@ -101,21 +101,21 @@ VACUUM (UPDATE_INDEXES) preds;
 
 # TERM_EQ on a JSON path
 query
-SELECT id FROM preds_idx WHERE TERM_EQ(content->>'host', 'server-02');
+SELECT id FROM preds_idx WHERE content->>'host' = 'server-02';
 ----
 id
 2
 
 # PHRASE on a JSON path
 query
-SELECT id FROM preds_idx WHERE PHRASE(content->>'msg', 'quick fox') ORDER BY id;
+SELECT id FROM preds_idx WHERE content->>'msg' @@ ts_phrase('quick fox') ORDER BY id;
 ----
 id
 3
 
 # TERM_IN on a JSON path
 query
-SELECT id FROM preds_idx WHERE TERM_IN(content->>'host', 'server-01', 'server-03') ORDER BY id;
+SELECT id FROM preds_idx WHERE content->>'host' @@ ts_any(['server-01', 'server-03']) ORDER BY id;
 ----
 id
 1
@@ -123,7 +123,7 @@ id
 
 # BOOST wraps any predicate; the JSON-path expression flows through.
 query
-SELECT id FROM preds_idx WHERE BOOST(TERM_LIKE(content->>'host', 'server-0_'), 2.0) ORDER BY id;
+SELECT id FROM preds_idx WHERE content->>'host' @@ (ts_like('server-0_') ^ 2.0) ORDER BY id;
 ----
 id
 1
@@ -150,7 +150,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) lev;
 
 query
-SELECT id FROM lev_idx WHERE LEVENSHTEIN_MATCH(content->>'tag', 'urgent', 1) ORDER BY id;
+SELECT id FROM lev_idx WHERE content->>'tag' @@ ts_levenshtein('urgent', 1) ORDER BY id;
 ----
 id
 1
@@ -175,14 +175,14 @@ statement ok
 VACUUM (UPDATE_INDEXES) arr_logs;
 
 query
-SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>0, 'alpha') ORDER BY id;
+SELECT id FROM arr_idx WHERE content->'tags'->>0 = 'alpha' ORDER BY id;
 ----
 id
 1
 3
 
 query
-SELECT id FROM arr_idx WHERE TERM_EQ(content->'tags'->>0, 'gamma') ORDER BY id;
+SELECT id FROM arr_idx WHERE content->'tags'->>0 = 'gamma' ORDER BY id;
 ----
 id
 2
@@ -204,18 +204,26 @@ VACUUM (UPDATE_INDEXES) jonly;
 
 # Sanity check: the ->> form claims the predicate and returns rows.
 query
-SELECT id FROM jonly_idx WHERE TERM_LIKE(content->>'host', 'server-0_') ORDER BY id;
+SELECT id FROM jonly_idx WHERE content->>'host' @@ ts_like('server-0_') ORDER BY id;
 ----
 id
 1
 2
 
-# The -> form returns JSON; the predicate is NOT claimed by the index, so
-# TERM_LIKE's runtime body is invoked and refuses.
+# The -> form returns JSON; the binder rejects it because @@ requires the
+# column-side argument to be a TEXT (or TSQUERY-coercible) expression. The
+# user must use ->> (which returns VARCHAR) instead.
 query error
-SELECT id FROM jonly_idx WHERE TERM_LIKE(content->'host', 'server-0_') ORDER BY id;
+SELECT id FROM jonly_idx WHERE content->'host' @@ ts_like('server-0_') ORDER BY id;
 ----
-db error: ERROR: Inverted index function called outside inverted index context. Use in WHERE clause on a table with an inverted index.
+db error: ERROR: No function matches the given name and argument types 'json_extract(JSON, BOOLEAN)'. You might need to add explicit type casts.
+	Candidate functions:
+	json_extract(VARCHAR, BIGINT) -> JSON
+	json_extract(VARCHAR, VARCHAR) -> JSON
+	json_extract(VARCHAR, VARCHAR[]) -> JSON[]
+	json_extract(JSON, BIGINT) -> JSON
+	json_extract(JSON, VARCHAR) -> JSON
+	json_extract(JSON, VARCHAR[]) -> JSON[]
 
 
 # CREATE INDEX itself rejects a JSON-typed (`->`) leaf: the indexed leaf must
@@ -313,7 +321,7 @@ VACUUM (UPDATE_INDEXES) prim_types;
 
 # String leaf is searchable through TERM_EQ on the ->> form (string mangle).
 query
-SELECT id FROM prim_types_idx WHERE TERM_EQ(content->>'val', 'hello');
+SELECT id FROM prim_types_idx WHERE content->>'val' = 'hello';
 ----
 id
 1

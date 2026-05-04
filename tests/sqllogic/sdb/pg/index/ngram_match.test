@@ -40,14 +40,14 @@ VACUUM (UPDATE_INDEXES) test_ngram;
 
 # Default threshold (0.7) - should match strings with high ngram similarity to 'hello'
 query
-SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello') ORDER BY a;
+SELECT a FROM test_ngram_idx WHERE b @@ ts_ngram('hello') ORDER BY a;
 ----
 a
 1
 
 # Lower threshold - should match more strings
 query
-SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello', 0.3) ORDER BY a;
+SELECT a FROM test_ngram_idx WHERE b @@ ts_ngram('hello', 0.3) ORDER BY a;
 ----
 a
 1
@@ -56,7 +56,7 @@ a
 
 # Threshold 0 - matches everything with at least one common ngram
 query
-SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello', 0.0) ORDER BY a;
+SELECT a FROM test_ngram_idx WHERE b @@ ts_ngram('hello', 0.0) ORDER BY a;
 ----
 a
 1
@@ -64,9 +64,9 @@ a
 4
 5
 
-# Combined with AND
+# Combined with AND on a non-FTS predicate
 query
-SELECT a FROM test_ngram_idx WHERE NGRAM_MATCH(b, 'hello', 0.3) AND a < 3 ORDER BY a;
+SELECT a FROM test_ngram_idx WHERE b @@ ts_ngram('hello', 0.3) AND a < 3 ORDER BY a;
 ----
 a
 1

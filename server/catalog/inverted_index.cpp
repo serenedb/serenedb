@@ -76,7 +76,7 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
-ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
+ColumnTokenizer InvertedIndex::GetColumnAnalyzer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
   auto it = _columns.find(column_id);
@@ -87,8 +87,7 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
 
   if (!it->second.text_dictionary.isSet()) {
     auto analyzer = std::make_unique<irs::StringTokenizer>();
-    return {.analyzer = Tokenizer::AnalyzerWrapper{
-              analyzer.release(), Tokenizer::Deleter{nullptr}}};
+    return {.analyzer = {analyzer.release(), Tokenizer::Deleter{nullptr}}};
   }
 
   auto dict = snapshot->GetObject<Tokenizer>(it->second.text_dictionary);
@@ -100,7 +99,7 @@ ColumnAnalyzer InvertedIndex::GetColumnAnalyzer(
           .features = it->second.features.GetIndexFeatures()};
 }
 
-std::optional<ColumnAnalyzer> InvertedIndex::GetJsonPathAnalyzer(
+std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathAnalyzer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id, std::span<const std::string> path) const {
   auto it = _columns.find(column_id);
@@ -117,16 +116,17 @@ std::optional<ColumnAnalyzer> InvertedIndex::GetJsonPathAnalyzer(
     }
     if (!path_info.text_dictionary.isSet()) {
       auto analyzer = std::make_unique<irs::StringTokenizer>();
-      return ColumnAnalyzer{.analyzer = Tokenizer::AnalyzerWrapper{
-                              analyzer.release(), Tokenizer::Deleter{nullptr}}};
+      return ColumnTokenizer{
+        .analyzer = Tokenizer::TokenizerWrapper{analyzer.release(),
+                                                Tokenizer::Deleter{nullptr}}};
     }
     auto dict = snapshot->GetObject<Tokenizer>(path_info.text_dictionary);
     SDB_ENSURE(dict, ERROR_INTERNAL,
                "Dictionary for inverted index does not exists");
     auto tokenizer = dict->GetTokenizer();
     SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
-    return ColumnAnalyzer{.analyzer = *std::move(tokenizer),
-                          .features = path_info.features.GetIndexFeatures()};
+    return ColumnTokenizer{.analyzer = *std::move(tokenizer),
+                           .features = path_info.features.GetIndexFeatures()};
   }
   return std::nullopt;
 }

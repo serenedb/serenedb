@@ -147,8 +147,7 @@ SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
     _cached_columns{{options.resource_manager}},
     _sort{options.column_info, {}, options.resource_manager},
     _docs_context{{options.resource_manager}},
-    _fields{options.feature_info, _cached_columns, options.scorers_features,
-            options.comparator},
+    _fields{_cached_columns, options.scorers_features, options.comparator},
     _columns{{options.resource_manager}},
     _column_info{&options.column_info} {
   _docs_mask.set = decltype(_docs_mask.set){{options.resource_manager}};

@@ -28,6 +28,7 @@
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "iresearch/index/column_info.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_output.hpp"
 

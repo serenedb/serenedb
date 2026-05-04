@@ -70,4 +70,12 @@ void CheckNumHashes(int value) {
   }
 }
 
+void CheckNgramSize(int value) {
+  if (value < 2) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("ngramsize must be at least 2"),
+                    ERR_HINT(kNgramSize.description));
+  }
+}
+
 }  // namespace sdb::pg::tokenizer_options

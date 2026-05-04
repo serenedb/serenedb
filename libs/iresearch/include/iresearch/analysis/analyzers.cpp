@@ -45,6 +45,7 @@
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/analysis/union_tokenizer.hpp"
+#include "iresearch/analysis/wildcard_analyzer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -84,11 +85,11 @@ class AnalyzerRegister final
 
 constexpr std::string_view kTypeParam = "type";
 constexpr std::string_view kPropertiesParam = "properties";
-constexpr std::string_view kAnalyzerParam = "analyzer";
+constexpr std::string_view kTokenizerParam = "tokenizer";
 
 std::string_view GetType(vpack::Slice& input) {
   SDB_ASSERT(input.isObject());
-  input = input.get(kAnalyzerParam);
+  input = input.get(kTokenizerParam);
   if (input.isNone() || input.isNull()) {
     return StringTokenizer::type_name();
   }
@@ -234,7 +235,7 @@ bool NormalizeAnalyzer(vpack::Slice input, vpack::Builder& output) {
   if (type == StringTokenizer::type_name()) {
     return true;
   }
-  vpack::ObjectBuilder scope{&output, kAnalyzerParam};
+  vpack::ObjectBuilder scope{&output, kTokenizerParam};
   output.add(kTypeParam, type);
   input = input.get(kPropertiesParam);
   if (input.isNone()) {
@@ -276,6 +277,7 @@ void Init() {
   TextTokenizer::init();
   MultiDelimitedTokenizer::init();
   GeoAnalyzer::init();
+  WildcardAnalyzer::init();
 }
 
 }  // namespace analyzers

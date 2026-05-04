@@ -155,6 +155,76 @@ TEST_F(LuceneParserTest, FieldSpecificPhrase) {
   AssertPhrase(OptionalRoot()[0], "title");
 }
 
+// strict_field=true: a field-prefix is rejected unless it exactly
+// matches the default field. The SQL `to_tsquery(...)` embed flips
+// this on because the column is already pinned by the enclosing @@
+// predicate -- a different field would silently miss because indexed
+// fields are mangled by column id, not user-facing name.
+TEST_F(LuceneParserTest, StrictField_AllowsBareTerm) {
+  ctx.strict_field = true;
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "hello").ok());
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertTerm(OptionalRoot()[0], "content", "hello");
+}
+
+TEST_F(LuceneParserTest, StrictField_AllowsPhrase) {
+  ctx.strict_field = true;
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "\"hello world\"").ok());
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertPhrase(OptionalRoot()[0], "content");
+}
+
+TEST_F(LuceneParserTest, StrictField_AllowsBoolean) {
+  ctx.strict_field = true;
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "hello AND world").ok());
+}
+
+TEST_F(LuceneParserTest, StrictField_AllowsMatchingFieldPrefix) {
+  // Same-name prefix is redundant but not wrong -- accept it.
+  ctx.strict_field = true;
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "content:hello").ok());
+  ASSERT_EQ(1, OptionalRoot().size());
+  AssertTerm(OptionalRoot()[0], "content", "hello");
+}
+
+TEST_F(LuceneParserTest, StrictField_AllowsMatchingFieldInBoolean) {
+  ctx.strict_field = true;
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "hello AND content:world").ok());
+}
+
+TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldPrefix) {
+  ctx.strict_field = true;
+  auto r = sdb::ParseQuery(ctx, "title:hello");
+  ASSERT_FALSE(r.ok());
+  ASSERT_NE(std::string{r.errorMessage()}.find(
+              "field-prefix in strict-field mode must match the default "
+              "field"),
+            std::string::npos)
+    << "got: " << r.errorMessage();
+  // Failed parse leaves no clauses on the root.
+  ASSERT_EQ(0, OptionalRoot().size());
+  ASSERT_EQ(0, RequiredRoot().size());
+}
+
+TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldInBoolean) {
+  // Mismatched prefix anywhere in the tree is rejected, not just at the top.
+  ctx.strict_field = true;
+  auto r = sdb::ParseQuery(ctx, "hello AND title:world");
+  ASSERT_FALSE(r.ok());
+  ASSERT_NE(std::string{r.errorMessage()}.find("field-prefix"),
+            std::string::npos)
+    << "got: " << r.errorMessage();
+}
+
+TEST_F(LuceneParserTest, StrictField_RejectsDifferentFieldInGroup) {
+  ctx.strict_field = true;
+  auto r = sdb::ParseQuery(ctx, "(foo OR title:bar)");
+  ASSERT_FALSE(r.ok());
+  ASSERT_NE(std::string{r.errorMessage()}.find("field-prefix"),
+            std::string::npos)
+    << "got: " << r.errorMessage();
+}
+
 TEST_F(LuceneParserTest, BoostedTerm) {
   ASSERT_TRUE(sdb::ParseQuery(ctx, "hello^2").ok());
   ASSERT_EQ(1, OptionalRoot().size());

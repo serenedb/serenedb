@@ -21,7 +21,7 @@ statement ok
 CREATE INDEX foo_idx ON foo USING inverted(a, b test_english, c test_english);
 
 query
-SELECT a, b, c FROM foo_idx WHERE PHRASE(b, 'over lazy dog');
+SELECT a, b, c FROM foo_idx WHERE b @@ ts_phrase('over lazy dog');
 ----
 a	b	c
 1	quick brown fox jumps over lazy dog	value a
@@ -33,7 +33,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) foo;
 
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over lazy dog') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over lazy dog') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -46,7 +46,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) foo;
 
 query
-SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value abc') AND PHRASE(b, 'over lazy dog');
+SELECT a, b, c FROM foo_idx WHERE c @@ ts_phrase('value abc') AND b @@ ts_phrase('over lazy dog');
 ----
 a	b	c
 1	quick brown fox jumps over lazy dog	value abc
@@ -61,7 +61,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) foo;
 
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR PHRASE(b, 'red fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over big dog') OR b @@ ts_phrase('red fox') ORDER BY a;
 ----
 a	b
 2	quick red fox jumps over lazy dog
@@ -69,7 +69,7 @@ a	b
 4	quick brown fox jumps over big dog
 
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'over big dog') OR a = 1 ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('over big dog') OR a = 1 ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -77,7 +77,7 @@ a	b
 4	quick brown fox jumps over big dog
 
 query
-SELECT a, b, c FROM foo_idx WHERE PHRASE(c, 'value b') AND PHRASE(b, 'over big dog');
+SELECT a, b, c FROM foo_idx WHERE c @@ ts_phrase('value b') AND b @@ ts_phrase('over big dog');
 ----
 a	b	c
 4	quick brown fox jumps over big dog	value b
@@ -93,7 +93,7 @@ VACUUM (UPDATE_INDEXES) foo;
 
 # Exact gap: 1 word between 'quick' and 'fox' -- matches rows with 'quick brown fox' and 'quick red fox'
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', 1, 'fox') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -103,21 +103,21 @@ a	b
 
 # Exact gap: 2 words between 'quick' and 'fox' -- matches only row 5 ('quick brown lazy fox')
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 2, 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', 2, 'fox') ORDER BY a;
 ----
 a	b
 5	quick brown lazy fox runs over big dog
 
 # Exact gap: 0 words between (adjacent) -- matches only row 6 ('quick fox')
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 0, 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', 0, 'fox') ORDER BY a;
 ----
 a	b
 6	quick fox over big dog
 
 # Range gap [0,1]: 0 or 1 words between 'quick' and 'fox'
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[0,1], 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', ARRAY[0,1], 'fox') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -128,7 +128,7 @@ a	b
 
 # Range gap [1,2]: 1 or 2 words between 'quick' and 'fox'
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[1,2], 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', ARRAY[1,2], 'fox') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -140,7 +140,7 @@ a	b
 # Range gap with bracket-literal syntax [1,2] -- also binds to LIST,
 # same as ARRAY[1,2] above.
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2], 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', [1,2], 'fox') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -153,7 +153,7 @@ a	b
 # branch of FromPhrase (unadorned ARRAY[..] / [..] bind to LIST, only an
 # explicit INTEGER[n] cast produces a fixed-size ARRAY value).
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', [1,2]::INTEGER[2], 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', [1,2]::INTEGER[2], 'fox') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -164,14 +164,14 @@ a	b
 
 # Multi-token pattern with gap: 'quick brown' then 1 word then 'fox' -- only row 5 has 'brown lazy fox'
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick brown', 1, 'fox') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick brown', 1, 'fox') ORDER BY a;
 ----
 a	b
 5	quick brown lazy fox runs over big dog
 
 # Multiple gaps: 'quick' +1 word+ 'fox' +3 words+ 'dog'
 query
-SELECT a, b FROM foo_idx WHERE PHRASE(b, 'quick', 1, 'fox', 3, 'dog') ORDER BY a;
+SELECT a, b FROM foo_idx WHERE b @@ ts_phrase('quick', 1, 'fox', 3, 'dog') ORDER BY a;
 ----
 a	b
 1	quick brown fox jumps over lazy dog
@@ -182,39 +182,29 @@ a	b
 # Error: leading text pattern tokenizes to nothing (empty string) so the
 # following integer gap has no preceding text -- covers the opts->empty()
 # check in the integer gap branch of FromPhrase.
-query error
-SELECT a FROM foo_idx WHERE PHRASE(b, '', 1, 'fox');
-----
-db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+query error ts_phrase gap at argument 1 must be preceded by a text pattern
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('', 1, 'fox');
 
 
 # Same as above but via a range gap -- covers the opts->empty() check
 # in the LIST/ARRAY gap branch of FromPhrase.
-query error
-SELECT a FROM foo_idx WHERE PHRASE(b, '', ARRAY[1,2], 'fox');
-----
-db error: ERROR: PHRASE gap at argument 2 must be preceded by a text pattern
+query error ts_phrase gap at argument 1 must be preceded by a text pattern
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('', ARRAY[1,2], 'fox');
 
 
 # Error: gap at end with no following text pattern
-query error
-SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1);
-----
-db error: ERROR: PHRASE ends with a gap; a text pattern must follow each gap
+query error ts_phrase ends with a gap; a text pattern must follow each gap
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 1);
 
 
 # Error: two consecutive gaps
-query error
-SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', 1, 2, 'fox');
-----
-db error: ERROR: PHRASE has consecutive gaps at argument 3
+query error ts_phrase has consecutive gaps at argument 2
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', 1, 2, 'fox');
 
 
 # Error: range gap with min > max
-query error
-SELECT a FROM foo_idx WHERE PHRASE(b, 'quick', ARRAY[3,1], 'fox');
-----
-db error: ERROR: PHRASE gap array at argument 2 min (3) must not exceed max (1)
+query error ts_phrase interval gap must satisfy 0 <= min <= max, got \[3, 1\] \(argument 1\)
+SELECT a FROM foo_idx WHERE b @@ ts_phrase('quick', ARRAY[3,1], 'fox');
 
 
 statement ok
@@ -242,14 +232,14 @@ CREATE INDEX vedernikoff_idx ON vedernikoff USING inverted(a, b test_english, c 
 
 
 query
-SELECT COUNT(1) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+SELECT COUNT(1) FROM vedernikoff_idx WHERE b @@ ts_phrase('pudge') AND b @@ ts_phrase('game');
 ----
 count
 2
 
 
 query
-EXPLAIN SELECT COUNT(*) FROM vedernikoff_idx WHERE PHRASE(b, 'pudge') AND PHRASE(b, 'game');
+EXPLAIN SELECT COUNT(*) FROM vedernikoff_idx WHERE b @@ ts_phrase('pudge') AND b @@ ts_phrase('game');
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -280,7 +270,7 @@ QUERY PLAN
 
 
 query
-SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'anchin-chan') ORDER BY a;
+SELECT a, b FROM vedernikoff_idx WHERE b @@ ts_phrase('every game') OR b @@ ts_phrase('anchin-chan') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
@@ -290,7 +280,7 @@ a	b
 
 
 query
-SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'every game') OR a = 2 ORDER BY a;
+SELECT a, b FROM vedernikoff_idx WHERE b @@ ts_phrase('every game') OR a = 2 ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
@@ -299,7 +289,7 @@ a	b
 
 
 query
-SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'gayazov') AND PHRASE(b, 'every game');
+SELECT a, b, c FROM vedernikoff_idx WHERE c @@ ts_phrase('gayazov') AND b @@ ts_phrase('every game');
 ----
 a	b	c
 4	pudge goes bot every game	gayazov
@@ -314,7 +304,7 @@ VACUUM (UPDATE_INDEXES) vedernikoff;
 
 
 query
-SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(c, 'deadinside') AND PHRASE(b, 'watches anime');
+SELECT a, b, c FROM vedernikoff_idx WHERE c @@ ts_phrase('deadinside') AND b @@ ts_phrase('watches anime');
 ----
 a	b	c
 3	anchin-chan watches anime at night	deadinside
@@ -449,26 +439,26 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 
 # EXPLAIN ANALYZE must actually create the index
 query
-SELECT a, b FROM donsimon_idx WHERE PHRASE(b, 'every game') ORDER BY a;
+SELECT a, b FROM donsimon_idx WHERE b @@ ts_phrase('every game') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
 
 query
-SELECT a, b, c FROM donsimon_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+SELECT a, b, c FROM donsimon_idx WHERE c @@ ts_phrase('clickclack university') ORDER BY a;
 ----
 a	b	c
 1	pudge goes mid every game	clickclack university
 2	anchin-chan reads manga all day	clickclack university
 
 query
-SELECT a, b, c FROM donsimon_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+SELECT a, b, c FROM donsimon_idx WHERE c @@ ts_phrase('deadinside academy') AND b @@ ts_phrase('vedernikoff') ORDER BY a;
 ----
 a	b	c
 3	vedernikoff carries team again	deadinside academy
 
 query
-SELECT a, b FROM donsimon_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+SELECT a, b FROM donsimon_idx WHERE b @@ ts_phrase('every game') OR b @@ ts_phrase('mass effect') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
@@ -513,19 +503,19 @@ statement ok
 CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b test_english, c test_english);
 
 query
-SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
+SELECT a, b FROM babsky_ext_idx WHERE b @@ ts_phrase('pudge goes') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
 
 query
-SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'anchin-chan') ORDER BY a;
+SELECT a, b FROM babsky_ext_idx WHERE b @@ ts_phrase('anchin-chan') ORDER BY a;
 ----
 a	b
 2	anchin-chan reads manga all day
 
 query
-SELECT a, b, c FROM babsky_ext_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+SELECT a, b, c FROM babsky_ext_idx WHERE c @@ ts_phrase('clickclack university') ORDER BY a;
 ----
 a	b	c
 1	pudge goes mid every game	clickclack university
@@ -533,13 +523,13 @@ a	b	c
 5	krivda writes sql at night	clickclack university
 
 query
-SELECT a, b, c FROM babsky_ext_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+SELECT a, b, c FROM babsky_ext_idx WHERE c @@ ts_phrase('deadinside academy') AND b @@ ts_phrase('vedernikoff') ORDER BY a;
 ----
 a	b	c
 3	vedernikoff carries team again	deadinside academy
 
 query
-SELECT a, b FROM babsky_ext_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+SELECT a, b FROM babsky_ext_idx WHERE b @@ ts_phrase('every game') OR b @@ ts_phrase('mass effect') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
@@ -592,19 +582,19 @@ statement ok
 CREATE INDEX text_idx_ext_idx ON text_idx_ext USING inverted(a, b test_english, c test_english);
 
 query
-SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'pudge goes') ORDER BY a;
+SELECT a, b FROM text_idx_ext_idx WHERE b @@ ts_phrase('pudge goes') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
 
 query
-SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'anchin-chan') ORDER BY a;
+SELECT a, b FROM text_idx_ext_idx WHERE b @@ ts_phrase('anchin-chan') ORDER BY a;
 ----
 a	b
 2	anchin-chan reads manga all day
 
 query
-SELECT a, b, c FROM text_idx_ext_idx WHERE PHRASE(c, 'clickclack university') ORDER BY a;
+SELECT a, b, c FROM text_idx_ext_idx WHERE c @@ ts_phrase('clickclack university') ORDER BY a;
 ----
 a	b	c
 1	pudge goes mid every game	clickclack university
@@ -612,13 +602,13 @@ a	b	c
 5	krivda writes sql at night	clickclack university
 
 query
-SELECT a, b, c FROM text_idx_ext_idx WHERE PHRASE(c, 'deadinside academy') AND PHRASE(b, 'vedernikoff') ORDER BY a;
+SELECT a, b, c FROM text_idx_ext_idx WHERE c @@ ts_phrase('deadinside academy') AND b @@ ts_phrase('vedernikoff') ORDER BY a;
 ----
 a	b	c
 3	vedernikoff carries team again	deadinside academy
 
 query
-SELECT a, b FROM text_idx_ext_idx WHERE PHRASE(b, 'every game') OR PHRASE(b, 'mass effect') ORDER BY a;
+SELECT a, b FROM text_idx_ext_idx WHERE b @@ ts_phrase('every game') OR b @@ ts_phrase('mass effect') ORDER BY a;
 ----
 a	b
 1	pudge goes mid every game
@@ -681,7 +671,7 @@ CREATE INDEX score_parquet_idx ON score_parquet_ext USING inverted(a, b score_en
 
 onlyif serenedb
 query
-EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+EXPLAIN SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -723,14 +713,14 @@ QUERY PLAN
 
 
 query
-SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(score_parquet_idx.tableoid) > 0 AS has_score FROM score_parquet_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 a	has_score
 1	t
 2	t
 
 query
-SELECT a FROM score_parquet_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(score_parquet_idx.tableoid) DESC, a;
+SELECT a FROM score_parquet_idx WHERE b @@ ts_phrase('fox') ORDER BY BM25(score_parquet_idx.tableoid) DESC, a;
 ----
 a
 2
@@ -770,14 +760,14 @@ statement ok
 CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
 
 query
-SELECT a, BM25(score_text_idx.tableoid) > 0 AS has_score FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(score_text_idx.tableoid) > 0 AS has_score FROM score_text_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 a	has_score
 1	t
 2	t
 
 query
-SELECT a FROM score_text_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(score_text_idx.tableoid) DESC, a;
+SELECT a FROM score_text_idx WHERE b @@ ts_phrase('fox') ORDER BY BM25(score_text_idx.tableoid) DESC, a;
 ----
 a
 2
@@ -811,7 +801,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) multi_seg;
 
 query
-SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, BM25(multi_seg_idx.tableoid) > 0 AS has_score FROM multi_seg_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -820,7 +810,7 @@ a	has_score
 4	t
 
 query
-SELECT a FROM multi_seg_idx WHERE PHRASE(b, 'fox') ORDER BY BM25(multi_seg_idx.tableoid) DESC, a;
+SELECT a FROM multi_seg_idx WHERE b @@ ts_phrase('fox') ORDER BY BM25(multi_seg_idx.tableoid) DESC, a;
 ----
 a
 1
@@ -863,7 +853,7 @@ statement ok
 CREATE INDEX dense_pq_idx ON dense_pq_ext USING inverted(a, b test_english, c test_english);
 
 query
-SELECT a, b FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+SELECT a, b FROM dense_pq_idx WHERE b @@ ts_phrase('common word') ORDER BY a;
 ----
 a	b
 1	common word alpha here
@@ -876,7 +866,7 @@ a	b
 8	common word theta here
 
 query
-SELECT a, b, c FROM dense_pq_idx WHERE PHRASE(b, 'here') ORDER BY a;
+SELECT a, b, c FROM dense_pq_idx WHERE b @@ ts_phrase('here') ORDER BY a;
 ----
 a	b	c
 1	common word alpha here	group east side
@@ -889,7 +879,7 @@ a	b	c
 8	common word theta here	group west side
 
 query
-SELECT * FROM dense_pq_idx WHERE PHRASE(b, 'common') ORDER BY a;
+SELECT * FROM dense_pq_idx WHERE b @@ ts_phrase('common') ORDER BY a;
 ----
 a	b	c
 1	common word alpha here	group east side
@@ -902,7 +892,7 @@ a	b	c
 8	common word theta here	group west side
 
 query
-SELECT a FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+SELECT a FROM dense_pq_idx WHERE b @@ ts_phrase('common word') ORDER BY a;
 ----
 a
 1
@@ -915,7 +905,7 @@ a
 8
 
 query
-SELECT a, c FROM dense_pq_idx WHERE PHRASE(c, 'group east side') ORDER BY a;
+SELECT a, c FROM dense_pq_idx WHERE c @@ ts_phrase('group east side') ORDER BY a;
 ----
 a	c
 1	group east side
@@ -924,13 +914,13 @@ a	c
 7	group east side
 
 query
-SELECT a, b FROM dense_pq_idx WHERE PHRASE(b, 'theta') ORDER BY a;
+SELECT a, b FROM dense_pq_idx WHERE b @@ ts_phrase('theta') ORDER BY a;
 ----
 a	b
 8	common word theta here
 
 query
-SELECT a, b, c FROM dense_pq_idx WHERE PHRASE(b, 'common') AND PHRASE(c, 'group west side') ORDER BY a;
+SELECT a, b, c FROM dense_pq_idx WHERE b @@ ts_phrase('common') AND c @@ ts_phrase('group west side') ORDER BY a;
 ----
 a	b	c
 2	common word beta here	group west side
@@ -939,14 +929,14 @@ a	b	c
 8	common word theta here	group west side
 
 query
-SELECT a, b FROM dense_pq_idx WHERE PHRASE(b, 'alpha') OR PHRASE(b, 'theta') ORDER BY a;
+SELECT a, b FROM dense_pq_idx WHERE b @@ ts_phrase('alpha') OR b @@ ts_phrase('theta') ORDER BY a;
 ----
 a	b
 1	common word alpha here
 8	common word theta here
 
 query
-SELECT a, BM25(dense_pq_idx.tableoid) > 0 AS has_score FROM dense_pq_idx WHERE PHRASE(b, 'common word') ORDER BY a;
+SELECT a, BM25(dense_pq_idx.tableoid) > 0 AS has_score FROM dense_pq_idx WHERE b @@ ts_phrase('common word') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -1016,7 +1006,7 @@ statement ok
 CREATE INDEX dense_csv_idx ON dense_csv_ext USING inverted(a, b test_english, c test_english);
 
 query
-EXPLAIN SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+EXPLAIN SELECT a, b FROM dense_csv_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -1054,7 +1044,7 @@ QUERY PLAN
 
 
 query
-SELECT a, b FROM dense_csv_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+SELECT a, b FROM dense_csv_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
 ----
 a	b
 1	shared term alpha info
@@ -1064,7 +1054,7 @@ a	b
 5	shared term epsilon info
 
 query
-SELECT a, b, c FROM dense_csv_idx WHERE PHRASE(b, 'info') ORDER BY a;
+SELECT a, b, c FROM dense_csv_idx WHERE b @@ ts_phrase('info') ORDER BY a;
 ----
 a	b	c
 1	shared term alpha info	dept red color
@@ -1074,7 +1064,7 @@ a	b	c
 5	shared term epsilon info	dept red color
 
 query
-SELECT a, c FROM dense_csv_idx WHERE PHRASE(c, 'dept red color') ORDER BY a;
+SELECT a, c FROM dense_csv_idx WHERE c @@ ts_phrase('dept red color') ORDER BY a;
 ----
 a	c
 1	dept red color
@@ -1082,7 +1072,7 @@ a	c
 5	dept red color
 
 query
-SELECT a, c FROM dense_csv_idx WHERE PHRASE(c, 'dept blue color') ORDER BY a;
+SELECT a, c FROM dense_csv_idx WHERE c @@ ts_phrase('dept blue color') ORDER BY a;
 ----
 a	c
 2	dept blue color
@@ -1123,7 +1113,7 @@ statement ok
 CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);
 
 query
-SELECT a, b FROM vedernikoff_idx WHERE PHRASE(b, 'shared term') ORDER BY a;
+SELECT a, b FROM vedernikoff_idx WHERE b @@ ts_phrase('shared term') ORDER BY a;
 ----
 a	b
 1	shared term alpha info
@@ -1133,7 +1123,7 @@ a	b
 5	shared term epsilon info
 
 query
-SELECT a, b, c FROM vedernikoff_idx WHERE PHRASE(b, 'info') ORDER BY a;
+SELECT a, b, c FROM vedernikoff_idx WHERE b @@ ts_phrase('info') ORDER BY a;
 ----
 a	b	c
 1	shared term alpha info	dept red color
@@ -1143,7 +1133,7 @@ a	b	c
 5	shared term epsilon info	dept red color
 
 query
-SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept red color') ORDER BY a;
+SELECT a, c FROM vedernikoff_idx WHERE c @@ ts_phrase('dept red color') ORDER BY a;
 ----
 a	c
 1	dept red color
@@ -1151,7 +1141,7 @@ a	c
 5	dept red color
 
 query
-SELECT a, c FROM vedernikoff_idx WHERE PHRASE(c, 'dept blue color') ORDER BY a;
+SELECT a, c FROM vedernikoff_idx WHERE c @@ ts_phrase('dept blue color') ORDER BY a;
 ----
 a	c
 2	dept blue color
@@ -1191,7 +1181,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) dense_multi;
 
 query
-SELECT a, b FROM dense_multi_idx WHERE PHRASE(b, 'universal token') ORDER BY a;
+SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
 ----
 a	b
 1	universal token alpha
@@ -1204,14 +1194,14 @@ a	b
 8	universal token theta
 
 query
-SELECT a, b FROM dense_multi_idx WHERE PHRASE(b, 'gamma') OR PHRASE(b, 'eta') ORDER BY a;
+SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('gamma') OR b @@ ts_phrase('eta') ORDER BY a;
 ----
 a	b
 3	universal token gamma
 7	universal token eta
 
 query
-SELECT a, BM25(dense_multi_idx.tableoid) > 0 AS has_score FROM dense_multi_idx WHERE PHRASE(b, 'universal') ORDER BY a;
+SELECT a, BM25(dense_multi_idx.tableoid) > 0 AS has_score FROM dense_multi_idx WHERE b @@ ts_phrase('universal') ORDER BY a;
 ----
 a	has_score
 1	t
@@ -1232,7 +1222,7 @@ statement ok
 VACUUM (UPDATE_INDEXES) dense_multi;
 
 query
-SELECT a, b FROM dense_multi_idx WHERE PHRASE(b, 'universal token') ORDER BY a;
+SELECT a, b FROM dense_multi_idx WHERE b @@ ts_phrase('universal token') ORDER BY a;
 ----
 a	b
 1	universal token alpha
@@ -1270,28 +1260,28 @@ statement ok
 CREATE INDEX arr_idx_tbl_idx ON arr_idx_tbl USING inverted(a, b test_english);
 
 query
-SELECT a, b, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'quick') ORDER BY a;
+SELECT a, b, nums, labels FROM arr_idx_tbl_idx WHERE b @@ ts_phrase('quick') ORDER BY a;
 ----
 a	b	nums	labels
 1	quick brown fox jumps	{1,2,3}	{alpha,beta}
 3	quick fox runs fast	{1,3}	{alpha,delta,epsilon}
 
 query
-SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'dog') ORDER BY a;
+SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE b @@ ts_phrase('dog') ORDER BY a;
 ----
 a	nums	labels
 2	{4,5}	{gamma}
 4	{}	{}
 
 query
-SELECT a, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'fox') ORDER BY a;
+SELECT a, labels FROM arr_idx_tbl_idx WHERE b @@ ts_phrase('fox') ORDER BY a;
 ----
 a	labels
 1	{alpha,beta}
 3	{alpha,delta,epsilon}
 
 query
-SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'quick') OR PHRASE(b, 'lazy') ORDER BY a;
+SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE b @@ ts_phrase('quick') OR b @@ ts_phrase('lazy') ORDER BY a;
 ----
 a	nums	labels
 1	{1,2,3}	{alpha,beta}
@@ -1299,7 +1289,7 @@ a	nums	labels
 3	{1,3}	{alpha,delta,epsilon}
 
 query
-SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE PHRASE(b, 'owl') ORDER BY a;
+SELECT a, nums, labels FROM arr_idx_tbl_idx WHERE b @@ ts_phrase('owl') ORDER BY a;
 ----
 a	nums	labels
 5	NULL	NULL
@@ -1326,7 +1316,7 @@ CREATE INDEX no_pk_index ON no_pk_table USING INVERTED(word test_english);
 
 
 query
-SELECT * FROM no_pk_index WHERE PHRASE(word, 'bad') LIMIT 1;
+SELECT * FROM no_pk_index WHERE word @@ ts_phrase('bad') LIMIT 1;
 ----
 word
 word is bad: 1

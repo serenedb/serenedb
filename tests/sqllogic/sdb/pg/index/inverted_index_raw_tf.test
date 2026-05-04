@@ -49,7 +49,7 @@ VACUUM (UPDATE_INDEXES) docs;
 # freq('fox') == 1, so every score equals 1.
 query
 SELECT id, raw_tf(docs_idx.tableoid) AS s FROM docs_idx
-  WHERE PHRASE(body, 'fox') ORDER BY id;
+  WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	s
 1	1
@@ -62,7 +62,7 @@ id	s
 # doc 1 scores 2, every other matching doc scores 1.
 query
 SELECT id, raw_tf(docs_idx.tableoid) AS s FROM docs_idx
-  WHERE PHRASE(body, 'the') ORDER BY id;
+  WHERE body @@ ts_phrase('the') ORDER BY id;
 ----
 id	s
 1	2
@@ -74,7 +74,7 @@ id	s
 # Ordering with raw_tf: for 'lazy' both docs have freq 1 so ordering falls
 # back to id ASC tiebreak.
 query
-SELECT id FROM docs_idx WHERE PHRASE(body, 'lazy')
+SELECT id FROM docs_idx WHERE body @@ ts_phrase('lazy')
   ORDER BY raw_tf(docs_idx.tableoid) DESC, id;
 ----
 id
@@ -103,7 +103,7 @@ VACUUM (UPDATE_INDEXES) docs;
 # raw_tf across segments: doc 7 has two 'fox' occurrences.
 query
 SELECT id, raw_tf(docs_idx.tableoid) AS s FROM docs_idx
-  WHERE PHRASE(body, 'fox') ORDER BY id;
+  WHERE body @@ ts_phrase('fox') ORDER BY id;
 ----
 id	s
 1	1

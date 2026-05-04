@@ -623,9 +623,7 @@ NormReader::ptr CachedColumn::norms() const {
   return MakeNormReader(payload(), _stream.Index(), _stream.Data());
 }
 
-FieldData::FieldData(std::string_view name,
-                     const FeatureInfoProvider& feature_columns,
-                     CachedColumns& cached_columns,
+FieldData::FieldData(std::string_view name, CachedColumns& cached_columns,
                      IndexFeatures cached_features, ColumnstoreWriter& columns,
                      byte_block_pool::inserter& byte_writer,
                      int_block_pool::inserter& int_writer,
@@ -638,42 +636,28 @@ FieldData::FieldData(std::string_view name,
     _proc_table{kTermProcessingTables[size_t(random_access)]},
     _requested_features{index_features},
     _last_doc{doc_limits::invalid()} {
-  auto& rm = cached_columns.get_allocator().Manager();
-
-  auto write_feature = [&](IndexFeatures feature, field_id* id) {
-    if (!IsSubsetOf(feature, index_features)) {
-      return;
-    }
-
-    SDB_ASSERT(feature_columns);
-    auto [feature_column_info, feature_writer_factory] =
-      feature_columns(feature);
-
-    auto feature_writer =
-      feature_writer_factory ? (*feature_writer_factory)({}) : nullptr;
-    *id = field_limits::invalid();
-    if (!feature_writer) {
-      return;
-    }
-    ColumnFinalizer finalizer = ColumnFinalizer{
+  if (IsSubsetOf(IndexFeatures::Norm, index_features)) {
+    // no compression, no encryption
+    const ColumnInfo info{Type<compression::None>::get(), {}, false};
+    auto feature_writer = Norm::MakeWriter({});
+    SDB_ASSERT(feature_writer);
+    ColumnFinalizer finalizer{
       [writer = feature_writer.get()](DataOutput& out) { writer->finish(out); },
       [] { return std::string_view{}; },
     };
 
     // sorted index case or the feature is required for wand
-    if (random_access || IsSubsetOf(feature, cached_features)) {
-      auto& column = cached_columns.emplace_back(id, feature_column_info,
+    if (random_access || IsSubsetOf(IndexFeatures::Norm, cached_features)) {
+      auto& rm = cached_columns.get_allocator().Manager();
+      auto& column = cached_columns.emplace_back(&_meta.norm, info,
                                                  std::move(finalizer), rm);
       _features.emplace_back(std::move(feature_writer), column.Stream());
     } else {
-      auto [column, out] =
-        columns.push_column(feature_column_info, std::move(finalizer));
+      auto [column, out] = columns.push_column(info, std::move(finalizer));
       _features.emplace_back(std::move(feature_writer), out);
-      *id = column;
+      _meta.norm = column;
     }
-  };
-
-  write_feature(IndexFeatures::Norm, &_meta.norm);
+  }
 
   SDB_ASSERT(!field_limits::valid(_meta.norm) ||
              IsSubsetOf(IndexFeatures::Norm, _meta.index_features));
@@ -1020,12 +1004,10 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   return true;
 }
 
-FieldsData::FieldsData(const FeatureInfoProvider& feature_info,
-                       FieldData::CachedColumns& cached_columns,
+FieldsData::FieldsData(FieldData::CachedColumns& cached_columns,
                        IndexFeatures cached_features,
                        const Comparer* comparator)
   : _comparator{comparator},
-    _feature_info{&feature_info},
     _fields{cached_columns.get_allocator()},
     _cached_columns{&cached_columns},
     _byte_pool{cached_columns.get_allocator()},
@@ -1045,8 +1027,8 @@ FieldData* FieldsData::emplace(const hashed_string_view& name,
   if (!it->ref) {
     try {
       const_cast<FieldData*&>(it->ref) = &_fields.emplace_back(
-        name, *_feature_info, *_cached_columns, _cached_features, columns,
-        _byte_writer, _int_writer, index_features, (nullptr != _comparator));
+        name, *_cached_columns, _cached_features, columns, _byte_writer,
+        _int_writer, index_features, (nullptr != _comparator));
     } catch (...) {
       _fields_map.erase(it);
       throw;

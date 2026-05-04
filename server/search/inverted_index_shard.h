@@ -224,6 +224,17 @@ class InvertedIndexShard final
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
+  enum class Phase : uint8_t {
+    Creating,
+    Recovering,
+    Active,
+  };
+
+  void StartRecovery() noexcept {
+    SDB_ASSERT(_phase == Phase::Creating);
+    _phase = Phase::Recovering;
+  }
+
  private:
   Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
@@ -232,7 +243,6 @@ class InvertedIndexShard final
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
   Result CleanupUnsafeImpl();
-  void InitPostRecovery(bool is_new);
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
@@ -249,7 +259,7 @@ class InvertedIndexShard final
 
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
-  bool _is_creation{true};
+  Phase _phase{Phase::Creating};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

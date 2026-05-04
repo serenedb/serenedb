@@ -30,6 +30,7 @@
 #include <functional>
 #include <limits>
 #include <string_view>
+#include <yaclib/exe/executor.hpp>
 
 #include "basics/async_utils.hpp"
 #include "basics/noncopyable.hpp"
@@ -53,7 +54,6 @@ class DatabaseInstance;
 #include "iresearch/index/segment_writer.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/utils/string.hpp"
-#include "yaclib/exe/executor.hpp"
 
 namespace irs {
 

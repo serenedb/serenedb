@@ -27,6 +27,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
+#include <duckdb/function/scalar/nested_functions.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/index/column_info.hpp>
@@ -138,68 +139,82 @@ void ExecuteNorm(R& result, const T* x, size_t size) {
   }
 }
 
+template<Norm N, typename T>
+void ExecuteNormalize(T* out, const T* x, size_t size) {
+  if constexpr (N == Norm::L1) {
+    irs::vector::L1Space<T, T, T>::Normalize(
+      reinterpret_cast<const irs::byte_type*>(x), static_cast<uint16_t>(size),
+      out);
+  } else if constexpr (N == Norm::L2) {
+    irs::vector::L2Space<T, T, T>::Normalize(
+      reinterpret_cast<const irs::byte_type*>(x), static_cast<uint16_t>(size),
+      out);
+  } else {
+    SDB_UNREACHABLE();
+  }
+}
+
+template<typename Elem>
+struct ArrayInput {
+  duckdb::UnifiedVectorFormat vdata;
+  const Elem* data;
+  const duckdb::ValidityMask* child_validity;
+  duckdb::idx_t array_size;
+
+  static ArrayInput Make(duckdb::Vector& v, duckdb::idx_t batch_size) {
+    ArrayInput in;
+    in.array_size = duckdb::ArrayType::GetSize(v.GetType());
+    v.ToUnifiedFormat(batch_size, in.vdata);
+    auto& child = duckdb::ArrayVector::GetEntry(v);
+    in.data = duckdb::FlatVector::GetData<Elem>(child);
+    in.child_validity = &duckdb::FlatVector::Validity(child);
+    return in;
+  }
+
+  const Elem* RowData(duckdb::idx_t row) const {
+    auto idx = vdata.sel->get_index(row);
+    if (!vdata.validity.RowIsValid(idx)) {
+      return nullptr;
+    }
+    auto base = idx * array_size;
+    for (duckdb::idx_t i = 0; i < array_size; ++i) {
+      if (!child_validity->RowIsValid(base + i)) {
+        return nullptr;
+      }
+    }
+    return data + base;
+  }
+};
+
 template<Distance D, typename Elem, typename Res>
 static void ArrayDistanceExecutor(duckdb::DataChunk& args,
                                   duckdb::ExpressionState& state,
                                   duckdb::Vector& result) {
-  auto& left_vector = args.data[0];
-  auto& right_vector = args.data[1];
   duckdb::idx_t batch_size = args.size();
-
-  duckdb::idx_t array_size = duckdb::ArrayType::GetSize(left_vector.GetType());
-  duckdb::idx_t right_array_size =
-    duckdb::ArrayType::GetSize(right_vector.GetType());
-  if (array_size == 0) {
+  auto left = ArrayInput<Elem>::Make(args.data[0], batch_size);
+  auto right = ArrayInput<Elem>::Make(args.data[1], batch_size);
+  if (left.array_size == 0) {
     throw duckdb::InvalidInputException(
       "Distance operators require non-empty arrays");
   }
-  if (array_size != right_array_size) {
+  if (left.array_size != right.array_size) {
     throw duckdb::InvalidInputException(
       "Array dimensions must be equal: left has %llu, right has %llu",
-      array_size, right_array_size);
+      left.array_size, right.array_size);
   }
-
-  duckdb::UnifiedVectorFormat left_vdata, right_vdata;
-  left_vector.ToUnifiedFormat(batch_size, left_vdata);
-  right_vector.ToUnifiedFormat(batch_size, right_vdata);
-
-  auto& left_child = duckdb::ArrayVector::GetEntry(left_vector);
-  auto& right_child = duckdb::ArrayVector::GetEntry(right_vector);
-  const Elem* left_data = duckdb::FlatVector::GetData<Elem>(left_child);
-  const Elem* right_data = duckdb::FlatVector::GetData<Elem>(right_child);
-  auto& left_child_validity = duckdb::FlatVector::Validity(left_child);
-  auto& right_child_validity = duckdb::FlatVector::Validity(right_child);
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   Res* result_data = duckdb::FlatVector::GetDataMutable<Res>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t row = 0; row < batch_size; row++) {
-    auto left_idx = left_vdata.sel->get_index(row);
-    auto right_idx = right_vdata.sel->get_index(row);
-
-    if (!left_vdata.validity.RowIsValid(left_idx) ||
-        !right_vdata.validity.RowIsValid(right_idx)) {
+    const Elem* l = left.RowData(row);
+    const Elem* r = right.RowData(row);
+    if (l == nullptr || r == nullptr) {
       result_validity.SetInvalid(row);
       continue;
     }
-
-    bool has_null = false;
-    for (duckdb::idx_t i = 0; i < array_size; i++) {
-      if (!left_child_validity.RowIsValid(left_idx * array_size + i) ||
-          !right_child_validity.RowIsValid(right_idx * array_size + i)) {
-        has_null = true;
-        break;
-      }
-    }
-    if (has_null) {
-      result_validity.SetInvalid(row);
-      continue;
-    }
-
-    ExecuteDistance<D, Elem, Res>(
-      result_data[row], left_data + (left_idx * array_size),
-      right_data + (right_idx * array_size), array_size);
+    ExecuteDistance<D, Elem, Res>(result_data[row], l, r, left.array_size);
   }
 }
 
@@ -207,49 +222,112 @@ template<Norm N, typename Elem, typename Res>
 static void ArrayNormExecutor(duckdb::DataChunk& args,
                               duckdb::ExpressionState& state,
                               duckdb::Vector& result) {
-  auto& input_vector = args.data[0];
   duckdb::idx_t batch_size = args.size();
-
-  duckdb::idx_t array_size = duckdb::ArrayType::GetSize(input_vector.GetType());
-  if (array_size == 0) {
+  auto in = ArrayInput<Elem>::Make(args.data[0], batch_size);
+  if (in.array_size == 0) {
     throw duckdb::InvalidInputException(
       "Norm operators require non-empty arrays");
   }
-
-  duckdb::UnifiedVectorFormat input_vdata;
-  input_vector.ToUnifiedFormat(batch_size, input_vdata);
-
-  auto& input_child = duckdb::ArrayVector::GetEntry(input_vector);
-  const Elem* input_data = duckdb::FlatVector::GetData<Elem>(input_child);
-  auto& input_child_validity = duckdb::FlatVector::Validity(input_child);
 
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   Res* result_data = duckdb::FlatVector::GetDataMutable<Res>(result);
   auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
 
   for (duckdb::idx_t row = 0; row < batch_size; row++) {
-    auto input_idx = input_vdata.sel->get_index(row);
-
-    if (!input_vdata.validity.RowIsValid(input_idx)) {
+    const Elem* x = in.RowData(row);
+    if (x == nullptr) {
       result_validity.SetInvalid(row);
       continue;
     }
-
-    bool has_null = false;
-    for (duckdb::idx_t i = 0; i < array_size; i++) {
-      if (!input_child_validity.RowIsValid(input_idx * array_size + i)) {
-        has_null = true;
-        break;
-      }
-    }
-    if (has_null) {
-      result_validity.SetInvalid(row);
-      continue;
-    }
-
-    ExecuteNorm<N, Elem, Res>(
-      result_data[row], input_data + (input_idx * array_size), array_size);
+    ExecuteNorm<N, Elem, Res>(result_data[row], x, in.array_size);
   }
+}
+
+template<Norm N, typename Elem>
+static void ArrayNormalizeExecutor(duckdb::DataChunk& args,
+                                   duckdb::ExpressionState& state,
+                                   duckdb::Vector& result) {
+  duckdb::idx_t batch_size = args.size();
+  auto in = ArrayInput<Elem>::Make(args.data[0], batch_size);
+  if (in.array_size == 0) {
+    throw duckdb::InvalidInputException(
+      "Normalize operators require non-empty arrays");
+  }
+
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
+  auto& result_child = duckdb::ArrayVector::GetEntry(result);
+  Elem* result_data = duckdb::FlatVector::GetDataMutable<Elem>(result_child);
+  auto& result_child_validity =
+    duckdb::FlatVector::ValidityMutable(result_child);
+
+  for (duckdb::idx_t row = 0; row < batch_size; row++) {
+    const Elem* x = in.RowData(row);
+    if (x == nullptr) {
+      result_validity.SetInvalid(row);
+      for (duckdb::idx_t i = 0; i < in.array_size; i++) {
+        result_child_validity.SetInvalid(row * in.array_size + i);
+      }
+      continue;
+    }
+    ExecuteNormalize<N, Elem>(result_data + (row * in.array_size), x,
+                              in.array_size);
+  }
+}
+
+static void ValidateArrayArgs(duckdb::BindScalarFunctionInput& input) {
+  auto& bound = input.GetBoundFunction();
+  auto& args = input.GetArguments();
+  for (auto& a : args) {
+    if (a->return_type.id() != duckdb::LogicalTypeId::ARRAY) {
+      throw duckdb::InvalidInputException("%s requires ARRAY arguments",
+                                          bound.name);
+    }
+  }
+}
+
+static duckdb::unique_ptr<duckdb::FunctionData> NormalizeBind(
+  duckdb::BindScalarFunctionInput& input) {
+  ValidateArrayArgs(input);
+  auto& bound = input.GetBoundFunction();
+  auto& args = input.GetArguments();
+  bound.SetReturnType(args[0]->return_type);
+  return duckdb::make_uniq<duckdb::VariableReturnBindData>(
+    bound.GetReturnType());
+}
+
+static duckdb::unique_ptr<duckdb::FunctionData> ScalarArrayBind(
+  duckdb::BindScalarFunctionInput& input) {
+  ValidateArrayArgs(input);
+  return nullptr;
+}
+
+template<Norm N>
+void RegisterNormalize(duckdb::ExtensionLoader& loader) {
+  std::string name;
+  if constexpr (N == Norm::L1) {
+    name = kL1Normalize;
+  } else if constexpr (N == Norm::L2) {
+    name = kL2Normalize;
+  } else {
+    SDB_UNREACHABLE();
+  }
+  const duckdb::ScalarFunction float_fn(
+    {duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
+                                duckdb::optional_idx{})},
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
+                               duckdb::optional_idx{}),
+    ArrayNormalizeExecutor<N, float>, NormalizeBind);
+  const duckdb::ScalarFunction double_fn(
+    {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
+                                duckdb::optional_idx{})},
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
+                               duckdb::optional_idx{}),
+    ArrayNormalizeExecutor<N, double>, NormalizeBind);
+  duckdb::ScalarFunctionSet fn{name};
+  fn.AddFunction(float_fn);
+  fn.AddFunction(double_fn);
+  loader.RegisterFunction(std::move(fn));
 }
 
 template<Norm N>
@@ -265,11 +343,13 @@ void RegisterNorm(duckdb::ExtensionLoader& loader) {
   const duckdb::ScalarFunction float_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{})},
-    duckdb::LogicalType::FLOAT, ArrayNormExecutor<N, float, float>);
+    duckdb::LogicalType::FLOAT, ArrayNormExecutor<N, float, float>,
+    ScalarArrayBind);
   const duckdb::ScalarFunction double_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                 duckdb::optional_idx{})},
-    duckdb::LogicalType::DOUBLE, ArrayNormExecutor<N, double, double>);
+    duckdb::LogicalType::DOUBLE, ArrayNormExecutor<N, double, double>,
+    ScalarArrayBind);
   duckdb::ScalarFunctionSet norm{name};
   norm.AddFunction(float_fn);
   norm.AddFunction(double_fn);
@@ -306,13 +386,15 @@ void RegisterDistance(duckdb::ExtensionLoader& loader) {
                                 duckdb::optional_idx{}),
      duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT,
                                 duckdb::optional_idx{})},
-    duckdb::LogicalType::FLOAT, ArrayDistanceExecutor<D, float, float>);
+    duckdb::LogicalType::FLOAT, ArrayDistanceExecutor<D, float, float>,
+    ScalarArrayBind);
   const duckdb::ScalarFunction double_fn(
     {duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                 duckdb::optional_idx{}),
      duckdb::LogicalType::ARRAY(duckdb::LogicalType::DOUBLE,
                                 duckdb::optional_idx{})},
-    duckdb::LogicalType::DOUBLE, ArrayDistanceExecutor<D, double, double>);
+    duckdb::LogicalType::DOUBLE, ArrayDistanceExecutor<D, double, double>,
+    ScalarArrayBind);
   duckdb::ScalarFunctionSet distance{name};
   distance.AddFunction(float_fn);
   distance.AddFunction(double_fn);
@@ -338,6 +420,8 @@ void RegisterVectorFunctions(duckdb::DatabaseInstance& db) {
   RegisterDistance<Distance::L2Sqr>(loader);
   RegisterNorm<Norm::L1>(loader);
   RegisterNorm<Norm::L2>(loader);
+  RegisterNormalize<Norm::L1>(loader);
+  RegisterNormalize<Norm::L2>(loader);
 }
 
 }  // namespace sdb::connector

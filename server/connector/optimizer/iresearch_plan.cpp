@@ -574,8 +574,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       }
       col_expr = args.col_arg;
     }
-    auto candidate_col_id =
-      ColumnIdByName(bind_data, col_expr->GetName());
+    auto candidate_col_id = ColumnIdByName(bind_data, col_expr->GetName());
     if (candidate_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
       continue;
     }

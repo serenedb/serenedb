@@ -107,9 +107,9 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
   std::string_view pk = irs::ViewCast<char>(_it.value->value);
 
   if (!_index_source) {
-    _index_source = MakeIndexSource(_context, _bind_data, _snapshot, _txn,
-                                    _filter_projected_columns, _filter_types,
-                                    _filter_bind_column_ids);
+    _index_source = MakeIndexSource(
+      _ctx.context, _ctx.bind_data, _ctx.rocksdb_snapshot, _ctx.rocksdb_txn,
+      _ctx.filter_projection, _ctx.filter_types, _ctx.filter_column_ids);
   }
   if (std::holds_alternative<std::monostate>(_pk_batch)) {
     _pk_batch = _index_source->CreatePkBatch();
@@ -131,7 +131,7 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
     _pk_batch);
 
   _scratch.Reset();
-  _index_source->Materialize(_context, _pk_batch, 0, 1, _scratch);
+  _index_source->Materialize(_ctx.context, _pk_batch, 0, 1, _scratch);
   _scratch.SetCardinality(1);
 
   _bool_out.Reset();

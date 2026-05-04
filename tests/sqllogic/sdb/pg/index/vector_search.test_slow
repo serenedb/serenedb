@@ -49,7 +49,7 @@ EXPLAIN SELECT id FROM vecs_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: vecs_hnsw     │
 │      Lookup: rocksdb      │
@@ -76,7 +76,7 @@ EXPLAIN SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: vecs_hnsw     │
 │      Lookup: rocksdb      │

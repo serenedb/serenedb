@@ -917,7 +917,7 @@ EXPLAIN SELECT * FROM docs_idx;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: docs_idx      │
 │      Lookup: rocksdb      │

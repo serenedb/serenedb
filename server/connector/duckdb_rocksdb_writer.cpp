@@ -569,8 +569,9 @@ void DuckDBColumnSerializer::WriteFlatColumn(
     }
     if (may_have_nulls && !validity.RowIsValid(row)) {
       writer.WriteNull(row_keys[row]);
+      const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
-        iw->Write({}, row_keys[row]);
+        iw->Write({&null_slice, 1}, row_keys[row]);
       }
       continue;
     }
@@ -595,8 +596,9 @@ void DuckDBColumnSerializer::WriteComplexColumn(
     auto idx = rdata.unified.sel->get_index(row);
     if (!rdata.unified.validity.RowIsValid(idx)) {
       writer.WriteNull(row_keys[row]);
+      const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
-        iw->Write({}, row_keys[row]);
+        iw->Write({&null_slice, 1}, row_keys[row]);
       }
       continue;
     }

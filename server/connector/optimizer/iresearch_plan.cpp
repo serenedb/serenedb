@@ -376,7 +376,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   bind_data.scan_source = std::move(ann);
-  get.function = connector::CreateIResearchANNFullscanFunction();
+  get.function = connector::CreateIResearchANNScanFunction();
 
   if (pushdown_filter && !residual_filters.empty()) {
     projection.children[0] = std::move(residual_filters.back()->children[0]);

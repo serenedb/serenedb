@@ -81,7 +81,7 @@ duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
   data->inverted_index = _inverted_index;
   data->lookup_label = "rocksdb";
   bind_data = std::move(data);
-  return CreateIResearchFullscanFunction();
+  return CreateIResearchScanFunction();
 }
 
 duckdb::TableStorageInfo TableInvertedIndexScanEntry::GetStorageInfo(
@@ -136,7 +136,7 @@ duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
     data->lookup_label = "view";
   }
   bind_data = std::move(data);
-  return CreateIResearchFullscanFunction();
+  return CreateIResearchScanFunction();
 }
 
 duckdb::TableStorageInfo ViewInvertedIndexScanEntry::GetStorageInfo(

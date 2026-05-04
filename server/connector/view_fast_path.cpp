@@ -291,16 +291,52 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   duckdb::named_parameter_map_t named_params;
   args.reserve(fn_expr.children.size());
   // CAST targets are unbound here; coercion happens in BindFastPathSource.
-  auto peel_cast = [&](const duckdb::ParsedExpression& expr)
-    -> const duckdb::ConstantExpression* {
+  auto peel_cast =
+    [](this auto& self,
+       const duckdb::ParsedExpression& expr) -> std::optional<duckdb::Value> {
     const duckdb::ParsedExpression* cur = &expr;
     while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
       cur = cur->Cast<duckdb::CastExpression>().child.get();
     }
     if (cur->GetExpressionClass() == duckdb::ExpressionClass::CONSTANT) {
-      return &cur->Cast<duckdb::ConstantExpression>();
+      return cur->Cast<duckdb::ConstantExpression>().value;
     }
-    return nullptr;
+    if (cur->GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
+      const auto& fn = cur->Cast<duckdb::FunctionExpression>();
+      if (fn.function_name == "list_value" ||
+          fn.function_name == "array_value") {
+        duckdb::vector<duckdb::Value> elements;
+        elements.reserve(fn.children.size());
+        duckdb::LogicalType child_type = duckdb::LogicalType::SQLNULL;
+        for (const auto& c : fn.children) {
+          auto folded = self(*c);
+          if (!folded) {
+            return std::nullopt;
+          }
+          if (child_type.id() == duckdb::LogicalTypeId::SQLNULL) {
+            child_type = folded->type();
+          }
+          elements.push_back(std::move(*folded));
+        }
+        return duckdb::Value::LIST(child_type, std::move(elements));
+      }
+      if (fn.function_name == "struct_pack") {
+        duckdb::child_list_t<duckdb::Value> fields;
+        fields.reserve(fn.children.size());
+        for (const auto& c : fn.children) {
+          if (c->GetAlias().empty()) {
+            return std::nullopt;
+          }
+          auto folded = self(*c);
+          if (!folded) {
+            return std::nullopt;
+          }
+          fields.emplace_back(c->GetAlias(), std::move(*folded));
+        }
+        return duckdb::Value::STRUCT(std::move(fields));
+      }
+    }
+    return std::nullopt;
   };
 
   for (const auto& child : fn_expr.children) {
@@ -310,16 +346,16 @@ std::optional<ViewFastPath> ResolveViewFastPath(
           duckdb::ExpressionType::COLUMN_REF) {
         const auto& colref = comp.left->Cast<duckdb::ColumnRefExpression>();
         if (!colref.IsQualified()) {
-          if (auto* lit = peel_cast(*comp.right)) {
-            named_params.emplace(colref.GetColumnName(), lit->value);
+          if (auto v = peel_cast(*comp.right)) {
+            named_params.emplace(colref.GetColumnName(), std::move(*v));
             continue;
           }
         }
       }
       return std::nullopt;
     }
-    if (auto* lit = peel_cast(*child)) {
-      args.push_back(lit->value);
+    if (auto v = peel_cast(*child)) {
+      args.push_back(std::move(*v));
       continue;
     }
     return std::nullopt;
@@ -332,6 +368,28 @@ std::optional<ViewFastPath> ResolveViewFastPath(
   if (args.size() != 1 ||
       args[0].type().id() != duckdb::LogicalTypeId::VARCHAR) {
     return std::nullopt;
+  }
+  const bool is_json = canonical == "read_json" || canonical == "read_ndjson" ||
+                       canonical == "read_json_objects" ||
+                       canonical == "read_ndjson_objects";
+  if (is_json) {
+    if (auto it = named_params.find("compression");
+        it != named_params.end() &&
+        it->second.type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      auto comp = absl::AsciiStrToLower(it->second.GetValue<std::string>());
+      if (comp != "none" && comp != "uncompressed" && comp != "auto") {
+        return std::nullopt;
+      }
+    }
+    const auto path = args[0].GetValue<std::string>();
+    static constexpr std::string_view kCompressedSuffixes[] = {
+      ".gz", ".gzip", ".zst", ".zstd", ".bz2", ".xz", ".lzma"};
+    auto lower_path = absl::AsciiStrToLower(path);
+    for (auto suffix : kCompressedSuffixes) {
+      if (lower_path.ends_with(suffix)) {
+        return std::nullopt;
+      }
+    }
   }
   ViewFastPath out;
   out.function_name = std::move(canonical);
@@ -412,7 +470,8 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   named_params.reserve(fp.named_params.size() + 1);
   for (auto& [k, v] : fp.named_params) {
     auto it = reader.named_parameters.find(k);
-    if (it == reader.named_parameters.end()) {
+    if (it == reader.named_parameters.end() ||
+        it->second.id() == duckdb::LogicalTypeId::ANY) {
       named_params.emplace(k, v);
       continue;
     }

@@ -371,5 +371,46 @@ id	body
 1	foo
 
 
+# Bare `SELECT * FROM idx;` -- must walk the iresearch index and
+# materialize, NOT fall back to a PK rocksdb scan. Covers all view-backed
+# pk_specs to confirm the bare-scan path uses the index everywhere.
+
+statement ok
+CREATE VIEW bare_pq_v AS SELECT * FROM read_parquet('/tmp/${__DATABASE__}_view_idx.parquet');
+
+statement ok
+CREATE INDEX bare_pq_idx ON bare_pq_v USING inverted(id, body view_idx_en);
+
+query
+SELECT id, body FROM bare_pq_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+3	pudge plays again
+
+statement count 4
+COPY (SELECT 10 AS id, 'one' AS body
+      UNION ALL SELECT 11, 'two'
+      UNION ALL SELECT 12, 'three'
+      UNION ALL SELECT 13, 'four')
+TO '/tmp/${__DATABASE__}_bare.csv';
+
+statement ok
+CREATE VIEW bare_csv_v AS SELECT * FROM read_csv('/tmp/${__DATABASE__}_bare.csv');
+
+statement ok
+CREATE INDEX bare_csv_idx ON bare_csv_v USING inverted(id, body view_idx_en);
+
+query
+SELECT id, body FROM bare_csv_idx ORDER BY id;
+----
+id	body
+10	one
+11	two
+12	three
+13	four
+
+
 # Iceberg view-fast-path tests live in inverted_index_view_iceberg.test_slow
 # (REST catalog + MinIO fixture).

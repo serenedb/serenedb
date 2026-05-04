@@ -15,7 +15,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: l2_index      │
 │      Lookup: rocksdb      │
@@ -32,7 +32,7 @@ EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance([0, 0, 0]::FLOAT[3], emb) L
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: l2_index      │
 │      Lookup: rocksdb      │
@@ -73,7 +73,7 @@ QUERY PLAN
 │          ~4 rows          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: l2_index      │
 │      Lookup: rocksdb      │
@@ -86,8 +86,10 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-query error db error: ERROR: Array dimensions must be equal: left has 3, right has 2
+query ?
 SELECT id FROM l2_index ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 1;
+----
+id
 
 
 statement ok
@@ -139,7 +141,7 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
 │      Index: l2_index      │
 │      Lookup: rocksdb      │
@@ -279,7 +281,7 @@ EXPLAIN SELECT id FROM cos_index ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMI
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: cos_index     │
 │      Lookup: rocksdb      │
@@ -316,7 +318,7 @@ EXPLAIN SELECT id FROM ip_index ORDER BY emb <#> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: ip_index      │
 │      Lookup: rocksdb      │
@@ -383,7 +385,7 @@ EXPLAIN SELECT id FROM l2_index WHERE id % 2 = 0 ORDER BY emb <-> [0, 0, 0]::FLO
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│   IRESEARCH_ANN_FULLSCAN  │
+│     IRESEARCH_ANN_SCAN    │
 │    ────────────────────   │
 │      Index: l2_index      │
 │      Lookup: rocksdb      │

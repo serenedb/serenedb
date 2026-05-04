@@ -652,15 +652,6 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
   return func;
 }
 
-duckdb::TableFunction CreateIResearchFullscanFunction() {
-  duckdb::TableFunction func{
-    "iresearch_fullscan", {}, PKFullScanFunction, SereneDBScanBind,
-    PKFullScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
-}
-
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{
     "iresearch_scan",         {}, SearchFullScanFunction, SereneDBScanBind,
@@ -679,9 +670,9 @@ duckdb::TableFunction CreateIResearchCountFunction() {
   return func;
 }
 
-duckdb::TableFunction CreateIResearchANNFullscanFunction() {
+duckdb::TableFunction CreateIResearchANNScanFunction() {
   duckdb::TableFunction func{
-    "iresearch_ann_fullscan", {}, SearchAnnScanFunction, SereneDBScanBind,
+    "iresearch_ann_scan",    {}, SearchAnnScanFunction, SereneDBScanBind,
     SearchAnnScanInitGlobal,
   };
   SetCommonCallbacks(func);

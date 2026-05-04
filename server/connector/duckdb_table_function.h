@@ -430,13 +430,11 @@ duckdb::TableFunction CreateSKPointsLookupFunction();
 
 duckdb::TableFunction CreateSKRangesScanFunction();
 
-duckdb::TableFunction CreateIResearchFullscanFunction();
-
 duckdb::TableFunction CreateIResearchScanFunction();
 
 duckdb::TableFunction CreateIResearchCountFunction();
 
-duckdb::TableFunction CreateIResearchANNFullscanFunction();
+duckdb::TableFunction CreateIResearchANNScanFunction();
 
 duckdb::TableFunction CreateIResearchANNRangeScanFunction();
 

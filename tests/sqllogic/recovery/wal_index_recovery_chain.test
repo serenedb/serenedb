@@ -1,0 +1,354 @@
+control substitution on
+
+# Multi-crash chain: large mixed insert/delete/update workloads with the
+# search commit task blocked, crash, restart (recovery runs), do another
+# round, crash again, restart (recovery runs again), etc. After all
+# rounds the index must reflect the final RocksDB state exactly.
+#
+# This stresses (a) recovery can run repeatedly across many restarts,
+# (b) per-round mutations include all three op types, (c) the
+# multi-flush path (>2048 rows per round) is hit several times.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY chain_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE chain_t(a INTEGER PRIMARY KEY, b TEXT);
+
+# Seed: 3000 rows. Bodies have the form 'seed_<id>'.
+statement ok
+INSERT INTO chain_t SELECT i, 'seed_' || i FROM range(0, 3000) AS t(i);
+
+statement ok
+CREATE INDEX chain_idx ON chain_t USING inverted(a, b chain_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) chain_t;
+
+# Initial sanity
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('seed_42');
+----
+a
+42
+
+query
+SELECT COUNT(*) FROM chain_idx;
+----
+count
+3000
+
+###############################################################################
+# Round 1
+#  - INSERT 3000..5999       (3000 rows, body 'r1ins_<id>')
+#  - DELETE 0..499            (500 seed rows gone)
+#  - UPDATE 1000..1499 → body 'r1upd_<id>'
+#  - crash
+###############################################################################
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO chain_t SELECT i, 'r1ins_' || i FROM range(3000, 6000) AS t(i);
+
+statement ok
+DELETE FROM chain_t WHERE a < 500;
+
+statement ok
+UPDATE chain_t SET b = 'r1upd_' || a WHERE a >= 1000 AND a < 1500;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 2 (post round-1 recovery)
+#  - INSERT 6000..8999       (3000 rows, body 'r2ins_<id>')
+#  - DELETE 600..899          (300 seed rows gone)
+#  - UPDATE 4000..4499 → body 'r2upd_<id>' (over r1ins rows)
+#  - crash
+###############################################################################
+
+connection r2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r2
+statement ok
+INSERT INTO chain_t SELECT i, 'r2ins_' || i FROM range(6000, 9000) AS t(i);
+
+connection r2
+statement ok
+DELETE FROM chain_t WHERE a >= 600 AND a < 900;
+
+connection r2
+statement ok
+UPDATE chain_t SET b = 'r2upd_' || a WHERE a >= 4000 AND a < 4500;
+
+connection r2
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r2
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 3 (post round-2 recovery)
+#  - INSERT 9000..11999      (3000 rows, body 'r3ins_<id>')
+#  - DELETE 3500..3799        (300 r1ins rows gone)
+#  - UPDATE 7000..7499 → body 'r3upd_<id>' (over r2ins rows)
+#  - crash
+###############################################################################
+
+connection r3
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r3
+statement ok
+INSERT INTO chain_t SELECT i, 'r3ins_' || i FROM range(9000, 12000) AS t(i);
+
+connection r3
+statement ok
+DELETE FROM chain_t WHERE a >= 3500 AND a < 3800;
+
+connection r3
+statement ok
+UPDATE chain_t SET b = 'r3upd_' || a WHERE a >= 7000 AND a < 7500;
+
+connection r3
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r3
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Round 4 (post round-3 recovery)
+#  - INSERT 12000..14999     (3000 rows, body 'r4ins_<id>')
+#  - DELETE 1100..1199        (100 r1upd rows gone)
+#  - UPDATE 10000..10499 → body 'r4upd_<id>' (over r3ins rows)
+#  - crash
+###############################################################################
+
+connection r4
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+connection r4
+statement ok
+INSERT INTO chain_t SELECT i, 'r4ins_' || i FROM range(12000, 15000) AS t(i);
+
+connection r4
+statement ok
+DELETE FROM chain_t WHERE a >= 1100 AND a < 1200;
+
+connection r4
+statement ok
+UPDATE chain_t SET b = 'r4upd_' || a WHERE a >= 10000 AND a < 10500;
+
+connection r4
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection r4
+query error connection closed
+SELECT 1;
+
+###############################################################################
+# Final verification — round 4 also recovered.
+#
+# Row accounting:
+#   seed (0..2999)         3000 - 500 - 300 = 2200 (after del 0..499, 600..899)
+#                          - 100 r1upd deleted in r4 (1100..1199) → 2100
+#   r1ins (3000..5999)     3000 - 300 = 2700 (after del 3500..3799)
+#   r2ins (6000..8999)     3000
+#   r3ins (9000..11999)    3000
+#   r4ins (12000..14999)   3000
+#   ---------
+#   Total: 13800
+#
+# Body breakdown after all updates:
+#   seed_<id>   for id in {500..599, 900..1099, 1200..2999} \ {1000..1499}
+#               = 100 + 200 + 1800 - (500 - 0..499 -100 in 1100..1199 already
+#               counted) ... easier just to count via PHRASE checks.
+###############################################################################
+
+connection final
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) chain_t;
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t;
+----
+count
+13800
+
+connection final
+query
+SELECT COUNT(*) FROM chain_idx;
+----
+count
+13800
+
+# === Spot-checks: row that survived all rounds (id=600 deleted in r2, so use 599) ===
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('seed_599');
+----
+a
+599
+
+# === Updated-then-survived rows ===
+
+# 1000..1499 updated in r1, 1100..1199 deleted in r4. So 1100..1199 gone,
+# 1000..1099 and 1200..1499 still 'r1upd_*'. Pick id=1050 and id=1300.
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r1upd_1050');
+----
+a
+1050
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r1upd_1300');
+----
+a
+1300
+
+# 4000..4499 updated in r2 from 'r1ins_*' to 'r2upd_*'.
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r2upd_4250');
+----
+a
+4250
+
+# 7000..7499 updated in r3 from 'r2ins_*' to 'r3upd_*'.
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r3upd_7100');
+----
+a
+7100
+
+# 10000..10499 updated in r4 from 'r3ins_*' to 'r4upd_*'.
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r4upd_10100');
+----
+a
+10100
+
+# === Deleted rows must be gone from the index ===
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('seed_100');
+----
+count
+0
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('seed_750');
+----
+count
+0
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r1ins_3700');
+----
+count
+0
+
+# Row 1150 was r1upd_1150, then deleted in r4.
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r1upd_1150');
+----
+count
+0
+
+# === Old bodies of updated rows must be gone (the iresearch Delete+Insert
+#    on update must have cleared the prior tokens) ===
+
+# Row 1050: had body 'seed_1050' before r1 updated it — token 'seed_1050'
+# should not match anything anymore.
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('seed_1050');
+----
+count
+0
+
+# Row 4250: 'r1ins_4250' before r2 update.
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r1ins_4250');
+----
+count
+0
+
+# Row 7100: 'r2ins_7100' before r3 update.
+
+connection final
+query
+SELECT COUNT(*) FROM chain_t WHERE b @@ ts_phrase('r2ins_7100');
+----
+count
+0
+
+# === Brand-new rows from each round are present ===
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r1ins_5500');
+----
+a
+5500
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r2ins_8500');
+----
+a
+8500
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r3ins_11500');
+----
+a
+11500
+
+connection final
+query
+SELECT a FROM chain_t WHERE b @@ ts_phrase('r4ins_14500');
+----
+a
+14500

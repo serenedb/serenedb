@@ -1,0 +1,167 @@
+control substitution on
+
+# Table with BOTH an inverted index and a regular (secondary) btree-style
+# index. The secondary index writes its own WAL records (in its own column
+# family). Recovery must ignore those and only replay records for the
+# inverted index's column families.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ws_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ws_t(id INTEGER PRIMARY KEY, body TEXT, score INTEGER);
+
+statement ok
+INSERT INTO ws_t VALUES
+  (1, 'apple seed one',   10),
+  (2, 'banana seed two',  20),
+  (3, 'cherry seed three', 30);
+
+statement ok
+CREATE INDEX ws_inv_idx ON ws_t USING inverted(id, body ws_dict);
+
+# Secondary (non-inverted) index on a separate column. This produces
+# RocksDB writes in a different CF than the inverted index, none of which
+# are relevant to WAL recovery for inverted.
+statement ok
+CREATE INDEX ws_score_idx ON ws_t(score);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ws_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Mix of writes that hit the inverted columns AND the secondary index.
+statement ok
+INSERT INTO ws_t VALUES
+  (4, 'date late four',  40),
+  (5, 'elder late five', 50),
+  (6, 'fig late six',    60);
+
+# UPDATE only the secondary-indexed column on row 1: inverted index path
+# does no work, secondary-index CF gets a delete+put. Recovery must be
+# unaffected.
+statement ok
+UPDATE ws_t SET score = 999 WHERE id = 1;
+
+# UPDATE only the inverted-indexed column on row 2.
+statement ok
+UPDATE ws_t SET body = 'banana CHANGED' WHERE id = 2;
+
+# UPDATE both an inverted-indexed column AND the secondary one on row 3.
+statement ok
+UPDATE ws_t SET body = 'cherry BOTH', score = 333 WHERE id = 3;
+
+# Delete a row — both indexes will see the delete.
+statement ok
+DELETE FROM ws_t WHERE id = 4;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ws_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ws_t;
+
+# Total row count.
+connection ws_after
+query
+SELECT COUNT(*) FROM ws_t;
+----
+count
+5
+
+connection ws_after
+query
+SELECT COUNT(*) FROM ws_inv_idx;
+----
+count
+5
+
+# Old token for row 2 is gone, new token present.
+connection ws_after
+query
+SELECT id FROM ws_t WHERE body @@ ts_phrase('CHANGED');
+----
+id
+2
+
+connection ws_after
+query
+SELECT COUNT(*) FROM ws_t WHERE body @@ ts_phrase('banana seed two');
+----
+count
+0
+
+# Old token for row 3 is gone, new token present.
+connection ws_after
+query
+SELECT id FROM ws_t WHERE body @@ ts_phrase('BOTH');
+----
+id
+3
+
+connection ws_after
+query
+SELECT COUNT(*) FROM ws_t WHERE body @@ ts_phrase('cherry seed three');
+----
+count
+0
+
+# Row 4 is deleted, its tokens are gone.
+connection ws_after
+query
+SELECT COUNT(*) FROM ws_t WHERE body @@ ts_phrase('date late four');
+----
+count
+0
+
+# Rows 5 and 6 inserted properly.
+connection ws_after
+query
+SELECT id FROM ws_t WHERE body @@ ts_phrase('elder late five');
+----
+id
+5
+
+connection ws_after
+query
+SELECT id FROM ws_t WHERE body @@ ts_phrase('fig late six');
+----
+id
+6
+
+# Row 1 — only score changed. Body still searchable as before.
+connection ws_after
+query
+SELECT id FROM ws_t WHERE body @@ ts_phrase('apple seed one');
+----
+id
+1
+
+# Secondary index is consistent after recovery. Score values reflect the
+# UPDATE and DELETE.
+connection ws_after
+query
+SELECT id, score FROM ws_t ORDER BY id;
+----
+id	score
+1	999
+2	20
+3	333
+5	50
+6	60

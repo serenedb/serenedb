@@ -41,13 +41,7 @@ void FromNgram(irs::BooleanFilter& filter, const FilterContext& ctx,
                     ERR_MSG("ts_ngram field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  if (func.children.empty() || func.children.size() > 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_ngram expects 1 or 2 arguments (text[, threshold]), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
 
   std::string target;
   if (auto r = GetVarcharArg(*func.children[0], "ts_ngram text", target);

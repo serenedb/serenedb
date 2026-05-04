@@ -1,0 +1,129 @@
+control substitution on
+
+# Port of view-serenesearch-link-recover-view-not-again-noncluster.js.
+# Original asserts that for an index that's already caught up before the crash,
+# recovery does not re-replay the WAL beyond what's needed.
+#
+# Adapted into a stronger test: two indexes on different tables, one is
+# caught up (committed after its last write), the other lags (writes after
+# the last commit are blocked). After crash, recovery must touch only the
+# lagging one and leave the caught-up one untouched.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pl_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE pl_caught_up(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE pl_lagging(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO pl_caught_up VALUES (1, 'caught up one'), (2, 'caught up two');
+
+statement ok
+INSERT INTO pl_lagging VALUES (1, 'lag base one'), (2, 'lag base two');
+
+statement ok
+CREATE INDEX pl_caught_up_idx ON pl_caught_up
+  USING inverted(id, body pl_dict);
+
+statement ok
+CREATE INDEX pl_lagging_idx ON pl_lagging
+  USING inverted(id, body pl_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) pl_caught_up;
+
+statement ok
+VACUUM (UPDATE_INDEXES) pl_lagging;
+
+# Both indexes are caught up. Block search commits and write to the lagging
+# table only.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO pl_lagging VALUES
+  (3, 'lag added three'),
+  (4, 'lag added four'),
+  (5, 'lag added five');
+
+# Catch-up table sees no writes — it should remain at end_tick == start_tick.
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+#
+# Recovery finds:
+#   pl_caught_up_idx  : persisted == engine.recoveryTick() → not in shards
+#   pl_lagging_idx    : persisted < engine.recoveryTick() → replayed
+#
+# pl_caught_up_idx must still be searchable for the seed tokens with no work
+# done by recovery. pl_lagging_idx must have the post-crash inserts.
+
+connection pl_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) pl_caught_up;
+
+connection pl_after
+statement ok
+VACUUM (UPDATE_INDEXES) pl_lagging;
+
+# Caught-up table is unchanged.
+connection pl_after
+query
+SELECT COUNT(*) FROM pl_caught_up_idx;
+----
+count
+2
+
+connection pl_after
+query
+SELECT id FROM pl_caught_up WHERE body @@ ts_phrase('caught');
+----
+id
+1
+2
+
+# Lagging table has the new rows after WAL replay.
+connection pl_after
+query
+SELECT COUNT(*) FROM pl_lagging_idx;
+----
+count
+5
+
+connection pl_after
+query
+SELECT id FROM pl_lagging WHERE body @@ ts_phrase('lag added three');
+----
+id
+3
+
+connection pl_after
+query
+SELECT id FROM pl_lagging WHERE body @@ ts_phrase('lag added five');
+----
+id
+5
+
+# Original seeds still reachable in the lagging index.
+connection pl_after
+query
+SELECT id FROM pl_lagging WHERE body @@ ts_phrase('lag base one');
+----
+id
+1

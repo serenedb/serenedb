@@ -53,6 +53,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "search/task.h"
+#include "search/wal_recovery.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
@@ -112,9 +113,7 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db_id,
 std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
   ObjectId id, const catalog::InvertedIndex& index,
   InvertedIndexShardOptions options, bool is_new) {
-  auto shard = std::make_shared<InvertedIndexShard>(id, index, options, is_new);
-  shard->InitPostRecovery(is_new);
-  return shard;
+  return std::make_shared<InvertedIndexShard>(id, index, options, is_new);
 }
 
 InvertedIndexShard::InvertedIndexShard(ObjectId id,
@@ -187,7 +186,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {
-    if (_is_creation) {
+    if (_phase == Phase::Creating) {
       tick = _engine.currentTick();
     }
     _last_committed_tick = std::max(_last_committed_tick, tick);
@@ -267,45 +266,6 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
 
   if (!server.hasFeature<RocksDBRecoveryManager>()) {
     return;
-  }
-}
-
-void InvertedIndexShard::InitPostRecovery(bool is_new) {
-  auto& server = SerenedServer::Instance();
-  auto res =
-    server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(
-      [weak_self = weak_from_this(), is_new]() -> Result {
-        auto self = weak_self.lock();
-        if (!self) {
-          // Index was dropped during recovery
-          return {};
-        }
-
-        SDB_ASSERT(!self->_engine.inRecovery());
-
-        const auto recovery_tick = self->_engine.recoveryTick();
-
-        // Check for out-of-sync condition
-        if (self->_recovery_tick > recovery_tick) {
-          SDB_WARN("xxxxx", Logger::SEARCH, "Inverted index '",
-                   self->GetId().id(), "' is recovered at tick ",
-                   self->_recovery_tick, " greater than storage engine tick ",
-                   recovery_tick,
-                   ", it seems WAL tail was lost and index is out "
-                   "of sync");
-        }
-
-        // Register flush subscription if we are loading existing index
-        // If not finishCreation would be called later when indexing finishes
-        if (!is_new) {
-          self->FinishCreation();
-          self->StartTasks();
-        }
-
-        return {};
-      });
-  if (res.fail()) {
-    SDB_THROW(std::move(res));
   }
 }
 
@@ -498,8 +458,18 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     absl::Cleanup commit_guard = [&, last = _last_committed_tick]() noexcept {
       _last_committed_tick = last;
     };
+
+    const auto commit_tick = [&] {
+      switch (_phase) {
+        case Phase::Creating:
+        case Phase::Recovering:
+          return irs::writer_limits::kMaxTick;
+        case Phase::Active:
+          return before_commit;
+      }
+    }();
     const bool were_changes = _writer->Commit({
-      .tick = _is_creation ? irs::writer_limits::kMaxTick : before_commit,
+      .tick = commit_tick,
       .progress = progress,
       .reopen_columnstore = /* TODO(codeworse) */ false,
     });
@@ -510,16 +480,21 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     if (!were_changes) {
       SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
                 GetId().id(), "' is no changes, tick ", before_commit, "'");
-      _last_committed_tick = before_commit;
-      // no changes, can release the latest tick before commit
-      auto& subscription =
-        basics::downCast<LowerBoundSubscription>(*_flush_subscription);
-      subscription.tick(_last_committed_tick);
+      // While Recovering, the flush subscription must not claim more than
+      // what's actually flushed -- otherwise rocksdb could truncate WAL we
+      // still need to replay on a later restart.
+      if (_phase != Phase::Recovering) {
+        _last_committed_tick = before_commit;
+        auto& subscription =
+          basics::downCast<LowerBoundSubscription>(*_flush_subscription);
+        subscription.tick(_last_committed_tick);
+      }
       StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
         std::move(reader), std::move(engine_snapshot)));
       return {};
     }
-    SDB_ASSERT(_is_creation || _last_committed_tick == before_commit);
+    SDB_ASSERT(_phase != Phase::Active ||
+               _last_committed_tick == before_commit);
     code = CommitResult::Done;
 
     // update reader
@@ -558,12 +533,14 @@ Result InvertedIndexShard::CommitUnsafeImpl(
 
 void InvertedIndexShard::FinishCreation() {
   std::lock_guard lock{_commit_mutex};
-  if (std::exchange(_is_creation, false)) {
-    auto& server = SerenedServer::Instance();
-    if (server.hasFeature<FlushFeature>()) {
-      server.getFeature<FlushFeature>().registerFlushSubscription(
-        _flush_subscription);
-    }
+  if (_phase == Phase::Active) {
+    return;
+  }
+  _phase = Phase::Active;
+  auto& server = SerenedServer::Instance();
+  if (server.hasFeature<FlushFeature>()) {
+    server.getFeature<FlushFeature>().registerFlushSubscription(
+      _flush_subscription);
   }
 }
 

@@ -1,0 +1,104 @@
+control substitution on
+
+# Large-scale recovery stress test. 100k rows in a single WAL window, crash,
+# recovery has to replay all of it through the multi-flush path
+# (kFlushThreshold = 65536 → ~2 flush cycles).
+#
+# Sized down from 1M to keep the test usable under ASAN. If you want to
+# reproduce the original load pattern manually, bump the row count and the
+# expected counts below.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY huge_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE huge_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX huge_idx ON huge_t USING inverted(id, body huge_dict) WITH (commit_interval = 0);
+
+statement ok
+VACUUM (UPDATE_INDEXES) huge_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# 100k rows.
+statement ok
+INSERT INTO huge_t SELECT
+  i,
+  'doc ' || i || ' tag_' || (i % 1000)
+FROM range(0, 100000) AS t(i);
+
+# Mix in scattered deletes — every 1000th row gone (100 deletes total).
+statement ok
+DELETE FROM huge_t WHERE id % 1000 = 0;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart, recovery has to chew through ~99_900 row replays ---
+
+connection huge_after
+statement ok retry 60 backoff 1s
+VACUUM (UPDATE_INDEXES) huge_t;
+
+# Counts: 100_000 - 100 (deleted at every multiple of 1000) = 99_900.
+connection huge_after
+query
+SELECT COUNT(*) FROM huge_t;
+----
+count
+99900
+
+connection huge_after
+query
+SELECT COUNT(*) FROM huge_idx;
+----
+count
+99900
+
+# Spot-check tokens at various offsets across the bulk.
+connection huge_after
+query
+SELECT id FROM huge_t WHERE body @@ ts_phrase('tag_500') AND id < 1000;
+----
+id
+500
+
+# tag_N appears on rows where id % 1000 == N. Every multiple of 1000 was
+# deleted, but tag_500 rows (500, 1500, 2500, ...) are not multiples of 1000,
+# so all 100 of them survive.
+connection huge_after
+query
+SELECT COUNT(*) FROM huge_t WHERE body @@ ts_phrase('tag_500');
+----
+count
+100
+
+# Last row.
+connection huge_after
+query
+SELECT id FROM huge_t WHERE body @@ ts_phrase('tag_999') AND id = 99999;
+----
+id
+99999
+
+# Deleted ids: 0, 1000, ..., 99000 → 100 docs gone.
+connection huge_after
+query
+SELECT COUNT(*) FROM huge_t WHERE id % 1000 = 0;
+----
+count
+0

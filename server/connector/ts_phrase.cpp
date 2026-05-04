@@ -328,16 +328,10 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     seq.parts.push_back(&unwrapped);
     return;
   }
-  const auto& f = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  if (f.children.size() != 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("## expects 2 arguments (lhs ## rhs), got ", f.children.size()),
-      ERR_HINT("Example: ts_phrase('a') ## 'b' (adjacent), or with a gap: "
-               "ts_phrase('a') ## 1 ## 'b'."));
-  }
-  FlattenPhraseSeq(*f.children[0], seq);
-  const auto& right = *f.children[1];
+  const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
+  SDB_ASSERT(func.children.size() == 2);
+  FlattenPhraseSeq(*func.children[0], seq);
+  const auto& right = *func.children[1];
   if (IsPhraseSeqGapType(right)) {
     if (seq.pending) {
       THROW_SQL_ERROR(

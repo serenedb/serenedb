@@ -34,13 +34,7 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
                   const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_tokenize('quick fox') or ts_tokenize('foo', 'keyword').";
-  if (func.children.empty() || func.children.size() > 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_tokenize expects 1 or 2 arguments (text[, analyzer]), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
   std::string text;
   if (auto r = GetVarcharArg(*func.children[0], "ts_tokenize text", text);
       !r.ok()) {

@@ -33,14 +33,7 @@ namespace sdb::connector {
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_between('a', 'z', true, false). NULL bound = unbounded.";
-  if (func.children.size() != 4) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_between expects 4 arguments (min, max, min_incl, max_incl), "
-              "got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() == 4);
   RangeArgs out;
   for (size_t i = 0; i < 2; ++i) {
     const auto* val = TryGetConstant(*func.children[i]);
@@ -98,12 +91,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_lt('m') or ts_ge(42). Bound must be non-null; "
     "use ts_between(NULL, ...) for unbounded.";
-  if (func.children.size() != 1) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(label, " expects 1 argument (bound), got ", func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() == 1);
   const auto* bound_val = TryGetConstant(*func.children[0]);
   if (!bound_val) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

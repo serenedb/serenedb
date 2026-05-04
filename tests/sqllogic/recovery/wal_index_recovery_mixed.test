@@ -1,0 +1,128 @@
+control substitution on
+
+# WAL index recovery: mixed INSERT + DELETE + re-INSERT on the same PK.
+#
+# Within a single WAL window we exercise all 3 state transitions per PK:
+#   - pk re-used (deleted then re-inserted)
+#   - pk only deleted
+#   - pk only inserted
+# The accumulator must end with the authoritative *last* state per PK.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mix_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_mix_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO wal_mix_t VALUES
+  (1, 'persistent one'),
+  (2, 'goner two'),
+  (3, 'flipflop three');
+
+statement ok
+CREATE INDEX wal_mix_idx ON wal_mix_t USING inverted(a, b mix_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_mix_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# pk=2: only delete → must disappear
+statement ok
+DELETE FROM wal_mix_t WHERE a = 2;
+
+# pk=3: delete then re-insert with different content → must exist with new content
+statement ok
+DELETE FROM wal_mix_t WHERE a = 3;
+
+statement ok
+INSERT INTO wal_mix_t VALUES (3, 'reborn three');
+
+# pk=4: brand new
+statement ok
+INSERT INTO wal_mix_t VALUES (4, 'brand four');
+
+# pk=5: insert and then delete → must NOT appear
+statement ok
+INSERT INTO wal_mix_t VALUES (5, 'ephemeral five');
+
+statement ok
+DELETE FROM wal_mix_t WHERE a = 5;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection mix_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_mix_t;
+
+# pk=1 untouched
+connection mix_after
+query
+SELECT a FROM wal_mix_idx WHERE b @@ ts_phrase('persistent');
+----
+a
+1
+
+# pk=2 deleted
+connection mix_after
+query
+SELECT COUNT(*) FROM wal_mix_idx WHERE b @@ ts_phrase('goner');
+----
+count
+0
+
+# pk=3 flip-flopped: old content gone, new content present
+connection mix_after
+query
+SELECT COUNT(*) FROM wal_mix_idx WHERE b @@ ts_phrase('flipflop');
+----
+count
+0
+
+connection mix_after
+query
+SELECT a FROM wal_mix_idx WHERE b @@ ts_phrase('reborn');
+----
+a
+3
+
+# pk=4 newly inserted
+connection mix_after
+query
+SELECT a FROM wal_mix_idx WHERE b @@ ts_phrase('brand');
+----
+a
+4
+
+# pk=5 insert+delete in same window → must not exist
+connection mix_after
+query
+SELECT COUNT(*) FROM wal_mix_idx WHERE b @@ ts_phrase('ephemeral');
+----
+count
+0
+
+connection mix_after
+query
+SELECT a, b FROM wal_mix_t ORDER BY a;
+----
+a	b
+1	persistent one
+3	reborn three
+4	brand four

@@ -1,0 +1,157 @@
+control substitution on
+
+# Recovery across the supported indexable column types.
+# Each type triggers a different SwitchColumnImpl branch in
+# search_sink_writer.cpp (string analyzer / numeric tokenizer / boolean
+# tokenizer / etc).
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ty_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ty_t(
+  id      INTEGER PRIMARY KEY,
+  txt     TEXT,
+  small_i SMALLINT,
+  big_i   BIGINT,
+  flt     FLOAT,
+  dbl     DOUBLE,
+  flag    BOOLEAN,
+  d       DATE
+);
+
+statement ok
+INSERT INTO ty_t VALUES
+  (1, 'alpha', 100, 1000000000000, 1.5, 2.5, true,  '2025-01-15'),
+  (2, 'bravo', 200, 2000000000000, 2.5, 4.5, false, '2025-06-20'),
+  (3, 'gamma', 300, 3000000000000, 3.5, 6.5, true,  '2025-12-31');
+
+statement ok
+CREATE INDEX ty_idx ON ty_t
+  USING inverted(id, txt ty_dict, small_i, big_i, flt, dbl, flag, d);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ty_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO ty_t VALUES
+  (4, 'delta', 400, 4000000000000, 4.5, 8.5, false, '2026-03-10'),
+  (5, 'echo',  500, 5000000000000, 5.5, 10.5, true, '2026-09-01');
+
+statement ok
+DELETE FROM ty_t WHERE id = 2;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ty_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ty_t;
+
+# Total row count
+connection ty_after
+query
+SELECT COUNT(*) FROM ty_t;
+----
+count
+4
+
+# Index count matches table.
+connection ty_after
+query
+SELECT COUNT(*) FROM ty_idx;
+----
+count
+4
+
+# Text column.
+connection ty_after
+query
+SELECT id FROM ty_t WHERE txt @@ ts_phrase('delta');
+----
+id
+4
+
+# SMALLINT range scan via the index.
+connection ty_after
+query
+SELECT id FROM ty_t WHERE small_i = 400;
+----
+id
+4
+
+connection ty_after
+query
+SELECT id FROM ty_t WHERE small_i = 200;
+----
+id
+
+# BIGINT.
+connection ty_after
+query
+SELECT id FROM ty_t WHERE big_i = 5000000000000;
+----
+id
+5
+
+# FLOAT and DOUBLE.
+connection ty_after
+query
+SELECT id FROM ty_t WHERE flt = 4.5;
+----
+id
+4
+
+connection ty_after
+query
+SELECT id FROM ty_t WHERE dbl = 10.5;
+----
+id
+5
+
+# BOOLEAN.
+connection ty_after
+query
+SELECT COUNT(*) FROM ty_t WHERE flag = true;
+----
+count
+3
+
+connection ty_after
+query
+SELECT COUNT(*) FROM ty_t WHERE flag = false;
+----
+count
+1
+
+# DATE.
+connection ty_after
+query
+SELECT id FROM ty_t WHERE d = '2026-09-01';
+----
+id
+5
+
+# Deleted row: nothing for id=2.
+connection ty_after
+query
+SELECT COUNT(*) FROM ty_t WHERE id = 2;
+----
+count
+0

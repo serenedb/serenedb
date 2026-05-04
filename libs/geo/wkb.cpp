@@ -32,6 +32,7 @@
 #include <memory>
 
 #include "basics/errors.h"
+#include "basics/misc.hpp"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
 #include "geo/shape_container.h"
@@ -56,53 +57,70 @@ enum class WkbType : uint32_t {
   GeometryCollection = 7,
 };
 
-// Byte-oriented WKB reader. Tracks cursor + expected endianness so coordinate
-// doubles are byteswapped as needed. All reads bounds-check.
-class WkbReader {
+// Byte-oriented cursor: byte-order-agnostic raw bytes only. The cursor is
+// the only stateful piece; templated readers are stateless lenses that
+// share it by reference, so a sub-geometry can be parsed with a different
+// Byteswap value than the parent and the cursor advance flows back through
+// the parent reader transparently.
+class WkbCursor {
  public:
-  explicit WkbReader(std::string_view bytes) noexcept
+  explicit WkbCursor(std::string_view bytes) noexcept
     : _ptr{bytes.data()}, _end{bytes.data() + bytes.size()} {}
 
-  bool ReadByteOrder() noexcept {
-    uint8_t b;
-    if (!ReadByte(b)) {
+  bool ReadByte(uint8_t& out) noexcept {
+    if (_ptr >= _end) {
       return false;
     }
-    // WKB: 0 = big-endian, 1 = little-endian (NDR). We normalize by tracking
-    // whether a byteswap is needed to produce native order.
-    if (b == 0) {
-      _byteswap = std::endian::native != std::endian::big;
-    } else if (b == 1) {
-      _byteswap = std::endian::native != std::endian::little;
-    } else {
-      return false;
-    }
+    out = static_cast<uint8_t>(*_ptr);
+    ++_ptr;
     return true;
   }
 
-  bool ReadU32(uint32_t& out) noexcept {
-    if (_end - _ptr < 4) {
+  bool ReadRaw(void* dst, size_t n) noexcept {
+    if (static_cast<size_t>(_end - _ptr) < n) {
       return false;
     }
-    std::memcpy(&out, _ptr, 4);
-    _ptr += 4;
-    if (_byteswap) {
+    std::memcpy(dst, _ptr, n);
+    _ptr += n;
+    return true;
+  }
+
+  bool Empty() const noexcept { return _ptr >= _end; }
+
+ private:
+  const char* _ptr;
+  const char* _end;
+};
+
+// Stateless typed lens over a WkbCursor. `Byteswap` is set at construction
+// from the byte-order byte of the geometry currently being parsed; the swap
+// branch in ReadU32/ReadDouble collapses to an `if constexpr`, so the
+// hot vertex loop is branch-free. Sub-geometries get their own
+// instantiation via WithGeometryReader.
+template<bool Byteswap>
+class WkbReader {
+ public:
+  explicit WkbReader(WkbCursor& cursor) noexcept : _cursor{&cursor} {}
+
+  bool ReadU32(uint32_t& out) noexcept {
+    if (!_cursor->ReadRaw(&out, sizeof(out))) {
+      return false;
+    }
+    if constexpr (Byteswap) {
       out = std::byteswap(out);
     }
     return true;
   }
 
   bool ReadDouble(double& out) noexcept {
-    if (_end - _ptr < 8) {
+    uint64_t raw;
+    if (!_cursor->ReadRaw(&raw, sizeof(raw))) {
       return false;
     }
-    uint64_t raw;
-    std::memcpy(&raw, _ptr, 8);
-    _ptr += 8;
-    if (_byteswap) {
+    if constexpr (Byteswap) {
       raw = std::byteswap(raw);
     }
-    std::memcpy(&out, &raw, 8);
+    std::memcpy(&out, &raw, sizeof(out));
     return true;
   }
 
@@ -116,29 +134,43 @@ class WkbReader {
     return true;
   }
 
-  bool ReadByte(uint8_t& out) noexcept {
-    if (_ptr >= _end) {
-      return false;
-    }
-    out = static_cast<uint8_t>(*_ptr);
-    ++_ptr;
-    return true;
-  }
-
-  bool Empty() const noexcept { return _ptr >= _end; }
+  WkbCursor& cursor() noexcept { return *_cursor; }
 
  private:
-  const char* _ptr;
-  const char* _end;
-  bool _byteswap{false};
+  WkbCursor* _cursor;
 };
 
-// Read the endian byte, type word, optional SRID, and return the bare
-// geometry type. Rejects Z/M dimensions and non-CRS84 SRIDs.
-Result ReadHeader(WkbReader& r, WkbType& type) {
-  if (!r.ReadByteOrder()) {
-    return {ERROR_BAD_PARAMETER, "WKB: truncated or bad byte-order byte"};
+// Reads the byte-order byte from the cursor, resolves Byteswap at
+// compile time via irs::ResolveBool, constructs a WkbReader<Byteswap>
+// over the same cursor, and invokes `func` with that reader. Used both
+// at the top level (ParseShapeWKB) and at every Multi* sub-geometry
+// header so each sub-geometry can carry its own byte order per OGC.
+template<typename Func>
+Result WithGeometryReader(WkbCursor& cursor, Func&& func) {
+  uint8_t b;
+  if (!cursor.ReadByte(b)) {
+    return {ERROR_BAD_PARAMETER, "WKB: truncated byte-order byte"};
   }
+  bool byteswap;
+  if (b == 0) {
+    byteswap = std::endian::native != std::endian::big;
+  } else if (b == 1) {
+    byteswap = std::endian::native != std::endian::little;
+  } else {
+    return {ERROR_BAD_PARAMETER, "WKB: bad byte-order byte"};
+  }
+  return irs::ResolveBool(byteswap, [&]<bool Byteswap> {
+    WkbReader<Byteswap> r{cursor};
+    return std::forward<Func>(func).template operator()<WkbReader<Byteswap>>(r);
+  });
+}
+
+// Read the type word + optional SRID and return the bare geometry type.
+// The byte-order byte is consumed by WithGeometryReader before this is
+// called -- the templated reader's Byteswap value already reflects it.
+// Rejects Z/M dimensions and non-CRS84 SRIDs.
+template<class R>
+Result ReadHeader(R& r, WkbType& type) {
   uint32_t raw_type;
   if (!r.ReadU32(raw_type)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated type word"};
@@ -168,14 +200,16 @@ Result ReadHeader(WkbReader& r, WkbType& type) {
   return {};
 }
 
-Result ReadPoint(WkbReader& r, S2LatLng& out) {
+template<class R>
+Result ReadPoint(R& r, S2LatLng& out) {
   if (!r.ReadLatLng(out)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated Point coordinates"};
   }
   return {};
 }
 
-Result ReadLineStringVertices(WkbReader& r, std::vector<S2LatLng>& cache) {
+template<class R>
+Result ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
   uint32_t count;
   if (!r.ReadU32(count)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated LineString vertex count"};
@@ -201,7 +235,8 @@ Result ReadLineStringVertices(WkbReader& r, std::vector<S2LatLng>& cache) {
 // the outer loop is left as-given (so polygons whose intended interior covers
 // more than half the earth survive), and subsequent loops are inverted only
 // when they aren't already contained in the outer.
-Result ReadPolygonLoops(WkbReader& r, std::vector<std::unique_ptr<S2Loop>>& out,
+template<class R>
+Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out,
                         std::vector<S2LatLng>& cache) {
   uint32_t ring_count;
   if (!r.ReadU32(ring_count)) {
@@ -256,10 +291,12 @@ Result ReadPolygonLoops(WkbReader& r, std::vector<std::unique_ptr<S2Loop>>& out,
   return {};
 }
 
-Result ParseGeometry(WkbReader& r, ShapeContainer& region,
+template<class R>
+Result ParseGeometry(R& r, ShapeContainer& region,
                      std::vector<S2LatLng>& cache);
 
-Result ParsePoint(WkbReader& r, ShapeContainer& region) {
+template<class R>
+Result ParsePoint(R& r, ShapeContainer& region) {
   S2LatLng ll;
   if (auto res = ReadPoint(r, ll); res.fail()) {
     return res;
@@ -268,7 +305,8 @@ Result ParsePoint(WkbReader& r, ShapeContainer& region) {
   return {};
 }
 
-Result ParseLineString(WkbReader& r, ShapeContainer& region,
+template<class R>
+Result ParseLineString(R& r, ShapeContainer& region,
                        std::vector<S2LatLng>& cache) {
   if (auto res = ReadLineStringVertices(r, cache); res.fail()) {
     return res;
@@ -286,7 +324,8 @@ Result ParseLineString(WkbReader& r, ShapeContainer& region,
   return {};
 }
 
-Result ParsePolygon(WkbReader& r, ShapeContainer& region,
+template<class R>
+Result ParsePolygon(R& r, ShapeContainer& region,
                     std::vector<S2LatLng>& cache) {
   std::vector<std::unique_ptr<S2Loop>> loops;
   if (auto res = ReadPolygonLoops(r, loops, cache); res.fail()) {
@@ -298,7 +337,14 @@ Result ParsePolygon(WkbReader& r, ShapeContainer& region,
   return {};
 }
 
-Result ParseMultiPoint(WkbReader& r, ShapeContainer& region) {
+// Each Multi* member is a complete WKB sub-geometry with its own
+// byte-order byte. WithGeometryReader consumes that BOM, resolves
+// Byteswap at compile time, and constructs a fresh WkbReader<Sub>
+// over the parent's cursor for the duration of the sub-parse. The
+// outer reader (`r`) is unused inside the lambda but its cursor flows
+// through transparently.
+template<class R>
+Result ParseMultiPoint(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated MultiPoint count"};
@@ -306,26 +352,33 @@ Result ParseMultiPoint(WkbReader& r, ShapeContainer& region) {
   auto multi = std::make_unique<S2MultiPointRegion>();
   multi->Impl().reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
-    // Each sub-geometry is a full WKB Point (header + coords).
-    WkbType sub_type;
-    if (auto res = ReadHeader(r, sub_type); res.fail()) {
+    auto res =
+      WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
+        WkbType sub_type;
+        if (auto e = ReadHeader(sub, sub_type); e.fail()) {
+          return e;
+        }
+        if (sub_type != WkbType::Point) {
+          return {ERROR_BAD_PARAMETER, "WKB: MultiPoint member ", i,
+                  " is not a Point"};
+        }
+        S2LatLng ll;
+        if (auto e = ReadPoint(sub, ll); e.fail()) {
+          return e;
+        }
+        multi->Impl().push_back(ll.ToPoint());
+        return {};
+      });
+    if (res.fail()) {
       return res;
     }
-    if (sub_type != WkbType::Point) {
-      return {ERROR_BAD_PARAMETER, "WKB: MultiPoint member ", i,
-              " is not a Point"};
-    }
-    S2LatLng ll;
-    if (auto res = ReadPoint(r, ll); res.fail()) {
-      return res;
-    }
-    multi->Impl().push_back(ll.ToPoint());
   }
   region.reset(std::move(multi), ShapeContainer::Type::S2Multipoint);
   return {};
 }
 
-Result ParseMultiLineString(WkbReader& r, ShapeContainer& region,
+template<class R>
+Result ParseMultiLineString(R& r, ShapeContainer& region,
                             std::vector<S2LatLng>& cache) {
   uint32_t count;
   if (!r.ReadU32(count)) {
@@ -334,34 +387,42 @@ Result ParseMultiLineString(WkbReader& r, ShapeContainer& region,
   auto multi = std::make_unique<S2MultiPolylineRegion>();
   multi->Impl().reserve(count);
   for (uint32_t i = 0; i < count; ++i) {
-    WkbType sub_type;
-    if (auto res = ReadHeader(r, sub_type); res.fail()) {
+    auto res =
+      WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
+        WkbType sub_type;
+        if (auto e = ReadHeader(sub, sub_type); e.fail()) {
+          return e;
+        }
+        if (sub_type != WkbType::LineString) {
+          return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
+                  " is not a LineString"};
+        }
+        if (auto e = ReadLineStringVertices(sub, cache); e.fail()) {
+          return e;
+        }
+        std::vector<S2Point> pts;
+        pts.reserve(cache.size());
+        for (const auto& ll : cache) {
+          pts.push_back(ll.ToPoint());
+        }
+        S2Polyline line{pts, S2Debug::DISABLE};
+        if (!line.IsValid()) {
+          return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
+                  " is not a valid S2Polyline"};
+        }
+        multi->Impl().push_back(std::move(line));
+        return {};
+      });
+    if (res.fail()) {
       return res;
     }
-    if (sub_type != WkbType::LineString) {
-      return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
-              " is not a LineString"};
-    }
-    if (auto res = ReadLineStringVertices(r, cache); res.fail()) {
-      return res;
-    }
-    std::vector<S2Point> pts;
-    pts.reserve(cache.size());
-    for (const auto& ll : cache) {
-      pts.push_back(ll.ToPoint());
-    }
-    S2Polyline line{pts, S2Debug::DISABLE};
-    if (!line.IsValid()) {
-      return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
-              " is not a valid S2Polyline"};
-    }
-    multi->Impl().push_back(std::move(line));
   }
   region.reset(std::move(multi), ShapeContainer::Type::S2Multipolyline);
   return {};
 }
 
-Result ParseMultiPolygon(WkbReader& r, ShapeContainer& region,
+template<class R>
+Result ParseMultiPolygon(R& r, ShapeContainer& region,
                          std::vector<S2LatLng>& cache) {
   uint32_t count;
   if (!r.ReadU32(count)) {
@@ -371,20 +432,27 @@ Result ParseMultiPolygon(WkbReader& r, ShapeContainer& region,
   // polygons natively through S2Polygon::InitNested.
   std::vector<std::unique_ptr<S2Loop>> all_loops;
   for (uint32_t i = 0; i < count; ++i) {
-    WkbType sub_type;
-    if (auto res = ReadHeader(r, sub_type); res.fail()) {
+    auto res =
+      WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
+        WkbType sub_type;
+        if (auto e = ReadHeader(sub, sub_type); e.fail()) {
+          return e;
+        }
+        if (sub_type != WkbType::Polygon) {
+          return {ERROR_BAD_PARAMETER, "WKB: MultiPolygon member ", i,
+                  " is not a Polygon"};
+        }
+        std::vector<std::unique_ptr<S2Loop>> loops;
+        if (auto e = ReadPolygonLoops(sub, loops, cache); e.fail()) {
+          return e;
+        }
+        for (auto& loop : loops) {
+          all_loops.push_back(std::move(loop));
+        }
+        return {};
+      });
+    if (res.fail()) {
       return res;
-    }
-    if (sub_type != WkbType::Polygon) {
-      return {ERROR_BAD_PARAMETER, "WKB: MultiPolygon member ", i,
-              " is not a Polygon"};
-    }
-    std::vector<std::unique_ptr<S2Loop>> loops;
-    if (auto res = ReadPolygonLoops(r, loops, cache); res.fail()) {
-      return res;
-    }
-    for (auto& loop : loops) {
-      all_loops.push_back(std::move(loop));
     }
   }
   auto poly = std::make_unique<S2Polygon>();
@@ -393,7 +461,8 @@ Result ParseMultiPolygon(WkbReader& r, ShapeContainer& region,
   return {};
 }
 
-Result ParseGeometry(WkbReader& r, ShapeContainer& region,
+template<class R>
+Result ParseGeometry(R& r, ShapeContainer& region,
                      std::vector<S2LatLng>& cache) {
   WkbType type;
   if (auto res = ReadHeader(r, type); res.fail()) {
@@ -422,8 +491,10 @@ Result ParseGeometry(WkbReader& r, ShapeContainer& region,
 
 Result ParseShapeWKB(std::string_view bytes, ShapeContainer& region,
                      std::vector<S2LatLng>& cache) {
-  WkbReader r{bytes};
-  return ParseGeometry(r, region, cache);
+  WkbCursor cursor{bytes};
+  return WithGeometryReader(cursor, [&]<class R>(R& r) -> Result {
+    return ParseGeometry(r, region, cache);
+  });
 }
 
 }  // namespace sdb::geo

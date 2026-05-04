@@ -20,9 +20,14 @@
 
 #include "connector/duckdb_physical_create_index.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/lambda_expression.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <iostream>
 
@@ -43,6 +48,7 @@
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "connector/search_sink_writer.hpp"
@@ -52,6 +58,62 @@
 
 namespace sdb::connector {
 namespace {
+
+// TODO(mkornaukhov) do not build path manually, see #597
+bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
+                     std::vector<std::string>& out_path) {
+  out_path.clear();
+  // Reject when outtermost extraction does not return string
+  if (e.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION ||
+      !IsJsonExtractString(
+        e.Cast<duckdb::FunctionExpression>().function_name)) {
+    return false;
+  }
+
+  const duckdb::ParsedExpression* cur = &e;
+  while (cur->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
+    const duckdb::ParsedExpression* key = nullptr;
+    const duckdb::ParsedExpression* next_lhs = nullptr;
+
+    switch (cur->GetExpressionClass()) {
+      case duckdb::ExpressionClass::LAMBDA: {
+        const auto& l = cur->Cast<duckdb::LambdaExpression>();
+        if (!l.lhs || !l.expr) {
+          return false;
+        }
+        next_lhs = l.lhs.get();
+        key = l.expr.get();
+        break;
+      }
+      case duckdb::ExpressionClass::FUNCTION: {
+        const auto& f = cur->Cast<duckdb::FunctionExpression>();
+        if (!IsJsonExtract(f.function_name) || f.children.size() != 2) {
+          return false;
+        }
+        next_lhs = f.children[0].get();
+        key = f.children[1].get();
+        break;
+      }
+      default:
+        return false;
+    }
+
+    if (key->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
+      return false;
+    }
+    const auto& key_const = key->Cast<duckdb::ConstantExpression>();
+    if (key_const.value.IsNull() ||
+        !AppendJsonPathKey(key_const.value, out_path)) {
+      return false;
+    }
+    cur = next_lhs;
+  }
+
+  col_name = cur->Cast<duckdb::ColumnRefExpression>().GetColumnName();
+  // We collected leaf-to-root; flip to root-to-leaf for downstream code.
+  absl::c_reverse(out_path);
+  return true;
+}
 
 struct InsertColumnMeta {
   catalog::Column::Id id;
@@ -182,38 +244,63 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // _info->parsed_expressions has the actual index column refs.
   const auto& columns = _table->Columns();
   std::vector<catalog::CreateIndexColumn> idx_columns;
+  auto resolve_column = [&](std::string_view col_name) {
+    for (const auto& col : columns) {
+      if (col.name == col_name) {
+        return &col;
+      }
+    }
+    return static_cast<const catalog::Column*>(nullptr);
+  };
+
   for (size_t i = 0; i < _info->parsed_expressions.size(); ++i) {
     auto& expr = _info->parsed_expressions[i];
+    std::string opclass = i < _info->column_opclasses.size()
+                            ? _info->column_opclasses[i]
+                            : std::string{};
+
+    duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
+    if (i < _info->column_opclass_options.size()) {
+      opclass_options = _info->column_opclass_options[i];
+    }
+
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
-      const catalog::Column* cat_col = nullptr;
-      for (const auto& col : columns) {
-        if (col.name == col_name) {
-          cat_col = &col;
-          break;
-        }
-      }
+      const auto* cat_col = resolve_column(col_name);
       if (!cat_col) {
         throw duckdb::CatalogException("column \"%s\" not found in table",
                                        col_name);
       }
-      duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
-      if (i < _info->column_opclass_options.size()) {
-        opclass_options = _info->column_opclass_options[i];
-      }
-      idx_columns.push_back(catalog::CreateIndexColumn{
+      idx_columns.emplace_back(catalog::CreateIndexColumn{
         .catalog_column = cat_col,
         .name = cat_col->name,
-        .opclass = i < _info->column_opclasses.size()
-                     ? _info->column_opclasses[i]
-                     : std::string{},
+        .opclass = std::move(opclass),
         .opclass_options = std::move(opclass_options),
       });
-    } else {
+      continue;
+    }
+
+    // Try to lift a JSON-path expression of the form
+    // `col -> 'k1' -> 'k2' ...` or `json_extract(col, 'k')` chains.
+    std::string col_name;
+    std::vector<std::string> json_path;
+    if (!TryLiftJsonPath(*expr, col_name, json_path) || json_path.empty()) {
       throw duckdb::CatalogException(
         "Expression-based index columns are not supported");
     }
+    const auto* cat_col = resolve_column(col_name);
+    if (!cat_col) {
+      throw duckdb::CatalogException("column \"%s\" not found in table",
+                                     col_name);
+    }
+    idx_columns.emplace_back(catalog::CreateIndexColumn{
+      .catalog_column = cat_col,
+      .name = cat_col->name,
+      .opclass = std::move(opclass),
+      .json_path = std::move(json_path),
+      .opclass_options = std::move(opclass_options),
+    });
   }
 
   bool if_not_exists =
@@ -316,9 +403,11 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       inverted_shard.GetTransaction());
     auto& inverted_index =
       basics::downCast<const catalog::InvertedIndex>(*index);
-    auto analyzer_provider = MakeAnalyzerProvider(snapshot, inverted_index);
+    auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
+    auto json_paths_provider = MakeJsonPathsProvider(snapshot, inverted_index);
     state->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
-      *state->search_trx, std::move(analyzer_provider), index->GetColumnIds());
+      *state->search_trx, std::move(tokenizer_provider), index->GetColumnIds(),
+      std::move(json_paths_provider));
   }
   return state;
 }

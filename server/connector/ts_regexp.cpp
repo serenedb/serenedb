@@ -28,11 +28,6 @@
 #include "pg/sql_exception_macro.h"
 #include "ts_common.hpp"
 
-// magic_enum customisation for irs::RegexpSyntax: maps the surface
-// names accepted by ts_regexp(pattern, syntax) ('perl', 'posix') to the
-// underlying enum values. The specialisation must be visible at
-// every enum_cast / enum_names<irs::RegexpSyntax> instantiation; only
-// this TU calls them, so the customisation lives here.
 namespace magic_enum {
 
 template<>
@@ -51,28 +46,6 @@ customize::enum_name<irs::RegexpSyntax>(irs::RegexpSyntax value) noexcept {
 
 }  // namespace magic_enum
 namespace sdb::connector {
-namespace {
-
-void BuildFtsRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
-                    const SearchColumnInfo& column_info,
-                    std::string_view pattern, irs::RegexpSyntax syntax) {
-  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
-    throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
-  }
-  std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
-  search::mangling::MangleString(field_name);
-  auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
-                             : AddFilter<irs::ByRegexp>(parent);
-  filter.boost(ctx.boost);
-  *filter.mutable_field() = field_name;
-  auto* opts = filter.mutable_options();
-  opts->scored_terms_limit = ctx.scored_terms_limit;
-  opts->pattern.assign(irs::ViewCast<irs::byte_type>(pattern));
-  opts->syntax = syntax;
-}
-
-}  // namespace
 
 void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
@@ -80,13 +53,7 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_regexp('abc.*') or ts_regexp('foo', 'posix'). "
     "Syntax is 'perl' (default) or 'posix'.";
-  if (func.children.empty() || func.children.size() > 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_regexp expects 1 or 2 arguments (pattern[, syntax]), got ",
-              func.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
   std::string pattern;
   if (auto r = GetVarcharArg(*func.children[0], "ts_regexp pattern", pattern);
       !r.ok()) {
@@ -117,7 +84,21 @@ void FromRegexp(irs::BooleanFilter& parent, const FilterContext& ctx,
     }
     syntax = *parsed;
   }
-  BuildFtsRegexp(parent, ctx, column_info, pattern, syntax);
+  if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR) {
+    throw duckdb::InvalidInputException("ts_regexp field is not VARCHAR");
+  }
+  std::string field_name;
+  MakeFieldName(column_info.column_id, field_name);
+  search::mangling::MangleString(field_name);
+  auto& filter = ctx.negated ? Negate<irs::ByRegexp>(parent)
+                             : AddFilter<irs::ByRegexp>(parent);
+  filter.boost(ctx.boost);
+  *filter.mutable_field() = std::move(field_name);
+  auto* opts = filter.mutable_options();
+  opts->scored_terms_limit = ctx.scored_terms_limit;
+  opts->pattern.assign(
+    irs::ViewCast<irs::byte_type>(std::string_view{pattern}));
+  opts->syntax = syntax;
 }
 
 }  // namespace sdb::connector

@@ -57,11 +57,7 @@ void FromTokenizeListInAnyAllOf(
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list "
     "element through the column analyzer.";
-  if (!is_any && outer.children.size() != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_all takes a single argument"),
-                    ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(is_any || outer.children.size() == 1);
   std::optional<size_t> min_match;
   if (is_any && outer.children.size() == 2) {
     int64_t m;
@@ -77,14 +73,9 @@ void FromTokenizeListInAnyAllOf(
     }
     min_match = static_cast<size_t>(m);
   }
-  if (tokenize_call.children.empty() || tokenize_call.children.size() > 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_tokenize(text_array[, analyzer]) expects 1 or 2 arguments, "
-              "got ",
-              tokenize_call.children.size()),
-      ERR_HINT(kSyntaxHint));
-  }
+
+  SDB_ASSERT(tokenize_call.children.size() >= 1 &&
+             tokenize_call.children.size() <= 2);
   // Inner list -- v1 requires a constant LIST(VARCHAR).
   const auto* list_const = TryGetConstant(*tokenize_call.children[0]);
   if (!list_const) {
@@ -210,18 +201,18 @@ void FromTokenizeListInAnyAllOf(
   //   ts_any without min_match -> 1
   //   ts_any(min_match=N) -> N (capped at tokens.size())
   //   ts_all -> tokens.size()
-  size_t mm = 1;
+  size_t min_match_value = 1;
   if (!is_any) {
-    mm = tokens.size();
+    min_match_value = tokens.size();
   } else if (min_match) {
-    mm = std::min<size_t>(*min_match, tokens.size());
+    min_match_value = std::min<size_t>(*min_match, tokens.size());
   }
   auto& terms = ctx.negated ? Negate<irs::ByTerms>(parent)
                             : AddFilter<irs::ByTerms>(parent);
   terms.boost(ctx.boost);
   *terms.mutable_field() = std::move(field_name);
   auto& opts = *terms.mutable_options();
-  opts.min_match = mm;
+  opts.min_match = min_match_value;
   for (auto& t : tokens) {
     opts.terms.emplace(std::move(t));
   }
@@ -240,18 +231,8 @@ void ExtractAnyAllOfArgs(
   std::optional<size_t>& min_match) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).";
-  if (func.children.empty() || func.children.size() > 2) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(is_any ? "ts_any takes ([list]) or ([list], min_match)"
-                     : "ts_all takes ([list])"),
-      ERR_HINT(kSyntaxHint));
-  }
-  if (!is_any && func.children.size() != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_all takes a single list argument"),
-                    ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 1 && func.children.size() <= 2);
+  SDB_ASSERT(is_any || func.children.size() == 1);
 
   // DuckDB constant-folds `['a', 'b']` into a BOUND_CONSTANT holding a
   // LIST/ARRAY Value rather than a `list_value`/`array_value` function

@@ -1096,7 +1096,8 @@ IndexWriter::IndexWriter(
   const SegmentOptions& segment_limits, const Comparer* comparator,
   const ColumnInfoProvider& column_info,
   const PayloadProvider& meta_payload_provider,
-  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
+  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+  yaclib::IExecutorPtr executor)
   : _column_info{column_info},
     _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
@@ -1109,7 +1110,8 @@ IndexWriter::IndexWriter(
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
-    _write_lock_file_ref{std::move(lock_file_ref)} {
+    _write_lock_file_ref{std::move(lock_file_ref)},
+    _executor{executor} {
   SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
@@ -1240,7 +1242,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
     options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
-    options.meta_payload_provider, std::move(reader));
+    options.meta_payload_provider, std::move(reader),
+    std::move(options.executor));
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 

@@ -846,7 +846,7 @@ struct RegexpInstrBindData : public duckdb::FunctionData {
   explicit RegexpInstrBindData(std::unique_ptr<re2::RE2> re)
     : compiled(std::move(re)) {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     if (compiled) {
       return duckdb::make_uniq<RegexpInstrBindData>(
         std::make_unique<re2::RE2>(compiled->pattern(), compiled->options()));
@@ -854,7 +854,7 @@ struct RegexpInstrBindData : public duckdb::FunctionData {
     return duckdb::make_uniq<RegexpInstrBindData>(nullptr);
   }
 
-  bool Equals(const duckdb::FunctionData& other_p) const override {
+  bool Equals(const duckdb::FunctionData& other_p) const final {
     auto& other = other_p.Cast<RegexpInstrBindData>();
     if (!compiled && !other.compiled) {
       return true;

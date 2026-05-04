@@ -107,7 +107,7 @@ struct ScanSource {
 
 struct FullTableScan : ScanSource {
   FullTableScan() : ScanSource(ScanSourceKind::FullTable) {}
-  std::unique_ptr<ScanSource> Clone() const override;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct SearchScan : ScanSource {
@@ -181,8 +181,8 @@ struct SearchScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 // Iresearch row-count scan: emits zero-column rows whose cardinality equals
@@ -207,8 +207,8 @@ struct CountScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct SecondaryIndexScan : ScanSource {
@@ -217,7 +217,7 @@ struct SecondaryIndexScan : ScanSource {
   ObjectId shard_id;
   bool is_unique = false;
 
-  std::unique_ptr<ScanSource> Clone() const override;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct VectorSearchScan : ScanSource {
@@ -238,8 +238,8 @@ struct ANNScan : VectorSearchScan {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct RangeSearchScan : VectorSearchScan {
@@ -249,8 +249,8 @@ struct RangeSearchScan : VectorSearchScan {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct PkPointScan : ScanSource {
@@ -261,8 +261,8 @@ struct PkPointScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct PkRangeScan : ScanSource {
@@ -273,8 +273,8 @@ struct PkRangeScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct SkPointScan : ScanSource {
@@ -287,8 +287,8 @@ struct SkPointScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 struct SkRangeScan : ScanSource {
@@ -301,8 +301,8 @@ struct SkRangeScan : ScanSource {
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
-    duckdb::InsertionOrderPreservingMap<std::string>& out) const override;
-  std::unique_ptr<ScanSource> Clone() const override;
+    duckdb::InsertionOrderPreservingMap<std::string>& out) const final;
+  std::unique_ptr<ScanSource> Clone() const final;
 };
 
 enum class ScanEntryKind : uint8_t {
@@ -378,16 +378,16 @@ struct TableScanBindData final : public SereneDBScanBindData {
 
   TableScanBindData() : SereneDBScanBindData(Kind::Table) {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;
-  bool Equals(const duckdb::FunctionData& other) const override;
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
+  bool Equals(const duckdb::FunctionData& other) const final;
 
   duckdb::unique_ptr<duckdb::NodeStatistics> Cardinality(
-    duckdb::ClientContext& context) const override;
-  ObjectId RelationId() const override;
-  std::string_view RelationName() const override;
-  catalog::Column::Id ColumnIdByName(std::string_view name) const override;
-  std::string_view ColumnNameById(catalog::Column::Id col_id) const override;
-  void IterateColumns(const ColumnVisitor& cb) const override;
+    duckdb::ClientContext& context) const final;
+  ObjectId RelationId() const final;
+  std::string_view RelationName() const final;
+  catalog::Column::Id ColumnIdByName(std::string_view name) const final;
+  std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
 struct ViewScanBindData final : public SereneDBScanBindData {
@@ -395,16 +395,16 @@ struct ViewScanBindData final : public SereneDBScanBindData {
 
   ViewScanBindData() : SereneDBScanBindData(Kind::View) {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override;
-  bool Equals(const duckdb::FunctionData& other) const override;
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final;
+  bool Equals(const duckdb::FunctionData& other) const final;
 
   duckdb::unique_ptr<duckdb::NodeStatistics> Cardinality(
-    duckdb::ClientContext& context) const override;
-  ObjectId RelationId() const override;
-  std::string_view RelationName() const override;
-  catalog::Column::Id ColumnIdByName(std::string_view name) const override;
-  std::string_view ColumnNameById(catalog::Column::Id col_id) const override;
-  void IterateColumns(const ColumnVisitor& cb) const override;
+    duckdb::ClientContext& context) const final;
+  ObjectId RelationId() const final;
+  std::string_view RelationName() const final;
+  catalog::Column::Id ColumnIdByName(std::string_view name) const final;
+  std::string_view ColumnNameById(catalog::Column::Id col_id) const final;
+  void IterateColumns(const ColumnVisitor& cb) const final;
 };
 
 // Public bind callback shared by every SereneDB scan -- IsSereneDBScan

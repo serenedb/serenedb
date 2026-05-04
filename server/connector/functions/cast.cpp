@@ -109,7 +109,7 @@ duckdb::BoundCastInfo PgArrayCastBind(duckdb::BindCastInput& input,
     duckdb::BoundCastInfo child_cast;
     explicit ChainCastData(duckdb::BoundCastInfo child_cast)
       : child_cast(std::move(child_cast)) {}
-    duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+    duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
       return duckdb::make_uniq<ChainCastData>(child_cast.Copy());
     }
   };

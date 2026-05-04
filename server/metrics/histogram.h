@@ -33,7 +33,7 @@
 namespace sdb::metrics {
 
 template<typename Scale>
-class Histogram : public Metric {
+class Histogram final : public Metric {
  public:
   using ValueType = typename Scale::Value;
 
@@ -48,7 +48,7 @@ class Histogram : public Metric {
     }
   }
 
-  ~Histogram() override {
+  ~Histogram() final {
     std::allocator<std::atomic_uint64_t>{}.deallocate(_c, _n);
   }
 

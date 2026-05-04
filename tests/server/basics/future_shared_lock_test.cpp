@@ -77,7 +77,7 @@ struct MockScheduler {
 
 struct FutureSharedLockTest : public ::testing::Test {
   FutureSharedLockTest() : lock(scheduler) {}
-  void TearDown() override {
+  void TearDown() final {
     ASSERT_EQ(0, scheduler.funcs.size());
     ASSERT_EQ(0, scheduler.delayed_funcs.size());
   }

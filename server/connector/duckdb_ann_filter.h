@@ -52,7 +52,7 @@ class ANNFilter final : public faiss::IDSelector {
             std::vector<catalog::Column::Id> filter_bind_column_ids,
             std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs);
 
-  bool is_member(faiss::idx_t id) const override;
+  bool is_member(faiss::idx_t id) const final;
 
  private:
   duckdb::ClientContext& _context;

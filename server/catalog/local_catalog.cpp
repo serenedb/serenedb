@@ -135,7 +135,7 @@ class SnapshotImpl : public Snapshot {
     return result;
   }
 
-  connector::DuckDBEntryCache& GetDuckDBEntryCache() const override {
+  connector::DuckDBEntryCache& GetDuckDBEntryCache() const final {
     return _duckdb_cache;
   }
 

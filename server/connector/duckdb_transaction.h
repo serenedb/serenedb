@@ -47,12 +47,11 @@ class SereneDBTransactionManager final : public duckdb::TransactionManager {
  public:
   explicit SereneDBTransactionManager(duckdb::AttachedDatabase& db);
 
-  duckdb::Transaction& StartTransaction(
-    duckdb::ClientContext& context) override;
-  duckdb::ErrorData CommitTransaction(
-    duckdb::ClientContext& context, duckdb::Transaction& transaction) override;
-  void RollbackTransaction(duckdb::Transaction& transaction) override;
-  void Checkpoint(duckdb::ClientContext& context, bool force) override;
+  duckdb::Transaction& StartTransaction(duckdb::ClientContext& context) final;
+  duckdb::ErrorData CommitTransaction(duckdb::ClientContext& context,
+                                      duckdb::Transaction& transaction) final;
+  void RollbackTransaction(duckdb::Transaction& transaction) final;
+  void Checkpoint(duckdb::ClientContext& context, bool force) final;
 
  private:
   duckdb::mutex _lock;

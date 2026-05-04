@@ -185,7 +185,7 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
                         ->GetID()},
       _max_response_size{max_response_size} {}
 
-  bool Continue() override {
+  bool Continue() final {
     if (_stop_on_next) {
       return false;
     }
@@ -201,7 +201,7 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
     return true;
   }
 
-  void LogData(const rocksdb::Slice& blob) override {
+  void LogData(const rocksdb::Slice& blob) final {
     // TODO(gnusi): all these LoadDatabase/LoadCollection calls are wrong,
     // we have to store in WAL names instead of ids as actual objects might be
     // already deleted
@@ -495,7 +495,7 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
   }
 
   rocksdb::Status PutCF(uint32_t column_family_id, const rocksdb::Slice& key,
-                        const rocksdb::Slice& value) override {
+                        const rocksdb::Slice& value) final {
 #ifdef SDB_DEV
     _check_tick = true;
 #endif
@@ -517,20 +517,20 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
   }
 
   rocksdb::Status DeleteCF(uint32_t column_family_id,
-                           const rocksdb::Slice& key) override {
+                           const rocksdb::Slice& key) final {
     HandleDeleteCf(column_family_id, key);
     return {};
   }
 
   rocksdb::Status SingleDeleteCF(uint32_t column_family_id,
-                                 const rocksdb::Slice& key) override {
+                                 const rocksdb::Slice& key) final {
     HandleDeleteCf(column_family_id, key);
     return {};
   }
 
   rocksdb::Status DeleteRangeCF(uint32_t /*column_family_id*/,
                                 const rocksdb::Slice& /*begin_key*/,
-                                const rocksdb::Slice& /*end_key*/) override {
+                                const rocksdb::Slice& /*end_key*/) final {
 #ifdef SDB_DEV
     _check_tick = true;
 #endif
@@ -538,29 +538,29 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
     return {};
   }
 
-  rocksdb::Status MarkBeginPrepare(bool = false) override {
+  rocksdb::Status MarkBeginPrepare(bool = false) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkBeginPrepare() handler not defined.");
   }
 
-  rocksdb::Status MarkEndPrepare(const rocksdb::Slice& /*xid*/) override {
+  rocksdb::Status MarkEndPrepare(const rocksdb::Slice& /*xid*/) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkEndPrepare() handler not defined.");
   }
 
-  rocksdb::Status MarkNoop(bool /*empty_batch*/) override {
+  rocksdb::Status MarkNoop(bool /*empty_batch*/) final {
     return rocksdb::Status::OK();
   }
 
-  rocksdb::Status MarkRollback(const rocksdb::Slice& /*xid*/) override {
+  rocksdb::Status MarkRollback(const rocksdb::Slice& /*xid*/) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkRollbackPrepare() handler not defined.");
   }
 
-  rocksdb::Status MarkCommit(const rocksdb::Slice& /*xid*/) override {
+  rocksdb::Status MarkCommit(const rocksdb::Slice& /*xid*/) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(
       "MarkCommit() handler not defined.");

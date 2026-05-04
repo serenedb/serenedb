@@ -54,12 +54,12 @@ class RocksDBIndexSource : public IndexSource {
                      std::span<const catalog::Column::Id> bind_column_ids,
                      rocksdb::Transaction* txn);
 
-  PrimaryKeyBatch CreatePkBatch() const override {
+  PrimaryKeyBatch CreatePkBatch() const final {
     return PrimaryKeyBatch{std::in_place_type<PrimaryKeysBytes>};
   }
   void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
                    duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) override;
+                   duckdb::DataChunk& output) final;
 
   // View-caller path: writes each projected column into the matching slot of
   // `per_col_targets` rather than into an output DataChunk.

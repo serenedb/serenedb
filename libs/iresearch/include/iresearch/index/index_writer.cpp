@@ -1087,8 +1087,11 @@ IndexWriter::IndexWriter(
   Directory& dir, Format::ptr codec, size_t segment_pool_size,
   const SegmentOptions& segment_limits, const Comparer* comparator,
   const PayloadProvider& meta_payload_provider,
-  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader)
+  std::shared_ptr<const DirectoryReaderImpl>&& committed_reader,
+  yaclib::IExecutorPtr executor)
   : _meta_payload_provider{meta_payload_provider},
+    _column_info{column_info},
+    _meta_payload_provider{meta_payload_provider},
     _comparator{comparator},
     _codec{std::move(codec)},
     _dir{dir},
@@ -1099,7 +1102,9 @@ IndexWriter::IndexWriter(
     _last_gen{_committed_reader->Meta().index_meta.gen},
     _writer{_codec->get_index_meta_writer()},
     _write_lock{std::move(lock)},
-    _write_lock_file_ref{std::move(lock_file_ref)} {
+    _write_lock_file_ref{std::move(lock_file_ref)},
+    _executor{executor} {
+  SDB_ASSERT(column_info);  // ensured by 'make'
   SDB_ASSERT(_codec);
 
   _topk_scorer = _committed_reader->Options().scorer;
@@ -1227,7 +1232,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
   auto writer = std::make_shared<IndexWriter>(
     ConstructToken{}, std::move(lock), std::move(lock_ref), dir,
     std::move(codec), options.segment_pool_size, SegmentOptions{options},
-    options.comparator, options.meta_payload_provider, std::move(reader));
+    options.comparator, options.meta_payload_provider, std::move(reader),
+    std::move(options.executor));
   writer->_db = options.db;
   writer->_column_options = options.column_options;
   writer->_norm_column_options = options.norm_column_options;

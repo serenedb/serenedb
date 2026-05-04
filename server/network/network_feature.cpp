@@ -61,7 +61,7 @@ namespace {
 // pushing retry operations to the scheduler needs to use the correct
 // priority lanes and also could be blocked by scheduler threads
 // not pulling any more new tasks due to overload/overwhelm.
-class RetryThread : public ServerThread<SerenedServer> {
+class RetryThread final : public ServerThread<SerenedServer> {
   static constexpr auto kDefaultSleepTime = std::chrono::seconds(10);
 
  public:
@@ -69,12 +69,12 @@ class RetryThread : public ServerThread<SerenedServer> {
     : ServerThread<SerenedServer>(server, "NetworkRetry"),
       _next_retry_time(std::chrono::steady_clock::now() + kDefaultSleepTime) {}
 
-  ~RetryThread() override {
+  ~RetryThread() final {
     shutdown();
     CancelAll();
   }
 
-  void beginShutdown() override {
+  void beginShutdown() final {
     Thread::beginShutdown();
     absl::MutexLock guard{&_mutex};
     _cv.notify_one();
@@ -147,7 +147,7 @@ class RetryThread : public ServerThread<SerenedServer> {
   }
 
  protected:
-  void run() override {
+  void run() final {
     while (!isStopping()) {
       try {
         std::unique_lock guard{_mutex};

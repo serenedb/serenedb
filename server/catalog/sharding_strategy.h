@@ -78,13 +78,13 @@ class ShardingStrategyNone final : public ShardingStrategy {
 
   ShardingStrategyNone();
 
-  std::string_view name() const override { return kName; }
+  std::string_view name() const final { return kName; }
 
-  bool usesDefaultShardKeys() const noexcept override { return true; }
+  bool usesDefaultShardKeys() const noexcept final { return true; }
 
   ResultOr<ShardID> getResponsibleShard(vpack::Slice slice, bool doc_complete,
                                         bool& uses_default_shard_keys,
-                                        std::string_view key) override;
+                                        std::string_view key) final;
 };
 
 }  // namespace sdb

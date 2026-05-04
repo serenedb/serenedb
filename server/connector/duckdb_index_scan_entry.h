@@ -35,7 +35,7 @@ namespace sdb::connector {
 class SereneDBIndexScanEntry : public duckdb::TableCatalogEntry {
  public:
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
-    duckdb::ClientContext& context, duckdb::column_t column_id) override;
+    duckdb::ClientContext& context, duckdb::column_t column_id) final;
 
   const std::vector<size_t>& GetIndexedColumnIndices() const {
     return _indexed_col_indices;
@@ -76,13 +76,12 @@ class TableInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;
@@ -103,13 +102,12 @@ class ViewInvertedIndexScanEntry final : public InvertedIndexScanEntry {
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   const std::shared_ptr<const catalog::PgSqlView>& GetSereneDBView() const {
     return _sdb_view;
@@ -146,13 +144,12 @@ class TableSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   const std::shared_ptr<catalog::Table>& GetSereneDBTable() const {
     return _sdb_table;
@@ -173,13 +170,12 @@ class ViewSecondaryIndexScanEntry final : public SecondaryIndexScanEntry {
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   const std::shared_ptr<const catalog::PgSqlView>& GetSereneDBView() const {
     return _sdb_view;

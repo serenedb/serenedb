@@ -75,15 +75,15 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // Pre-* hooks run while the DuckDB transaction is still active; use them
   // for work that needs ActiveTransaction (catalog lookups, set_local).
   void TransactionPreCommit(duckdb::MetaTransaction& transaction,
-                            duckdb::ClientContext& context) override;
+                            duckdb::ClientContext& context) final;
   void TransactionPreRollback(
     duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
-    duckdb::optional_ptr<duckdb::ErrorData> error) override;
+    duckdb::optional_ptr<duckdb::ErrorData> error) final;
   void TransactionCommit(duckdb::MetaTransaction& transaction,
-                         duckdb::ClientContext& context) override;
+                         duckdb::ClientContext& context) final;
   void TransactionRollback(duckdb::MetaTransaction& transaction,
-                           duckdb::ClientContext& context) override;
-  void QueryEnd(duckdb::ClientContext& context) override;
+                           duckdb::ClientContext& context) final;
+  void QueryEnd(duckdb::ClientContext& context) final;
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;

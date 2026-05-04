@@ -36,7 +36,7 @@ class EndpointFeature final : public HttpEndpointProvider {
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
-  std::vector<std::string> httpEndpoints() override;
+  std::vector<std::string> httpEndpoints() final;
   EndpointList& endpointList() { return _endpoint_list; }
   const EndpointList& endpointList() const { return _endpoint_list; }
 

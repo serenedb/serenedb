@@ -61,7 +61,7 @@ class AppenderRingBuffer final : public Appender {
   }
 
  public:
-  void logMessage(const Message& message) override {
+  void logMessage(const Message& message) final {
     if (message.level > _min_log_level) {
       // logger not configured to log these messages
       return;
@@ -152,7 +152,7 @@ class AppenderMetricsCounter final : public Appender {
     : _warnings_counter(metrics.add(serenedb_logger_warnings_total{})),
       _errors_counter(metrics.add(serenedb_logger_errors_total{})) {}
 
-  void logMessage(const Message& message) override {
+  void logMessage(const Message& message) final {
     // only handle WARN and ERR log messages
     if (message.level == LogLevel::WARN) {
       ++_warnings_counter;

@@ -51,12 +51,12 @@ class ViewRocksDBIndexSource final : public IndexSource {
                          const rocksdb::Snapshot* snapshot,
                          rocksdb::Transaction* txn);
 
-  PrimaryKeyBatch CreatePkBatch() const override {
+  PrimaryKeyBatch CreatePkBatch() const final {
     return PrimaryKeyBatch{std::in_place_type<PrimaryKeysBytes>};
   }
   void Materialize(duckdb::ClientContext& context, PrimaryKeyBatch& batch,
                    duckdb::idx_t start, duckdb::idx_t count,
-                   duckdb::DataChunk& output) override;
+                   duckdb::DataChunk& output) final;
 
  private:
   ViewFastPath _fast_path;

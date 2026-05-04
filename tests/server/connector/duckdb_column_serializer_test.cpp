@@ -51,7 +51,7 @@ constexpr ObjectId kSerializerTableId{654321};
 
 class DuckDBColumnSerializerTest : public ::testing::Test {
  public:
-  void SetUp() override {
+  void SetUp() final {
     rocksdb::Options opts;
     opts.OptimizeForSmallDb();
     opts.create_if_missing = true;
@@ -71,7 +71,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     _table_key = key_utils::PrepareTableKey(kSerializerTableId);
   }
 
-  void TearDown() override {
+  void TearDown() final {
     if (_db) {
       for (auto h : _cf_handles) {
         _db->DestroyColumnFamilyHandle(h);

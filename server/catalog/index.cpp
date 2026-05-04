@@ -199,7 +199,8 @@ Result ValidateInvertedIndexColumns(
                      kind == duckdb::LogicalTypeId::DOUBLE ||
                      kind == duckdb::LogicalTypeId::DATE ||
                      kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                     kind == duckdb::LogicalTypeId::ARRAY;
+                     kind == duckdb::LogicalTypeId::ARRAY ||
+                     kind == duckdb::LogicalTypeId::GEOMETRY;
     if (!supported) {
       return {ERROR_BAD_PARAMETER,
               "Column ",

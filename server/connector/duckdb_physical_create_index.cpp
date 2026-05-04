@@ -21,7 +21,6 @@
 #include "connector/duckdb_physical_create_index.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
 
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
@@ -60,6 +59,7 @@
 namespace sdb::connector {
 namespace {
 
+// TODO(mkornaukhov) do not build path manually, see #597
 bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
                      std::vector<std::string>& out_path) {
   out_path.clear();
@@ -75,40 +75,35 @@ bool TryLiftJsonPath(const duckdb::ParsedExpression& e, std::string& col_name,
     const duckdb::ParsedExpression* key = nullptr;
     const duckdb::ParsedExpression* next_lhs = nullptr;
 
-    if (cur->GetExpressionClass() == duckdb::ExpressionClass::LAMBDA) {
-      const auto& l = cur->Cast<duckdb::LambdaExpression>();
-      if (!l.lhs || !l.expr) {
-        return false;
+    switch (cur->GetExpressionClass()) {
+      case duckdb::ExpressionClass::LAMBDA: {
+        const auto& l = cur->Cast<duckdb::LambdaExpression>();
+        if (!l.lhs || !l.expr) {
+          return false;
+        }
+        next_lhs = l.lhs.get();
+        key = l.expr.get();
+        break;
       }
-      next_lhs = l.lhs.get();
-      key = l.expr.get();
-    } else if (cur->GetExpressionClass() == duckdb::ExpressionClass::FUNCTION) {
-      const auto& f = cur->Cast<duckdb::FunctionExpression>();
-      if (!IsJsonExtract(f.function_name) || f.children.size() != 2) {
-        return false;
+      case duckdb::ExpressionClass::FUNCTION: {
+        const auto& f = cur->Cast<duckdb::FunctionExpression>();
+        if (!IsJsonExtract(f.function_name) || f.children.size() != 2) {
+          return false;
+        }
+        next_lhs = f.children[0].get();
+        key = f.children[1].get();
+        break;
       }
-      next_lhs = f.children[0].get();
-      key = f.children[1].get();
-    } else {
-      return false;
+      default:
+        return false;
     }
 
     if (key->GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
       return false;
     }
     const auto& key_const = key->Cast<duckdb::ConstantExpression>();
-    if (key_const.value.IsNull()) {
-      return false;
-    }
-    const auto key_type = key_const.value.type().id();
-    if (key_type == duckdb::LogicalTypeId::VARCHAR) {
-      out_path.emplace_back(key_const.value.GetValue<std::string>());
-    } else if (key_type == duckdb::LogicalTypeId::TINYINT ||
-               key_type == duckdb::LogicalTypeId::SMALLINT ||
-               key_type == duckdb::LogicalTypeId::INTEGER ||
-               key_type == duckdb::LogicalTypeId::BIGINT) {
-      out_path.emplace_back(absl::StrCat(key_const.value.GetValue<int64_t>()));
-    } else {
+    if (key_const.value.IsNull() ||
+        !AppendJsonPathKey(key_const.value, out_path)) {
       return false;
     }
     cur = next_lhs;

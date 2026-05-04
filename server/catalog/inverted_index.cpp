@@ -105,16 +105,22 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
   b.close();
 }
 
+const InvertedIndexColumnInfo* InvertedIndex::FindColumnInfo(
+  catalog::Column::Id column_id) const noexcept {
+  auto it = _columns.find(column_id);
+  return it == _columns.end() ? nullptr : &it->second;
+}
+
 ColumnTokenizer InvertedIndex::GetColumnTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id) const {
-  auto it = _columns.find(column_id);
-  if (it == _columns.end()) {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info) {
     SDB_THROW(ERROR_INTERNAL, "Column id ", column_id,
               " not found in the index definition");
   }
-  auto tokenizer = BuildColumnTokenizer(snapshot, it->second.text_dictionary,
-                                        it->second.features);
+  auto tokenizer =
+    BuildColumnTokenizer(snapshot, info->text_dictionary, info->features);
   SDB_ENSURE(tokenizer, ERROR_INTERNAL, tokenizer.error().errorMessage());
   return *std::move(tokenizer);
 }
@@ -122,11 +128,11 @@ ColumnTokenizer InvertedIndex::GetColumnTokenizer(
 std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
   catalog::Column::Id column_id, std::span<const std::string> path) const {
-  auto it = _columns.find(column_id);
-  if (it == _columns.end()) {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info) {
     return std::nullopt;
   }
-  for (const auto& path_info : it->second.json_paths) {
+  for (const auto& path_info : info->json_paths) {
     if (!absl::c_equal(path_info.path, path)) {
       continue;
     }
@@ -140,11 +146,11 @@ std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
 
 std::optional<irs::HNSWInfo> InvertedIndex::GetColumnHNSWInfo(
   catalog::Column::Id column_id) const {
-  auto it = _columns.find(column_id);
-  if (it == _columns.end() || !it->second.hnsw_config) {
+  const auto* info = FindColumnInfo(column_id);
+  if (!info || !info->hnsw_config) {
     return std::nullopt;
   }
-  const auto& cfg = *it->second.hnsw_config;
+  const auto& cfg = *info->hnsw_config;
   return irs::HNSWInfo{
     .max_doc = 0,
     .d = cfg.d,

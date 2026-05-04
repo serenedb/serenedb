@@ -20,7 +20,12 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
+#include <duckdb/common/types/value.hpp>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace sdb::connector {
 
@@ -51,6 +56,31 @@ inline bool IsJsonExtractJson(std::string_view name) noexcept {
 
 inline bool IsJsonExtract(std::string_view name) noexcept {
   return IsJsonExtractString(name) || IsJsonExtractJson(name);
+}
+
+// Stringifies one key constant from a `->` / `->>` chain into a JSON Pointer
+// path segment. Returns true on success and appends to `out_path`. Accepts
+// VARCHAR (object key) and integer types (array index, stringified). Returns
+// false for any other type. Caller must have already verified that `key` is
+// non-null. Shared by the bound-tree and parser-tree path lifters.
+inline bool AppendJsonPathKey(const duckdb::Value& key,
+                              std::vector<std::string>& out_path) {
+  switch (key.type().id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      out_path.emplace_back(key.GetValue<std::string>());
+      return true;
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+      // Integer/array-index key like `content->0`: stringify so the path
+      // segment becomes "0", which `simdjson::at_pointer` interprets as
+      // an array index when the parent is an array.
+      out_path.emplace_back(absl::StrCat(key.GetValue<int64_t>()));
+      return true;
+    default:
+      return false;
+  }
 }
 
 }  // namespace sdb::connector

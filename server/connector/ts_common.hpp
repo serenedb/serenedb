@@ -55,6 +55,11 @@ struct FilterContext {
   // coexist in one map. NodeHashMap because SearchColumnInfo carries
   // analyzer state large enough to trip FlatHashMap's size cap.
   containers::NodeHashMap<std::string, SearchColumnInfo>& column_cache;
+  // Reusable scratch buffers for JSON-path resolution. Cleared at the start
+  // of every FindColumnInfoForExpr call; carrying them on the context lets
+  // back-to-back path lookups reuse the allocated capacity.
+  std::vector<std::string>& json_path;
+  std::string& cache_key;
   irs::analysis::Analyzer& identity;
   irs::analysis::Analyzer& tokenizer;
   duckdb::ClientContext& client_context;
@@ -67,6 +72,8 @@ struct FilterContext {
       .column_getter = column_getter,
       .json_path_getter = json_path_getter,
       .column_cache = column_cache,
+      .json_path = json_path,
+      .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -81,6 +88,8 @@ struct FilterContext {
       .column_getter = column_getter,
       .json_path_getter = json_path_getter,
       .column_cache = column_cache,
+      .json_path = json_path,
+      .cache_key = cache_key,
       .identity = identity,
       .tokenizer = tokenizer,
       .client_context = client_context,
@@ -122,6 +131,7 @@ void MakeFieldName(const SearchColumnInfo& column, std::string& field_name);
 Result MangleForType(duckdb::LogicalTypeId type_id, std::string& field_name);
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id);
+bool IsIntegerTypeId(duckdb::LogicalTypeId id);
 bool IsRangeNumericValueType(duckdb::LogicalTypeId id);
 
 Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,

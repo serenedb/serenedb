@@ -90,6 +90,12 @@ class InvertedIndex final : public Index {
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
     bool is_new, ObjectId id, IndexShardOptions&) const final;
 
+  // Looks up the per-column entry. Returns nullptr if the column is not
+  // covered by this index. The pointer is valid as long as this InvertedIndex
+  // instance is alive.
+  const InvertedIndexColumnInfo* FindColumnInfo(
+    catalog::Column::Id column_id) const noexcept;
+
   ColumnTokenizer GetColumnTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;

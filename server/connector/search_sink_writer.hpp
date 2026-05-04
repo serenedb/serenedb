@@ -43,9 +43,8 @@ using AnalyzerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
 // One JSON path's worth of indexing config, resolved against the catalog.
-// The sink owns these while the column is active.
 struct JsonPathSinkConfig {
-  std::vector<std::string> path;
+  std::span<const std::string> path;
   catalog::ColumnTokenizer analyzer;
 };
 
@@ -73,20 +72,18 @@ inline JsonPathsProvider MakeJsonPathsProvider(
   const catalog::InvertedIndex& index) {
   return [snapshot = std::move(snapshot), &index](
            catalog::Column::Id column_id) -> std::vector<JsonPathSinkConfig> {
+    const auto* col = index.FindColumnInfo(column_id);
+    if (!col) {
+      return {};
+    }
     std::vector<JsonPathSinkConfig> out;
-    for (const auto& col : index.GetColumns()) {
-      if (col.first != column_id) {
+    out.reserve(col->json_paths.size());
+    for (const auto& p : col->json_paths) {
+      auto analyzer = index.GetJsonPathTokenizer(snapshot, column_id, p.path);
+      if (!analyzer) {
         continue;
       }
-      for (const auto& p : col.second.json_paths) {
-        auto analyzer = index.GetJsonPathTokenizer(snapshot, column_id, p.path);
-        if (!analyzer) {
-          continue;
-        }
-        out.push_back(
-          JsonPathSinkConfig{.path = p.path, .analyzer = *std::move(analyzer)});
-      }
-      break;
+      out.emplace_back(p.path, *std::move(analyzer));
     }
     return out;
   };

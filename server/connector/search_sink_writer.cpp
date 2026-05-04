@@ -423,6 +423,7 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
     // Look up each path independently. On simdjson ondemand a new document
     // cursor is required per at_pointer() call on a freshly parsed document
     // to avoid consuming other paths' state.
+    // TODO(mkornaukhov) group prefixes, bench and optimize
     for (auto& jpf : _json_fields) {
       simdjson::ondemand::document doc;
       if (_json_parser.iterate(_json_padded).get(doc) != simdjson::SUCCESS) {

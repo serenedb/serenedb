@@ -1263,6 +1263,18 @@ const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
   return FindColumnRefInfo(ctx, *col_ref);
 }
 
+bool IsIntegerTypeId(duckdb::LogicalTypeId id) {
+  switch (id) {
+    case duckdb::LogicalTypeId::TINYINT:
+    case duckdb::LogicalTypeId::SMALLINT:
+    case duckdb::LogicalTypeId::INTEGER:
+    case duckdb::LogicalTypeId::BIGINT:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
   switch (id) {
     case duckdb::LogicalTypeId::TINYINT:
@@ -1271,9 +1283,6 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
     case duckdb::LogicalTypeId::BIGINT:
     case duckdb::LogicalTypeId::FLOAT:
     case duckdb::LogicalTypeId::DOUBLE:
-    case duckdb::LogicalTypeId::DATE:
-    case duckdb::LogicalTypeId::TIMESTAMP:
-    case duckdb::LogicalTypeId::TIMESTAMP_TZ:
       return true;
     default:
       return false;
@@ -1301,23 +1310,13 @@ const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
       return nullptr;
     }
     const auto* key_val = TryGetConstant(*f.children[1]);
-    if (!key_val || key_val->IsNull()) {
-      return nullptr;
-    }
-    const auto key_type = key_val->type().id();
-    if (key_type == duckdb::LogicalTypeId::VARCHAR) {
-      out_path.emplace_back(key_val->GetValue<std::string>());
-    } else if (IsNumericTypeId(key_type)) {
-      // Integer/array-index key like `content->0`: stringify so the path
-      // segment becomes "0", which `simdjson::at_pointer` interprets as
-      // array index 0 when the parent is an array.
-      out_path.emplace_back(absl::StrCat(key_val->GetValue<int64_t>()));
-    } else {
+    if (!key_val || key_val->IsNull() ||
+        !AppendJsonPathKey(*key_val, out_path)) {
       return nullptr;
     }
     cur = f.children[0].get();
   }
-  std::reverse(out_path.begin(), out_path.end());
+  absl::c_reverse(out_path);
   return TryGetColumnRef(*cur);
 }
 
@@ -1350,7 +1349,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   }
 
   const auto unwrapped = UnwrapFieldCast(expr);
-  std::vector<std::string> path;
+  auto& path = ctx.json_path;
   const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr, path);
   if (!col_ref) {
     return nullptr;
@@ -1373,15 +1372,18 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
 
   // The cache key needs to incorporate the (possibly overridden) type so
   // numeric and string lookups against the same path don't collide.
-  std::string cache_key;
+  auto& cache_key = ctx.cache_key;
+  cache_key.clear();
   MakeColumnFieldName(info->column_id, info->json_path, cache_key);
   cache_key.push_back(static_cast<char>(info->logical_type.id()));
   auto it = ctx.column_cache.find(cache_key);
   if (it != ctx.column_cache.end()) {
     return &it->second;
   }
-  return &ctx.column_cache
-            .emplace(std::move(cache_key), std::move(info.value()))
+  // Copy the key (don't move) so the scratch buffer retains its capacity
+  // across calls. Cache misses are rare (once per unique col+path+type),
+  // so the extra allocation here is amortised.
+  return &ctx.column_cache.emplace(cache_key, std::move(info.value()))
             .first->second;
 }
 
@@ -1754,16 +1756,16 @@ Result MakeSearchFilter(
   const JsonPathGetter& json_path_getter) {
   irs::StringTokenizer identity;
   containers::NodeHashMap<std::string, SearchColumnInfo> column_cache;
-
-  // json_path_getter is optional; only pass a pointer when the caller
-  // supplied a non-empty invocable.
-  const JsonPathGetter* jpg = json_path_getter ? &json_path_getter : nullptr;
+  std::vector<std::string> json_path_scratch;
+  std::string cache_key_scratch;
 
   FilterContext ctx{
     .negated = false,
     .column_getter = column_getter,
-    .json_path_getter = jpg,
+    .json_path_getter = json_path_getter ? &json_path_getter : nullptr,
     .column_cache = column_cache,
+    .json_path = json_path_scratch,
+    .cache_key = cache_key_scratch,
     .identity = identity,
     .tokenizer = identity,
     .client_context = options.client_context,

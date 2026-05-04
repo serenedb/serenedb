@@ -1018,18 +1018,14 @@ TEST_F(DuckDBSearchSinkWriterTest, JsonPathEmitsPerPathFields) {
 
   // Provider that returns two indexed paths for col_id; each uses the
   // identity tokenizer so TERMs are whole-string.
+  static const std::vector<std::string> kHostPath{"host"};
+  static const std::vector<std::string> kStatusPath{"status"};
   auto paths_provider =
     [](catalog::Column::Id id) -> std::vector<JsonPathSinkConfig> {
     EXPECT_EQ(kColId, id);
     std::vector<JsonPathSinkConfig> out;
-    auto make_cfg = [](std::string key) {
-      JsonPathSinkConfig cfg;
-      cfg.path = {std::move(key)};
-      cfg.analyzer = AnalyzerProvider(kColId);
-      return cfg;
-    };
-    out.push_back(make_cfg("host"));
-    out.push_back(make_cfg("status"));
+    out.emplace_back(kHostPath, AnalyzerProvider(kColId));
+    out.emplace_back(kStatusPath, AnalyzerProvider(kColId));
     return out;
   };
 

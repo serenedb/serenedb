@@ -315,7 +315,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       const irs::bytes_view wkb{
         reinterpret_cast<const irs::byte_type*>(slice.data()), slice.size()};
       auto& geo =
-        basics::downCast<irs::analysis::GeoAnalyzer>(**field.string_analyzer);
+        basics::downCast<irs::analysis::GeoAnalyzer>(*field.string_analyzer);
       // Parse failure is treated silently (option A from the port plan): the
       // analyzer keeps whatever state it had, which at worst means this row
       // contributes no new terms. Matches the VARCHAR path behavior on bad

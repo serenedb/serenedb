@@ -984,4 +984,3 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
 }
 
 }  // namespace sdb::connector
-

@@ -1283,12 +1283,14 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
 
   const auto* col_ref = TryGetColumnRef(*func.children[0]);
   if (!col_ref) {
-    return {ERROR_BAD_PARAMETER, "ST_Distance_Between first input must be a column"};
+    return {ERROR_BAD_PARAMETER,
+            "ST_Distance_Between first input must be a column"};
   }
 
   const auto* centroid_val = TryGetConstant(*func.children[1]);
   if (!centroid_val) {
-    return {ERROR_BAD_PARAMETER, "ST_Distance_Between centroid must be a constant"};
+    return {ERROR_BAD_PARAMETER,
+            "ST_Distance_Between centroid must be a constant"};
   }
 
   const auto* min_val = TryGetConstant(*func.children[2]);
@@ -1332,7 +1334,8 @@ Result FromGeoInRange(irs::BooleanFilter& filter, const FilterContext& ctx,
             "ST_Distance_Between field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->tokenizer.analyzer) {
-    return {ERROR_BAD_PARAMETER, "ST_Distance_Between field has no analyzer attached"};
+    return {ERROR_BAD_PARAMETER,
+            "ST_Distance_Between field has no analyzer attached"};
   }
 
   std::string field_name;

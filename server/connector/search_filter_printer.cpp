@@ -298,26 +298,6 @@ void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
 }
 
 template<typename FT>
-void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
-                            FT&& ft) {
-  std::string parts_str;
-  for (const auto& phrase : filter.options().parts) {
-    absl::StrAppend(&parts_str, "<");
-    for (const auto& part : phrase) {
-      std::string part_str;
-      part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
-                      part.offs_min, ")", "; ");
-    }
-    absl::StrAppend(&parts_str, ">; ");
-  }
-  absl::StrAppend(out, "WILDCARD_NGRAM[", ft(filter.field()), ", '",
-                  TermToString(filter.options().token),
-                  "', has_pos=", filter.options().has_pos, ", parts=[",
-                  parts_str, "]]");
-}
-
-template<typename FT>
 std::string StringifyFilter(const Filter& filter, FT&& ft) {
   std::string out;
   const auto& type = filter.type();

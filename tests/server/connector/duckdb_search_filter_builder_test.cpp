@@ -201,11 +201,11 @@ catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(catalog::Column::Id) {
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
 
-[[maybe_unused]] catalog::ColumnAnalyzer GeoJsonAnalyzerProvider(
+[[maybe_unused]] catalog::ColumnTokenizer GeoJsonAnalyzerProvider(
   catalog::Column::Id) {
   auto make_geojson = [] {
     auto builder = vpack::Parser::fromJson(
-      "{ \"analyzer\": {\"type\":\"geojson\",\"properties\":{}}}");
+      "{ \"tokenizer\": {\"type\":\"geojson\",\"properties\":{}}}");
     return std::string(builder->slice().startAs<char>(),
                        builder->slice().byteSize());
   };
@@ -2535,8 +2535,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastNegative) {
                columns, false);
 }
 
-// Boost on geo predicates: confirms that BOOST(...) propagates through to the
-// inner GeoDistanceFilter / GeoFilter that the geo function rewrites produce.
+// Boost on geo predicates: the legacy `BOOST(predicate, factor)` function was
+// removed in favour of the TSQUERY-surface `^` operator (TSQUERY-only) and the
+// `(predicate)::boost(K)` cast (BOOLEAN-predicate-friendly via
+// TryDispatchSqlBoostCast). Geo functions return BOOLEAN, so the cast form
+// applies. The filter builder peels the BOOSTED_TSQUERY->BOOLEAN coercion
+// DuckDB inserts at the WHERE root, reads the boost factor from the cast's
+// modifier, and dispatches the inner expression with `ctx.boost = K`.
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
   std::vector<ColumnSpec> columns{
@@ -2546,18 +2551,18 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoInRange) {
                        500.0, true)
     .boost(2.5f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(ST_Distance_Between(g, "
-               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0), "
-               "2.5)",
+               "SELECT * FROM foo WHERE (ST_Distance_Between(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', 100.0, 500.0))"
+               "::boost(2.5)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
-  // ST_Distance_Centroid returns DOUBLE so BOOST wraps the comparison
+  // ST_Distance_Centroid returns DOUBLE so the cast wraps the comparison
   // expression rather than the function call itself; the filter builder
   // rewrites `ST_Distance_Centroid(...) < d` into a one-sided
   // GeoDistanceFilter range and applies the boost from the surrounding
-  // BOOST.
+  // ::boost(K).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"}};
   irs::And expected;
@@ -2565,8 +2570,9 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoDistance) {
                        false, 100.0, false)
     .boost(1.5f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(ST_Distance_Centroid(g,"
-               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0, 1.5)",
+               "SELECT * FROM foo WHERE (ST_Distance_Centroid(g,"
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0)"
+               "::boost(1.5)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
@@ -2578,8 +2584,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoIntersects) {
                irs::GeoFilterType::Intersects)
     .boost(2.0f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(ST_Intersects(g, "
-               "'{\"type\":\"Point\",\"coordinates\":[10,20]}'), 2.0)",
+               "SELECT * FROM foo WHERE (ST_Intersects(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}'))::boost(2.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
@@ -2593,8 +2599,8 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains) {
                irs::GeoFilterType::IsContained)
     .boost(3.0f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(ST_Contains(g, "
-               "'{\"type\":\"Point\",\"coordinates\":[10,20]}'), 3.0)",
+               "SELECT * FROM foo WHERE (ST_Contains(g, "
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}'))::boost(3.0)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
@@ -2608,8 +2614,9 @@ TEST_F(SearchFilterBuilderTest, test_Boost_GeoContains_SwappedArgs) {
                irs::GeoFilterType::Contains)
     .boost(0.75f);
   AssertFilter(expected,
-               "SELECT * FROM foo WHERE BOOST(ST_Contains("
-               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', g), 0.75)",
+               "SELECT * FROM foo WHERE (ST_Contains("
+               "'{\"type\":\"Point\",\"coordinates\":[10,20]}', g))"
+               "::boost(0.75)",
                columns, true, GeoJsonAnalyzerProvider);
 }
 
@@ -2706,9 +2713,9 @@ TEST_F(SearchFilterBuilderTest, test_GeoInRange_NonConstantCentroid) {
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "g"},
     {.id = 2, .type = duckdb::LogicalType::VARCHAR, .name = "c"}};
   irs::And expected;
-  AssertFilter(expected,
-               "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)",
-               columns, false, GeoJsonAnalyzerProvider);
+  AssertFilter(
+    expected, "SELECT * FROM foo WHERE ST_Distance_Between(g, c, 100.0, 500.0)",
+    columns, false, GeoJsonAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_GeoInRange_WrongAnalyzer) {
@@ -2843,6 +2850,8 @@ TEST_F(SearchFilterBuilderTest, test_GeoDistance_WrongAnalyzer) {
                "SELECT * FROM foo WHERE ST_Distance_Centroid(g,"
                "'{\"type\":\"Point\",\"coordinates\":[10,20]}') < 100.0",
                columns, false, SegmentationAnalyzerProvider);
+}
+
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BoostCastLevenshtein) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};

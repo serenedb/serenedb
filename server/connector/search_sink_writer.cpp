@@ -115,11 +115,11 @@ inline constexpr bool kIsNumericKind =
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+  irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   JsonPathsProvider&& json_paths_provider,
   std::span<const catalog::Column::Id> columns)
   : ColumnSinkWriterImplBase{columns},
-    _analyzer_provider{std::move(analyzer_provider)},
+    _tokenizer_provider{std::move(tokenizer_provider)},
     _json_paths_provider{std::move(json_paths_provider)},
     _trx{trx} {
   _pk_field.PrepareForVerbatimStringValue();
@@ -260,7 +260,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_analyzer_provider(column_id));
+    _field.PrepareForStringValue(_tokenizer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {
       _current_writer =
@@ -382,7 +382,7 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
   _json_fields.clear();
   _json_fields.reserve(paths.size());
   for (auto& p : paths) {
-    _json_fields.emplace_back().Init(column_id, p.path, std::move(p.analyzer));
+    _json_fields.emplace_back().Init(column_id, p.path, std::move(p.tokenizer));
   }
 
   _current_writer = [this](std::string_view /*full_key*/,
@@ -410,7 +410,16 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
       return;
     }
 
-    _json_padded = simdjson::padded_string{json_str};
+    _json_buffer.assign(json_str);
+    _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{
+      _json_buffer.data(), json_str.size(), _json_buffer.size()};
+
+    // DuckDB validates JSON at cast time, so by the time bytes reach the
+    // sink they are guaranteed parseable.
+    simdjson::ondemand::document doc;
+    auto res = _json_parser.iterate(padded_view).get(doc);
+    SDB_ASSERT(res == simdjson::SUCCESS);
 
     auto insert_field = [this](Field& field) {
       const bool ok = _document->template Insert<irs::Action::INDEX>(&field);
@@ -420,17 +429,10 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
       }
     };
 
-    // Look up each path independently. On simdjson ondemand a new document
-    // cursor is required per at_pointer() call on a freshly parsed document
-    // to avoid consuming other paths' state.
-    // TODO(mkornaukhov) group prefixes, bench and optimize
     for (auto& jpf : _json_fields) {
-      simdjson::ondemand::document doc;
-      if (_json_parser.iterate(_json_padded).get(doc) != simdjson::SUCCESS) {
-        return;
-      }
       simdjson::ondemand::value val;
       if (doc.at_pointer(jpf.pointer).get(val) != simdjson::SUCCESS) {
+        // Document doesn't have this path, just skip it.
         continue;
       }
       simdjson::ondemand::json_type t;

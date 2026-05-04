@@ -109,8 +109,6 @@ class InvertedIndex final : public Index {
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
-  const ColumnOptions& GetColumns() const noexcept { return _columns; }
-
  private:
   ColumnOptions _columns;
 };

@@ -194,12 +194,6 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
   return {};
 }
 
-// Defined further down (outside the anonymous namespace) -- forward-
-// declared so FromTSQueryMatch can resolve JSON-path field expressions
-// on the column side of `@@`.
-const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
-                                              const duckdb::Expression& expr);
-
 namespace {
 
 ComparisonOp InvertComparisonOp(ComparisonOp op) {
@@ -879,7 +873,7 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
         validator = &IsLikeCompatibleAnalyzer;
       }
 
-      const auto* column_info = TryFindColumnInfo(ctx, *args[0]);
+      const auto* column_info = FindColumnInfoForExpr(ctx, *args[0]);
       if (!column_info) {
         return {ERROR_NOT_IMPLEMENTED, name,
                 ": first arg is not a reference to an indexed column"};
@@ -1252,15 +1246,6 @@ const duckdb::BoundColumnRefExpression* TryGetColumnRef(
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundColumnRefExpression>();
-}
-
-const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
-                                          const duckdb::Expression& expr) {
-  const auto* col_ref = TryGetColumnRef(expr);
-  if (!col_ref) {
-    return nullptr;
-  }
-  return FindColumnRefInfo(ctx, *col_ref);
 }
 
 bool IsIntegerTypeId(duckdb::LogicalTypeId id) {

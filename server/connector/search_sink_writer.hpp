@@ -39,13 +39,13 @@ namespace sdb::connector {
 
 class SearchRemoveFilterBase;
 
-using AnalyzerProvider =
+using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
 // One JSON path's worth of indexing config, resolved against the catalog.
 struct JsonPathSinkConfig {
   std::span<const std::string> path;
-  catalog::ColumnTokenizer analyzer;
+  catalog::ColumnTokenizer tokenizer;
 };
 
 using JsonPathsProvider =
@@ -57,7 +57,7 @@ inline JsonPathsProvider NoJsonPaths() {
   return [](catalog::Column::Id) { return std::vector<JsonPathSinkConfig>{}; };
 }
 
-inline AnalyzerProvider MakeAnalyzerProvider(
+inline TokenizerProvider MakeTokenizerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
   return [snapshot, &index](catalog::Column::Id column_id) {
@@ -92,7 +92,7 @@ inline JsonPathsProvider MakeJsonPathsProvider(
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
-                           AnalyzerProvider&& analyzer_provider,
+                           TokenizerProvider&& tokenizer_provider,
                            JsonPathsProvider&& json_paths_provider,
                            std::span<const catalog::Column::Id> columns);
 
@@ -232,8 +232,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     std::string numeric_name;
     std::string bool_name;
     std::string null_name;
-    Field string_field;  // user's configured analyzer
-    // TODO decide whether we need separate int and float
+    Field string_field;   // user's configured analyzer
     Field numeric_field;  // built-in NumericTokenizer
     Field bool_field;     // built-in BooleanTokenizer
     Field null_field;     // built-in NullTokenizer
@@ -244,7 +243,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
               catalog::ColumnTokenizer string_analyzer);
   };
 
-  AnalyzerProvider _analyzer_provider;
+  TokenizerProvider _tokenizer_provider;
   JsonPathsProvider _json_paths_provider;
   Field _field;
   Field _pk_field;
@@ -261,7 +260,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   // path-indexed). Rebuilt on every SwitchColumn.
   std::vector<JsonPathField> _json_fields;
   simdjson::ondemand::parser _json_parser;
-  simdjson::padded_string _json_padded;
+  std::string _json_buffer;
 };
 
 class SearchSinkDeleteBaseImpl {

@@ -403,10 +403,10 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       inverted_shard.GetTransaction());
     auto& inverted_index =
       basics::downCast<const catalog::InvertedIndex>(*index);
-    auto analyzer_provider = MakeAnalyzerProvider(snapshot, inverted_index);
+    auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
     auto json_paths_provider = MakeJsonPathsProvider(snapshot, inverted_index);
     state->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
-      *state->search_trx, std::move(analyzer_provider), index->GetColumnIds(),
+      *state->search_trx, std::move(tokenizer_provider), index->GetColumnIds(),
       std::move(json_paths_provider));
   }
   return state;

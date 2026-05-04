@@ -102,18 +102,19 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
 
 std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
-  AnalyzerProvider&& analyzer_provider, JsonPathsProvider&& json_paths_provider,
+  TokenizerProvider&& tokenizer_provider,
+  JsonPathsProvider&& json_paths_provider,
   std::span<const catalog::Column::Id> columns) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
-        trx, std::move(analyzer_provider), columns,
+        trx, std::move(tokenizer_provider), columns,
         std::move(json_paths_provider));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
-        trx, std::move(analyzer_provider), columns,
+        trx, std::move(tokenizer_provider), columns,
         std::move(json_paths_provider));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
@@ -170,12 +171,12 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       // Inverted/search index
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
-      auto analyzer_provider = MakeAnalyzerProvider(snapshot, inverted_index);
+      auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
       auto json_paths_provider =
         MakeJsonPathsProvider(snapshot, inverted_index);
 
       writers.push_back(MakeDuckDBSearchWriter(
-        Kind, index_txn, std::move(analyzer_provider),
+        Kind, index_txn, std::move(tokenizer_provider),
         std::move(json_paths_provider), index.GetColumnIds()));
     }
   };

@@ -160,8 +160,9 @@ void BuildFtsTerm(irs::BooleanFilter& parent, const FilterContext& ctx,
 void BuildFtsTokens(irs::BooleanFilter& parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
-const SearchColumnInfo* TryFindColumnInfo(const FilterContext& ctx,
-                                          const duckdb::Expression& expr);
+
+const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
+                                              const duckdb::Expression& expr);
 
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).

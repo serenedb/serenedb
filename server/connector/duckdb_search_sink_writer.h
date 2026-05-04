@@ -26,7 +26,7 @@
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
 #include "connector/duckdb_sink_writer_base.h"
-#include "connector/search_sink_writer.hpp"  // reuse AnalyzerProvider, Field, etc.
+#include "connector/search_sink_writer.hpp"  // reuse TokenizerProvider, Field, etc.
 #include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
@@ -35,10 +35,10 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {
  public:
   DuckDBSearchSinkInsertWriter(
-    irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
     JsonPathsProvider&& json_paths_provider = NoJsonPaths())
-    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider),
+    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
                                std::move(json_paths_provider), columns} {}
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk&) final {
@@ -82,10 +82,10 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkDeleteBaseImpl {
  public:
   DuckDBSearchSinkUpdateWriter(
-    irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
     std::span<const catalog::Column::Id> columns,
     JsonPathsProvider&& json_paths_provider = NoJsonPaths())
-    : SearchSinkInsertBaseImpl{trx, std::move(analyzer_provider),
+    : SearchSinkInsertBaseImpl{trx, std::move(tokenizer_provider),
                                std::move(json_paths_provider), columns},
       SearchSinkDeleteBaseImpl{trx} {}
 

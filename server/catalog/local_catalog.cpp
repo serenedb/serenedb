@@ -1276,15 +1276,15 @@ ResultOr<ResolvedIndexRelation> ResolveIndexRelation(
   } else if (relation->GetType() == ObjectType::PgSqlView) {
     auto& view = basics::downCast<PgSqlView>(*relation);
     const auto& view_info = view.GetInfo();
-    std::vector<Column> columns;
-    columns.reserve(view_info.names.size());
-    for (size_t i = 0; i < view_info.names.size(); ++i) {
-      columns.push_back(Column{
-        .id = static_cast<Column::Id>(i),
-        .type = view_info.types[i],
-        .name = view_info.names[i],
-      });
-    }
+    auto columns = std::views::iota(size_t{0}, view_info.names.size()) |
+                   std::views::transform([&](size_t i) {
+                     return Column{
+                       .id = static_cast<Column::Id>(i),
+                       .type = view_info.types[i],
+                       .name = view_info.names[i],
+                     };
+                   }) |
+                   std::ranges::to<std::vector>();
     return ResolvedIndexRelation{
       .relation_id = view.GetId(),
       .columns = std::move(columns),

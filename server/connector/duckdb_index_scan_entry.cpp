@@ -152,6 +152,7 @@ duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
 duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
+  result.reserve(2);
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
   result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
@@ -273,6 +274,7 @@ duckdb::vector<duckdb::column_t> ViewSecondaryIndexScanEntry::GetRowIdColumns()
 duckdb::virtual_column_map_t ViewSecondaryIndexScanEntry::GetVirtualColumns()
   const {
   duckdb::virtual_column_map_t result;
+  result.reserve(2);
   result.insert({kColumnIdentifierTableOid,
                  duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
   result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,

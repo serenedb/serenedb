@@ -157,16 +157,16 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
-  bool is_external = false;
-  bool is_glob_external = false;
   duckdb::idx_t file_row_number_col_idx = 0;
   duckdb::idx_t file_index_col_idx = 0;
-  int64_t external_row_counter = 0;
-  bool has_generated_pk_col = false;
   duckdb::idx_t generated_pk_col_idx = 0;
+  int64_t external_row_counter = 0;
+  int64_t view_row_counter = 0;
+  bool is_external = false;
+  bool is_glob_external = false;
+  bool has_generated_pk_col = false;
   // No PK column in the chunk -- Sink synthesises a monotonic counter.
   bool is_view_synth_pk = false;
-  int64_t view_row_counter = 0;
   bool is_view_rocksdb_pk = false;
 
   std::unique_ptr<DuckDBSinkIndexWriter> writer;

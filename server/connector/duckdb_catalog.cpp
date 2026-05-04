@@ -48,6 +48,7 @@
 #include <duckdb/planner/operator/logical_projection.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/storage/database_size.hpp>
+#include <ranges>
 
 #include "catalog/catalog.h"
 #include "catalog/pk_spec.h"
@@ -988,18 +989,18 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
                       ERR_MSG("view \"", target.name,
                               "\" must be bound before it can be indexed"));
     }
-    rel_columns.reserve(column_info->names.size());
-    for (size_t i = 0; i < column_info->names.size(); ++i) {
-      rel_columns.emplace_back(column_info->names[i], column_info->types[i]);
-    }
+    rel_columns.assign_range(
+      std::views::iota(size_t{0}, column_info->names.size()) |
+      std::views::transform([&](size_t i) {
+        return std::pair{column_info->names[i], column_info->types[i]};
+      }));
   } else {
     auto& sdb_entry = RequireBaseTable(*resolved_table);
     auto sdb_table = sdb_entry.GetSereneDBTable();
     const auto& columns = sdb_table->Columns();
-    rel_columns.reserve(columns.size());
-    for (const auto& c : columns) {
-      rel_columns.emplace_back(c.name, c.type);
-    }
+    rel_columns.assign_range(columns | std::views::transform([](const auto& c) {
+                               return std::pair{c.name, c.type};
+                             }));
     use_generated_pk_rowid_col = sdb_table->PKColumns().empty();
   }
 
@@ -1051,11 +1052,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         duckdb::ColumnBinding(get.table_index, duckdb::ProjectionIndex(i))));
     }
   } else {
-    create_index_info->names.clear();
-    create_index_info->names.reserve(rel_columns.size());
-    for (const auto& c : rel_columns) {
-      create_index_info->names.push_back(c.first);
-    }
+    create_index_info->names.assign_range(rel_columns | std::views::keys);
     create_index_info->schema = target.ParentSchema().name;
     create_index_info->catalog = target.ParentCatalog().GetName();
     if (view_fast_path) {

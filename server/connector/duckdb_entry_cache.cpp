@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_entry_cache.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -309,10 +311,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
       info->columns.AddColumn(
         duckdb::ColumnDefinition(vinfo.names[i], vinfo.types[i]));
     }
-    std::vector<size_t> indexed_col_indices;
-    for (auto col_id : index.GetColumnIds()) {
-      indexed_col_indices.push_back(static_cast<size_t>(col_id));
-    }
+    auto col_ids = index.GetColumnIds();
+    std::vector<size_t> indexed_col_indices(col_ids.begin(), col_ids.end());
     if (index.GetType() == catalog::ObjectType::InvertedIndex) {
       auto inverted_index_ptr =
         snapshot.GetObject<catalog::InvertedIndex>(index.GetId());
@@ -326,19 +326,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildIndexScanEntry(
     if (index.GetType() == catalog::ObjectType::SecondaryIndex) {
       const auto& sec_index =
         basics::downCast<const catalog::SecondaryIndex>(index);
-      ObjectId sk_shard_id;
-      for (auto& shard : snapshot.GetIndexShardsByRelation(view->GetId())) {
-        if (shard->GetIndexId() == index.GetId()) {
-          sk_shard_id = shard->GetId();
-          break;
-        }
-      }
-      if (sk_shard_id == ObjectId{}) {
+      const auto& shards = snapshot.GetIndexShardsByRelation(view->GetId());
+      auto it = absl::c_find_if(shards, [&](const auto& shard) {
+        return shard->GetIndexId() == index.GetId();
+      });
+      if (it == shards.end()) {
         return nullptr;
       }
       return duckdb::make_uniq<ViewSecondaryIndexScanEntry>(
         catalog, schema, *info, std::move(view), std::move(indexed_col_indices),
-        sk_shard_id, sec_index.IsUnique());
+        (*it)->GetId(), sec_index.IsUnique());
     }
     return nullptr;
   }

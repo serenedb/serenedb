@@ -1,0 +1,101 @@
+control substitution on
+
+# WAL index recovery across multiple indexed columns of different types.
+# The SwitchColumnImpl path in SearchSinkInsertBaseImpl picks a different
+# tokenizer per column kind, so we verify VARCHAR + INTEGER + BIGINT all
+# land in the index correctly on recovery.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mc_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_mc_t(pk INTEGER PRIMARY KEY, name TEXT, score INTEGER, ts BIGINT);
+
+statement ok
+INSERT INTO wal_mc_t VALUES (1, 'seeded alpha', 100, 1000000);
+
+statement ok
+CREATE INDEX wal_mc_idx ON wal_mc_t USING inverted(pk, name mc_dict, score, ts);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_mc_t;
+
+# All 3 columns searchable pre-crash
+query
+SELECT pk FROM wal_mc_idx WHERE name @@ ts_phrase('seeded');
+----
+pk
+1
+
+query
+SELECT pk FROM wal_mc_idx WHERE score = 100;
+----
+pk
+1
+
+query
+SELECT pk FROM wal_mc_idx WHERE ts = 1000000;
+----
+pk
+1
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_mc_t VALUES
+  (2, 'recovered bravo', 200, 2000000),
+  (3, 'recovered charlie', 300, 3000000),
+  (4, 'recovered delta', 400, 4000000);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection mc_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_mc_t;
+
+# TEXT column recovered
+connection mc_after
+query
+SELECT pk, name FROM wal_mc_idx WHERE name @@ ts_phrase('recovered bravo');
+----
+pk	name
+2	recovered bravo
+
+# INTEGER column recovered
+connection mc_after
+query
+SELECT pk FROM wal_mc_idx WHERE score = 300;
+----
+pk
+3
+
+# BIGINT column recovered
+connection mc_after
+query
+SELECT pk FROM wal_mc_idx WHERE ts = 4000000;
+----
+pk
+4
+
+# All rows present through the index
+connection mc_after
+query
+SELECT COUNT(*) FROM wal_mc_idx WHERE score >= 0;
+----
+count
+4

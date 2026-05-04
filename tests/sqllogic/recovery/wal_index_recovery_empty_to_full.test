@@ -1,0 +1,86 @@
+control substitution on
+
+# Empty table, index created on empty table, then bulk inserts post-fault,
+# crash. Recovery has to populate iresearch from a state of zero docs —
+# tests the no-prior-snapshot path.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ef_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ef_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX ef_idx ON ef_t USING inverted(id, body ef_dict);
+
+# No VACUUM (UPDATE_INDEXES) needed — table is empty, index has 0 docs.
+
+# Initial sanity: index is empty.
+query
+SELECT COUNT(*) FROM ef_idx;
+----
+count
+0
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Bulk-load into the empty index, all of which goes only to RocksDB.
+statement ok
+INSERT INTO ef_t SELECT i, 'doc_' || i FROM range(0, 5000) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ef_after
+statement ok retry 60 backoff 1s
+VACUUM (UPDATE_INDEXES) ef_t;
+
+connection ef_after
+query
+SELECT COUNT(*) FROM ef_t;
+----
+count
+5000
+
+connection ef_after
+query
+SELECT COUNT(*) FROM ef_idx;
+----
+count
+5000
+
+# Spot checks
+connection ef_after
+query
+SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_0');
+----
+id
+0
+
+connection ef_after
+query
+SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_2500');
+----
+id
+2500
+
+connection ef_after
+query
+SELECT id FROM ef_t WHERE body @@ ts_phrase('doc_4999');
+----
+id
+4999

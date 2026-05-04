@@ -1,0 +1,134 @@
+control substitution on
+
+# DROP DATABASE inside the WAL recovery range.
+#
+# Constraint: the test harness can only talk to the default database, so the
+# dropped database has no inverted index inside it. The interesting bit is
+# that the DDL itself (CREATE DATABASE … then DROP DATABASE … all post fault)
+# lives in the WAL window we replay against an inverted index in the default
+# database. Recovery must finish cleanly and the surviving index must come
+# back with the right data.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dd_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE dd_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO dd_t VALUES (1, 'seed alpha bravo'), (2, 'seed charlie delta');
+
+statement ok
+CREATE INDEX dd_idx ON dd_t USING inverted(id, body dd_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) dd_t;
+
+# Block search commits.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Index falls behind — these writes only land in rocksdb.
+statement ok
+INSERT INTO dd_t VALUES (3, 'after fault echo'), (4, 'after fault foxtrot');
+
+# Mixed DDL inside the recovery window: create + drop a database. Both
+# events live in the WAL replay range. Recovery must walk past them.
+statement ok
+CREATE DATABASE dd_transient;
+
+statement ok
+UPDATE dd_t SET body = 'mid window golf' WHERE id = 1;
+
+statement ok
+DROP DATABASE dd_transient;
+
+statement ok
+INSERT INTO dd_t VALUES (5, 'post drop hotel');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection dd_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) dd_t;
+
+# Transient database really is gone.
+connection dd_after
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dd_transient';
+----
+count
+0
+
+# Surviving index replayed all writes correctly.
+connection dd_after
+query
+SELECT COUNT(*) FROM dd_t;
+----
+count
+5
+
+connection dd_after
+query
+SELECT COUNT(*) FROM dd_idx;
+----
+count
+5
+
+connection dd_after
+query
+SELECT id FROM dd_t WHERE body @@ ts_phrase('mid window golf');
+----
+id
+1
+
+connection dd_after
+query
+SELECT COUNT(*) FROM dd_t WHERE body @@ ts_phrase('seed alpha bravo');
+----
+count
+0
+
+connection dd_after
+query
+SELECT id FROM dd_t WHERE body @@ ts_phrase('after fault echo');
+----
+id
+3
+
+connection dd_after
+query
+SELECT id FROM dd_t WHERE body @@ ts_phrase('after fault foxtrot');
+----
+id
+4
+
+connection dd_after
+query
+SELECT id FROM dd_t WHERE body @@ ts_phrase('post drop hotel');
+----
+id
+5
+
+# Recreating the same name works post-recovery.
+connection dd_after
+statement ok
+CREATE DATABASE dd_transient;
+
+connection dd_after
+statement ok
+DROP DATABASE dd_transient;

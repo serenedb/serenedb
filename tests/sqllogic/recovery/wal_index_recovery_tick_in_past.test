@@ -1,0 +1,149 @@
+control substitution on
+
+# Port of view-search-alias-recover-tick-in-past-noncluster.js / view-
+# serenesearch-link-recover-tick-in-past-noncluster.js.
+#
+# Original: 1000 docs inserted, then index created (its initial _recovery_tick
+# captured), then more writes, then bg-thread fault prevents the index's tick
+# from advancing, then crash. On restart the recovery range covers everything
+# from the captured tick onward → the index must contain all 1000 docs.
+#
+# Adapted: we have no `RocksDBBackgroundThread::run` fault, but we don't need
+# it — `SearchCommitTask::commitUnsafe` blocks every search commit including
+# the one schedule right after CREATE INDEX. So whatever the index already
+# committed during backfill is durable; everything after stays in WAL.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY past_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE past_t(value1 INTEGER PRIMARY KEY, value2 TEXT);
+
+# Round 1 — 1000 rows visible to the backfill.
+statement ok
+INSERT INTO past_t SELECT i, 'test' || i FROM range(0, 1000) AS t(i);
+
+statement ok
+CREATE INDEX past_idx ON past_t USING inverted(value1, value2 past_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) past_t;
+
+# At this point past_idx has _recovery_tick == engine.recoveryTick(). Everything
+# below now goes into WAL but the iresearch tick stays where it is.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# More rows that the backfill never saw — these are what recovery must replay.
+statement ok
+INSERT INTO past_t SELECT i, 'test' || i FROM range(1000, 2000) AS t(i);
+
+# Some deletes within the original range, mixed with inserts above.
+statement ok
+DELETE FROM past_t WHERE value1 < 100;
+
+# Updates to part of the seed range — same tokens cleared, new ones added.
+statement ok
+UPDATE past_t SET value2 = 'updated' || value1 WHERE value1 >= 500 AND value1 < 600;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart, recovery picks up the (committed_after_backfill, end_tick] range ---
+
+connection past_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) past_t;
+
+# Row counts:
+#  seed 0..999      1000
+#   - delete 0..99  -100
+#   - update 500..599 (no change in count)
+#  insert 1000..1999 +1000
+#  total: 1900
+connection past_after
+query
+SELECT COUNT(*) FROM past_t;
+----
+count
+1900
+
+connection past_after
+query
+SELECT COUNT(*) FROM past_idx;
+----
+count
+1900
+
+# Original suite asserts: `FOR i IN 0..999 ... SEARCH doc.value1 == i RETURN
+# doc` returns all 1000 docs. Translated to "every value1 in [100, 1000) must
+# be in the index", since value1 0..99 were deleted.
+connection past_after
+query
+SELECT COUNT(*) FROM past_t WHERE value1 >= 100 AND value1 < 1000;
+----
+count
+900
+
+# Original suite asserts every value1 in [100, 1000) (post-delete seed range)
+# is in the index. Recovery has to preserve value1 even for the rows updated
+# in the same WAL window — non-updated indexed columns are read from rocksdb
+# and re-emitted, mirroring online UPDATE.
+connection past_after
+query
+SELECT COUNT(*) FROM past_t WHERE value1 >= 100 AND value1 < 1000;
+----
+count
+900
+
+# Spot-check the recovery range: token from the post-CREATE-INDEX insert
+# block (1000..1999). PHRASE on 'test1500' must match a doc, even though it
+# was never seen by the backfill commit.
+connection past_after
+query
+SELECT value1 FROM past_t WHERE value2 @@ ts_phrase('test1500');
+----
+value1
+1500
+
+connection past_after
+query
+SELECT value1 FROM past_t WHERE value2 @@ ts_phrase('test1999');
+----
+value1
+1999
+
+# Updates in the seed range: old token 'test550' is gone, new token
+# 'updated550' is searchable.
+connection past_after
+query
+SELECT COUNT(*) FROM past_t WHERE value2 @@ ts_phrase('test550');
+----
+count
+0
+
+connection past_after
+query
+SELECT value1 FROM past_t WHERE value2 @@ ts_phrase('updated550');
+----
+value1
+550
+
+# Deleted rows: token 'test50' should not match anything.
+connection past_after
+query
+SELECT COUNT(*) FROM past_t WHERE value2 @@ ts_phrase('test50');
+----
+count
+0

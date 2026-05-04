@@ -1,0 +1,108 @@
+control substitution on
+
+# UPDATE on a column that is NOT in the inverted index. Online: no
+# DeleteRow/Insert on iresearch, just a rocksdb Put for the non-indexed
+# column. WAL: PutCF for that column. Recovery sees a PutCF on a column
+# not in s.col2index → skipped (handler does nothing). The row stays as
+# it was in iresearch.
+#
+# Net: index is undisturbed by the update.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ni_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# `note` is the indexed text column. `meta` is NOT indexed.
+statement ok
+CREATE TABLE ni_t(id INTEGER PRIMARY KEY, note TEXT, meta TEXT);
+
+statement ok
+INSERT INTO ni_t VALUES
+  (1, 'fruit apple', 'private_one'),
+  (2, 'fruit banana', 'private_two');
+
+statement ok
+CREATE INDEX ni_idx ON ni_t USING inverted(id, note ni_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ni_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Update only the non-indexed column. The index should not see anything.
+statement ok
+UPDATE ni_t SET meta = 'changed_one' WHERE id = 1;
+
+statement ok
+UPDATE ni_t SET meta = 'changed_two' WHERE id = 2;
+
+# Plus a real indexed-column write to make sure recovery still does work
+# at least for some shard — otherwise the shard wouldn't be lagging at all
+# and our recovery wouldn't run for it.
+statement ok
+INSERT INTO ni_t VALUES (3, 'fruit cherry', 'private_three');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ni_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ni_t;
+
+# Indexed column unchanged for rows 1 and 2.
+connection ni_after
+query
+SELECT id FROM ni_t WHERE note @@ ts_phrase('apple');
+----
+id
+1
+
+connection ni_after
+query
+SELECT id FROM ni_t WHERE note @@ ts_phrase('banana');
+----
+id
+2
+
+# Row 3 is the new insert, both indexed and reachable.
+connection ni_after
+query
+SELECT id FROM ni_t WHERE note @@ ts_phrase('cherry');
+----
+id
+3
+
+connection ni_after
+query
+SELECT COUNT(*) FROM ni_t WHERE note @@ ts_phrase('fruit');
+----
+count
+3
+
+# Non-indexed column reflects the rocksdb state.
+connection ni_after
+query
+SELECT meta FROM ni_t WHERE id = 1;
+----
+meta
+changed_one
+
+connection ni_after
+query
+SELECT meta FROM ni_t WHERE id = 2;
+----
+meta
+changed_two

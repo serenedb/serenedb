@@ -34,13 +34,7 @@ void FromCompound(irs::BooleanFilter& parent, const FilterContext& ctx,
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_compound([ts_phrase('a')], [], ['b','c'], 1). "
     "Buckets are TSQUERY[] or NULL; min_should_match defaults to 1.";
-  if (func.children.size() < 3 || func.children.size() > 4) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("ts_compound expects (must, must_not, should [, "
-                            "min_should_match]), got ",
-                            func.children.size(), " args"),
-                    ERR_HINT(kSyntaxHint));
-  }
+  SDB_ASSERT(func.children.size() >= 3 && func.children.size() <= 4);
 
   auto extract =
     [](const duckdb::Expression& arg, std::string_view label,

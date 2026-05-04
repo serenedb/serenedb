@@ -1,0 +1,66 @@
+control substitution on
+
+# WAL index recovery no-op path: crash with iresearch fully caught up.
+# _recovery_tick == engine.recoveryTick() → RunWalRecovery must be skipped
+# and the index must still be consistent.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY nop_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_nop_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO wal_nop_t VALUES (1, 'caught up one'), (2, 'caught up two');
+
+statement ok
+CREATE INDEX wal_nop_idx ON wal_nop_t USING inverted(a, b nop_dict);
+
+# Flush iresearch so its persisted tick matches rocksdb's tail
+statement ok
+VACUUM (UPDATE_INDEXES) wal_nop_t;
+
+query
+SELECT COUNT(*) FROM wal_nop_idx WHERE b @@ ts_phrase('caught');
+----
+count
+2
+
+# Now crash without writing anything else — the two ticks should be equal
+# so recovery must no-op.
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection nop_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM wal_nop_t;
+----
+count
+2
+
+connection nop_after
+query
+SELECT a FROM wal_nop_idx WHERE b @@ ts_phrase('caught up one');
+----
+a
+1
+
+connection nop_after
+query
+SELECT a FROM wal_nop_idx WHERE b @@ ts_phrase('caught up two');
+----
+a
+2

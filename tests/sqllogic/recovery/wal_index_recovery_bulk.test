@@ -1,0 +1,84 @@
+control substitution on
+
+# WAL index recovery with row count larger than the internal 2048-row flush
+# threshold — exercises the multi-flush path inside RunWalRecovery.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bulk_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_bulk_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO wal_bulk_t SELECT i, 'seed row ' || i FROM range(0, 50) AS t(i);
+
+statement ok
+CREATE INDEX wal_bulk_idx ON wal_bulk_t USING inverted(a, b bulk_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_bulk_t;
+
+query
+SELECT COUNT(*) FROM wal_bulk_idx WHERE b @@ ts_phrase('seed');
+----
+count
+50
+
+# Block commits and ingest > flush-threshold rows so recovery has to flush
+# multiple times.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_bulk_t
+SELECT i, 'recovered row ' || i FROM range(1000, 3500) AS t(i);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection bulk_after
+statement ok retry 60 backoff 1s
+VACUUM (UPDATE_INDEXES) wal_bulk_t;
+
+connection bulk_after
+query
+SELECT COUNT(*) FROM wal_bulk_t;
+----
+count
+2550
+
+# Every recovered row must be in the search index too.
+connection bulk_after
+query
+SELECT COUNT(*) FROM wal_bulk_idx WHERE b @@ ts_phrase('recovered');
+----
+count
+2500
+
+connection bulk_after
+query
+SELECT COUNT(*) FROM wal_bulk_idx WHERE b @@ ts_phrase('seed');
+----
+count
+50
+
+# Spot check a row well past the flush boundary
+connection bulk_after
+query
+SELECT a FROM wal_bulk_idx WHERE b @@ ts_phrase('recovered row 3400');
+----
+a
+3400

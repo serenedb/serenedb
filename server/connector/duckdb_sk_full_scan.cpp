@@ -24,7 +24,7 @@
 
 #include "basics/assert.h"
 #include "connector/duckdb_table_function.h"
-#include "connector/row_materializer.h"
+#include "connector/lookup.h"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -123,10 +123,9 @@ void SKFullScanFunction(duckdb::ClientContext& context,
 
   const auto num_rows = pk_bytes.size();
   std::vector<std::string_view> views(pk_bytes.begin(), pk_bytes.end());
-  auto materializer = MakeRowMaterializer(
-    context, bind_data, gstate.snapshot, pk_bytes, gstate.projected_columns,
-    gstate.projected_types, bind_data.column_ids, gstate.txn);
-  materializer->Materialize(views, output);
+  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
+             gstate.projected_types, bind_data.column_ids, gstate.txn, views,
+             gstate.file_lookup_session, output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

@@ -36,7 +36,7 @@ namespace sdb::connector {
 class SearchRemoveFilterBase;
 
 using AnalyzerProvider =
-  absl::AnyInvocable<catalog::ColumnAnalyzer(catalog::Column::Id)>;
+  absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
 inline AnalyzerProvider MakeAnalyzerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
@@ -79,8 +79,8 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
     irs::Tokenizer& GetTokens() const noexcept {
       SDB_ASSERT(analyzer || string_analyzer);
-      SDB_ASSERT((analyzer == nullptr) || !string_analyzer);
-      return analyzer ? *analyzer : **string_analyzer;
+      SDB_ASSERT(!analyzer || !string_analyzer);
+      return analyzer ? *analyzer : *string_analyzer;
     }
 
     bool Write(irs::DataOutput& out) const {
@@ -93,7 +93,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void PrepareForVectorValue();
 
     void PrepareForVerbatimStringValue();
-    void PrepareForStringValue(catalog::ColumnAnalyzer&& column_analyzer);
+    void PrepareForStringValue(catalog::ColumnTokenizer&& column_analyzer);
     void SetStringValue(std::string_view value);
 
     void PrepareForNumericValue();
@@ -107,7 +107,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
     void SetNullValue();
 
     search::AnalyzerImpl::CacheType::ptr analyzer;
-    std::optional<catalog::Tokenizer::AnalyzerWrapper> string_analyzer;
+    catalog::Tokenizer::TokenizerWrapper string_analyzer;
     std::string_view name;
     irs::IndexFeatures index_features;
     // For paths that don't receive a StoreAttr from an analyzer

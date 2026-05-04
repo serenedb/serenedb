@@ -34,7 +34,7 @@
 
 namespace sdb::catalog {
 
-ResultOr<Tokenizer::AnalyzerWrapper> Tokenizer::GetTokenizer() {
+ResultOr<Tokenizer::TokenizerWrapper> Tokenizer::GetTokenizer() {
   absl::MutexLock lock{&_m};
   if (_pool.empty()) {
     auto analyzer = CreateAnalyzer();
@@ -42,12 +42,12 @@ ResultOr<Tokenizer::AnalyzerWrapper> Tokenizer::GetTokenizer() {
       return std::unexpected<Result>{std::in_place, ERROR_INTERNAL,
                                      "Failed to create analyzer"};
     }
-    return AnalyzerWrapper{analyzer.release(), Deleter{this}};
+    return TokenizerWrapper{analyzer.release(), Deleter{this}};
   }
   auto analyzer = std::move(_pool.back());
   SDB_ASSERT(analyzer);
   _pool.pop_back();
-  return AnalyzerWrapper{analyzer.release(), Deleter{this}};
+  return TokenizerWrapper{analyzer.release(), Deleter{this}};
 }
 
 void Tokenizer::PushTokenizer(irs::analysis::Analyzer::ptr analyzer) noexcept {
@@ -93,7 +93,7 @@ void Tokenizer::WriteInternal(vpack::Builder& b) const {
   b.openObject();
   WriteObject(b, [&](vpack::Builder& b) {
     auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(_data.data())};
-    b.add("analyzer", slice.get("analyzer"));
+    b.add("tokenizer", slice.get("tokenizer"));
     b.add("features");
     _features.ToVPack(b);
   });

@@ -1,0 +1,336 @@
+control substitution on
+
+# Many tables with varied index configurations:
+#   mt_alpha   : inverted index + secondary index
+#   mt_beta    : inverted index only
+#   mt_gamma   : secondary index only (no inverted)
+#   mt_delta   : no index at all
+#   mt_epsilon : inverted index only, but caught up before crash (no
+#                writes after VACUUM) — recovery should skip it
+# Heavy writes are interleaved across all of them. Recovery must replay
+# only mt_alpha and mt_beta.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mt_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE mt_alpha(id INTEGER PRIMARY KEY, body TEXT, score INTEGER);
+
+statement ok
+CREATE TABLE mt_beta(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE mt_gamma(id INTEGER PRIMARY KEY, body TEXT, qty INTEGER);
+
+statement ok
+CREATE TABLE mt_delta(id INTEGER PRIMARY KEY, payload TEXT);
+
+statement ok
+CREATE TABLE mt_epsilon(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO mt_alpha VALUES
+  (1, 'alpha seed one',   10),
+  (2, 'alpha seed two',   20),
+  (3, 'alpha seed three', 30);
+
+statement ok
+INSERT INTO mt_beta VALUES
+  (1, 'beta seed one'),
+  (2, 'beta seed two');
+
+statement ok
+INSERT INTO mt_gamma VALUES
+  (1, 'gamma seed one',   100),
+  (2, 'gamma seed two',   200),
+  (3, 'gamma seed three', 300);
+
+statement ok
+INSERT INTO mt_delta SELECT i, 'delta_' || i FROM range(0, 50) AS t(i);
+
+statement ok
+INSERT INTO mt_epsilon VALUES
+  (1, 'epsilon untouched one'),
+  (2, 'epsilon untouched two');
+
+statement ok
+CREATE INDEX mt_alpha_inv ON mt_alpha USING inverted(id, body mt_dict);
+
+statement ok
+CREATE INDEX mt_alpha_score_idx ON mt_alpha(score);
+
+statement ok
+CREATE INDEX mt_beta_inv ON mt_beta USING inverted(id, body mt_dict);
+
+statement ok
+CREATE INDEX mt_gamma_score_idx ON mt_gamma(qty);
+
+statement ok
+CREATE INDEX mt_epsilon_inv ON mt_epsilon USING inverted(id, body mt_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) mt_alpha;
+
+statement ok
+VACUUM (UPDATE_INDEXES) mt_beta;
+
+statement ok
+VACUUM (UPDATE_INDEXES) mt_epsilon;
+
+# === Block search commits and start the heavy interleaved workload. ===
+# mt_epsilon must NOT receive any writes — it stays caught up.
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# alpha + delta + gamma writes interleaved.
+statement ok
+INSERT INTO mt_alpha VALUES (4, 'alpha added four', 40);
+
+statement ok
+INSERT INTO mt_delta VALUES (1000, 'delta tail one');
+
+statement ok
+INSERT INTO mt_gamma VALUES (4, 'gamma added four', 400);
+
+statement ok
+INSERT INTO mt_beta VALUES (3, 'beta added three');
+
+statement ok
+UPDATE mt_alpha SET body = 'alpha CHANGED two' WHERE id = 2;
+
+statement ok
+UPDATE mt_gamma SET qty = qty + 1 WHERE id < 3;
+
+statement ok
+INSERT INTO mt_alpha VALUES (5, 'alpha added five', 50);
+
+statement ok
+DELETE FROM mt_delta WHERE id < 10;
+
+statement ok
+INSERT INTO mt_beta VALUES (4, 'beta added four'), (5, 'beta added five');
+
+statement ok
+UPDATE mt_alpha SET score = 999 WHERE id = 1;
+
+statement ok
+DELETE FROM mt_alpha WHERE id = 3;
+
+statement ok
+DELETE FROM mt_beta WHERE id = 1;
+
+statement ok
+INSERT INTO mt_gamma VALUES (5, 'gamma added five', 500);
+
+# A PK update in mt_alpha — id 4 → id 40 (new pk, body unchanged via
+# saved_columns).
+statement ok
+UPDATE mt_alpha SET id = 40 WHERE id = 4;
+
+statement ok
+UPDATE mt_beta SET body = 'beta CHANGED two' WHERE id = 2;
+
+statement ok
+INSERT INTO mt_delta VALUES (2000, 'delta tail two');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection mt_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) mt_alpha;
+
+connection mt_after
+statement ok
+VACUUM (UPDATE_INDEXES) mt_beta;
+
+connection mt_after
+statement ok
+VACUUM (UPDATE_INDEXES) mt_epsilon;
+
+# === mt_alpha: 5 rows — id ∈ {1, 2, 5, 40} after deletes, plus id=2 modified.
+#   Wait: started with 1,2,3, added 4,5, deleted 3, pk-renamed 4→40.
+#   Final pks: 1, 2, 5, 40 → 4 rows.
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_alpha;
+----
+count
+4
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_alpha_inv;
+----
+count
+4
+
+connection mt_after
+query
+SELECT id FROM mt_alpha WHERE body @@ ts_phrase('CHANGED');
+----
+id
+2
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_alpha WHERE body @@ ts_phrase('alpha seed two');
+----
+count
+0
+
+# id=3 deleted.
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_alpha WHERE body @@ ts_phrase('alpha seed three');
+----
+count
+0
+
+# id=4 → 40 (PK update, body preserved via saved_columns).
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_alpha WHERE id = 4;
+----
+count
+0
+
+connection mt_after
+query
+SELECT id FROM mt_alpha WHERE id = 40;
+----
+id
+40
+
+connection mt_after
+query
+SELECT id FROM mt_alpha WHERE body @@ ts_phrase('alpha added four');
+----
+id
+40
+
+connection mt_after
+query
+SELECT id FROM mt_alpha WHERE body @@ ts_phrase('alpha added five');
+----
+id
+5
+
+# id=1 still there, only score changed.
+connection mt_after
+query
+SELECT id FROM mt_alpha WHERE body @@ ts_phrase('alpha seed one');
+----
+id
+1
+
+# === mt_beta: started 1,2; added 3,4,5; deleted 1; updated 2 body.
+# Final: 4 rows (2, 3, 4, 5).
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_beta;
+----
+count
+4
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_beta_inv;
+----
+count
+4
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_beta WHERE body @@ ts_phrase('beta seed one');
+----
+count
+0
+
+connection mt_after
+query
+SELECT id FROM mt_beta WHERE body @@ ts_phrase('CHANGED');
+----
+id
+2
+
+connection mt_after
+query
+SELECT id FROM mt_beta WHERE body @@ ts_phrase('beta added three');
+----
+id
+3
+
+connection mt_after
+query
+SELECT id FROM mt_beta WHERE body @@ ts_phrase('beta added four');
+----
+id
+4
+
+connection mt_after
+query
+SELECT id FROM mt_beta WHERE body @@ ts_phrase('beta added five');
+----
+id
+5
+
+# === mt_epsilon: untouched after VACUUM, must be unchanged.
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_epsilon;
+----
+count
+2
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_epsilon_inv;
+----
+count
+2
+
+connection mt_after
+query
+SELECT id FROM mt_epsilon WHERE body @@ ts_phrase('epsilon untouched one');
+----
+id
+1
+
+connection mt_after
+query
+SELECT id FROM mt_epsilon WHERE body @@ ts_phrase('epsilon untouched two');
+----
+id
+2
+
+# === mt_gamma & mt_delta: no inverted index. Just sanity-check rocksdb
+#     reflects the writes (i.e., regular WAL replay still works).
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_gamma;
+----
+count
+5
+
+connection mt_after
+query
+SELECT COUNT(*) FROM mt_delta;
+----
+count
+42

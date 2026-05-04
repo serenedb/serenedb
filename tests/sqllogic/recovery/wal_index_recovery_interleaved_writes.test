@@ -1,0 +1,254 @@
+control substitution on
+
+# Inverted-indexed writes appear at different positions of the WAL window:
+#   - some at the very start (right after fault is enabled)
+#   - some in the middle (surrounded by writes to non-indexed tables)
+#   - some at the very end (right before crash_on_packet)
+# Recovery must pick up all of them regardless of position, while ignoring
+# the surrounding non-indexed-table noise.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY iw_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE iw_idx_t(id INTEGER PRIMARY KEY, body TEXT);
+
+# Non-indexed tables of varying widths to surround the indexed writes.
+statement ok
+CREATE TABLE iw_noise_a(id INTEGER PRIMARY KEY, payload TEXT);
+
+statement ok
+CREATE TABLE iw_noise_b(id INTEGER PRIMARY KEY, x INTEGER, y INTEGER, z INTEGER);
+
+statement ok
+CREATE TABLE iw_noise_c(id INTEGER PRIMARY KEY, name TEXT, tag TEXT);
+
+statement ok
+INSERT INTO iw_idx_t VALUES (1, 'pre seed one'), (2, 'pre seed two');
+
+statement ok
+CREATE INDEX iw_idx ON iw_idx_t USING inverted(id, body iw_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) iw_idx_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# === START of WAL window: indexed writes first ===
+statement ok
+INSERT INTO iw_idx_t VALUES
+  (10, 'start_pos token_a'),
+  (11, 'start_pos token_b'),
+  (12, 'start_pos token_c');
+
+statement ok
+UPDATE iw_idx_t SET body = 'pre UPDATED two' WHERE id = 2;
+
+# === Then a wall of non-indexed noise ===
+statement ok
+INSERT INTO iw_noise_a SELECT i, 'noise_a_' || i FROM range(0, 500) AS t(i);
+
+statement ok
+INSERT INTO iw_noise_b SELECT i, i, i*2, i*3 FROM range(0, 500) AS t(i);
+
+statement ok
+UPDATE iw_noise_a SET payload = payload || '_x' WHERE id < 100;
+
+statement ok
+DELETE FROM iw_noise_b WHERE x >= 400;
+
+# === MIDDLE: indexed writes again, surrounded by more noise ===
+statement ok
+INSERT INTO iw_noise_c SELECT i, 'name_' || i, 'tag_' || (i % 7) FROM range(0, 300) AS t(i);
+
+statement ok
+INSERT INTO iw_idx_t VALUES
+  (20, 'mid_pos token_a'),
+  (21, 'mid_pos token_b'),
+  (22, 'mid_pos token_c'),
+  (23, 'mid_pos token_d');
+
+statement ok
+DELETE FROM iw_idx_t WHERE id = 1;
+
+statement ok
+UPDATE iw_noise_c SET tag = 'updated_tag' WHERE id < 50;
+
+statement ok
+INSERT INTO iw_noise_a VALUES
+  (10000, 'noise_a_tail_1'),
+  (10001, 'noise_a_tail_2'),
+  (10002, 'noise_a_tail_3');
+
+statement ok
+UPDATE iw_idx_t SET body = 'mid_pos token_b CHANGED' WHERE id = 21;
+
+# === Even more non-indexed noise ===
+statement ok
+DELETE FROM iw_noise_a WHERE id >= 200 AND id < 300;
+
+statement ok
+UPDATE iw_noise_b SET y = y + 1000 WHERE x < 50;
+
+statement ok
+INSERT INTO iw_noise_b VALUES (99999, 1, 2, 3);
+
+# === END of WAL window: indexed writes right before crash ===
+statement ok
+INSERT INTO iw_idx_t VALUES
+  (30, 'end_pos token_a'),
+  (31, 'end_pos token_b');
+
+statement ok
+UPDATE iw_idx_t SET body = 'end_pos token_a CHANGED' WHERE id = 30;
+
+statement ok
+DELETE FROM iw_idx_t WHERE id = 11;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection iw_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) iw_idx_t;
+
+# Final pks in iw_idx_t:
+#  pre seeds: 1 was deleted, 2 updated → kept as id=2
+#  start: 10, 12 (id=11 deleted at end), id=12 unchanged
+#  mid:   20, 21 (updated), 22, 23
+#  end:   30 (updated), 31
+# Total: 2, 10, 12, 20, 21, 22, 23, 30, 31  → 9 rows
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_idx_t;
+----
+count
+9
+
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_idx;
+----
+count
+9
+
+# === Pre-fault rows ===
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_idx_t WHERE body @@ ts_phrase('pre seed one');
+----
+count
+0
+
+connection iw_after
+query
+SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('UPDATED');
+----
+id
+2
+
+# === START position rows ===
+connection iw_after
+query
+SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('start_pos') ORDER BY id;
+----
+id
+10
+12
+
+connection iw_after
+query
+SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('token_a') ORDER BY id;
+----
+id
+10
+20
+30
+
+# === MIDDLE position rows ===
+# id=21 was UPDATEd to 'mid_pos token_b CHANGED' — still contains the
+# 'mid_pos' token, so it still matches.
+connection iw_after
+query
+SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('mid_pos') ORDER BY id;
+----
+id
+20
+21
+22
+23
+
+# 21 had its mid_pos token replaced by 'mid_pos token_b CHANGED' so still
+# matches mid_pos and additionally CHANGED.
+connection iw_after
+query
+SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('CHANGED') ORDER BY id;
+----
+id
+21
+30
+
+# === END position rows ===
+connection iw_after
+query
+SELECT id FROM iw_idx_t WHERE body @@ ts_phrase('end_pos') ORDER BY id;
+----
+id
+30
+31
+
+# id=30 token_a got CHANGED via update; old 'end_pos token_a' still in
+# token form because UPDATE only changed body to 'end_pos token_a CHANGED'
+# which still contains 'end_pos' and 'token_a' tokens. The row count is
+# still 30,31 → 2.
+
+# === Deleted rows ===
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_idx_t WHERE id = 1;
+----
+count
+0
+
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_idx_t WHERE id = 11;
+----
+count
+0
+
+# === Non-indexed tables — final rocksdb state, sanity only ===
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_noise_a;
+----
+count
+403
+
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_noise_b;
+----
+count
+401
+
+connection iw_after
+query
+SELECT COUNT(*) FROM iw_noise_c;
+----
+count
+300

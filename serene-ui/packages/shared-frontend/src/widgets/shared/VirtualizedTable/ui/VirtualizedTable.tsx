@@ -8,6 +8,7 @@ import { useResizeObserver } from "@serene-ui/shared-frontend/shared";
 import {
     SORT_BUTTON_SIZE,
     TABLE_HEADER_HEIGHT,
+    TABLE_MAX_COLUMN_WIDTH,
     TABLE_ROW_HEIGHT,
     type SortDirection,
     useVirtualizedTableCellRenderer,
@@ -143,6 +144,8 @@ export const VirtualizedTable = ({
                         onColumnResize={tableData.handleColumnResize}
                         getRowThemeOverride={tableData.getRowThemeOverride}
                         minColumnWidth={tableData.minimumColumnWidth}
+                        maxColumnWidth={TABLE_MAX_COLUMN_WIDTH}
+                        maxColumnAutoWidth={TABLE_MAX_COLUMN_WIDTH}
                         freezeColumns={1}
                         smoothScrollX
                         smoothScrollY

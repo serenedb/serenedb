@@ -44,6 +44,7 @@
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
+#include <iresearch/analysis/wildcard_analyzer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <type_traits>
@@ -63,7 +64,7 @@
 namespace sdb::pg {
 namespace {
 
-inline constexpr std::string_view kAnalyzerField = "analyzer";
+inline constexpr std::string_view kTokenizerField = "tokenizer";
 inline constexpr std::string_view kPropertiesField = "properties";
 inline constexpr std::string_view kTypeField = "type";
 
@@ -149,11 +150,11 @@ class CreateTSDictionaryOptions : public OptionsParser {
       _current_schema{current_schema} {
     ParseOptions([&] {
       _builder.openObject();
-      _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+      _builder.add(kTokenizerField, vpack::Value{vpack::ValueType::Object});
       const auto type =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>();
       Parse<true>(type);
-      _builder.close();  // close analyzer
+      _builder.close();  // close tokenizer
       _builder.close();  // close object
     });
   }
@@ -239,7 +240,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (!OptionsParser::HasOption(Info.name, prefix)) {
       std::string_view name = Info.name;
       // tokenizer's properties vpack does not contains its type
-      // tokenizer: {"analyzer": {"type" : "some", "properties": {...}}}
+      // tokenizer: {"tokenizer": {"type" : "some", "properties": {...}}}
       SDB_ASSERT(name != tokenizer_options::kTemplate.name);
       auto value = GetFromCopy<R>(name, prefix);
       if (value) {
@@ -334,6 +335,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
       return;
     } else if constexpr (Group.name == tokenizer_options::kCopyFromGroup.name) {
       ParseCopyFrom(prefix);
+      return;
+    } else if constexpr (Group.name == tokenizer_options::kWildcardGroup.name) {
+      ParseWildcard(prefix);
       return;
     } else {
       if constexpr (Group.name == tokenizer_options::kTextGroup.name) {
@@ -455,7 +459,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseMinHash(std::string_view prefix) {
-    auto tokenizer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
+    auto tokenizer_prefix = OptionInfo::AdjustPrefix(prefix, kTokenizerField);
     std::string type;
     bool type_from_template = false;
     if (OptionsParser::HasOption(tokenizer_options::kTemplate,
@@ -465,16 +469,16 @@ class CreateTSDictionaryOptions : public OptionsParser {
         tokenizer_prefix);
     } else {
       SDB_ASSERT(!_copy_from.empty());
-      auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
+      auto slice = GetFromPath(kTokenizerField, prefix, _copy_from.back().first,
                                _copy_from.back().second);
       type = slice.get(kTypeField).stringView();
       _copy_from.emplace_back(tokenizer_prefix, slice.get(kPropertiesField));
       type_from_template = true;
     }
     SDB_ASSERT(!type.empty());
-    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
+    _builder.add(kTokenizerField, vpack::Value{vpack::ValueType::Object});
     Parse<false>(type, tokenizer_prefix);
-    _builder.close();  // close analyzer
+    _builder.close();  // close tokenizer
     if (type_from_template) {
       _copy_from.pop_back();
     }
@@ -483,26 +487,26 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseWildcard(std::string_view prefix) {
-    auto analyzer_prefix = OptionInfo::AdjustPrefix(prefix, kAnalyzerField);
+    auto tokenizer_prefix = OptionInfo::AdjustPrefix(prefix, kTokenizerField);
     std::string type;
     bool type_from_template = false;
     if (OptionsParser::HasOption(tokenizer_options::kTemplate,
-                                 analyzer_prefix) ||
+                                 tokenizer_prefix) ||
         _copy_from.empty()) {
       type = OptionsParser::EraseOptionOrDefault<tokenizer_options::kTemplate>(
-        analyzer_prefix);
+        tokenizer_prefix);
     } else {
       SDB_ASSERT(!_copy_from.empty());
-      auto slice = GetFromPath(kAnalyzerField, prefix, _copy_from.back().first,
+      auto slice = GetFromPath(kTokenizerField, prefix, _copy_from.back().first,
                                _copy_from.back().second);
       type = slice.get(kTypeField).stringView();
-      _copy_from.emplace_back(analyzer_prefix, slice.get(kPropertiesField));
+      _copy_from.emplace_back(tokenizer_prefix, slice.get(kPropertiesField));
       type_from_template = true;
     }
     SDB_ASSERT(!type.empty());
-    _builder.add(kAnalyzerField, vpack::Value{vpack::ValueType::Object});
-    Parse<false>(type, analyzer_prefix);
-    _builder.close();  // close analyzer
+    _builder.add(kTokenizerField, vpack::Value{vpack::ValueType::Object});
+    Parse<false>(type, tokenizer_prefix);
+    _builder.close();
     if (type_from_template) {
       _copy_from.pop_back();
     }
@@ -633,7 +637,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", from, "\" does not exist"));
     }
-    auto slice = tokenizer->Slice().get(kAnalyzerField);
+    auto slice = tokenizer->Slice().get(kTokenizerField);
 
     auto type = slice.get(kTypeField);
     _copy_from.emplace_back(prefix, slice.get(kPropertiesField));
@@ -678,11 +682,11 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
                                    snapshot, db_id, current_schema, options})
                          .Result();
 
-  // Validate analyzer/tokenizer configuration
-  auto analyzer_slice = b.slice().get(kAnalyzerField);
-  if (!analyzer_slice.isNone()) {
-    auto type_slice = analyzer_slice.get(kTypeField);
-    auto properties_slice = analyzer_slice.get(kPropertiesField);
+  // Validate tokenizer configuration
+  auto tokenizer_slice = b.slice().get(kTokenizerField);
+  if (!tokenizer_slice.isNone()) {
+    auto type_slice = tokenizer_slice.get(kTypeField);
+    auto properties_slice = tokenizer_slice.get(kPropertiesField);
     if (!type_slice.isNone() && !properties_slice.isNone()) {
       std::string dummy_output;
       if (!irs::analysis::analyzers::Normalize(

@@ -8,6 +8,18 @@ add_library(
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
     search_filter_builder.cpp
+    ts_anyall.cpp
+    ts_compound.cpp
+    ts_levenshtein.cpp
+    ts_like.cpp
+    ts_ngram.cpp
+    ts_phrase.cpp
+    ts_prefix.cpp
+    ts_between.cpp
+    ts_regexp.cpp
+    ts_term.cpp
+    ts_tokenize.cpp
+    ts_to_tsquery.cpp
     search_filter_printer.cpp
     duckdb_ann_filter.cpp
     duckdb_client_state.cpp
@@ -33,10 +45,8 @@ add_library(
     duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
-    rocksdb_row_materializer.cpp
-    parquet_row_materializer.cpp
-    counter_row_materializer.cpp
-    row_materializer.cpp
+    lookup.cpp
+    rocksdb_lookup.cpp
     duckdb_copy_filesystem.cpp
     duckdb_physical_insert.cpp
     duckdb_physical_sst_insert.cpp

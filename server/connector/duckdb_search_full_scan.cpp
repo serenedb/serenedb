@@ -45,7 +45,7 @@
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/key_utils.hpp"
-#include "connector/rocksdb_row_materializer.h"
+#include "connector/lookup.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_pk_lookup.h"
 #include "connector/search_remove_filter.hpp"
@@ -228,29 +228,9 @@ static void SearchScanMaterialize(duckdb::ClientContext& context,
     }
   }
 
-  // Real columns: delegate to the storage-specific materializer.
-  //
-  // Unlike ann/range scans which eagerly collect ALL pks in InitGlobal,
-  // full_scan's iresearch loop interleaves scoring / offsets work per
-  // batch, so we only know THIS batch's pks here. The materializer is
-  // built fresh each call with this batch's pks as `all_pks`. RocksDB
-  // doesn't care (stateless per batch). Parquet / CSV pay a per-batch
-  // re-init cost; a cleaner fix would fold the whole scoring+offsets
-  // loop into InitGlobal too, but that's a separate refactor.
-  //
-  // NOTE: preserves existing behavior of reading without a snapshot
-  // (pre-refactor SearchScanMaterialize did not set ro.snapshot; the
-  // ANN / range paths do).
-  std::vector<std::string> pk_storage_owned;
-  pk_storage_owned.reserve(pk_bytes.size());
-  for (auto pk : pk_bytes) {
-    pk_storage_owned.emplace_back(pk);
-  }
-  auto materializer =
-    MakeRowMaterializer(context, bind_data, /*snapshot=*/nullptr,
-                        pk_storage_owned, gstate.projected_columns,
-                        gstate.projected_types, bind_data.column_ids, nullptr);
-  materializer->Materialize(pk_bytes, output);
+  LookupRows(context, bind_data, /*snapshot=*/nullptr, gstate.projected_columns,
+             gstate.projected_types, bind_data.column_ids, /*txn=*/nullptr,
+             pk_bytes, gstate.file_lookup_session, output);
 
   output.SetCardinality(num_rows);
 }

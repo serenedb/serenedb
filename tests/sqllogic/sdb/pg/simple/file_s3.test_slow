@@ -283,3 +283,7 @@ WHERE iq > 90;
 ----
 count
 10000
+
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

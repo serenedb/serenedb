@@ -1,0 +1,111 @@
+control substitution on
+
+# WAL index recovery: UPDATE handling
+#
+# UPDATE in the WAL appears as Put(changed cols only) — the online update
+# sink does Delete(pk) + Insert(updated cols). Recovery must mirror that:
+# a row with any Put should have its old document removed and the new cells
+# re-inserted.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY upd_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_upd_t(a INTEGER PRIMARY KEY, b TEXT);
+
+statement ok
+INSERT INTO wal_upd_t VALUES
+  (1, 'old cat'),
+  (2, 'old dog'),
+  (3, 'old fish');
+
+statement ok
+CREATE INDEX wal_upd_idx ON wal_upd_t USING inverted(a, b upd_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_upd_t;
+
+query
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
+----
+a
+1
+
+# Block iresearch commit, then mutate the rows
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+UPDATE wal_upd_t SET b = 'new tiger' WHERE a = 1;
+
+statement ok
+UPDATE wal_upd_t SET b = 'new wolf' WHERE a = 2;
+
+# a=3 left alone
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection upd_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_upd_t;
+
+# Old values for updated rows must be gone
+connection upd_after
+query
+SELECT COUNT(*) FROM wal_upd_idx WHERE b @@ ts_phrase('old cat');
+----
+count
+0
+
+connection upd_after
+query
+SELECT COUNT(*) FROM wal_upd_idx WHERE b @@ ts_phrase('old dog');
+----
+count
+0
+
+# New values searchable
+connection upd_after
+query
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('new tiger');
+----
+a
+1
+
+connection upd_after
+query
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('new wolf');
+----
+a
+2
+
+# Untouched row survived unchanged
+connection upd_after
+query
+SELECT a FROM wal_upd_idx WHERE b @@ ts_phrase('old fish');
+----
+a
+3
+
+connection upd_after
+query
+SELECT a, b FROM wal_upd_t ORDER BY a;
+----
+a	b
+1	new tiger
+2	new wolf
+3	old fish

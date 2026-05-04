@@ -104,7 +104,7 @@ count
 
 
 query
-SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'the');
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('the');
 ----
 count
 3750
@@ -113,7 +113,7 @@ count
 # topk=100, verify count matches expected top-100
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'the') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 100
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('the') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 100
 ) t;
 ----
 count
@@ -129,7 +129,7 @@ count
 
 # -- Term query: "university" --
 query
-SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'university');
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('university');
 ----
 count
 1050
@@ -137,7 +137,7 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'university') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 10
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('university') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 10
 ) t;
 ----
 count
@@ -153,7 +153,7 @@ count
 
 
 query
-SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'washington');
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('washington');
 ----
 count
 800
@@ -168,7 +168,7 @@ count
 
 
 query
-SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'summit');
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('summit');
 ----
 count
 1050
@@ -183,7 +183,7 @@ count
 
 
 query
-SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'griffith observatory');
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('griffith observatory');
 ----
 count
 250
@@ -192,7 +192,7 @@ count
 # Compare topk result IDs with full scan + limit
 # Full scan path
 query
-SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 10;
+SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 10;
 ----
 id
 2
@@ -216,7 +216,7 @@ count
 
 
 query
-SELECT COUNT(*) FROM wiki_topk_idx WHERE PHRASE(body, 'french culinary institute');
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('french culinary institute');
 ----
 count
 250
@@ -224,7 +224,7 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 20
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 20
 ) t;
 ----
 count
@@ -233,7 +233,7 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 1
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 1
 ) t;
 ----
 count
@@ -242,7 +242,7 @@ count
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 500
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 500
 ) t;
 ----
 count
@@ -253,7 +253,7 @@ query
 SELECT COUNT(*) FROM (
   SELECT id, BM25(wiki_topk_idx.tableoid) AS score, ROW_NUMBER() OVER (ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id) AS rn
   FROM wiki_topk_idx
-  WHERE PHRASE(body, 'university')
+  WHERE body @@ ts_phrase('university')
   ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id
   LIMIT 100
 ) t;
@@ -265,7 +265,7 @@ count
 # -- Verify exact match between topk and full scan for a specific query --
 # Full scan reference
 query
-SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
+SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 id
 4
@@ -276,7 +276,7 @@ id
 
 
 query
-SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
+SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
 ----
 id
 4
@@ -288,7 +288,7 @@ id
 
 query
 SELECT COUNT(*) FROM (
-  SELECT id FROM wiki_topk_idx WHERE PHRASE(body, 'griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC
 ) t;
 ----
 count

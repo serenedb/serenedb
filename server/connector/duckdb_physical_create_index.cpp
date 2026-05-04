@@ -99,7 +99,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
 
   bool is_external = false;
-  bool has_row_number_col = false;
   duckdb::idx_t file_row_number_col_idx = 0;
   int64_t external_row_counter = 0;
   bool has_generated_pk_col = false;
@@ -288,10 +287,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
   state->is_external = _table->GetTableType() == TableType::File;
-  state->has_row_number_col = IsParquetExternalTable(*_table);
-  // For parquet, BindCreateIndex appends file_row_number as the trailing
-  // column; for CSV/JSON no trailing column exists and the sink uses a
-  // counter.
   state->file_row_number_col_idx = columns.size();
   state->has_generated_pk_col =
     !state->is_external && _table->PKColumns().empty();
@@ -363,7 +358,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     // Final layout: [ObjectId(8)][ColumnId(4, filled later)][PK(8)].
     std::memcpy(key.data(), gstate.table_key.data(), sizeof(ObjectId));
   };
-  if (gstate.is_external && gstate.has_row_number_col) {
+  if (gstate.is_external) {
     SDB_ASSERT(gstate.file_row_number_col_idx < chunk.ColumnCount());
     auto& rownum_vec = chunk.data[gstate.file_row_number_col_idx];
     rownum_vec.Flatten(num_rows);

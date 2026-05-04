@@ -1,0 +1,116 @@
+control substitution on
+
+# Unicode-heavy text: cyrillic / greek / chinese / emoji. Tokenizer should
+# handle multi-byte UTF-8 across recovery just like normal ASCII.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY uni_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE uni_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO uni_t VALUES
+  (1, 'привет мир'),
+  (2, 'γειά σου κόσμε');
+
+statement ok
+CREATE INDEX uni_idx ON uni_t USING inverted(id, body uni_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) uni_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO uni_t VALUES
+  (3, '你好世界'),
+  (4, 'こんにちは世界'),
+  (5, 'مرحبا بالعالم'),
+  (6, 'hello 🦀 rust 🚀 ferris');
+
+statement ok
+DELETE FROM uni_t WHERE id = 1;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection uni_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) uni_t;
+
+connection uni_after
+query
+SELECT COUNT(*) FROM uni_t;
+----
+count
+5
+
+# Cyrillic — still indexed (was deleted).
+connection uni_after
+query
+SELECT COUNT(*) FROM uni_t WHERE body @@ ts_phrase('мир');
+----
+count
+0
+
+# Greek (untouched seed).
+connection uni_after
+query
+SELECT id FROM uni_t WHERE body @@ ts_phrase('κόσμε');
+----
+id
+2
+
+# Chinese (added post-fault).
+connection uni_after
+query
+SELECT id FROM uni_t WHERE body @@ ts_phrase('你好世界');
+----
+id
+3
+
+# Japanese.
+connection uni_after
+query
+SELECT id FROM uni_t WHERE body @@ ts_phrase('こんにちは世界');
+----
+id
+4
+
+# Arabic.
+connection uni_after
+query
+SELECT id FROM uni_t WHERE body @@ ts_phrase('مرحبا');
+----
+id
+5
+
+# Emoji + ascii.
+connection uni_after
+query
+SELECT id FROM uni_t WHERE body @@ ts_phrase('rust');
+----
+id
+6
+
+connection uni_after
+query
+SELECT id FROM uni_t WHERE body @@ ts_phrase('ferris');
+----
+id
+6

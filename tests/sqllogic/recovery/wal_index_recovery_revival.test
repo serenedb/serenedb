@@ -1,0 +1,152 @@
+control substitution on
+
+# pk reuse / "revival" within one WAL window:
+#   pk=K is INSERTed (committed), then DELETEd, then re-INSERTed with
+#   different content — all post fault, before crash. Recovery must end up
+#   with the LAST insert's content, no trace of the original.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rv_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE rv_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO rv_t VALUES
+  (1, 'persistent untouched'),
+  (2, 'first life of two'),
+  (3, 'first life of three'),
+  (4, 'first life of four');
+
+statement ok
+CREATE INDEX rv_idx ON rv_t USING inverted(id, body rv_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) rv_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Scenario A: pk=2 — delete then re-insert with new content (revival).
+statement ok
+DELETE FROM rv_t WHERE id = 2;
+
+statement ok
+INSERT INTO rv_t VALUES (2, 'second life of two');
+
+# Scenario B: pk=3 — delete + re-insert + delete + re-insert again.
+statement ok
+DELETE FROM rv_t WHERE id = 3;
+
+statement ok
+INSERT INTO rv_t VALUES (3, 'temp life of three');
+
+statement ok
+DELETE FROM rv_t WHERE id = 3;
+
+statement ok
+INSERT INTO rv_t VALUES (3, 'final life of three');
+
+# Scenario C: pk=4 — insert, delete, no revival.
+statement ok
+DELETE FROM rv_t WHERE id = 4;
+
+# Brand-new pk=5 in same window — sanity for normal new insert.
+statement ok
+INSERT INTO rv_t VALUES (5, 'born after fault');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection rv_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) rv_t;
+
+# pk=1 untouched
+connection rv_after
+query
+SELECT id FROM rv_t WHERE body @@ ts_phrase('persistent');
+----
+id
+1
+
+# pk=2: original gone, second life present
+connection rv_after
+query
+SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('first life of two');
+----
+count
+0
+
+connection rv_after
+query
+SELECT id FROM rv_t WHERE body @@ ts_phrase('second life');
+----
+id
+2
+
+# pk=3: original gone, intermediate gone, final present
+connection rv_after
+query
+SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('first life of three');
+----
+count
+0
+
+connection rv_after
+query
+SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('temp life');
+----
+count
+0
+
+connection rv_after
+query
+SELECT id FROM rv_t WHERE body @@ ts_phrase('final life of three');
+----
+id
+3
+
+# pk=4: gone (insert+delete cancels)
+connection rv_after
+query
+SELECT COUNT(*) FROM rv_t WHERE id = 4;
+----
+count
+0
+
+connection rv_after
+query
+SELECT COUNT(*) FROM rv_t WHERE body @@ ts_phrase('first life of four');
+----
+count
+0
+
+# pk=5: brand new
+connection rv_after
+query
+SELECT id FROM rv_t WHERE body @@ ts_phrase('born after fault');
+----
+id
+5
+
+# Final row count: 1, 2, 3, 5 = 4 rows.
+connection rv_after
+query
+SELECT COUNT(*) FROM rv_t;
+----
+count
+4

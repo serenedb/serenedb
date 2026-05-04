@@ -3,6 +3,7 @@ import {
     forwardRef,
     useCallback,
     type HTMLAttributes,
+    type KeyboardEvent,
     type ReactElement,
 } from "react";
 import { NodeApi, Tree } from "react-arborist";
@@ -15,12 +16,23 @@ import type {
 } from "../model";
 import { ExplorerNode } from "./ExplorerNode";
 import { ExplorerProvider, useExplorer } from "../model/ExplorerProvider";
-import { Skeleton, useResizeObserver } from "@serene-ui/shared-frontend/shared";
+import {
+    activateSidebarPrimaryAction,
+    focusSidebarElement,
+    focusSidebarItemByFocusId,
+    focusSidebarRelativeItem,
+    handleSidebarSectionHotkey,
+    restoreSidebarFocusById,
+    focusSidebarSectionHeader,
+    Skeleton,
+    useResizeObserver,
+} from "@serene-ui/shared-frontend/shared";
 
 interface ExplorerProps extends ExplorerPinningOptions {
     initialData: ExplorerNodeData[];
     searchTerm?: string;
     isDataFetched?: boolean;
+    sidebarSectionId?: string;
 }
 
 const EXPLORER_DND_MANAGER_KEY = "__SERENE_EXPLORER_DND_MANAGER__";
@@ -34,7 +46,7 @@ const explorerDndManager =
         createDragDropManager(HTML5Backend));
 
 const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
-    ({ initialData, searchTerm, isDataFetched }, ref) => {
+    ({ initialData, searchTerm, isDataFetched, sidebarSectionId }, ref) => {
         const { ref: resizeRef, size } = useResizeObserver();
         const { treeRef, currentTree, setCurrentTree } = useExplorer();
 
@@ -85,7 +97,12 @@ const WrappedExplorer = forwardRef<HTMLDivElement, ExplorerProps>(
                         className="scrollbar fade-in"
                         searchTerm={searchTerm}
                         indent={8}
-                        renderRow={Row}
+                        renderRow={(props) => (
+                            <Row
+                                {...props}
+                                sidebarSectionId={sidebarSectionId}
+                            />
+                        )}
                         width={size.width}
                         height={size.height}
                         rowHeight={28}
@@ -106,6 +123,7 @@ export const Explorer = forwardRef<HTMLDivElement, ExplorerProps>(
             initialData,
             searchTerm,
             isDataFetched,
+            sidebarSectionId,
             enablePinning,
             isNodePinned,
             onTogglePinned,
@@ -122,6 +140,7 @@ export const Explorer = forwardRef<HTMLDivElement, ExplorerProps>(
                     initialData={initialData}
                     searchTerm={searchTerm}
                     isDataFetched={isDataFetched}
+                    sidebarSectionId={sidebarSectionId}
                 />
             </ExplorerProvider>
         );
@@ -137,31 +156,127 @@ export const Row = ({
     node,
     innerRef,
     attrs,
+    sidebarSectionId,
 }: {
     node: NodeApi<ExplorerNodeData>;
     innerRef: (el: HTMLDivElement | null) => void;
     attrs: HTMLAttributes<any>;
     children: ReactElement;
+    sidebarSectionId?: string;
 }) => {
+    const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+        if (handleSidebarSectionHotkey(e)) {
+            return;
+        }
+
+        if (e.target !== e.currentTarget) {
+            return;
+        }
+
+        const currentElement = e.currentTarget;
+        const currentFocusId = currentElement.dataset.sidebarFocusId;
+        const isNextItemKey =
+            e.key === "ArrowDown" || e.key.toLowerCase() === "j";
+        const isPreviousItemKey =
+            e.key === "ArrowUp" || e.key.toLowerCase() === "k";
+        const isExpandKey =
+            e.key === "ArrowRight" || e.key.toLowerCase() === "l";
+        const isCollapseKey =
+            e.key === "ArrowLeft" || e.key.toLowerCase() === "h";
+
+        if (e.key === "Escape") {
+            currentElement.blur();
+            return;
+        }
+
+        if (isNextItemKey || isPreviousItemKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            focusSidebarRelativeItem(
+                currentElement,
+                isNextItemKey ? "next" : "previous",
+            );
+            return;
+        }
+
+        if (e.key === "Enter") {
+            e.preventDefault();
+            e.stopPropagation();
+            activateSidebarPrimaryAction(currentElement);
+
+            if (currentFocusId) {
+                restoreSidebarFocusById(currentFocusId);
+            }
+            return;
+        }
+
+        if (isExpandKey) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            if (node.isOpen) {
+                focusSidebarRelativeItem(currentElement, "next");
+                return;
+            }
+
+            activateSidebarPrimaryAction(currentElement);
+
+            if (currentFocusId) {
+                restoreSidebarFocusById(currentFocusId);
+            }
+            return;
+        }
+
+        if (!isCollapseKey) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (node.isOpen) {
+            activateSidebarPrimaryAction(currentElement);
+
+            if (currentFocusId) {
+                restoreSidebarFocusById(currentFocusId);
+            }
+            return;
+        }
+
+        if (
+            sidebarSectionId &&
+            node.data.parentId &&
+            focusSidebarItemByFocusId(
+                `${sidebarSectionId}:${node.data.parentId}`,
+                { shouldScrollIntoView: true },
+            )
+        ) {
+            return;
+        }
+
+        focusSidebarSectionHeader(currentElement);
+    };
+
     return (
         <div
             {...attrs}
             className="focus:outline-none focus:bg-accent hover:bg-accent/100"
             tabIndex={0}
             ref={innerRef}
-            onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                    e.currentTarget.blur();
-                } else if (["Enter", "ArrowRight"].includes(e.key)) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const button = e.currentTarget.querySelector("button");
-                    if (button) {
-                        button.click();
-                    }
+            data-sidebar-focus-id={
+                sidebarSectionId ? `${sidebarSectionId}:${node.id}` : undefined
+            }
+            data-sidebar-section-id={sidebarSectionId}
+            onKeyDown={handleKeyDown}
+            onClick={(event) => {
+                const currentFocusId = event.currentTarget.dataset.sidebarFocusId;
+                focusSidebarElement(event.currentTarget);
+                node.handleClick(event);
+
+                if (currentFocusId) {
+                    restoreSidebarFocusById(currentFocusId);
                 }
-            }}
-            onClick={node.handleClick}>
+            }}>
             {children}
         </div>
     );

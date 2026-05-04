@@ -18,6 +18,10 @@ const STATEMENT_DECORATION_CLASSES = [
 ];
 
 type PGSQLEditorHighlightVariant = "default" | "success" | "warning" | "error";
+type ExecuteQueryMode =
+    | "sequential"
+    | "sequentialIgnoreErrors"
+    | "transaction";
 
 interface PGSQLEditorHighlightRange {
     startOffset: number;
@@ -29,8 +33,8 @@ interface PGSQLEditorProps {
     value?: string;
     onChange?: (value: string) => void;
     readOnly?: boolean;
-    onExecute?: (mode: "sequential" | "transaction") => void;
-    onExecuteInNewTab?: (mode?: "sequential" | "transaction") => void;
+    onExecute?: (mode: ExecuteQueryMode) => void;
+    onExecuteInNewTab?: (mode?: ExecuteQueryMode) => void;
     autocompleteEnabled?: boolean;
     autocomplete?: {
         tables: string[];

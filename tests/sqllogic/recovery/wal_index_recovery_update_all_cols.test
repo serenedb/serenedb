@@ -1,0 +1,199 @@
+control substitution on
+
+# UPDATE that touches ALL non-PK columns. Online path writes Put for each
+# updated col to rocksdb; all indexed cells are seen by recovery → no
+# Get-fallback needed (just like INSERT). Plus a PK-update variant where
+# the entire row moves to a new pk with all columns set explicitly.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ua_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ua_t(id INTEGER PRIMARY KEY, a TEXT, b TEXT, c TEXT);
+
+statement ok
+INSERT INTO ua_t VALUES
+  (1, 'a_one',   'b_one',   'c_one'),
+  (2, 'a_two',   'b_two',   'c_two'),
+  (3, 'a_three', 'b_three', 'c_three');
+
+statement ok
+CREATE INDEX ua_idx ON ua_t
+  USING inverted(id, a ua_dict, b ua_dict, c ua_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ua_t;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Case A: update ALL non-PK columns at once on row 1.
+statement ok
+UPDATE ua_t SET a = 'A_NEW', b = 'B_NEW', c = 'C_NEW' WHERE id = 1;
+
+# Case B: PK update + all-cols update on row 2 (id 2 → 20).
+statement ok
+UPDATE ua_t SET id = 20, a = 'a_pk_new', b = 'b_pk_new', c = 'c_pk_new'
+  WHERE id = 2;
+
+# Case C: PK-only update on row 3 (everything else unchanged via saved_columns).
+statement ok
+UPDATE ua_t SET id = 30 WHERE id = 3;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ua_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) ua_t;
+
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t;
+----
+count
+3
+
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_idx;
+----
+count
+3
+
+# === Case A: row 1 still at pk=1 with all new tokens, no old tokens ===
+connection ua_after
+query
+SELECT id FROM ua_t WHERE a @@ ts_phrase('A_NEW');
+----
+id
+1
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE b @@ ts_phrase('B_NEW');
+----
+id
+1
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE c @@ ts_phrase('C_NEW');
+----
+id
+1
+
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t WHERE a @@ ts_phrase('a_one');
+----
+count
+0
+
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t WHERE b @@ ts_phrase('b_one');
+----
+count
+0
+
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t WHERE c @@ ts_phrase('c_one');
+----
+count
+0
+
+# === Case B: pk=2 gone, pk=20 has all new tokens ===
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t WHERE id = 2;
+----
+count
+0
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE id = 20;
+----
+id
+20
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE a @@ ts_phrase('a_pk_new');
+----
+id
+20
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE b @@ ts_phrase('b_pk_new');
+----
+id
+20
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE c @@ ts_phrase('c_pk_new');
+----
+id
+20
+
+# Old pk=2 tokens gone everywhere
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t WHERE a @@ ts_phrase('a_two');
+----
+count
+0
+
+# === Case C: pk=3 → 30, all original column values preserved via saved_columns ===
+connection ua_after
+query
+SELECT COUNT(*) FROM ua_t WHERE id = 3;
+----
+count
+0
+
+connection ua_after
+query
+SELECT id, a, b, c FROM ua_t WHERE id = 30;
+----
+id	a	b	c
+30	a_three	b_three	c_three
+
+# Original tokens for row 3 must STILL be searchable (via saved_columns path).
+connection ua_after
+query
+SELECT id FROM ua_t WHERE a @@ ts_phrase('a_three');
+----
+id
+30
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE b @@ ts_phrase('b_three');
+----
+id
+30
+
+connection ua_after
+query
+SELECT id FROM ua_t WHERE c @@ ts_phrase('c_three');
+----
+id
+30

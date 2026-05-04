@@ -608,7 +608,8 @@ struct SearchColumnContext {
   containers::FlatHashMap<catalog::Column::Id, duckdb::LogicalType>
     column_type_by_id;
   containers::FlatHashSet<catalog::Column::Id> indexed_column_ids;
-  std::function<catalog::ColumnAnalyzer(catalog::Column::Id)> analyzer_provider;
+  std::function<catalog::ColumnTokenizer(catalog::Column::Id)>
+    analyzer_provider;
 };
 
 connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
@@ -634,12 +635,13 @@ connector::ColumnGetter MakeColumnGetter(SearchColumnContext& ctx) {
     connector::SearchColumnInfo info;
     info.column_id = col_id;
     info.logical_type = type_it->second;
-    info.analyzer = ctx.analyzer_provider(col_id);
+    info.tokenizer = ctx.analyzer_provider(col_id);
     return info;
   };
 }
 
-bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                     const connector::SearchFilterOptions& options) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {
     return false;
   }
@@ -727,7 +729,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     const auto before = root->size();
     std::span<const duckdb::unique_ptr<duckdb::Expression>> single{
       &filter.expressions[i], 1};
-    auto result = connector::MakeSearchFilter(*root, single, getter);
+    auto result = connector::MakeSearchFilter(*root, single, getter, options);
     if (result.ok() && root->size() > before) {
       claimed_indices.push_back(i);
     } else {
@@ -1873,7 +1875,8 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
 //
 // We trigger at the AGGREGATE node (not the GET) because projection-pushdown
 // runs before our extension and may leave filter-only columns (e.g. `b` in
-// WHERE PHRASE(b,...)) in get.column_ids even after we claimed the filter.
+// WHERE b @@ ts_phrase(...)) in get.column_ids even after we claimed the
+// filter.
 // Detecting at aggregate level lets us verify the output shape is truly
 // "no columns needed" and then strip column_ids ourselves.
 // ---------------------------------------------------------------------------
@@ -1987,9 +1990,10 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // for BM25/TFIDF in projections.
   static bool TryOptimizePass1(
     duckdb::unique_ptr<duckdb::LogicalOperator>& root,
-    duckdb::unique_ptr<duckdb::LogicalOperator>& plan, int ef_search_override) {
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+    const connector::SearchFilterOptions& options) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-      if (TryAnnTopk(plan, ef_search_override)) {
+      if (TryAnnTopk(plan, options.ef_search_override)) {
         return true;
       }
       bool changed = TryAttachScoreTopK(plan);
@@ -2026,7 +2030,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       if (TryAnnRange(plan)) {
         return true;
       }
-      bool changed = TrySearchFilter(plan);
+      bool changed = TrySearchFilter(plan, options);
       // Simplify `BM25/TFIDF(tableoid) > 0` predicates to TRUE: a scorer's
       // value is always positive for matching docs, so the comparison adds
       // no filtering. This lets scorer selection stay controlled by the
@@ -2111,16 +2115,16 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // `plan` is the current node being visited.
   static bool Walk(duckdb::unique_ptr<duckdb::LogicalOperator>& root,
                    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
-                   bool in_mutation, int pass, int ef_search_override) {
+                   bool in_mutation, int pass,
+                   const connector::SearchFilterOptions& options) {
     const bool subtree_in_mutation = in_mutation || IsMutationOp(plan->type);
     bool changed = false;
     for (auto& child : plan->children) {
-      changed |=
-        Walk(root, child, subtree_in_mutation, pass, ef_search_override);
+      changed |= Walk(root, child, subtree_in_mutation, pass, options);
     }
     if (!subtree_in_mutation) {
       if (pass == 1) {
-        changed |= TryOptimizePass1(root, plan, ef_search_override);
+        changed |= TryOptimizePass1(root, plan, options);
       } else {
         changed |= TryOptimizePass2(root, plan);
       }
@@ -2156,20 +2160,22 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
     // Pass 2: pull top-K limits (now scorer is set) and rewrite
     // BM25/TFIDF in Filter/TopN ORDER BY contexts (bottom-up, so by
     // the time we visit Projection the scorer may already be set).
-    int ef_search_override = 0;
+    connector::SearchFilterOptions options{.client_context = input.context};
     {
       duckdb::Value v;
       if (input.context.TryGetCurrentSetting("sdb_ef_search", v) &&
           !v.IsNull()) {
-        ef_search_override = v.GetValue<int32_t>();
+        options.ef_search_override = v.GetValue<int32_t>();
+      }
+      if (input.context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
+          !v.IsNull()) {
+        options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
       }
     }
     bool changed =
-      TopDownAnnPass(plan, /*in_mutation=*/false, ef_search_override);
-    changed |=
-      Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, ef_search_override);
-    changed |=
-      Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, ef_search_override);
+      TopDownAnnPass(plan, /*in_mutation=*/false, options.ef_search_override);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/1, options);
+    changed |= Walk(plan, plan, /*in_mutation=*/false, /*pass=*/2, options);
 
     if (changed) {
       FlattenSwappedGets(*plan, plan);

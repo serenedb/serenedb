@@ -262,6 +262,14 @@ dv-tabs-container > .dv-tab:focus::after {
     width: 0.5px !important;
 }
 
+.electron-drag-region {
+    -webkit-app-region: drag;
+}
+
+.electron-no-drag {
+    -webkit-app-region: no-drag;
+}
+
 .dv-tab.dv-inactive-tab .dv-default-tab .dv-default-tab-action {
     visibility: visible !important;
 }

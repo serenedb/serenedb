@@ -690,9 +690,9 @@ duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
   if (!val || val->IsNull()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG(kHasAnyToken,
+      ERR_MSG(kHasAnyTokens,
               "(col, text, min_match) requires a constant non-NULL text"),
-      ERR_HINT("Pass a literal string or a list-form: ", kHasAnyToken,
+      ERR_HINT("Pass a literal string or a list-form: ", kHasAnyTokens,
                "(col, ['text'], n)."));
   }
   duckdb::vector<duckdb::Value> elems;
@@ -732,7 +732,7 @@ constexpr containers::TrivialBiMap kSugarBuilders = [](auto selector) {
     .Case(kNgramMatches, BuildPassthrough<kTSQNgram>)
     .Case(kLevenshteinMatches, BuildPassthrough<kTSQLevenshtein>)
     .Case(kHasAllTokens, BuildAllTokens)
-    .Case(kHasAnyToken, BuildAnyToken);
+    .Case(kHasAnyTokens, BuildAnyToken);
 };
 
 Result FromPredicate(irs::BooleanFilter& filter, const FilterContext& ctx,

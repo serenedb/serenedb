@@ -39,8 +39,6 @@ class DB;
 }  // namespace rocksdb
 namespace sdb::catalog {
 
-// PG-compatible sequence parameters (CREATE SEQUENCE [...]).
-// Values mirror the column-only fields of pg_sequence.
 struct SequenceOptions {
   int64_t start_value = 1;
   int64_t increment = 1;
@@ -50,16 +48,6 @@ struct SequenceOptions {
   bool cycle = false;
 };
 
-// A first-class catalog object representing a SQL sequence.
-//
-// Two creation paths feed into this single type:
-//   * `CREATE SEQUENCE` (user DDL) -- created by SereneDBSchemaEntry.
-//   * Auto-generated PK (table without explicit PRIMARY KEY) -- created
-//     alongside the Table in LocalCatalog::CreateTable.
-//
-// Persistent counter access (next-value-to-emit) is exposed via Reserve /
-// Read / Write below. The counter lives in the dedicated `sequences`
-// RocksDB column family, keyed by this Sequence's ObjectId.
 class Sequence final : public SchemaObject {
  public:
   Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
@@ -75,29 +63,16 @@ class Sequence final : public SchemaObject {
   const SequenceOptions& Options() const noexcept { return _options; }
   SequenceOptions& MutableOptions() noexcept { return _options; }
 
-  // Reserve `count` consecutive ticks of the persistent counter. Returns the
-  // post-merge high-water mark; the caller owns the range
-  //   [high_water - count + 1, high_water]
-  // For a freshly-seeded sequence with start=1/increment=1 and count=1, the
-  // first call returns 1.
+  // Hand out [base, base+count-1]; returns base. Persists via Merge before
+  // returning, so a crash burns the range but never reuses it.
   uint64_t Reserve(uint64_t count);
-
-  // Read the persisted counter without advancing it. Returns 0 if the
-  // counter key has never been written.
   uint64_t Read() const;
-
-  // Overwrite the persisted counter (setval / seeding). Atomic Put on the
-  // counter key.
   void Write(uint64_t value);
 
  private:
-  // Hot path: `_live` is the source of truth for what's been handed out.
-  // `Reserve` does Merge(+count) (WAL durability) then atomic fetch_add (no
-  // lock). On first use, `_init` seeds `_live` from the persisted value.
-  // `_setval_mu` only guards `Write` (setval) -- the cold path that needs
-  // to atomically Put + store-into-atomic against concurrent Reserves.
   mutable std::atomic<uint64_t> _live{0};
   mutable std::once_flag _init;
+  // Serialises Write vs Write only. Reserves are wait-free against Writes.
   mutable absl::Mutex _setval_mu;
   SequenceOptions _options;
 

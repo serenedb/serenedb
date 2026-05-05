@@ -56,9 +56,6 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
-  // Set when table has a generated PK. Reserve a range per chunk.
-  // Owned by the catalog snapshot; held as shared_ptr so the per-sequence
-  // counter mutex stays alive for the duration of the sink.
   bool has_generated_pk = false;
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 

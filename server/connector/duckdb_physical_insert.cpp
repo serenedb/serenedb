@@ -62,10 +62,8 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
 
-  // Auto-created PK sequence (only set when has_generated_pk).
-  // Owned by the catalog snapshot; the sink keeps a strong ref so the
-  // counter mutex on Sequence stays alive across Sink() calls even if the
-  // snapshot rotates mid-insert.
+  // Set when has_generated_pk. shared_ptr keeps the in-memory counter alive
+  // if the catalog snapshot rotates mid-insert.
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   // Index writers -- created once, reused per Sink() call
@@ -149,14 +147,11 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
     state->table_id, conn_ctx, *_table);
 
   if (state->has_generated_pk) {
-    // Find the auto-created PK sequence for this table in the catalog. The
-    // sequence is registered alongside the table by LocalCatalog::CreateTable
-    // under the conventional name "<table>_pkey_seq" in the same schema.
     auto snapshot = conn_ctx.EnsureCatalogSnapshot();
     std::string seq_name = absl::StrCat(_table->GetName(), "_pkey_seq");
     state->generated_pk_seq = snapshot->GetSequence(
       _table->GetDatabaseId(), _table->GetSchemaId(), seq_name);
-    SDB_ASSERT(state->generated_pk_seq);  // CreateTable must have created it
+    SDB_ASSERT(state->generated_pk_seq);
   }
 
   return state;
@@ -185,8 +180,6 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
-  // For tables without an explicit PK, reserve the full id range for this
-  // chunk in one Merge: each row gets `generated_pk_base + row`.
   uint64_t generated_pk_base =
     gstate.has_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
 

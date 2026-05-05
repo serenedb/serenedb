@@ -70,8 +70,7 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   state.table_key = key_utils::PrepareTableKey(state.table_id);
   state.pk_columns = duckdb_primary_key::BuildPKColumns(table);
   state.has_generated_pk = table.PKColumns().empty();
-  // generated_pk_seq is wired in GetGlobalSinkState where the catalog snapshot
-  // is available -- sequence lookup is by name in the snapshot.
+  // generated_pk_seq is wired in GetGlobalSinkState (needs the snapshot).
 
   // Build column metadata -- skip generated PK and virtual generated columns
   const auto& columns = table.Columns();

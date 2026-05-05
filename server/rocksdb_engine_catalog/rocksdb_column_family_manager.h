@@ -43,7 +43,7 @@ struct RocksDBColumnFamilyManager {
     Invalid = std::numeric_limits<size_t>::max(),
   };
 
-  static constexpr size_t kMinNumberOfColumnFamilies = 2;
+  static constexpr size_t kMinNumberOfColumnFamilies = 3;
   static constexpr size_t kNumberOfColumnFamilies = 3;
 
   static rocksdb::ColumnFamilyHandle* get(Family family);

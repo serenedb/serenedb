@@ -35,15 +35,11 @@
 
 namespace sdb::connector::duckdb_primary_key {
 
-// Column mapping for PK construction from DuckDB DataChunk
 struct PKColumn {
   size_t input_col_idx;
   duckdb::LogicalType type;
 };
 
-// Build PK column mappings from table metadata.
-// Maps each PK column ID to its position in the table column list + DuckDB
-// type.
 inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
   const auto& columns = table.Columns();
   const auto& pk_col_ids = table.PKColumns();
@@ -84,17 +80,11 @@ inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
   }
 }
 
-// Append a precomputed generated PK id (sortable signed encoding) onto `key`.
-// Caller is responsible for reserving the id from the table's
-// catalog::Sequence.
+// Sortable signed encoding -- caller must have reserved the id.
 inline void AppendGenerated(std::string& key, uint64_t generated_id) {
   primary_key::AppendSigned(key, std::bit_cast<int64_t>(generated_id));
 }
 
-// Build PK keys for all rows in a DataChunk.
-// For explicit PKs: encodes from input columns.
-// For generated PKs (pk_columns empty): assigns ids from [generated_pk_base,
-// generated_pk_base + num_rows). Caller must have reserved that range.
 inline void CreateBatch(const duckdb::DataChunk& chunk,
                         std::span<const PKColumn> pk_columns,
                         uint64_t generated_pk_base,
@@ -108,10 +98,8 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
       AppendGenerated(keys[row], generated_pk_base + row);
     }
   } else {
-    // Explicit PKs from input columns
     std::vector<duckdb::UnifiedVectorFormat> pk_formats;
     PreparePKFormats(chunk, pk_columns, pk_formats);
-
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       keys[row].clear();
       Create(pk_formats, pk_columns, row, keys[row]);
@@ -119,16 +107,12 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
   }
 }
 
-// Prepare buffer for column key and call 'row_key_handle' on row_key.
-// Layout during construction: [ColumnId(reserved)][ObjectId][PK bytes]
-// Callback receives row_key = [ObjectId][PK bytes] (for locking).
-// Final layout: [ObjectId][ColumnId(reserved)][PK bytes].
-// Use key_utils::SetupColumnForKey() to fill in ColumnId per column -- no copy.
+// Build buffer as [ColumnId(reserved)][ObjectId][PK]; pass [ObjectId][PK] to
+// the callback (used for row-level locking); finalise to
+// [ObjectId][ColumnId(reserved)][PK]. Per-column ColumnId is filled in later
+// by key_utils::SetupColumnForKey() without a copy.
 //
-// `pk_formats` must be pre-built via PreparePKFormats once per chunk; it is
-// unused (and may be empty) when pk_columns is empty. `generated_id` is
-// consulted only when `pk_columns` is empty -- the caller must reserve it
-// from the table's catalog::Sequence first.
+// `generated_id` is consulted only when `pk_columns` is empty.
 template<typename Func>
 void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
                    std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,

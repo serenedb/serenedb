@@ -694,11 +694,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       if (!seq) {
         return nullptr;
       }
-      // Build a DuckDB SequenceCatalogEntry stub so binders for
-      // DROP SEQUENCE / nextval can resolve the name. The runtime nextval
-      // implementation is registered separately and consults the catalog +
-      // RocksDBSequenceManager directly, so the in-memory counter fields
-      // here are never read.
+      // Stub so DuckDB binders can resolve the name (DROP SEQUENCE etc.).
+      // nextval/currval/setval go through catalog::Sequence directly; the
+      // in-memory counter fields on the DuckDB entry are never read.
       duckdb::CreateSequenceInfo info;
       info.schema = std::string{schema};
       info.name = std::string{name};

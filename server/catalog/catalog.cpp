@@ -548,8 +548,7 @@ Result OpenDatabase::AddRoles() {
 
 Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
                               ObjectId table_id, std::shared_ptr<Table> table) {
-  // Restore schema_id on the table object (Table.WriteInternal does not
-  // serialize it). LocalCatalog::CreateTable does the same on the live path.
+  // Table::WriteInternal does not serialize schema_id; restore it.
   table->SetSchemaId(schema_id);
   auto r = _catalog.RegisterTable(db_id, schema_id, std::move(table));
   if (!r.ok()) {
@@ -635,8 +634,7 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
     return r;
   }
-  // Sequences are loaded before tables so the TableDependency::pk_sequence_id
-  // edge is well-defined when inserts later look up the sequence.
+  // Sequences load before tables so insert sinks can resolve them on first use.
   if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
     return r;
   }

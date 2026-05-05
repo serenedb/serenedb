@@ -233,8 +233,7 @@ class SnapshotImpl : public Snapshot {
       }
       return AddObjectDefinition<ViewDependency>(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, Sequence>) {
-      // Sequences share the relation namespace with tables/views/indexes
-      // (PG semantics: pg_class.relkind='S').
+      // Sequences share the relation namespace (PG: pg_class.relkind='S').
       auto r = AddToResolution<ResolveType::Relation>(
         parent_id, object->GetId(), object->GetName(), replace);
       if (!r.ok()) {
@@ -1490,8 +1489,6 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  // Reject duplicates in the relation namespace (sequences share it with
-  // tables/views/indexes).
   if (auto existed = _snapshot->GetObjectId<ResolveType::Relation>(
         *schema_id, sequence->GetName())) {
     if (if_not_exists) {
@@ -1579,15 +1576,10 @@ Result LocalCatalog::CreateTable(
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  // Stash the schema_id on the table so consumers (insert sink, etc.) can
-  // resolve schema-scoped objects (like the auto-created PK sequence) without
-  // a reverse lookup. Recovery sets this in OpenDatabase::AddTable.
+  // Insert sinks find the auto-PK sequence by table->GetSchemaId();
+  // OpenDatabase::AddTable does the same on recovery.
   table->SetSchemaId(*schema_id);
 
-  // For tables without an explicit PRIMARY KEY, auto-create a Sequence
-  // named "<table>_pkey_seq" that backs the generated PK counter. The
-  // sequence shares the relation namespace with the table and is dropped
-  // alongside it (DropTable cascade).
   std::shared_ptr<Sequence> pk_sequence;
   if (table->PKColumns().empty()) {
     pk_sequence = std::make_shared<Sequence>(
@@ -2095,8 +2087,6 @@ Result LocalCatalog::DropTable(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto table = basics::downCast<Table>(std::move(object));
-    // Cascade-drop the auto-generated PK sequence (PG-style: a SERIAL or
-    // generated-PK column owns its sequence and goes away with the table).
     bool has_generated_pk = table->PKColumns().empty();
     auto task = clone->CreateTableDrop(*database_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {

@@ -44,8 +44,9 @@
 namespace sdb::catalog {
 namespace {
 
-// 8-byte little-endian encoding compatible with rocksdb::UInt64AddOperator
-// (which uses PutFixed64 / DecodeFixed64 internally).
+// Wire-compatible with rocksdb::UInt64AddOperator (PutFixed64). Hand-rolled
+// because rocksdb's util/coding.h depends on port::kLittleEndian which is
+// not surfaced to consumers.
 void EncodeFixed64Le(std::string& dst, uint64_t value) {
   if constexpr (std::endian::native == std::endian::big) {
     value = std::byteswap(value);
@@ -144,8 +145,9 @@ uint64_t Sequence::Reserve(uint64_t count) {
   SDB_ASSERT(count > 0);
   EnsureInitialized();
 
-  // 1. WAL: persist the allocation. Operands fold associatively inside
-  //    RocksDB; many threads can Merge concurrently with no app-level lock.
+  // Merge persists before fetch_add, so the WAL high-water always covers
+  // any base we've handed out. A crash between the two burns IDs but does
+  // not reuse them.
   std::string operand;
   EncodeFixed64Le(operand, count);
   auto* db = GetServerEngine().db();
@@ -154,8 +156,6 @@ uint64_t Sequence::Reserve(uint64_t count) {
   if (!s.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(s));
   }
-
-  // 2. Allocate from the live counter -- wait-free.
   return _live.fetch_add(count, std::memory_order_acq_rel) + 1;
 }
 
@@ -172,11 +172,9 @@ void Sequence::Write(uint64_t value) {
   auto* cf = CounterCF();
   auto key = CounterKey(GetId());
 
-  // setval is the cold path -- a Put resets the merge chain on disk, and we
-  // must store the new value into the atomic atomically against concurrent
-  // Reserves. The mutex serialises Write vs Write only; Reserves still go
-  // wait-free, but a Reserve racing with a Write may see either old or new
-  // base -- same guarantee Postgres provides for setval vs nextval.
+  // Lock guards Write vs Write so the persisted Put and `_live` store agree
+  // on the same value (otherwise interleaved setvals can leave them out of
+  // sync). Reserve does not contend on this.
   absl::MutexLock lock{&_setval_mu};
   auto s = db->Put(rocksdb::WriteOptions{}, cf, key, encoded);
   if (!s.ok()) {

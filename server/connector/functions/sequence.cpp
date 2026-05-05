@@ -41,9 +41,6 @@
 namespace sdb::connector {
 namespace {
 
-// Resolve a (possibly schema-qualified) sequence name to a Sequence in the
-// current connection's catalog snapshot. Throws CatalogException if the
-// schema or sequence does not exist or the resolved object is not a Sequence.
 std::shared_ptr<catalog::Sequence> ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
@@ -65,9 +62,9 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
   return seq;
 }
 
-// nextval('seq'): atomically advance the persistent counter by `increment`
-// and return the new value. We seed the counter at CREATE SEQUENCE time so
-// that the first nextval emits start_value (counter = start - increment).
+// CREATE SEQUENCE seeds the counter to `start - increment`, so the first
+// Reserve(increment) post-merge yields `start`. The same sentinel is what
+// Currval inspects to detect "not yet called".
 int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
   auto seq = ResolveSequence(context, qualified);
   const auto& opts = seq->Options();
@@ -83,24 +80,19 @@ int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
                                 std::string{qualified} + "\" (" +
                                 std::to_string(opts.max_value) + ")");
     }
-    // Cycle: reset counter so the next call starts from min_value.
-    // Best-effort under concurrent calls -- the current caller still gets
-    // `value` (possibly > max). Strict atomic CYCLE is out of MVP scope.
+    // CYCLE: best-effort -- this caller still gets `value` (possibly > max);
+    // strict atomic cycle is out of scope.
     seq->Write(static_cast<uint64_t>(opts.min_value) - inc_u);
     value = opts.min_value;
   }
   return value;
 }
 
-// currval('seq'): the most-recently-emitted value across all callers.
-// Throws if nextval has not been called for this sequence yet.
-// (PG's spec is per-session; that level of fidelity is out of MVP scope.)
+// PG's currval is per-session; we report the global last-emitted value.
 int64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
   auto seq = ResolveSequence(context, qualified);
   const auto& opts = seq->Options();
   auto persisted = static_cast<int64_t>(seq->Read());
-  // Counter sentinel: at sequence creation we seed counter to start - inc, so
-  // currval before any nextval should error.
   if (persisted == opts.start_value - opts.increment) {
     throw duckdb::Exception(duckdb::ExceptionType::SEQUENCE,
                             "currval: sequence \"" + std::string{qualified} +
@@ -109,9 +101,6 @@ int64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
   return persisted;
 }
 
-// setval('seq', value [, is_called]): overwrite the persistent counter.
-//   is_called=true (default): the next nextval returns value + increment.
-//   is_called=false:          the next nextval returns value.
 int64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
                int64_t value, bool is_called) {
   auto seq = ResolveSequence(context, qualified);
@@ -127,11 +116,8 @@ int64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
   return value;
 }
 
-// nextval/currval: emit one row at a time. We deliberately do NOT use
-// UnaryExecutor here because the input (sequence name) is typically a
-// constant vector, which UnaryExecutor would fast-path to a single call --
-// nextval must advance the counter once per output row. Match upstream
-// DuckDB's nextval impl: force FLAT_VECTOR and loop manually.
+// Avoid UnaryExecutor: it constant-folds when the input is a constant vector,
+// collapsing N nextval calls into one. Matches upstream DuckDB's nextval impl.
 void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& context = state.GetContext();

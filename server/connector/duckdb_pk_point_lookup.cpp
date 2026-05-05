@@ -82,7 +82,10 @@ void PKPointLookupFunction(duckdb::ClientContext& /*context*/,
     std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
 
   MultiGetContext mgc{*cf, ro};
-  DuckDBPrimaryKeyBuilder builder{bind_data.table->GetId()};
+  // PK point lookup only fires on rocksdb-backed binds.
+  SDB_ASSERT(!bind_data.IsViewBacked());
+  DuckDBPrimaryKeyBuilder builder{
+    bind_data.As<TableScanBindData>().table->GetId()};
   DuckDBPKResultCollector collector;
 
   duckdb::idx_t found_count = 0;

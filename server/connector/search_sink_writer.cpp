@@ -31,6 +31,7 @@
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
+#include "connector/search_field_name.hpp"
 #include "search_remove_filter.hpp"
 
 namespace sdb::connector {
@@ -116,10 +117,12 @@ inline constexpr bool kIsNumericKind =
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx, AnalyzerProvider&& analyzer_provider,
+  irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+  JsonPathsProvider&& json_paths_provider,
   std::span<const catalog::Column::Id> columns)
   : ColumnSinkWriterImplBase{columns},
-    _analyzer_provider{std::move(analyzer_provider)},
+    _tokenizer_provider{std::move(tokenizer_provider)},
+    _json_paths_provider{std::move(json_paths_provider)},
     _trx{trx} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
@@ -133,6 +136,17 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
     _current_writer = nullptr;
 #endif
     return false;
+  }
+  // JSON path-based indexing: if one or more paths are configured for this
+  // column we emit per-path fields instead of (or in addition to) a plain
+  // text field.
+  if (_json_paths_provider) {
+    if (auto paths = _json_paths_provider(column_id); !paths.empty()) {
+      SetupJsonColumnWriter(column_id, std::move(paths));
+      SDB_ASSERT(_document.has_value());
+      _document->NextFieldBatch();
+      return true;
+    }
   }
   // For now we do not support types that are not default comparable as our
   // ranges depend on that.
@@ -252,7 +266,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
   } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_analyzer_provider(column_id));
+    _field.PrepareForStringValue(_tokenizer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {
       _current_writer =
@@ -303,7 +317,7 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     // lets future LatLng-coding work fuse the WKB read with the encoder
     // write without changing this call site.
     search::mangling::MangleString(_name_buffer);
-    _field.PrepareForStringValue(_analyzer_provider(column_id));
+    _field.PrepareForStringValue(_tokenizer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
     auto geo_writer = [](std::string_view,
                          std::span<const rocksdb::Slice> cell_slices,
@@ -352,6 +366,181 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _pk_field.own_store.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
       // We need indexed PK for removes
+      const bool r =
+        _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
+          _pk_field);
+      if (!r) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert PK field into IResearch document");
+      }
+      data_writer(full_key, cell_slices);
+    };
+    _emit_pk = false;
+  }
+}
+
+void SearchSinkInsertBaseImpl::JsonPathField::Init(
+  catalog::Column::Id column_id, std::span<const std::string> path,
+  catalog::ColumnTokenizer string_analyzer) {
+  // Common prefix: [BE col_id]/key1/key2... -- no mangle byte yet.
+  std::string prefix;
+  MakeColumnFieldName(column_id, path, prefix);
+  const size_t prefix_size = prefix.size();
+
+  string_name = prefix;
+  search::mangling::MangleString(string_name);
+  string_field.PrepareForStringValue(std::move(string_analyzer));
+  string_field.name = string_name;
+
+  numeric_name = prefix;
+  search::mangling::MangleNumeric(numeric_name);
+  numeric_field.PrepareForNumericValue();
+  numeric_field.name = numeric_name;
+
+  bool_name = prefix;
+  search::mangling::MangleBool(bool_name);
+  bool_field.PrepareForBooleanValue();
+  bool_field.name = bool_name;
+
+  null_name = std::move(prefix);
+  search::mangling::MangleNull(null_name);
+  null_field.PrepareForNullValue();
+  null_field.name = null_name;
+
+  // The pointer view is shared across every type's name -- they all have
+  // the same bytes for the prefix, so any buffer's data() works.
+  constexpr size_t kColIdSize = sizeof(catalog::Column::Id);
+  pointer =
+    std::string_view{string_name.data() + kColIdSize, prefix_size - kColIdSize};
+}
+
+void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
+  catalog::Column::Id column_id, std::vector<JsonPathSinkConfig> paths) {
+  SDB_ASSERT(!paths.empty());
+
+  // Build per-path Field instances for every primitive leaf type. Each
+  // leaf type goes to a distinct iresearch field via the mangle byte, so
+  // different-typed values at the same path don't collide.
+  _json_fields.clear();
+  _json_fields.reserve(paths.size());
+  for (auto& p : paths) {
+    _json_fields.emplace_back().Init(column_id, p.path, std::move(p.tokenizer));
+  }
+
+  // TODO(mkornaukhov): index SQL-NULL cells and missing keys into every
+  // configured path's null_field so `WHERE col->>'path' IS NULL` finds them
+  // through the index. Now only the JSON `null` leaf is indexed; SQL NULL
+  // cells and missing keys are silently skipped, producing index/scan
+  // divergence on IS NULL.
+  _current_writer = [this](std::string_view /*full_key*/,
+                           std::span<const rocksdb::Slice> cell_slices) {
+    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+      return;
+    }
+    // Reconstruct the JSON string. For VARCHAR storage the layout can be
+    // [prefix][data] (fresh insert) or [data] (re-index); WriteStringValue
+    // has the same logic.
+    std::string_view json_str;
+    if (cell_slices.size() == 1) {
+      auto s = cell_slices.front();
+      if (!s.starts_with(kStringPrefix)) {
+        json_str = {s.data(), s.size()};
+      } else {
+        json_str = {s.data() + 1, s.size() - 1};
+      }
+    } else {
+      SDB_ASSERT(cell_slices.size() == 2);
+      json_str = {cell_slices[1].data(), cell_slices[1].size()};
+    }
+    if (json_str.empty()) {
+      return;
+    }
+
+    _json_buffer.assign(json_str);
+    _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::padded_string_view padded_view{
+      _json_buffer.data(), json_str.size(), _json_buffer.size()};
+
+    // DuckDB validates JSON at cast time; failure here is an upstream bug.
+    simdjson::ondemand::document doc;
+    auto res = _json_parser.iterate(padded_view).get(doc);
+    SDB_ASSERT(res == simdjson::SUCCESS);
+
+    auto insert_field = [this](Field& field) {
+      const bool ok = _document->template Insert<irs::Action::INDEX>(&field);
+      if (!ok) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to insert JSON path field into IResearch document");
+      }
+    };
+
+    for (auto& jpf : _json_fields) {
+      simdjson::ondemand::value val;
+      if (doc.at_pointer(jpf.pointer).get(val) != simdjson::SUCCESS) {
+        continue;
+      }
+      simdjson::ondemand::json_type t;
+      if (val.type().get(t) != simdjson::SUCCESS) {
+        continue;
+      }
+      switch (t) {
+        case simdjson::ondemand::json_type::string: {
+          auto s = val.get_string();
+          if (s.error() != simdjson::SUCCESS) {
+            continue;
+          }
+          jpf.string_field.SetStringValue(s.value_unsafe());
+          insert_field(jpf.string_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::number: {
+          // Always as double. JSON has only one number type, so picking
+          // the int-vs-float encoding per row would split the same field
+          // into incompatible term sets; double is a safe superset for
+          // values up to 2^53.
+          double d;
+          if (val.get_double().get(d) != simdjson::SUCCESS) {
+            continue;
+          }
+          jpf.numeric_field.SetNumericValue(d);
+          insert_field(jpf.numeric_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::boolean: {
+          bool b;
+          if (val.get_bool().get(b) != simdjson::SUCCESS) {
+            continue;
+          }
+          jpf.bool_field.SetBooleanValue(b);
+          insert_field(jpf.bool_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::null: {
+          jpf.null_field.SetNullValue();
+          insert_field(jpf.null_field);
+          break;
+        }
+        case simdjson::ondemand::json_type::object:
+        case simdjson::ondemand::json_type::array:
+          SDB_THROW(ERROR_BAD_PARAMETER,
+                    "JSON path indexed by an inverted index must point to a "
+                    "primitive (string/number/boolean/null) leaf; got an "
+                    "object or array");
+        default:
+          // simdjson::ondemand::json_type has an `unknown` sentinel; treat
+          // it the same as a missing leaf (skip silently).
+          continue;
+      }
+    }
+  };
+
+  if (_emit_pk) {
+    _current_writer = [this, data_writer = std::move(_current_writer)](
+                        std::string_view full_key,
+                        std::span<const rocksdb::Slice> cell_slices) {
+      auto row_key = key_utils::ExtractRowKey(full_key);
+      _pk_field.own_store.value = irs::ViewCast<irs::byte_type>(row_key);
+      _pk_field.SetStringValue(row_key);
       const bool r =
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
           _pk_field);

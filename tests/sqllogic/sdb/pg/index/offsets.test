@@ -84,7 +84,9 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│    Table: offsets_test    │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -361,7 +363,9 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│    Table: offsets_test    ││    Table: offsets_test    │
+│           Index:          ││           Index:          │
+│      offsets_test_idx     ││      offsets_test_idx     │
+│                           ││                           │
 │      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │

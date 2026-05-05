@@ -40,12 +40,10 @@
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"
 #include "catalog/column_expr.h"
-#include "catalog/format_options.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/key_generator.h"
-#include "catalog/storage_options.h"
 #include "catalog/types.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
@@ -193,15 +191,6 @@ struct CheckConstraint {
     std::span<const Column> columns) const noexcept;
 };
 
-struct FileInfo {
-  std::shared_ptr<StorageOptions> storage_options;
-  std::shared_ptr<FormatOptions> format_options;
-};
-
-inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {
-  return info.format_options != nullptr;
-}
-
 struct CreateTableRequest {
   std::vector<std::string> shardKeys;
   std::vector<Column> columns;
@@ -226,7 +215,6 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::RocksDB);
   bool waitForSync = false;
-  FileInfo file_info;
 };
 
 struct TableStats {
@@ -254,7 +242,6 @@ struct TableOptions {
   uint32_t writeConcern = 1;
   int type = std::to_underlying(TableType::RocksDB);
   bool waitForSync = false;
-  FileInfo file_info;
 };
 
 struct CreateTableOptions : TableOptions {

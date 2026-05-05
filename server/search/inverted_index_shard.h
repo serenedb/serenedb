@@ -235,6 +235,11 @@ class InvertedIndexShard final
     _phase = Phase::Recovering;
   }
 
+  // Persisted in the commit payload to survive iceberg compactions. 0 = not
+  // pinned.
+  void SetIcebergSnapshotId(int64_t id) noexcept { _iceberg_snapshot_id = id; }
+  int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
+
  private:
   Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
@@ -259,6 +264,7 @@ class InvertedIndexShard final
 
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
+  int64_t _iceberg_snapshot_id{0};
   Phase _phase{Phase::Creating};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};

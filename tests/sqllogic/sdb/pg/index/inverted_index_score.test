@@ -372,7 +372,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -404,7 +404,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -447,7 +447,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -542,7 +542,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -715,7 +715,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -770,7 +770,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        │
+│      Index: docs_idx      ││      Index: docs_idx      │
 │      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
@@ -838,7 +838,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -882,7 +882,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -917,9 +917,10 @@ EXPLAIN SELECT * FROM docs_idx;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│      Index: docs_idx      │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │             id            │
@@ -1044,7 +1045,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs2       │
+│      Index: docs_idx      ││      Index: docs2_idx     │
 │      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
@@ -1110,7 +1111,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││   ROCKSDB_TABLE_FULLSCAN  │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: meta        │
+│      Index: docs_idx      ││        Table: meta        │
 │      Lookup: rocksdb      ││                           │
 │                           ││        Projections:       │
 │          Filter:          ││             id            │
@@ -1212,7 +1213,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        ││        Table: docs        ││        Table: docs        │
+│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
 │      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           ││                           ││                           │
 │          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │
@@ -1276,7 +1277,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   ││    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        ││        Table: docs        ││        Table: docs        │
+│      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      ││      Index: docs_idx      │
 │      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           ││                           ││                           │
 │          Filter:          ││          Filter:          ││          Filter:          ││          Filter:          │

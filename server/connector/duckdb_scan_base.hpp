@@ -35,7 +35,7 @@
 namespace sdb::connector {
 
 struct SereneDBScanBindData;
-struct FileLookupSession;
+class IndexSource;
 
 // Common state inherited by all per-scan global states.
 // Holds the fields shared across every scan strategy: isolation context,
@@ -69,13 +69,14 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // Rows emitted -- read by the rows_scanned DuckDB callback.
   std::atomic<duckdb::idx_t> produced_rows{0};
 
-  // Cached File-backed lookup session: bind, projection mapping, and the
-  // wrapper's sibling lookup TableFunction's gstate. Lazy-built on the
-  // first LookupRows call; reused across batches so file metadata is only
-  // parsed once per query. Null for RocksDB-backed scans.
+  // Cached IndexSource adapter for the table being scanned: holds whatever
+  // bind/session state the per-source materialiser needs (file-backed: a
+  // bound MultiFileBindData + lookup gstate; rocksdb: small projection +
+  // snapshot/txn). Lazy-built via MakeIndexSource on first use; reused
+  // across batches.
   // shared_ptr (not unique_ptr) so derived-state destructors don't need
-  // FileLookupSession's complete type -- the deleter is type-erased.
-  std::shared_ptr<FileLookupSession> file_lookup_session;
+  // IndexSource's complete type -- the deleter is type-erased.
+  std::shared_ptr<IndexSource> index_source;
 
   ~CommonScanGlobalState() override;
 };

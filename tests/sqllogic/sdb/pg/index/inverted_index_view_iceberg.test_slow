@@ -1,0 +1,1499 @@
+control substitution on
+
+# View-backed inverted index over iceberg, both shapes:
+#   A: literal-args `iceberg_scan('s3://path', ...)`
+#   B: catalog-attached `SELECT * FROM iceberg.s.t`
+#
+# Index reflects iceberg state at CREATE INDEX time; subsequent iceberg
+# DML (INSERT/DELETE/UPDATE) is not picked up.
+
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+# REST-catalog warehouse has no version-hint.text; literal-args
+# iceberg_scan needs version guessing to find current metadata.json.
+statement ok
+SET unsafe_enable_version_guessing=true;
+
+
+# Per-${__DATABASE__} ATTACH alias: each run.sh invocation starts a new
+# iceberg-rest on a fresh random port, so a process-global alias like
+# `iceberg` would survive in serened's catalog with a stale ENDPOINT and the
+# next run's `ATTACH IF NOT EXISTS` would silently keep the dead port. The
+# DETACH-then-ATTACH below makes the test idempotent on the same instance,
+# and the unique alias keeps parallel iceberg tests from stepping on each
+# other's attachment.
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_ice_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+# ============================================================================
+# Per-${__DATABASE__} schema -- iceberg-rest's namespace is shared across all
+# parallel tests in one run.sh, and the warehouse S3 path is keyed on the
+# schema name, so the schema must be unique per test invocation. The session
+# search_path puts `public` first (so bare CREATE VIEW/INDEX/TABLE land in
+# serened's native catalog) and the iceberg schema second (so bare DML
+# references to iceberg tables -- INSERT/DELETE/UPDATE/SELECT -- fall
+# through search_path resolution to find them). Iceberg tables themselves
+# are still created with explicit qualification because the view-local bind
+# at CREATE VIEW time only sees the view's own catalog/schema, so anything
+# inside a view body that references an iceberg table must be qualified
+# regardless of session search_path.
+# ============================================================================
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+SET search_path TO public, iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+# ============================================================================
+# S1 -- clean inserts only, no DML before index build.
+# Shape A and Shape B should both classify as fast-path; count, PHRASE,
+# materialisation, BM25, bare scan all match the source.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.clean_t (id INTEGER, body TEXT);
+
+
+statement count 6
+INSERT INTO clean_t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'pudge plays again'),
+  (4, 'krivda writes sql'),
+  (5, 'kostya types clickclack'),
+  (6, 'gayazov plays mass effect');
+
+
+# ----- S1 / Shape A: literal-args iceberg_scan view -----
+
+statement ok
+CREATE VIEW s1_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/clean_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s1_lit_idx ON s1_lit USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s1_lit_idx;
+----
+count
+6
+
+
+query
+SELECT count(*) FROM s1_lit_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+query
+SELECT id, body FROM s1_lit_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
+query
+SELECT id, body FROM s1_lit_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+3	pudge plays again
+4	krivda writes sql
+5	kostya types clickclack
+6	gayazov plays mass effect
+
+
+query
+SELECT id, BM25(s1_lit_idx.tableoid) > 0 AS has_score
+FROM   s1_lit_idx
+WHERE  body @@ ts_phrase('pudge')
+ORDER BY id;
+----
+id	has_score
+1	t
+3	t
+
+
+# ----- S1 / Shape B: catalog-attached view -----
+
+statement ok
+CREATE VIEW s1_cat AS SELECT * FROM iceberg_${__DATABASE__}.${__DATABASE__}.clean_t;
+
+
+statement ok
+CREATE INDEX s1_cat_idx ON s1_cat USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s1_cat_idx;
+----
+count
+6
+
+
+query
+SELECT count(*) FROM s1_cat_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+2
+
+
+query
+SELECT id, body FROM s1_cat_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+
+query
+SELECT id, body FROM s1_cat_idx ORDER BY id;
+----
+id	body
+1	pudge goes mid
+2	anchin reads manga
+3	pudge plays again
+4	krivda writes sql
+5	kostya types clickclack
+6	gayazov plays mass effect
+
+
+# Cross-shape consistency: same query → same answer.
+query
+SELECT id FROM s1_lit_idx WHERE body @@ ts_phrase('mass effect') ORDER BY id;
+----
+id
+6
+
+
+query
+SELECT id FROM s1_cat_idx WHERE body @@ ts_phrase('mass effect') ORDER BY id;
+----
+id
+6
+
+
+# ----- S1 / Shape C: projection + cast over the catalog-attached view -----
+# Exercises the same code paths as the parquet-side variants test: rename
+# (id -> id_b), cast (TEXT -> TEXT, INTEGER -> BIGINT), and per-iceberg-file
+# materialisation via the row-group-pruned reader.
+statement ok
+CREATE VIEW s1_cast AS
+  SELECT id::BIGINT AS id_b, body AS text
+  FROM iceberg_${__DATABASE__}.${__DATABASE__}.clean_t;
+
+
+statement ok
+CREATE INDEX s1_cast_idx ON s1_cast USING inverted(id_b, text view_ice_en);
+
+
+query
+SELECT count(*) FROM s1_cast_idx;
+----
+count
+6
+
+
+query
+SELECT count(*) FROM s1_cast_idx WHERE text @@ ts_phrase('pudge');
+----
+count
+2
+
+
+query
+SELECT id_b, text FROM s1_cast_idx WHERE text @@ ts_phrase('pudge') ORDER BY id_b;
+----
+id_b	text
+1	pudge goes mid
+3	pudge plays again
+
+
+query
+SELECT id_b, text FROM s1_cast_idx ORDER BY id_b;
+----
+id_b	text
+1	pudge goes mid
+2	anchin reads manga
+3	pudge plays again
+4	krivda writes sql
+5	kostya types clickclack
+6	gayazov plays mass effect
+
+
+# ============================================================================
+# S2 -- positional deletes (DELETE) before index build. The index must NOT
+# return deleted rows.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.del_t (id INTEGER, body TEXT);
+
+
+statement count 5
+INSERT INTO del_t VALUES
+  (1, 'pudge alpha'),
+  (2, 'manga beta'),
+  (3, 'pudge gamma'),
+  (4, 'sql delta'),
+  (5, 'clickclack epsilon');
+
+
+# Two DELETEs -- two positional-delete files referencing the original data file.
+statement count 1
+DELETE FROM del_t WHERE id = 2;
+
+statement count 1
+DELETE FROM del_t WHERE id = 4;
+
+
+# ----- S2 / Shape A -----
+
+statement ok
+CREATE VIEW s2_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/del_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s2_lit_idx ON s2_lit USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s2_lit_idx;
+----
+count
+3
+
+
+query
+SELECT id, body FROM s2_lit_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+5	clickclack epsilon
+
+
+# Deleted ids' tokens have no entry in the iresearch index.
+query
+SELECT count(*) FROM s2_lit_idx WHERE body @@ ts_phrase('manga');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s2_lit_idx WHERE body @@ ts_phrase('sql');
+----
+count
+0
+
+
+# Surviving rows materialise from their (file_index, file_row_number) PKs.
+query
+SELECT id, body FROM s2_lit_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+
+
+# ----- S2 / Shape B -----
+
+statement ok
+CREATE VIEW s2_cat AS SELECT * FROM iceberg_${__DATABASE__}.${__DATABASE__}.del_t;
+
+
+statement ok
+CREATE INDEX s2_cat_idx ON s2_cat USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s2_cat_idx;
+----
+count
+3
+
+
+query
+SELECT id, body FROM s2_cat_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+5	clickclack epsilon
+
+
+query
+SELECT count(*) FROM s2_cat_idx WHERE body @@ ts_phrase('manga');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s2_cat_idx WHERE body @@ ts_phrase('sql');
+----
+count
+0
+
+
+query
+SELECT id, body FROM s2_cat_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+
+
+# ============================================================================
+# S3 -- UPDATE before index build. Iceberg implements UPDATE as
+# positional-delete-old + insert-new-into-new-file. The index must:
+#   1. Not return the old body.
+#   2. Return the new body (from a different data file with file_index != 0).
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.upd_t (id INTEGER, body TEXT);
+
+
+statement count 4
+INSERT INTO upd_t VALUES
+  (10, 'old body for ten'),
+  (20, 'old body for twenty'),
+  (30, 'unchanged thirty'),
+  (40, 'old body for forty');
+
+
+statement count 1
+UPDATE upd_t SET body = 'new body for ten' WHERE id = 10;
+
+statement count 1
+UPDATE upd_t SET body = 'new body for forty (refreshed)' WHERE id = 40;
+
+
+# ----- S3 / Shape A -----
+
+statement ok
+CREATE VIEW s3_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/upd_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s3_lit_idx ON s3_lit USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s3_lit_idx;
+----
+count
+4
+
+
+# 'new' appears in 2 updated rows.
+query
+SELECT count(*) FROM s3_lit_idx WHERE body @@ ts_phrase('new');
+----
+count
+2
+
+
+# 'old' bodies for id=10/40 are positionally deleted; id=20 was not updated
+# and its 'old body for twenty' is still live.
+query
+SELECT id, body FROM s3_lit_idx WHERE body @@ ts_phrase('old') ORDER BY id;
+----
+id	body
+20	old body for twenty
+
+
+query
+SELECT id, body FROM s3_lit_idx WHERE body @@ ts_phrase('new') ORDER BY id;
+----
+id	body
+10	new body for ten
+40	new body for forty (refreshed)
+
+
+query
+SELECT id, body FROM s3_lit_idx WHERE body @@ ts_phrase('unchanged') ORDER BY id;
+----
+id	body
+30	unchanged thirty
+
+
+query
+SELECT id, body FROM s3_lit_idx ORDER BY id;
+----
+id	body
+10	new body for ten
+20	old body for twenty
+30	unchanged thirty
+40	new body for forty (refreshed)
+
+
+# ----- S3 / Shape B -----
+
+statement ok
+CREATE VIEW s3_cat AS SELECT * FROM iceberg_${__DATABASE__}.${__DATABASE__}.upd_t;
+
+
+statement ok
+CREATE INDEX s3_cat_idx ON s3_cat USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s3_cat_idx;
+----
+count
+4
+
+
+query
+SELECT count(*) FROM s3_cat_idx WHERE body @@ ts_phrase('new');
+----
+count
+2
+
+
+query
+SELECT id, body FROM s3_cat_idx WHERE body @@ ts_phrase('old') ORDER BY id;
+----
+id	body
+20	old body for twenty
+
+
+query
+SELECT id, body FROM s3_cat_idx WHERE body @@ ts_phrase('new') ORDER BY id;
+----
+id	body
+10	new body for ten
+40	new body for forty (refreshed)
+
+
+query
+SELECT id, body FROM s3_cat_idx WHERE body @@ ts_phrase('unchanged') ORDER BY id;
+----
+id	body
+30	unchanged thirty
+
+
+query
+SELECT id, body FROM s3_cat_idx ORDER BY id;
+----
+id	body
+10	new body for ten
+20	old body for twenty
+30	unchanged thirty
+40	new body for forty (refreshed)
+
+
+# ============================================================================
+# S4 -- mixed DML (the canonical scenario): INSERT + DELETE + UPDATE +
+# INSERT + DELETE before the index. Manifest has: 3 data files (initial +
+# update + insert) + 3 positional-delete files. PK = (file_index,
+# file_row_number) where file_index spans all three data files.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.mix_t (id INTEGER, body TEXT);
+
+
+statement count 6
+INSERT INTO mix_t VALUES
+  (1, 'pudge goes mid'),
+  (2, 'anchin reads manga'),
+  (3, 'pudge plays again'),
+  (4, 'krivda writes sql'),
+  (5, 'kostya types clickclack'),
+  (6, 'gayazov plays mass effect');
+
+
+statement count 1
+DELETE FROM mix_t WHERE id = 2;
+
+
+statement count 1
+UPDATE mix_t SET body = 'pudge solo mid (updated)' WHERE id = 1;
+
+
+statement count 1
+INSERT INTO mix_t VALUES (7, 'pudge new entry');
+
+
+statement count 1
+DELETE FROM mix_t WHERE id = 4;
+
+
+# ----- S4 / Shape A -----
+
+statement ok
+CREATE VIEW s4_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/mix_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s4_lit_idx ON s4_lit USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s4_lit_idx;
+----
+count
+5
+
+
+# Surviving rows form the bare scan in id order.
+query
+SELECT id, body FROM s4_lit_idx ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+5	kostya types clickclack
+6	gayazov plays mass effect
+7	pudge new entry
+
+
+# 'pudge' tokens: id=1 (updated), id=3, id=7. The pre-update token 'pudge
+# goes mid' is gone (positional-delete on the original data file row 0).
+query
+SELECT id, body FROM s4_lit_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+7	pudge new entry
+
+
+# 'updated' is unique to the post-update body for id=1.
+query
+SELECT id, body FROM s4_lit_idx WHERE body @@ ts_phrase('updated');
+----
+id	body
+1	pudge solo mid (updated)
+
+
+# 'goes' was only in the pre-update body of id=1 -- now positionally deleted.
+query
+SELECT id, body FROM s4_lit_idx WHERE body @@ ts_phrase('goes');
+----
+id	body
+
+
+# Deleted ids: id=2 (manga) and id=4 (krivda) gone.
+query
+SELECT count(*) FROM s4_lit_idx WHERE body @@ ts_phrase('manga');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s4_lit_idx WHERE body @@ ts_phrase('krivda');
+----
+count
+0
+
+
+# Inserted id=7 is present.
+query
+SELECT id, body FROM s4_lit_idx WHERE body @@ ts_phrase('new');
+----
+id	body
+7	pudge new entry
+
+
+# Cross-row PHRASE OR.
+query
+SELECT id FROM s4_lit_idx
+WHERE body @@ ts_phrase('kostya') OR body @@ ts_phrase('gayazov')
+ORDER BY id;
+----
+id
+5
+6
+
+
+# BM25 over the post-DML index.
+query
+SELECT id, BM25(s4_lit_idx.tableoid) > 0 AS has_score
+FROM   s4_lit_idx
+WHERE  body @@ ts_phrase('pudge')
+ORDER BY id;
+----
+id	has_score
+1	t
+3	t
+7	t
+
+
+# ----- S4 / Shape B -----
+
+statement ok
+CREATE VIEW s4_cat AS SELECT * FROM iceberg_${__DATABASE__}.${__DATABASE__}.mix_t;
+
+
+statement ok
+CREATE INDEX s4_cat_idx ON s4_cat USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s4_cat_idx;
+----
+count
+5
+
+
+query
+SELECT id, body FROM s4_cat_idx ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+5	kostya types clickclack
+6	gayazov plays mass effect
+7	pudge new entry
+
+
+query
+SELECT id, body FROM s4_cat_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+7	pudge new entry
+
+
+query
+SELECT id, body FROM s4_cat_idx WHERE body @@ ts_phrase('updated');
+----
+id	body
+1	pudge solo mid (updated)
+
+
+query
+SELECT id, body FROM s4_cat_idx WHERE body @@ ts_phrase('goes');
+----
+id	body
+
+
+query
+SELECT count(*) FROM s4_cat_idx WHERE body @@ ts_phrase('manga');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s4_cat_idx WHERE body @@ ts_phrase('krivda');
+----
+count
+0
+
+
+# Cross-shape consistency: literal-args and catalog-attached round-trip the
+# same dataset and produce identical PHRASE answers.
+query
+SELECT id FROM s4_lit_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+7
+
+
+query
+SELECT id FROM s4_cat_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+7
+
+
+# ============================================================================
+# S5 -- immutable-index promise: DML *after* CREATE INDEX is NOT reflected.
+# After building the index, INSERT a row and DELETE another. The index must
+# still report its as-of-build-time view.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.imm_t (id INTEGER, body TEXT);
+
+
+statement count 4
+INSERT INTO imm_t VALUES
+  (101, 'snapshot one'),
+  (102, 'snapshot two'),
+  (103, 'snapshot three'),
+  (104, 'snapshot four');
+
+
+# Build the index over the as-of-now state.
+statement ok
+CREATE VIEW s5_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/imm_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s5_lit_idx ON s5_lit USING inverted(id, body view_ice_en);
+
+
+# Modify iceberg AFTER index build.
+statement count 1
+INSERT INTO imm_t VALUES (999, 'snapshot post-build');
+
+
+statement count 1
+DELETE FROM imm_t WHERE id = 102;
+
+
+# Iceberg view sees the post-DML state -- 4 rows.
+query
+SELECT count(*) FROM imm_t;
+----
+count
+4
+
+
+# But the index is frozen at build time -- still 4 rows, including id=102.
+query
+SELECT count(*) FROM s5_lit_idx;
+----
+count
+4
+
+
+query
+SELECT id FROM s5_lit_idx WHERE body @@ ts_phrase('snapshot') ORDER BY id;
+----
+id
+101
+102
+103
+104
+
+
+# Post-build INSERT is absent.
+query
+SELECT count(*) FROM s5_lit_idx WHERE id = 999;
+----
+count
+0
+
+
+# ============================================================================
+# S6 -- named param round-trip: `allow_moved_paths=true` reaches the binder
+# at materialisation time. Without B4's deferred-cast fix, the parser-level
+# UNBOUND CAST target makes BindFastPathSource crash. Without B5's
+# virtual-column patch, CREATE INDEX fails before backfill.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.np_t (id INTEGER, body TEXT);
+
+
+statement count 3
+INSERT INTO np_t VALUES
+  (1, 'named param one'),
+  (2, 'named param two'),
+  (3, 'named param three');
+
+
+statement ok
+CREATE VIEW s6_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/np_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s6_lit_idx ON s6_lit USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s6_lit_idx;
+----
+count
+3
+
+
+query
+SELECT id, body FROM s6_lit_idx WHERE body @@ ts_phrase('param') ORDER BY id;
+----
+id	body
+1	named param one
+2	named param two
+3	named param three
+
+
+# ============================================================================
+# S7 -- multi-snapshot, larger workload: many INSERTs producing multiple
+# data files, multiple DELETEs producing multiple positional-delete files.
+# Verify count + PHRASE materialisation across many file groups.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.big_t (id INTEGER, body TEXT);
+
+
+# 5 batches of inserts -> 5 data files in the manifest.
+statement count 20
+INSERT INTO big_t
+SELECT i, 'batch_a row ' || i::text FROM generate_series(1, 20) AS g(i);
+
+statement count 20
+INSERT INTO big_t
+SELECT i + 100, 'batch_b row ' || i::text FROM generate_series(1, 20) AS g(i);
+
+statement count 20
+INSERT INTO big_t
+SELECT i + 200, 'batch_c row ' || i::text FROM generate_series(1, 20) AS g(i);
+
+statement count 20
+INSERT INTO big_t
+SELECT i + 300, 'batch_d row ' || i::text FROM generate_series(1, 20) AS g(i);
+
+statement count 20
+INSERT INTO big_t
+SELECT i + 400, 'batch_e row ' || i::text FROM generate_series(1, 20) AS g(i);
+
+
+# Delete one row from each batch -> 5 positional-delete files.
+statement count 1
+DELETE FROM big_t WHERE id = 5;
+
+statement count 1
+DELETE FROM big_t WHERE id = 105;
+
+statement count 1
+DELETE FROM big_t WHERE id = 205;
+
+statement count 1
+DELETE FROM big_t WHERE id = 305;
+
+statement count 1
+DELETE FROM big_t WHERE id = 405;
+
+
+# Update one row from each batch -> 5 more positional deletes + 5 new files.
+statement count 1
+UPDATE big_t SET body = 'batch_a UPDATED row 10' WHERE id = 10;
+
+statement count 1
+UPDATE big_t SET body = 'batch_b UPDATED row 110' WHERE id = 110;
+
+statement count 1
+UPDATE big_t SET body = 'batch_c UPDATED row 210' WHERE id = 210;
+
+statement count 1
+UPDATE big_t SET body = 'batch_d UPDATED row 310' WHERE id = 310;
+
+statement count 1
+UPDATE big_t SET body = 'batch_e UPDATED row 410' WHERE id = 410;
+
+
+# 100 inserted - 5 deleted = 95 surviving rows. The 5 updated rows count as
+# updates (still 95 total rows), 5 with new bodies, 5 deleted.
+query
+SELECT count(*) FROM big_t;
+----
+count
+95
+
+
+# ----- S7 / Shape A -----
+
+statement ok
+CREATE VIEW s7_lit AS SELECT * FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/big_t',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s7_lit_idx ON s7_lit USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s7_lit_idx;
+----
+count
+95
+
+
+# 5 UPDATED rows.
+query
+SELECT count(*) FROM s7_lit_idx WHERE body @@ ts_phrase('UPDATED');
+----
+count
+5
+
+
+# Updated bodies are correct (post-update text).
+query
+SELECT id, body FROM s7_lit_idx WHERE body @@ ts_phrase('UPDATED') ORDER BY id;
+----
+id	body
+10	batch_a UPDATED row 10
+110	batch_b UPDATED row 110
+210	batch_c UPDATED row 210
+310	batch_d UPDATED row 310
+410	batch_e UPDATED row 410
+
+
+# Each batch token matches 19 surviving rows (20 inserted - 1 deleted).
+query
+SELECT count(*) FROM s7_lit_idx WHERE body @@ ts_phrase('batch_a');
+----
+count
+19
+
+
+query
+SELECT count(*) FROM s7_lit_idx WHERE body @@ ts_phrase('batch_b');
+----
+count
+19
+
+
+query
+SELECT count(*) FROM s7_lit_idx WHERE body @@ ts_phrase('batch_c');
+----
+count
+19
+
+
+query
+SELECT count(*) FROM s7_lit_idx WHERE body @@ ts_phrase('batch_d');
+----
+count
+19
+
+
+query
+SELECT count(*) FROM s7_lit_idx WHERE body @@ ts_phrase('batch_e');
+----
+count
+19
+
+
+# Deleted ids are absent.
+query
+SELECT count(*) FROM s7_lit_idx WHERE id IN (5, 105, 205, 305, 405);
+----
+count
+0
+
+
+# Sample materialisation for an updated row in each batch.
+query
+SELECT id, body FROM s7_lit_idx WHERE id = 10;
+----
+id	body
+10	batch_a UPDATED row 10
+
+
+query
+SELECT id, body FROM s7_lit_idx WHERE id = 410;
+----
+id	body
+410	batch_e UPDATED row 410
+
+
+# Cross-batch PHRASE selection with explicit IN list.
+query
+SELECT id, body FROM s7_lit_idx
+WHERE body @@ ts_phrase('UPDATED') AND id IN (10, 110, 210)
+ORDER BY id;
+----
+id	body
+10	batch_a UPDATED row 10
+110	batch_b UPDATED row 110
+210	batch_c UPDATED row 210
+
+
+# PHRASE + range filter: DuckDB pushes id < 300 into get.table_filters;
+# iresearch_plan reclaims it back into filter_summary so only updates
+# from the first three batches survive.
+query
+SELECT id, body FROM s7_lit_idx
+WHERE body @@ ts_phrase('UPDATED') AND id < 300
+ORDER BY id;
+----
+id	body
+10	batch_a UPDATED row 10
+110	batch_b UPDATED row 110
+210	batch_c UPDATED row 210
+
+
+query
+SELECT id, body FROM s7_lit_idx
+WHERE body @@ ts_phrase('UPDATED') AND id >= 300
+ORDER BY id;
+----
+id	body
+310	batch_d UPDATED row 310
+410	batch_e UPDATED row 410
+
+
+# Bare-scan id range filter: count-scan rewrite bails out when there are
+# table filters, the regular AGGREGATE+GET path applies the filter at the
+# iceberg reader and counts the surviving rows.
+query
+SELECT count(*) FROM s7_lit_idx WHERE id <= 100;
+----
+count
+19
+
+
+query
+SELECT count(*) FROM s7_lit_idx WHERE id BETWEEN 100 AND 300;
+----
+count
+38
+
+
+# ----- S7 / Shape B (catalog-attached) -----
+
+statement ok
+CREATE VIEW s7_cat AS SELECT * FROM iceberg_${__DATABASE__}.${__DATABASE__}.big_t;
+
+
+statement ok
+CREATE INDEX s7_cat_idx ON s7_cat USING inverted(id, body view_ice_en);
+
+
+query
+SELECT count(*) FROM s7_cat_idx;
+----
+count
+95
+
+
+query
+SELECT count(*) FROM s7_cat_idx WHERE body @@ ts_phrase('UPDATED');
+----
+count
+5
+
+
+query
+SELECT id, body FROM s7_cat_idx WHERE body @@ ts_phrase('UPDATED') ORDER BY id;
+----
+id	body
+10	batch_a UPDATED row 10
+110	batch_b UPDATED row 110
+210	batch_c UPDATED row 210
+310	batch_d UPDATED row 310
+410	batch_e UPDATED row 410
+
+
+query
+SELECT count(*) FROM s7_cat_idx WHERE id IN (5, 105, 205, 305, 405);
+----
+count
+0
+
+
+# Cross-shape: same answers between literal-args and catalog-attached.
+query
+SELECT id FROM s7_lit_idx WHERE body @@ ts_phrase('UPDATED') ORDER BY id;
+----
+id
+10
+110
+210
+310
+410
+
+
+query
+SELECT id FROM s7_cat_idx WHERE body @@ ts_phrase('UPDATED') ORDER BY id;
+----
+id
+10
+110
+210
+310
+410
+
+
+# ============================================================================
+# S8 -- equality deletes (regression for the iceberg D_ASSERT patch).
+# Equality-delete files match by column value rather than (file_path, pos).
+# Without our patch in iceberg_multi_file_reader.cpp:287/363 the index build
+# trips `D_ASSERT(!col.identifier.IsNull())` because virtual columns
+# (file_row_number / file_index) lack iceberg field-ids.
+#
+# Path-based fixture: REST catalog default produces positional deletes only,
+# so we use the bundled equality_deletes fixture here -- it ships a v7
+# table with two surviving rows (id 4, 5) after equality-delete files
+# remove ids 1, 2, 3, 6.
+# ============================================================================
+
+
+statement ok
+CREATE VIEW s8_lit AS SELECT * FROM iceberg_scan(
+  '${ICEBERG_FIXTURES}/equality_deletes/warehouse/mydb/mytable',
+  allow_moved_paths=true);
+
+
+statement ok
+CREATE INDEX s8_lit_idx ON s8_lit USING inverted(id, name view_ice_en);
+
+
+# Iceberg's view: 2 rows after equality deletes.
+query
+SELECT count(*) FROM s8_lit;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM s8_lit_idx;
+----
+count
+2
+
+
+query
+SELECT id, name FROM s8_lit ORDER BY id;
+----
+id	name
+4	d
+5	e
+
+
+query
+SELECT id, name FROM s8_lit_idx ORDER BY id;
+----
+id	name
+4	d
+5	e
+
+
+# Names of equality-deleted rows must NOT appear in the index.
+query
+SELECT count(*) FROM s8_lit_idx WHERE name @@ ts_phrase('a');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s8_lit_idx WHERE name @@ ts_phrase('b');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s8_lit_idx WHERE name @@ ts_phrase('c');
+----
+count
+0
+
+
+query
+SELECT count(*) FROM s8_lit_idx WHERE name @@ ts_phrase('f');
+----
+count
+0
+
+
+# Surviving names materialise correctly.
+query
+SELECT id, name FROM s8_lit_idx WHERE name @@ ts_phrase('d');
+----
+id	name
+4	d
+
+
+query
+SELECT id, name FROM s8_lit_idx WHERE name @@ ts_phrase('e');
+----
+id	name
+5	e
+
+
+# ============================================================================
+# S9 -- bare full-scan correctness for catalog-attached. Without B2's
+# fix to PKFullScanInitGlobal, this would crash (nullptr deref on
+# bind_data.table->GetId()) for non-fast-path views; for catalog-attached
+# fast-path views the bare scan goes through MakeViewFastPathScanFunction
+# and returns the underlying iceberg rows.
+# ============================================================================
+
+
+# Use the s4 mix_t catalog view; bare scan should match the iceberg view.
+query
+SELECT id, body FROM s4_cat ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+5	kostya types clickclack
+6	gayazov plays mass effect
+7	pudge new entry
+
+
+# Bare scan via the index returns the same rows.
+query
+SELECT id, body FROM s4_cat_idx ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+5	kostya types clickclack
+6	gayazov plays mass effect
+7	pudge new entry
+
+
+# Combine PHRASE + bare-style projection of all index columns.
+query
+SELECT id, body FROM s4_cat_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge solo mid (updated)
+3	pudge plays again
+7	pudge new entry
+
+
+# ============================================================================
+# S10 -- JOIN: combine an iceberg-backed indexed view with a native
+# rocksdb table by id. Verifies the index returns row schemas suitable
+# for downstream ops.
+# ============================================================================
+
+
+statement ok
+CREATE TABLE local_meta (id INTEGER PRIMARY KEY, who TEXT);
+
+
+statement count 5
+INSERT INTO local_meta VALUES
+  (1, 'admin'),
+  (3, 'editor'),
+  (5, 'viewer'),
+  (6, 'viewer'),
+  (7, 'admin');
+
+
+query
+SELECT m.id, m.who, idx.body
+FROM   local_meta m
+JOIN   s4_lit_idx idx ON m.id = idx.id
+WHERE  idx.body @@ ts_phrase('pudge')
+ORDER BY m.id;
+----
+id	who	body
+1	admin	pudge solo mid (updated)
+3	editor	pudge plays again
+7	admin	pudge new entry
+
+
+query
+SELECT m.id, m.who, idx.body
+FROM   local_meta m
+JOIN   s4_cat_idx idx ON m.id = idx.id
+WHERE  idx.body @@ ts_phrase('pudge')
+ORDER BY m.id;
+----
+id	who	body
+1	admin	pudge solo mid (updated)
+3	editor	pudge plays again
+7	admin	pudge new entry
+
+
+# UNION between local rocksdb rows and iceberg-indexed rows.
+query
+SELECT id, who AS label FROM local_meta WHERE id <= 3
+UNION ALL
+SELECT id, body AS label FROM s4_cat_idx WHERE body @@ ts_phrase('pudge')
+ORDER BY id, label;
+----
+id	label
+1	admin
+1	pudge solo mid (updated)
+3	editor
+3	pudge plays again
+7	pudge new entry
+
+
+# ============================================================================
+# S11 -- empty PHRASE result (no rows, no per-file dispatch should fail).
+# ============================================================================
+
+
+query
+SELECT count(*) FROM s4_lit_idx WHERE body @@ ts_phrase('noTokenLikeThis');
+----
+count
+0
+
+
+query
+SELECT id, body FROM s4_lit_idx WHERE body @@ ts_phrase('noTokenLikeThis');
+----
+id	body
+
+
+query
+SELECT count(*) FROM s4_cat_idx WHERE body @@ ts_phrase('noTokenLikeThis');
+----
+count
+0
+
+
+query
+SELECT id, body FROM s4_cat_idx WHERE body @@ ts_phrase('noTokenLikeThis');
+----
+id	body
+
+
+# ============================================================================
+# Cleanup
+# ============================================================================
+
+
+statement ok
+DROP VIEW s1_lit;
+
+statement ok
+DROP VIEW s1_cat;
+
+statement ok
+DROP VIEW s1_cast;
+
+statement ok
+DROP VIEW s2_lit;
+
+statement ok
+DROP VIEW s2_cat;
+
+statement ok
+DROP VIEW s3_lit;
+
+statement ok
+DROP VIEW s3_cat;
+
+statement ok
+DROP VIEW s4_lit;
+
+statement ok
+DROP VIEW s4_cat;
+
+statement ok
+DROP VIEW s5_lit;
+
+statement ok
+DROP VIEW s6_lit;
+
+statement ok
+DROP VIEW s7_lit;
+
+statement ok
+DROP VIEW s7_cat;
+
+statement ok
+DROP VIEW s8_lit;
+
+
+statement ok
+DROP TABLE clean_t;
+
+statement ok
+DROP TABLE del_t;
+
+statement ok
+DROP TABLE upd_t;
+
+statement ok
+DROP TABLE mix_t;
+
+statement ok
+DROP TABLE imm_t;
+
+statement ok
+DROP TABLE np_t;
+
+statement ok
+DROP TABLE big_t;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
+
+
+statement ok
+DROP TABLE local_meta;
+
+
+statement ok
+DROP SECRET iceberg_${__DATABASE__};

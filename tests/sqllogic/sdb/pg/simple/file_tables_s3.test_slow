@@ -1,13 +1,13 @@
 control substitution on
 
-# S3-backed external tables. Mirrors file_s3.test_slow's setup (same secret,
-# same seed data via COPY TO) but the READ side exercises
+# S3-backed views over parquet/csv files. Mirrors file_s3.test_slow's setup
+# (same secret, same seed data via COPY TO) but the READ side exercises
 #
-#   CREATE TABLE t(...) WITH (PATH='s3://bucket/key.ext')
+#   CREATE VIEW v AS SELECT * FROM read_parquet('s3://bucket/key.parquet');
+#   CREATE VIEW v AS SELECT * FROM read_csv('s3://bucket/key.csv');
 #
 # rather than COPY ... FROM 's3://...'. DuckDB's httpfs resolves the secret
-# at scan time; the extension of the URL picks the reader (.parquet ->
-# read_parquet, .csv -> read_csv_auto).
+# at scan time.
 
 
 statement ok
@@ -47,17 +47,12 @@ COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.csv'
 WITH (FORMAT csv, HEADER true);
 
 
-# --- external table over S3 parquet ---
+# --- view over S3 parquet ---
 
 
 statement ok
-CREATE TABLE ext_s3_parquet
-(
-  id INTEGER,
-  name TEXT
-) WITH (
-  PATH = 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.parquet'
-);
+CREATE VIEW ext_s3_parquet AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.parquet');
 
 
 query
@@ -79,13 +74,8 @@ count
 
 
 statement ok
-CREATE TABLE ext_s3_csv
-(
-  id INTEGER,
-  name TEXT
-) WITH (
-  PATH = 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.csv'
-);
+CREATE VIEW ext_s3_csv AS
+  SELECT * FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.csv');
 
 
 query
@@ -129,13 +119,8 @@ WITH (FORMAT parquet);
 
 
 statement ok
-CREATE TABLE ext_s3_babsky
-(
-  iq BIGINT,
-  pencil_size BIGINT
-) WITH (
-  PATH = 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_babsky_company.parquet'
-);
+CREATE VIEW ext_s3_babsky AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_babsky_company.parquet');
 
 
 query

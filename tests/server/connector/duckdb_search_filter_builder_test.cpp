@@ -531,7 +531,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     irs::compression::Init();
   }
 
-  void SetUp() override {
+  void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);
     auto& db_config = duckdb::DBConfig::GetConfig(*_db.instance);
     // Keep filter predicates on LogicalFilter so MakeSearchFilter can see

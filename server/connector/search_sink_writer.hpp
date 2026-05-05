@@ -20,8 +20,13 @@
 
 #pragma once
 
+#include <simdjson.h>
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <span>
+#include <string>
+#include <vector>
 
 #include "catalog/inverted_index.h"
 #include "catalog/search_analyzer_impl.h"
@@ -35,21 +40,61 @@ namespace sdb::connector {
 
 class SearchRemoveFilterBase;
 
-using AnalyzerProvider =
+using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
-inline AnalyzerProvider MakeAnalyzerProvider(
+// One JSON path's worth of indexing config, resolved against the catalog.
+struct JsonPathSinkConfig {
+  std::span<const std::string> path;
+  catalog::ColumnTokenizer tokenizer;
+};
+
+using JsonPathsProvider =
+  absl::AnyInvocable<std::vector<JsonPathSinkConfig>(catalog::Column::Id)>;
+
+// A JsonPathsProvider that returns an empty vector for every column. Useful
+// for code paths that do not yet support path-based JSON indexing.
+inline JsonPathsProvider NoJsonPaths() {
+  return [](catalog::Column::Id) { return std::vector<JsonPathSinkConfig>{}; };
+}
+
+inline TokenizerProvider MakeTokenizerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
   const catalog::InvertedIndex& index) {
   return [snapshot, &index](catalog::Column::Id column_id) {
-    return index.GetColumnAnalyzer(snapshot, column_id);
+    return index.GetColumnTokenizer(snapshot, column_id);
+  };
+}
+
+// Resolves every configured JSON path for `column_id` against the catalog.
+// Returns an empty vector for columns without path-based indexing.
+inline JsonPathsProvider MakeJsonPathsProvider(
+  std::shared_ptr<const catalog::Snapshot> snapshot,
+  const catalog::InvertedIndex& index) {
+  return [snapshot = std::move(snapshot), &index](
+           catalog::Column::Id column_id) -> std::vector<JsonPathSinkConfig> {
+    const auto* col = index.FindColumnInfo(column_id);
+    if (!col) {
+      return {};
+    }
+    std::vector<JsonPathSinkConfig> out;
+    out.reserve(col->json_paths.size());
+    for (const auto& p : col->json_paths) {
+      auto analyzer = index.GetJsonPathTokenizer(snapshot, column_id, p.path);
+      if (!analyzer) {
+        continue;
+      }
+      out.emplace_back(p.path, *std::move(analyzer));
+    }
+    return out;
   };
 }
 
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
-                           AnalyzerProvider&& analyzer_provider,
+                           TokenizerProvider&& tokenizer_provider,
+                           JsonPathsProvider&& json_paths_provider,
                            std::span<const catalog::Column::Id> columns);
 
   void InitImpl(size_t batch_size);
@@ -175,7 +220,32 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   template<duckdb::LogicalTypeId Kind>
   void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
-  AnalyzerProvider _analyzer_provider;
+  // Setup the writer for a JSON column with one or more configured paths.
+  // Each path becomes a distinct iresearch field named
+  // [8 bytes BE column_id] + "." + key1 + "." + key2 + ... + <MangleString>.
+  void SetupJsonColumnWriter(catalog::Column::Id column_id,
+                             std::vector<JsonPathSinkConfig> paths);
+
+  struct JsonPathField {
+    // Backing storage for each per-type field name; Field::name is a
+    // string_view into the corresponding buffer.
+    std::string string_name;
+    std::string numeric_name;
+    std::string bool_name;
+    std::string null_name;
+    Field string_field;   // user's configured analyzer
+    Field numeric_field;  // built-in NumericTokenizer
+    Field bool_field;     // built-in BooleanTokenizer
+    Field null_field;     // built-in NullTokenizer
+    // JSON Pointer view inside one of the name buffers.
+    std::string_view pointer;
+
+    void Init(catalog::Column::Id column_id, std::span<const std::string> path,
+              catalog::ColumnTokenizer string_analyzer);
+  };
+
+  TokenizerProvider _tokenizer_provider;
+  JsonPathsProvider _json_paths_provider;
   Field _field;
   Field _pk_field;
   Field _null_field;
@@ -186,6 +256,12 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   Writer _current_writer;
   bool _emit_pk{true};
+
+  // State for the currently active JSON column (empty when the column is not
+  // path-indexed). Rebuilt on every SwitchColumn.
+  std::vector<JsonPathField> _json_fields;
+  simdjson::ondemand::parser _json_parser;
+  std::string _json_buffer;
 };
 
 class SearchSinkDeleteBaseImpl {

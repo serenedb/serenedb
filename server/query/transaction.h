@@ -113,7 +113,7 @@ class Transaction : public Config {
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
 
-    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
+    for (auto index_shard : snapshot->GetIndexShardsByRelation(table_id)) {
       auto index =
         snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
       SDB_ASSERT(index);

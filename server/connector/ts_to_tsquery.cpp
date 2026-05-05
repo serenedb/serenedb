@@ -248,7 +248,7 @@ void FromToTsquery(irs::BooleanFilter& parent, const FilterContext& ctx,
                     ERR_MSG(r.errorMessage()), ERR_HINT(kSyntaxHint));
   }
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
   auto& mixed = ctx.negated ? Negate<irs::MixedBooleanFilter>(parent)
                             : AddFilter<irs::MixedBooleanFilter>(parent);

@@ -138,7 +138,7 @@ void FromHalfRange(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   if (auto r = MangleForType(col_type, field_name); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));
@@ -286,7 +286,7 @@ void FromBetween(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   if (auto r = MangleForType(col_type, field_name); !r.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(r.errorMessage()));

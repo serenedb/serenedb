@@ -1,0 +1,95 @@
+hash-threshold 100
+control substitution on
+
+# Demonstrates the file_row_number byte offset emitted by read_json /
+# read_json_objects.  This is the value stored as the lookup key when an
+# inverted index is built over a read_json view body, and the value passed
+# back to JSONReader::FetchRow on probe.
+#
+# The fix in JSONReader::FinalizeBuffer (file_read_start += skipped bytes)
+# is what makes the ARRAY-format offsets here match the actual byte
+# position of each record's `{`. Without the fix the offsets would be
+# short by 3 (the `[\n\t` prefix), starting at 0 for the first record.
+#
+# COPY (FORMAT JSON, ARRAY) layout:
+#   prefix    = "[\n\t"   (3 bytes)
+#   separator = ",\n\t"   (3 bytes)
+#   suffix    = "\n]\n"   (3 bytes)
+
+
+# ============================================================================
+# format='array': prefix skip is what the fix corrects.
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta'
+      UNION ALL SELECT 3, 'pudge gamma')
+TO '/tmp/${__DATABASE__}_frn_array.json' (FORMAT JSON, ARRAY);
+
+# Record sizes: {"id":1,"body":"pudge alpha"} = 29, "manga beta" = 28,
+# "pudge gamma" = 29.
+#   byte 0..2   = `[\n\t`
+#   byte 3..31  = record 1
+#   byte 32..34 = `,\n\t`
+#   byte 35..62 = record 2
+#   byte 63..65 = `,\n\t`
+#   byte 66..94 = record 3
+# Post-fix: 3, 35, 66.   Pre-fix: 0, 32, 63.
+query
+SELECT file_row_number, id, body
+FROM read_json('/tmp/${__DATABASE__}_frn_array.json', format='array')
+ORDER BY id;
+----
+file_row_number	id	body
+3	1	pudge alpha
+35	2	manga beta
+66	3	pudge gamma
+
+# Same file via read_json_objects: each top-level array element is returned
+# as an opaque JSON document; the byte offsets are the same.
+query
+SELECT file_row_number, json
+FROM read_json_objects('/tmp/${__DATABASE__}_frn_array.json', format='array')
+ORDER BY file_row_number;
+----
+file_row_number	json
+3	{"id":1,"body":"pudge alpha"}
+35	{"id":2,"body":"manga beta"}
+66	{"id":3,"body":"pudge gamma"}
+
+
+# ============================================================================
+# format='nd' (newline-delimited): no array prefix, offsets are the byte
+# position of each record's `{` regardless of the fix.
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta'
+      UNION ALL SELECT 3, 'pudge gamma')
+TO '/tmp/${__DATABASE__}_frn_nd.jsonl' (FORMAT JSON);
+
+# Records separated by single `\n`:
+#   byte 0..28  = record 1, byte 29 = `\n`
+#   byte 30..57 = record 2, byte 58 = `\n`
+#   byte 59..87 = record 3, byte 88 = `\n`
+query
+SELECT file_row_number, id, body
+FROM read_json('/tmp/${__DATABASE__}_frn_nd.jsonl', format='nd')
+ORDER BY id;
+----
+file_row_number	id	body
+0	1	pudge alpha
+30	2	manga beta
+59	3	pudge gamma
+
+query
+SELECT file_row_number, json
+FROM read_json_objects('/tmp/${__DATABASE__}_frn_nd.jsonl', format='nd')
+ORDER BY file_row_number;
+----
+file_row_number	json
+0	{"id":1,"body":"pudge alpha"}
+30	{"id":2,"body":"manga beta"}
+59	{"id":3,"body":"pudge gamma"}

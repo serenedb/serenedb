@@ -84,7 +84,7 @@ class SereneDBCatalog final : public duckdb::Catalog {
 
   duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndex(
     duckdb::Binder& binder, duckdb::CreateStatement& stmt,
-    duckdb::TableCatalogEntry& table,
+    duckdb::CatalogEntry& table,
     duckdb::unique_ptr<duckdb::LogicalOperator> plan) final;
 
   duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) final;

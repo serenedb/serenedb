@@ -2243,3 +2243,5 @@ Text Search Dictionary:
       maxlevel (integer) [default: 23] - Maximum S2 cell level (0-30), ~1m precision at level 23
       levelmod (integer) [default: 1] - S2 level modifier (1, 2, or 3)
       optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
+  keyword:
+    (no additional options)

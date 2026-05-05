@@ -67,7 +67,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│    Index: docs_topk_idx   │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -102,7 +102,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│    Index: docs_topk_idx   │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -145,7 +145,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│    Index: docs_topk_idx   │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -184,7 +184,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│    Index: docs_topk_idx   │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -214,7 +214,7 @@ QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│    Index: docs_topk_idx   │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -263,7 +263,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      ││       IRESEARCH_SCAN      │
 │    ────────────────────   ││    ────────────────────   │
-│        Table: docs        ││        Table: docs        │
+│    Index: docs_topk_idx   ││    Index: docs_topk_idx   │
 │      Lookup: rocksdb      ││      Lookup: rocksdb      │
 │                           ││                           │
 │          Filter:          ││          Filter:          │
@@ -303,7 +303,7 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│        Table: docs        │
+│    Index: docs_topk_idx   │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │

@@ -158,14 +158,14 @@ struct Snapshot {
   virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
                                           std::string_view schema,
                                           std::string_view name) const = 0;
-  virtual bool HasIndexes(ObjectId table_id) const = 0;
+  virtual bool HasIndexes(ObjectId relation_id) const = 0;
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
-  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
-    ObjectId table_id) const = 0;
-  virtual std::vector<std::shared_ptr<Index>> GetIndexesByTable(
-    ObjectId table_id) const = 0;
+  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByRelation(
+    ObjectId relation_id) const = 0;
+  virtual std::vector<std::shared_ptr<Index>> GetIndexesByRelation(
+    ObjectId relation_id) const = 0;
   virtual std::shared_ptr<IndexShard> GetIndexShard(
     ObjectId index_id) const = 0;
 

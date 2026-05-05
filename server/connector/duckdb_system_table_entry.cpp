@@ -36,7 +36,7 @@ struct SystemTableBindData : public duckdb::FunctionData {
   std::vector<std::string> column_names;
   int64_t tableoid = 0;
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     auto copy = duckdb::make_uniq<SystemTableBindData>();
     copy->entry = entry;
     copy->column_names = column_names;
@@ -44,7 +44,7 @@ struct SystemTableBindData : public duckdb::FunctionData {
     return copy;
   }
 
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     return entry == other.Cast<SystemTableBindData>().entry;
   }
 };

@@ -26,6 +26,7 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
@@ -180,22 +181,32 @@ Result ValidateInvertedIndexColumns(
   // there, otherwise inserts/updates would silently drop the column at write
   // time. TIMESTAMP is supported by the writer but not by the search filter
   // path yet, so it stays rejected explicitly.
-  for (auto c : indexed_columns) {
+  for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
-    auto kind = c.catalog_column->type.id();
-    bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
-                     kind == duckdb::LogicalTypeId::VARCHAR ||
-                     kind == duckdb::LogicalTypeId::BLOB ||
-                     kind == duckdb::LogicalTypeId::BOOLEAN ||
-                     kind == duckdb::LogicalTypeId::TINYINT ||
-                     kind == duckdb::LogicalTypeId::SMALLINT ||
-                     kind == duckdb::LogicalTypeId::INTEGER ||
-                     kind == duckdb::LogicalTypeId::BIGINT ||
-                     kind == duckdb::LogicalTypeId::FLOAT ||
-                     kind == duckdb::LogicalTypeId::DOUBLE ||
-                     kind == duckdb::LogicalTypeId::DATE ||
-                     kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                     kind == duckdb::LogicalTypeId::ARRAY;
+    const auto kind = c.catalog_column->type.id();
+    if (!c.json_path.empty()) {
+      // JSON-path entries target a JSON column (stored as VARCHAR). The
+      // whitelist below applies to whole-column entries; path entries
+      // get their own type-dispatch at write time per leaf JSON value.
+      if (kind != duckdb::LogicalTypeId::VARCHAR) {
+        return {ERROR_BAD_PARAMETER, "Column ", c.name,
+                " must be a JSON/VARCHAR column to be indexed by path"};
+      }
+      continue;
+    }
+    const bool supported = kind == duckdb::LogicalTypeId::SQLNULL ||
+                           kind == duckdb::LogicalTypeId::VARCHAR ||
+                           kind == duckdb::LogicalTypeId::BLOB ||
+                           kind == duckdb::LogicalTypeId::BOOLEAN ||
+                           kind == duckdb::LogicalTypeId::TINYINT ||
+                           kind == duckdb::LogicalTypeId::SMALLINT ||
+                           kind == duckdb::LogicalTypeId::INTEGER ||
+                           kind == duckdb::LogicalTypeId::BIGINT ||
+                           kind == duckdb::LogicalTypeId::FLOAT ||
+                           kind == duckdb::LogicalTypeId::DOUBLE ||
+                           kind == duckdb::LogicalTypeId::DATE ||
+                           kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
+                           kind == duckdb::LogicalTypeId::ARRAY;
     if (!supported) {
       return {ERROR_BAD_PARAMETER,
               "Column ",
@@ -210,11 +221,19 @@ Result ValidateInvertedIndexColumns(
 
 std::vector<Column::Id> ExtractColumnIds(
   std::span<const CreateIndexColumn> columns) {
+  // Multiple CreateIndexColumn entries may share the same catalog column when
+  // several JSON paths are indexed on it -- dedup so the index-level column
+  // list has one entry per physical column.
   std::vector<Column::Id> ids;
   ids.reserve(columns.size());
+  containers::FlatHashSet<Column::Id> seen;
+  seen.reserve(columns.size());
   for (const auto& c : columns) {
     SDB_ASSERT(c.catalog_column);
-    ids.push_back(c.catalog_column->id);
+    auto id = c.catalog_column->id;
+    if (seen.insert(id).second) {
+      ids.push_back(id);
+    }
   }
   return ids;
 }
@@ -253,9 +272,62 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     return std::unexpected<Result>(std::move(column_validation_res));
   }
 
+  // Resolves a text-dictionary opclass against the current snapshot. The HNSW
+  // opclass is handled inline because it does not feed JSON paths.
+  auto resolve_dict = [&](std::string_view col_name, const std::string& opclass)
+    -> ResultOr<std::pair<ObjectId, search::Features>> {
+    auto object_name = pg::ParseObjectName(opclass, schema_name);
+    // Technically nothing prevents us from allowing so.
+    // But that will make schema drop more complicated as we will need to
+    // check if any dictionaries are used in the indexes from other
+    // schemas and even fail schema drops on this case. For now if we
+    // drop text dictionary as a child entity we can be sure that
+    // indexes will also be dropped along with tables from same schema.
+    if (object_name.schema != schema_name) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_BAD_PARAMETER,
+        "Accessing text dictionary from different schema is not supported"};
+    }
+    auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
+                                       object_name.relation);
+    if (!dict) {
+      return std::unexpected<Result>{std::in_place,
+                                     ERROR_BAD_PARAMETER,
+                                     "Text search dictionary '",
+                                     opclass,
+                                     "' does not exist.",
+                                     " Required by column '",
+                                     col_name,
+                                     "'"};
+    }
+    return std::make_pair(dict->GetId(), dict->GetFeatures());
+  };
+
   InvertedIndex::ColumnOptions inverted_columns;
   for (const auto& c : columns) {
-    InvertedIndexColumnInfo index_col;
+    auto& index_col = inverted_columns[c.catalog_column->id];
+
+    if (!c.json_path.empty()) {
+      if (!c.opclass_options.empty()) {
+        return std::unexpected<Result>{
+          std::in_place, ERROR_BAD_PARAMETER,
+          "JSON-path index entries do not accept opclass options (used on "
+          "column '",
+          c.name, "')"};
+      }
+      JsonPathInfo path_info{.path = c.json_path};
+      if (!c.opclass.empty()) {
+        auto dict = resolve_dict(c.name, c.opclass);
+        if (!dict) {
+          return std::unexpected<Result>{std::move(dict.error())};
+        }
+        path_info.text_dictionary = dict->first;
+        path_info.features = dict->second;
+      }
+      index_col.json_paths.emplace_back(std::move(path_info));
+      continue;
+    }
+
     if (!c.opclass.empty()) {
       // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
       if (c.opclass == "hnsw") {
@@ -290,35 +362,14 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
             c.name,
             "')"};
         }
-        auto object_name = pg::ParseObjectName(c.opclass, schema_name);
-        if (object_name.schema != schema_name) {
-          // Technically nothing prevents us from allowing so.
-          // But that will make schema drop more complicated as we will need to
-          // check if any dictionaries are used in the indexes from other
-          // schemas and even fail schema drops on this case. For now if we
-          // drop text dictionary as a child entity we can be sure that
-          // indexes will also be dropped along with tables from same schema.
-          return std::unexpected<Result>{
-            std::in_place, ERROR_BAD_PARAMETER,
-            "Accessing text dictionary from different schema is not supported"};
-        }
-        auto dict = snapshot->GetTokenizer(database_id, object_name.schema,
-                                           object_name.relation);
+        auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
-          return std::unexpected<Result>{std::in_place,
-                                         ERROR_BAD_PARAMETER,
-                                         "Text search dictionary '",
-                                         c.opclass,
-                                         "' does not exist.",
-                                         " Required by column '",
-                                         c.name,
-                                         "'"};
+          return std::unexpected<Result>{std::move(dict.error())};
         }
-        index_col.text_dictionary = dict->GetId();
-        index_col.features = dict->GetFeatures();
+        index_col.text_dictionary = dict->first;
+        index_col.features = dict->second;
       }
     }
-    inverted_columns.emplace(c.catalog_column->id, std::move(index_col));
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),

@@ -802,7 +802,7 @@ void RocksDBEngineCatalog::trackRevisionTreeBufferedMemoryDecrease(
 }
 
 bool RocksDBEngineCatalog::hasBackgroundError() const {
-  return _error_listener != nullptr && _error_listener->called();
+  return _error_listener != nullptr && _error_listener->Called();
 }
 
 // TODO: Rewrite this to use single scan.
@@ -1716,7 +1716,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   }
 
   if (_error_listener) {
-    builder.add("rocksdb.read-only", _error_listener->called() ? 1 : 0);
+    builder.add("rocksdb.read-only", _error_listener->Called() ? 1 : 0);
   }
 
   auto sequence_number = _db->GetLatestSequenceNumber();

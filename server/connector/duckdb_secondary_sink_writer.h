@@ -42,20 +42,36 @@ struct SKColumn {
   duckdb::LogicalType type;
 };
 
-// Appends <marker><encoded_value> for each SK column from a DuckDB DataChunk.
+// Pre-build UnifiedVectorFormat for each SK column. Call once per chunk in
+// the writer's Init; AppendSKValue then resolves rows zero-copy.
+inline void PrepareSKFormats(
+  const duckdb::DataChunk& input, std::span<const SKColumn> sk_columns,
+  std::vector<duckdb::UnifiedVectorFormat>& sk_formats) {
+  const auto num_rows = input.size();
+  sk_formats.resize(sk_columns.size());
+  for (size_t c = 0; c < sk_columns.size(); ++c) {
+    input.data[sk_columns[c].input_col_idx].ToUnifiedFormat(num_rows,
+                                                            sk_formats[c]);
+  }
+}
+
+// Appends <marker><encoded_value> for each SK column. Reads via the
+// pre-built UnifiedVectorFormat to avoid per-row Value allocation.
 // Returns true if any SK column is NULL.
-inline bool AppendSKValue(std::string& key, const duckdb::DataChunk& input,
-                          std::span<const SKColumn> sk_columns,
-                          duckdb::idx_t row_idx) {
+inline bool AppendSKValue(
+  std::string& key, std::span<const duckdb::UnifiedVectorFormat> sk_formats,
+  std::span<const SKColumn> sk_columns, duckdb::idx_t row_idx) {
+  SDB_ASSERT(sk_formats.size() == sk_columns.size());
   bool has_null = false;
-  for (const auto& sk : sk_columns) {
-    auto& vec = input.data[sk.input_col_idx];
-    if (vec.GetValue(row_idx).IsNull()) {
+  for (size_t c = 0; c < sk_columns.size(); ++c) {
+    const auto& fmt = sk_formats[c];
+    const auto idx = fmt.sel->get_index(row_idx);
+    if (!fmt.validity.RowIsValid(idx)) {
       secondary_key::AppendNullMarker(key);
       has_null = true;
     } else {
       secondary_key::AppendNotNullMarker(key);
-      AppendPKValueFromDuckDB(key, vec, row_idx, sk.type);
+      AppendPKValue(key, fmt, row_idx, sk_columns[c].type);
     }
   }
   return has_null;
@@ -87,9 +103,9 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
 
  protected:
   void InitBase(const duckdb::DataChunk& input) {
-    _input = &input;
     _row_idx = 0;
     _del_row_idx = 0;
+    duckdb_secondary_key::PrepareSKFormats(input, _sk_columns, _sk_formats);
   }
 
   bool BuildSK(std::string_view full_pk, rocksdb::Slice& value) {
@@ -97,8 +113,8 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
     secondary_key::AppendDummyColumnId(_key_buffer);
-    bool has_null = duckdb_secondary_key::AppendSKValue(_key_buffer, *_input,
-                                                        _sk_columns, _row_idx);
+    bool has_null = duckdb_secondary_key::AppendSKValue(
+      _key_buffer, _sk_formats, _sk_columns, _row_idx);
     constexpr bool kAlwaysPKInKey = !Unique;
     bool pk_in_key = kAlwaysPKInKey || has_null;
     _value_buffer.clear();
@@ -115,14 +131,18 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
     return has_null;
   }
 
+  // For DELETE / UPDATE-OLD lookups using a (possibly different) sk_columns
+  // mapping: caller passes the matching pre-built formats span, so we keep
+  // `sk_columns` and `sk_formats` paired.
   std::string_view BuildDeleteSK(
     std::string_view encoded_pk,
-    std::span<const duckdb_secondary_key::SKColumn> sk_columns) {
+    std::span<const duckdb_secondary_key::SKColumn> sk_columns,
+    std::span<const duckdb::UnifiedVectorFormat> sk_formats) {
     _key_buffer.clear();
     secondary_key::AppendShardPrefix(_key_buffer, _shard_id);
     secondary_key::AppendDummyColumnId(_key_buffer);
     bool has_null = duckdb_secondary_key::AppendSKValue(
-      _key_buffer, *_input, sk_columns, _del_row_idx);
+      _key_buffer, sk_formats, sk_columns, _del_row_idx);
     if constexpr (Unique) {
       if (has_null) {
         _key_buffer.append(encoded_pk);
@@ -138,7 +158,7 @@ class DuckDBSecondarySinkWriteBase : public DuckDBSinkIndexWriter,
   ObjectId _shard_id;
   std::vector<duckdb_secondary_key::SKColumn> _sk_columns;
   catalog::Column::Id _trigger_column_id;
-  const duckdb::DataChunk* _input = nullptr;
+  std::vector<duckdb::UnifiedVectorFormat> _sk_formats;
   duckdb::idx_t _row_idx = 0;
   duckdb::idx_t _del_row_idx = 0;
   std::string _key_buffer;
@@ -192,8 +212,8 @@ class DuckDBSecondarySinkDeleteWriter final
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    auto s =
-      this->_trx.Delete(this->BuildDeleteSK(encoded_pk, this->_sk_columns));
+    auto s = this->_trx.Delete(
+      this->BuildDeleteSK(encoded_pk, this->_sk_columns, this->_sk_formats));
     SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 };
@@ -227,6 +247,8 @@ class DuckDBSecondarySinkUpdateWriter final
 
   void Init(duckdb::idx_t batch_size, const duckdb::DataChunk& input) final {
     Base::InitBase(input);
+    duckdb_secondary_key::PrepareSKFormats(input, _old_sk_columns,
+                                           _old_sk_formats);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
@@ -251,13 +273,14 @@ class DuckDBSecondarySinkUpdateWriter final
   }
 
   void DeleteRow(std::string_view encoded_pk) final {
-    auto s =
-      this->_trx.Delete(this->BuildDeleteSK(encoded_pk, _old_sk_columns));
+    auto s = this->_trx.Delete(
+      this->BuildDeleteSK(encoded_pk, _old_sk_columns, _old_sk_formats));
     SDB_ASSERT(s.ok(), "Secondary index Delete failed: ", s.ToString());
   }
 
  private:
   std::vector<duckdb_secondary_key::SKColumn> _old_sk_columns;
+  std::vector<duckdb::UnifiedVectorFormat> _old_sk_formats;
 };
 
 }  // namespace sdb::connector

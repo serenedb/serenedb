@@ -122,7 +122,7 @@ void FromPhrase(irs::BooleanFilter& filter, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
 
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(filter)
@@ -239,7 +239,7 @@ void BuildFtsPhrase(irs::BooleanFilter& parent, const FilterContext& ctx,
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)
                              : AddFilter<irs::ByPhrase>(parent);
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
   *phrase.mutable_field() = field_name;
   phrase.boost(ctx.boost);
@@ -378,7 +378,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
   }
 
   std::string field_name;
-  MakeFieldName(column_info.column_id, field_name);
+  MakeFieldName(column_info, field_name);
   search::mangling::MangleString(field_name);
 
   auto& phrase = ctx.negated ? Negate<irs::ByPhrase>(parent)

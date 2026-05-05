@@ -18,11 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/str_replace.h>
 
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/types/string.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
@@ -45,6 +48,56 @@ template<vpack::detail::FixedString Name>
 void Readonly(duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {
   throw duckdb::InvalidInputException{"parameter \"%s\" cannot be changed",
                                       std::string_view{Name}.data()};
+}
+
+// Check for settings that is writable in principle. It is just us who not yet
+// support writing. So be honest here - if client actually does not change
+// anything, we accept it. If change is real - we error out.
+template<vpack::detail::FixedString Name>
+void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
+                 duckdb::Value& value) {
+  constexpr std::string_view kName{Name};
+  duckdb::Value current;
+  if (ctx.TryGetCurrentSetting(std::string{kName}, current)) {
+    bool equal = false;
+    if (current.type().id() == duckdb::LogicalTypeId::VARCHAR &&
+        value.type().id() == duckdb::LogicalTypeId::VARCHAR &&
+        !current.IsNull() && !value.IsNull()) {
+      equal = absl::EqualsIgnoreCase(current.ToString(), value.ToString());
+    } else {
+      equal = duckdb::Value::NotDistinctFrom(current, value);
+    }
+    if (equal) {
+      return;
+    }
+  }
+  throw duckdb::InvalidInputException{
+    "parameter \"%s\" cannot be changed from \"%s\" to \"%s\"", kName.data(),
+    current.ToString(), value.ToString()};
+}
+
+// PostgreSQL drivers supply client_encoding in many forms (UTF8, UTF-8, utf_8,
+// utf8, ...). To tackle this we have a special overload for encoding.
+void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
+                               duckdb::Value& value) {
+  auto canonicalize = [](std::string_view name) {
+    auto cleaned_str =
+      absl::StrReplaceAll(name, {{"-", ""}, {"_", ""}, {" ", ""}});
+    absl::AsciiStrToUpper(&cleaned_str);
+    return cleaned_str;
+  };
+
+  duckdb::Value current;
+  bool got_current =
+    ctx.TryGetCurrentSetting("client_encoding", current) && !current.IsNull();
+  std::string new_str = value.IsNull() ? std::string{} : value.ToString();
+  std::string new_canonical = canonicalize(new_str);
+  if (got_current && canonicalize(current.ToString()) == new_canonical) {
+    return;
+  }
+  throw duckdb::InvalidInputException{
+    "parameter \"client_encoding\" cannot be changed from \"%s\" to \"%s\"",
+    got_current ? current.ToString() : std::string{}, new_str};
 }
 
 constexpr std::pair<std::string_view, VariableDescription>
@@ -232,7 +285,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the client's character set encoding.",
         [] { return duckdb::Value{"UTF8"}; },
-        Readonly<"client_encoding">,
+        NoOverwriteClientEncoding,
       },
     },
     {
@@ -258,7 +311,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::BOOLEAN,
         "Shows whether datetimes are integer based.",
         [] { return duckdb::Value{true}; },
-        Readonly<"integer_datetimes">,
+        NoOverwrite<"integer_datetimes">,
       },
     },
     {
@@ -294,7 +347,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::BOOLEAN,
         "Causes '...' strings to treat backslashes literally.",
         [] { return duckdb::Value{true}; },
-        Readonly<"standard_conforming_strings">,
+        NoOverwrite<"standard_conforming_strings">,
       },
     },
     {
@@ -303,7 +356,7 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::VARCHAR,
         "Sets the message levels that are sent to the client.",
         [] { return duckdb::Value{"notice"}; },
-        Readonly<"client_min_messages">,
+        NoOverwrite<"client_min_messages">,
       },
     },
     {

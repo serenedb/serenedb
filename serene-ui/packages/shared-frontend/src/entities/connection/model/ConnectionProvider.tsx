@@ -54,6 +54,29 @@ export const ConnectionProvider = ({
         }
     }, [connections, isFetched, currentConnection.connectionId]);
 
+    useEffect(() => {
+        if (
+            !isFetched ||
+            !connections?.length ||
+            currentConnection.connectionId !== -1
+        ) {
+            return;
+        }
+
+        const defaultConnection = connections.find(
+            (connection) => connection.isDefault,
+        );
+
+        if (!defaultConnection) {
+            return;
+        }
+
+        setCurrentConnection({
+            connectionId: defaultConnection.id,
+            database: "",
+        });
+    }, [connections, isFetched, currentConnection.connectionId]);
+
     return (
         <ConnectionContext.Provider
             value={{

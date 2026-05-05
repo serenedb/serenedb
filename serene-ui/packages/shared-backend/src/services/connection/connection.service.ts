@@ -1,5 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import { ConnectionRepository } from "../../repositories";
+import { getDefaultConnectionName } from "./load-default-connection";
 import type {
     AddConnectionInput,
     AddConnectionOutput,
@@ -14,8 +15,16 @@ export const ConnectionService = {
     listMyConnections: async (): Promise<ListMyConnectionOutput> => {
         try {
             const connections = ConnectionRepository.findMany();
+            const defaultConnectionName = getDefaultConnectionName();
 
-            return connections;
+            if (!defaultConnectionName) {
+                return connections;
+            }
+
+            return connections.map((connection) => ({
+                ...connection,
+                isDefault: connection.name === defaultConnectionName,
+            }));
         } catch (error) {
             if (error instanceof ORPCError) {
                 throw error;

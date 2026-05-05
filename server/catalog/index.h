@@ -22,6 +22,7 @@
 
 #include <duckdb/common/types/value.hpp>
 #include <string>
+#include <vector>
 
 #include "catalog/object.h"
 #include "catalog/table_options.h"
@@ -44,6 +45,7 @@ struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
+  std::vector<std::string> json_path;
   duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
 };
 

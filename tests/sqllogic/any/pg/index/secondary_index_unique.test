@@ -2085,9 +2085,11 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │  ROCKSDB_SK_POINTS_LOOKUP │
 │    ────────────────────   │
-│           Table:          │
-│ vedernikoff_uniq_idx_scan │
+│           Index:          │
+│vedernikoff_uniq_idx_scan_c│
+│          ode_idx          │
 │                           │
+│      Lookup: rocksdb      │
 │     Filter: (code=20)     │
 │        Unique: true       │
 │                           │

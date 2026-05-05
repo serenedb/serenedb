@@ -38,14 +38,14 @@ struct VacuumBindData : public duckdb::FunctionData {
   std::string table_name;
   std::string schema_name;
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     auto copy = duckdb::make_uniq<VacuumBindData>();
     copy->option = option;
     copy->table_name = table_name;
     copy->schema_name = schema_name;
     return copy;
   }
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     auto& o = other.Cast<VacuumBindData>();
     return option == o.option && table_name == o.table_name &&
            schema_name == o.schema_name;
@@ -104,7 +104,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   if (option == "update_indexes" || option.empty()) {
     // Commit inverted indexes
     for (const auto& table : tables) {
-      for (auto shard : snapshot->GetIndexShardsByTable(table->GetId())) {
+      for (auto shard : snapshot->GetIndexShardsByRelation(table->GetId())) {
         if (shard &&
             shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
           auto& inverted = basics::downCast<search::InvertedIndexShard>(*shard);

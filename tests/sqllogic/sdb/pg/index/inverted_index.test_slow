@@ -136,12 +136,8 @@ statement count 100000
 COPY csv_idx_src TO '/tmp/${__DATABASE__}_csv_idx_slow.csv';
 
 statement ok
-CREATE TABLE csv_idx_ext(
-  fact TEXT,
-  dept TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_csv_idx_slow.csv'
-);
+CREATE VIEW csv_idx_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_csv_idx_slow.csv');
 
 statement ok
 CREATE INDEX csv_idx_ext_facts ON csv_idx_ext USING inverted(fact test_english, dept test_english);
@@ -167,7 +163,7 @@ SELECT * FROM csv_idx_ext_facts WHERE dept @@ ts_phrase('department alpha');
 66600 values hashing to e75efbadfaf23e06fddbfa32ed427ef9
 
 statement ok
-DROP TABLE csv_idx_ext;
+DROP VIEW csv_idx_ext;
 
 statement ok
 DROP TABLE csv_idx_src;
@@ -188,12 +184,8 @@ statement count 10000
 COPY dense_pq_slow_src TO '/tmp/${__DATABASE__}_dense_pq_slow.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TABLE dense_pq_slow_ext(
-  fact TEXT,
-  division TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_dense_pq_slow.parquet'
-);
+CREATE VIEW dense_pq_slow_ext AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_dense_pq_slow.parquet');
 
 statement ok
 CREATE INDEX dense_pq_slow_idx ON dense_pq_slow_ext USING inverted(fact test_english, division test_english);
@@ -234,7 +226,7 @@ SELECT * FROM dense_pq_slow_idx WHERE fact @@ ts_phrase('every') OR division @@ 
 20000 values hashing to 6d447bce6f45bd07ae971f1e22396944
 
 statement ok
-DROP TABLE dense_pq_slow_ext;
+DROP VIEW dense_pq_slow_ext;
 
 statement ok
 DROP TABLE dense_pq_slow_src;
@@ -254,12 +246,8 @@ statement count 10000
 COPY dense_csv_slow_src TO '/tmp/${__DATABASE__}_dense_csv_slow.csv';
 
 statement ok
-CREATE TABLE dense_csv_slow_ext(
-  content TEXT,
-  region TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_dense_csv_slow.csv'
-);
+CREATE VIEW dense_csv_slow_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_dense_csv_slow.csv');
 
 statement ok
 CREATE INDEX dense_csv_slow_idx ON dense_csv_slow_ext USING inverted(content test_english, region test_english);
@@ -290,7 +278,7 @@ SELECT * FROM dense_csv_slow_idx WHERE content @@ ts_phrase('universal') AND reg
 10000 values hashing to f795c7eddb5e4c035810211d5ffc3a5d
 
 statement ok
-DROP TABLE dense_csv_slow_ext;
+DROP VIEW dense_csv_slow_ext;
 
 statement ok
 DROP TABLE dense_csv_slow_src;
@@ -318,12 +306,8 @@ statement count 10000
 COPY json_idx_src TO '/tmp/${__DATABASE__}_json_idx_slow.jsonl' (FORMAT json);
 
 statement ok
-CREATE TABLE json_idx_ext(
-  fact TEXT,
-  dept TEXT
-) WITH (
-  PATH = '/tmp/${__DATABASE__}_json_idx_slow.jsonl'
-);
+CREATE VIEW json_idx_ext AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_json_idx_slow.jsonl');
 
 statement ok
 CREATE INDEX json_idx_ext_facts ON json_idx_ext USING inverted(fact test_english, dept test_english);
@@ -354,7 +338,7 @@ SELECT * FROM json_idx_ext_facts WHERE fact @@ ts_phrase('vedernikoff') AND dept
 3332 values hashing to f6161bae08ed6f91eef7373d3ed74e51
 
 statement ok
-DROP TABLE json_idx_ext;
+DROP VIEW json_idx_ext;
 
 statement ok
 DROP TABLE json_idx_src;

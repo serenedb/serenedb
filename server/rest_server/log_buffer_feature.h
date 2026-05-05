@@ -57,7 +57,7 @@ class LogBufferFeature final : public SerenedFeature {
   explicit LogBufferFeature(Server& server);
 
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void prepare() override;
+  void prepare() final;
 
   /// return all buffered log entries
   std::vector<LogBuffer> entries(LogLevel, uint64_t start, bool up_to_level,

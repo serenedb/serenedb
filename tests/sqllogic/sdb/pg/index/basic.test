@@ -346,10 +346,8 @@ statement ok
 CREATE VIEW view_idx_view AS SELECT a, b FROM view_idx_test;
 
 
-statement error
+statement ok
 CREATE INDEX view_idx ON view_idx_view USING inverted(b);
-----
-db error: ERROR: can only create an index on a base table
 
 
 statement error

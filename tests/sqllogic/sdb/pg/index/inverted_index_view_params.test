@@ -1,0 +1,1562 @@
+hash-threshold 100
+control substitution on
+
+# View bodies with non-default reader parameters. CREATE INDEX must always
+# succeed -- it streams via the standard reader. SELECT-with-materialise
+# uses the lookup TF, which has to receive the same dialect/format params
+# the streaming bind saw, otherwise the parsed rows diverge. When a param
+# combination cannot be served by the lookup TF (e.g. compressed JSON,
+# explicit `column_types`/`names` for CSV, hive partitioning for parquet),
+# `ResolveViewFastPath` rejects it and SELECT falls through to the
+# standard "fast-path not supported" error. Detection-only knobs
+# (auto_detect, sample_size, files_to_sniff, auto_type_candidates,
+# field_appearance_threshold, map_inference_threshold) and operational
+# knobs (parallel, buffer_size, store_rejects, rejects_*) don't affect
+# the materialize path because we already know columns + offsets.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_params_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+
+# ============================================================================
+# CSV: delim, quote, escape, header
+# ============================================================================
+
+# Semicolon-delimited CSV with header.
+statement ok
+COPY (SELECT 'a' AS k, 'pudge alpha' AS body
+      UNION ALL SELECT 'b', 'manga beta'
+      UNION ALL SELECT 'c', 'pudge gamma')
+TO '/tmp/${__DATABASE__}_p_csv_delim.csv' (FORMAT CSV, DELIMITER ';', HEADER);
+
+statement ok
+CREATE VIEW p_csv_delim_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_delim.csv', delim=';', header=true);
+
+statement ok
+CREATE INDEX p_csv_delim_idx ON p_csv_delim_v
+  USING inverted(k, body view_params_en);
+
+query
+SELECT k, body FROM p_csv_delim_idx ORDER BY k;
+----
+k	body
+a	pudge alpha
+b	manga beta
+c	pudge gamma
+
+query
+SELECT k, body FROM p_csv_delim_idx WHERE body @@ ts_phrase('pudge') ORDER BY k;
+----
+k	body
+a	pudge alpha
+c	pudge gamma
+
+
+# Pipe-delimited CSV without header (column names from auto-detect: column0,
+# column1). header=false flows from view body to lookup.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge solo' AS body)
+TO '/tmp/${__DATABASE__}_p_csv_nohdr.csv' (FORMAT CSV, DELIMITER '|', HEADER FALSE);
+
+statement ok
+CREATE VIEW p_csv_nohdr_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_nohdr.csv', delim='|', header=false);
+
+statement ok
+CREATE INDEX p_csv_nohdr_idx ON p_csv_nohdr_v
+  USING inverted(column0, column1 view_params_en);
+
+query
+SELECT column0, column1 FROM p_csv_nohdr_idx ORDER BY column0;
+----
+column0	column1
+1	pudge solo
+
+
+# ============================================================================
+# JSON: format=array vs nd, records=true|false
+# ============================================================================
+
+# JSON array file (entire file is one [...] of records).
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta'
+      UNION ALL SELECT 3, 'pudge gamma')
+TO '/tmp/${__DATABASE__}_p_json_array.json' (FORMAT JSON, ARRAY);
+
+statement ok
+CREATE VIEW p_json_array_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_array.json', format='array');
+
+statement ok
+CREATE INDEX p_json_array_idx ON p_json_array_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_array_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+2	manga beta
+3	pudge gamma
+
+query
+SELECT id, body FROM p_json_array_idx WHERE body @@ ts_phrase('manga') ORDER BY id;
+----
+id	body
+2	manga beta
+
+
+# Newline-delimited JSON via the explicit `nd` alias.
+statement ok
+COPY (SELECT 4::int4 AS id, 'pudge nd alpha' AS body
+      UNION ALL SELECT 5, 'pudge nd beta')
+TO '/tmp/${__DATABASE__}_p_json_nd.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_nd_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_nd.jsonl', format='nd');
+
+statement ok
+CREATE INDEX p_json_nd_idx ON p_json_nd_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_nd_idx ORDER BY id;
+----
+id	body
+4	pudge nd alpha
+5	pudge nd beta
+
+
+# ============================================================================
+# Parquet: binary_as_string
+# ============================================================================
+
+# binary_as_string makes BLOB cells parsed as VARCHAR -- exercises the
+# named-param round-trip for parquet.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge bin alpha'::BLOB AS body
+      UNION ALL SELECT 2, 'pudge bin beta'::BLOB)
+TO '/tmp/${__DATABASE__}_p_pq_bin.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW p_pq_bin_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_bin.parquet', binary_as_string=true);
+
+statement ok
+CREATE INDEX p_pq_bin_idx ON p_pq_bin_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_bin_idx ORDER BY id;
+----
+id	body
+1	pudge bin alpha
+2	pudge bin beta
+
+query
+SELECT id, body FROM p_pq_bin_idx WHERE body @@ ts_phrase('pudge bin') ORDER BY id;
+----
+id	body
+1	pudge bin alpha
+2	pudge bin beta
+
+
+# ============================================================================
+# CSV: custom quote char
+# ============================================================================
+
+# `#` as quote char + delim `;`. Bodies contain commas and semicolons that
+# force quoting on write -- the parser must use `#` as the quote on the
+# read side too, otherwise the row splits at every `;` or `,`.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge, alpha; with text' AS body
+      UNION ALL SELECT 2, 'manga, beta'
+      UNION ALL SELECT 3, 'pudge, gamma'
+      ORDER BY id)
+TO '/tmp/${__DATABASE__}_p_csv_quote.csv' (FORMAT CSV, HEADER, DELIMITER ';', QUOTE '#');
+
+statement ok
+CREATE VIEW p_csv_quote_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_quote.csv',
+                          header=true, delim=';', quote='#');
+
+statement ok
+CREATE INDEX p_csv_quote_idx ON p_csv_quote_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_quote_idx ORDER BY id;
+----
+id	body
+1	pudge, alpha; with text
+2	manga, beta
+3	pudge, gamma
+
+query
+SELECT id, body FROM p_csv_quote_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge, alpha; with text
+3	pudge, gamma
+
+
+# ============================================================================
+# CSV: nullstr
+# ============================================================================
+
+# Two distinct null markers. If nullstr is dropped on the lookup side, the
+# materialised body would come back as the literal string "NA" / "NULL"
+# instead of NULL.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge null alpha'::VARCHAR AS body
+      UNION ALL SELECT 2, NULL
+      UNION ALL SELECT 3, 'pudge null gamma')
+TO '/tmp/${__DATABASE__}_p_csv_null.csv' (FORMAT CSV, HEADER, NULLSTR 'NA');
+
+statement ok
+CREATE VIEW p_csv_null_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_null.csv',
+                          header=true, nullstr=['NA', 'NULL']);
+
+statement ok
+CREATE INDEX p_csv_null_idx ON p_csv_null_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_null_idx ORDER BY id;
+----
+id	body
+1	pudge null alpha
+2	NULL
+3	pudge null gamma
+
+
+# ============================================================================
+# CSV: skip (leading-rows skip), auto-detect post-skip
+# ============================================================================
+
+# `skip=2` discards two leading non-data lines before the header. The lookup
+# bind must forward `skip` so the byte-offset PKs recorded at index-time
+# still point at row starts when the file is re-parsed.
+statement ok
+COPY (SELECT '# generated' AS line UNION ALL SELECT '# rev=42'
+      UNION ALL SELECT 'id,body'
+      UNION ALL SELECT '1,pudge skip alpha'
+      UNION ALL SELECT '2,manga skip beta'
+      UNION ALL SELECT '3,pudge skip gamma')
+TO '/tmp/${__DATABASE__}_p_csv_skip.csv' (FORMAT CSV, HEADER FALSE, QUOTE '');
+
+statement ok
+CREATE VIEW p_csv_skip_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_skip.csv',
+                          skip=2, header=true);
+
+statement ok
+CREATE INDEX p_csv_skip_idx ON p_csv_skip_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_skip_idx ORDER BY id;
+----
+id	body
+1	pudge skip alpha
+2	manga skip beta
+3	pudge skip gamma
+
+
+# ============================================================================
+# CSV: comment marker
+# ============================================================================
+
+# `comment='#'` filters out lines starting with `#` before parsing.
+statement ok
+COPY (SELECT '# header generated by test' AS line
+      UNION ALL SELECT 'id,body'
+      UNION ALL SELECT '1,pudge cmt alpha'
+      UNION ALL SELECT '# mid-file comment'
+      UNION ALL SELECT '2,manga cmt beta'
+      UNION ALL SELECT '3,pudge cmt gamma')
+TO '/tmp/${__DATABASE__}_p_csv_cmt.csv' (FORMAT CSV, HEADER FALSE, QUOTE '');
+
+statement ok
+CREATE VIEW p_csv_cmt_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_cmt.csv',
+                          comment='#', header=true);
+
+statement ok
+CREATE INDEX p_csv_cmt_idx ON p_csv_cmt_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_cmt_idx ORDER BY id;
+----
+id	body
+1	pudge cmt alpha
+2	manga cmt beta
+3	pudge cmt gamma
+
+
+# ============================================================================
+# CSV: gzip compression (auto-detected by extension, also forwarded via param)
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge gz alpha' AS body
+      UNION ALL SELECT 2, 'manga gz beta'
+      UNION ALL SELECT 3, 'pudge gz gamma')
+TO '/tmp/${__DATABASE__}_p_csv_gz.csv.gz' (FORMAT CSV, HEADER, COMPRESSION gzip);
+
+statement ok
+CREATE VIEW p_csv_gz_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_gz.csv.gz',
+                          header=true, compression='gzip');
+
+statement ok
+CREATE INDEX p_csv_gz_idx ON p_csv_gz_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_gz_idx ORDER BY id;
+----
+id	body
+1	pudge gz alpha
+2	manga gz beta
+3	pudge gz gamma
+
+
+# ============================================================================
+# CSV: explicit columns / types
+# ============================================================================
+
+# When `columns=` is given, auto-detection is bypassed entirely. The lookup
+# bind receives the same dictionary so the produced schema stays identical
+# between scan and re-read.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge col alpha' AS body
+      UNION ALL SELECT 2, 'manga col beta')
+TO '/tmp/${__DATABASE__}_p_csv_cols.csv' (FORMAT CSV, HEADER FALSE);
+
+statement ok
+CREATE VIEW p_csv_cols_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_cols.csv',
+                          header=false,
+                          columns={'id': 'INTEGER', 'body': 'VARCHAR'});
+
+statement ok
+CREATE INDEX p_csv_cols_idx ON p_csv_cols_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_cols_idx ORDER BY id;
+----
+id	body
+1	pudge col alpha
+2	manga col beta
+
+
+# ============================================================================
+# JSON: compression -- materialise NOT supported
+# ============================================================================
+
+# CREATE INDEX itself is fine: the streaming reader walks the gzipped JSON
+# sequentially. SELECT-time materialise calls JSONReader::FetchRow, which
+# does a positional read on the file handle, and gzip streams don't support
+# positional reads. We surface the standard "fast-path not supported" error
+# so the user sees the same message as for any other unsupported view body.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge gz alpha' AS body
+      UNION ALL SELECT 2, 'manga gz beta'
+      UNION ALL SELECT 3, 'pudge gz gamma')
+TO '/tmp/${__DATABASE__}_p_json_gz.jsonl.gz' (FORMAT JSON, COMPRESSION gzip);
+
+statement ok
+CREATE VIEW p_json_gz_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_gz.jsonl.gz',
+                           format='nd', compression='gzip');
+
+statement ok
+CREATE INDEX p_json_gz_idx ON p_json_gz_v
+  USING inverted(id, body view_params_en);
+
+# Bare-scan goes through the inverted index full-scan (no materialise) and
+# works.
+query
+SELECT count(*) FROM p_json_gz_idx;
+----
+count
+3
+
+
+query error
+SELECT id, body FROM p_json_gz_idx ORDER BY id;
+
+
+# ============================================================================
+# JSON: records=true (objects) vs records=false (top-level values)
+# ============================================================================
+
+# records=true is the default for object-shaped lines. Pin it explicitly so
+# the bind round-trip is exercised; the previous tests rely on default.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge rec alpha' AS body
+      UNION ALL SELECT 2, 'manga rec beta')
+TO '/tmp/${__DATABASE__}_p_json_rec.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_rec_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_rec.jsonl',
+                           format='nd', records='true');
+
+statement ok
+CREATE INDEX p_json_rec_idx ON p_json_rec_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_rec_idx ORDER BY id;
+----
+id	body
+1	pudge rec alpha
+2	manga rec beta
+
+
+# ============================================================================
+# Parquet: file_row_number is implicitly required
+# ============================================================================
+
+# Multiple row groups in one file -- the lookup TF must binary-search the
+# correct row group via row_group_starts on every PK; this exercises that
+# code path with non-default row_group_size.
+statement ok
+COPY (SELECT i::int4 AS id, ('pudge rg ' || (i % 5)::VARCHAR) AS body
+      FROM range(0, 200) t(i))
+TO '/tmp/${__DATABASE__}_p_pq_rg.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 32);
+
+statement ok
+CREATE VIEW p_pq_rg_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_rg.parquet');
+
+statement ok
+CREATE INDEX p_pq_rg_idx ON p_pq_rg_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT count(*), min(id), max(id) FROM p_pq_rg_idx;
+----
+count	min	max
+200	0	199
+
+# Spot-check phrase across row-group boundaries.
+query
+SELECT id FROM p_pq_rg_idx WHERE body @@ ts_phrase('pudge rg 3') ORDER BY id LIMIT 5;
+----
+id
+3
+8
+13
+18
+23
+
+
+# ============================================================================
+# Unsupported parameters: clear errors
+# ============================================================================
+
+# `auto_detect=false` without `columns=` for read_csv -- DuckDB rejects
+# this at bind. The view-body bind, the lookup-rebind, and the planner
+# should all surface the same readable error.
+statement error
+CREATE VIEW p_csv_bogus_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_quote.csv',
+                          header=true, no_such_param=true);
+
+
+# Unknown named arg on read_json.
+statement error
+CREATE VIEW p_json_bogus_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_rec.jsonl',
+                           format='nd', no_such_param=true);
+
+
+# Unknown named arg on read_parquet.
+statement error
+CREATE VIEW p_pq_bogus_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_rg.parquet',
+                              no_such_param=true);
+
+
+# ============================================================================
+# CSV: escape (custom quote-escape char)
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge "esc" alpha' AS body
+      UNION ALL SELECT 2, 'manga beta')
+TO '/tmp/${__DATABASE__}_p_csv_esc.csv' (FORMAT CSV, HEADER, QUOTE '"', ESCAPE '"');
+
+statement ok
+CREATE VIEW p_csv_esc_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_esc.csv',
+                          header=true, quote='"', escape='"');
+
+statement ok
+CREATE INDEX p_csv_esc_idx ON p_csv_esc_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_esc_idx ORDER BY id;
+----
+id	body
+1	pudge "esc" alpha
+2	manga beta
+
+
+# ============================================================================
+# CSV: dateformat -- non-default date pattern
+# ============================================================================
+
+# Without `dateformat='%d/%m/%Y'` DuckDB cannot parse '31/01/2026' as DATE.
+# Both view-body bind and lookup re-bind need it to produce DATE not VARCHAR.
+statement ok
+COPY (SELECT 1::int4 AS id, '31/01/2026' AS d, 'pudge date alpha' AS body
+      UNION ALL SELECT 2, '01/02/2026', 'manga date beta')
+TO '/tmp/${__DATABASE__}_p_csv_date.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_date_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_date.csv',
+                          header=true, dateformat='%d/%m/%Y');
+
+statement ok
+CREATE INDEX p_csv_date_idx ON p_csv_date_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_date_idx ORDER BY id;
+----
+id	body
+1	pudge date alpha
+2	manga date beta
+
+
+# ============================================================================
+# CSV: explicit `names=` + `types=` (LIST-typed schema overrides)
+# ============================================================================
+
+# Both round-trip through the resolver's `list_value` fold and through the
+# lookup re-bind.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge ct alpha' AS body
+      UNION ALL SELECT 2, 'manga ct beta')
+TO '/tmp/${__DATABASE__}_p_csv_ct.csv' (FORMAT CSV, HEADER FALSE);
+
+statement ok
+CREATE VIEW p_csv_ct_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ct.csv',
+                          header=false,
+                          names=['id', 'body'],
+                          types=['INTEGER', 'VARCHAR']);
+
+statement ok
+CREATE INDEX p_csv_ct_idx ON p_csv_ct_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_ct_idx ORDER BY id;
+----
+id	body
+1	pudge ct alpha
+2	manga ct beta
+
+
+# ============================================================================
+# CSV: force_not_null (LIST) -- forces empty string instead of NULL on a col
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge fnn alpha' AS body
+      UNION ALL SELECT 2, ''
+      UNION ALL SELECT 3, 'pudge fnn gamma')
+TO '/tmp/${__DATABASE__}_p_csv_fnn.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_fnn_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_fnn.csv',
+                          header=true, force_not_null=['body']);
+
+statement ok
+CREATE INDEX p_csv_fnn_idx ON p_csv_fnn_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_fnn_idx ORDER BY id;
+----
+id	body
+1	pudge fnn alpha
+2	(empty)
+3	pudge fnn gamma
+
+
+# ============================================================================
+# CSV: ignore_errors -- skip malformed rows during scan
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge ie alpha' AS body
+      UNION ALL SELECT 2, 'manga ie beta')
+TO '/tmp/${__DATABASE__}_p_csv_ie.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_ie_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ie.csv',
+                          header=true, ignore_errors=true);
+
+statement ok
+CREATE INDEX p_csv_ie_idx ON p_csv_ie_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_ie_idx ORDER BY id;
+----
+id	body
+1	pudge ie alpha
+2	manga ie beta
+
+
+# ============================================================================
+# JSON: columns -- explicit STRUCT schema
+# ============================================================================
+
+# The struct_pack literal goes through `peel_cast`'s STRUCT folding.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge jcols alpha' AS body
+      UNION ALL SELECT 2, 'manga jcols beta')
+TO '/tmp/${__DATABASE__}_p_json_cols.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_cols_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_cols.jsonl',
+                           format='nd',
+                           columns={'id': 'INTEGER', 'body': 'VARCHAR'});
+
+statement ok
+CREATE INDEX p_json_cols_idx ON p_json_cols_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_cols_idx ORDER BY id;
+----
+id	body
+1	pudge jcols alpha
+2	manga jcols beta
+
+
+# ============================================================================
+# JSON: dateformat
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, '31/01/2026' AS d, 'pudge jdate alpha' AS body
+      UNION ALL SELECT 2, '01/02/2026', 'manga jdate beta')
+TO '/tmp/${__DATABASE__}_p_json_date.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_date_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_date.jsonl',
+                           format='nd', dateformat='%d/%m/%Y');
+
+statement ok
+CREATE INDEX p_json_date_idx ON p_json_date_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_date_idx ORDER BY id;
+----
+id	body
+1	pudge jdate alpha
+2	manga jdate beta
+
+
+# ============================================================================
+# JSON: ignore_errors
+# ============================================================================
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge jie alpha' AS body
+      UNION ALL SELECT 2, 'manga jie beta')
+TO '/tmp/${__DATABASE__}_p_json_ie.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_ie_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_ie.jsonl',
+                           format='nd', ignore_errors=true);
+
+statement ok
+CREATE INDEX p_json_ie_idx ON p_json_ie_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_ie_idx ORDER BY id;
+----
+id	body
+1	pudge jie alpha
+2	manga jie beta
+
+
+# ============================================================================
+# Parquet: hive_partitioning -- glob with partition column synthesised
+# ============================================================================
+
+# Hive partitioning synthesises a `color` column from the path components
+# `.../color=red/...` and `.../color=blue/...`. The resolver glob-mode
+# fast path threads (file_index, file_row_number); the lookup TF reads
+# just the data columns, so partition columns work as long as we don't
+# index them.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge hp alpha' AS body, 'red' AS color
+      UNION ALL SELECT 2, 'manga hp beta', 'blue')
+TO '/tmp/${__DATABASE__}_hive' (FORMAT PARQUET, PARTITION_BY (color));
+
+statement ok
+CREATE VIEW p_pq_hive_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_hive/**/*.parquet',
+                              hive_partitioning=true);
+
+statement ok
+CREATE INDEX p_pq_hive_idx ON p_pq_hive_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_hive_idx ORDER BY id;
+----
+id	body
+1	pudge hp alpha
+2	manga hp beta
+
+
+# ============================================================================
+# Parquet: file_row_number=true (already implicit virtual column)
+# ============================================================================
+
+# Promotes file_row_number to a real column. The lookup TF already projects
+# file_row_number as the PK virtual; explicit projection should still work.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge frn alpha' AS body
+      UNION ALL SELECT 2, 'manga frn beta')
+TO '/tmp/${__DATABASE__}_p_pq_frn.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW p_pq_frn_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_frn.parquet',
+                              file_row_number=true);
+
+statement ok
+CREATE INDEX p_pq_frn_idx ON p_pq_frn_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_frn_idx ORDER BY id;
+----
+id	body
+1	pudge frn alpha
+2	manga frn beta
+
+
+# ============================================================================
+# Params I previously labelled "out of scope" -- verifying that claim
+# ============================================================================
+
+# `decimal_separator=','` -- comma-decimal floats. COPY doesn't write
+# alternate decimal separators, so emit the raw CSV via a single VARCHAR
+# column with semicolon delim so commas don't conflict.
+statement ok
+COPY (SELECT 'id;x;body' AS line
+      UNION ALL SELECT '1;1,5;pudge dec alpha'
+      UNION ALL SELECT '2;2,75;manga dec beta')
+TO '/tmp/${__DATABASE__}_p_csv_dec.csv' (FORMAT CSV, HEADER FALSE, QUOTE '');
+
+statement ok
+CREATE VIEW p_csv_dec_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_dec.csv',
+                          header=true, delim=';', decimal_separator=',');
+
+statement ok
+CREATE INDEX p_csv_dec_idx ON p_csv_dec_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_dec_idx ORDER BY id;
+----
+id	body
+1	pudge dec alpha
+2	manga dec beta
+
+
+# `all_varchar=true` -- forces every column to VARCHAR. Schema diverges from
+# auto-detect: id must materialise as VARCHAR, not INTEGER.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge av alpha' AS body
+      UNION ALL SELECT 2, 'manga av beta')
+TO '/tmp/${__DATABASE__}_p_csv_av.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_av_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_av.csv',
+                          header=true, all_varchar=true);
+
+statement ok
+CREATE INDEX p_csv_av_idx ON p_csv_av_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_av_idx ORDER BY id;
+----
+id	body
+1	pudge av alpha
+2	manga av beta
+
+
+# `null_padding=true` -- short rows pad with NULL. Affects parser shape.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge np alpha' AS body
+      UNION ALL SELECT 2, 'manga np beta')
+TO '/tmp/${__DATABASE__}_p_csv_np.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_np_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_np.csv',
+                          header=true, null_padding=true);
+
+statement ok
+CREATE INDEX p_csv_np_idx ON p_csv_np_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_np_idx ORDER BY id;
+----
+id	body
+1	pudge np alpha
+2	manga np beta
+
+
+# `encoding='utf-8'` -- explicit encoding, exercise the param round-trip.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge enc alpha' AS body
+      UNION ALL SELECT 2, 'manga enc beta')
+TO '/tmp/${__DATABASE__}_p_csv_enc.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_enc_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_enc.csv',
+                          header=true, encoding='utf-8');
+
+statement ok
+CREATE INDEX p_csv_enc_idx ON p_csv_enc_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_enc_idx ORDER BY id;
+----
+id	body
+1	pudge enc alpha
+2	manga enc beta
+
+
+# `auto_detect=false` with explicit `columns=` -- bypasses sniffing entirely.
+# If the lookup re-bind didn't get auto_detect=false it would re-sniff.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge ad alpha' AS body
+      UNION ALL SELECT 2, 'manga ad beta')
+TO '/tmp/${__DATABASE__}_p_csv_ad.csv' (FORMAT CSV, HEADER FALSE);
+
+statement ok
+CREATE VIEW p_csv_ad_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ad.csv',
+                          header=false, auto_detect=false,
+                          columns={'id': 'INTEGER', 'body': 'VARCHAR'});
+
+statement ok
+CREATE INDEX p_csv_ad_idx ON p_csv_ad_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_ad_idx ORDER BY id;
+----
+id	body
+1	pudge ad alpha
+2	manga ad beta
+
+
+# JSON `convert_strings_to_integers=true` -- a quoted "42" in the file
+# becomes BIGINT 42. Lookup must agree on the type.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge csi alpha' AS body
+      UNION ALL SELECT 2, 'manga csi beta')
+TO '/tmp/${__DATABASE__}_p_json_csi.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_csi_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_csi.jsonl',
+                           format='nd', convert_strings_to_integers=true);
+
+statement ok
+CREATE INDEX p_json_csi_idx ON p_json_csi_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_csi_idx ORDER BY id;
+----
+id	body
+1	pudge csi alpha
+2	manga csi beta
+
+
+# JSON `maximum_object_size` -- buffer-size knob; lookup must reuse it
+# verbatim or `FetchRow` could overflow / underflow on bigger records.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge mos alpha' AS body
+      UNION ALL SELECT 2, 'manga mos beta')
+TO '/tmp/${__DATABASE__}_p_json_mos.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_mos_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_mos.jsonl',
+                           format='nd', maximum_object_size=1048576);
+
+statement ok
+CREATE INDEX p_json_mos_idx ON p_json_mos_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_mos_idx ORDER BY id;
+----
+id	body
+1	pudge mos alpha
+2	manga mos beta
+
+
+# CSV `parallel=false` -- single-threaded streaming. Lookup is already
+# single-threaded so this should be a no-op for the materialise path.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge par alpha' AS body
+      UNION ALL SELECT 2, 'manga par beta')
+TO '/tmp/${__DATABASE__}_p_csv_par.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_par_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_par.csv',
+                          header=true, parallel=false);
+
+statement ok
+CREATE INDEX p_csv_par_idx ON p_csv_par_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_par_idx ORDER BY id;
+----
+id	body
+1	pudge par alpha
+2	manga par beta
+
+
+# CSV `buffer_size` (UBIGINT) -- operational, just round-trips.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge buf alpha' AS body
+      UNION ALL SELECT 2, 'manga buf beta')
+TO '/tmp/${__DATABASE__}_p_csv_buf.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_buf_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_buf.csv',
+                          header=true, buffer_size=1048576);
+
+statement ok
+CREATE INDEX p_csv_buf_idx ON p_csv_buf_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_buf_idx ORDER BY id;
+----
+id	body
+1	pudge buf alpha
+2	manga buf beta
+
+
+# CSV `sample_size` (BIGINT) -- detection-only knob. Lookup gets the same
+# value; both passes infer the same schema.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge ss alpha' AS body
+      UNION ALL SELECT 2, 'manga ss beta')
+TO '/tmp/${__DATABASE__}_p_csv_ss.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_ss_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ss.csv',
+                          header=true, sample_size=10000);
+
+statement ok
+CREATE INDEX p_csv_ss_idx ON p_csv_ss_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_ss_idx ORDER BY id;
+----
+id	body
+1	pudge ss alpha
+2	manga ss beta
+
+
+# `allow_quoted_nulls=true` -- empty quoted field counts as NULL.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge aqn alpha' AS body
+      UNION ALL SELECT 2, 'manga aqn beta')
+TO '/tmp/${__DATABASE__}_p_csv_aqn.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_aqn_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_aqn.csv',
+                          header=true, allow_quoted_nulls=true);
+
+statement ok
+CREATE INDEX p_csv_aqn_idx ON p_csv_aqn_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_aqn_idx ORDER BY id;
+----
+id	body
+1	pudge aqn alpha
+2	manga aqn beta
+
+
+# `normalize_names=true` -- coerces header names to a normalized form. The
+# lookup must agree on the post-normalisation names or column lookup fails.
+statement ok
+COPY (SELECT 1::int4 AS "Id With Space", 'pudge nn alpha' AS "Body Col"
+      UNION ALL SELECT 2, 'manga nn beta')
+TO '/tmp/${__DATABASE__}_p_csv_nn.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_nn_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_nn.csv',
+                          header=true, normalize_names=true);
+
+statement ok
+CREATE INDEX p_csv_nn_idx ON p_csv_nn_v
+  USING inverted(id_with_space, body_col view_params_en);
+
+query
+SELECT id_with_space, body_col FROM p_csv_nn_idx ORDER BY id_with_space;
+----
+id_with_space	body_col
+1	pudge nn alpha
+2	manga nn beta
+
+
+# `strict_mode=true` -- RFC 4180 strict parsing.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge sm alpha' AS body
+      UNION ALL SELECT 2, 'manga sm beta')
+TO '/tmp/${__DATABASE__}_p_csv_sm.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_sm_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_sm.csv',
+                          header=true, strict_mode=true);
+
+statement ok
+CREATE INDEX p_csv_sm_idx ON p_csv_sm_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_sm_idx ORDER BY id;
+----
+id	body
+1	pudge sm alpha
+2	manga sm beta
+
+
+# `thousands` separator -- '1,000,000' parses as 1000000. Default
+# decimal_separator '.' must differ from thousands.
+statement ok
+COPY (SELECT 'id;n;body' AS line
+      UNION ALL SELECT '1;1,000;pudge th alpha'
+      UNION ALL SELECT '2;2,500;manga th beta')
+TO '/tmp/${__DATABASE__}_p_csv_th.csv' (FORMAT CSV, HEADER FALSE, QUOTE '');
+
+statement ok
+CREATE VIEW p_csv_th_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_th.csv',
+                          header=true, delim=';', thousands=',');
+
+statement ok
+CREATE INDEX p_csv_th_idx ON p_csv_th_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_th_idx ORDER BY id;
+----
+id	body
+1	pudge th alpha
+2	manga th beta
+
+
+# `timestampformat` -- non-default timestamp pattern.
+statement ok
+COPY (SELECT 1::int4 AS id, '31/01/2026 10:00:00' AS ts, 'pudge tf alpha' AS body
+      UNION ALL SELECT 2, '01/02/2026 11:30:00', 'manga tf beta')
+TO '/tmp/${__DATABASE__}_p_csv_tf.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_tf_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_tf.csv',
+                          header=true, timestampformat='%d/%m/%Y %H:%M:%S');
+
+statement ok
+CREATE INDEX p_csv_tf_idx ON p_csv_tf_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_tf_idx ORDER BY id;
+----
+id	body
+1	pudge tf alpha
+2	manga tf beta
+
+
+# `max_line_size` -- per-line cap.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge mls alpha' AS body
+      UNION ALL SELECT 2, 'manga mls beta')
+TO '/tmp/${__DATABASE__}_p_csv_mls.csv' (FORMAT CSV, HEADER);
+
+statement ok
+CREATE VIEW p_csv_mls_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_mls.csv',
+                          header=true, max_line_size=1048576);
+
+statement ok
+CREATE INDEX p_csv_mls_idx ON p_csv_mls_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_mls_idx ORDER BY id;
+----
+id	body
+1	pudge mls alpha
+2	manga mls beta
+
+
+# CSV `sep` (alias of delim) -- alias should round-trip the same.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge sep alpha' AS body
+      UNION ALL SELECT 2, 'manga sep beta')
+TO '/tmp/${__DATABASE__}_p_csv_sep.csv' (FORMAT CSV, HEADER, DELIMITER '|');
+
+statement ok
+CREATE VIEW p_csv_sep_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_sep.csv',
+                          header=true, sep='|');
+
+statement ok
+CREATE INDEX p_csv_sep_idx ON p_csv_sep_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_sep_idx ORDER BY id;
+----
+id	body
+1	pudge sep alpha
+2	manga sep beta
+
+
+# JSON `auto_detect=true` -- explicit; default is true so this is a no-op
+# round-trip.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge jad alpha' AS body
+      UNION ALL SELECT 2, 'manga jad beta')
+TO '/tmp/${__DATABASE__}_p_json_ad.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_ad_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_ad.jsonl',
+                           format='nd', auto_detect=true);
+
+statement ok
+CREATE INDEX p_json_ad_idx ON p_json_ad_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_ad_idx ORDER BY id;
+----
+id	body
+1	pudge jad alpha
+2	manga jad beta
+
+
+# JSON `timestamp_format`.
+statement ok
+COPY (SELECT 1::int4 AS id, '31/01/2026 10:00:00' AS ts, 'pudge jtf alpha' AS body
+      UNION ALL SELECT 2, '01/02/2026 11:30:00', 'manga jtf beta')
+TO '/tmp/${__DATABASE__}_p_json_tf.jsonl' (FORMAT JSON);
+
+statement ok
+CREATE VIEW p_json_tf_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_tf.jsonl',
+                           format='nd', timestamp_format='%d/%m/%Y %H:%M:%S');
+
+statement ok
+CREATE INDEX p_json_tf_idx ON p_json_tf_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_tf_idx ORDER BY id;
+----
+id	body
+1	pudge jtf alpha
+2	manga jtf beta
+
+
+# JSON `maximum_depth` -- detection-only knob, just needs to round-trip.
+statement ok
+CREATE VIEW p_json_md_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_ad.jsonl',
+                           format='nd', maximum_depth=10);
+
+statement ok
+CREATE INDEX p_json_md_idx ON p_json_md_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_md_idx ORDER BY id;
+----
+id	body
+1	pudge jad alpha
+2	manga jad beta
+
+
+# Parquet `can_have_nan=true` -- affects min/max stat reading.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge cnh alpha' AS body
+      UNION ALL SELECT 2, 'manga cnh beta')
+TO '/tmp/${__DATABASE__}_p_pq_cnh.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW p_pq_cnh_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_cnh.parquet',
+                              can_have_nan=true);
+
+statement ok
+CREATE INDEX p_pq_cnh_idx ON p_pq_cnh_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_cnh_idx ORDER BY id;
+----
+id	body
+1	pudge cnh alpha
+2	manga cnh beta
+
+
+# Parquet `explicit_cardinality` -- planner hint.
+statement ok
+CREATE VIEW p_pq_ec_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_cnh.parquet',
+                              explicit_cardinality=2);
+
+statement ok
+CREATE INDEX p_pq_ec_idx ON p_pq_ec_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_ec_idx ORDER BY id;
+----
+id	body
+1	pudge cnh alpha
+2	manga cnh beta
+
+
+# Parquet `debug_use_openssl=false` -- decryption-engine selector. Just a
+# round-trip; matters only for encrypted parquet (not exercised here).
+statement ok
+CREATE VIEW p_pq_oss_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_p_pq_cnh.parquet',
+                              debug_use_openssl=false);
+
+statement ok
+CREATE INDEX p_pq_oss_idx ON p_pq_oss_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_oss_idx ORDER BY id;
+----
+id	body
+1	pudge cnh alpha
+2	manga cnh beta
+
+
+# ============================================================================
+# Stage 2 -- aliases (each canonical was tested above; alias should resolve
+# identically through the resolver).
+# ============================================================================
+
+# `column_names` (alias of `names`)
+statement ok
+CREATE VIEW p_csv_alias_cn_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ct.csv',
+                          header=false,
+                          column_names=['id', 'body'],
+                          types=['INTEGER', 'VARCHAR']);
+
+statement ok
+CREATE INDEX p_csv_alias_cn_idx ON p_csv_alias_cn_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_alias_cn_idx ORDER BY id;
+----
+id	body
+1	pudge ct alpha
+2	manga ct beta
+
+
+# `column_types` (alias of `types`)
+statement ok
+CREATE VIEW p_csv_alias_ct_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ct.csv',
+                          header=false,
+                          names=['id', 'body'],
+                          column_types=['INTEGER', 'VARCHAR']);
+
+statement ok
+CREATE INDEX p_csv_alias_ct_idx ON p_csv_alias_ct_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_alias_ct_idx ORDER BY id;
+----
+id	body
+1	pudge ct alpha
+2	manga ct beta
+
+
+# `dtypes` (another alias of `types`)
+statement ok
+CREATE VIEW p_csv_alias_dt_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_ct.csv',
+                          header=false,
+                          names=['id', 'body'],
+                          dtypes=['INTEGER', 'VARCHAR']);
+
+statement ok
+CREATE INDEX p_csv_alias_dt_idx ON p_csv_alias_dt_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_alias_dt_idx ORDER BY id;
+----
+id	body
+1	pudge ct alpha
+2	manga ct beta
+
+
+# `maximum_line_size` (alias of `max_line_size`)
+statement ok
+CREATE VIEW p_csv_alias_mls_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_mls.csv',
+                          header=true, maximum_line_size=1048576);
+
+statement ok
+CREATE INDEX p_csv_alias_mls_idx ON p_csv_alias_mls_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_alias_mls_idx ORDER BY id;
+----
+id	body
+1	pudge mls alpha
+2	manga mls beta
+
+
+# JSON `date_format` (alias of `dateformat`)
+statement ok
+CREATE VIEW p_json_alias_df_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_date.jsonl',
+                           format='nd', date_format='%d/%m/%Y');
+
+statement ok
+CREATE INDEX p_json_alias_df_idx ON p_json_alias_df_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_alias_df_idx ORDER BY id;
+----
+id	body
+1	pudge jdate alpha
+2	manga jdate beta
+
+
+# ============================================================================
+# Stage 3 -- detection-only / operational params; round-trip only
+# ============================================================================
+
+# CSV `auto_type_candidates`
+statement ok
+CREATE VIEW p_csv_atc_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_av.csv',
+                          header=true,
+                          auto_type_candidates=['INTEGER', 'VARCHAR']);
+
+statement ok
+CREATE INDEX p_csv_atc_idx ON p_csv_atc_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_atc_idx ORDER BY id;
+----
+id	body
+1	pudge av alpha
+2	manga av beta
+
+
+# CSV `files_to_sniff`
+statement ok
+CREATE VIEW p_csv_fts_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_av.csv',
+                          header=true, files_to_sniff=1);
+
+statement ok
+CREATE INDEX p_csv_fts_idx ON p_csv_fts_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_fts_idx ORDER BY id;
+----
+id	body
+1	pudge av alpha
+2	manga av beta
+
+
+# CSV `store_rejects=false` -- explicit operational round-trip.
+statement ok
+CREATE VIEW p_csv_rej_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_av.csv',
+                          header=true, store_rejects=false);
+
+statement ok
+CREATE INDEX p_csv_rej_idx ON p_csv_rej_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_rej_idx ORDER BY id;
+----
+id	body
+1	pudge av alpha
+2	manga av beta
+
+
+# CSV `rejects_table` / `rejects_scan` / `rejects_limit` (paired with
+# store_rejects=true; ignore_errors required so rejects don't abort).
+statement ok
+CREATE VIEW p_csv_rejtbl_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_p_csv_av.csv',
+                          header=true, ignore_errors=true,
+                          store_rejects=true,
+                          rejects_table='view_rejects',
+                          rejects_scan='view_reject_scans',
+                          rejects_limit=100);
+
+statement ok
+CREATE INDEX p_csv_rejtbl_idx ON p_csv_rejtbl_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_csv_rejtbl_idx ORDER BY id;
+----
+id	body
+1	pudge av alpha
+2	manga av beta
+
+
+# JSON detection triplet -- field_appearance_threshold,
+# map_inference_threshold, maximum_sample_files. Same value at both bind
+# sites -> same inferred schema.
+statement ok
+CREATE VIEW p_json_det_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_p_json_ad.jsonl',
+                           format='nd',
+                           field_appearance_threshold=0.1,
+                           map_inference_threshold=200,
+                           maximum_sample_files=32);
+
+statement ok
+CREATE INDEX p_json_det_idx ON p_json_det_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_json_det_idx ORDER BY id;
+----
+id	body
+1	pudge jad alpha
+2	manga jad beta
+
+
+# Parquet `hive_types` -- paired with hive_partitioning. Synthesised
+# partition cols get explicit types.
+statement ok
+CREATE VIEW p_pq_ht_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_hive/**/*.parquet',
+                              hive_partitioning=true,
+                              hive_types={'color': 'VARCHAR'});
+
+statement ok
+CREATE INDEX p_pq_ht_idx ON p_pq_ht_v
+  USING inverted(id, body view_params_en);
+
+query
+SELECT id, body FROM p_pq_ht_idx ORDER BY id;
+----
+id	body
+1	pudge hp alpha
+2	manga hp beta
+
+
+# ============================================================================
+# Iceberg parameter coverage
+# ============================================================================
+# iceberg_scan accepts `version` (snapshot AT-clause), `version_name_format`,
+# `metadata_compression_codec`, and friends. Exercising them needs a running
+# REST catalog + S3, which lives in inverted_index_view_iceberg.test_slow.
+# The snapshot pinning round-trip there covers the only param the resolver
+# reads explicitly (pinned_iceberg_snapshot_id).
+#
+# ============================================================================
+# Truly skipped (write-only / encrypted-only / impossible to test here)
+# ============================================================================
+# CSV write-only: force_quote, prefix, suffix
+# CSV operational (no parsing effect): rejects_limit, rejects_scan,
+#     rejects_table, store_rejects
+# CSV detection-only-with-no-different-effect: auto_type_candidates,
+#     files_to_sniff
+# CSV aliases of tested params: column_names (= names), column_types/dtypes
+#     (= types), date_format (= dateformat), maximum_line_size (= max_line_size),
+#     null (= nullstr), timestamp_format (= timestampformat)
+# CSV new_line='\r\n': sqllogic substitution preprocessor blocks `\r`.
+#     LF byte-offset path is exhaustively covered.
+# JSON aliases: date_format (= dateformat), timestampformat (= timestamp_format)
+# JSON detection-only: field_appearance_threshold, map_inference_threshold,
+#     maximum_sample_files, sample_size
+# Parquet operational: debug_use_openssl, parquet_version (write-only),
+#     encryption_config (needs encrypted file), schema (struct of complex
+#     parquet types -- view body parser doesn't accept this dictionary form)

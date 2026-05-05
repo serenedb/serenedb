@@ -253,7 +253,9 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │      IRESEARCH_COUNT      │
 │    ────────────────────   │
-│     Table: vedernikoff    │
+│           Index:          │
+│      vedernikoff_idx      │
+│                           │
 │      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
@@ -490,14 +492,8 @@ statement count 5
 COPY babsky_src TO '/tmp/${__DATABASE__}_babsky_memes.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TABLE babsky_ext(
-  a INT8,
-  b TEXT,
-  c TEXT
-) 
-WITH (
-  PATH = '/tmp/${__DATABASE__}_babsky_memes.parquet'
-);
+CREATE VIEW babsky_ext AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_babsky_memes.parquet');
 
 statement ok
 CREATE INDEX babsky_ext_idx ON babsky_ext USING inverted(a, b test_english, c test_english);
@@ -546,7 +542,7 @@ a	b	c
 5	krivda writes sql at night	clickclack university
 
 statement ok
-DROP TABLE babsky_ext;
+DROP VIEW babsky_ext;
 
 statement ok
 DROP TABLE babsky_src;
@@ -569,14 +565,8 @@ statement count 5
 COPY text_idx_src TO '/tmp/${__DATABASE__}_text_idx_memes.csv';
 
 statement ok
-CREATE TABLE text_idx_ext(
-  a INT8,
-  b TEXT,
-  c TEXT
-) 
-WITH (
-  PATH = '/tmp/${__DATABASE__}_text_idx_memes.csv'
-);
+CREATE VIEW text_idx_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_text_idx_memes.csv');
 
 statement ok
 CREATE INDEX text_idx_ext_idx ON text_idx_ext USING inverted(a, b test_english, c test_english);
@@ -625,7 +615,7 @@ a	b	c
 5	krivda writes sql at night	clickclack university
 
 statement ok
-DROP TABLE text_idx_ext;
+DROP VIEW text_idx_ext;
 
 statement ok
 DROP TABLE text_idx_src;
@@ -646,13 +636,8 @@ statement count 3
 COPY score_parquet_src TO '/tmp/${__DATABASE__}_score_parquet.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TABLE score_parquet_ext(
-  a INT8,
-  b TEXT
-) 
-WITH (
-  PATH = '/tmp/${__DATABASE__}_score_parquet.parquet'
-);
+CREATE VIEW score_parquet_ext AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_score_parquet.parquet');
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY score_en(
@@ -692,8 +677,8 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│           Table:          │
-│     score_parquet_ext     │
+│           Index:          │
+│     score_parquet_idx     │
 │                           │
 │      Lookup: parquet      │
 │                           │
@@ -708,7 +693,7 @@ QUERY PLAN
 │             a             │
 │  sdb_inverted_index_score │
 │                           │
-│          ~0 rows          │
+│          ~3 rows          │
 └───────────────────────────┘
 
 
@@ -727,7 +712,7 @@ a
 1
 
 statement ok
-DROP TABLE score_parquet_ext;
+DROP VIEW score_parquet_ext;
 
 statement ok
 DROP TABLE score_parquet_src;
@@ -748,13 +733,8 @@ statement count 3
 COPY score_text_src TO '/tmp/${__DATABASE__}_score_text.csv';
 
 statement ok
-CREATE TABLE score_text_ext(
-  a INT8,
-  b TEXT
-) 
-WITH (
-  PATH = '/tmp/${__DATABASE__}_score_text.csv'
-);
+CREATE VIEW score_text_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_score_text.csv');
 
 statement ok
 CREATE INDEX score_text_idx ON score_text_ext USING inverted(a, b score_en);
@@ -774,7 +754,7 @@ a
 1
 
 statement ok
-DROP TABLE score_text_ext;
+DROP VIEW score_text_ext;
 
 statement ok
 DROP TABLE score_text_src;
@@ -840,14 +820,8 @@ statement count 8
 COPY dense_pq_src TO '/tmp/${__DATABASE__}_dense_pq.parquet' (FORMAT PARQUET);
 
 statement ok
-CREATE TABLE dense_pq_ext(
-  a INT8,
-  b TEXT,
-  c TEXT
-) 
-WITH (
-  PATH = '/tmp/${__DATABASE__}_dense_pq.parquet'
-);
+CREATE VIEW dense_pq_ext AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_dense_pq.parquet');
 
 statement ok
 CREATE INDEX dense_pq_idx ON dense_pq_ext USING inverted(a, b test_english, c test_english);
@@ -949,7 +923,7 @@ a	has_score
 8	t
 
 statement ok
-DROP TABLE dense_pq_ext;
+DROP VIEW dense_pq_ext;
 
 statement ok
 DROP TABLE dense_pq_src;
@@ -970,14 +944,8 @@ statement count 5
 COPY dense_csv_src TO '/tmp/${__DATABASE__}_dense_csv.csv';
 
 statement ok
-CREATE TABLE dense_csv_ext(
-  a INT8,
-  b TEXT,
-  c TEXT
-) 
-WITH (
-  PATH = '/tmp/${__DATABASE__}_dense_csv.csv'
-);
+CREATE VIEW dense_csv_ext AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_dense_csv.csv');
 
 
 query
@@ -988,10 +956,9 @@ QUERY PLAN
 │         EXTENSION         │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│       READ_CSV_AUTO       │
+│          READ_CSV         │
 │    ────────────────────   │
-│         Function:         │
-│       READ_CSV_AUTO       │
+│     Function: READ_CSV    │
 │                           │
 │        Projections:       │
 │             a             │
@@ -1022,12 +989,12 @@ QUERY PLAN
 │             a             │
 │             b             │
 │                           │
-│          ~2 rows          │
+│           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│    Table: dense_csv_ext   │
+│    Index: dense_csv_idx   │
 │        Lookup: csv        │
 │                           │
 │          Filter:          │
@@ -1039,7 +1006,7 @@ QUERY PLAN
 │             b             │
 │             a             │
 │                           │
-│          ~13 rows         │
+│          ~5 rows          │
 └───────────────────────────┘
 
 
@@ -1079,7 +1046,7 @@ a	c
 4	dept blue color
 
 statement ok
-DROP TABLE dense_csv_ext;
+DROP VIEW dense_csv_ext;
 
 statement ok
 DROP TABLE dense_csv_src;
@@ -1100,14 +1067,8 @@ statement count 5
 COPY vedernikoff_src TO '/tmp/${__DATABASE__}_vedernikoff.jsonl' (FORMAT json);
 
 statement ok
-CREATE TABLE vedernikoff_ext(
-  a INT8,
-  b TEXT,
-  c TEXT
-)
-WITH (
-  PATH = '/tmp/${__DATABASE__}_vedernikoff.jsonl'
-);
+CREATE VIEW vedernikoff_ext AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_vedernikoff.jsonl');
 
 statement ok
 CREATE INDEX vedernikoff_idx ON vedernikoff_ext USING inverted(a, b test_english, c test_english);
@@ -1148,7 +1109,7 @@ a	c
 4	dept blue color
 
 statement ok
-DROP TABLE vedernikoff_ext;
+DROP VIEW vedernikoff_ext;
 
 statement ok
 DROP TABLE vedernikoff_src;

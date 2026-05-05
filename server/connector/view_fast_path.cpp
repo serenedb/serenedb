@@ -1,0 +1,545 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "connector/view_fast_path.h"
+
+#include <absl/strings/str_cat.h>
+
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
+#include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/common/multi_file/multi_file_states.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/comparison_expression.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/parser/expression/star_expression.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/parser/query_node/select_node.hpp>
+#include <duckdb/parser/result_modifier.hpp>
+#include <duckdb/parser/statement/select_statement.hpp>
+#include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/table_function_ref.hpp>
+#include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/tableref/bound_at_clause.hpp>
+
+#include "catalog/table.h"
+#include "catalog/view.h"
+#include "connector/duckdb_table_entry.h"
+#include "core/metadata/snapshot/iceberg_snapshot.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
+#include "planning/iceberg_multi_file_list.hpp"
+
+namespace duckdb {
+
+TableFunction MakeParquetLookupTableFunction();
+TableFunction MakeCSVLookupTableFunction();
+TableFunction MakeJSONLookupTableFunction();
+TableFunction MakeJSONObjectsLookupTableFunction();
+
+}  // namespace duckdb
+namespace sdb::connector {
+namespace {
+
+struct RegistryEntry {
+  std::string_view function_name;
+  catalog::PkSpec single_pk_spec;
+  catalog::PkSpec glob_pk_spec;
+  duckdb::TableFunction (*make_lookup)();
+};
+
+const RegistryEntry kRegistry[] = {
+  {
+    .function_name = "read_parquet",
+    .single_pk_spec = catalog::PkSpec::FileRowNumber,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .make_lookup = duckdb::MakeParquetLookupTableFunction,
+  },
+  {
+    .function_name = "read_csv",
+    .single_pk_spec = catalog::PkSpec::FileOffset,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .make_lookup = duckdb::MakeCSVLookupTableFunction,
+  },
+  {
+    .function_name = "read_json",
+    .single_pk_spec = catalog::PkSpec::FileOffset,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .make_lookup = duckdb::MakeJSONLookupTableFunction,
+  },
+  {
+    .function_name = "read_ndjson",
+    .single_pk_spec = catalog::PkSpec::FileOffset,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .make_lookup = duckdb::MakeJSONLookupTableFunction,
+  },
+  {
+    .function_name = "read_json_objects",
+    .single_pk_spec = catalog::PkSpec::FileOffset,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
+  },
+  {
+    .function_name = "read_ndjson_objects",
+    .single_pk_spec = catalog::PkSpec::FileOffset,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusOffset,
+    .make_lookup = duckdb::MakeJSONObjectsLookupTableFunction,
+  },
+  // Iceberg data files are parquet; reuse the parquet lookup TF.
+  {
+    .function_name = "iceberg_scan",
+    .single_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .glob_pk_spec = catalog::PkSpec::FileIndexPlusRowNumber,
+    .make_lookup = duckdb::MakeParquetLookupTableFunction,
+  },
+  // TODO: read_avro, postgres_scan / postgres_query.
+};
+
+constexpr struct {
+  std::string_view alias;
+  std::string_view canonical;
+} kFunctionAliases[] = {
+  {"parquet_scan", "read_parquet"},
+  {"read_csv_auto", "read_csv"},
+  {"read_json_auto", "read_json"},
+  {"read_json_objects_auto", "read_json_objects"},
+  {"read_ndjson_auto", "read_ndjson"},
+};
+
+std::string_view ResolveAlias(std::string_view name) noexcept {
+  for (const auto& [alias, canonical] : kFunctionAliases) {
+    if (alias == name) {
+      return canonical;
+    }
+  }
+  return name;
+}
+
+const RegistryEntry* LookupRegistry(std::string_view function_name) {
+  for (const auto& e : kRegistry) {
+    if (e.function_name == function_name) {
+      return &e;
+    }
+  }
+  return nullptr;
+}
+
+bool LooksLikeGlob(std::string_view path) noexcept {
+  return path.find('*') != std::string_view::npos ||
+         path.find('?') != std::string_view::npos;
+}
+
+duckdb::TableFunction LookupSingleStringReader(duckdb::ClientContext& context,
+                                               std::string_view name) {
+  auto& sys = duckdb::Catalog::GetSystemCatalog(context);
+  auto tx = duckdb::CatalogTransaction::GetSystemTransaction(*context.db);
+  auto& schema = sys.GetSchema(tx, DEFAULT_SCHEMA);
+  auto entry = schema.GetEntry(tx, duckdb::CatalogType::TABLE_FUNCTION_ENTRY,
+                               std::string{name});
+  if (!entry) {
+    throw duckdb::CatalogException(
+      "fast-path source function \"%s\" not registered", name);
+  }
+  auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
+  for (duckdb::idx_t i = 0; i < tf_entry.functions.Size(); ++i) {
+    auto candidate = tf_entry.functions.GetFunctionByOffset(i);
+    if (candidate.arguments.size() == 1 &&
+        candidate.arguments[0].id() == duckdb::LogicalTypeId::VARCHAR) {
+      return candidate;
+    }
+  }
+  throw duckdb::CatalogException(
+    "fast-path source function \"%s\" has no (VARCHAR) overload", name);
+}
+
+}  // namespace
+
+std::optional<ViewFastPath> ResolveViewFastPath(
+  duckdb::ClientContext& context, const catalog::PgSqlView& view) {
+  const auto& info = view.GetInfo();
+  if (!info.query) {
+    return std::nullopt;
+  }
+  if (info.query->node->type != duckdb::QueryNodeType::SELECT_NODE) {
+    return std::nullopt;
+  }
+  const auto& select_node = info.query->node->Cast<duckdb::SelectNode>();
+  if (select_node.having || select_node.qualify || select_node.sample ||
+      !select_node.groups.group_expressions.empty() ||
+      !select_node.cte_map.map.empty()) {
+    return std::nullopt;
+  }
+  // DISTINCT would collapse base rows -- we'd lose dedupe at materialisation.
+  for (const auto& mod : select_node.modifiers) {
+    switch (mod->type) {
+      case duckdb::ResultModifierType::ORDER_MODIFIER:
+      case duckdb::ResultModifierType::LIMIT_MODIFIER:
+      case duckdb::ResultModifierType::LIMIT_PERCENT_MODIFIER:
+        break;
+      default:
+        return std::nullopt;
+    }
+  }
+  std::vector<std::string> projection_columns;
+  if (select_node.select_list.empty()) {
+    return std::nullopt;
+  }
+  if (select_node.select_list.size() == 1 &&
+      select_node.select_list[0]->GetExpressionClass() ==
+        duckdb::ExpressionClass::STAR) {
+  } else {
+    for (const auto& item : select_node.select_list) {
+      const duckdb::ParsedExpression* cur = item.get();
+      while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
+        cur = cur->Cast<duckdb::CastExpression>().child.get();
+      }
+      if (cur->GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF) {
+        return std::nullopt;
+      }
+      const auto& colref = cur->Cast<duckdb::ColumnRefExpression>();
+      if (colref.IsQualified()) {
+        return std::nullopt;
+      }
+      projection_columns.push_back(colref.GetColumnName());
+    }
+  }
+  if (!select_node.from_table) {
+    return std::nullopt;
+  }
+  if (select_node.from_table->type == duckdb::TableReferenceType::BASE_TABLE) {
+    const auto& base_ref = select_node.from_table->Cast<duckdb::BaseTableRef>();
+    duckdb::EntryLookupInfo entry_lookup(duckdb::CatalogType::TABLE_ENTRY,
+                                         base_ref.table_name);
+    auto generic = duckdb::Catalog::GetEntry(
+      context, base_ref.catalog_name, base_ref.schema_name, entry_lookup,
+      duckdb::OnEntryNotFound::RETURN_NULL);
+    if (!generic) {
+      return std::nullopt;
+    }
+    if (generic->type != duckdb::CatalogType::TABLE_ENTRY) {
+      return std::nullopt;
+    }
+    auto& entry = generic->Cast<duckdb::TableCatalogEntry>();
+    const auto cat_type = entry.ParentCatalog().GetCatalogType();
+    if (cat_type == "iceberg") {
+      const auto* registry_entry = LookupRegistry("iceberg_scan");
+      if (!registry_entry) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.function_name = std::string{registry_entry->function_name};
+      out.catalog_ref =
+        CatalogTableRef{.catalog = entry.ParentCatalog().GetName(),
+                        .schema = entry.ParentSchema().name,
+                        .table = entry.name};
+      out.is_glob = true;
+      out.projection_columns = std::move(projection_columns);
+      out.pk_spec = registry_entry->glob_pk_spec;
+      return out;
+    }
+    if (cat_type == "serenedb") {
+      const auto* sdb_entry = dynamic_cast<const SereneDBTableEntry*>(&entry);
+      if (!sdb_entry) {
+        return std::nullopt;
+      }
+      auto sdb_table = sdb_entry->GetSereneDBTable();
+      if (!sdb_table) {
+        return std::nullopt;
+      }
+      ViewFastPath out;
+      out.pk_spec = sdb_table->PKColumns().empty()
+                      ? catalog::PkSpec::RocksDBGeneratedRowId
+                      : catalog::PkSpec::RocksDBExplicitPK;
+      out.base_table = std::move(sdb_table);
+      out.projection_columns = std::move(projection_columns);
+      return out;
+    }
+    return std::nullopt;
+  }
+  if (select_node.from_table->type !=
+      duckdb::TableReferenceType::TABLE_FUNCTION) {
+    return std::nullopt;
+  }
+  const auto& tf_ref = select_node.from_table->Cast<duckdb::TableFunctionRef>();
+  if (!tf_ref.function || tf_ref.function->GetExpressionType() !=
+                            duckdb::ExpressionType::FUNCTION) {
+    return std::nullopt;
+  }
+  const auto& fn_expr = tf_ref.function->Cast<duckdb::FunctionExpression>();
+  duckdb::vector<duckdb::Value> args;
+  duckdb::named_parameter_map_t named_params;
+  args.reserve(fn_expr.children.size());
+  // CAST targets are unbound here; coercion happens in BindFastPathSource.
+  auto peel_cast =
+    [](this auto& self,
+       const duckdb::ParsedExpression& expr) -> std::optional<duckdb::Value> {
+    const duckdb::ParsedExpression* cur = &expr;
+    while (cur->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
+      cur = cur->Cast<duckdb::CastExpression>().child.get();
+    }
+    if (cur->GetExpressionClass() == duckdb::ExpressionClass::CONSTANT) {
+      return cur->Cast<duckdb::ConstantExpression>().value;
+    }
+    if (cur->GetExpressionType() == duckdb::ExpressionType::FUNCTION) {
+      const auto& fn = cur->Cast<duckdb::FunctionExpression>();
+      if (fn.function_name == "list_value" ||
+          fn.function_name == "array_value") {
+        duckdb::vector<duckdb::Value> elements;
+        elements.reserve(fn.children.size());
+        duckdb::LogicalType child_type = duckdb::LogicalType::SQLNULL;
+        for (const auto& c : fn.children) {
+          auto folded = self(*c);
+          if (!folded) {
+            return std::nullopt;
+          }
+          if (child_type.id() == duckdb::LogicalTypeId::SQLNULL) {
+            child_type = folded->type();
+          }
+          elements.push_back(std::move(*folded));
+        }
+        return duckdb::Value::LIST(child_type, std::move(elements));
+      }
+      if (fn.function_name == "struct_pack") {
+        duckdb::child_list_t<duckdb::Value> fields;
+        fields.reserve(fn.children.size());
+        for (const auto& c : fn.children) {
+          if (c->GetAlias().empty()) {
+            return std::nullopt;
+          }
+          auto folded = self(*c);
+          if (!folded) {
+            return std::nullopt;
+          }
+          fields.emplace_back(c->GetAlias(), std::move(*folded));
+        }
+        return duckdb::Value::STRUCT(std::move(fields));
+      }
+    }
+    return std::nullopt;
+  };
+
+  for (const auto& child : fn_expr.children) {
+    if (child->GetExpressionType() == duckdb::ExpressionType::COMPARE_EQUAL) {
+      auto& comp = child->Cast<duckdb::ComparisonExpression>();
+      if (comp.left->GetExpressionType() ==
+          duckdb::ExpressionType::COLUMN_REF) {
+        const auto& colref = comp.left->Cast<duckdb::ColumnRefExpression>();
+        if (!colref.IsQualified()) {
+          if (auto v = peel_cast(*comp.right)) {
+            named_params.emplace(colref.GetColumnName(), std::move(*v));
+            continue;
+          }
+        }
+      }
+      return std::nullopt;
+    }
+    if (auto v = peel_cast(*child)) {
+      args.push_back(std::move(*v));
+      continue;
+    }
+    return std::nullopt;
+  }
+  auto canonical = std::string{ResolveAlias(fn_expr.function_name)};
+  const auto* entry = LookupRegistry(canonical);
+  if (!entry) {
+    return std::nullopt;
+  }
+  if (args.size() != 1 ||
+      args[0].type().id() != duckdb::LogicalTypeId::VARCHAR) {
+    return std::nullopt;
+  }
+  const bool is_json = canonical == "read_json" || canonical == "read_ndjson" ||
+                       canonical == "read_json_objects" ||
+                       canonical == "read_ndjson_objects";
+  if (is_json) {
+    if (auto it = named_params.find("compression");
+        it != named_params.end() &&
+        it->second.type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      auto comp = absl::AsciiStrToLower(it->second.GetValue<std::string>());
+      if (comp != "none" && comp != "uncompressed" && comp != "auto") {
+        return std::nullopt;
+      }
+    }
+    const auto path = args[0].GetValue<std::string>();
+    static constexpr std::string_view kCompressedSuffixes[] = {
+      ".gz", ".gzip", ".zst", ".zstd", ".bz2", ".xz", ".lzma"};
+    auto lower_path = absl::AsciiStrToLower(path);
+    for (auto suffix : kCompressedSuffixes) {
+      if (lower_path.ends_with(suffix)) {
+        return std::nullopt;
+      }
+    }
+  }
+  ViewFastPath out;
+  out.function_name = std::move(canonical);
+  out.args = std::move(args);
+  out.named_params = std::move(named_params);
+  out.is_glob = LooksLikeGlob(out.args[0].GetValue<std::string>());
+  out.projection_columns = std::move(projection_columns);
+  out.pk_spec = out.is_glob ? entry->glob_pk_spec : entry->single_pk_spec;
+  return out;
+}
+
+std::vector<duckdb::column_t> BackfillPkVirtualColumns(const ViewFastPath& fp) {
+  if (fp.pk_spec == catalog::PkSpec::RocksDBExplicitPK) {
+    SDB_ASSERT(fp.base_table);
+    const auto& base_cols = fp.base_table->Columns();
+    const auto& pk_ids = fp.base_table->PKColumns();
+    std::vector<duckdb::column_t> result;
+    result.reserve(pk_ids.size());
+    for (auto pk_id : pk_ids) {
+      for (size_t i = 0; i < base_cols.size(); ++i) {
+        if (base_cols[i].id == pk_id) {
+          result.push_back(static_cast<duckdb::column_t>(i));
+          break;
+        }
+      }
+    }
+    return result;
+  }
+  if (fp.pk_spec == catalog::PkSpec::RocksDBGeneratedRowId) {
+    return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+  }
+  if (catalog::IsGlobPK(fp.pk_spec)) {
+    return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX,
+            duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER};
+  }
+  return {duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER};
+}
+
+duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp) {
+  SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
+  const auto* entry = LookupRegistry(fp.function_name);
+  SDB_ENSURE(entry, ERROR_INTERNAL,
+             "fast-path classification missing for function ",
+             fp.function_name);
+  return entry->make_lookup();
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
+  duckdb::ClientContext& context, const ViewFastPath& fp) {
+  SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
+  if (fp.catalog_ref) {
+    auto& entry =
+      duckdb::Catalog::GetEntry(context, duckdb::CatalogType::TABLE_ENTRY,
+                                fp.catalog_ref->catalog, fp.catalog_ref->schema,
+                                fp.catalog_ref->table)
+        .Cast<duckdb::TableCatalogEntry>();
+    duckdb::unique_ptr<duckdb::FunctionData> bind_data;
+    std::optional<duckdb::BoundAtClause> at_clause;
+    if (fp.pinned_iceberg_snapshot_id != 0) {
+      at_clause.emplace("version",
+                        duckdb::Value::BIGINT(fp.pinned_iceberg_snapshot_id));
+    }
+    duckdb::EntryLookupInfo lookup(
+      duckdb::CatalogType::TABLE_ENTRY, fp.catalog_ref->table,
+      at_clause ? duckdb::optional_ptr<duckdb::BoundAtClause>(&*at_clause)
+                : duckdb::optional_ptr<duckdb::BoundAtClause>{},
+      duckdb::QueryErrorContext{});
+    auto fn = entry.GetScanFunction(context, bind_data, lookup);
+    if (fn.get_virtual_columns && bind_data) {
+      fn.get_virtual_columns(context, bind_data.get());
+    }
+    return bind_data;
+  }
+  SDB_ASSERT(!fp.args.empty());
+  auto reader = LookupSingleStringReader(context, fp.function_name);
+  duckdb::vector<duckdb::Value> inputs = fp.args;
+  duckdb::named_parameter_map_t named_params;
+  named_params.reserve(fp.named_params.size() + 1);
+  for (auto& [k, v] : fp.named_params) {
+    auto it = reader.named_parameters.find(k);
+    if (it == reader.named_parameters.end() ||
+        it->second.id() == duckdb::LogicalTypeId::ANY) {
+      named_params.emplace(k, v);
+      continue;
+    }
+    duckdb::Value coerced = v;
+    if (!coerced.DefaultTryCastAs(it->second)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("named argument `", k, "` for `", fp.function_name,
+                "` cannot be coerced from ", v.type().ToString(), " to ",
+                it->second.ToString()));
+    }
+    named_params.emplace(k, std::move(coerced));
+  }
+  if (fp.pinned_iceberg_snapshot_id != 0 &&
+      fp.function_name == "iceberg_scan") {
+    named_params["snapshot_from_id"] = duckdb::Value::UBIGINT(
+      static_cast<uint64_t>(fp.pinned_iceberg_snapshot_id));
+  }
+  duckdb::vector<duckdb::LogicalType> unused_types;
+  duckdb::vector<std::string> unused_names;
+  duckdb::TableFunctionRef unused_ref;
+  duckdb::TableFunctionBindInput input(inputs, named_params, unused_types,
+                                       unused_names, reader.function_info.get(),
+                                       nullptr, reader, unused_ref);
+  duckdb::vector<duckdb::LogicalType> out_types;
+  duckdb::vector<std::string> out_names;
+  auto bind_data = reader.bind(context, input, out_types, out_names);
+  if (reader.get_virtual_columns && bind_data) {
+    reader.get_virtual_columns(context, bind_data.get());
+  }
+  return bind_data;
+}
+
+int64_t ExtractIcebergSnapshotId(duckdb::FunctionData& bind_data) noexcept {
+  auto* multi_bd = dynamic_cast<duckdb::MultiFileBindData*>(&bind_data);
+  if (!multi_bd || !multi_bd->file_list) {
+    return 0;
+  }
+  auto* iceberg_list =
+    dynamic_cast<duckdb::IcebergMultiFileList*>(multi_bd->file_list.get());
+  if (!iceberg_list) {
+    return 0;
+  }
+  const auto& snapshot_info = iceberg_list->GetSnapshot();
+  if (!snapshot_info.snapshot) {
+    return 0;
+  }
+  return snapshot_info.snapshot->snapshot_id;
+}
+
+std::string FormatLookupLabel(const ViewFastPath& fp) {
+  if (catalog::IsRocksPK(fp.pk_spec)) {
+    return "rocksdb";
+  }
+  if (fp.function_name == "iceberg_scan") {
+    return "iceberg";
+  }
+  std::string_view name = fp.function_name;
+  if (name.starts_with("read_")) {
+    name.remove_prefix(5);
+  }
+  if (name == "ndjson") {
+    name = "json";
+  }
+  if (fp.is_glob) {
+    return absl::StrCat("glob ", name);
+  }
+  return std::string{name};
+}
+
+}  // namespace sdb::connector

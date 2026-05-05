@@ -132,7 +132,7 @@ bool PgVarcharToBlobCast(duckdb::Vector& source, duckdb::Vector& result,
 struct ByteaOutCastData : public duckdb::BoundCastData {
   bool use_escape;
   explicit ByteaOutCastData(bool use_escape) : use_escape(use_escape) {}
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<ByteaOutCastData>(use_escape);
   }
 };
@@ -187,7 +187,7 @@ duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
 struct RegCastData : public duckdb::BoundCastData {
   duckdb::ClientContext* ctx;
   explicit RegCastData(duckdb::ClientContext* ctx) : ctx(ctx) {}
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const override {
+  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<RegCastData>(ctx);
   }
 };

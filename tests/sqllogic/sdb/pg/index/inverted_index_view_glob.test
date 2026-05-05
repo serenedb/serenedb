@@ -1,0 +1,752 @@
+hash-threshold 100
+control substitution on
+
+# Comprehensive local-filesystem tests for view-backed inverted indexes
+# over GLOB readers (parquet/csv/json). Mirrors inverted_index_view_s3
+# without the S3 dependency -- runs fast and exercises the same per-file
+# dispatch path in MaterializeByPkGlob.
+#
+# Glob fast path:
+#   read_parquet('/tmp/*.parquet')  -> FileIndexPlusRowNumber pair PK
+#   read_csv('/tmp/*.csv')          -> FileIndexPlusOffset pair PK
+#   read_json('/tmp/*.jsonl')       -> FileIndexPlusOffset pair PK (per-file
+#                                      byte offsets, same dispatch shape as csv).
+#
+# Per-file dispatch contract (all glob formats):
+#   1. PK = 16 bytes = (file_index BIG_ENDIAN UBIGINT, position BIG_ENDIAN BIGINT).
+#   2. MaterializeByPkGlob decodes pairs, sorts by (file_index, position).
+#   3. Walks the bound MultiFileList (LazyMultiFileList for parquet/csv globs),
+#      groups by file_index, dispatches the per-format lookup TF per leaf file.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_glob_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+# Three-file fixture -- distinct rows per file with varying widths so the
+# per-file row positions differ across files (file_index alone wouldn't
+# disambiguate; pair PK is required).
+statement count 3
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta'
+      UNION ALL SELECT 3, 'pudge gamma')
+TO '/tmp/${__DATABASE__}_pq_a.parquet' (FORMAT PARQUET);
+
+statement count 4
+COPY (SELECT 4::int4 AS id, 'sql delta' AS body
+      UNION ALL SELECT 5, 'pudge epsilon'
+      UNION ALL SELECT 6, 'clickclack zeta'
+      UNION ALL SELECT 7, 'mass effect eta')
+TO '/tmp/${__DATABASE__}_pq_b.parquet' (FORMAT PARQUET);
+
+statement count 2
+COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
+      UNION ALL SELECT 9, '3am iota')
+TO '/tmp/${__DATABASE__}_pq_c.parquet' (FORMAT PARQUET);
+
+
+# ============================================================================
+# Parquet glob: classification + count + materialisation
+# ============================================================================
+
+
+statement ok
+CREATE VIEW pq_glob_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_pq_*.parquet');
+
+
+statement ok
+CREATE INDEX pq_glob_idx ON pq_glob_v
+  USING inverted(id, body view_glob_en);
+
+
+# 3 + 4 + 2 = 9 rows total.
+query
+SELECT count(*) FROM pq_glob_idx;
+----
+count
+9
+
+
+# Bare scan (fast-path) returns underlying view 1:1.
+query
+SELECT id, body FROM pq_glob_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+2	manga beta
+3	pudge gamma
+4	sql delta
+5	pudge epsilon
+6	clickclack zeta
+7	mass effect eta
+8	pudge theta
+9	3am iota
+
+
+# 'pudge' hits one row per file -- exercises grouping across all 3 files.
+query
+SELECT id, body FROM pq_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+5	pudge epsilon
+8	pudge theta
+
+
+# 'mass effect' is a multi-token PHRASE in file b only.
+query
+SELECT id, body FROM pq_glob_idx WHERE body @@ ts_phrase('mass effect') ORDER BY id;
+----
+id	body
+7	mass effect eta
+
+
+# 'sql' is unique to file b, position 0.
+query
+SELECT id, body FROM pq_glob_idx WHERE body @@ ts_phrase('sql');
+----
+id	body
+4	sql delta
+
+
+# Tokens unique to a single file boundary.
+query
+SELECT id, body FROM pq_glob_idx WHERE body @@ ts_phrase('manga');
+----
+id	body
+2	manga beta
+
+
+query
+SELECT id, body FROM pq_glob_idx WHERE body @@ ts_phrase('3am');
+----
+id	body
+9	3am iota
+
+
+# OR across files (a + c).
+query
+SELECT id, body FROM pq_glob_idx
+WHERE body @@ ts_phrase('manga') OR body @@ ts_phrase('3am')
+ORDER BY id;
+----
+id	body
+2	manga beta
+9	3am iota
+
+
+# Range filter on indexed column (without PHRASE) -- exercises the bare
+# index full-scan path through the fast-path stream.
+query
+SELECT id, body FROM pq_glob_idx WHERE id <= 3 ORDER BY id;
+----
+id	body
+1	pudge alpha
+2	manga beta
+3	pudge gamma
+
+
+query
+SELECT id, body FROM pq_glob_idx WHERE id >= 5 ORDER BY id;
+----
+id	body
+5	pudge epsilon
+6	clickclack zeta
+7	mass effect eta
+8	pudge theta
+9	3am iota
+
+
+query
+SELECT id, body FROM pq_glob_idx WHERE id BETWEEN 4 AND 7 ORDER BY id;
+----
+id	body
+4	sql delta
+5	pudge epsilon
+6	clickclack zeta
+7	mass effect eta
+
+
+# count(*) over filtered scan: count-scan rewrite bails out for table
+# filter pushdown, AGGREGATE+GET path applies the filter.
+query
+SELECT count(*) FROM pq_glob_idx WHERE id <= 3;
+----
+count
+3
+
+
+query
+SELECT count(*) FROM pq_glob_idx WHERE id BETWEEN 4 AND 7;
+----
+count
+4
+
+
+query
+SELECT count(*) FROM pq_glob_idx WHERE id IN (1, 5, 9);
+----
+count
+3
+
+
+# PHRASE + range/equality filter: the secondary filter is reclaimed from
+# get.table_filters into the iresearch search-scan filter_summary, so the
+# materialised hits are filtered both ways.
+query
+SELECT id, body FROM pq_glob_idx
+WHERE body @@ ts_phrase('pudge') AND id <= 3
+ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+
+
+query
+SELECT id, body FROM pq_glob_idx
+WHERE body @@ ts_phrase('pudge') AND id >= 5
+ORDER BY id;
+----
+id	body
+5	pudge epsilon
+8	pudge theta
+
+
+query
+SELECT id, body FROM pq_glob_idx
+WHERE body @@ ts_phrase('pudge') AND id BETWEEN 3 AND 6
+ORDER BY id;
+----
+id	body
+3	pudge gamma
+5	pudge epsilon
+
+
+query
+SELECT id, body FROM pq_glob_idx
+WHERE body @@ ts_phrase('pudge') AND id = 1;
+----
+id	body
+1	pudge alpha
+
+
+# BM25 returns positive scores for matching rows.
+query
+SELECT id, BM25(pq_glob_idx.tableoid) > 0 AS has_score
+FROM   pq_glob_idx
+WHERE  body @@ ts_phrase('pudge')
+ORDER BY id;
+----
+id	has_score
+1	t
+3	t
+5	t
+8	t
+
+
+# top-K via BM25 (parquet glob path drives lookup TF per file group).
+query
+SELECT id FROM pq_glob_idx
+WHERE body @@ ts_phrase('pudge')
+ORDER BY BM25(pq_glob_idx.tableoid) DESC, id ASC
+LIMIT 2;
+----
+id
+1
+3
+
+
+# Empty PHRASE result: must not crash per-file dispatch.
+query
+SELECT id FROM pq_glob_idx WHERE body @@ ts_phrase('doesNotExist');
+----
+id
+
+
+# Cross-check against direct view scan.
+query
+SELECT count(*) FROM pq_glob_v WHERE body LIKE '%pudge%';
+----
+count
+4
+
+
+query
+SELECT count(*) FROM pq_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+4
+
+
+# ============================================================================
+# CSV glob (FileIndexPlusOffset) -- byte-offset PK; same per-file dispatch
+# contract as parquet but the lookup TF is offset-driven.
+# ============================================================================
+
+
+statement count 3
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta'
+      UNION ALL SELECT 3, 'pudge gamma')
+TO '/tmp/${__DATABASE__}_csv_a.csv';
+
+statement count 4
+COPY (SELECT 4::int4 AS id, 'sql delta' AS body
+      UNION ALL SELECT 5, 'pudge epsilon'
+      UNION ALL SELECT 6, 'clickclack zeta'
+      UNION ALL SELECT 7, 'mass effect eta')
+TO '/tmp/${__DATABASE__}_csv_b.csv';
+
+statement count 2
+COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
+      UNION ALL SELECT 9, '3am iota')
+TO '/tmp/${__DATABASE__}_csv_c.csv';
+
+
+statement ok
+CREATE VIEW csv_glob_v AS
+  SELECT * FROM read_csv('/tmp/${__DATABASE__}_csv_*.csv');
+
+
+statement ok
+CREATE INDEX csv_glob_idx ON csv_glob_v
+  USING inverted(id, body view_glob_en);
+
+
+query
+SELECT count(*) FROM csv_glob_idx;
+----
+count
+9
+
+
+query
+SELECT id, body FROM csv_glob_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+2	manga beta
+3	pudge gamma
+4	sql delta
+5	pudge epsilon
+6	clickclack zeta
+7	mass effect eta
+8	pudge theta
+9	3am iota
+
+
+query
+SELECT id, body FROM csv_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+5	pudge epsilon
+8	pudge theta
+
+
+query
+SELECT id, body FROM csv_glob_idx WHERE body @@ ts_phrase('mass effect') ORDER BY id;
+----
+id	body
+7	mass effect eta
+
+
+query
+SELECT count(*) FROM csv_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+4
+
+
+# OR across all three files.
+query
+SELECT id, body FROM csv_glob_idx
+WHERE body @@ ts_phrase('alpha') OR body @@ ts_phrase('epsilon') OR body @@ ts_phrase('theta')
+ORDER BY id;
+----
+id	body
+1	pudge alpha
+5	pudge epsilon
+8	pudge theta
+
+
+# Cross-check the byte-offset PK invariant: rows materialise in id order
+# even though file_index ordering may differ from id ordering.
+query
+SELECT id FROM csv_glob_idx
+WHERE body @@ ts_phrase('pudge')
+ORDER BY id ASC;
+----
+id
+1
+3
+5
+8
+
+
+query
+SELECT id FROM csv_glob_idx
+WHERE body @@ ts_phrase('pudge')
+ORDER BY id DESC;
+----
+id
+8
+5
+3
+1
+
+
+# ============================================================================
+# JSON glob -- per-file byte-offset PK + file_index, same per-file dispatch
+# shape as csv glob. Materialisation reads each record via JSONLookupScan
+# (which uses the gstate's arena to back zero-copy string_t output).
+# ============================================================================
+
+
+statement count 3
+COPY (SELECT 1::int4 AS id, 'pudge alpha' AS body
+      UNION ALL SELECT 2, 'manga beta'
+      UNION ALL SELECT 3, 'pudge gamma')
+TO '/tmp/${__DATABASE__}_json_a.jsonl' (FORMAT json);
+
+statement count 4
+COPY (SELECT 4::int4 AS id, 'sql delta' AS body
+      UNION ALL SELECT 5, 'pudge epsilon'
+      UNION ALL SELECT 6, 'clickclack zeta'
+      UNION ALL SELECT 7, 'mass effect eta')
+TO '/tmp/${__DATABASE__}_json_b.jsonl' (FORMAT json);
+
+statement count 2
+COPY (SELECT 8::int4 AS id, 'pudge theta' AS body
+      UNION ALL SELECT 9, '3am iota')
+TO '/tmp/${__DATABASE__}_json_c.jsonl' (FORMAT json);
+
+
+statement ok
+CREATE VIEW json_glob_v AS
+  SELECT * FROM read_json('/tmp/${__DATABASE__}_json_*.jsonl');
+
+
+statement ok
+CREATE INDEX json_glob_idx ON json_glob_v
+  USING inverted(id, body view_glob_en);
+
+
+# count(*) works via iresearch.
+query
+SELECT count(*) FROM json_glob_idx;
+----
+count
+9
+
+
+# PHRASE counts work too.
+query
+SELECT count(*) FROM json_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+4
+
+
+query
+SELECT count(*) FROM json_glob_idx WHERE body @@ ts_phrase('mass effect');
+----
+count
+1
+
+
+query
+SELECT count(*) FROM json_glob_idx WHERE body @@ ts_phrase('doesNotExist');
+----
+count
+0
+
+
+# Real-column SELECT: JSONLookupScan is dispatched per file, output
+# string_t points at the arena-backed read buffers (zero-copy single,
+# per-iter copy in glob to land in the parent's heap).
+query
+SELECT id, body FROM json_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge alpha
+3	pudge gamma
+5	pudge epsilon
+8	pudge theta
+
+
+# Bare scan also materialises through ViewFileGlobIndexSource.
+query
+SELECT id, body FROM json_glob_idx ORDER BY id;
+----
+id	body
+1	pudge alpha
+2	manga beta
+3	pudge gamma
+4	sql delta
+5	pudge epsilon
+6	clickclack zeta
+7	mass effect eta
+8	pudge theta
+9	3am iota
+
+
+# ============================================================================
+# Cross-format consistency: parquet glob and csv glob over the same logical
+# data return identical PHRASE answers. JSON glob count must agree too.
+# ============================================================================
+
+
+query
+SELECT id FROM pq_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+5
+8
+
+
+query
+SELECT id FROM csv_glob_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+3
+5
+8
+
+
+query
+SELECT count(*) FROM json_glob_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+4
+
+
+# ============================================================================
+# Larger glob: 60 rows distributed across 4 files (15+15+15+15) so per-file
+# dispatch crosses many files and many positions.
+# ============================================================================
+
+
+statement count 15
+COPY (SELECT i AS id, 'row '::text || i::text ||
+        CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
+      FROM generate_series(1, 15) AS g(i))
+TO '/tmp/${__DATABASE__}_big_a.parquet' (FORMAT PARQUET);
+
+statement count 15
+COPY (SELECT i AS id, 'row '::text || i::text ||
+        CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
+      FROM generate_series(16, 30) AS g(i))
+TO '/tmp/${__DATABASE__}_big_b.parquet' (FORMAT PARQUET);
+
+statement count 15
+COPY (SELECT i AS id, 'row '::text || i::text ||
+        CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
+      FROM generate_series(31, 45) AS g(i))
+TO '/tmp/${__DATABASE__}_big_c.parquet' (FORMAT PARQUET);
+
+statement count 15
+COPY (SELECT i AS id, 'row '::text || i::text ||
+        CASE WHEN i % 4 = 0 THEN ' kappa' ELSE ' lambda' END AS body
+      FROM generate_series(46, 60) AS g(i))
+TO '/tmp/${__DATABASE__}_big_d.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW pq_big_v AS
+  SELECT * FROM read_parquet('/tmp/${__DATABASE__}_big_*.parquet');
+
+
+statement ok
+CREATE INDEX pq_big_idx ON pq_big_v USING inverted(id, body view_glob_en);
+
+
+query
+SELECT count(*) FROM pq_big_idx;
+----
+count
+60
+
+
+# kappa = i%4==0: 15 rows in [1..60].
+query
+SELECT count(*) FROM pq_big_idx WHERE body @@ ts_phrase('kappa');
+----
+count
+15
+
+
+# lambda = i%4!=0: 45 rows.
+query
+SELECT count(*) FROM pq_big_idx WHERE body @@ ts_phrase('lambda');
+----
+count
+45
+
+
+# Materialise specific rows from each file boundary. Note: kappa = i%4==0,
+# lambda = i%4!=0. Each file holds 15 sequential ids.
+query
+SELECT id, body FROM pq_big_idx WHERE id IN (1, 15, 16, 30, 31, 45, 46, 60) ORDER BY id;
+----
+id	body
+1	row 1 lambda
+15	row 15 lambda
+16	row 16 kappa
+30	row 30 lambda
+31	row 31 lambda
+45	row 45 lambda
+46	row 46 lambda
+60	row 60 kappa
+
+
+# kappa rows are at the i%4==0 positions across all 4 files. Verify the
+# 15 positions resolve correctly through per-file dispatch.
+query
+SELECT id FROM pq_big_idx WHERE body @@ ts_phrase('kappa') ORDER BY id;
+----
+id
+4
+8
+12
+16
+20
+24
+28
+32
+36
+40
+44
+48
+52
+56
+60
+
+
+# Empty PHRASE result on the larger glob.
+query
+SELECT id FROM pq_big_idx WHERE body @@ ts_phrase('noTokenLikeThis');
+----
+id
+
+
+# PHRASE + IN: filters pushed into get.table_filters get reclaimed into
+# the iresearch filter at search-scan attach time.
+query
+SELECT id, body FROM pq_big_idx
+WHERE body @@ ts_phrase('kappa') AND id IN (4, 16, 32, 60)
+ORDER BY id;
+----
+id	body
+4	row 4 kappa
+16	row 16 kappa
+32	row 32 kappa
+60	row 60 kappa
+
+
+# PHRASE + range: same reclaim path, different filter shape.
+query
+SELECT id FROM pq_big_idx
+WHERE body @@ ts_phrase('kappa') AND id BETWEEN 20 AND 50
+ORDER BY id;
+----
+id
+20
+24
+28
+32
+36
+40
+44
+48
+
+
+query
+SELECT id FROM pq_big_idx
+WHERE body @@ ts_phrase('kappa') AND id <= 15
+ORDER BY id;
+----
+id
+4
+8
+12
+
+
+query
+SELECT id FROM pq_big_idx
+WHERE body @@ ts_phrase('kappa') AND id >= 50
+ORDER BY id;
+----
+id
+52
+56
+60
+
+
+# Materialise specific ids individually -- exercises per-file dispatch
+# with a single PK per scan.
+query
+SELECT id, body FROM pq_big_idx WHERE id = 4;
+----
+id	body
+4	row 4 kappa
+
+
+query
+SELECT id, body FROM pq_big_idx WHERE id = 60;
+----
+id	body
+60	row 60 kappa
+
+
+query
+SELECT id, body FROM pq_big_idx WHERE id IN (1, 30, 31, 60) ORDER BY id;
+----
+id	body
+1	row 1 lambda
+30	row 30 lambda
+31	row 31 lambda
+60	row 60 kappa
+
+
+# count(*) over PHRASE + range -- count-scan rewrite still bails out (table
+# filters present), regular AGGREGATE+search-scan path produces the count.
+query
+SELECT count(*) FROM pq_big_idx WHERE body @@ ts_phrase('kappa') AND id BETWEEN 20 AND 50;
+----
+count
+8
+
+
+# ============================================================================
+# Cleanup
+# ============================================================================
+
+
+statement ok
+DROP VIEW pq_glob_v;
+
+statement ok
+DROP VIEW csv_glob_v;
+
+statement ok
+DROP VIEW json_glob_v;
+
+statement ok
+DROP VIEW pq_big_v;

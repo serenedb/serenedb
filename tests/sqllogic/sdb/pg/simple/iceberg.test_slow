@@ -4,10 +4,10 @@ control substitution on
 # parquet/avro under s3://${MINIO_BUCKET}/warehouse/<schema>/<table>/...;
 # serened reads those via duckdb's httpfs S3 client.
 #
-# Isolation is per-${__DATABASE__}: secret name, ATTACH alias, and the iceberg
-# namespace are all scoped that way so tests can run in parallel without
-# clashing in DuckDB's global secret/ATTACH state or in the shared iceberg-rest
-# catalog.
+# Isolation is per-${__DATABASE__}: the secret, the ATTACH alias, and the
+# iceberg-rest namespace are all scoped that way. The first two live in
+# serened's process-global state; the namespace lives in iceberg-rest which
+# is shared across parallel tests within one run.sh.
 #
 # Exercises:
 #  - ATTACH against the REST catalog
@@ -31,8 +31,18 @@ statement ok
 SET s3_use_ssl=false;
 
 
+# Per-${__DATABASE__} ATTACH alias: each run.sh invocation starts a new
+# iceberg-rest on a fresh random port, so a process-global alias like
+# `iceberg` would survive in serened's catalog with a stale ENDPOINT and the
+# next run's `ATTACH IF NOT EXISTS` would silently keep the dead port. The
+# DETACH-then-ATTACH below makes the test idempotent on the same instance,
+# and the unique alias keeps parallel iceberg tests from stepping on each
+# other's attachment.
 statement ok
-ATTACH IF NOT EXISTS '${ICEBERG_WAREHOUSE}' AS iceberg (
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
   TYPE ICEBERG,
   ENDPOINT '${ICEBERG_REST_URL}',
   AUTHORIZATION_TYPE 'none'
@@ -47,20 +57,30 @@ statement count 3
 INSERT INTO local_emp VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol');
 
 
+# Per-${__DATABASE__} schema -- iceberg-rest's namespace is shared across all
+# parallel tests in one run.sh, and the warehouse S3 path is keyed on the
+# schema name, so the schema must be unique per test invocation. The session
+# search_path puts `public` first (so bare CREATE/INSERT for native tables
+# land in serened's catalog) and the iceberg schema second (so bare DML
+# references against iceberg tables fall through to find them). Iceberg
+# tables themselves are still created with explicit qualification.
 statement ok
-CREATE SCHEMA iceberg.${__DATABASE__};
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+SET search_path TO public, iceberg_${__DATABASE__}.${__DATABASE__};
 
 
 statement ok
-CREATE TABLE iceberg.${__DATABASE__}.salary (id INTEGER, salary BIGINT);
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.salary (id INTEGER, salary BIGINT);
 
 
 statement count 3
-INSERT INTO iceberg.${__DATABASE__}.salary VALUES (1, 100000), (2, 90000), (3, 80000);
+INSERT INTO salary VALUES (1, 100000), (2, 90000), (3, 80000);
 
 
 query
-SELECT id, salary FROM iceberg.${__DATABASE__}.salary ORDER BY id;
+SELECT id, salary FROM salary ORDER BY id;
 ----
 id	salary
 1	100000
@@ -71,7 +91,7 @@ id	salary
 query
 SELECT e.name, s.salary
 FROM local_emp AS e
-JOIN iceberg.${__DATABASE__}.salary AS s ON e.id = s.id
+JOIN salary AS s ON e.id = s.id
 ORDER BY e.id;
 ----
 name	salary
@@ -83,7 +103,7 @@ Carol	80000
 query
 SELECT id, name AS label FROM local_emp
 UNION ALL
-SELECT id, 'salary='::text || salary::text FROM iceberg.${__DATABASE__}.salary
+SELECT id, 'salary='::text || salary::text FROM salary
 ORDER BY id, label;
 ----
 id	label
@@ -96,11 +116,19 @@ id	label
 
 
 statement ok
-DROP TABLE iceberg.${__DATABASE__}.salary;
+DROP TABLE salary;
 
 
 statement ok
-DROP SCHEMA iceberg.${__DATABASE__};
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
 
 
 statement ok

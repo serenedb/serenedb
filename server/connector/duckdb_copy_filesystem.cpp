@@ -77,8 +77,8 @@ struct CopyQueueFileHandle final : public duckdb::FileHandle {
     is_buffering = true;  // all opens buffer reads for later replays
   }
 
-  ~CopyQueueFileHandle() override = default;
-  void Close() override {}
+  ~CopyQueueFileHandle() final = default;
+  void Close() final {}
 
   int64_t DoRead(void* buf, int64_t nr_bytes) {
     char* out = static_cast<char*>(buf);

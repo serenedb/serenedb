@@ -47,19 +47,179 @@
 #include "connector/rocksdb_filter.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
+#include "search/inverted_index_shard.h"
 
 namespace sdb::connector {
+namespace {
 
-duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBindData::Copy() const {
-  auto copy = duckdb::make_uniq<SereneDBScanBindData>();
+void CopyCommon(const SereneDBScanBindData& src, SereneDBScanBindData& dst) {
+  dst.column_ids = src.column_ids;
+  dst.column_types = src.column_types;
+  dst.has_rowid = src.has_rowid;
+  dst.table_entry = src.table_entry;
+  dst.entry_kind = src.entry_kind;
+  dst.inverted_index = src.inverted_index;
+  dst.scan_source = src.scan_source->Clone();
+  dst.lookup_label = src.lookup_label;
+}
+
+std::shared_ptr<search::InvertedIndexShard> ResolveInvertedIndexShard(
+  duckdb::ClientContext& context, const SereneDBScanBindData& bind) {
+  if (!bind.inverted_index) {
+    return nullptr;
+  }
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto cat_snapshot = conn_ctx.EnsureCatalogSnapshot();
+  for (auto& s : cat_snapshot->GetIndexShardsByRelation(
+         bind.inverted_index->GetRelationId())) {
+    if (s->GetIndexId() == bind.inverted_index->GetId() &&
+        s->GetType() == catalog::ObjectType::InvertedIndexShard) {
+      return basics::downCast<search::InvertedIndexShard>(std::move(s));
+    }
+  }
+  return nullptr;
+}
+
+duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
+  duckdb::ClientContext& context, const SereneDBScanBindData& bind) {
+  if (bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search) {
+    const auto& ss = bind.scan_source->Cast<SearchScan>();
+    if (ss.reader) {
+      return duckdb::make_uniq<duckdb::NodeStatistics>(
+        static_cast<duckdb::idx_t>(ss.reader->live_docs_count()));
+    }
+  }
+  auto shard = ResolveInvertedIndexShard(context, bind);
+  if (!shard) {
+    return nullptr;
+  }
+  auto idx_snapshot = shard->GetInvertedIndexSnapshot();
+  if (!idx_snapshot || !idx_snapshot->reader) {
+    return nullptr;
+  }
+  return duckdb::make_uniq<duckdb::NodeStatistics>(
+    static_cast<duckdb::idx_t>(idx_snapshot->reader->live_docs_count()));
+}
+
+}  // namespace
+
+duckdb::unique_ptr<duckdb::FunctionData> TableScanBindData::Copy() const {
+  auto copy = duckdb::make_uniq<TableScanBindData>();
+  CopyCommon(*this, *copy);
   copy->table = table;
-  copy->column_ids = column_ids;
-  copy->column_types = column_types;
-  copy->has_rowid = has_rowid;
-  copy->table_entry = table_entry;
-  copy->scan_source = scan_source->Clone();
   return copy;
 }
+
+bool TableScanBindData::Equals(const duckdb::FunctionData& other) const {
+  const auto& o = other.Cast<SereneDBScanBindData>();
+  if (o.GetKind() != Kind::Table) {
+    return false;
+  }
+  const auto& t = o.As<TableScanBindData>();
+  return table == t.table && column_ids == t.column_ids;
+}
+
+duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
+  duckdb::ClientContext& context) const {
+  auto& conn_ctx = GetSereneDBContext(context);
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto shard = snapshot->GetTableShard(table->GetId());
+  if (!shard) {
+    return nullptr;
+  }
+  auto stats = shard->GetTableStats();
+  return duckdb::make_uniq<duckdb::NodeStatistics>(
+    static_cast<duckdb::idx_t>(stats.num_rows));
+}
+
+ObjectId TableScanBindData::RelationId() const { return table->GetId(); }
+
+std::string_view TableScanBindData::RelationName() const {
+  return table->GetName();
+}
+
+catalog::Column::Id TableScanBindData::ColumnIdByName(
+  std::string_view name) const {
+  for (const auto& col : table->Columns()) {
+    if (col.name == name) {
+      return col.id;
+    }
+  }
+  return kInvalidColumnId;
+}
+
+std::string_view TableScanBindData::ColumnNameById(
+  catalog::Column::Id col_id) const {
+  for (const auto& col : table->Columns()) {
+    if (col.id == col_id) {
+      return col.name;
+    }
+  }
+  return {};
+}
+
+void TableScanBindData::IterateColumns(const ColumnVisitor& cb) const {
+  for (const auto& col : table->Columns()) {
+    cb(col.id, col.type);
+  }
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> ViewScanBindData::Copy() const {
+  auto copy = duckdb::make_uniq<ViewScanBindData>();
+  CopyCommon(*this, *copy);
+  copy->view = view;
+  return copy;
+}
+
+bool ViewScanBindData::Equals(const duckdb::FunctionData& other) const {
+  const auto& o = other.Cast<SereneDBScanBindData>();
+  if (o.GetKind() != Kind::View) {
+    return false;
+  }
+  const auto& v = o.As<ViewScanBindData>();
+  return view == v.view && column_ids == v.column_ids;
+}
+
+duckdb::unique_ptr<duckdb::NodeStatistics> ViewScanBindData::Cardinality(
+  duckdb::ClientContext& context) const {
+  return InvertedIndexCardinality(context, *this);
+}
+
+ObjectId ViewScanBindData::RelationId() const { return view->GetId(); }
+
+std::string_view ViewScanBindData::RelationName() const {
+  return view->GetName();
+}
+
+catalog::Column::Id ViewScanBindData::ColumnIdByName(
+  std::string_view name) const {
+  const auto& info = view->GetInfo();
+  for (size_t i = 0; i < info.names.size(); ++i) {
+    if (info.names[i] == name) {
+      return static_cast<catalog::Column::Id>(i);
+    }
+  }
+  return kInvalidColumnId;
+}
+
+std::string_view ViewScanBindData::ColumnNameById(
+  catalog::Column::Id col_id) const {
+  const auto& info = view->GetInfo();
+  const auto idx = static_cast<size_t>(col_id);
+  if (idx < info.names.size()) {
+    return info.names[idx];
+  }
+  return {};
+}
+
+void ViewScanBindData::IterateColumns(const ColumnVisitor& cb) const {
+  const auto& info = view->GetInfo();
+  for (size_t i = 0; i < info.names.size(); ++i) {
+    cb(static_cast<catalog::Column::Id>(i), info.types[i]);
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 static duckdb::BindInfo SereneDBGetBindInfo(
   const duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
@@ -71,14 +231,7 @@ static duckdb::BindInfo SereneDBGetBindInfo(
   return duckdb::BindInfo(duckdb::ScanType::TABLE);
 }
 
-bool SereneDBScanBindData::Equals(const duckdb::FunctionData& other) const {
-  auto& o = other.Cast<SereneDBScanBindData>();
-  return table == o.table && column_ids == o.column_ids;
-}
-
-// --- Bind stub ---
-
-static duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
+duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::string>& names) {
@@ -86,26 +239,12 @@ static duckdb::unique_ptr<duckdb::FunctionData> SereneDBScanBind(
     "SereneDBScanBind: should be provided via GetScanFunction");
 }
 
-// --- cardinality / rows_scanned / virtual columns ---
-
 static duckdb::unique_ptr<duckdb::NodeStatistics> SereneDBScanCardinality(
   duckdb::ClientContext& context, const duckdb::FunctionData* bind_data) {
   if (!bind_data) {
     return nullptr;
   }
-  auto& bind = bind_data->Cast<SereneDBScanBindData>();
-  if (!bind.table) {
-    return nullptr;
-  }
-  auto& conn_ctx = GetSereneDBContext(context);
-  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-  auto shard = snapshot->GetTableShard(bind.table->GetId());
-  if (!shard) {
-    return nullptr;
-  }
-  auto stats = shard->GetTableStats();
-  return duckdb::make_uniq<duckdb::NodeStatistics>(
-    static_cast<duckdb::idx_t>(stats.num_rows));
+  return bind_data->Cast<SereneDBScanBindData>().Cardinality(context);
 }
 
 static duckdb::virtual_column_map_t SereneDBScanGetVirtualColumns(
@@ -142,16 +281,12 @@ std::unique_ptr<ScanSource> SecondaryIndexScan::Clone() const {
   return std::make_unique<SecondaryIndexScan>(*this);
 }
 
+// Prepared iresearch query/filter aren't duplicable; reset to a full scan.
 std::unique_ptr<ScanSource> SearchScan::Clone() const {
-  // SearchScan owns a prepared iresearch query + filter tree that we can't
-  // duplicate; preserve the pre-refactor behaviour of falling back to the
-  // default FullTableScan on copy.
   return std::make_unique<FullTableScan>();
 }
 
 std::unique_ptr<ScanSource> CountScan::Clone() const {
-  // Same fallback as SearchScan: the prepared iresearch query + filter
-  // tree aren't duplicable; Copy() paths land on FullTableScan.
   return std::make_unique<FullTableScan>();
 }
 
@@ -179,25 +314,24 @@ std::unique_ptr<ScanSource> SkRangeScan::Clone() const {
   return std::make_unique<SkRangeScan>(*this);
 }
 
-static std::string ColumnNameFor(const catalog::Table& table,
+static std::string ColumnNameFor(const SereneDBScanBindData& bind,
                                  catalog::Column::Id col_id) {
-  for (const auto& c : table.Columns()) {
-    if (c.id == col_id) {
-      return c.name;
-    }
+  auto name = bind.ColumnNameById(col_id);
+  if (!name.empty()) {
+    return std::string{name};
   }
   return absl::StrCat("col", col_id);
 }
 
 static std::string FormatResolvedPoint(
-  const ResolvedPoint& point, const catalog::Table& table,
+  const ResolvedPoint& point, const SereneDBScanBindData& bind,
   std::span<const catalog::Column::Id> column_ids) {
   std::string out = "(";
   for (size_t i = 0; i < point.size(); ++i) {
     if (i) {
       absl::StrAppend(&out, ", ");
     }
-    absl::StrAppend(&out, ColumnNameFor(table, column_ids[i]), "=",
+    absl::StrAppend(&out, ColumnNameFor(bind, column_ids[i]), "=",
                     point[i].ToString());
   }
   absl::StrAppend(&out, ")");
@@ -205,14 +339,14 @@ static std::string FormatResolvedPoint(
 }
 
 static std::string FormatResolvedRange(
-  const ResolvedRange& range, const catalog::Table& table,
+  const ResolvedRange& range, const SereneDBScanBindData& bind,
   std::span<const catalog::Column::Id> column_ids) {
   std::string out = "{";
   for (size_t i = 0; i < range.prefix.size(); ++i) {
     if (i) {
       absl::StrAppend(&out, ", ");
     }
-    absl::StrAppend(&out, ColumnNameFor(table, column_ids[i]), "=",
+    absl::StrAppend(&out, ColumnNameFor(bind, column_ids[i]), "=",
                     range.prefix[i].ToString());
   }
   const auto range_col_idx = range.prefix.size();
@@ -220,7 +354,7 @@ static std::string FormatResolvedRange(
     if (!range.prefix.empty()) {
       absl::StrAppend(&out, ", ");
     }
-    absl::StrAppend(&out, ColumnNameFor(table, column_ids[range_col_idx]), "=",
+    absl::StrAppend(&out, ColumnNameFor(bind, column_ids[range_col_idx]), "=",
                     range.range_column.toString());
   }
   absl::StrAppend(&out, "}");
@@ -243,35 +377,34 @@ static std::string FormatClaimList(const PointsOrRanges& items,
 void PkPointScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (!points.empty() && bind.table) {
-    auto& table = *bind.table;
-    auto cols = std::span<const catalog::Column::Id>(column_ids);
-    out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
-                 return FormatResolvedPoint(pt, table, cols);
-               }));
+  if (points.empty()) {
+    return;
   }
+  auto cols = std::span<const catalog::Column::Id>(column_ids);
+  out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
+               return FormatResolvedPoint(pt, bind, cols);
+             }));
 }
 
 void PkRangeScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (!ranges.empty() && bind.table) {
-    auto& table = *bind.table;
-    auto cols = std::span<const catalog::Column::Id>(column_ids);
-    out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
-                 return FormatResolvedRange(rr, table, cols);
-               }));
+  if (ranges.empty()) {
+    return;
   }
+  auto cols = std::span<const catalog::Column::Id>(column_ids);
+  out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
+               return FormatResolvedRange(rr, bind, cols);
+             }));
 }
 
 void SkPointScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (!points.empty() && bind.table) {
-    auto& table = *bind.table;
+  if (!points.empty()) {
     auto cols = std::span<const catalog::Column::Id>(column_ids);
     out.insert("Filter", FormatClaimList(points, [&](const ResolvedPoint& pt) {
-                 return FormatResolvedPoint(pt, table, cols);
+                 return FormatResolvedPoint(pt, bind, cols);
                }));
   }
   if (is_unique) {
@@ -282,11 +415,10 @@ void SkPointScan::AppendSummary(
 void SkRangeScan::AppendSummary(
   const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
-  if (!ranges.empty() && bind.table) {
-    auto& table = *bind.table;
+  if (!ranges.empty()) {
     auto cols = std::span<const catalog::Column::Id>(column_ids);
     out.insert("Filter", FormatClaimList(ranges, [&](const ResolvedRange& rr) {
-                 return FormatResolvedRange(rr, table, cols);
+                 return FormatResolvedRange(rr, bind, cols);
                }));
   }
   if (is_unique) {
@@ -389,13 +521,13 @@ void SearchScan::AppendSummary(
   if (score_top_k) {
     out.insert("TopK", std::to_string(*score_top_k));
   }
-  if (emit_offsets()) {
+  if (EmitOffsets()) {
     std::string cols;
     for (size_t i = 0; i < offsets.size(); ++i) {
       if (i) {
         absl::StrAppend(&cols, ", ");
       }
-      absl::StrAppend(&cols, ColumnNameFor(*bind.table, offsets[i].column_id));
+      absl::StrAppend(&cols, ColumnNameFor(bind, offsets[i].column_id));
     }
     out.insert("Offsets", std::move(cols));
   }
@@ -408,41 +540,21 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
     return result;
   }
   auto& bind = input.bind_data->Cast<SereneDBScanBindData>();
-  if (bind.table) {
-    result.insert("Table", std::string{bind.table->GetName()});
+  if (bind.table_entry) {
+    const char* kind =
+      bind.entry_kind == ScanEntryKind::BaseTable ? "Table" : "Index";
+    result.insert(kind, std::string{bind.table_entry->name});
+  } else {
+    const char* kind = bind.IsViewBacked() ? "View" : "Table";
+    result.insert(kind, std::string{bind.RelationName()});
   }
-  // Surface which lookup backend the search-scan path will use to resolve
-  // PKs from the iresearch index. Only emit for strategies that actually
-  // run the iresearch pk -> row pipeline.
-  if (bind.scan_source->IsSearchLike()) {
-    const auto& table = *bind.table;
-    auto name = [&]() -> std::string {
-      switch (table.GetTableType()) {
-        using enum TableType;
-        case File: {
-          const auto& fi = table.GetFileInfo();
-          SDB_ASSERT(fi.storage_options);
-          std::string_view path = fi.storage_options->Path();
-          auto dot = path.rfind('.');
-          if (dot == std::string_view::npos) {
-            return "file";
-          }
-          return std::string{path.substr(dot + 1)};
-        }
-        case RocksDB:
-          return "rocksdb";
-        case Unknown:
-          SDB_UNREACHABLE();
-      }
-    }();
-
-    result.insert("Lookup", std::move(name));
+  if (!bind.lookup_label.empty()) {
+    result.insert("Lookup", bind.lookup_label);
   }
   bind.scan_source->AppendSummary(bind, result);
   return result;
 }
 
-// Populate the common callbacks shared by every scan function variant.
 static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO(mbkkt) Maybe we can use bind_replace/bind_operator to make indexes?
   func.init_local = CommonScanInitLocal;  // TODO: Use separate callbacks
@@ -485,8 +597,6 @@ static void SetCommonCallbacks(duckdb::TableFunction& func) {
   // TODO: We can init_global on schedule for some scan types, with
   // global_initialization, but why?
 }
-
-// --- Factory ---
 
 duckdb::TableFunction CreateTableFullscanFunction() {
   duckdb::TableFunction func{
@@ -542,15 +652,6 @@ duckdb::TableFunction CreateSKRangesScanFunction() {
   return func;
 }
 
-duckdb::TableFunction CreateIResearchFullscanFunction() {
-  duckdb::TableFunction func{
-    "iresearch_fullscan", {}, PKFullScanFunction, SereneDBScanBind,
-    PKFullScanInitGlobal,
-  };
-  SetCommonCallbacks(func);
-  return func;
-}
-
 duckdb::TableFunction CreateIResearchScanFunction() {
   duckdb::TableFunction func{
     "iresearch_scan",         {}, SearchFullScanFunction, SereneDBScanBind,
@@ -569,9 +670,9 @@ duckdb::TableFunction CreateIResearchCountFunction() {
   return func;
 }
 
-duckdb::TableFunction CreateIResearchANNFullscanFunction() {
+duckdb::TableFunction CreateIResearchANNScanFunction() {
   duckdb::TableFunction func{
-    "iresearch_ann_fullscan", {}, SearchAnnScanFunction, SereneDBScanBind,
+    "iresearch_ann_scan",    {}, SearchAnnScanFunction, SereneDBScanBind,
     SearchAnnScanInitGlobal,
   };
   SetCommonCallbacks(func);

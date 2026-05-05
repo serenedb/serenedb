@@ -33,7 +33,6 @@ using Tick = uint64_t;
 enum class TableType : uint8_t {
   Unknown = 0,
   RocksDB = 1,
-  File = 2,
 };
 
 enum class FileFormat : uint8_t {
@@ -83,8 +82,6 @@ customize::enum_name<sdb::TableType>(sdb::TableType value) noexcept {
   switch (value) {
     case sdb::TableType::RocksDB:
       return "rocksdb";
-    case sdb::TableType::File:
-      return "file";
     default:
       return invalid_tag;
   }

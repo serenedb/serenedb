@@ -10,6 +10,9 @@ import path from "path";
 import { initServer } from "./server";
 
 const PORT: number = config.get("port") || 3000;
+const HOST: string =
+    process.env.BACKEND_HOST ||
+    (config.has("host") ? config.get("host") : "0.0.0.0");
 
 const run = async () => {
     const dbPath = path.join(__dirname, "db.sqlite");
@@ -34,7 +37,7 @@ const run = async () => {
         : path.join(__dirname, "query-worker.js");
     setWorkerPath(workerPath);
 
-    initServer(PORT, "0.0.0.0");
+    initServer(PORT, HOST);
 };
 
 run().catch((err) => {

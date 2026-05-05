@@ -7,12 +7,11 @@ import {
 import {
     AddConnectionOutput,
     DeleteConnectionOutput,
+    ListMyConnectionOutput,
     UpdateConnectionOutput,
 } from "../outputs";
-import { ConnectionSchema } from "../schemas/connection";
-import z from "zod";
 
-export const listMyConnectionContract = oc.output(z.array(ConnectionSchema));
+export const listMyConnectionContract = oc.output(ListMyConnectionOutput);
 export const addConnectionContract = oc
     .input(AddConnectionInput)
     .output(AddConnectionOutput);

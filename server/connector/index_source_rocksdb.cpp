@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/rocksdb_lookup.h"
+#include "connector/index_source_rocksdb.h"
 
 #include <absl/algorithm/container.h>
 
@@ -40,19 +40,23 @@
 namespace sdb::connector {
 namespace {
 
-// Batch-size threshold for picking the Seek strategy over MultiGet.
-// Ported from origin/main rocksdb_materializer.cpp.
-//
 // TODO(mbkkt) benchmark and choose best threshold
 constexpr size_t kSeekThreshold = 100;
 
-// `[ObjectId][Column::Id]` prefix attached to every row key.
-constexpr size_t kColumnKeySize =
-  sizeof(ObjectId) + sizeof(catalog::Column::Id);
+constexpr size_t kPrefixGap = PrimaryKeysBytes::kPrefixGap;
+
+static_assert(kPrefixGap == sizeof(ObjectId) + sizeof(catalog::Column::Id),
+              "PrimaryKeysBytes::kPrefixGap must match the RocksDB key "
+              "[ObjectId][ColumnId] prefix size");
+
+// const_cast is safe: the gap is arena-owned writable memory.
+inline char* PrefixGapOf(std::string_view pk) {
+  return const_cast<char*>(pk.data()) - kPrefixGap;
+}
 
 }  // namespace
 
-RocksDBLookup::RocksDBLookup(
+RocksDBIndexSource::RocksDBIndexSource(
   ObjectId table_id, const rocksdb::Snapshot* snapshot,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
@@ -77,15 +81,17 @@ RocksDBLookup::RocksDBLookup(
   SDB_ASSERT(_cf);
 }
 
-void RocksDBLookup::Lookup(std::span<const std::string_view> pk_bytes,
-                           duckdb::DataChunk& output) {
-  const auto num_rows = pk_bytes.size();
-  if (num_rows == 0) {
+void RocksDBIndexSource::Materialize(duckdb::ClientContext& /*context*/,
+                                     PrimaryKeyBatch& batch,
+                                     duckdb::idx_t start, duckdb::idx_t count,
+                                     duckdb::DataChunk& output) {
+  auto& arena = std::get<PrimaryKeysBytes>(batch);
+  SDB_ASSERT(start + count <= arena.views.size());
+  std::span<const std::string_view> pk_bytes{arena.views.data() + start, count};
+  if (pk_bytes.empty()) {
     return;
   }
 
-  // Mark each new call as a fresh batch; the sort + arena staging is done
-  // lazily on first strategy that needs it.
   _new_batch = true;
 
   std::string table_key = key_utils::PrepareTableKey(_table_id);
@@ -94,17 +100,15 @@ void RocksDBLookup::Lookup(std::span<const std::string_view> pk_bytes,
   for (duckdb::idx_t proj = 0; proj < _projected_columns.size(); ++proj) {
     const auto bind_col = _projected_columns[proj];
     if (bind_col == duckdb::DConstants::INVALID_INDEX) {
-      // Virtual slot (rowid / tableoid / score / offsets) -- caller fills.
       continue;
     }
 
     const auto col_id = _bind_column_ids[bind_col];
     const auto& type = _projected_types[proj];
 
-    // Build the column-key prefix: [ObjectId][ColumnId].
     basics::StrResize(table_key, table_prefix_size);
     key_utils::AppendColumnKey(table_key, col_id);
-    SDB_ASSERT(table_key.size() == kColumnKeySize);
+    SDB_ASSERT(table_key.size() == kPrefixGap);
 
     auto& vec = output.data[proj];
     DispatchColumnRead(table_key, col_id, pk_bytes,
@@ -116,9 +120,47 @@ void RocksDBLookup::Lookup(std::span<const std::string_view> pk_bytes,
   }
 }
 
-void RocksDBLookup::DispatchColumnRead(
+void RocksDBIndexSource::LookupInto(
+  std::span<const std::string_view> pk_bytes,
+  std::span<duckdb::Vector* const> per_col_targets) {
+  if (pk_bytes.empty()) {
+    return;
+  }
+  _new_batch = true;
+
+  std::string table_key = key_utils::PrepareTableKey(_table_id);
+  const auto table_prefix_size = table_key.size();
+
+  duckdb::idx_t real_idx = 0;
+  for (duckdb::idx_t proj = 0; proj < _projected_columns.size(); ++proj) {
+    const auto bind_col = _projected_columns[proj];
+    if (bind_col == duckdb::DConstants::INVALID_INDEX) {
+      continue;
+    }
+    SDB_ASSERT(real_idx < per_col_targets.size());
+    auto* target = per_col_targets[real_idx++];
+    SDB_ASSERT(target);
+
+    const auto col_id = _bind_column_ids[bind_col];
+    const auto& type = _projected_types[proj];
+
+    basics::StrResize(table_key, table_prefix_size);
+    key_utils::AppendColumnKey(table_key, col_id);
+    SDB_ASSERT(table_key.size() == kPrefixGap);
+
+    DispatchColumnRead(
+      table_key, col_id, pk_bytes,
+      [&, target](size_t original_idx, std::string_view value) {
+        DeserializeValueIntoDuckDB(value, *target, type,
+                                   static_cast<duckdb::idx_t>(original_idx));
+      });
+  }
+}
+
+void RocksDBIndexSource::DispatchColumnRead(
   std::string_view column_key_prefix, catalog::Column::Id column_id,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
+  // TODO(Dronplane) Maybe multiply by pk count by columns count?
   if (pk_bytes.size() > kSeekThreshold) {
     SeekIterateColumnKeys(column_key_prefix, column_id, pk_bytes, decode);
   } else if (pk_bytes.size() > MultiGetContext::kMultiGetThreshold) {
@@ -128,20 +170,18 @@ void RocksDBLookup::DispatchColumnRead(
   }
 }
 
-void RocksDBLookup::IterateColumnKeys(
+void RocksDBIndexSource::IterateColumnKeys(
   std::string_view column_key_prefix,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
-  std::string buffer;
-  buffer.reserve(column_key_prefix.size() + 64);
   for (size_t idx = 0; idx < pk_bytes.size(); ++idx) {
-    buffer.assign(column_key_prefix);
-    buffer.append(pk_bytes[idx].data(), pk_bytes[idx].size());
+    char* gap = PrefixGapOf(pk_bytes[idx]);
+    std::memcpy(gap, column_key_prefix.data(), kPrefixGap);
+    rocksdb::Slice key{gap, kPrefixGap + pk_bytes[idx].size()};
+
     _value_buffer.clear();
-    auto s = _txn ? _txn->Get(_read_options, _cf, buffer, &_value_buffer)
-                  : _db->Get(_read_options, _cf, buffer, &_value_buffer);
+    auto s = _txn ? _txn->Get(_read_options, _cf, key, &_value_buffer)
+                  : _db->Get(_read_options, _cf, key, &_value_buffer);
     if (s.IsNotFound()) {
-      // Missing rows: mirror origin/main behaviour of raising; callers
-      // never expect sparse index state in a consistent snapshot.
       SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB");
     }
     SDB_ASSERT(s.ok(), "RocksDB Get failed: ", s.ToString());
@@ -149,7 +189,7 @@ void RocksDBLookup::IterateColumnKeys(
   }
 }
 
-void RocksDBLookup::PrepareSortedBatch(
+void RocksDBIndexSource::EnsureSortedBatch(
   std::span<const std::string_view> pk_bytes) {
   if (!_new_batch) {
     return;
@@ -159,40 +199,23 @@ void RocksDBLookup::PrepareSortedBatch(
   std::sort(_read_idxs.begin(), _read_idxs.end(), [&](size_t lhs, size_t rhs) {
     return pk_bytes[lhs] < pk_bytes[rhs];
   });
-
-  // Layout: per sorted pk we reserve `kColumnKeySize + pk.size()` bytes.
-  // The column-key prefix is written at read-time (it may vary across
-  // columns), so only the pk portion is staged here.
-  size_t required_size = kColumnKeySize * pk_bytes.size();
-  for (auto& pk : pk_bytes) {
-    required_size += pk.size();
-  }
-  _multi_get_buffer.resize(required_size);
-  char* data = _multi_get_buffer.data();
-
-  size_t offset = kColumnKeySize;  // first pk goes right after first prefix
-  for (auto idx : _read_idxs) {
-    std::memcpy(data + offset, pk_bytes[idx].data(), pk_bytes[idx].size());
-    offset += pk_bytes[idx].size() + kColumnKeySize;
-  }
   _new_batch = false;
 }
 
-void RocksDBLookup::MultiGetIterateColumnKeys(
+void RocksDBIndexSource::MultiGetIterateColumnKeys(
   std::string_view column_key_prefix,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
-  PrepareSortedBatch(pk_bytes);
+  EnsureSortedBatch(pk_bytes);
+  SDB_ASSERT(column_key_prefix.size() == kPrefixGap);
   _key_slices.resize(pk_bytes.size());
-  SDB_ASSERT(column_key_prefix.size() == kColumnKeySize);
-  char* data = _multi_get_buffer.data();
 
-  // Re-stamp the column-key prefix before every full key in the arena.
-  size_t offset = 0;
+  // Sorted slice array -- MultiGet wants keys sorted for sequential block
+  // reads.
   for (size_t i = 0; i < _read_idxs.size(); ++i) {
-    std::memcpy(data + offset, column_key_prefix.data(), kColumnKeySize);
-    const auto full_key_size = kColumnKeySize + pk_bytes[_read_idxs[i]].size();
-    _key_slices[i] = {data + offset, full_key_size};
-    offset += full_key_size;
+    const auto idx = _read_idxs[i];
+    char* gap = PrefixGapOf(pk_bytes[idx]);
+    std::memcpy(gap, column_key_prefix.data(), kPrefixGap);
+    _key_slices[i] = rocksdb::Slice{gap, kPrefixGap + pk_bytes[idx].size()};
   }
 
   size_t sorted_pos = 0;
@@ -211,17 +234,17 @@ void RocksDBLookup::MultiGetIterateColumnKeys(
   }
 }
 
-void RocksDBLookup::SeekIterateColumnKeys(
+void RocksDBIndexSource::SeekIterateColumnKeys(
   std::string_view column_key_prefix, catalog::Column::Id column_id,
   std::span<const std::string_view> pk_bytes, const DecodeFn& decode) {
-  PrepareSortedBatch(pk_bytes);
+  EnsureSortedBatch(pk_bytes);
+  SDB_ASSERT(column_key_prefix.size() == kPrefixGap);
 
   rocksdb::Iterator* column_iterator = nullptr;
   auto it = _iterators.find(column_id);
   if (it == _iterators.end()) {
-    // Iterators are kept across batches, so disable async_io -- a batch
-    // could be resumed on a different thread and an outstanding async
-    // op would hang. (Same reasoning as in origin/main.)
+    // async_io off: cached iterators may be resumed on a different thread,
+    // and an outstanding async op would hang.
     auto it_options = _read_options;
     it_options.async_io = false;
     auto iter = std::unique_ptr<rocksdb::Iterator>(
@@ -234,19 +257,16 @@ void RocksDBLookup::SeekIterateColumnKeys(
   }
   SDB_ASSERT(column_iterator);
 
-  char* data = _multi_get_buffer.data();
-  size_t offset = 0;
   for (auto idx : _read_idxs) {
-    const auto pk_size = pk_bytes[idx].size();
-    std::memcpy(data + offset, column_key_prefix.data(), kColumnKeySize);
-    const rocksdb::Slice key{data + offset, kColumnKeySize + pk_size};
+    char* gap = PrefixGapOf(pk_bytes[idx]);
+    std::memcpy(gap, column_key_prefix.data(), kPrefixGap);
+    const rocksdb::Slice key{gap, kPrefixGap + pk_bytes[idx].size()};
     column_iterator->Seek(key);
     if (!column_iterator->Valid() || column_iterator->key() != key) {
       SDB_THROW(ERROR_INTERNAL, "Missing row for PK in RocksDB (Seek)");
     }
     rocksutils::CheckIteratorStatus(*column_iterator);
     decode(idx, column_iterator->value().ToStringView());
-    offset += kColumnKeySize + pk_size;
   }
 }
 

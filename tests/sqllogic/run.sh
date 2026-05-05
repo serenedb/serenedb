@@ -261,6 +261,17 @@ launch_external() {
 	# iceberg test transitively requires MinIO too.
 	if [[ "$needs_iceberg" == "true" ]]; then
 		needs_s3=true
+		# Path-based iceberg_scan() tests (e.g. equality_deletes regression)
+		# read static fixtures shipped with the duckdb_iceberg submodule.
+		# Inside the sqllogic compose the workspace is mounted at /serenedb;
+		# in local-runner mode the same path is the repo root.
+		local repo_root
+		repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+		if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+			export ICEBERG_FIXTURES="/serenedb/third_party/duckdb_iceberg/data/persistent"
+		else
+			export ICEBERG_FIXTURES="${repo_root}/third_party/duckdb_iceberg/data/persistent"
+		fi
 	fi
 	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3

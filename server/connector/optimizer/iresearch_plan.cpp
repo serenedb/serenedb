@@ -62,10 +62,6 @@
 namespace sdb::optimizer {
 namespace {
 
-// ---------------------------------------------------------------------------
-// Mutation context
-// ---------------------------------------------------------------------------
-
 duckdb::unique_ptr<duckdb::Expression> CombineFilterExpressions(
   std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs) {
   if (exprs.empty()) {
@@ -146,10 +142,6 @@ std::string MakeHnswFieldName(catalog::Column::Id col_id) {
   absl::big_endian::Store(name.data(), col_id);
   return name;
 }
-
-// ---------------------------------------------------------------------------
-// Vector argument extraction (shared by ANN topk + ANN range)
-// ---------------------------------------------------------------------------
 
 struct ExpectedHNSW {
   irs::HNSWMetric metric;

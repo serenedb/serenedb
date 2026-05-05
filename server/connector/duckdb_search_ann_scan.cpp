@@ -183,7 +183,7 @@ void MergeResult(duckdb::ClientContext& context,
       } else {
         pk.Reset();
         if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
-          pk.EnsureInit(duckdb::Allocator::DefaultAllocator());
+          pk.EnsureInit(duckdb::Allocator::Get(context));
         }
         PkResize(pk, n);
         LookupSegmentsValues(segments, doc_ids, *g.reader, n,
@@ -271,7 +271,7 @@ void RangeSearchSegment(duckdb::ClientContext& context,
     if (std::holds_alternative<std::monostate>(l.pk_batch)) {
       l.pk_batch = g.index_source->CreatePkBatch();
       if (auto* p = std::get_if<PrimaryKeysBytes>(&l.pk_batch)) {
-        p->EnsureInit(duckdb::Allocator::DefaultAllocator());
+        p->EnsureInit(duckdb::Allocator::Get(context));
       }
     }
   }
@@ -321,6 +321,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
     GetSereneDBContext(context).EnsureSearchSnapshot(gstate->scan->index_id);
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
+
+  std::cout << gstate->total_segments << "\n";
 
   // remained_segments must match what ClaimNextLiveSegment will hand out:
   // dead segments are skipped there, so per-worker `processed` counts only

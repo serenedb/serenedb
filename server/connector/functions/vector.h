@@ -36,8 +36,8 @@ inline constexpr std::string_view kCosineSimilarity = "cosine_similarity";
 inline constexpr std::string_view kIP = "inner_product";
 inline constexpr std::string_view kNegativeIP = "negative_inner_product";
 inline constexpr std::string_view kNegativeIPDistanceOp = "<#>";
-inline constexpr std::string_view kL2Norm = "l2_norm";
 inline constexpr std::string_view kL1Norm = "l1_norm";
+inline constexpr std::string_view kL2Norm = "l2_norm";
 inline constexpr std::string_view kL1Normalize = "l1_normalize";
 inline constexpr std::string_view kL2Normalize = "l2_normalize";
 

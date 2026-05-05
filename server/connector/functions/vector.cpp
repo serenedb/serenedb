@@ -50,8 +50,8 @@ enum class Distance {
 };
 
 enum class Norm {
-  L2 = 0,
-  L1,
+  L1 = 0,
+  L2,
 };
 
 template<typename T, typename R>

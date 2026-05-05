@@ -1040,13 +1040,24 @@ void SerializeRecord(SerializationContext context,
     auto* nfields_data = context.buffer->GetContiguousData(4);
     absl::big_endian::Store32(nfields_data,
                               static_cast<int32_t>(children.size()));
+
+    struct ChildPlan {
+      SerializationFunction fn;
+      int32_t oid;
+    };
+    std::vector<ChildPlan> plan;
+    plan.reserve(children.size());
+    for (const auto& [_, child_type] : children) {
+      plan.push_back({
+        .fn = GetSerialization(child_type, VarFormat::Binary, context),
+        .oid = Type2Oid(child_type, false),
+      });
+    }
+
     for (size_t i = 0; i < children.size(); ++i) {
-      const auto& child_type = children[i].second;
-      const auto& child = vdata.children[i];
-      const auto oid = static_cast<int32_t>(Type2Oid(child_type, false));
-      absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
-      auto fn = GetSerialization(child_type, VarFormat::Binary, context);
-      fn(context, child, row);
+      absl::big_endian::Store32(context.buffer->GetContiguousData(4),
+                                plan[i].oid);
+      plan[i].fn(context, vdata.children[i], row);
     }
   }
 }

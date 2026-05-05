@@ -32,6 +32,7 @@
 #include <tuple>
 
 #include "basics/assert.h"
+#include "basics/logger/logger.h"
 #include "basics/string_utils.h"
 #include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_client_state.h"
@@ -112,15 +113,28 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
   }
 }
 
+// Snapshot the worker buffer (sorted ascending after ReorderResult) into the
+// global per-segment lists. Copied (not moved) because faiss heap_heapify
+// resets the buffer at the start of each Search call -- if we moved the
+// vectors out, the buffer's spans would dangle and the next segment's
+// Search would write into freed memory.
 void EmitLocalData(SearchAnnScanGlobalState& g, SearchAnnScanLocalState& l) {
   l.buffer.ReorderResult();
-  while (!l.ids.empty() && l.ids.back() == -1) {
-    l.ids.pop_back();
+  size_t valid = l.ids.size();
+  while (valid > 0 && l.ids[valid - 1] == -1) {
+    --valid;
   }
-  l.dis.resize(l.ids.size());
+  SDB_PRINT("ANN EmitLocalData: buffer_size=", l.ids.size(), " valid=", valid,
+            " first_id=", (valid ? l.ids[0] : int64_t{-1}),
+            " first_dis=", (valid ? l.dis[0] : 0.0f));
+  if (valid == 0) {
+    return;
+  }
+  std::vector<float> dis_out(l.dis.begin(), l.dis.begin() + valid);
+  std::vector<int64_t> ids_out(l.ids.begin(), l.ids.begin() + valid);
   std::lock_guard lock{g.m};
-  g.dis.emplace_back(std::move(l.dis));
-  g.ids.emplace_back(std::move(l.ids));
+  g.dis.emplace_back(std::move(dis_out));
+  g.ids.emplace_back(std::move(ids_out));
 }
 
 size_t LocalPkSize(const PrimaryKeyBatch& b) {
@@ -169,6 +183,9 @@ void MergeResult(duckdb::ClientContext& context,
     std::any_of(g.projected_columns.begin(), g.projected_columns.end(),
                 [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
 
+  SDB_PRINT("ANN MergeResult: num_lists=", num_lists, " k=", k, " n=", n,
+            " has_real=", has_real);
+
   if (!has_real || n == 0) {
     g.total_results = n;
     return;
@@ -208,7 +225,10 @@ void MergeResult(duckdb::ClientContext& context,
                              [&](size_t orig, std::string_view pk_bytes) {
                                SetPrimaryKey(pk, orig, pk_bytes);
                              });
-        return PkCompactResolved(pk, n);
+        const auto resolved = PkCompactResolved(pk, n);
+        SDB_PRINT("ANN MergeResult: PkCompactResolved n=", n,
+                  " resolved=", resolved);
+        return resolved;
       }
     },
     g.pk_batch);
@@ -234,12 +254,6 @@ void EmitResult(duckdb::ClientContext& context,
     }
     if (g.scan_tableoid && proj == g.tableoid_output_idx) {
       output.data[proj].Reference(duckdb::Value::BIGINT(g.tableoid_value));
-    } else {
-      auto* data_ptr =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-        data_ptr[i] = static_cast<int64_t>(batch_start + i);
-      }
     }
   }
 
@@ -341,10 +355,32 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
 
   auto& snapshot =
     GetSereneDBContext(context).EnsureSearchSnapshot(gstate->scan->index_id);
-  gstate->total_segments = snapshot.reader.size();
-  gstate->remained_segments = gstate->total_segments;
-
   gstate->reader = &snapshot.reader;
+  gstate->total_segments = snapshot.reader.size();
+
+  // remained_segments must match what ClaimNextLiveSegment will hand out:
+  // dead segments are skipped there, so per-worker `processed` counts only
+  // live segments. If we initialized this to total_segments, the final
+  // `remained == processed` check after fetch_sub would never be true when
+  // any segment is dead, and the merge/emit branch would never run --
+  // producing zero rows.
+  size_t live = 0;
+  for (size_t i = 0; i < gstate->total_segments; ++i) {
+    if (snapshot.reader[i].live_docs_count() != 0) {
+      ++live;
+    }
+  }
+  gstate->remained_segments = live;
+
+  SDB_PRINT("ANN InitGlobal: index_id=", gstate->scan->index_id.id(),
+            " total_segments=", gstate->total_segments, " live=", live,
+            " top_k=", gstate->scan->top_k);
+
+  if (live == 0) {
+    gstate->search_finished.store(true, std::memory_order_release);
+    gstate->total_results = 0;
+  }
+
   return gstate;
 }
 
@@ -377,7 +413,12 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
     if (g.filter_ctx) {
       filter.emplace(*g.filter_ctx, reader);
     }
+    // faiss begin_multiple resets the heap each Search call, so a worker
+    // running >1 segment must snapshot results per segment -- otherwise
+    // the next Search would clobber the previous segment's top-k.
+    l.buffer.ResetValues();
     ANNSearchSegment(reader, filter, g, l, context);
+    EmitLocalData(g, l);
     processed++;
     filter.reset();
   }
@@ -385,7 +426,6 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
     output.SetCardinality(0);
     return;
   }
-  EmitLocalData(g, l);
   auto remained =
     g.remained_segments.fetch_sub(processed, std::memory_order_acq_rel);
   if (remained != processed) {
@@ -461,16 +501,11 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
     }
     if (g.scan_tableoid && proj == g.tableoid_output_idx) {
       output.data[proj].Reference(duckdb::Value::BIGINT(g.tableoid_value));
-    } else {
-      auto* data_ptr =
-        duckdb::FlatVector::GetDataMutable<int64_t>(output.data[proj]);
-      for (duckdb::idx_t i = 0; i < batch_size; ++i) {
-        data_ptr[i] = static_cast<int64_t>(batch_start + i);
-      }
     }
   }
 
-  if (!std::holds_alternative<std::monostate>(l.pk_batch) && g.index_source) {
+  SDB_ASSERT(g.index_source);
+  if (!std::holds_alternative<std::monostate>(l.pk_batch)) {
     g.index_source->Materialize(context, l.pk_batch, batch_start, batch_size,
                                 output);
   }

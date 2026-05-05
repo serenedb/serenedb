@@ -365,8 +365,22 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
 
     if (!c.opclass.empty()) {
-      // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
-      if (c.opclass == "hnsw") {
+      const bool is_builtin = (c.opclass == kHnswKind);
+      if (!c.opclass_options.empty() && !is_builtin) {
+        return std::unexpected<Result>{std::in_place,
+                                       ERROR_BAD_PARAMETER,
+                                       "Opclass '",
+                                       c.opclass,
+                                       "' on column '",
+                                       c.name,
+                                       "' is not a built-in opclass; only "
+                                       "built-in opclasses accept parameters "
+                                       "(known built-in opclasses: ",
+                                       DescribeKnownOpclassTypes(),
+                                       ")"};
+      }
+      if (is_builtin) {
+        // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
         const auto& col_type = c.catalog_column->type;
         if (col_type.id() != duckdb::LogicalTypeId::ARRAY) {
           return std::unexpected<Result>{
@@ -391,17 +405,6 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
-        }
-        if (!c.opclass_options.empty()) {
-          return std::unexpected<Result>{
-            std::in_place,
-            ERROR_BAD_PARAMETER,
-            "Opclass '",
-            c.opclass,
-            "' refers to text dictionary and does not accept options "
-            "(used on column '",
-            c.name,
-            "')"};
         }
         index_col.text_dictionary = dict->first;
         index_col.features = dict->second;

@@ -318,7 +318,7 @@ query
 (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY id LIMIT 3)
 UNION ALL
 (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') ORDER BY id LIMIT 3)
-ORDER BY id;
+ORDER BY id, score;
 ----
 id	score
 1	0.019136623
@@ -334,7 +334,7 @@ query
 (SELECT id, BM25(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('fox') LIMIT 2)
 UNION ALL
 (SELECT id, TFIDF(docs_idx.tableoid) AS score FROM docs_idx WHERE body @@ ts_phrase('lazy') LIMIT 2)
-ORDER BY id;
+ORDER BY id, score;
 ----
 id	score
 1	0.019136623

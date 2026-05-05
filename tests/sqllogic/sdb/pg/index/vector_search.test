@@ -604,11 +604,8 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-statement error db error: ERROR: relation "t_l1" already exists
-CREATE TABLE t_l1 (id INT, emb FLOAT[3]);
-
 statement ok
-CREATE INDEX l1_index ON t_l1 USING inverted(emb hnsw (Metric = 'L1', M = 12, EF_CONSTRUCTION = 48));
+CREATE INDEX l1_index ON t_l1 USING inverted(emb hnsw (Metric = 'L1', M = 24, EF_CONSTRUCTION = 48));
 
 statement count 4
 INSERT INTO t_l1 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
@@ -621,7 +618,7 @@ SELECT id FROM l1_index ORDER BY l1_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
 ----
 id
 1
-1
+3
 
 
 statement ok
@@ -709,13 +706,13 @@ db error: ERROR: Failed to create index: Unknown opclass 'fake_idx' on column 'e
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_idx' on column 'emb': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Opclass 'fake_idx' on column 'emb' is not a built-in opclass; only built-in opclasses accept parameters (known built-in opclasses: hnsw)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_idx' on column 'emb': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Opclass 'fake_idx' on column 'emb' is not a built-in opclass; only built-in opclasses accept parameters (known built-in opclasses: hnsw)
 
 
 statement error

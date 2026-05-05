@@ -97,7 +97,7 @@ FROM
     ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
 ) as tindex(name, grade, iq)
-ORDER BY clickclack.name DESC;
+ORDER BY clickclack.name DESC, tindex.name;
 ----
 name	name
 vedernikoff	babsky

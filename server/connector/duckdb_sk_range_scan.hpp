@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "connector/duckdb_scan_base.hpp"
+#include "connector/index_source.h"
 #include "rocksdb/iterator.h"
 
 namespace sdb::connector {
@@ -43,6 +44,9 @@ struct SKRangeScanGlobalState : public CommonScanGlobalState {
   // iterator over all ranges. Stored as rocksdb::Iterator* because
   // RocksDBPrefixRangeColumnIterator extends rocksdb::Iterator.
   std::unique_ptr<rocksdb::Iterator> sk_iterator;
+
+  // Reused PK batch across batches; std::monostate until first call.
+  PrimaryKeyBatch pk_batch;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SKRangeScanInitGlobal(

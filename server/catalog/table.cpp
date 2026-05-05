@@ -74,7 +74,6 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _number_of_shards{options.number_of_shards},
     _replication_factor{options.replication_factor},
     _write_concern{options.write_concern},
-    _file_info{other._file_info},
     _lookup_cache{_columns, _pk_columns} {}
 
 Table::Table(TableOptions&& options, ObjectId database_id)
@@ -106,7 +105,6 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _number_of_shards{options.numberOfShards},
     _replication_factor{options.replicationFactor},
     _write_concern{options.writeConcern},
-    _file_info{std::move(options.file_info)},
     _lookup_cache{_columns, _pk_columns} {
   SDB_ASSERT(_shard_ids);
 
@@ -140,7 +138,6 @@ struct Table::TableOutput {
   uint32_t writeConcern;
   int type;
   bool waitForSync;
-  FileInfo file_info;
 };
 // NOLINTEND
 
@@ -164,7 +161,6 @@ Table::TableOutput Table::MakeTableOptions() const {
     .writeConcern = _write_concern,
     .type = std::to_underlying(_type),
     .waitForSync = _wait_for_sync,
-    .file_info = _file_info,
   };
 }
 

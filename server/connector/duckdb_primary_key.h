@@ -65,14 +65,23 @@ inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
   return result;
 }
 
-// Append PK bytes from a DuckDB DataChunk row.
-// Uses sortable encoding (big-endian + sign-bit-flip).
-inline void Create(const duckdb::DataChunk& chunk,
+inline void PreparePKFormats(
+  const duckdb::DataChunk& chunk, std::span<const PKColumn> pk_columns,
+  std::vector<duckdb::UnifiedVectorFormat>& pk_formats) {
+  const auto num_rows = chunk.size();
+  pk_formats.resize(pk_columns.size());
+  for (size_t c = 0; c < pk_columns.size(); ++c) {
+    chunk.data[pk_columns[c].input_col_idx].ToUnifiedFormat(num_rows,
+                                                            pk_formats[c]);
+  }
+}
+
+inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
                    std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
                    std::string& key) {
-  for (const auto& pk : pk_columns) {
-    AppendPKValueFromDuckDB(key, chunk.data[pk.input_col_idx], row_idx,
-                            pk.type);
+  SDB_ASSERT(pk_formats.size() == pk_columns.size());
+  for (size_t c = 0; c < pk_columns.size(); ++c) {
+    AppendPKValue(key, pk_formats[c], row_idx, pk_columns[c].type);
   }
 }
 
@@ -99,9 +108,12 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
     }
   } else {
     // Explicit PKs from input columns
+    std::vector<duckdb::UnifiedVectorFormat> pk_formats;
+    PreparePKFormats(chunk, pk_columns, pk_formats);
+
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       keys[row].clear();
-      Create(chunk, pk_columns, row, keys[row]);
+      Create(pk_formats, pk_columns, row, keys[row]);
     }
   }
 }
@@ -111,8 +123,11 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
 // Callback receives row_key = [ObjectId][PK bytes] (for locking).
 // Final layout: [ObjectId][ColumnId(reserved)][PK bytes].
 // Use key_utils::SetupColumnForKey() to fill in ColumnId per column -- no copy.
+//
+// `pk_formats` must be pre-built via PreparePKFormats once per chunk; it
+// is unused (and may be empty) when pk_columns is empty.
 template<typename Func>
-void MakeColumnKey(const duckdb::DataChunk& chunk,
+void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
                    std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
                    std::string_view object_id, Func&& row_key_handle,
                    std::string& key_buffer) {
@@ -124,7 +139,7 @@ void MakeColumnKey(const duckdb::DataChunk& chunk,
   if (pk_columns.empty()) {
     CreateGenerated(key_buffer);
   } else {
-    Create(chunk, pk_columns, row_idx, key_buffer);
+    Create(pk_formats, pk_columns, row_idx, key_buffer);
   }
 
   row_key_handle(std::string_view{

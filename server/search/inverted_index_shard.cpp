@@ -73,13 +73,16 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
   return (old_time + new_time) / (old_num + 1);
 }
 
-bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
-  // Payload format: [tick:8]
-  constexpr size_t kExpectedSize = sizeof(uint64_t);
+bool ReadCommitMeta(irs::bytes_view payload, Tick& tick,
+                    int64_t& iceberg_snapshot_id) noexcept {
+  // [tick:8][iceberg_snapshot_id:8]; 0 = not pinned.
+  constexpr size_t kExpectedSize = 2 * sizeof(uint64_t);
   if (payload.size() != kExpectedSize) {
     return false;
   }
   tick = absl::big_endian::Load64(payload.data());
+  iceberg_snapshot_id = static_cast<int64_t>(
+    absl::big_endian::Load64(payload.data() + sizeof(uint64_t)));
   return true;
 }
 
@@ -190,11 +193,13 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
       tick = _engine.currentTick();
     }
     _last_committed_tick = std::max(_last_committed_tick, tick);
-
-    // Write payload: [tick:8]
-    tick = absl::big_endian::FromHost(_last_committed_tick);
-
-    out.append(reinterpret_cast<const irs::byte_type*>(&tick), sizeof(tick));
+    uint64_t tick_be = absl::big_endian::FromHost(_last_committed_tick);
+    out.append(reinterpret_cast<const irs::byte_type*>(&tick_be),
+               sizeof(tick_be));
+    uint64_t iceberg_be =
+      absl::big_endian::FromHost(static_cast<uint64_t>(_iceberg_snapshot_id));
+    out.append(reinterpret_cast<const irs::byte_type*>(&iceberg_be),
+               sizeof(iceberg_be));
     return true;
   };
 
@@ -240,13 +245,12 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);
 
-  // For existing index, read recovery tick from persisted payload
   if (path_exists) {
     auto payload = irs::GetPayload(reader.Meta().index_meta);
     if (!payload.empty()) {
-      if (!ReadTick(payload, _recovery_tick)) {
+      if (!ReadCommitMeta(payload, _recovery_tick, _iceberg_snapshot_id)) {
         SDB_WARN("xxxxx", Logger::SEARCH,
-                 "Failed to read recovery tick from inverted index '",
+                 "Failed to read commit meta from inverted index '",
                  GetId().id(), "'");
       }
       _last_committed_tick = _recovery_tick;

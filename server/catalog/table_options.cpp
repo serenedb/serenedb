@@ -135,8 +135,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
                         CreateTableOptions& options,
                         uint32_t replication_factor, uint32_t write_concern,
                         bool enforce_replication_factor) {
-  if (request.type != std::to_underlying(TableType::RocksDB) &&
-      request.type != std::to_underlying(TableType::File)) {
+  if (request.type != std::to_underlying(TableType::RocksDB)) {
     return {ERROR_BAD_PARAMETER, "Invalid collection type: ", request.type};
   }
 
@@ -384,7 +383,6 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.writeConcern = *request.writeConcern;
   options.type = request.type;
   options.waitForSync = request.waitForSync;
-  options.file_info = std::move(request.file_info);
 
   return {};
 }

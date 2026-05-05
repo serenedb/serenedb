@@ -27,6 +27,7 @@
 #include "connector/duckdb_ann_filter.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/duckdb_table_function.h"
+#include "connector/index_source.h"
 
 namespace sdb::connector {
 
@@ -40,8 +41,10 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
   // search only one batch per request
 
   const RangeSearchScan* scan = nullptr;
-  std::vector<std::string> pk_bytes;
+  PrimaryKeyBatch pk_batch;
+  size_t total_results = 0;
   size_t current_idx = 0;
+  bool results_ready = false;
   std::unique_ptr<ANNFilter> filter;
 };
 

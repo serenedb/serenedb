@@ -1034,9 +1034,12 @@ QUERY PLAN
 │           ~1 row          │
 └─────────────┬─────────────┘
 ┌─────────────┴─────────────┐
-│     IRESEARCH_FULLSCAN    │
+│       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│    Table: gayazov_dual    │
+│           Index:          │
+│    gayazov_dual_inv_idx   │
+│                           │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │            rank           │
@@ -1427,8 +1430,10 @@ QUERY PLAN
 ┌───────────────────────────┐
 │    ROCKSDB_SK_FULLSCAN    │
 │    ────────────────────   │
-│           Table:          │
-│      babsky_from_idx      │
+│           Index:          │
+│  babsky_from_idx_val_idx  │
+│                           │
+│      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
 │            pid            │

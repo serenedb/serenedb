@@ -29,16 +29,16 @@
 
 namespace sdb {
 
-class RocksDBBackgroundErrorListener : public rocksdb::EventListener {
+class RocksDBBackgroundErrorListener final : public rocksdb::EventListener {
  public:
-  ~RocksDBBackgroundErrorListener() override;
+  ~RocksDBBackgroundErrorListener() final;
 
   void OnBackgroundError(rocksdb::BackgroundErrorReason reason,
-                         rocksdb::Status* error) override;
+                         rocksdb::Status* error) final;
 
-  void OnErrorRecoveryCompleted(rocksdb::Status /* old_bg_error */) override;
+  void OnErrorRecoveryCompleted(rocksdb::Status /* old_bg_error */) final;
 
-  bool called() const { return _called.load(std::memory_order_relaxed); }
+  bool Called() const { return _called.load(std::memory_order_relaxed); }
 
  private:
   std::atomic<bool> _called{false};

@@ -520,7 +520,13 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
         }
         inv_shard->StartTasks();
 
-        if (skip_wal_recovery || persisted >= end_tick) {
+        // View-backed indexes are static -- the underlying view's data
+        // doesn't change at runtime, so there's nothing to replay from WAL.
+        const auto relation = snapshot->GetObject(idx->GetRelationId());
+        const bool is_view_backed =
+          relation && relation->GetType() == catalog::ObjectType::PgSqlView;
+
+        if (skip_wal_recovery || is_view_backed || persisted >= end_tick) {
           inv_shard->FinishCreation();
           continue;
         }

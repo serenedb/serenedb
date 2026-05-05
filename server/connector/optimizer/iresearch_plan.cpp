@@ -61,10 +61,6 @@
 namespace sdb::optimizer {
 namespace {
 
-// ---------------------------------------------------------------------------
-// Mutation context
-// ---------------------------------------------------------------------------
-
 bool IsMutationOp(duckdb::LogicalOperatorType type) {
   switch (type) {
     case duckdb::LogicalOperatorType::LOGICAL_DELETE:
@@ -76,41 +72,24 @@ bool IsMutationOp(duckdb::LogicalOperatorType type) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Common: resolve the inverted index + shard for a serenedb_scan
-// ---------------------------------------------------------------------------
-
 struct ResolvedIresearch {
   std::shared_ptr<const catalog::InvertedIndex> index;
   std::shared_ptr<search::InvertedIndexShard> shard;
 };
 
-// Look up the InvertedIndex for the scan. Priority:
-//   1. Explicit -- when the entry is a SereneDBIndexScanEntry on an
-//      inverted index (FROM idx_name).
-//   2. Auto -- the first InvertedIndex on the underlying table.
-//
-// Returns nullptr index when none is available; nullptr shard when the
-// shard isn't readable (no live snapshot yet).
+// Index source: explicit (FROM idx_name) or auto-detect first InvertedIndex
+// on a table-backed scan. Returns nullopt if none or shard not yet readable.
 std::optional<ResolvedIresearch> ResolveIresearch(
   const connector::SereneDBScanBindData& bind_data,
   const catalog::Snapshot& snapshot) {
   ResolvedIresearch out;
+  out.index = bind_data.inverted_index;
 
-  // Explicit (FROM idx_name) priority.
-  if (bind_data.table_entry) {
-    if (const auto* idx_entry =
-          dynamic_cast<const connector::SereneDBIndexScanEntry*>(
-            &*bind_data.table_entry)) {
-      out.index = idx_entry->GetInvertedIndex();
-    }
-  }
-  // Auto-detect over the table.
-  if (!out.index) {
-    for (auto& obj : snapshot.GetIndexesByTable(bind_data.table->GetId())) {
+  if (!out.index && !bind_data.IsViewBacked()) {
+    const auto table_id = bind_data.RelationId();
+    for (auto& obj : snapshot.GetIndexesByRelation(table_id)) {
       if (obj->GetType() == catalog::ObjectType::InvertedIndex) {
-        out.index =
-          std::dynamic_pointer_cast<const catalog::InvertedIndex>(obj);
+        out.index = basics::downCast<const catalog::InvertedIndex>(obj);
         break;
       }
     }
@@ -119,10 +98,12 @@ std::optional<ResolvedIresearch> ResolveIresearch(
     return std::nullopt;
   }
 
-  for (auto& shard : snapshot.GetIndexShardsByTable(bind_data.table->GetId())) {
+  for (auto& shard :
+       snapshot.GetIndexShardsByRelation(out.index->GetRelationId())) {
     if (shard->GetIndexId() == out.index->GetId() &&
         shard->GetType() == catalog::ObjectType::InvertedIndexShard) {
-      out.shard = std::dynamic_pointer_cast<search::InvertedIndexShard>(shard);
+      out.shard =
+        basics::downCast<search::InvertedIndexShard>(std::move(shard));
       break;
     }
   }
@@ -132,30 +113,17 @@ std::optional<ResolvedIresearch> ResolveIresearch(
   return out;
 }
 
-// Map a column name as seen in a DuckDB expression back to its catalog
-// Column::Id on the underlying SereneDB table. Returns the special
-// invalid-id sentinel when the name isn't on the table.
-catalog::Column::Id ColumnIdByName(const catalog::Table& table,
-                                   std::string_view name) {
-  for (const auto& col : table.Columns()) {
-    if (col.name == name) {
-      return col.id;
-    }
-  }
-  return std::numeric_limits<catalog::Column::Id>::max();
+catalog::Column::Id ColumnIdByName(
+  const connector::SereneDBScanBindData& bind_data, std::string_view name) {
+  return bind_data.ColumnIdByName(name);
 }
 
-// Encode a Column::Id as iresearch HNSW field name (8 big-endian bytes,
-// no Mangle suffix -- vectors are stored without a per-type tag).
+// 8 big-endian bytes, no Mangle suffix.
 std::string MakeHnswFieldName(catalog::Column::Id col_id) {
   std::string name(sizeof(col_id), '\0');
   absl::big_endian::Store(name.data(), col_id);
   return name;
 }
-
-// ---------------------------------------------------------------------------
-// Vector argument extraction (shared by ANN topk + ANN range)
-// ---------------------------------------------------------------------------
 
 bool IsDistanceFunction(std::string_view name) {
   return name == connector::kL2Distance || name == connector::kL2DistanceOp ||
@@ -186,8 +154,7 @@ std::optional<irs::HNSWMetric> DistanceMetricForFunction(
   return std::nullopt;
 }
 
-// Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
-// non-float element types and nulls.
+// Rejects mixed / non-float / null elements.
 bool TryExtractQueryVector(const duckdb::Value& val, std::vector<float>& out) {
   using duckdb::LogicalTypeId;
   if (val.type().id() != LogicalTypeId::ARRAY) {
@@ -235,11 +202,6 @@ DistanceArgs ExtractDistanceArgs(duckdb::BoundFunctionExpression& func_expr) {
   }
   return out;
 }
-
-// ---------------------------------------------------------------------------
-// Case 4: ANN top-k  (LogicalTopN -> Projection -> [LogicalFilter*] ->
-// LogicalGet)
-// ---------------------------------------------------------------------------
 
 bool RewriteFilterColumnRefs(
   duckdb::Expression& expr, const duckdb::LogicalGet& get,
@@ -349,14 +311,10 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
   auto& get = child->Cast<duckdb::LogicalGet>();
-  if (!get.bind_data ||
-      !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+  if (!connector::IsSereneDBScan(get)) {
     return false;
   }
   auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-  if (!bind_data.table) {
-    return false;
-  }
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return false;
   }
@@ -369,7 +327,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
     return false;
   }
-  auto col_id = ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+  auto col_id = ColumnIdByName(bind_data, args.col_arg->GetName());
   if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
     return false;
   }
@@ -418,21 +376,16 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   }
 
   bind_data.scan_source = std::move(ann);
-  get.function = connector::CreateIResearchANNFullscanFunction();
+  get.function = connector::CreateIResearchANNScanFunction();
 
   if (pushdown_filter && !residual_filters.empty()) {
     projection.children[0] = std::move(residual_filters.back()->children[0]);
   }
 
-  // The HNSW scan returns rows pre-sorted, bounded; drop the TopN.
+  // HNSW returns rows pre-sorted and bounded; drop the TopN.
   plan = std::move(top_n.children[0]);
   return true;
 }
-
-// ---------------------------------------------------------------------------
-// Case 3: ANN range  (LogicalFilter[ distance(col, vec) < radius ] ->
-// LogicalGet)
-// ---------------------------------------------------------------------------
 
 bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_FILTER) {
@@ -442,8 +395,6 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (filter.children.size() != 1) {
     return false;
   }
-  // Descend through any intermediate LogicalFilters inserted by DuckDB's
-  // FilterPushdown optimiser before reaching the LogicalGet.
   duckdb::LogicalOperator* get_op = filter.children[0].get();
   while (get_op->type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
     if (get_op->children.size() != 1) {
@@ -455,14 +406,10 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   auto& get = get_op->Cast<duckdb::LogicalGet>();
-  if (!get.bind_data ||
-      !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+  if (!connector::IsSereneDBScan(get)) {
     return false;
   }
   auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-  if (!bind_data.table) {
-    return false;
-  }
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return false;
   }
@@ -536,7 +483,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!TryExtractQueryVector(args.const_arg->value, query_vector)) {
     return false;
   }
-  auto col_id = ColumnIdByName(*bind_data.table, args.col_arg->GetName());
+  auto col_id = ColumnIdByName(bind_data, args.col_arg->GetName());
   if (col_id == std::numeric_limits<catalog::Column::Id>::max()) {
     return false;
   }
@@ -589,19 +536,6 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Case 1/2: boolean filter via search_filter_builder
-// ---------------------------------------------------------------------------
-
-// Build a SearchColumnInfo for a column ref, if the column belongs to
-// our scan AND it's part of an inverted index. Returns nullopt
-// otherwise (the search builder will then refuse to claim that
-// expression and we leave it on the LogicalFilter).
-//
-// `projected_column_ids` is indexed by binding.column_index after
-// projection pushdown reordering -- same translation we do in
-// rocksdb_plan. `tokenizer_provider` queries the InvertedIndex for the
-// per-column tokenizer (op_class).
 struct SearchColumnContext {
   duckdb::TableIndex table_index;
   std::span<const catalog::Column::Id> projected_column_ids;
@@ -689,9 +623,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   if (filter.children.size() != 1) {
     return false;
   }
-  // DuckDB's built-in optimisers (FilterPushdown, RemoveUnusedColumns, etc.)
-  // may insert LogicalFilter and LogicalProjection nodes between the outer
-  // LogicalFilter and the LogicalGet. Descend through all of them.
+  // Descend through any LogicalFilter/LogicalProjection inserted by
+  // DuckDB's other optimisers.
   duckdb::LogicalOperator* get_op = filter.children[0].get();
   while (get_op->type == duckdb::LogicalOperatorType::LOGICAL_FILTER ||
          get_op->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION) {
@@ -704,14 +637,10 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
   auto& get = get_op->Cast<duckdb::LogicalGet>();
-  if (!get.bind_data ||
-      !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+  if (!connector::IsSereneDBScan(get)) {
     return false;
   }
   auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-  if (!bind_data.table) {
-    return false;
-  }
   if (bind_data.scan_source->Kind() != connector::ScanSourceKind::FullTable) {
     return false;
   }
@@ -725,9 +654,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
 
-  // Build the column-resolution context for the filter builder.
-  // ctx.projected_column_ids is a std::span that borrows from projected_ids --
-  // projected_ids must outlive ctx / getter.
+  // ctx.projected_column_ids spans projected_ids -- it must outlive ctx.
   constexpr auto kInvalidId = std::numeric_limits<catalog::Column::Id>::max();
   std::vector<catalog::Column::Id> projected_ids;
   projected_ids.reserve(get.GetColumnIds().size());
@@ -745,9 +672,10 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   ctx.table_index = get.table_index;
   ctx.projected_column_ids = projected_ids;
 
-  for (const auto& col : bind_data.table->Columns()) {
-    ctx.column_type_by_id.emplace(col.id, col.type);
-  }
+  bind_data.IterateColumns(
+    [&](catalog::Column::Id id, const duckdb::LogicalType& type) {
+      ctx.column_type_by_id.emplace(id, type);
+    });
   for (auto col_id : resolved->index->GetColumnIds()) {
     ctx.indexed_column_ids.insert(col_id);
   }
@@ -765,10 +693,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   auto getter = MakeColumnGetter(ctx);
   auto json_getter = MakeJsonPathGetter(ctx);
 
-  // Per-expression claim: try each filter expression individually so we
-  // can leave non-iresearch predicates on the LogicalFilter. The
-  // BooleanFilter::PopBack() rollback handles partial-add failures.
-  // Heap-allocate to allow shared ownership for scorer re-preparation.
+  // Try each expression individually -- non-iresearch predicates stay on the
+  // LogicalFilter.
   auto root = std::make_shared<irs::And>();
   std::vector<size_t> claimed_indices;
   for (size_t i = 0; i < filter.expressions.size(); ++i) {
@@ -788,16 +714,57 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   if (claimed_indices.empty()) {
     return false;
   }
+  // DuckDB pushed simple comparisons into get.table_filters before we ran.
+  // SearchScan materialises pre-filter rows, so we MUST re-claim them
+  // here -- otherwise the executor has nothing left to filter and queries
+  // like `WHERE PHRASE(...) AND id <= 3` silently return unfiltered hits.
+  std::vector<duckdb::ProjectionIndex> pushed_to_remove;
+  for (auto entry : get.table_filters) {
+    auto proj_idx = entry.GetIndex();
+    auto idx = proj_idx.GetIndex();
+    if (idx >= get.GetColumnIds().size()) {
+      continue;
+    }
+    auto& col_id_ref = get.GetColumnIds()[idx];
+    if (!col_id_ref.HasPrimaryIndex()) {
+      continue;
+    }
+    auto phys = col_id_ref.GetPrimaryIndex();
+    if (phys >= bind_data.column_ids.size() ||
+        phys >= bind_data.column_types.size()) {
+      continue;
+    }
+    auto col_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      "", bind_data.column_types[phys],
+      duckdb::ColumnBinding(get.table_index, proj_idx));
+    auto pushed_expr = entry.Filter().ToExpression(*col_ref);
+    if (!pushed_expr) {
+      continue;
+    }
+    const auto before = root->size();
+    duckdb::unique_ptr<duckdb::Expression> wrapper{std::move(pushed_expr)};
+    std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&wrapper, 1};
+    auto result = connector::MakeSearchFilter(*root, single, getter, options);
+    if (result.ok() && root->size() > before) {
+      pushed_to_remove.push_back(proj_idx);
+    } else {
+      while (root->size() > before) {
+        root->PopBack();
+      }
+    }
+  }
+  for (auto proj_idx : pushed_to_remove) {
+    get.table_filters.RemoveFilterByColumnIndex(proj_idx);
+  }
 
   // Capture the demangled filter summary BEFORE preparing (prepare
   // consumes the tree into an opaque Query).
-  auto col_name_lookup = [table_ptr = bind_data.table](
-                           catalog::Column::Id col_id) -> std::string_view {
+  auto col_name_lookup =
+    [&bind_data](catalog::Column::Id col_id) -> std::string_view {
     static thread_local std::string fallback;
-    for (const auto& col : table_ptr->Columns()) {
-      if (col.id == col_id) {
-        return col.name;
-      }
+    auto name = bind_data.ColumnNameById(col_id);
+    if (!name.empty()) {
+      return name;
     }
     fallback = absl::StrCat("col", col_id);
     return fallback;
@@ -826,15 +793,6 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Score / offsets attachment helpers (cases 1 + 2)
-// ---------------------------------------------------------------------------
-
-// Walks down the `Projection -> [Filter] -> Get` shape (any number of
-// projection / filter layers) looking for a serenedb_scan LogicalGet
-// whose bind data is currently a SearchScan (i.e. an earlier rule pass
-// already claimed the boolean filter). Returns nullptr if the chain
-// doesn't end in such a scan.
 struct FoundScan {
   duckdb::LogicalGet* get;
   connector::SereneDBScanBindData* bind_data;
@@ -847,8 +805,7 @@ std::optional<FoundScan> FindSearchScanChild(duckdb::LogicalOperator& op) {
   auto& child = *op.children[0];
   if (child.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
     auto& get = child.Cast<duckdb::LogicalGet>();
-    if (!get.bind_data ||
-        !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+    if (!connector::IsSereneDBScan(get)) {
       return std::nullopt;
     }
     auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
@@ -882,8 +839,7 @@ std::optional<FoundScan> FindSearchScanByTableIndex(duckdb::LogicalOperator& op,
     if (get.table_index != target) {
       return std::nullopt;
     }
-    if (!get.bind_data ||
-        !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+    if (!connector::IsSereneDBScan(get)) {
       return std::nullopt;
     }
     auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
@@ -931,8 +887,7 @@ bool BindingIsScoreColumn(duckdb::LogicalOperator& op,
     if (get.table_index != binding.table_index) {
       return false;
     }
-    if (!get.bind_data ||
-        !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+    if (!connector::IsSereneDBScan(get)) {
       return false;
     }
     auto& bd = get.bind_data->Cast<connector::SereneDBScanBindData>();
@@ -1245,9 +1200,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
   // SearchScan (e.g. because a range predicate on an indexed column is
   // pushable), the user is not asking to score the text index and
   // bm25()/tfidf() should fall through to the runtime stub error.
-  if (!found->bind_data->table_entry ||
-      !dynamic_cast<const connector::SereneDBIndexScanEntry*>(
-        &*found->bind_data->table_entry)) {
+  if (found->bind_data->entry_kind == connector::ScanEntryKind::BaseTable) {
     return nullptr;
   }
   if (set_scorer) {
@@ -1687,13 +1640,8 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
 
   // Require FROM <idx_name>. OFFSETS() on a base-table scan that was
   // opportunistically promoted to a SearchScan is not supported.
-  const auto* index_entry =
-    found->bind_data->table_entry
-      ? dynamic_cast<const connector::SereneDBIndexScanEntry*>(
-          &*found->bind_data->table_entry)
-      : nullptr;
   const auto col_name = OffsetsColumnName(col_ref, found->get);
-  if (!index_entry || !index_entry->IsInvertedIndex()) {
+  if (!found->bind_data->IsInvertedIndexEntry()) {
     throw duckdb::InvalidInputException(
       "OFFSETS(%s) requires an inverted index scan in the same sub-query",
       col_name);
@@ -1705,7 +1653,7 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
     throw duckdb::InvalidInputException(
       "OFFSETS(): column '%s' not found in table", col_name);
   }
-  const auto& idx_col_ids = index_entry->GetInvertedIndex()->GetColumnIds();
+  const auto& idx_col_ids = found->bind_data->inverted_index->GetColumnIds();
   const bool in_index =
     absl::c_find(idx_col_ids, target_col_id) != idx_col_ids.end();
   if (!in_index) {
@@ -1914,20 +1862,9 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Row-count pushdown (case 5): ungrouped COUNT(*) / COUNT(1) / COUNT(const)
-// directly over an iresearch scan -> rewrite the scan to CountScan that
-// emits zero-column rows with cardinality == match count. The aggregate
-// above then sums chunk cardinalities.
-//
-// We trigger at the AGGREGATE node (not the GET) because projection-pushdown
-// runs before our extension and may leave filter-only columns (e.g. `b` in
-// WHERE b @@ ts_phrase(...)) in get.column_ids even after we claimed the
-// filter.
-// Detecting at aggregate level lets us verify the output shape is truly
-// "no columns needed" and then strip column_ids ourselves.
-// ---------------------------------------------------------------------------
-
+// Match at AGGREGATE level so we can verify output shape and strip
+// column_ids ourselves; projection pushdown can leave filter-only columns
+// in get.column_ids that don't reflect the real output need.
 bool IsCountStarLikeAggregate(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_AGGREGATE) {
     return false;
@@ -1964,12 +1901,15 @@ bool TryConvertAggregateToCount(
     return false;
   }
   auto& get = agg.children[0]->Cast<duckdb::LogicalGet>();
-  if (!get.bind_data ||
-      !dynamic_cast<connector::SereneDBScanBindData*>(&*get.bind_data)) {
+  if (!connector::IsSereneDBScan(get)) {
     return false;
   }
   auto& bind_data = get.bind_data->Cast<connector::SereneDBScanBindData>();
-  if (!bind_data.table) {
+  // Bail on non-PHRASE pushed filters: clearing column_ids below would
+  // orphan their ProjectionIndex keys and the executor would crash.
+  // (PHRASE filters live in scan_source, not table_filters, so this only
+  // catches `id <= N`-style pushed filters.)
+  if (get.table_filters.HasFilters()) {
     return false;
   }
 
@@ -1981,7 +1921,7 @@ bool TryConvertAggregateToCount(
       if (search.scorer.kind != connector::SearchScan::ScorerKind::None) {
         return false;
       }
-      if (search.emit_offsets()) {
+      if (search.EmitOffsets()) {
         return false;
       }
       count_scan->query = std::move(search.query);
@@ -1992,12 +1932,9 @@ bool TryConvertAggregateToCount(
       break;
     }
     case connector::ScanSourceKind::FullTable: {
-      // No filter claimed. Only fire on an explicit FROM <idx_name> -- plain
-      // SELECT COUNT(*) FROM <table> should keep going through rocksdb so we
-      // don't silently expose the inverted-index lag.
-      if (!bind_data.table_entry ||
-          !dynamic_cast<const connector::SereneDBIndexScanEntry*>(
-            &*bind_data.table_entry)) {
+      // FROM <inverted_idx> only -- table count(*) should not silently
+      // expose the index lag.
+      if (!bind_data.IsInvertedIndexEntry()) {
         return false;
       }
       auto snapshot = catalog::GetCatalog().GetCatalogSnapshot();
@@ -2015,18 +1952,11 @@ bool TryConvertAggregateToCount(
 
   bind_data.scan_source = std::move(count_scan);
   get.function = connector::CreateIResearchCountFunction();
-  // Drop every column from the scan -- CountScan emits zero columns. The
-  // aggregate's count_star/count(const) children don't reference any Get
-  // binding, so clearing these is safe.
   get.ClearColumnIds();
   get.projection_ids.clear();
   get.types.clear();
   return true;
 }
-
-// ---------------------------------------------------------------------------
-// Walker / dispatcher
-// ---------------------------------------------------------------------------
 
 class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
  public:

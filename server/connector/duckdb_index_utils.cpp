@@ -143,7 +143,7 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
 
       // Find shard ID
       ObjectId shard_id;
-      for (auto& shard : snapshot->GetIndexShardsByTable(table_id)) {
+      for (auto& shard : snapshot->GetIndexShardsByRelation(table_id)) {
         if (shard->GetIndexId() == index.GetId()) {
           shard_id = shard->GetId();
           break;

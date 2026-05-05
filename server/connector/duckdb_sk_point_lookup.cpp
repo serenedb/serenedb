@@ -26,8 +26,10 @@
 #include "basics/assert.h"
 #include "connector/duckdb_key_builder.hpp"
 #include "connector/duckdb_table_function.h"
-#include "connector/lookup.h"
+#include "connector/index_source.h"
+#include "connector/index_source_factory.h"
 #include "connector/multiget_context.hpp"
+#include "connector/pk_batch_helpers.h"
 #include "connector/secondary_sink_writer.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -73,60 +75,76 @@ void SKPointLookupFunction(duckdb::ClientContext& context,
     scan.column_ids.empty() ? catalog::Column::Id{0} : scan.column_ids[0];
   DuckDBSecondaryKeyBuilder builder{scan.shard_id};
 
-  std::vector<std::string> batch_pk_bytes;
-  auto on_sk_result = [&](const rocksdb::Slice&,
-                          const rocksdb::PinnableSlice& val,
-                          const rocksdb::Status& s) {
-    if (s.ok()) {
-      SDB_ASSERT(val.size() >= 2 && val[0] == secondary_key::kPKInValue);
-      batch_pk_bytes.emplace_back(val.data() + 1, val.size() - 1);
-    } else {
-      SDB_ASSERT(s.IsNotFound(), "SK lookup error: ", s.ToString());
-    }
-  };
-
-  while (gstate.point_offset < scan.points.size()) {
-    batch_pk_bytes.clear();
-    const size_t batch_start = gstate.point_offset;
-    const size_t batch =
-      std::min<size_t>(STANDARD_VECTOR_SIZE, scan.points.size() - batch_start);
-
-    if (gstate.txn) {
-      mgc.MultiGet(
-        *gstate.txn,
-        builder.BuildKeys(probe_col, scan.points, batch_start, batch),
-        on_sk_result);
-    } else {
-      mgc.MultiGet(
-        *db, builder.BuildKeys(probe_col, scan.points, batch_start, batch),
-        on_sk_result);
-    }
-
-    gstate.point_offset += batch;
-    if (!batch_pk_bytes.empty()) {
-      break;
-    }
+  if (!gstate.index_source) {
+    gstate.index_source = MakeIndexSource(
+      context, bind_data, gstate.snapshot, gstate.txn, gstate.projected_columns,
+      gstate.projected_types, bind_data.column_ids);
   }
+  if (std::holds_alternative<std::monostate>(gstate.pk_batch)) {
+    gstate.pk_batch = gstate.index_source->CreatePkBatch();
+  }
+
+  size_t row_count = std::visit(
+    [&](auto& pk) -> size_t {
+      using T = std::decay_t<decltype(pk)>;
+      if constexpr (std::is_same_v<T, std::monostate>) {
+        SDB_ASSERT(false, "pk_batch must be initialised");
+        return 0;
+      } else {
+        auto on_sk_result = [&](const rocksdb::Slice&,
+                                const rocksdb::PinnableSlice& val,
+                                const rocksdb::Status& s) {
+          if (s.ok()) {
+            SDB_ASSERT(val.size() >= 2 && val[0] == secondary_key::kPKInValue);
+            AppendPrimaryKey(pk,
+                             std::string_view{val.data() + 1, val.size() - 1});
+          } else {
+            SDB_ASSERT(s.IsNotFound(), "SK lookup error: ", s.ToString());
+          }
+        };
+
+        while (gstate.point_offset < scan.points.size()) {
+          pk.Reset();
+          if constexpr (std::is_same_v<T, PrimaryKeysBytes>) {
+            pk.EnsureInit(duckdb::Allocator::DefaultAllocator());
+          }
+          const size_t batch_start = gstate.point_offset;
+          const size_t batch = std::min<size_t>(
+            STANDARD_VECTOR_SIZE, scan.points.size() - batch_start);
+
+          if (gstate.txn) {
+            mgc.MultiGet(
+              *gstate.txn,
+              builder.BuildKeys(probe_col, scan.points, batch_start, batch),
+              on_sk_result);
+          } else {
+            mgc.MultiGet(
+              *db,
+              builder.BuildKeys(probe_col, scan.points, batch_start, batch),
+              on_sk_result);
+          }
+
+          gstate.point_offset += batch;
+          if (PrimaryKeysSize(pk) > 0) {
+            break;
+          }
+        }
+        return PrimaryKeysSize(pk);
+      }
+    },
+    gstate.pk_batch);
 
   if (gstate.point_offset >= scan.points.size()) {
     gstate.finished = true;
   }
 
-  if (batch_pk_bytes.empty()) {
+  if (row_count == 0) {
     output.SetCardinality(0);
     return;
   }
 
-  const size_t row_count = batch_pk_bytes.size();
-  std::vector<std::string_view> views;
-  views.reserve(row_count);
-  for (const auto& pk : batch_pk_bytes) {
-    views.emplace_back(pk);
-  }
-
-  LookupRows(context, bind_data, gstate.snapshot, gstate.projected_columns,
-             gstate.projected_types, bind_data.column_ids, gstate.txn, views,
-             gstate.file_lookup_session, output);
+  gstate.index_source->Materialize(context, gstate.pk_batch, 0, row_count,
+                                   output);
 
   if (gstate.scan_rowid) {
     const auto row_base = gstate.produced_rows.load(std::memory_order_relaxed);

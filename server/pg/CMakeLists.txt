@@ -29,6 +29,5 @@ target_sources(
         sdb_catalog/sdb_log.cpp
         sql_utils.cpp
         option_help.cpp
-        file_options.cpp
         tokenizer_options.cpp
 )

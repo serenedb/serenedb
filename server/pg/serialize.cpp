@@ -706,15 +706,19 @@ void SerializeOneDimArray(SerializationContext context,
   }
 }
 
-// Multi-dim array serialization (text only for now, binary uses FlattenArray)
+// Multi-dim array serialization (text only for now, binary uses FlattenArray).
+// `leaf_oid` is filled in once the leaf element type is reached -- either via
+// the data-driven recursion (the base case) or, for empty arrays, by walking
+// the remaining type since the data path never reaches a leaf.
 template<SerializationFunction ElementSerialization, VarFormat Format,
          bool First = true>
 int32_t FlattenArray(SerializationContext context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                     duckdb::idx_t row) {
+                     duckdb::idx_t row, int32_t& leaf_oid) {
   const auto lid = vdata.logical_type.id();
   if (lid != duckdb::LogicalTypeId::LIST &&
       lid != duckdb::LogicalTypeId::ARRAY) {
+    leaf_oid = Type2Oid(vdata.logical_type, false);
     SerializeNullable<ElementSerialization>(context, vdata, row);
     return 0;
   }
@@ -737,20 +741,29 @@ int32_t FlattenArray(SerializationContext context,
     absl::big_endian::Store32(prefix_data, array_size);
   }
   if (array_size == 0) {
+    const auto* leaf = &child_vdata.logical_type;
+    while (leaf->id() == duckdb::LogicalTypeId::LIST ||
+           leaf->id() == duckdb::LogicalTypeId::MAP ||
+           leaf->id() == duckdb::LogicalTypeId::ARRAY) {
+      leaf = leaf->id() == duckdb::LogicalTypeId::ARRAY
+               ? &duckdb::ArrayType::GetChildType(*leaf)
+               : &duckdb::ListType::GetChildType(*leaf);
+    }
+    leaf_oid = Type2Oid(*leaf, false);
     return 1;
   }
   duckdb::idx_t i = 0;
   int32_t dims = -1;
   if constexpr (First) {
-    dims = FlattenArray<ElementSerialization, Format>(context, child_vdata,
-                                                      array_offset + i) +
+    dims = FlattenArray<ElementSerialization, Format, false>(
+             context, child_vdata, array_offset + i, leaf_oid) +
            1;
     i++;
   }
   for (; i < array_size; ++i) {
     auto element_row = array_offset + i;
     const auto inner_dim = FlattenArray<ElementSerialization, Format, false>(
-      context, child_vdata, element_row);
+      context, child_vdata, element_row, leaf_oid);
     SDB_ASSERT(dims == -1 || dims == inner_dim + 1);
     dims = inner_dim + 1;
   }
@@ -801,9 +814,10 @@ void SerializeArray(SerializationContext context,
   } else {
     auto* prefix_data = context.buffer->GetContiguousData(12);
     absl::big_endian::Store32(prefix_data + 4, 0);
-    absl::big_endian::Store32(prefix_data + 8, ElementOID);
+    int32_t leaf_oid = ElementOID;
     const auto dims =
-      FlattenArray<ElementSerialization, Format>(context, vdata, row);
+      FlattenArray<ElementSerialization, Format>(context, vdata, row, leaf_oid);
+    absl::big_endian::Store32(prefix_data + 8, leaf_oid);
     absl::big_endian::Store32(prefix_data, dims);
   }
 }
@@ -981,50 +995,49 @@ void AppendCompositeField(std::string& out, std::string_view text) {
   out += '"';
 }
 
-std::string RenderToString(const duckdb::LogicalType& type,
-                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                           duckdb::idx_t row,
-                           const SerializationContext& base_ctx) {
-  std::string out;
-  auto callback = [&out](message::SequenceView v) {
-    for (auto chunk : v) {
-      out.append(static_cast<const char*>(chunk.data()), chunk.size());
-    }
-  };
-  message::Buffer fbuf(64, 4096, std::numeric_limits<size_t>::max(),
-                       std::move(callback));
-  SerializationContext ctx = base_ctx;
-  ctx.buffer = &fbuf;
-  auto fn = GetSerialization(type, VarFormat::Text, ctx);
-  fn(ctx, vdata, row);
-  fbuf.Commit(true);
-  // strip SerializeNullable's 4-byte length prefix.
-  if (out.size() >= 4) {
-    out.erase(0, 4);
-  }
-  return out;
-}
-
 template<VarFormat Format, bool InArray>
 void SerializeRecord(SerializationContext context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
   if constexpr (Format == VarFormat::Text) {
+    const auto& children =
+      duckdb::StructType::GetChildTypes(vdata.logical_type);
+
     std::string out;
     out += '(';
-    auto& children = duckdb::StructType::GetChildTypes(vdata.logical_type);
-    for (size_t i = 0; i < children.size(); ++i) {
-      if (i > 0) {
-        out += ',';
+
+    if (!children.empty()) {
+      std::string scratch;
+      message::Buffer scratch_buf(64, 4096, std::numeric_limits<size_t>::max(),
+                                  [&scratch](message::SequenceView v) {
+                                    for (auto chunk : v) {
+                                      scratch.append(
+                                        static_cast<const char*>(chunk.data()),
+                                        chunk.size());
+                                    }
+                                  });
+      SerializationContext child_ctx = context;
+      child_ctx.buffer = &scratch_buf;
+
+      for (size_t i = 0; i < children.size(); ++i) {
+        if (i > 0) {
+          out += ',';
+        }
+        const auto& child = vdata.children[i];
+        if (!child.unified.validity.RowIsValid(
+              child.unified.sel->get_index(row))) {
+          continue;
+        }
+        scratch.clear();
+        auto fn =
+          GetSerialization(children[i].second, VarFormat::Text, child_ctx);
+        fn(child_ctx, child, row);
+        scratch_buf.Commit(true);
+        // SerializeNullable writes a 4-byte length prefix we don't need here.
+        AppendCompositeField(out, std::string_view(scratch).substr(4));
       }
-      const auto& child = vdata.children[i];
-      const auto cidx = child.unified.sel->get_index(row);
-      if (!child.unified.validity.RowIsValid(cidx)) {
-        continue;
-      }
-      auto scratch = RenderToString(children[i].second, child, row, context);
-      AppendCompositeField(out, scratch);
     }
+
     out += ')';
     if constexpr (InArray) {
       WriteArrayItemQuotedAndEscaped(out, context);
@@ -1325,9 +1338,11 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       RETURN_ARRAY_SERIALIZATION(SerializeBit<VarFormat::Text>,
                                  SerializeBit<VarFormat::Binary>, kVarbit);
     case STRUCT: {
+      // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
+      // kRecord, named composite types yield their pg_type OID.
       static constexpr auto kText = SerializeRecord<VarFormat::Text, true>;
       static constexpr auto kBinary = SerializeRecord<VarFormat::Binary, true>;
-      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kRecord);
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kDynamicOid);
     }
     case ENUM: {
       static constexpr auto kText = SerializeEnum<VarFormat::Text, true>;

@@ -716,6 +716,7 @@ int32_t FlattenArray(SerializationContext context,
   if (lid != duckdb::LogicalTypeId::LIST &&
       lid != duckdb::LogicalTypeId::ARRAY) {
     SerializeNullable<ElementSerialization>(context, vdata, row);
+    oid = Type2Oid(vdata.logical_type, false);
     return 0;
   }
   duckdb::idx_t array_size;
@@ -799,11 +800,11 @@ void SerializeArray(SerializationContext context,
     }
     context.buffer->WriteUncommitted("}");
   } else {
+    auto* prefix_data = context.buffer->GetContiguousData(12);
+    absl::big_endian::Store32(prefix_data + 4, 0);
     int32_t element_oid;
     const auto dims = FlattenArray<ElementSerialization, Format>(
       context, vdata, row, element_oid);
-    auto* prefix_data = context.buffer->GetContiguousData(12);
-    absl::big_endian::Store32(prefix_data + 4, 0);
     absl::big_endian::Store32(prefix_data + 8, element_oid);
     absl::big_endian::Store32(prefix_data, dims);
   }

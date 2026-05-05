@@ -108,7 +108,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     std::vector<std::string> row_keys(num_rows);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       duckdb_primary_key::MakeColumnKey(
-        pk_formats, pk_cols, row, /*generated_id=*/0, _table_key,
+        pk_formats, pk_cols, row, 0, _table_key,
         [](std::string_view) {},  // no locking in tests
         row_keys[row]);
     }

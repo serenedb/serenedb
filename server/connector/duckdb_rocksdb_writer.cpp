@@ -200,16 +200,16 @@ size_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
   const duckdb::string_t& value) {
   if (value.GetSize() == 0) {
     _row_slices.emplace_back(kStringPrefix);
-    return static_cast<uint32_t>(kStringPrefix.size());
+    return kStringPrefix.size();
   }
   static_assert(kStringPrefix.size() == 1);
   size_t bytes = 0;
   if (value.GetData()[0] == kStringPrefix.front()) {
     _row_slices.emplace_back(kStringPrefix);
-    bytes += static_cast<uint32_t>(kStringPrefix.size());
+    bytes += kStringPrefix.size();
   }
   _row_slices.emplace_back(value.GetData(), value.GetSize());
-  bytes += static_cast<uint32_t>(value.GetSize());
+  bytes += value.GetSize();
   return bytes;
 }
 
@@ -631,7 +631,7 @@ size_t DuckDBColumnSerializer::WriteNullBitmap(
   if (!has_nulls) {
     return 0;
   }
-  auto null_bytes = static_cast<uint32_t>((count + 7) / 8);
+  size_t null_bytes = (count + 7) / 8;
   auto* bitmap = Allocate(null_bytes);
   std::memset(bitmap, 0, null_bytes);
   // bit=1 means valid.
@@ -668,14 +668,14 @@ size_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
     }
   }
 
-  auto header_size = static_cast<uint32_t>(
-    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags));
+  size_t header_size =
+    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = null_bytes != 0 ? ValueFlags::HaveNulls : ValueFlags::None;
   *(header++) = std::bit_cast<char>(flags);
-  return header_size + null_bytes + static_cast<uint32_t>(count * sizeof(T));
+  return header_size + null_bytes + count * sizeof(T);
 }
 
 template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int8_t>(
@@ -718,7 +718,7 @@ size_t DuckDBColumnSerializer::WriteSubVectorBool(
 
   size_t null_bytes = WriteNullBitmap(fmt, offset, count);
 
-  auto bool_bytes = static_cast<uint32_t>((count + 7) / 8);
+  size_t bool_bytes = (count + 7) / 8;
   auto* bitmap = Allocate(bool_bytes);
   std::memset(bitmap, 0, bool_bytes);
   for (duckdb::idx_t i = 0; i < count; i++) {
@@ -728,8 +728,8 @@ size_t DuckDBColumnSerializer::WriteSubVectorBool(
   }
   _row_slices.emplace_back(bitmap, bool_bytes);
 
-  auto header_size = static_cast<uint32_t>(
-    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags));
+  size_t header_size =
+    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
@@ -780,9 +780,9 @@ size_t DuckDBColumnSerializer::WriteSubVectorVarchar(
     irs::WriteVarint(len, length_buf);
   }
 
-  auto header_size = static_cast<uint32_t>(
-    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags) +
-    irs::bytes_io<uint32_t>::vsize(length_array_size));
+  size_t header_size = irs::bytes_io<uint32_t>::vsize(count) +
+                       sizeof(ValueFlags) +
+                       irs::bytes_io<uint32_t>::vsize(length_array_size);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
@@ -800,7 +800,7 @@ size_t DuckDBColumnSerializer::WriteSubVector(
   duckdb::idx_t count, const duckdb::LogicalType& type) {
   if (count == 0) {
     _row_slices.emplace_back(kZeroLengthVector);
-    return static_cast<uint32_t>(kZeroLengthVector.size());
+    return kZeroLengthVector.size();
   }
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN:
@@ -898,7 +898,7 @@ size_t DuckDBColumnSerializer::WriteListSubVector(
 
   // Per-list size array. Offsets are not stored -- the reader recomputes
   // them via running-sum while iterating sizes.
-  auto sizes_bytes = static_cast<uint32_t>(sizeof(uint32_t) * count);
+  size_t sizes_bytes = sizeof(uint32_t) * count;
   auto* sizes_buf = Allocate(sizes_bytes);
   auto* sizes_ptr = reinterpret_cast<uint32_t*>(sizes_buf);
 
@@ -921,8 +921,8 @@ size_t DuckDBColumnSerializer::WriteListSubVector(
                                  total_child_count, child_type);
   }
 
-  auto header_size = static_cast<uint32_t>(
-    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags));
+  size_t header_size =
+    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);
@@ -942,7 +942,7 @@ size_t DuckDBColumnSerializer::WriteMapValue(
 
   if (entry.length == 0) {
     _row_slices.emplace_back(kZeroLengthVector);
-    return static_cast<uint32_t>(kZeroLengthVector.size());
+    return kZeroLengthVector.size();
   }
 
   auto header_idx = _row_slices.size();
@@ -1010,9 +1010,9 @@ size_t DuckDBColumnSerializer::WriteStructSubVector(
     irs::WriteVarint(len, length_buf);
   }
 
-  auto header_size = static_cast<uint32_t>(
-    irs::bytes_io<uint32_t>::vsize(count) + sizeof(ValueFlags) +
-    irs::bytes_io<uint32_t>::vsize(length_array_size));
+  size_t header_size = irs::bytes_io<uint32_t>::vsize(count) +
+                       sizeof(ValueFlags) +
+                       irs::bytes_io<uint32_t>::vsize(length_array_size);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(static_cast<uint32_t>(count), header);

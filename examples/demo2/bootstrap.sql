@@ -1,11 +1,7 @@
 -- One-time bootstrap for demo2: load IMDb into a native SereneDB table.
 --
 -- Pulls the auto-converted parquet branch from Hugging Face once and inserts
--- the rows into a rocksdb-backed table with an INTEGER primary key. After
--- this runs, the demo no longer touches Hugging Face or local parquet --
--- everything lives in the native storage engine.
---
--- ~30s on a typical broadband link. Re-running drops and reloads.
+-- the rows into a rocksdb-backed table.
 --
 -- Run:
 --   psql -h <host> -p <port> -U serenedb -d postgres -f bootstrap.sql

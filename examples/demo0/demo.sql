@@ -40,7 +40,6 @@ CREATE VIEW imdb_v AS
   SELECT * FROM read_parquet('hf://datasets/stanfordnlp/imdb@~parquet/plain_text/**/*.parquet');
 
 -- Builds an iresearch inverted index over the remote stream.
--- Expect ~30s on a typical broadband link (~80 MB across 3 files).
 CREATE INDEX imdb_idx ON imdb_v USING inverted(text imdb_en, label);
 
 -- Q1: phrase count.

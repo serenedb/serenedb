@@ -681,7 +681,6 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
 #ifdef SDB_DEV
   bool _check_tick = true;
 #endif
-  RevisionId _removed_doc_rid;
 };
 
 #ifdef SDB_DEV

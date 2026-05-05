@@ -85,7 +85,8 @@ inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
 }
 
 // Append a precomputed generated PK id (sortable signed encoding) onto `key`.
-// Caller is responsible for reserving the id from the table's catalog::Sequence.
+// Caller is responsible for reserving the id from the table's
+// catalog::Sequence.
 inline void AppendGenerated(std::string& key, uint64_t generated_id) {
   primary_key::AppendSigned(key, std::bit_cast<int64_t>(generated_id));
 }

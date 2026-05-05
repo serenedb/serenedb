@@ -22,18 +22,21 @@
 
 #include <absl/synchronization/mutex.h>
 
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "catalog/object.h"
 
 namespace rocksdb {
+
 class ColumnFamilyHandle;
 class DB;
-}  // namespace rocksdb
 
+}  // namespace rocksdb
 namespace sdb::catalog {
 
 // PG-compatible sequence parameters (CREATE SEQUENCE [...]).
@@ -88,13 +91,18 @@ class Sequence final : public SchemaObject {
   void Write(uint64_t value);
 
  private:
-  // RocksDB-backed counter ops are serialised per Sequence by `_counter_mu`.
-  // `_counter_mu` is mutable so const methods (Read) can lock it.
-  // Cloned Sequences get their own mutex; in steady state the catalog
-  // snapshot returns the same shared_ptr<Sequence> per ObjectId so callers
-  // share a mutex for that sequence.
-  mutable absl::Mutex _counter_mu;
+  // Hot path: `_live` is the source of truth for what's been handed out.
+  // `Reserve` does Merge(+count) (WAL durability) then atomic fetch_add (no
+  // lock). On first use, `_init` seeds `_live` from the persisted value.
+  // `_setval_mu` only guards `Write` (setval) -- the cold path that needs
+  // to atomically Put + store-into-atomic against concurrent Reserves.
+  mutable std::atomic<uint64_t> _live{0};
+  mutable std::once_flag _init;
+  mutable absl::Mutex _setval_mu;
   SequenceOptions _options;
+
+  uint64_t LoadFromDb() const;
+  void EnsureInitialized() const;
 };
 
 }  // namespace sdb::catalog

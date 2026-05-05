@@ -114,38 +114,38 @@ DROP SEQUENCE seq_b;
 # Sequence used as a column DEFAULT for a primary key (the SERIAL replacement
 # until parser-level SERIAL support lands).
 statement ok
-CREATE SEQUENCE users_id_seq;
+CREATE SEQUENCE vedernikoff_id_seq;
 
 
 statement ok
-CREATE TABLE users (
-  id BIGINT NOT NULL DEFAULT nextval('users_id_seq') PRIMARY KEY,
-  name VARCHAR
+CREATE TABLE vedernikoff (
+  id BIGINT NOT NULL DEFAULT nextval('vedernikoff_id_seq') PRIMARY KEY,
+  hero VARCHAR
 );
 
 
 statement count 1
-INSERT INTO users (name) VALUES ('alice');
+INSERT INTO vedernikoff (hero) VALUES ('kostya');
 
 
 statement count 1
-INSERT INTO users (name) VALUES ('bob');
+INSERT INTO vedernikoff (hero) VALUES ('babsky');
 
 
 query
-SELECT id, name FROM users ORDER BY id;
+SELECT id, hero FROM vedernikoff ORDER BY id;
 ----
-id	name
-1	alice
-2	bob
+id	hero
+1	kostya
+2	babsky
 
 
 statement ok
-DROP TABLE users;
+DROP TABLE vedernikoff;
 
 
 statement ok
-DROP SEQUENCE users_id_seq;
+DROP SEQUENCE vedernikoff_id_seq;
 
 
 # IF NOT EXISTS.

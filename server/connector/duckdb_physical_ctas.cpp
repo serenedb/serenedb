@@ -27,11 +27,11 @@
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/sequence.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_schema_entry.h"
-#include "catalog/sequence.h"
 #include "pg/connection_context.h"
 
 namespace sdb::connector {

@@ -29,9 +29,10 @@
 #include "rocksdb/sst_file_writer.h"
 
 namespace sdb::catalog {
-class Sequence;
-}  // namespace sdb::catalog
 
+class Sequence;
+
+}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct SSTInsertColumnMeta {

@@ -77,8 +77,8 @@ rocksdb::ColumnFamilyHandle* CounterCF() {
 
 Sequence::Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
                    std::string_view name, SequenceOptions opts)
-  : SchemaObject{{},     database_id,       schema_id,
-                 id,     std::string{name}, ObjectType::Sequence},
+  : SchemaObject{{}, database_id,       schema_id,
+                 id, std::string{name}, ObjectType::Sequence},
     _options{opts} {}
 
 Sequence::~Sequence() = default;
@@ -89,15 +89,13 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
     basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
 
   SequenceOptions opts;
-  opts.start_value =
-    basics::VPackHelper::getNumber<int64_t>(slice, "start", 1);
+  opts.start_value = basics::VPackHelper::getNumber<int64_t>(slice, "start", 1);
   opts.increment =
     basics::VPackHelper::getNumber<int64_t>(slice, "increment", 1);
   opts.min_value = basics::VPackHelper::getNumber<int64_t>(slice, "min", 1);
   opts.max_value = basics::VPackHelper::getNumber<int64_t>(
     slice, "max", std::numeric_limits<int64_t>::max());
-  opts.cache_size =
-    basics::VPackHelper::getNumber<int64_t>(slice, "cache", 1);
+  opts.cache_size = basics::VPackHelper::getNumber<int64_t>(slice, "cache", 1);
   opts.cycle = basics::VPackHelper::getBool(slice, "cycle", false);
 
   return std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
@@ -121,40 +119,11 @@ std::shared_ptr<Object> Sequence::Clone() const {
                                     GetName(), _options);
 }
 
-uint64_t Sequence::Reserve(uint64_t count) {
-  SDB_ASSERT(count > 0);
-
-  std::string operand;
-  EncodeFixed64Le(operand, count);
-
-  auto* db = GetServerEngine().db();
-  auto* cf = CounterCF();
-  auto key = CounterKey(GetId());
-
-  absl::MutexLock lock{&_counter_mu};
-  rocksdb::WriteOptions wo;
-  auto s = db->Merge(wo, cf, key, operand);
-  if (!s.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(s));
-  }
-
-  std::string raw;
-  s = db->Get(rocksdb::ReadOptions{}, cf, key, &raw);
-  if (!s.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(s));
-  }
-  SDB_ASSERT(raw.size() == sizeof(uint64_t));
-  uint64_t high_water = DecodeFixed64Le(raw.data());
-  SDB_ASSERT(high_water >= count);
-  return high_water - count + 1;
-}
-
-uint64_t Sequence::Read() const {
+uint64_t Sequence::LoadFromDb() const {
   auto* db = GetServerEngine().db();
   auto* cf = CounterCF();
   auto key = CounterKey(GetId());
   std::string raw;
-  absl::MutexLock lock{&_counter_mu};
   auto s = db->Get(rocksdb::ReadOptions{}, cf, key, &raw);
   if (s.IsNotFound()) {
     return 0;
@@ -166,17 +135,54 @@ uint64_t Sequence::Read() const {
   return DecodeFixed64Le(raw.data());
 }
 
+void Sequence::EnsureInitialized() const {
+  std::call_once(
+    _init, [this] { _live.store(LoadFromDb(), std::memory_order_release); });
+}
+
+uint64_t Sequence::Reserve(uint64_t count) {
+  SDB_ASSERT(count > 0);
+  EnsureInitialized();
+
+  // 1. WAL: persist the allocation. Operands fold associatively inside
+  //    RocksDB; many threads can Merge concurrently with no app-level lock.
+  std::string operand;
+  EncodeFixed64Le(operand, count);
+  auto* db = GetServerEngine().db();
+  auto* cf = CounterCF();
+  auto s = db->Merge(rocksdb::WriteOptions{}, cf, CounterKey(GetId()), operand);
+  if (!s.ok()) {
+    SDB_THROW(rocksutils::ConvertStatus(s));
+  }
+
+  // 2. Allocate from the live counter -- wait-free.
+  return _live.fetch_add(count, std::memory_order_acq_rel) + 1;
+}
+
+uint64_t Sequence::Read() const {
+  EnsureInitialized();
+  return _live.load(std::memory_order_acquire);
+}
+
 void Sequence::Write(uint64_t value) {
+  EnsureInitialized();
   std::string encoded;
   EncodeFixed64Le(encoded, value);
   auto* db = GetServerEngine().db();
   auto* cf = CounterCF();
   auto key = CounterKey(GetId());
-  absl::MutexLock lock{&_counter_mu};
+
+  // setval is the cold path -- a Put resets the merge chain on disk, and we
+  // must store the new value into the atomic atomically against concurrent
+  // Reserves. The mutex serialises Write vs Write only; Reserves still go
+  // wait-free, but a Reserve racing with a Write may see either old or new
+  // base -- same guarantee Postgres provides for setval vs nextval.
+  absl::MutexLock lock{&_setval_mu};
   auto s = db->Put(rocksdb::WriteOptions{}, cf, key, encoded);
   if (!s.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(s));
   }
+  _live.store(value, std::memory_order_release);
 }
 
 }  // namespace sdb::catalog

@@ -28,7 +28,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/qualified_name.hpp>
-
 #include <memory>
 #include <string>
 #include <string_view>
@@ -48,9 +47,8 @@ namespace {
 std::shared_ptr<catalog::Sequence> ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
-  std::string schema_name = qname.schema.empty()
-                              ? std::string{StaticStrings::kPublic}
-                              : qname.schema;
+  std::string schema_name =
+    qname.schema.empty() ? std::string{StaticStrings::kPublic} : qname.schema;
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
@@ -61,8 +59,8 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
   }
   auto seq = snapshot->GetSequence(database_id, schema->GetId(), qname.name);
   if (!seq) {
-    throw duckdb::CatalogException(
-      "relation \"%s\" does not exist", std::string{qualified});
+    throw duckdb::CatalogException("relation \"%s\" does not exist",
+                                   std::string{qualified});
   }
   return seq;
 }
@@ -80,11 +78,10 @@ int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
 
   if (value > opts.max_value) {
     if (!opts.cycle) {
-      throw duckdb::Exception(
-        duckdb::ExceptionType::SEQUENCE,
-        "nextval: reached maximum value of sequence \"" +
-          std::string{qualified} + "\" (" +
-          std::to_string(opts.max_value) + ")");
+      throw duckdb::Exception(duckdb::ExceptionType::SEQUENCE,
+                              "nextval: reached maximum value of sequence \"" +
+                                std::string{qualified} + "\" (" +
+                                std::to_string(opts.max_value) + ")");
     }
     // Cycle: reset counter so the next call starts from min_value.
     // Best-effort under concurrent calls -- the current caller still gets
@@ -124,9 +121,8 @@ int64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
                             "setval: value out of bounds for sequence \"" +
                               std::string{qualified} + "\"");
   }
-  auto to_persist = is_called
-                      ? static_cast<uint64_t>(value)
-                      : static_cast<uint64_t>(value - opts.increment);
+  auto to_persist = is_called ? static_cast<uint64_t>(value)
+                              : static_cast<uint64_t>(value - opts.increment);
   seq->Write(to_persist);
   return value;
 }
@@ -144,9 +140,8 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto out = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    out[i] =
-      Nextval(context,
-              std::string_view{names[i].GetData(), names[i].GetSize()});
+    out[i] = Nextval(context,
+                     std::string_view{names[i].GetData(), names[i].GetSize()});
   }
 }
 
@@ -158,9 +153,8 @@ void CurrvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   auto out = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    out[i] =
-      Currval(context,
-              std::string_view{names[i].GetData(), names[i].GetSize()});
+    out[i] = Currval(context,
+                     std::string_view{names[i].GetData(), names[i].GetSize()});
   }
 }
 

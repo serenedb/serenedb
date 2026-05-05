@@ -4,6 +4,7 @@ target_sources(
         rocksdb_comparator.cpp
         rocksdb_background_thread.cpp
         rocksdb_settings_manager.cpp
+        rocksdb_sequence_manager.cpp
         rocksdb_common.cpp
         rocksdb_key.cpp
         rocksdb_utils.cpp

@@ -36,6 +36,7 @@
 #include "rocksdb/table.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "rocksdb_engine_catalog/rocksdb_sequence_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "storage_engine/engine_feature.h"
 
@@ -68,6 +69,11 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   state.table_id = table.GetId();
   state.table_key = key_utils::PrepareTableKey(state.table_id);
   state.pk_columns = duckdb_primary_key::BuildPKColumns(table);
+  state.has_generated_pk = table.PKColumns().empty();
+  if (state.has_generated_pk) {
+    state.generated_pk_seq =
+      &engine.sequenceManager()->GetForTable(state.table_id);
+  }
 
   // Build column metadata -- skip generated PK and virtual generated columns
   const auto& columns = table.Columns();
@@ -163,10 +169,12 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   // Build row keys: [ObjectId][ColumnId(reserved)][PK bytes]
   gstate.row_keys.clear();
   gstate.row_keys.reserve(num_rows);
+  uint64_t generated_pk_base =
+    gstate.has_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-      gstate.row_keys.emplace_back());
+      chunk, gstate.pk_columns, row, generated_pk_base + row, gstate.table_key,
+      [](auto) {}, gstate.row_keys.emplace_back());
   }
 
   // Write each column to its SST file

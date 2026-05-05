@@ -36,6 +36,7 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "rocksdb_engine_catalog/rocksdb_sequence_manager.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
@@ -62,6 +63,9 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+
+  // Per-table sequence allocator (only set when has_generated_pk)
+  TableSequence* generated_pk_seq = nullptr;
 
   // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -143,6 +147,11 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
+  if (state->has_generated_pk) {
+    state->generated_pk_seq =
+      &GetServerEngine().sequenceManager()->GetForTable(state->table_id);
+  }
+
   return state;
 }
 
@@ -166,10 +175,15 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   gstate.row_keys.clear();
   gstate.row_keys.reserve(num_rows);
 
+  // For tables without an explicit PK, reserve the full id range for this
+  // chunk in one Merge: each row gets `generated_pk_base + row`.
+  uint64_t generated_pk_base =
+    gstate.has_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
+
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     auto& key_buffer = gstate.row_keys.emplace_back();
     duckdb_primary_key::MakeColumnKey(
-      chunk, gstate.pk_columns, row, gstate.table_key,
+      chunk, gstate.pk_columns, row, generated_pk_base + row, gstate.table_key,
       [&](std::string_view row_key) {
         auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
         if (!status.ok()) {

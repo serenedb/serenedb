@@ -1,2 +1,3 @@
 add_subdirectory(basics)
 add_subdirectory(connector)
+add_subdirectory(rocksdb_engine_catalog)

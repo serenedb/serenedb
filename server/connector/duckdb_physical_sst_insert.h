@@ -28,6 +28,10 @@
 #include "connector/duckdb_rocksdb_writer.h"
 #include "rocksdb/sst_file_writer.h"
 
+namespace sdb {
+class TableSequence;
+}  // namespace sdb
+
 namespace sdb::connector {
 
 struct SSTInsertColumnMeta {
@@ -50,6 +54,10 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
+
+  // Set when table has a generated PK. Reserve a range per chunk.
+  bool has_generated_pk = false;
+  TableSequence* generated_pk_seq = nullptr;
 
   // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;

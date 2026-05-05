@@ -80,6 +80,7 @@ class RocksDBKey;
 class RocksDBLogValue;
 class RocksDBRecoveryHelper;
 class RocksDBReplicationManager;
+class RocksDBSequenceManager;
 class RocksDBSettingsManager;
 class RocksDBSyncThread;
 class RocksDBVPackComparator;
@@ -297,6 +298,12 @@ class RocksDBEngineCatalog {
     return _settings_manager.get();
   }
 
+  /// per-table monotonic ID allocator (generated PKs, future PG sequences)
+  RocksDBSequenceManager* sequenceManager() const {
+    SDB_ASSERT(_sequence_manager);
+    return _sequence_manager.get();
+  }
+
   /// manages the ongoing dump clients
   RocksDBReplicationManager* replicationManager() const {
     SDB_ASSERT(_replication_manager);
@@ -379,6 +386,8 @@ class RocksDBEngineCatalog {
   std::shared_ptr<RocksDBReplicationManager> _replication_manager;
   /// tracks the count of documents in collections
   std::unique_ptr<RocksDBSettingsManager> _settings_manager;
+  /// per-table monotonic ID allocator (generated PKs)
+  std::unique_ptr<RocksDBSequenceManager> _sequence_manager;
   /// Local wal access abstraction
   std::unique_ptr<RocksDBWalAccess> _wal_access;
 

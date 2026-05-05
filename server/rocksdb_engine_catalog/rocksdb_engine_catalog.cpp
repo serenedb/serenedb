@@ -112,6 +112,7 @@
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
+#include "rocksdb_engine_catalog/rocksdb_sequence_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_sync_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -620,6 +621,7 @@ void RocksDBEngineCatalog::start() {
   };
   add_family(RocksDBColumnFamilyManager::Family::Default);
   add_family(RocksDBColumnFamilyManager::Family::Definitions);
+  add_family(RocksDBColumnFamilyManager::Family::Sequences);
 
   bool db_existed = checkExistingDB(cf_families);
 
@@ -668,6 +670,11 @@ void RocksDBEngineCatalog::start() {
     cf_handles[std::to_underlying(
       RocksDBColumnFamilyManager::Family::Definitions)]);
 
+  RocksDBColumnFamilyManager::set(
+    RocksDBColumnFamilyManager::Family::Sequences,
+    cf_handles[std::to_underlying(
+      RocksDBColumnFamilyManager::Family::Sequences)]);
+
   // will crash the process if version does not match
   StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
 
@@ -706,6 +713,8 @@ void RocksDBEngineCatalog::start() {
   SDB_ASSERT(_db != nullptr);
   _settings_manager = std::make_unique<RocksDBSettingsManager>(*this);
   _settings_manager->retrieveInitialValues();
+
+  _sequence_manager = std::make_unique<RocksDBSequenceManager>(*this);
 
   const double counter_sync_seconds = 2.5;
   _background_thread =
@@ -1971,13 +1980,24 @@ bool RocksDBEngineCatalog::checkExistingDB(
       auto it2 = std::find(existing_column_families.begin(),
                            existing_column_families.end(), it.name);
       if (it2 == existing_column_families.end()) {
-        SDB_FATAL(
-          "xxxxx", Logger::STARTUP, "column family '", it.name,
-          "' is missing in database",
-          ". if you are upgrading from an earlier alpha or beta version "
-          "of SereneDB, it is required to restart with a new database "
-          "directory and "
-          "re-import data");
+        // Newly introduced CFs are auto-created by rocksdb on Open via
+        // create_missing_column_families. Only fail if a *core* CF is missing.
+        bool is_core =
+          it.name == rocksdb::kDefaultColumnFamilyName ||
+          it.name == RocksDBColumnFamilyManager::name(
+                       RocksDBColumnFamilyManager::Family::Definitions);
+        if (is_core) {
+          SDB_FATAL(
+            "xxxxx", Logger::STARTUP, "column family '", it.name,
+            "' is missing in database",
+            ". if you are upgrading from an earlier alpha or beta version "
+            "of SereneDB, it is required to restart with a new database "
+            "directory and "
+            "re-import data");
+        } else {
+          SDB_INFO("xxxxx", Logger::STARTUP, "column family '", it.name,
+                   "' will be created in existing database");
+        }
       }
     }
 

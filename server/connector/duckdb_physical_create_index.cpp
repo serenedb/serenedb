@@ -381,8 +381,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   } else {
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       duckdb_primary_key::MakeColumnKey(
-        chunk, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-        gstate.row_keys.emplace_back());
+        chunk, gstate.pk_columns, row, /*generated_id*/ 0, gstate.table_key,
+        [](auto) {}, gstate.row_keys.emplace_back());
     }
   }
 

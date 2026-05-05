@@ -1363,6 +1363,9 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
     case StatementType::UPDATE_STATEMENT:
       return make("UPDATE");
     case StatementType::DELETE_STATEMENT:
+      if (prepared.data && prepared.data->properties.is_truncate) {
+        return make("TRUNCATE TABLE");
+      }
       return make("DELETE");
     case StatementType::COPY_STATEMENT:
       return make("COPY");

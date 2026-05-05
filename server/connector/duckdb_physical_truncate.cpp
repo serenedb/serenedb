@@ -33,7 +33,6 @@ namespace {
 
 struct TruncateSourceState : public duckdb::GlobalSourceState {
   bool finished = false;
-  int64_t deleted = 0;
 };
 
 }  // namespace
@@ -62,18 +61,12 @@ duckdb::SourceResultType SereneDBPhysicalTruncate::GetDataInternal(
 
   auto& conn_ctx = GetSereneDBContext(context.client);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-
-  // Capture row count BEFORE the wipe so the DELETE Count tag is meaningful.
-  // TruncateResolvedTable resets the table_shard's num_rows to 0 inside the
-  // noexcept phase-2 block, so we can't read it afterwards.
-  if (auto table_shard = snapshot->GetTableShard(_table->GetId())) {
-    state.deleted = table_shard->GetTableStats().num_rows;
-  }
   TruncateResolvedTable(conn_ctx, snapshot, _table);
 
+  // The bound LogicalDelete sets return_type=NOTHING for is_truncate, so
+  // PG's CommandComplete is "TRUNCATE TABLE" with no count -- we don't
+  // emit any rows. Cardinality stays 0; one more call returns FINISHED.
   state.finished = true;
-  chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(state.deleted));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

@@ -340,8 +340,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
   // Resolves a text-dictionary opclass against the current snapshot. The HNSW
   // opclass is handled inline because it does not feed JSON paths.
-  auto resolve_dict = [&](std::string_view col_name, const std::string& opclass)
-    -> ResultOr<std::shared_ptr<Tokenizer>> {
+  auto resolve_dict =
+    [&](std::string_view col_name,
+        const std::string& opclass) -> ResultOr<std::shared_ptr<Tokenizer>> {
     auto object_name = pg::ParseObjectName(opclass, schema_name);
     // Technically nothing prevents us from allowing so.
     // But that will make schema drop more complicated as we will need to

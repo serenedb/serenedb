@@ -1167,7 +1167,8 @@ Result FromGeoFilter(irs::BooleanFilter& filter, const FilterContext& ctx,
   const auto* column_info =
     FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[0]));
   if (!column_info) {
-    column_info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[1]));
+    column_info =
+      FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*func.children[1]));
     if (!column_info) {
       return {ERROR_BAD_PARAMETER, func.function.name,
               ": one argument must be an indexed column reference"};

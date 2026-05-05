@@ -103,7 +103,7 @@ struct IndexReader {
               HNSWSearchBuffer& buffer) const;
 
   void RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
-                   std::vector<float>& dis, std::vector<int64_t>& ids) const;
+                   HNSWRangeSearchBuffer& buffer) const;
 
   // returns number of sub-segments in current reader
   virtual size_t size() const = 0;
@@ -136,6 +136,12 @@ struct SubReader : public IndexReader, public ColumnProvider {
     IRS_IGNORE(i);
     return *this;
   }
+
+  void Search(std::string_view field, HNSWSearchInfo info,
+              HNSWSearchBuffer& buffer, uint32_t segment_id) const;
+
+  void RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
+                   HNSWRangeSearchBuffer& buffer, uint32_t segment_id) const;
 
   size_t size() const noexcept final { return 1; }
 

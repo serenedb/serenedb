@@ -24,6 +24,7 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <iresearch/formats/column/hnsw_index.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,7 +57,7 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
 
   size_t total_segments = 0;
   std::atomic_size_t remained_segments = 0;
-  std::atomic_size_t next_segment = 0;
+  std::atomic_uint32_t next_segment = 0;
 
   duckdb::idx_t MaxThreads() const override {
     return std::max<duckdb::idx_t>(1, total_segments);
@@ -88,7 +89,7 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
   int ef_search = 0;
 
   size_t total_segments = 0;
-  std::atomic_size_t next_segment = 0;
+  std::atomic_uint32_t next_segment = 0;
   std::atomic_size_t total_results = 0;
   absl::Mutex m;
 
@@ -100,6 +101,7 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
 struct SearchRangeScanLocalState : public CommonScanLocalState {
   PrimaryKeyBatch pk_batch;
   size_t current_idx = 0;
+  irs::HNSWRangeSearchBuffer range_buffer;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

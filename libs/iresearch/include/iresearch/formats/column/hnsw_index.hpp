@@ -139,6 +139,7 @@ struct HNSWSearchBuffer {
   std::span<float> dis;
   std::span<int64_t> ids;
   float max_dist;
+  faiss::VisitedTable vt{0};
 
   HNSWSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
                    float max_dist = std::numeric_limits<float>::max())
@@ -166,7 +167,7 @@ struct HNSWSearchInfo {
 struct HNSWSearchContext {
   HNSWSearchInfo info;
   uint32_t segment_id;
-  faiss::VisitedTable vt;
+  faiss::VisitedTable& vt;
   HNSWResultHandler& handler;
 };
 
@@ -176,10 +177,16 @@ struct HNSWRangeSearchInfo {
   faiss::SearchParametersHNSW params;
 };
 
+struct HNSWRangeSearchBuffer {
+  std::vector<float> dis;
+  std::vector<int64_t> ids;
+  faiss::VisitedTable vt{0};
+};
+
 struct HNSWRangeSearchContext {
   HNSWRangeSearchInfo info;
   uint32_t segment_id;
-  faiss::VisitedTable vt;
+  faiss::VisitedTable& vt;
   HNSWRangeResultHandler& handler;
 };
 

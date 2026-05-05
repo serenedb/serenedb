@@ -14896,11 +14896,10 @@ TEST_P(RangeSearchTest, hnsw_range_search_basic) {
         radius,
         params,
       };
-      std::vector<float> dis;
-      std::vector<int64_t> ids;
-      reader.RangeSearch(kColumnName, info, dis, ids);
+      irs::HNSWRangeSearchBuffer buffer;
+      reader.RangeSearch(kColumnName, info, buffer);
 
-      for (auto dist : dis) {
+      for (auto dist : buffer.dis) {
         EXPECT_LT(dist, radius);
       }
 
@@ -14908,7 +14907,7 @@ TEST_P(RangeSearchTest, hnsw_range_search_basic) {
         continue;
       }
       size_t correct = 0;
-      for (auto id : ids) {
+      for (auto id : buffer.ids) {
         correct +=
           std::find(expected.begin(), expected.end(), id) != expected.end();
       }

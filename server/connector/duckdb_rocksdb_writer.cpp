@@ -953,20 +953,12 @@ size_t DuckDBColumnSerializer::WriteMapValue(
   const auto& val_rdata = struct_rdata.children[1];
 
   auto& key_type = duckdb::MapType::KeyType(type);
-  auto slices_before_keys = _row_slices.size();
-  WriteSubVector(key_rdata, entry.offset, entry.length, key_type);
-  size_t keys_size = 0;
-  for (size_t i = slices_before_keys; i < _row_slices.size(); i++) {
-    keys_size += _row_slices[i].size();
-  }
+  size_t keys_size =
+    WriteSubVector(key_rdata, entry.offset, entry.length, key_type);
 
   auto& val_type = duckdb::MapType::ValueType(type);
-  auto slices_before_vals = _row_slices.size();
-  WriteSubVector(val_rdata, entry.offset, entry.length, val_type);
-  size_t vals_size = 0;
-  for (size_t i = slices_before_vals; i < _row_slices.size(); i++) {
-    vals_size += _row_slices[i].size();
-  }
+  size_t vals_size =
+    WriteSubVector(val_rdata, entry.offset, entry.length, val_type);
 
   // [keys_size_varint] -- no elem_count prefix.
   auto header_size = irs::bytes_io<uint32_t>::vsize(keys_size);
@@ -1190,14 +1182,8 @@ size_t DuckDBColumnSerializer::WriteArrayValue(
   auto& child_type = duckdb::ArrayType::GetChildType(type);
   auto array_size = duckdb::ArrayType::GetSize(type);
   const auto resolved = rdata.unified.sel->get_index(idx);
-  auto slices_before = _row_slices.size();
-  WriteSubVector(rdata.children[0], resolved * array_size, array_size,
-                 child_type);
-  size_t bytes = 0;
-  for (size_t j = slices_before; j < _row_slices.size(); ++j) {
-    bytes += _row_slices[j].size();
-  }
-  return bytes;
+  return WriteSubVector(rdata.children[0], resolved * array_size, array_size,
+                        child_type);
 }
 
 }  // namespace sdb::connector

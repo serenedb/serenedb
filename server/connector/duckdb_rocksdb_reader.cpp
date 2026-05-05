@@ -217,50 +217,18 @@ static duckdb::idx_t ReadMapColumn(rocksdb::Iterator& it,
                        });
 }
 
-// Recursively mark a row invalid through nested STRUCT/ARRAY children.
-// DuckDB's templated scatter takes a fast path that reads a child slot
-// unconditionally when the child's validity has CannotHaveNull()=true.
-// Setting each descendant slot invalid forces the per-row validity check
-// to fire and skips the read of uninitialized data.
-void NullifyChildAt(duckdb::Vector& vec, duckdb::idx_t idx) {
-  duckdb::FlatVector::ValidityMutable(vec).SetInvalid(idx);
-  using duckdb::LogicalTypeId;
-  switch (vec.GetType().id()) {
-    case LogicalTypeId::STRUCT:
-      for (auto& child : duckdb::StructVector::GetEntries(vec)) {
-        NullifyChildAt(child, idx);
-      }
-      return;
-    case LogicalTypeId::ARRAY: {
-      auto& child = duckdb::ArrayVector::GetEntry(vec);
-      auto sz = duckdb::ArrayType::GetSize(vec.GetType());
-      for (duckdb::idx_t i = 0; i < sz; ++i) {
-        NullifyChildAt(child, idx * sz + i);
-      }
-      return;
-    }
-    default:
-      return;
-  }
-}
-
 static duckdb::idx_t ReadStructColumn(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       const duckdb::LogicalType& type,
                                       duckdb::idx_t max_rows) {
-  auto& validity = duckdb::FlatVector::ValidityMutable(output);
-
-  return IterateColumn(
-    it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
-      if (value.empty()) {
-        validity.SetInvalid(idx);
-        for (auto& child : duckdb::StructVector::GetEntries(output)) {
-          NullifyChildAt(child, idx);
-        }
-        return;
-      }
-      DeserializeStructValue(value, output, type, idx);
-    });
+  return IterateColumn(it, max_rows,
+                       [&](duckdb::idx_t idx, std::string_view value) {
+                         if (value.empty()) {
+                           duckdb::FlatVector::SetNull(output, idx, true);
+                           return;
+                         }
+                         DeserializeStructValue(value, output, type, idx);
+                       });
 }
 
 duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
@@ -529,10 +497,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
       for (uint32_t i = 0; i < elem_count; i++) {
         auto len = irs::vread<uint32_t>(lptr);
         if (elem_nulls && !(elem_nulls[i / 8] & (1 << (i % 8)))) {
-          child_validity.SetInvalid(child_offset + i);
-          for (auto& sub : duckdb::StructVector::GetEntries(child)) {
-            NullifyChildAt(sub, child_offset + i);
-          }
+          duckdb::FlatVector::SetNull(child, child_offset + i, true);
           ptr += len;
           continue;
         }
@@ -784,7 +749,7 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
     auto& child_type = child_types[i].second;
 
     if (child_len == 0) {
-      duckdb::FlatVector::ValidityMutable(child).SetInvalid(idx);
+      duckdb::FlatVector::SetNull(child, idx, true);
     } else {
       auto child_sv =
         std::string_view{reinterpret_cast<const char*>(ptr), child_len};

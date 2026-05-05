@@ -185,7 +185,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       return in_array ? kRecordArray : kRecord;
     }
     case MAP:
-      return in_array ? kRecordArray : kRecord;
+      return kRecordArray;
     case VARCHAR: {
       if (type.IsJSONType()) {
         return in_array ? kJsonArray : kJson;

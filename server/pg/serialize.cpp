@@ -1634,12 +1634,13 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       static constexpr auto kBinary = SerializeRecord<VarFormat::Binary, false>;
       RETURN_SERIALIZATION(kText, kBinary);
     }
+    case MAP:
     case LIST:
     case ARRAY: {
       const auto* element_type = &type;
       size_t dims = 0;
       while (true) {
-        if (element_type->id() == LIST) {
+        if (element_type->id() == LIST || element_type->id() == MAP) {
           element_type = &duckdb::ListType::GetChildType(*element_type);
         } else if (element_type->id() == ARRAY) {
           element_type = &duckdb::ArrayType::GetChildType(*element_type);

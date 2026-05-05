@@ -10,12 +10,18 @@ End-to-end demos that show what SereneDB does, against real data, in scripts you
 | [demo1](demo1/) | Same demo over **local** Parquet -- same SQL, two orders of magnitude faster | IMDb reviews staged in `/tmp` |
 | [demo2](demo2/) | Same demo over a **native table** -- production shape, durable, sub-millisecond queries | IMDb reviews ingested into a SereneDB table |
 
-All three demos run the same SQL: ranked search with BM25, hybrid full-text + relational analytics, JOINs over indexed columns. They differ only in where the data lives.
-
 ## Running a demo
 
 ```bash
 psql -h <host> -p <port> -U serenedb -d postgres -f <demo>/demo.sql
 ```
 
-Each demo's README has the full instructions and any one-time bootstrap. If you don't have a SereneDB server running yet, check the [downloads page](https://serenedb.com/download).
+>
+> **One-time bootstrap.** Some demos ship a `bootstrap.sql` that stages the data locally (downloads parquet shards, or ingests them into a native table). Run it once before `demo.sql`:
+>
+> ```bash
+> psql -h <host> -p <port> -U serenedb -d postgres -f <demo>/bootstrap.sql
+> ```
+>
+
+If you don't have a SereneDB server running yet, check the [downloads page](https://serenedb.com/download).

@@ -1,6 +1,6 @@
 # Demo 0 -- Full-text search over remote Parquet
 
-Indexes the [IMDb sentiment dataset](https://huggingface.co/datasets/stanfordnlp/imdb) (100,000 movie reviews, three Parquet shards) directly from Hugging Face -- no download, no `COPY`, no ETL. SereneDB streams the remote Parquet, builds a BM25 inverted index, and runs ranked search and SQL analytics against it, all in under a minute.
+Indexes the [IMDb sentiment dataset](https://huggingface.co/datasets/stanfordnlp/imdb) (100,000 movie reviews, three Parquet shards) directly from Hugging Face -- no download, no `COPY`, no ETL. SereneDB streams the remote Parquet, builds a BM25 inverted index and runs ranked search and SQL analytics against it, all in roughly the time it takes to read this paragraph.
 
 ## What it shows
 

@@ -238,6 +238,9 @@ void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
 
 void PgSQLCommTaskBase::ProcessWakeup(yaclib::Result<> r) noexcept {
   std::lock_guard lock{_execution_mutex};
+  if (!_current_portal) {
+    return;
+  }
   SDB_ASSERT(!_pop_packet);
   _pop_packet = true;
   SafeCall([&] {
@@ -1672,6 +1675,7 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
     }
   }
   _current_packet_type = 0;
+  _pop_packet = false;
   SDB_ASSERT(!_queue.empty());
   _queue.pop();
   if (Stopped()) {

@@ -322,8 +322,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
 
-  std::cout << gstate->total_segments << "\n";
-
   // remained_segments must match what ClaimNextLiveSegment will hand out:
   // dead segments are skipped there, so per-worker `processed` counts only
   // live segments. If we initialized this to total_segments, the final

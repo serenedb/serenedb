@@ -438,7 +438,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       auto& key_buffer = gstate.new_row_keys.emplace_back();
       duckdb_primary_key::MakeColumnKey(
-        new_pk_formats, gstate.new_pk_columns, row, 0, gstate.table_key,
+        new_pk_formats, gstate.new_pk_columns, row, gstate.table_key,
         [&](std::string_view row_key) {
           auto pk_bytes = row_key.substr(sizeof(ObjectId));
           if (!gstate.batch_keys.emplace(std::string(pk_bytes)).second) {
@@ -467,7 +467,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       auto& key_buffer = gstate.row_keys.emplace_back();
       duckdb_primary_key::MakeColumnKey(
-        old_pk_formats, gstate.pk_columns, row, 0, gstate.table_key,
+        old_pk_formats, gstate.pk_columns, row, gstate.table_key,
         [&](std::string_view row_key) {
           auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
           if (!status.ok()) {
@@ -604,7 +604,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       auto& key_buffer = gstate.row_keys.emplace_back();
       duckdb_primary_key::MakeColumnKey(
-        pk_formats, gstate.pk_columns, row, 0, gstate.table_key,
+        pk_formats, gstate.pk_columns, row, gstate.table_key,
         [&](std::string_view row_key) {
           auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
           if (!status.ok()) {

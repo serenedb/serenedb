@@ -134,4 +134,15 @@ void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
 }
 
+// Overload for paths that operate on existing rows (UPDATE/DELETE/CREATE INDEX)
+template<typename Func>
+void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
+                   std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
+                   std::string_view object_id, Func&& row_key_handle,
+                   std::string& key_buffer) {
+  SDB_ASSERT(!pk_columns.empty());
+  MakeColumnKey(pk_formats, pk_columns, row_idx, 0, object_id,
+                std::forward<Func>(row_key_handle), key_buffer);
+}
+
 }  // namespace sdb::connector::duckdb_primary_key

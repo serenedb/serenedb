@@ -562,7 +562,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       duckdb_primary_key::MakeColumnKey(
-        pk_formats, gstate.pk_columns, row, 0, gstate.table_key, [](auto) {},
+        pk_formats, gstate.pk_columns, row, gstate.table_key, [](auto) {},
         gstate.row_keys.emplace_back());
     }
   }

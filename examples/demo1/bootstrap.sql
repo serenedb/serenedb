@@ -1,7 +1,7 @@
 -- One-time bootstrap for demo1: stage IMDb parquet shards locally.
 --
 -- Server-side fetch via COPY ... TO. Pulls each split from the auto-converted
--- parquet branch on Hugging Face and writes a local file per shard. 
+-- parquet branch on Hugging Face and writes a local file per shard.
 --
 -- Run:
 --   psql -h <host> -p <port> -U serenedb -d postgres -f bootstrap.sql

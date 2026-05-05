@@ -15,7 +15,7 @@ db error: ERROR: type "address" already exists
 query error
 CREATE TYPE bad_composite AS (x INTEGER, y VARCHAR, x BOOLEAN);
 ----
-db error: ERROR: column "x" specified more than once
+db error: ERROR: Duplicate STRUCT type argument name "x"
 
 
 statement ok
@@ -66,6 +66,68 @@ coordinates	c
 
 statement ok
 DROP TABLE vedernikoff_locations;
+
+
+# Nested composite: a composite field whose type is itself a composite.
+statement ok
+CREATE TYPE pudge_place AS (name VARCHAR, where_at coordinates);
+
+
+statement ok
+CREATE TABLE pudge_journal (id INTEGER PRIMARY KEY, p pudge_place);
+
+
+statement count 1
+INSERT INTO pudge_journal VALUES
+  (1, ROW('moscow', ROW(55.7, 37.6)::coordinates)::pudge_place);
+
+
+statement count 1
+INSERT INTO pudge_journal VALUES
+  (2, ROW('spb', ROW(59.9, 30.3)::coordinates)::pudge_place);
+
+
+query
+SELECT id, p FROM pudge_journal ORDER BY id;
+----
+id	p
+1	(moscow,"(55.7,37.6)")
+2	(spb,"(59.9,30.3)")
+
+
+# Array of nested composite: each element renders with array-style escaping
+# around an already record-quoted inner composite.
+statement ok
+CREATE TABLE pudge_routes (id INTEGER PRIMARY KEY, hops pudge_place[]);
+
+
+statement count 1
+INSERT INTO pudge_routes VALUES (
+  1,
+  ARRAY[
+    ROW('a', ROW(1.0, 2.0)::coordinates)::pudge_place,
+    ROW('b', ROW(3.0, 4.0)::coordinates)::pudge_place
+  ]
+);
+
+
+query
+SELECT id, hops FROM pudge_routes ORDER BY id;
+----
+id	hops
+1	{"(a,\\"(1,2)\\")","(b,\\"(3,4)\\")"}
+
+
+statement ok
+DROP TABLE pudge_routes;
+
+
+statement ok
+DROP TABLE pudge_journal;
+
+
+statement ok
+DROP TYPE pudge_place;
 
 
 statement ok

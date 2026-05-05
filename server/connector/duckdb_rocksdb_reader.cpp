@@ -217,20 +217,59 @@ static duckdb::idx_t ReadMapColumn(rocksdb::Iterator& it,
                        });
 }
 
+// DuckDB's TupleDataStructScatter (and other code paths) read struct child
+// data unconditionally, ignoring the parent's validity bit. So a NULL row
+// also needs its child slots zero-filled or ASAN trips on uninitialized
+// reads.
+void NullifyChildAt(duckdb::Vector& vec, duckdb::idx_t idx) {
+  duckdb::FlatVector::ValidityMutable(vec).SetInvalid(idx);
+  using duckdb::LogicalTypeId;
+  switch (vec.GetType().id()) {
+    case LogicalTypeId::STRUCT:
+      for (auto& child : duckdb::StructVector::GetEntries(vec)) {
+        NullifyChildAt(child, idx);
+      }
+      return;
+    case LogicalTypeId::LIST:
+    case LogicalTypeId::MAP:
+      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(vec)[idx] = {};
+      return;
+    case LogicalTypeId::VARCHAR:
+    case LogicalTypeId::BLOB:
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[idx] = {};
+      return;
+    case LogicalTypeId::ARRAY: {
+      auto& child = duckdb::ArrayVector::GetEntry(vec);
+      auto sz = duckdb::ArrayType::GetSize(vec.GetType());
+      for (duckdb::idx_t i = 0; i < sz; ++i) {
+        NullifyChildAt(child, idx * sz + i);
+      }
+      return;
+    }
+    default:
+      auto width = duckdb::GetTypeIdSize(vec.GetType().InternalType());
+      std::memset(duckdb::FlatVector::GetDataMutable(vec) + idx * width, 0,
+                  width);
+  }
+}
+
 static duckdb::idx_t ReadStructColumn(rocksdb::Iterator& it,
                                       duckdb::Vector& output,
                                       const duckdb::LogicalType& type,
                                       duckdb::idx_t max_rows) {
   auto& validity = duckdb::FlatVector::ValidityMutable(output);
 
-  return IterateColumn(it, max_rows,
-                       [&](duckdb::idx_t idx, std::string_view value) {
-                         if (value.empty()) {
-                           validity.SetInvalid(idx);
-                           return;
-                         }
-                         DeserializeStructValue(value, output, type, idx);
-                       });
+  return IterateColumn(
+    it, max_rows, [&](duckdb::idx_t idx, std::string_view value) {
+      if (value.empty()) {
+        validity.SetInvalid(idx);
+        for (auto& child : duckdb::StructVector::GetEntries(output)) {
+          NullifyChildAt(child, idx);
+        }
+        return;
+      }
+      DeserializeStructValue(value, output, type, idx);
+    });
 }
 
 duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
@@ -491,6 +530,27 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
         }
       }
     } break;
+    case duckdb::LogicalTypeId::STRUCT: {
+      // Mirror image of WriteStructSubVector: read the per-element length
+      // array, then deserialize each struct slot from its slice. NULL slots
+      // (length=0) recursively nullify the struct's children.
+      const uint8_t* lptr = ptr;
+      ptr += length_array_size;
+      for (uint32_t i = 0; i < elem_count; i++) {
+        auto len = irs::vread<uint32_t>(lptr);
+        if (elem_nulls && !(elem_nulls[i / 8] & (1 << (i % 8)))) {
+          child_validity.SetInvalid(child_offset + i);
+          for (auto& sub : duckdb::StructVector::GetEntries(child)) {
+            NullifyChildAt(sub, child_offset + i);
+          }
+          ptr += len;
+          continue;
+        }
+        auto sv = std::string_view{reinterpret_cast<const char*>(ptr), len};
+        DeserializeStructValue(sv, child, child_type, child_offset + i);
+        ptr += len;
+      }
+    } break;
     default: {
       // Fixed-width types -- dispatch by type to get correct
       // GetDataMutable<T>
@@ -534,6 +594,21 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           break;
         case duckdb::LogicalTypeId::HUGEINT:
           copy_fixed(static_cast<duckdb::hugeint_t*>(nullptr));
+          break;
+        case duckdb::LogicalTypeId::ENUM:
+          switch (duckdb::EnumType::GetPhysicalType(child_type)) {
+            case duckdb::PhysicalType::UINT8:
+              copy_fixed(static_cast<uint8_t*>(nullptr));
+              break;
+            case duckdb::PhysicalType::UINT16:
+              copy_fixed(static_cast<uint16_t*>(nullptr));
+              break;
+            case duckdb::PhysicalType::UINT32:
+              copy_fixed(static_cast<uint32_t*>(nullptr));
+              break;
+            default:
+              SDB_ASSERT(false, "Unsupported ENUM physical type");
+          }
           break;
         default:
           SDB_ASSERT(false, "Unsupported fixed-width element type in list");

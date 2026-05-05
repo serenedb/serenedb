@@ -852,17 +852,17 @@ void DuckDBColumnSerializer::WriteSubVector(
       WriteListSubVector(rdata, offset, count, type);
       break;
     case duckdb::LogicalTypeId::MAP:
-      // TODO: emit MAP as a true sub-vector instead of one element at a time.
-      SDB_ASSERT(count == 1, "MAP sub-vector with count != 1 not supported");
-      WriteMapValue(rdata, offset, type);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        WriteMapValue(rdata, offset + i, type);
+      }
       break;
     case duckdb::LogicalTypeId::STRUCT:
-      SDB_ASSERT(count == 1, "STRUCT sub-vector with count != 1 not supported");
-      WriteStructValue(rdata, offset, type);
+      WriteStructSubVector(rdata, offset, count, type);
       break;
     case duckdb::LogicalTypeId::ARRAY:
-      SDB_ASSERT(count == 1, "ARRAY sub-vector with count != 1 not supported");
-      WriteArrayValue(rdata, offset, type);
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        WriteArrayValue(rdata, offset + i, type);
+      }
       break;
     default:
       SDB_ASSERT(false,
@@ -979,6 +979,59 @@ uint32_t DuckDBColumnSerializer::WriteMapValue(
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(keys_size, header);
   return header_size + keys_size + vals_size;
+}
+
+// Mirror of the variable-length sub-vector format used for VARCHAR: header
+// (count + flags + length_array_size), optional null bitmap, varint length
+// array, then per-element struct bodies (NULL slots contribute 0 bytes).
+void DuckDBColumnSerializer::WriteStructSubVector(
+  const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t offset,
+  duckdb::idx_t count, const duckdb::LogicalType& type) {
+  SDB_ASSERT(count > 0);
+  auto& fmt = rdata.unified;
+  const auto num_children = duckdb::StructType::GetChildTypes(type).size();
+  _row_slices.reserve(_row_slices.size() + 3 + count * (1 + num_children));
+
+  auto header_idx = _row_slices.size();
+  _row_slices.emplace_back();  // header placeholder
+
+  bool have_nulls = WriteNullBitmap(fmt, offset, count);
+
+  auto length_slice_idx = _row_slices.size();
+  _row_slices.emplace_back();  // length array placeholder
+
+  duckdb::unsafe_arena_vector<uint32_t> lengths{_arena};
+  lengths.reserve(count);
+  uint32_t length_array_size = 0;
+
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    uint32_t struct_size = 0;
+    if (!have_nulls ||
+        fmt.validity.RowIsValid(fmt.sel->get_index(offset + i))) {
+      struct_size = WriteStructValue(rdata, offset + i, type);
+    }
+    lengths.push_back(struct_size);
+    length_array_size += irs::bytes_io<uint32_t>::vsize(struct_size);
+  }
+
+  auto* length_buf = Allocate(length_array_size);
+  _row_slices[length_slice_idx] = rocksdb::Slice(length_buf, length_array_size);
+  for (auto len : lengths) {
+    irs::WriteVarint(len, length_buf);
+  }
+
+  auto header_size = irs::bytes_io<uint32_t>::vsize(count) +
+                     sizeof(ValueFlags) +
+                     irs::bytes_io<uint32_t>::vsize(length_array_size);
+  auto* header = Allocate(header_size);
+  _row_slices[header_idx] = rocksdb::Slice(header, header_size);
+  irs::WriteVarint(static_cast<uint32_t>(count), header);
+  auto flags = ValueFlags::HaveLength;
+  if (have_nulls) {
+    flags |= ValueFlags::HaveNulls;
+  }
+  *(header++) = std::bit_cast<char>(flags);
+  irs::WriteVarint(length_array_size, header);
 }
 
 template<typename T>

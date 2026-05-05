@@ -102,6 +102,9 @@ class DuckDBColumnSerializer {
   uint32_t WriteStructValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                             duckdb::idx_t idx,
                             const duckdb::LogicalType& type);
+  void WriteStructSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                            duckdb::idx_t offset, duckdb::idx_t count,
+                            const duckdb::LogicalType& type);
 
   uint32_t WriteArrayValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                            duckdb::idx_t idx, const duckdb::LogicalType& type);

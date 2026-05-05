@@ -474,7 +474,21 @@ void SerializeBool(SerializationContext context,
   }
 }
 
-template<VarFormat Format>
+// Wrap text output in "..." when emitting inside an array. Safe only for types
+// whose textual form never contains '"' or '\\', so no internal escaping is
+// needed (timestamps, intervals).
+template<bool InArray, typename Body>
+void WithArrayWrap(SerializationContext context, Body&& body) {
+  if constexpr (InArray) {
+    context.buffer->WriteUncommitted("\"");
+    body();
+    context.buffer->WriteUncommitted("\"");
+  } else {
+    body();
+  }
+}
+
+template<VarFormat Format, bool InArray>
 void SerializeTimestampSec(SerializationContext context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
@@ -484,14 +498,15 @@ void SerializeTimestampSec(SerializationContext context,
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochSeconds(timestamp.value));
-    context.buffer->WriteUncommitted(str);
+    WithArrayWrap<InArray>(context,
+                           [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               (timestamp.value - kGapSec) * 1'000'000);
   }
 }
 
-template<VarFormat Format>
+template<VarFormat Format, bool InArray>
 void SerializeTimestampMs(SerializationContext context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
@@ -501,14 +516,15 @@ void SerializeTimestampMs(SerializationContext context,
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochMicroSeconds(timestamp.value));
-    context.buffer->WriteUncommitted(str);
+    WithArrayWrap<InArray>(context,
+                           [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               (timestamp.value - kGapMs) * 1000);
   }
 }
 
-template<VarFormat Format>
+template<VarFormat Format, bool InArray>
 void SerializeTimestamp(SerializationContext context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
@@ -517,14 +533,15 @@ void SerializeTimestamp(SerializationContext context,
       .GetData<duckdb::timestamp_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(timestamp);
-    context.buffer->WriteUncommitted(str);
+    WithArrayWrap<InArray>(context,
+                           [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               timestamp.value - kGapUs);
   }
 }
 
-template<VarFormat Format>
+template<VarFormat Format, bool InArray>
 void SerializeTimestampNs(SerializationContext context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
@@ -534,14 +551,15 @@ void SerializeTimestampNs(SerializationContext context,
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochNanoSeconds(timestamp.value));
-    context.buffer->WriteUncommitted(str);
+    WithArrayWrap<InArray>(context,
+                           [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               (timestamp.value - kGapNs) / 1000);
   }
 }
 
-template<VarFormat Format>
+template<VarFormat Format, bool InArray>
 void SerializeTimestampTz(SerializationContext context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
@@ -550,8 +568,10 @@ void SerializeTimestampTz(SerializationContext context,
       .GetData<duckdb::timestamp_tz_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(ts);
-    context.buffer->WriteUncommitted(str);
-    context.buffer->WriteUncommitted("+00");
+    WithArrayWrap<InArray>(context, [&] {
+      context.buffer->WriteUncommitted(str);
+      context.buffer->WriteUncommitted("+00");
+    });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               ts.value - kGapUs);
@@ -910,7 +930,7 @@ void SerializeOidBinary(SerializationContext context,
                             static_cast<int32_t>(oid));
 }
 
-template<VarFormat Format>
+template<VarFormat Format, bool InArray>
 void SerializeInterval(SerializationContext context,
                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
@@ -919,7 +939,8 @@ void SerializeInterval(SerializationContext context,
       .GetData<duckdb::interval_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Interval::ToString(interval);
-    context.buffer->WriteUncommitted(str);
+    WithArrayWrap<InArray>(context,
+                           [&] { context.buffer->WriteUncommitted(str); });
   } else {
     // PG binary: microseconds(8) + days(4) + months(4)
     auto* data = context.buffer->GetContiguousData(16);
@@ -1307,30 +1328,43 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case TIME_TZ:
       RETURN_ARRAY_SERIALIZATION(SerializeTimeTz<VarFormat::Text>,
                                  SerializeTimeTz<VarFormat::Binary>, kTimeTz);
-    case TIMESTAMP_SEC:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampSec<VarFormat::Text>,
-                                 SerializeTimestampSec<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP_MS:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampMs<VarFormat::Text>,
-                                 SerializeTimestampMs<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestamp<VarFormat::Text>,
-                                 SerializeTimestamp<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP_NS:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampNs<VarFormat::Text>,
-                                 SerializeTimestampNs<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP_TZ:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampTz<VarFormat::Text>,
-                                 SerializeTimestampTz<VarFormat::Binary>,
-                                 kTimestampTz);
-    case INTERVAL:
-      RETURN_ARRAY_SERIALIZATION(SerializeInterval<VarFormat::Text>,
-                                 SerializeInterval<VarFormat::Binary>,
-                                 kInterval);
+    case TIMESTAMP_SEC: {
+      static constexpr auto kText =
+        SerializeTimestampSec<VarFormat::Text, true>;
+      static constexpr auto kBinary =
+        SerializeTimestampSec<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP_MS: {
+      static constexpr auto kText = SerializeTimestampMs<VarFormat::Text, true>;
+      static constexpr auto kBinary =
+        SerializeTimestampMs<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP: {
+      static constexpr auto kText = SerializeTimestamp<VarFormat::Text, true>;
+      static constexpr auto kBinary =
+        SerializeTimestamp<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP_NS: {
+      static constexpr auto kText = SerializeTimestampNs<VarFormat::Text, true>;
+      static constexpr auto kBinary =
+        SerializeTimestampNs<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP_TZ: {
+      static constexpr auto kText = SerializeTimestampTz<VarFormat::Text, true>;
+      static constexpr auto kBinary =
+        SerializeTimestampTz<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestampTz);
+    }
+    case INTERVAL: {
+      static constexpr auto kText = SerializeInterval<VarFormat::Text, true>;
+      static constexpr auto kBinary =
+        SerializeInterval<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kInterval);
+    }
     case UUID:
       RETURN_ARRAY_SERIALIZATION(SerializeUuid<VarFormat::Text>,
                                  SerializeUuid<VarFormat::Binary>, kUuid);
@@ -1625,24 +1659,46 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case TIME_TZ:
       RETURN_SERIALIZATION(SerializeTimeTz<VarFormat::Text>,
                            SerializeTimeTz<VarFormat::Binary>);
-    case TIMESTAMP_SEC:
-      RETURN_SERIALIZATION(SerializeTimestampSec<VarFormat::Text>,
-                           SerializeTimestampSec<VarFormat::Binary>);
-    case TIMESTAMP_MS:
-      RETURN_SERIALIZATION(SerializeTimestampMs<VarFormat::Text>,
-                           SerializeTimestampMs<VarFormat::Binary>);
-    case TIMESTAMP:
-      RETURN_SERIALIZATION(SerializeTimestamp<VarFormat::Text>,
-                           SerializeTimestamp<VarFormat::Binary>);
-    case TIMESTAMP_NS:
-      RETURN_SERIALIZATION(SerializeTimestampNs<VarFormat::Text>,
-                           SerializeTimestampNs<VarFormat::Binary>);
-    case TIMESTAMP_TZ:
-      RETURN_SERIALIZATION(SerializeTimestampTz<VarFormat::Text>,
-                           SerializeTimestampTz<VarFormat::Binary>);
-    case INTERVAL:
-      RETURN_SERIALIZATION(SerializeInterval<VarFormat::Text>,
-                           SerializeInterval<VarFormat::Binary>);
+    case TIMESTAMP_SEC: {
+      static constexpr auto kText =
+        SerializeTimestampSec<VarFormat::Text, false>;
+      static constexpr auto kBinary =
+        SerializeTimestampSec<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
+    case TIMESTAMP_MS: {
+      static constexpr auto kText =
+        SerializeTimestampMs<VarFormat::Text, false>;
+      static constexpr auto kBinary =
+        SerializeTimestampMs<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
+    case TIMESTAMP: {
+      static constexpr auto kText = SerializeTimestamp<VarFormat::Text, false>;
+      static constexpr auto kBinary =
+        SerializeTimestamp<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
+    case TIMESTAMP_NS: {
+      static constexpr auto kText =
+        SerializeTimestampNs<VarFormat::Text, false>;
+      static constexpr auto kBinary =
+        SerializeTimestampNs<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
+    case TIMESTAMP_TZ: {
+      static constexpr auto kText =
+        SerializeTimestampTz<VarFormat::Text, false>;
+      static constexpr auto kBinary =
+        SerializeTimestampTz<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
+    case INTERVAL: {
+      static constexpr auto kText = SerializeInterval<VarFormat::Text, false>;
+      static constexpr auto kBinary =
+        SerializeInterval<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
     case UUID:
       RETURN_SERIALIZATION(SerializeUuid<VarFormat::Text>,
                            SerializeUuid<VarFormat::Binary>);

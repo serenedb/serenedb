@@ -54,6 +54,7 @@
 #include "catalog/object.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -254,6 +255,7 @@ class OpenDatabase {
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
+  Result RegisterSequences(ObjectId database_id, ObjectId schema_id);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
@@ -394,6 +396,21 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
+Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitDefinitions(
+    schema_id, ObjectType::Sequence,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
+                                                .database_id = db_id,
+                                                .schema_id = schema_id});
+      if (!seq) {
+        return ErrorMeta(ERROR_INTERNAL, "sequence",
+                         "Failed to read sequence definition", slice);
+      }
+      return _catalog.RegisterSequence(db_id, schema_id, std::move(seq));
+    });
+}
+
 Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlType,
@@ -531,6 +548,9 @@ Result OpenDatabase::AddRoles() {
 
 Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
                               ObjectId table_id, std::shared_ptr<Table> table) {
+  // Restore schema_id on the table object (Table.WriteInternal does not
+  // serialize it). LocalCatalog::CreateTable does the same on the live path.
+  table->SetSchemaId(schema_id);
   auto r = _catalog.RegisterTable(db_id, schema_id, std::move(table));
   if (!r.ok()) {
     return r;
@@ -613,6 +633,11 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
     return r;
   }
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  // Sequences are loaded before tables so the TableDependency::pk_sequence_id
+  // edge is well-defined when inserts later look up the sequence.
+  if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
     return r;
   }
   if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {

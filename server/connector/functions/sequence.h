@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -20,32 +20,14 @@
 
 #pragma once
 
-namespace sdb::catalog {
+#include <duckdb/main/database.hpp>
 
-struct Snapshot;
+namespace sdb::connector {
 
-class SchemaObject;
-class PgSqlFunction;
-class Table;
-class Role;
-class PgSqlView;
-class Sequence;
-class Index;
-class Schema;
-class Database;
-struct FunctionSignature;
-struct CreateTableOptions;
-struct CreateTableRequest;
-class VirtualTable;
-class VirtualTableSnapshot;
+// Registers nextval / currval / setval scalar functions backed by
+// catalog::Sequence (Definitions CF) and per-sequence counters in the
+// Sequences CF (RocksDBSequenceManager). These shadow DuckDB's built-in
+// in-memory sequence functions.
+void RegisterSequenceFunctions(duckdb::DatabaseInstance& db);
 
-}  // namespace sdb::catalog
-namespace sdb {
-
-class TableShard;
-class KeyGenerator;
-struct ShardingStrategy;
-struct TableOptions;
-class ObjectId;
-
-}  // namespace sdb
+}  // namespace sdb::connector

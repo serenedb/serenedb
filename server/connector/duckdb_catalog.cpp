@@ -68,7 +68,6 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-
 namespace sdb::connector {
 namespace {
 
@@ -245,6 +244,12 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case TYPE_ENTRY:
       r = catalog.DropType(info.catalog, info.schema, info.name);
       break;
+    case SEQUENCE_ENTRY: {
+      bool if_exists =
+        info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+      r = catalog.DropSequence(info.catalog, info.schema, info.name, if_exists);
+      break;
+    }
     case SCHEMA_ENTRY:
       if (info.name == StaticStrings::kPgCatalogSchema ||
           info.name == StaticStrings::kInformationSchema) {

@@ -224,7 +224,7 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
   std::string key_buffer;
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      pk_formats, gstate.pk_columns, row, gstate.table_key,
+      pk_formats, gstate.pk_columns, row, /*generated_id*/ 0, gstate.table_key,
       [&](std::string_view row_key) {
         auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
         if (!status.ok()) {

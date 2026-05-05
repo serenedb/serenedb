@@ -27,6 +27,7 @@
 #include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -47,6 +48,7 @@
 #include "catalog/function.h"
 #include "catalog/index.h"
 #include "catalog/secondary_index.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/user_type.h"
@@ -55,6 +57,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -103,14 +106,56 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   catalog::CreateTableRequest request;
   request.name = table_info.table;
 
-  // Convert columns (Logical includes generated columns)
+  // Convert columns (Logical includes generated columns).
+  // PG SERIAL/BIGSERIAL/SMALLSERIAL are exposed as alias-bearing logical
+  // types (INTEGER/BIGINT/SMALLINT with the alias preserved). We expand
+  // them here the way PG's parse_utilcmd transformColumnDefinition does:
+  //   * strip the alias and use the integer base type for storage,
+  //   * generate the implicit sequence "<table>_<col>_seq" and emit it
+  //     to be created before the table,
+  //   * inject a DEFAULT nextval('<seq>') expression,
+  //   * mark the column NOT NULL.
+  struct SerialPending {
+    duckdb::idx_t col_idx;      // column position in request.columns
+    std::string sequence_name;  // bare sequence identifier
+  };
+  std::vector<SerialPending> serial_pending;
+
   catalog::Column::Id next_col_id = 0;
   for (auto& col : table_info.columns.Logical()) {
     catalog::Column sdb_col;
     sdb_col.id = next_col_id++;
     sdb_col.name = col.Name();
     sdb_col.type = col.Type();
-    if (col.Generated()) {
+
+    // SERIAL family detection -- check first so the alias is gone before we
+    // store sdb_col.type in the catalog.
+    bool is_serial = pg::IsSerial(sdb_col.type) ||
+                     pg::IsBigserial(sdb_col.type) ||
+                     pg::IsSmallserial(sdb_col.type);
+    if (is_serial) {
+      // Strip the PG alias and store the bare integer type.
+      duckdb::LogicalType base{sdb_col.type.id()};
+      sdb_col.type = base;
+
+      auto sequence_name =
+        absl::StrCat(table_info.table, "_", sdb_col.name, "_seq");
+
+      // DEFAULT nextval('<schema>.<seq>') -- qualify with the schema so the
+      // table can live in any schema and still resolve correctly.
+      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
+      args.emplace_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+        duckdb::Value(absl::StrCat(name, ".", sequence_name))));
+      auto default_expr = duckdb::make_uniq<duckdb::FunctionExpression>(
+        std::string{"nextval"}, std::move(args));
+      sdb_col.expr = std::make_shared<ColumnExpr>(std::move(default_expr));
+
+      serial_pending.push_back(SerialPending{
+        .col_idx = static_cast<duckdb::idx_t>(request.columns.size()),
+        .sequence_name = std::move(sequence_name),
+      });
+      // NOT NULL is added below in the constraint pass via append_not_null.
+    } else if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
       sdb_col.expr =
         std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
@@ -259,6 +304,11 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
   }
 
+  // SERIAL columns implicitly carry NOT NULL.
+  for (const auto& sp : serial_pending) {
+    append_not_null(sp.col_idx);
+  }
+
   // Get database info
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
@@ -280,6 +330,30 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
+
+  // Create the implicit sequences for each SERIAL column BEFORE the table.
+  // PG semantics: the sequence is owned by the column (OWNED BY ...), so we
+  // create with default options and idempotent IF NOT EXISTS so re-running
+  // CREATE TABLE IF NOT EXISTS is well-behaved. Cascade-drop on DROP TABLE
+  // is a follow-up (no OWNED BY metadata yet).
+  for (const auto& sp : serial_pending) {
+    auto seq = std::make_shared<catalog::Sequence>(database_id, ObjectId{},
+                                                   ObjectId{}, sp.sequence_name,
+                                                   catalog::SequenceOptions{});
+    auto sr = catalog_impl.CreateSequence(database_id, name, seq,
+                                          /*if_not_exists=*/true);
+    if (!sr.ok()) {
+      SDB_THROW(std::move(sr));
+    }
+    if (seq->GetId().isSet()) {
+      // Newly created (not pre-existing): seed the counter so the first
+      // nextval emits start_value (= 1 by default).
+      const auto& opts = seq->Options();
+      auto seed = static_cast<uint64_t>(opts.start_value) -
+                  static_cast<uint64_t>(opts.increment);
+      seq->Write(seed);
+    }
+  }
 
   r =
     catalog_impl.CreateTable(database_id, name, std::move(options), op_options);
@@ -550,7 +624,46 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateView(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   duckdb::CatalogTransaction transaction, duckdb::CreateSequenceInfo& info) {
-  throw duckdb::NotImplementedException("CREATE SEQUENCE through DuckDB");
+  auto database_id = GetDatabaseId();
+
+  catalog::SequenceOptions opts;
+  opts.start_value = info.start_value;
+  opts.increment = info.increment;
+  opts.min_value = info.min_value;
+  opts.max_value = info.max_value;
+  opts.cycle = info.cycle;
+  opts.cache_size = 1;  // DuckDB CreateSequenceInfo has no CACHE field
+
+  bool if_not_exists =
+    info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
+
+  // Schema id is set inside LocalCatalog::CreateSequence after resolving
+  // the schema name; pass empty for now.
+  auto sequence = std::make_shared<catalog::Sequence>(
+    database_id, ObjectId{}, ObjectId{}, info.name, opts);
+
+  auto& catalog_impl =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto r =
+    catalog_impl.CreateSequence(database_id, name, sequence, if_not_exists);
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("relation \"", info.name, "\" already exists"));
+  }
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+
+  // If the catalog::Sequence was newly registered, seed its counter so the
+  // first nextval emits start_value (we initialise to start - increment so
+  // Reserve(increment) post-merge yields start). Skip for the IF NOT EXISTS
+  // pre-existing case (sequence->GetId() will be unset).
+  if (sequence->GetId().isSet()) {
+    auto seed = static_cast<uint64_t>(opts.start_value) -
+                static_cast<uint64_t>(opts.increment);
+    sequence->Write(seed);
+  }
+  return nullptr;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry>

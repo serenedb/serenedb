@@ -34,6 +34,7 @@
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -60,6 +61,8 @@ class LocalCatalog final : public LogicalCatalog,
                         std::shared_ptr<Schema> schema) final;
   Result RegisterView(ObjectId schema_id,
                       std::shared_ptr<PgSqlView> view) final;
+  Result RegisterSequence(ObjectId database_id, ObjectId schema_id,
+                          std::shared_ptr<Sequence> sequence) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<PgSqlFunction> function) final;
   Result RegisterTokenizer(ObjectId database_id, ObjectId schema_id,
@@ -77,6 +80,9 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
                     std::shared_ptr<PgSqlView> view, bool replace) final;
+  Result CreateSequence(ObjectId database_id, std::string_view schema,
+                        std::shared_ptr<Sequence> sequence,
+                        bool if_not_exists) final;
   Result CreateSchema(ObjectId database_id,
                       std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
@@ -124,6 +130,8 @@ class LocalCatalog final : public LogicalCatalog,
                     bool cascade) final;
   Result DropView(std::string_view database, std::string_view schema,
                   std::string_view name) final;
+  Result DropSequence(std::string_view database, std::string_view schema,
+                      std::string_view name, bool if_exists) final;
   Result DropType(std::string_view database, std::string_view schema,
                   std::string_view name) final;
   Result DropFunction(std::string_view database, std::string_view schema,

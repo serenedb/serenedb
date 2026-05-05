@@ -1,0 +1,174 @@
+statement ok
+CREATE SEQUENCE seq_a;
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+1
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+2
+
+
+query
+SELECT currval('seq_a');
+----
+currval
+2
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+3
+
+
+# setval with default is_called=true: next nextval returns value+1.
+query
+SELECT setval('seq_a', 100);
+----
+setval
+100
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+101
+
+
+# setval(seq, val, is_called=false): next nextval returns val.
+query
+SELECT setval('seq_a', 50, false);
+----
+setval
+50
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+50
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+51
+
+
+# DROP SEQUENCE removes it; subsequent nextval should fail.
+statement ok
+DROP SEQUENCE seq_a;
+
+
+statement error
+SELECT nextval('seq_a');
+
+
+# IF EXISTS swallows the error.
+statement ok
+DROP SEQUENCE IF EXISTS seq_a;
+
+
+# Custom START / INCREMENT.
+statement ok
+CREATE SEQUENCE seq_b START WITH 100 INCREMENT BY 5;
+
+
+query
+SELECT nextval('seq_b');
+----
+nextval
+100
+
+
+query
+SELECT nextval('seq_b');
+----
+nextval
+105
+
+
+query
+SELECT nextval('seq_b');
+----
+nextval
+110
+
+
+statement ok
+DROP SEQUENCE seq_b;
+
+
+# Sequence used as a column DEFAULT for a primary key (the SERIAL replacement
+# until parser-level SERIAL support lands).
+statement ok
+CREATE SEQUENCE users_id_seq;
+
+
+statement ok
+CREATE TABLE users (
+  id BIGINT NOT NULL DEFAULT nextval('users_id_seq') PRIMARY KEY,
+  name VARCHAR
+);
+
+
+statement count 1
+INSERT INTO users (name) VALUES ('alice');
+
+
+statement count 1
+INSERT INTO users (name) VALUES ('bob');
+
+
+query
+SELECT id, name FROM users ORDER BY id;
+----
+id	name
+1	alice
+2	bob
+
+
+statement ok
+DROP TABLE users;
+
+
+statement ok
+DROP SEQUENCE users_id_seq;
+
+
+# IF NOT EXISTS.
+statement ok
+CREATE SEQUENCE seq_c;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS seq_c;
+
+
+statement ok
+DROP SEQUENCE seq_c;
+
+
+# currval before any nextval errors out.
+statement ok
+CREATE SEQUENCE seq_d;
+
+
+statement error
+SELECT currval('seq_d');
+
+
+statement ok
+DROP SEQUENCE seq_d;

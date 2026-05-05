@@ -34,6 +34,7 @@
 #include "pg/connection_context.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
+#include "catalog/sequence.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -68,6 +69,9 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   state.table_id = table.GetId();
   state.table_key = key_utils::PrepareTableKey(state.table_id);
   state.pk_columns = duckdb_primary_key::BuildPKColumns(table);
+  state.has_generated_pk = table.PKColumns().empty();
+  // generated_pk_seq is wired in GetGlobalSinkState where the catalog snapshot
+  // is available -- sequence lookup is by name in the snapshot.
 
   // Build column metadata -- skip generated PK and virtual generated columns
   const auto& columns = table.Columns();
@@ -143,6 +147,15 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
+  if (state->has_generated_pk) {
+    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+    std::string seq_name = absl::StrCat(_table->GetName(), "_pkey_seq");
+    auto seq = snapshot->GetSequence(_table->GetDatabaseId(),
+                                     _table->GetSchemaId(), seq_name);
+    SDB_ASSERT(seq);
+    state->generated_pk_seq = std::move(seq);
+  }
+
   return state;
 }
 
@@ -167,10 +180,13 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
+  uint64_t generated_pk_base =
+    gstate.has_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
+
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     duckdb_primary_key::MakeColumnKey(
-      pk_formats, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-      gstate.row_keys.emplace_back());
+      pk_formats, gstate.pk_columns, row, generated_pk_base + row,
+      gstate.table_key, [](auto) {}, gstate.row_keys.emplace_back());
   }
 
   // Write each column to its SST file

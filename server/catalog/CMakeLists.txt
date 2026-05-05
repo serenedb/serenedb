@@ -15,6 +15,7 @@ target_sources(
         table.cpp
         index.cpp
         view.cpp
+        sequence.cpp
         function.cpp
         user_type.cpp
         sharding_strategy.cpp

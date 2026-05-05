@@ -1,0 +1,119 @@
+# PG-style SERIAL / BIGSERIAL / SMALLSERIAL pseudo-types. SerenebDB rewrites
+# the column at the SQL-string layer (see server/pg/serial_rewriter.cpp)
+# into "<base-int> NOT NULL DEFAULT nextval('<table>_<col>_seq')" plus an
+# implicit CREATE SEQUENCE IF NOT EXISTS. Drop cascades the sequence with
+# the table.
+
+statement ok
+CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 1
+INSERT INTO users (name) VALUES ('alice');
+
+
+statement count 1
+INSERT INTO users (name) VALUES ('bob');
+
+
+statement count 1
+INSERT INTO users (name) VALUES ('carol');
+
+
+query
+SELECT id, name FROM users ORDER BY id;
+----
+id	name
+1	alice
+2	bob
+3	carol
+
+
+# Multi-row INSERT must increment per row, not once per statement.
+statement count 2
+INSERT INTO users (name) VALUES ('dave'), ('eve');
+
+
+query
+SELECT id, name FROM users ORDER BY id;
+----
+id	name
+1	alice
+2	bob
+3	carol
+4	dave
+5	eve
+
+
+statement ok
+DROP TABLE users;
+
+
+# DROP TABLE does NOT (yet) cascade the SERIAL-implied sequence -- PG's
+# OWNED BY semantics is a deferred follow-up. The rewriter emits CREATE
+# SEQUENCE IF NOT EXISTS so re-creating the same-shaped table reuses the
+# existing counter (next id picks up where the dropped table left off).
+statement ok
+CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 1
+INSERT INTO users (name) VALUES ('one');
+
+
+# Counter continues from where the previous table left off.
+query
+SELECT id, name FROM users;
+----
+id	name
+6	one
+
+
+statement ok
+DROP TABLE users;
+
+
+statement ok
+DROP SEQUENCE users_id_seq;
+
+
+# BIGSERIAL → BIGINT-backed.
+statement ok
+CREATE TABLE big (id BIGSERIAL PRIMARY KEY, x INT);
+
+
+statement count 2
+INSERT INTO big (x) VALUES (10), (20);
+
+
+query
+SELECT id, x FROM big ORDER BY id;
+----
+id	x
+1	10
+2	20
+
+
+statement ok
+DROP TABLE big;
+
+
+# SMALLSERIAL → SMALLINT-backed.
+statement ok
+CREATE TABLE small (id SMALLSERIAL PRIMARY KEY, y INT);
+
+
+statement count 2
+INSERT INTO small (y) VALUES (100), (200);
+
+
+query
+SELECT id, y FROM small ORDER BY id;
+----
+id	y
+1	100
+2	200
+
+
+statement ok
+DROP TABLE small;

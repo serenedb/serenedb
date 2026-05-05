@@ -28,7 +28,6 @@
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
-#include "catalog/identifiers/revision_id.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
@@ -85,26 +84,27 @@ inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
   }
 }
 
-// Generate a monotonic PK (for tables without explicit PK).
-inline void CreateGenerated(std::string& key) {
-  auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
-  primary_key::AppendSigned(key, generated_pk);
+// Append a precomputed generated PK id (sortable signed encoding) onto `key`.
+// Caller is responsible for reserving the id from the table's catalog::Sequence.
+inline void AppendGenerated(std::string& key, uint64_t generated_id) {
+  primary_key::AppendSigned(key, std::bit_cast<int64_t>(generated_id));
 }
 
 // Build PK keys for all rows in a DataChunk.
 // For explicit PKs: encodes from input columns.
-// For generated PKs (pk_columns empty): generates monotonic IDs.
+// For generated PKs (pk_columns empty): assigns ids from [generated_pk_base,
+// generated_pk_base + num_rows). Caller must have reserved that range.
 inline void CreateBatch(const duckdb::DataChunk& chunk,
                         std::span<const PKColumn> pk_columns,
+                        uint64_t generated_pk_base,
                         std::vector<std::string>& keys) {
   const auto num_rows = chunk.size();
   keys.resize(num_rows);
 
   if (pk_columns.empty()) {
-    // Generated PKs -- monotonic
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       keys[row].clear();
-      CreateGenerated(keys[row]);
+      AppendGenerated(keys[row], generated_pk_base + row);
     }
   } else {
     // Explicit PKs from input columns
@@ -124,20 +124,22 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
 // Final layout: [ObjectId][ColumnId(reserved)][PK bytes].
 // Use key_utils::SetupColumnForKey() to fill in ColumnId per column -- no copy.
 //
-// `pk_formats` must be pre-built via PreparePKFormats once per chunk; it
-// is unused (and may be empty) when pk_columns is empty.
+// `pk_formats` must be pre-built via PreparePKFormats once per chunk; it is
+// unused (and may be empty) when pk_columns is empty. `generated_id` is
+// consulted only when `pk_columns` is empty -- the caller must reserve it
+// from the table's catalog::Sequence first.
 template<typename Func>
 void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
                    std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
-                   std::string_view object_id, Func&& row_key_handle,
-                   std::string& key_buffer) {
+                   uint64_t generated_id, std::string_view object_id,
+                   Func&& row_key_handle, std::string& key_buffer) {
   SDB_ASSERT(object_id.size() == sizeof(ObjectId));
   basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
   std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
               sizeof(ObjectId));
 
   if (pk_columns.empty()) {
-    CreateGenerated(key_buffer);
+    AppendGenerated(key_buffer, generated_id);
   } else {
     Create(pk_formats, pk_columns, row_idx, key_buffer);
   }

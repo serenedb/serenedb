@@ -41,6 +41,7 @@
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -94,6 +95,8 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::InvertedIndex;
   } else if constexpr (std::is_same_v<T, Tokenizer>) {
     return ObjectType::Tokenizer;
+  } else if constexpr (std::is_same_v<T, Sequence>) {
+    return ObjectType::Sequence;
   } else {
     static_assert(false);
   }
@@ -158,6 +161,8 @@ struct Snapshot {
   virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
                                           std::string_view schema,
                                           std::string_view name) const = 0;
+  virtual std::shared_ptr<Sequence> GetSequence(
+    ObjectId database, ObjectId schema_id, std::string_view name) const = 0;
   virtual bool HasIndexes(ObjectId relation_id) const = 0;
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
@@ -222,6 +227,9 @@ struct LogicalCatalog {
                                 std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result RegisterView(ObjectId schema_id,
                               std::shared_ptr<catalog::PgSqlView> view) = 0;
+  virtual Result RegisterSequence(
+    ObjectId database_id, ObjectId schema_id,
+    std::shared_ptr<catalog::Sequence> sequence) = 0;
   virtual Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                                std::shared_ptr<Table> table) = 0;
   virtual Result RegisterTableShard(std::shared_ptr<TableShard> shard) = 0;
@@ -245,6 +253,9 @@ struct LogicalCatalog {
   virtual Result CreateView(ObjectId database_id, std::string_view schema,
                             std::shared_ptr<catalog::PgSqlView> view,
                             bool replace) = 0;
+  virtual Result CreateSequence(ObjectId database_id, std::string_view schema,
+                                std::shared_ptr<catalog::Sequence> sequence,
+                                bool if_not_exists) = 0;
   virtual Result CreateFunction(
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::PgSqlFunction> function, bool replace) = 0;
@@ -302,6 +313,9 @@ struct LogicalCatalog {
                                std::string_view name) = 0;
   virtual Result DropView(std::string_view database, std::string_view schema,
                           std::string_view name) = 0;
+  virtual Result DropSequence(std::string_view database,
+                              std::string_view schema, std::string_view name,
+                              bool if_exists) = 0;
   virtual Result DropType(std::string_view database, std::string_view schema,
                           std::string_view name) = 0;
   virtual Result DropTable(std::string_view database, std::string_view schema,

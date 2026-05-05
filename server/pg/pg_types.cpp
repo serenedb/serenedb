@@ -38,6 +38,7 @@
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/parse_array.h"
+#include "pg/parse_record.h"
 #include "pg/serialize.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
@@ -997,99 +998,40 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
       return duckdb::Value::ENUM(static_cast<uint64_t>(pos), type);
     }
     case STRUCT: {
-      // PG composite text: "(field1,field2,...)". An empty unquoted field
-      // is NULL; "..." is a quoted field with "" -> ", \" -> ", \\ -> \.
-      auto trimmed = data;
-      while (!trimmed.empty() && absl::ascii_isspace(trimmed.front())) {
-        trimmed.remove_prefix(1);
-      }
-      while (!trimmed.empty() && absl::ascii_isspace(trimmed.back())) {
-        trimmed.remove_suffix(1);
-      }
-      if (trimmed.size() < 2 || trimmed.front() != '(' ||
-          trimmed.back() != ')') {
-        return MakeInvalid();
-      }
-      trimmed.remove_prefix(1);
-      trimmed.remove_suffix(1);
-
       const auto& children = duckdb::StructType::GetChildTypes(type);
       duckdb::child_list_t<duckdb::Value> fields;
       fields.reserve(children.size());
+      std::optional<DeserializeError> error;
 
-      if (trimmed.empty() && children.empty()) {
-        return duckdb::Value::STRUCT(std::move(fields));
-      }
-      if (children.empty()) {
-        return MakeInvalid();
-      }
-
-      size_t i = 0;
-      size_t field_idx = 0;
-      while (true) {
-        if (field_idx >= children.size()) {
-          return MakeInvalid();
-        }
-        const auto& child_type = children[field_idx].second;
-        const auto& child_name = children[field_idx].first;
-
-        std::string token;
-        bool is_null = false;
-        if (i < trimmed.size() && trimmed[i] == '"') {
-          ++i;
-          while (i < trimmed.size()) {
-            if (trimmed[i] == '"') {
-              if (i + 1 < trimmed.size() && trimmed[i + 1] == '"') {
-                token += '"';
-                i += 2;
-              } else {
-                ++i;
-                break;
-              }
-            } else if (trimmed[i] == '\\' && i + 1 < trimmed.size()) {
-              token += trimmed[i + 1];
-              i += 2;
-            } else {
-              token += trimmed[i];
-              ++i;
-            }
+      ParsePgTextRecord(
+        data,
+        [&](std::string_view token, bool is_null) {
+          if (error) {
+            return;
           }
-        } else {
-          while (i < trimmed.size() && trimmed[i] != ',') {
-            if (trimmed[i] == '\\' && i + 1 < trimmed.size()) {
-              token += trimmed[i + 1];
-              i += 2;
-            } else {
-              token += trimmed[i];
-              ++i;
-            }
+          if (fields.size() >= children.size()) {
+            error = DeserializeError::InvalidRepresentation;
+            return;
           }
-          if (token.empty()) {
-            is_null = true;
+          const auto& [child_name, child_type] = children[fields.size()];
+          if (is_null) {
+            fields.emplace_back(child_name, duckdb::Value{child_type});
+            return;
           }
-        }
-
-        if (is_null) {
-          fields.emplace_back(child_name, duckdb::Value{child_type});
-        } else {
           auto field = DeserializeTextParameter(child_type, token, snapshot);
           if (!field) {
-            return std::unexpected{field.error()};
+            error = field.error();
+            return;
           }
           fields.emplace_back(child_name, std::move(*field));
-        }
-        ++field_idx;
-
-        if (i >= trimmed.size()) {
-          break;
-        }
-        if (trimmed[i] != ',') {
-          return MakeInvalid();
-        }
-        ++i;
+        },
+        [&](std::string_view) {
+          error = DeserializeError::InvalidRepresentation;
+        });
+      if (error) {
+        return std::unexpected{*error};
       }
-
-      if (field_idx != children.size()) {
+      if (fields.size() != children.size()) {
         return MakeInvalid();
       }
       return duckdb::Value::STRUCT(std::move(fields));

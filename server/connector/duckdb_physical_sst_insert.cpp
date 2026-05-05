@@ -140,6 +140,10 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   // Create index writers
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::unique_lock{state->table_shard->GetTableLock()};
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 

@@ -1,0 +1,157 @@
+control substitution on
+
+# WAL index recovery: TRUNCATE on one table must not affect another.
+#
+# Two tables, each with its own inverted index. We TRUNCATE only one of them
+# and write more rows to both. After restart the truncated table must be
+# wiped, the untruncated table must keep its pre-recovery seed AND its
+# WAL-only writes. Verifies the recovery handler's per-table dispatch via
+# `_table2shards.find(id)` does not collateral-damage other shards.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vedernikoff_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE vedernikoff_keep(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE vedernikoff_drop(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO vedernikoff_keep VALUES (1, 'keep seed alpha'), (2, 'keep seed bravo');
+
+statement ok
+INSERT INTO vedernikoff_drop VALUES (1, 'drop seed charlie'), (2, 'drop seed delta');
+
+statement ok
+CREATE INDEX vedernikoff_keep_idx ON vedernikoff_keep USING inverted(id, body vedernikoff_dict);
+
+statement ok
+CREATE INDEX vedernikoff_drop_idx ON vedernikoff_drop USING inverted(id, body vedernikoff_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff_keep;
+
+statement ok
+VACUUM (UPDATE_INDEXES) vedernikoff_drop;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Pre-truncate WAL-only writes for both tables.
+statement ok
+INSERT INTO vedernikoff_keep VALUES (3, 'keep wal echo'), (4, 'keep wal foxtrot');
+
+statement ok
+INSERT INTO vedernikoff_drop VALUES (3, 'drop wal echo'), (4, 'drop wal foxtrot');
+
+# Truncate only one table.
+statement ok
+TRUNCATE vedernikoff_drop;
+
+# Post-truncate writes for both tables.
+statement ok
+INSERT INTO vedernikoff_keep VALUES (10, 'keep post golf');
+
+statement ok
+INSERT INTO vedernikoff_drop VALUES (10, 'drop post hotel');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection vedernikoff_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Untruncated table: seed + WAL-only + post writes all present.
+connection vedernikoff_after
+query
+SELECT id, body FROM vedernikoff_keep ORDER BY id;
+----
+id	body
+1	keep seed alpha
+2	keep seed bravo
+3	keep wal echo
+4	keep wal foxtrot
+10	keep post golf
+
+connection vedernikoff_after
+query
+SELECT id FROM vedernikoff_keep_idx WHERE body @@ ts_phrase('keep seed alpha');
+----
+id
+1
+
+connection vedernikoff_after
+query
+SELECT id FROM vedernikoff_keep_idx WHERE body @@ ts_phrase('keep wal echo');
+----
+id
+3
+
+connection vedernikoff_after
+query
+SELECT id FROM vedernikoff_keep_idx WHERE body @@ ts_phrase('keep post golf');
+----
+id
+10
+
+# Truncated table: only the post-truncate row.
+connection vedernikoff_after
+query
+SELECT id, body FROM vedernikoff_drop ORDER BY id;
+----
+id	body
+10	drop post hotel
+
+connection vedernikoff_after
+query
+SELECT id FROM vedernikoff_drop_idx WHERE body @@ ts_phrase('drop seed charlie');
+----
+id
+
+connection vedernikoff_after
+query
+SELECT id FROM vedernikoff_drop_idx WHERE body @@ ts_phrase('drop wal echo');
+----
+id
+
+connection vedernikoff_after
+query
+SELECT id FROM vedernikoff_drop_idx WHERE body @@ ts_phrase('drop post hotel');
+----
+id
+10
+
+connection vedernikoff_after
+statement ok
+DROP INDEX vedernikoff_keep_idx;
+
+connection vedernikoff_after
+statement ok
+DROP INDEX vedernikoff_drop_idx;
+
+connection vedernikoff_after
+statement ok
+DROP TABLE vedernikoff_keep;
+
+connection vedernikoff_after
+statement ok
+DROP TABLE vedernikoff_drop;
+
+connection vedernikoff_after
+statement ok
+DROP TEXT SEARCH DICTIONARY vedernikoff_dict;

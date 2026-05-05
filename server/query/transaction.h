@@ -88,6 +88,10 @@ class Transaction : public Config {
 
   rocksdb::Transaction& EnsureRocksDBTransaction();
 
+  void EraseSearchTransaction(ObjectId shard_id) noexcept {
+    _search_transactions.erase(shard_id);
+  }
+
   const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
 
   const rocksdb::Snapshot& EnsureRocksDBSnapshot();

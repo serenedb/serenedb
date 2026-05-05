@@ -1,0 +1,184 @@
+control substitution on
+
+# WAL index recovery: stress -- many truncates interleaved with many writes.
+#
+# Six round-trips of (insert burst, delete subset, truncate). Each round
+# inserts a batch large enough to cross the per-shard `kFlushThreshold`
+# boundary so the recovery's accumulator gets flushed mid-replay, then a
+# truncate that must reset the in-flight state cleanly. After the final
+# truncate, a fresh post-truncate burst is the only thing that should be
+# searchable on restart.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivanov_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE ivanov_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement count 200
+INSERT INTO ivanov_t
+SELECT x, 'seed pre x' || x::TEXT FROM generate_series(1, 200) AS t(x);
+
+statement ok
+CREATE INDEX ivanov_idx ON ivanov_t USING inverted(id, body ivanov_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) ivanov_t;
+
+# Sanity before stress.
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('seed pre');
+----
+count
+200
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# round 1
+statement count 800
+INSERT INTO ivanov_t
+SELECT 1000 + x, 'round1 mid ' || x::TEXT FROM generate_series(1, 800) AS t(x);
+
+statement ok
+DELETE FROM ivanov_t WHERE id BETWEEN 1001 AND 1100;
+
+statement ok
+TRUNCATE ivanov_t;
+
+# round 2
+statement count 600
+INSERT INTO ivanov_t
+SELECT 2000 + x, 'round2 mid ' || x::TEXT FROM generate_series(1, 600) AS t(x);
+
+statement ok
+TRUNCATE ivanov_t;
+
+# round 3
+statement count 1500
+INSERT INTO ivanov_t
+SELECT 3000 + x, 'round3 mid ' || x::TEXT FROM generate_series(1, 1500) AS t(x);
+
+statement ok
+DELETE FROM ivanov_t WHERE id BETWEEN 3001 AND 3500;
+
+statement ok
+TRUNCATE ivanov_t;
+
+# round 4 -- empty truncate (no inserts before truncate after a fresh truncate)
+statement ok
+TRUNCATE ivanov_t;
+
+# round 5
+statement count 1200
+INSERT INTO ivanov_t
+SELECT 5000 + x, 'round5 mid ' || x::TEXT FROM generate_series(1, 1200) AS t(x);
+
+statement ok
+TRUNCATE ivanov_t;
+
+# round 6 -- final survivors
+statement count 700
+INSERT INTO ivanov_t
+SELECT 9000 + x, 'final survivor ' || x::TEXT FROM generate_series(1, 700) AS t(x);
+
+statement ok
+DELETE FROM ivanov_t WHERE id BETWEEN 9001 AND 9100;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection ivanov_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Rocksdb side: 700 - 100 deleted = 600 rows.
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_t;
+----
+count
+600
+
+# Pre-truncate phrases must all be gone.
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('seed pre');
+----
+count
+0
+
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('round1 mid');
+----
+count
+0
+
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('round2 mid');
+----
+count
+0
+
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('round3 mid');
+----
+count
+0
+
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('round5 mid');
+----
+count
+0
+
+# Final-round survivors -- 700 inserted, 100 deleted, 600 left.
+connection ivanov_after
+query
+SELECT count(*) FROM ivanov_idx WHERE body @@ ts_phrase('final survivor');
+----
+count
+600
+
+# Spot-check a still-alive id and a deleted id.
+connection ivanov_after
+query
+SELECT id FROM ivanov_idx WHERE body @@ ts_phrase('final survivor 200');
+----
+id
+9200
+
+connection ivanov_after
+query
+SELECT id FROM ivanov_idx WHERE body @@ ts_phrase('final survivor 50');
+----
+id
+
+connection ivanov_after
+statement ok
+DROP INDEX ivanov_idx;
+
+connection ivanov_after
+statement ok
+DROP TABLE ivanov_t;
+
+connection ivanov_after
+statement ok
+DROP TEXT SEARCH DICTIONARY ivanov_dict;

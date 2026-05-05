@@ -20,9 +20,13 @@
 
 #include "connector/duckdb_physical_delete.h"
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
+#include <shared_mutex>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_primary_key.h"
@@ -34,6 +38,7 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -59,6 +64,9 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   // Reusable buffers
   std::vector<std::string> row_keys;
+
+  std::shared_ptr<TableShard> table_shard;
+  std::shared_lock<std::shared_mutex> table_lock;
 };
 
 struct SereneDBDeleteSourceState : public duckdb::GlobalSourceState {
@@ -88,6 +96,12 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
 
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
+
+  auto& conn_ctx = GetSereneDBContext(context);
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
 
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
@@ -119,7 +133,6 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     });
   }
 
-  auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.AddRocksDBWrite();
   state->txn = &conn_ctx.EnsureRocksDBTransaction();
 

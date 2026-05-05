@@ -757,7 +757,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
       return;
     }
     auto& next = stmt.extracted[stmt.current_stmt_idx];
-    stmt.prepared = _duckdb_conn->Prepare(next->query);
+    stmt.prepared = _duckdb_conn->Prepare(std::move(next));
     if (stmt.prepared->HasError()) {
       SendError(stmt.prepared->GetErrorObject());
       return;
@@ -1063,7 +1063,6 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
     }
   }
 
-  // Prepare via DuckDB instead of libpg_query + Velox
   auto& stmt = (it == _statements.end()) ? _anonymous_statement : it->second;
   stmt.Reset();
   stmt.prepared = _duckdb_conn->Prepare(std::string{_current_query});

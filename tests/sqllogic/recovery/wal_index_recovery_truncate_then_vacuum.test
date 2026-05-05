@@ -1,0 +1,138 @@
+control substitution on
+
+# WAL index recovery: VACUUM (UPDATE_INDEXES) AFTER a TRUNCATE, then crash.
+#
+# Sequence inside the recovery range:
+#   1) seed + VACUUM            -> on-disk iresearch holds the seed.
+#   2) more inserts             -> iresearch staging at higher tick.
+#   3) VACUUM                   -> publishes those inserts to disk.
+#   4) TRUNCATE                 -> wipes iresearch on-disk + bumps flush sub.
+#   5) more inserts (no vacuum) -> WAL only.
+#   6) crash.
+#
+# After restart: the iresearch on-disk state from steps 1+3 must NOT survive,
+# the WAL replay starting from a tick BEFORE the truncate must reach the
+# DeleteRange and reset both the accumulator and the on-disk segments,
+# then replay the post-truncate inserts. Verifies the flush-subscription
+# advancement on Truncate doesn't cause the WAL window to be trimmed before
+# the truncate marker is replayed.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gnusi_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE gnusi_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO gnusi_t VALUES (1, 'phase1 alpha'), (2, 'phase1 bravo');
+
+statement ok
+CREATE INDEX gnusi_idx ON gnusi_t USING inverted(id, body gnusi_dict);
+
+# Phase 1: seed -> publish via vacuum.
+statement ok
+VACUUM (UPDATE_INDEXES) gnusi_t;
+
+# Phase 2: write more, then publish via vacuum -- iresearch on-disk now holds
+# {phase1, phase2}.
+statement ok
+INSERT INTO gnusi_t VALUES (3, 'phase2 charlie'), (4, 'phase2 delta');
+
+statement ok
+VACUUM (UPDATE_INDEXES) gnusi_t;
+
+query
+SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase1 alpha');
+----
+count
+1
+
+query
+SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase2 charlie');
+----
+count
+1
+
+# Phase 3: truncate -- iresearch reset at this seq via the writer-locked path.
+statement ok
+TRUNCATE gnusi_t;
+
+# Block bg search commits so the post-truncate writes stay WAL-only.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# Phase 4: post-truncate writes.
+statement ok
+INSERT INTO gnusi_t VALUES (10, 'phase4 echo'), (20, 'phase4 foxtrot');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection gnusi_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Rocksdb side: only post-truncate rows.
+connection gnusi_after
+query
+SELECT id, body FROM gnusi_t ORDER BY id;
+----
+id	body
+10	phase4 echo
+20	phase4 foxtrot
+
+# Phase 1 + phase 2 phrases must NOT survive recovery -- the truncate's
+# Clear must wipe the on-disk segments (not just the in-memory pk2row).
+connection gnusi_after
+query
+SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase1 alpha');
+----
+count
+0
+
+connection gnusi_after
+query
+SELECT count(*) FROM gnusi_idx WHERE body @@ ts_phrase('phase2 charlie');
+----
+count
+0
+
+# Post-truncate phrases must come back via WAL replay.
+connection gnusi_after
+query
+SELECT id FROM gnusi_idx WHERE body @@ ts_phrase('phase4 echo');
+----
+id
+10
+
+connection gnusi_after
+query
+SELECT id FROM gnusi_idx WHERE body @@ ts_phrase('phase4 foxtrot');
+----
+id
+20
+
+connection gnusi_after
+statement ok
+DROP INDEX gnusi_idx;
+
+connection gnusi_after
+statement ok
+DROP TABLE gnusi_t;
+
+connection gnusi_after
+statement ok
+DROP TEXT SEARCH DICTIONARY gnusi_dict;

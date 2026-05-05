@@ -53,6 +53,7 @@
 #include "connector/duckdb_external_scan.h"
 #include "connector/duckdb_physical_ctas.h"
 #include "connector/duckdb_physical_delete.h"
+#include "connector/duckdb_physical_truncate.h"
 #include "connector/duckdb_physical_insert.h"
 #include "connector/duckdb_physical_sst_insert.h"
 #include "connector/duckdb_physical_update.h"
@@ -580,6 +581,11 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   duckdb::LogicalDelete& op, duckdb::PhysicalOperator& plan) {
   auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
+
+  if (op.is_truncate) {
+    return planner.Make<SereneDBPhysicalTruncate>(std::move(sdb_table),
+                                                  op.estimated_cardinality);
+  }
 
   // Child output layout (from GetRowIdColumns):
   //   [..., pk_0, pk_1, ..., idx_col_0, idx_col_1, ..., rowid]

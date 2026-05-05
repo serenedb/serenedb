@@ -358,6 +358,8 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchAnnScanInitLocal(
   auto dis_begin = dis.size();
   ids.resize(ids.size() + gstate.scan->top_k);
   dis.resize(dis.size() + gstate.scan->top_k);
+  SDB_ASSERT(ids.capacity() == gstate.MaxThreads() * gstate.scan->top_k);
+  SDB_ASSERT(dis.capacity() == gstate.MaxThreads() * gstate.scan->top_k);
   return duckdb::make_uniq<SearchAnnScanLocalState>(
     dis.data() + dis_begin, ids.data() + ids_begin, gstate.scan->top_k);
 }

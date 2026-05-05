@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://install.serenedb.com | sh
 # Override tags:
 #   SERENEDB_TAG=v1.2.3 SERENE_UI_TAG=v0.5.0 PSQL_TAG=16 \
-#     curl -fsSL https://quick-docker.serenedb.com | sh
+#     curl -fsSL https://install.serenedb.com | sh
 
 SERENEDB_TAG="${SERENEDB_TAG:-latest}"
 SERENE_UI_TAG="${SERENE_UI_TAG:-latest}"
@@ -105,7 +105,7 @@ EOF
 
 start_stack() {
 	echo "Starting SereneDB and SereneUI..."
-	docker compose -f "${COMPOSE_FILE}" up -d
+	docker compose -f "${COMPOSE_FILE}" up -d --pull always
 }
 
 # ── Hyperlink helper ──────────────────────────────────────────────────────────

@@ -49,9 +49,8 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   size_t current_idx = 0;
   size_t total_results = 0;
 
-  // Variables for stoging partial (unmerged) results
-  std::vector<std::vector<float>> dis;
-  std::vector<std::vector<int64_t>> ids;
+  std::vector<float> dis;
+  std::vector<int64_t> ids;
   std::atomic<float> global_kth_dis{std::numeric_limits<float>::max()};
   absl::Mutex m;
 
@@ -64,13 +63,9 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   }
 };
 
-// Per-worker local state
 struct SearchAnnScanLocalState : public CommonScanLocalState {
-  SearchAnnScanLocalState(size_t top_k)
-    : dis(top_k), ids(top_k), buffer{dis.data(), ids.data(), top_k} {}
-
-  std::vector<float> dis;
-  std::vector<int64_t> ids;
+  SearchAnnScanLocalState(float* dis_data, int64_t* ids_data, size_t size)
+    : buffer{dis_data, ids_data, size} {}
   irs::HNSWSearchBuffer buffer;
 };
 
@@ -95,6 +90,7 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
   size_t total_segments = 0;
   std::atomic_size_t next_segment = 0;
   std::atomic_size_t total_results = 0;
+  absl::Mutex m;
 
   duckdb::idx_t MaxThreads() const override {
     return std::max<duckdb::idx_t>(1, total_segments);

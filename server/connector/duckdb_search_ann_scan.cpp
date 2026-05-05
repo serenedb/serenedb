@@ -26,10 +26,9 @@
 #include <iresearch/formats/column/hnsw_index.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <limits>
-#include <queue>
+#include <numeric>
 #include <ranges>
 #include <span>
-#include <tuple>
 
 #include "basics/assert.h"
 #include "basics/logger/logger.h"
@@ -79,12 +78,7 @@ bool ClaimNextLiveSegment(std::atomic_size_t& next_segment,
 void ANNSearchSegment(const irs::SubReader& segment_reader,
                       std::optional<ANNFilter>& filter,
                       SearchAnnScanGlobalState& gstate,
-                      SearchAnnScanLocalState& lstate,
-                      duckdb::ClientContext& context) {
-  auto& snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(gstate.scan->index_id);
-  auto& reader = snapshot.reader;
-
+                      SearchAnnScanLocalState& lstate) {
   SDB_ASSERT(gstate.scan->top_k > 0);
   const size_t top_k = gstate.scan->top_k;
 
@@ -102,7 +96,7 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
   info.params.efSearch = std::max(requested_ef, static_cast<int>(top_k));
   info.params.sel = filter.has_value() ? &*filter : nullptr;
 
-  SDB_ASSERT(reader);
+  SDB_ASSERT(gstate.reader);
 
   segment_reader.Search(gstate.scan->field_name, info, lstate.buffer);
 
@@ -111,30 +105,6 @@ void ANNSearchSegment(const irs::SubReader& segment_reader,
   while (local_kth < cur && !gstate.global_kth_dis.compare_exchange_weak(
                               cur, local_kth, std::memory_order_relaxed)) {
   }
-}
-
-// Snapshot the worker buffer (sorted ascending after ReorderResult) into the
-// global per-segment lists. Copied (not moved) because faiss heap_heapify
-// resets the buffer at the start of each Search call -- if we moved the
-// vectors out, the buffer's spans would dangle and the next segment's
-// Search would write into freed memory.
-void EmitLocalData(SearchAnnScanGlobalState& g, SearchAnnScanLocalState& l) {
-  l.buffer.ReorderResult();
-  size_t valid = l.ids.size();
-  while (valid > 0 && l.ids[valid - 1] == -1) {
-    --valid;
-  }
-  SDB_PRINT("ANN EmitLocalData: buffer_size=", l.ids.size(), " valid=", valid,
-            " first_id=", (valid ? l.ids[0] : int64_t{-1}),
-            " first_dis=", (valid ? l.dis[0] : 0.0f));
-  if (valid == 0) {
-    return;
-  }
-  std::vector<float> dis_out(l.dis.begin(), l.dis.begin() + valid);
-  std::vector<int64_t> ids_out(l.ids.begin(), l.ids.begin() + valid);
-  std::lock_guard lock{g.m};
-  g.dis.emplace_back(std::move(dis_out));
-  g.ids.emplace_back(std::move(ids_out));
 }
 
 size_t LocalPkSize(const PrimaryKeyBatch& b) {
@@ -154,37 +124,31 @@ void MergeResult(duckdb::ClientContext& context,
                  const SereneDBScanBindData& bind_data,
                  SearchAnnScanGlobalState& g) {
   const size_t k = g.scan->top_k;
-  const size_t num_lists = g.dis.size();
+  const size_t total = g.dis.size();
+  const size_t take = std::min(k, total);
 
-  using HeapEntry = std::tuple<float, size_t, size_t>;
-  std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<>> heap;
-  for (size_t i = 0; i < num_lists; ++i) {
-    if (!g.dis[i].empty()) {
-      heap.emplace(g.dis[i][0], i, 0);
-    }
+  std::vector<uint32_t> idx(total);
+  absl::c_iota(idx, 0u);
+  auto cmp = [&](uint32_t a, uint32_t b) { return g.dis[a] < g.dis[b]; };
+  if (take < total) {
+    absl::c_nth_element(idx, idx.begin() + take, cmp);
   }
+  std::sort(idx.begin(), idx.begin() + take, cmp);
 
   std::vector<int64_t> top_ids;
-  top_ids.reserve(k);
-  while (!heap.empty() && top_ids.size() < k) {
-    auto [d, li, pi] = heap.top();
-    heap.pop();
-    const auto id = g.ids[li][pi];
-    SDB_ASSERT(id != -1);
-    top_ids.push_back(id);
-    const auto next = pi + 1;
-    if (next < g.dis[li].size() && g.ids[li][next] != -1) {
-      heap.emplace(g.dis[li][next], li, next);
+  top_ids.reserve(take);
+  for (size_t i = 0; i < take; ++i) {
+    const int64_t id = g.ids[idx[i]];
+    if (id == -1) {
+      continue;
     }
+    top_ids.push_back(id);
   }
 
   const size_t n = top_ids.size();
-  const bool has_real =
-    std::any_of(g.projected_columns.begin(), g.projected_columns.end(),
-                [](auto p) { return p != duckdb::DConstants::INVALID_INDEX; });
-
-  SDB_PRINT("ANN MergeResult: num_lists=", num_lists, " k=", k, " n=", n,
-            " has_real=", has_real);
+  const bool has_real = absl::c_any_of(g.projected_columns, [](auto p) {
+    return p != duckdb::DConstants::INVALID_INDEX;
+  });
 
   if (!has_real || n == 0) {
     g.total_results = n;
@@ -225,10 +189,7 @@ void MergeResult(duckdb::ClientContext& context,
                              [&](size_t orig, std::string_view pk_bytes) {
                                SetPrimaryKey(pk, orig, pk_bytes);
                              });
-        const auto resolved = PkCompactResolved(pk, n);
-        SDB_PRINT("ANN MergeResult: PkCompactResolved n=", n,
-                  " resolved=", resolved);
-        return resolved;
+        return PkCompactResolved(pk, n);
       }
     },
     g.pk_batch);
@@ -245,8 +206,8 @@ void EmitResult(duckdb::ClientContext& context,
     output.SetCardinality(0);
     return;
   }
-  const size_t batch_size =
-    std::min<size_t>(STANDARD_VECTOR_SIZE, total - batch_start);
+  // TODO(codeworse): think how to send the result in batches
+  const size_t batch_size = total;
 
   for (duckdb::idx_t proj = 0; proj < g.projected_columns.size(); ++proj) {
     if (g.projected_columns[proj] != duckdb::DConstants::INVALID_INDEX) {
@@ -297,18 +258,18 @@ void RangeSearchSegment(duckdb::ClientContext& context,
     return;
   }
 
-  if (!g.index_source) {
-    // Worker-side lazy init. MakeIndexSource is deterministic for a given
-    // bind_data + snapshot/txn, so a benign race between workers produces
-    // equivalent objects.
-    g.index_source = MakeIndexSource(context, bind_data, g.snapshot, g.txn,
-                                     g.projected_columns, g.projected_types,
-                                     bind_data.column_ids);
-  }
-  if (std::holds_alternative<std::monostate>(l.pk_batch)) {
-    l.pk_batch = g.index_source->CreatePkBatch();
-    if (auto* p = std::get_if<PrimaryKeysBytes>(&l.pk_batch)) {
-      p->EnsureInit(duckdb::Allocator::DefaultAllocator());
+  {
+    std::lock_guard lock{g.m};
+    if (!g.index_source) {
+      g.index_source = MakeIndexSource(context, bind_data, g.snapshot, g.txn,
+                                       g.projected_columns, g.projected_types,
+                                       bind_data.column_ids);
+    }
+    if (std::holds_alternative<std::monostate>(l.pk_batch)) {
+      l.pk_batch = g.index_source->CreatePkBatch();
+      if (auto* p = std::get_if<PrimaryKeysBytes>(&l.pk_batch)) {
+        p->EnsureInit(duckdb::Allocator::DefaultAllocator());
+      }
     }
   }
 
@@ -371,10 +332,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
     }
   }
   gstate->remained_segments = live;
-
-  SDB_PRINT("ANN InitGlobal: index_id=", gstate->scan->index_id.id(),
-            " total_segments=", gstate->total_segments, " live=", live,
-            " top_k=", gstate->scan->top_k);
+  gstate->dis.reserve(gstate->MaxThreads() * gstate->scan->top_k);
+  gstate->ids.reserve(gstate->MaxThreads() * gstate->scan->top_k);
 
   if (live == 0) {
     gstate->search_finished.store(true, std::memory_order_release);
@@ -387,10 +346,17 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> SearchAnnScanInitLocal(
   duckdb::ExecutionContext& /*context*/,
   duckdb::TableFunctionInitInput& /*input*/,
-  duckdb::GlobalTableFunctionState* global_state) {
-  auto& gstate = global_state->Cast<SearchAnnScanGlobalState>();
-  auto lstate = duckdb::make_uniq<SearchAnnScanLocalState>(gstate.scan->top_k);
-  return lstate;
+  duckdb::GlobalTableFunctionState* state) {
+  auto& gstate = state->Cast<SearchAnnScanGlobalState>();
+  std::lock_guard lock{gstate.m};
+  auto& ids = gstate.ids;
+  auto& dis = gstate.dis;
+  auto ids_begin = ids.size();
+  auto dis_begin = dis.size();
+  ids.resize(ids.size() + gstate.scan->top_k);
+  dis.resize(dis.size() + gstate.scan->top_k);
+  return duckdb::make_uniq<SearchAnnScanLocalState>(
+    dis.data() + dis_begin, ids.data() + ids_begin, gstate.scan->top_k);
 }
 
 void SearchAnnScanFunction(duckdb::ClientContext& context,
@@ -403,37 +369,24 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   size_t segment;
   SDB_ASSERT(g.reader);
   std::optional<ANNFilter> filter;
-  if (g.search_finished.load(std::memory_order_acquire)) {
-    EmitResult(context, bind_data, g, output);
-    return;
-  }
   while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
     const auto& reader = (*g.reader)[segment];
     if (g.filter_ctx) {
       filter.emplace(*g.filter_ctx, reader);
     }
-    // faiss begin_multiple resets the heap each Search call, so a worker
-    // running >1 segment must snapshot results per segment -- otherwise
-    // the next Search would clobber the previous segment's top-k.
-    l.buffer.ResetValues();
-    ANNSearchSegment(reader, filter, g, l, context);
-    EmitLocalData(g, l);
+    ANNSearchSegment(reader, filter, g, l);
     processed++;
     filter.reset();
   }
-  if (!processed) {
-    output.SetCardinality(0);
-    return;
-  }
   auto remained =
     g.remained_segments.fetch_sub(processed, std::memory_order_acq_rel);
-  if (remained != processed) {
+  if (processed == 0 || remained != processed) {
     output.SetCardinality(0);
     return;
   }
   g.search_finished.store(true, std::memory_order_release);
-  // Merge result in a single thread
+  // Last worker partitions the flat results to top-k and emits.
   MergeResult(context, bind_data, g);
   EmitResult(context, bind_data, g, output);
 }
@@ -506,6 +459,7 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
 
   SDB_ASSERT(g.index_source);
   if (!std::holds_alternative<std::monostate>(l.pk_batch)) {
+    std::lock_guard lock{g.m};
     g.index_source->Materialize(context, l.pk_batch, batch_start, batch_size,
                                 output);
   }

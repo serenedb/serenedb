@@ -75,36 +75,35 @@ class DuckDBColumnSerializer {
                    std::vector<std::string>& row_keys,
                    std::span<DuckDBSinkIndexWriter*> index_writers);
 
-  void WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                      duckdb::idx_t offset, duckdb::idx_t count,
-                      const duckdb::LogicalType& type);
-
-  template<typename T>
-  void WriteSubVectorPrimitive(const duckdb::UnifiedVectorFormat& fmt,
-                               duckdb::idx_t offset, duckdb::idx_t count);
-  void WriteSubVectorBool(const duckdb::UnifiedVectorFormat& fmt,
-                          duckdb::idx_t offset, duckdb::idx_t count);
-  void WriteSubVectorVarchar(const duckdb::UnifiedVectorFormat& fmt,
-                             duckdb::idx_t offset, duckdb::idx_t count);
-
-  uint32_t WriteListValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                          duckdb::idx_t idx, const duckdb::LogicalType& type);
-  void WriteListSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+  uint32_t WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                           duckdb::idx_t offset, duckdb::idx_t count,
                           const duckdb::LogicalType& type);
 
-  // Per-value writers return the total bytes appended to `_row_slices`
-  // (header + payload). Lets nested callers (WriteStructValue) skip a
-  // slice-summing scan.
+  template<typename T>
+  uint32_t WriteSubVectorPrimitive(const duckdb::UnifiedVectorFormat& fmt,
+                                   duckdb::idx_t offset, duckdb::idx_t count);
+  uint32_t WriteSubVectorBool(const duckdb::UnifiedVectorFormat& fmt,
+                              duckdb::idx_t offset, duckdb::idx_t count);
+  uint32_t WriteSubVectorVarchar(const duckdb::UnifiedVectorFormat& fmt,
+                                 duckdb::idx_t offset, duckdb::idx_t count);
+
+  // Per-value/sub-vector writers return the total bytes appended to
+  // `_row_slices` (header + payload). Nested callers (WriteStructValue,
+  // WriteListValue) propagate this without a slice-summing scan.
+  uint32_t WriteListValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                          duckdb::idx_t idx, const duckdb::LogicalType& type);
+  uint32_t WriteListSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                              duckdb::idx_t offset, duckdb::idx_t count,
+                              const duckdb::LogicalType& type);
+
   uint32_t WriteMapValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                          duckdb::idx_t idx, const duckdb::LogicalType& type);
 
   uint32_t WriteStructValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                            duckdb::idx_t idx,
-                            const duckdb::LogicalType& type);
-  void WriteStructSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                            duckdb::idx_t offset, duckdb::idx_t count,
-                            const duckdb::LogicalType& type);
+                            duckdb::idx_t idx, const duckdb::LogicalType& type);
+  uint32_t WriteStructSubVector(
+    const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t offset,
+    duckdb::idx_t count, const duckdb::LogicalType& type);
 
   uint32_t WriteArrayValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                            duckdb::idx_t idx, const duckdb::LogicalType& type);
@@ -133,9 +132,10 @@ class DuckDBColumnSerializer {
  private:
   char* Allocate(size_t size);
 
-  // Returns false (no slice emitted) when the validity mask is all-valid.
-  bool WriteNullBitmap(const duckdb::UnifiedVectorFormat& fmt,
-                       duckdb::idx_t offset, duckdb::idx_t count);
+  // Returns the bitmap size in bytes, or 0 if the validity mask is all-valid
+  // (in which case nothing is emitted).
+  uint32_t WriteNullBitmap(const duckdb::UnifiedVectorFormat& fmt,
+                           duckdb::idx_t offset, duckdb::idx_t count);
 
   template<typename Writer, typename T>
   void WriteFlatColumn(Writer& writer, const duckdb::Vector& vec,

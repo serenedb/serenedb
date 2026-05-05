@@ -58,7 +58,7 @@ class ANNFilter final : public faiss::IDSelector {
  public:
   ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
 
-  bool is_member(faiss::idx_t id) const override;
+  bool is_member(faiss::idx_t id) const final;
 
  private:
   const ANNFilterContext& _ctx;

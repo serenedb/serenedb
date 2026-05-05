@@ -37,13 +37,13 @@ namespace sdb::connector {
 namespace {
 
 // TODO(mbkkt) fix this, drop by object id! Otherwise rename can break this
-struct CTASGlobalState : public SSTInsertGlobalState {
+struct CTASGlobalState final : public SSTInsertGlobalState {
   ObjectId database_id;
   std::string database_name;
   std::string schema_name;
   std::string table_name;
 
-  ~CTASGlobalState() override {
+  ~CTASGlobalState() final {
     if (!finalized && !table_name.empty()) {
       try {
         auto& catalog = SerenedServer::Instance()

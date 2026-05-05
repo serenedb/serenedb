@@ -44,7 +44,7 @@ class BindingRewriter : public duckdb::LogicalOperatorVisitor {
  protected:
   duckdb::unique_ptr<duckdb::Expression> VisitReplace(
     duckdb::BoundColumnRefExpression& expr,
-    duckdb::unique_ptr<duckdb::Expression>* /*expr_ptr*/) override {
+    duckdb::unique_ptr<duckdb::Expression>* /*expr_ptr*/) final {
     if (expr.binding.table_index == _table_index) {
       auto it = _old_to_new.find(expr.binding.column_index);
       if (it != _old_to_new.end()) {

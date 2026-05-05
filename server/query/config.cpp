@@ -29,6 +29,7 @@
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 
@@ -106,7 +107,7 @@ bool Config::GetReadYourOwnWrites() const {
 std::optional<std::string> Config::Get(std::string_view key) const {
   duckdb::Value value;
   if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
-    return value.ToString();
+    return duckdb::Settings::FormatDisplayValue(_client_ctx, value).ToString();
   }
   return std::nullopt;
 }
@@ -164,6 +165,14 @@ void Config::OnSet(std::string_view name, bool is_local,
 void Config::SetSetting(std::string_view key, std::string value,
                         bool /*is_local*/) {
   SetInternal(key, std::move(value));
+}
+
+void Config::SetSettingChecked(std::string_view key, std::string value,
+                               bool is_local) {
+  duckdb::PhysicalSet::SetVariable(
+    _client_ctx, duckdb::String::Reference(key.data(), key.size()),
+    is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
+    duckdb::Value{std::move(value)});
 }
 
 void Config::ResetAll() {

@@ -45,17 +45,16 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
                      std::vector<size_t> indexed_col_indices = {});
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
-    duckdb::ClientContext& context, duckdb::column_t column_id) override;
+    duckdb::ClientContext& context, duckdb::column_t column_id) final;
 
   duckdb::TableFunction GetScanFunction(
     duckdb::ClientContext& context,
-    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) override;
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
-  duckdb::TableStorageInfo GetStorageInfo(
-    duckdb::ClientContext& context) override;
+  duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext& context) final;
 
-  duckdb::vector<duckdb::column_t> GetRowIdColumns() const override;
-  duckdb::virtual_column_map_t GetVirtualColumns() const override;
+  duckdb::vector<duckdb::column_t> GetRowIdColumns() const final;
+  duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
   // Helpers shared with SereneDBIndexScanEntry. These compute virtual
   // columns / rowid columns / storage info from the underlying SereneDB
@@ -72,7 +71,7 @@ class SereneDBTableEntry final : public duckdb::TableCatalogEntry {
   void BindUpdateConstraints(duckdb::Binder& binder, duckdb::LogicalGet& get,
                              duckdb::LogicalProjection& proj,
                              duckdb::LogicalUpdate& update,
-                             duckdb::ClientContext& context) override;
+                             duckdb::ClientContext& context) final;
 
   // Convert a virtual column ID (VIRTUAL_COLUMN_START + i) back to a real
   // column index. Returns DConstants::INVALID_INDEX if not a PK virtual col.

@@ -226,6 +226,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kTimeTz, LogicalType::TIME_TZ)
     SDB_OID2TYPE(kBit, LogicalType::BIT)
     SDB_OID2TYPE(kVarbit, LogicalType::BIT)
+    SDB_OID2TYPE(kVarchar, LogicalType::VARCHAR)
     SDB_OID2TYPE(kRegprocedure, REGPROCEDURE())
     SDB_OID2TYPE(kRegoper, REGOPER())
     SDB_OID2TYPE(kRegoperator, REGOPERATOR())

@@ -109,6 +109,13 @@ class Config {
 
   void SetSetting(std::string_view key, std::string value, bool is_local);
 
+  // Same as SetSetting but routes through DuckDB's SET pipeline, so type
+  // casting and the option's set_callback run as if the client had issued a
+  // `SET key = value` statement. Throws on unknown settings or validation
+  // failure -- callers translate to the appropriate PG error.
+  void SetSettingChecked(std::string_view key, std::string value,
+                         bool is_local);
+
  protected:
   // Pre-rollback hook: restore every tracked variable to its pre-SET value.
   void RollbackVariables() noexcept;

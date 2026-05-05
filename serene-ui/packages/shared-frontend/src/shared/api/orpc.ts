@@ -23,7 +23,10 @@ function createLink() {
     }
 
     return new RPCLink({
-        url: "http://localhost:3000",
+        url:
+            mode === "prod-docker"
+                ? `${window.location.origin}/rpc`
+                : "http://localhost:3000",
     });
 }
 

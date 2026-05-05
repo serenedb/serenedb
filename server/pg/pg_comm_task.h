@@ -150,7 +150,6 @@ class PgSQLCommTaskBase : public rest::CommTask {
                              bool extended = true);
   DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
   void BuildColumnSerializers(DuckDBPortal& portal);
-  void ResolveStatementTypes(DuckDBStatement& stmt);
   void DeallocateNamedStatement(std::string_view name);
   void ExecutePortal(DuckDBPortal& portal);
   void ExecuteNextSimpleStatement();

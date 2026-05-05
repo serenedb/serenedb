@@ -209,8 +209,8 @@ threads	1	The number of total threads used by the system.
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
-user	(empty)	The username to use. Ignored for legacy compatibility.
-username	(empty)	The username to use. Ignored for legacy compatibility.
+user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
 validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
 variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
@@ -439,8 +439,8 @@ threads	1	The number of total threads used by the system.
 transaction_isolation	read committed	Sets the current transaction's isolation level.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
-user	(empty)	The username to use. Ignored for legacy compatibility.
-username	(empty)	The username to use. Ignored for legacy compatibility.
+user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
 vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
 validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
 variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup

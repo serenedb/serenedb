@@ -41,23 +41,23 @@ class SereneDBPhysicalUpdate final : public duckdb::PhysicalOperator {
     duckdb::vector<duckdb::unique_ptr<duckdb::BoundConstraint>>
       bound_constraints);
 
-  bool IsSink() const override { return true; }
+  bool IsSink() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
-                              duckdb::OperatorSinkInput& input) const override;
+                              duckdb::OperatorSinkInput& input) const final;
   duckdb::SinkFinalizeType Finalize(
     duckdb::Pipeline& pipeline, duckdb::Event& event,
     duckdb::ClientContext& context,
-    duckdb::OperatorSinkFinalizeInput& input) const override;
+    duckdb::OperatorSinkFinalizeInput& input) const final;
 
-  bool IsSource() const override { return true; }
+  bool IsSource() const final { return true; }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const override;
+    duckdb::ClientContext& context) const final;
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
-    duckdb::OperatorSourceInput& input) const override;
+    duckdb::OperatorSourceInput& input) const final;
 
  private:
   std::shared_ptr<catalog::Table> _table;

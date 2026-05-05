@@ -219,7 +219,7 @@ class TraditionalKeyGenerator : public KeyGenerator {
   }
 
   ErrorCode validate(std::string_view key, vpack::Slice input,
-                     bool is_restore) noexcept override {
+                     bool is_restore) noexcept final {
     auto res = KeyGenerator::validate(key, input, is_restore);
 
     if (res == ERROR_OK) {
@@ -229,7 +229,7 @@ class TraditionalKeyGenerator : public KeyGenerator {
     return res;
   }
 
-  void track(std::string_view key) noexcept override {
+  void track(std::string_view key) noexcept final {
     const char* p = key.data();
     size_t length = key.size();
     // check the numeric key part
@@ -262,14 +262,14 @@ class TraditionalKeyGeneratorSingle final : public TraditionalKeyGenerator {
     SDB_ASSERT(!ServerState::instance()->IsCoordinator());
   }
 
-  void toVPack(vpack::Builder& builder) const override {
+  void toVPack(vpack::Builder& builder) const final {
     TraditionalKeyGenerator::toVPack(builder);
     builder.add(StaticStrings::kLastValue,
                 _last_value.load(std::memory_order_relaxed));
   }
 
  private:
-  uint64_t GenerateValue() override {
+  uint64_t GenerateValue() final {
     SDB_IF_FAILURE("KeyGenerator::generateOnSingleServer") {
       // for testing purposes only
       SDB_THROW(ERROR_DEBUG);
@@ -302,7 +302,7 @@ class TraditionalKeyGeneratorSingle final : public TraditionalKeyGenerator {
   }
 
   /// track a key value (internal)
-  void TrackValue(uint64_t value) noexcept override {
+  void TrackValue(uint64_t value) noexcept final {
     auto last_value = _last_value.load(std::memory_order_relaxed);
     while (value > last_value) {
       // and update our last value
@@ -351,7 +351,7 @@ class PaddedKeyGenerator : public KeyGenerator {
   }
 
   ErrorCode validate(std::string_view key, vpack::Slice input,
-                     bool is_restore) noexcept override {
+                     bool is_restore) noexcept final {
     auto res = KeyGenerator::validate(key, input, is_restore);
 
     if (res == ERROR_OK) {
@@ -383,7 +383,7 @@ class PaddedKeyGenerator : public KeyGenerator {
                 _last_value.load(std::memory_order_relaxed));
   }
 
-  void initState(vpack::Slice state) override {
+  void initState(vpack::Slice state) final {
     SDB_ASSERT(state.isObject());
     // special case here: we read a numeric, UNENCODED lastValue attribute from
     // the state object, but we need to pass an ENCODED value to the track()
@@ -406,7 +406,7 @@ class PaddedKeyGeneratorSingle final : public PaddedKeyGenerator {
   }
 
  private:
-  uint64_t GenerateValue() override {
+  uint64_t GenerateValue() final {
     SDB_IF_FAILURE("KeyGenerator::generateOnSingleServer") {
       // for testing purposes only
       SDB_THROW(ERROR_DEBUG);
@@ -424,9 +424,9 @@ class AutoIncrementKeyGenerator final : public KeyGenerator {
       _offset{offset},
       _increment{increment} {}
 
-  bool hasDynamicState() const noexcept override { return true; }
+  bool hasDynamicState() const noexcept final { return true; }
 
-  std::string generate(vpack::Slice /*input*/) override {
+  std::string generate(vpack::Slice /*input*/) final {
     uint64_t key_value;
 
     auto last_value = _last_value.load(std::memory_order_relaxed);
@@ -453,7 +453,7 @@ class AutoIncrementKeyGenerator final : public KeyGenerator {
   }
 
   ErrorCode validate(std::string_view key, vpack::Slice input,
-                     bool is_restore) noexcept override {
+                     bool is_restore) noexcept final {
     auto res = KeyGenerator::validate(key, input, is_restore);
 
     if (res == ERROR_OK) {
@@ -472,7 +472,7 @@ class AutoIncrementKeyGenerator final : public KeyGenerator {
     return res;
   }
 
-  void track(std::string_view key) noexcept override {
+  void track(std::string_view key) noexcept final {
     const char* p = key.data();
     size_t length = key.size();
     // check the numeric key part
@@ -492,7 +492,7 @@ class AutoIncrementKeyGenerator final : public KeyGenerator {
     }
   }
 
-  void toVPack(vpack::Builder& builder) const override {
+  void toVPack(vpack::Builder& builder) const final {
     KeyGenerator::toVPack(builder);
     builder.add("type", "autoincrement");
     builder.add("offset", _offset);
@@ -512,16 +512,16 @@ class UuidKeyGenerator final : public KeyGenerator {
   explicit UuidKeyGenerator(bool allow_user_keys)
     : KeyGenerator{allow_user_keys} {}
 
-  bool hasDynamicState() const noexcept override { return false; }
+  bool hasDynamicState() const noexcept final { return false; }
 
-  std::string generate(vpack::Slice /*input*/) override {
+  std::string generate(vpack::Slice /*input*/) final {
     std::lock_guard locker{_lock};
     return boost::uuids::to_string(_uuid());
   }
 
-  void track(std::string_view /*key*/) noexcept override {}
+  void track(std::string_view /*key*/) noexcept final {}
 
-  void toVPack(vpack::Builder& builder) const override {
+  void toVPack(vpack::Builder& builder) const final {
     KeyGenerator::toVPack(builder);
     builder.add("type", "uuid");
   }

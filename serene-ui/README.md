@@ -60,10 +60,10 @@ Desktop builds are available from the [SereneDB releases page](https://github.co
 
 ```bash
 docker pull serenedb/serene-ui
-docker run -p 3000:3000 -p 6543:6543 serenedb/serene-ui
+docker run -p 6543:6543 serenedb/serene-ui
 ```
 
-Open `http://localhost:3000` after the container starts.
+Open `http://localhost:6543` after the container starts.
 
 ### Docker Compose
 

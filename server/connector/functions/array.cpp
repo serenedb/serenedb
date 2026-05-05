@@ -48,11 +48,11 @@ struct ArrayNdimsBindData : public duckdb::FunctionData {
 
   explicit ArrayNdimsBindData(int32_t ndims) : ndims{ndims} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<ArrayNdimsBindData>(ndims);
   }
 
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     return ndims == other.Cast<ArrayNdimsBindData>().ndims;
   }
 };
@@ -100,11 +100,11 @@ struct ArrayDimsBindData : public duckdb::FunctionData {
 
   explicit ArrayDimsBindData(int32_t ndims) : ndims{ndims} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<ArrayDimsBindData>(ndims);
   }
 
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     return ndims == other.Cast<ArrayDimsBindData>().ndims;
   }
 };

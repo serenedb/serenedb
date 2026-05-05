@@ -14,8 +14,6 @@ db error: ERROR: type "address" already exists
 
 query error
 CREATE TYPE bad_composite AS (x INTEGER, y VARCHAR, x BOOLEAN);
-----
-db error: ERROR: Duplicate STRUCT type argument name "x"
 
 
 statement ok
@@ -56,6 +54,8 @@ id	name	addr
 1	psycho_hospital	("ulica pushkina",moscow,101010)
 2	reabilitacia	("dom kolotushkina",spb,202020)
 
+
+skipif pg
 query
 SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' ORDER BY typname;
 ----

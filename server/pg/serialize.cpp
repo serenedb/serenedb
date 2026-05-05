@@ -71,7 +71,7 @@ enum class ArrayKind {
   MultiDimensions,
 };
 
-inline constexpr int32_t kDynamicOid = 0;
+inline constexpr int32_t kDynamicOid = -2;
 
 #define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid)     \
   switch (kind) {                                                             \
@@ -686,9 +686,12 @@ void SerializeOneDimArray(SerializationContext context,
     // element_oid (4) - oid of an array element
     // dim1 size (4) - size of first(and only) dim
     // lower_bound (4) - begin offset(0 by default)
-    const int32_t element_oid = ElementOID == kDynamicOid
-                                  ? Type2Oid(child_vdata.logical_type, false)
-                                  : ElementOID;
+    int32_t element_oid;
+    if constexpr (ElementOID == kDynamicOid) {
+      element_oid = Type2Oid(child_vdata.logical_type, false);
+    } else {
+      element_oid = ElementOID;
+    }
     auto* prefix_data = context.buffer->GetContiguousData(20);
     absl::big_endian::Store32(prefix_data, 1);
     absl::big_endian::Store32(prefix_data + 4, 1);
@@ -708,7 +711,7 @@ template<SerializationFunction ElementSerialization, VarFormat Format,
          bool First = true>
 int32_t FlattenArray(SerializationContext context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                     duckdb::idx_t row) {
+                     duckdb::idx_t row, int32_t& oid) {
   const auto lid = vdata.logical_type.id();
   if (lid != duckdb::LogicalTypeId::LIST &&
       lid != duckdb::LogicalTypeId::ARRAY) {
@@ -740,30 +743,19 @@ int32_t FlattenArray(SerializationContext context,
   int32_t dims = -1;
   if constexpr (First) {
     dims = FlattenArray<ElementSerialization, Format>(context, child_vdata,
-                                                      array_offset + i) +
+                                                      array_offset + i, oid) +
            1;
     i++;
   }
   for (; i < array_size; ++i) {
     auto element_row = array_offset + i;
     const auto inner_dim = FlattenArray<ElementSerialization, Format, false>(
-      context, child_vdata, element_row);
+      context, child_vdata, element_row, oid);
     SDB_ASSERT(dims == -1 || dims == inner_dim + 1);
     dims = inner_dim + 1;
   }
   SDB_ASSERT(dims > 0);
   return dims;
-}
-
-const duckdb::LogicalType& ArrayLeafElementType(const duckdb::LogicalType& t) {
-  const duckdb::LogicalType* p = &t;
-  while (p->id() == duckdb::LogicalTypeId::LIST ||
-         p->id() == duckdb::LogicalTypeId::ARRAY) {
-    p = (p->id() == duckdb::LogicalTypeId::LIST)
-          ? &duckdb::ListType::GetChildType(*p)
-          : &duckdb::ArrayType::GetChildType(*p);
-  }
-  return *p;
 }
 
 template<SerializationFunction ElementSerialization, int32_t ElementOID,
@@ -807,15 +799,12 @@ void SerializeArray(SerializationContext context,
     }
     context.buffer->WriteUncommitted("}");
   } else {
-    const int32_t element_oid =
-      ElementOID == kDynamicOid
-        ? Type2Oid(ArrayLeafElementType(vdata.logical_type), false)
-        : ElementOID;
+    int32_t element_oid;
+    const auto dims = FlattenArray<ElementSerialization, Format>(
+      context, vdata, row, element_oid);
     auto* prefix_data = context.buffer->GetContiguousData(12);
     absl::big_endian::Store32(prefix_data + 4, 0);
     absl::big_endian::Store32(prefix_data + 8, element_oid);
-    const auto dims =
-      FlattenArray<ElementSerialization, Format>(context, vdata, row);
     absl::big_endian::Store32(prefix_data, dims);
   }
 }
@@ -1017,10 +1006,10 @@ std::string RenderToString(const duckdb::LogicalType& type,
   return out;
 }
 
-template<VarFormat Format>
-void SerializeComposite(SerializationContext context,
-                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                        duckdb::idx_t row) {
+template<VarFormat Format, bool InArray>
+void SerializeRecord(SerializationContext context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
   if constexpr (Format == VarFormat::Text) {
     std::string out;
     out += '(';
@@ -1038,7 +1027,11 @@ void SerializeComposite(SerializationContext context,
       AppendCompositeField(out, scratch);
     }
     out += ')';
-    context.buffer->WriteUncommitted(out);
+    if constexpr (InArray) {
+      WriteArrayItemQuotedAndEscaped(out, context);
+    } else {
+      context.buffer->WriteUncommitted(out);
+    }
   } else {
     // PG record binary format: int32 nfields; for each field { int32 OID,
     // int32 length (-1 for NULL) followed by length bytes }.
@@ -1055,18 +1048,6 @@ void SerializeComposite(SerializationContext context,
       auto fn = GetSerialization(child_type, VarFormat::Binary, context);
       fn(context, child, row);
     }
-  }
-}
-
-template<VarFormat Format>
-void SerializeCompositeInArray(
-  SerializationContext context,
-  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
-  if constexpr (Format == VarFormat::Text) {
-    auto rendered = RenderToString(vdata.logical_type, vdata, row, context);
-    WriteArrayItemQuotedAndEscaped(rendered, context);
-  } else {
-    SerializeComposite<VarFormat::Binary>(context, vdata, row);
   }
 }
 
@@ -1334,11 +1315,9 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       RETURN_ARRAY_SERIALIZATION(SerializeBit<VarFormat::Text>,
                                  SerializeBit<VarFormat::Binary>, kVarbit);
     case STRUCT: {
-      static constexpr auto kCompositeText =
-        SerializeCompositeInArray<VarFormat::Text>;
-      static constexpr auto kCompositeBinary =
-        SerializeComposite<VarFormat::Text>;
-      RETURN_ARRAY_SERIALIZATION(kCompositeText, kCompositeBinary, kRecord);
+      static constexpr auto kText = SerializeRecord<VarFormat::Text, true>;
+      static constexpr auto kBinary = SerializeRecord<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kRecord);
     }
     case ENUM: {
       static constexpr auto kText = SerializeEnum<VarFormat::Text, true>;
@@ -1646,37 +1625,15 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       RETURN_SERIALIZATION(SerializeBit<VarFormat::Text>,
                            SerializeBit<VarFormat::Binary>);
     case ENUM: {
-      auto phys = duckdb::EnumType::GetPhysicalType(type);
-      switch (phys) {
-        using enum duckdb::PhysicalType;
-        case UINT8: {
-          static constexpr auto kText =
-            SerializeEnumLabel<VarFormat::Text, false, uint8_t>;
-          static constexpr auto kBinary =
-            SerializeEnumLabel<VarFormat::Binary, false, uint8_t>;
-          RETURN_SERIALIZATION(kText, kBinary);
-        }
-        case UINT16: {
-          static constexpr auto kText =
-            SerializeEnumLabel<VarFormat::Text, false, uint16_t>;
-          static constexpr auto kBinary =
-            SerializeEnumLabel<VarFormat::Binary, false, uint16_t>;
-          RETURN_SERIALIZATION(kText, kBinary);
-        }
-        case UINT32: {
-          static constexpr auto kText =
-            SerializeEnumLabel<VarFormat::Text, false, uint32_t>;
-          static constexpr auto kBinary =
-            SerializeEnumLabel<VarFormat::Binary, false, uint32_t>;
-          RETURN_SERIALIZATION(kText, kBinary);
-        }
-        default:
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                          ERR_MSG("Unsupported ENUM physical type"));
-      }
+      static constexpr auto kText = SerializeEnum<VarFormat::Text, false>;
+      static constexpr auto kBinary = SerializeEnum<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
     }
-    case STRUCT:
-      return SerializeNullable<SerializeComposite<VarFormat::Text>>;
+    case STRUCT: {
+      static constexpr auto kText = SerializeRecord<VarFormat::Text, false>;
+      static constexpr auto kBinary = SerializeRecord<VarFormat::Binary, false>;
+      RETURN_SERIALIZATION(kText, kBinary);
+    }
     case LIST:
     case ARRAY: {
       const auto* element_type = &type;

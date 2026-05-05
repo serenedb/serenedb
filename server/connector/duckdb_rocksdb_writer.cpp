@@ -190,20 +190,20 @@ rocksdb::Slice DuckDBColumnSerializer::Finalize(std::string& output) const {
 }
 
 template<>
-uint32_t DuckDBColumnSerializer::WritePrimitive<bool>(const bool& value) {
+size_t DuckDBColumnSerializer::WritePrimitive<bool>(const bool& value) {
   _row_slices.emplace_back(value ? kTrueValue : kFalseValue);
   return 1;
 }
 
 template<>
-uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
+size_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
   const duckdb::string_t& value) {
   if (value.GetSize() == 0) {
     _row_slices.emplace_back(kStringPrefix);
     return static_cast<uint32_t>(kStringPrefix.size());
   }
   static_assert(kStringPrefix.size() == 1);
-  uint32_t bytes = 0;
+  size_t bytes = 0;
   if (value.GetData()[0] == kStringPrefix.front()) {
     _row_slices.emplace_back(kStringPrefix);
     bytes += static_cast<uint32_t>(kStringPrefix.size());
@@ -215,27 +215,24 @@ uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
 
 // value must be in stable memory -- _row_slices stores &value.
 template<typename T>
-uint32_t DuckDBColumnSerializer::WritePrimitive(const T& value) {
+size_t DuckDBColumnSerializer::WritePrimitive(const T& value) {
   static_assert(std::is_trivially_copyable_v<T>);
   static_assert(basics::IsLittleEndian());
   _row_slices.emplace_back(reinterpret_cast<const char*>(&value), sizeof(T));
   return sizeof(T);
 }
 
-template uint32_t DuckDBColumnSerializer::WritePrimitive<int8_t>(const int8_t&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<int16_t>(
-  const int16_t&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<int32_t>(
-  const int32_t&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<int64_t>(
-  const int64_t&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<float>(const float&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<double>(const double&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::timestamp_t>(
+template size_t DuckDBColumnSerializer::WritePrimitive<int8_t>(const int8_t&);
+template size_t DuckDBColumnSerializer::WritePrimitive<int16_t>(const int16_t&);
+template size_t DuckDBColumnSerializer::WritePrimitive<int32_t>(const int32_t&);
+template size_t DuckDBColumnSerializer::WritePrimitive<int64_t>(const int64_t&);
+template size_t DuckDBColumnSerializer::WritePrimitive<float>(const float&);
+template size_t DuckDBColumnSerializer::WritePrimitive<double>(const double&);
+template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::timestamp_t>(
   const duckdb::timestamp_t&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
+template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
   const duckdb::date_t&);
-template uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
+template size_t DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
   const duckdb::hugeint_t&);
 
 namespace {
@@ -618,7 +615,7 @@ void DuckDBColumnSerializer::WriteComplexColumn(
 }
 
 // Returns the bitmap size in bytes (0 = no bitmap emitted, all rows valid).
-uint32_t DuckDBColumnSerializer::WriteNullBitmap(
+size_t DuckDBColumnSerializer::WriteNullBitmap(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t offset,
   duckdb::idx_t count) {
   if (fmt.validity.CannotHaveNull()) {
@@ -648,7 +645,7 @@ uint32_t DuckDBColumnSerializer::WriteNullBitmap(
 }
 
 template<typename T>
-uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
+size_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t offset,
   duckdb::idx_t count) {
   SDB_ASSERT(count > 0);
@@ -657,7 +654,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();
 
-  uint32_t null_bytes = WriteNullBitmap(fmt, offset, count);
+  size_t null_bytes = WriteNullBitmap(fmt, offset, count);
 
   static_assert(basics::IsLittleEndian());
   if (fmt.sel == duckdb::FlatVector::IncrementalSelectionVector()) {
@@ -681,37 +678,36 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive(
   return header_size + null_bytes + static_cast<uint32_t>(count * sizeof(T));
 }
 
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int8_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int8_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int16_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int16_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int32_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int32_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int64_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<int64_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<float>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<float>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<double>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<double>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t
+template size_t
 DuckDBColumnSerializer::WriteSubVectorPrimitive<duckdb::timestamp_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t
-DuckDBColumnSerializer::WriteSubVectorPrimitive<duckdb::date_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<duckdb::date_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t
+template size_t
 DuckDBColumnSerializer::WriteSubVectorPrimitive<duckdb::hugeint_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint8_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint8_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint16_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint16_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-template uint32_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint32_t>(
+template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint32_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
 
 // --- WriteSubVectorBool ---
 
-uint32_t DuckDBColumnSerializer::WriteSubVectorBool(
+size_t DuckDBColumnSerializer::WriteSubVectorBool(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t offset,
   duckdb::idx_t count) {
   SDB_ASSERT(count > 0);
@@ -720,7 +716,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorBool(
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();
 
-  uint32_t null_bytes = WriteNullBitmap(fmt, offset, count);
+  size_t null_bytes = WriteNullBitmap(fmt, offset, count);
 
   auto bool_bytes = static_cast<uint32_t>((count + 7) / 8);
   auto* bitmap = Allocate(bool_bytes);
@@ -742,7 +738,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorBool(
   return header_size + null_bytes + bool_bytes;
 }
 
-uint32_t DuckDBColumnSerializer::WriteSubVectorVarchar(
+size_t DuckDBColumnSerializer::WriteSubVectorVarchar(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t offset,
   duckdb::idx_t count) {
   SDB_ASSERT(count > 0);
@@ -751,7 +747,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorVarchar(
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();
 
-  uint32_t null_bytes = WriteNullBitmap(fmt, offset, count);
+  size_t null_bytes = WriteNullBitmap(fmt, offset, count);
   bool have_nulls = null_bytes != 0;
 
   auto length_slice_idx = _row_slices.size();
@@ -759,8 +755,8 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorVarchar(
 
   duckdb::unsafe_arena_vector<uint32_t> lengths{_arena};
   lengths.reserve(count);
-  uint32_t length_array_size = 0;
-  uint32_t payload_bytes = 0;
+  size_t length_array_size = 0;
+  size_t payload_bytes = 0;
 
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto src_idx = fmt.sel->get_index(offset + i);
@@ -799,7 +795,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVectorVarchar(
   return header_size + null_bytes + length_array_size + payload_bytes;
 }
 
-uint32_t DuckDBColumnSerializer::WriteSubVector(
+size_t DuckDBColumnSerializer::WriteSubVector(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t offset,
   duckdb::idx_t count, const duckdb::LogicalType& type) {
   if (count == 0) {
@@ -851,7 +847,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVector(
     case duckdb::LogicalTypeId::LIST:
       return WriteListSubVector(rdata, offset, count, type);
     case duckdb::LogicalTypeId::MAP: {
-      uint32_t bytes = 0;
+      size_t bytes = 0;
       for (duckdb::idx_t i = 0; i < count; ++i) {
         bytes += WriteMapValue(rdata, offset + i, type);
       }
@@ -860,7 +856,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVector(
     case duckdb::LogicalTypeId::STRUCT:
       return WriteStructSubVector(rdata, offset, count, type);
     case duckdb::LogicalTypeId::ARRAY: {
-      uint32_t bytes = 0;
+      size_t bytes = 0;
       for (duckdb::idx_t i = 0; i < count; ++i) {
         bytes += WriteArrayValue(rdata, offset + i, type);
       }
@@ -874,7 +870,7 @@ uint32_t DuckDBColumnSerializer::WriteSubVector(
   }
 }
 
-uint32_t DuckDBColumnSerializer::WriteListValue(
+size_t DuckDBColumnSerializer::WriteListValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   auto& child_type = duckdb::ListType::GetChildType(type);
@@ -887,7 +883,7 @@ uint32_t DuckDBColumnSerializer::WriteListValue(
 }
 
 // Assumes contiguous child layout (FLAT-LIST); asserted below.
-uint32_t DuckDBColumnSerializer::WriteListSubVector(
+size_t DuckDBColumnSerializer::WriteListSubVector(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t offset,
   duckdb::idx_t count, const duckdb::LogicalType& type) {
   SDB_ASSERT(count > 0);
@@ -898,35 +894,31 @@ uint32_t DuckDBColumnSerializer::WriteListSubVector(
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();
 
-  uint32_t null_bytes = WriteNullBitmap(fmt, offset, count);
+  size_t null_bytes = WriteNullBitmap(fmt, offset, count);
 
-  // Offsets and sizes arrays
-  auto indexes_size =
-    static_cast<uint32_t>(sizeof(duckdb::list_entry_t::offset) * count);
-  auto* offsets_buf = Allocate(indexes_size);
-  auto* sizes_buf = Allocate(indexes_size);
-  auto* offsets_ptr = reinterpret_cast<uint32_t*>(offsets_buf);
+  // Per-list size array. Offsets are not stored -- the reader recomputes
+  // them via running-sum while iterating sizes.
+  auto sizes_bytes = static_cast<uint32_t>(sizeof(uint32_t) * count);
+  auto* sizes_buf = Allocate(sizes_bytes);
   auto* sizes_ptr = reinterpret_cast<uint32_t*>(sizes_buf);
 
-  uint32_t current_offset = 0;
+  uint32_t total_child_count = 0;
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto& entry = list_data[fmt.sel->get_index(offset + i)];
-    offsets_ptr[i] = current_offset;
     sizes_ptr[i] = static_cast<uint32_t>(entry.length);
-    current_offset += sizes_ptr[i];
+    total_child_count += sizes_ptr[i];
   }
-  _row_slices.emplace_back(offsets_buf, indexes_size);
-  _row_slices.emplace_back(sizes_buf, indexes_size);
+  _row_slices.emplace_back(sizes_buf, sizes_bytes);
 
   // Elements: emit the contiguous range covering all selected list bodies.
   // The child sub-vector encoder handles its own format dispatch via
   // rdata.children[0].unified.
   auto& child_type = duckdb::ListType::GetChildType(type);
-  uint32_t child_bytes = 0;
-  if (current_offset > 0) {
+  size_t child_bytes = 0;
+  if (total_child_count > 0) {
     auto first_offset = list_data[fmt.sel->get_index(offset)].offset;
     child_bytes = WriteSubVector(rdata.children[0], first_offset,
-                                 current_offset, child_type);
+                                 total_child_count, child_type);
   }
 
   auto header_size = static_cast<uint32_t>(
@@ -936,11 +928,11 @@ uint32_t DuckDBColumnSerializer::WriteListSubVector(
   irs::WriteVarint(static_cast<uint32_t>(count), header);
   auto flags = null_bytes != 0 ? ValueFlags::HaveNulls : ValueFlags::None;
   *(header++) = std::bit_cast<char>(flags);
-  return header_size + null_bytes + 2 * indexes_size + child_bytes;
+  return header_size + null_bytes + sizes_bytes + child_bytes;
 }
 
 // MAP is LIST(STRUCT(key, value)) in DuckDB.
-uint32_t DuckDBColumnSerializer::WriteMapValue(
+size_t DuckDBColumnSerializer::WriteMapValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   auto& fmt = rdata.unified;
@@ -963,7 +955,7 @@ uint32_t DuckDBColumnSerializer::WriteMapValue(
   auto& key_type = duckdb::MapType::KeyType(type);
   auto slices_before_keys = _row_slices.size();
   WriteSubVector(key_rdata, entry.offset, entry.length, key_type);
-  uint32_t keys_size = 0;
+  size_t keys_size = 0;
   for (size_t i = slices_before_keys; i < _row_slices.size(); i++) {
     keys_size += _row_slices[i].size();
   }
@@ -971,7 +963,7 @@ uint32_t DuckDBColumnSerializer::WriteMapValue(
   auto& val_type = duckdb::MapType::ValueType(type);
   auto slices_before_vals = _row_slices.size();
   WriteSubVector(val_rdata, entry.offset, entry.length, val_type);
-  uint32_t vals_size = 0;
+  size_t vals_size = 0;
   for (size_t i = slices_before_vals; i < _row_slices.size(); i++) {
     vals_size += _row_slices[i].size();
   }
@@ -987,7 +979,7 @@ uint32_t DuckDBColumnSerializer::WriteMapValue(
 // Mirror of the variable-length sub-vector format used for VARCHAR: header
 // (count + flags + length_array_size), optional null bitmap, varint length
 // array, then per-element struct bodies (NULL slots contribute 0 bytes).
-uint32_t DuckDBColumnSerializer::WriteStructSubVector(
+size_t DuckDBColumnSerializer::WriteStructSubVector(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t offset,
   duckdb::idx_t count, const duckdb::LogicalType& type) {
   SDB_ASSERT(count > 0);
@@ -998,7 +990,7 @@ uint32_t DuckDBColumnSerializer::WriteStructSubVector(
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();  // header placeholder
 
-  uint32_t null_bytes = WriteNullBitmap(fmt, offset, count);
+  size_t null_bytes = WriteNullBitmap(fmt, offset, count);
   bool have_nulls = null_bytes != 0;
 
   auto length_slice_idx = _row_slices.size();
@@ -1006,11 +998,11 @@ uint32_t DuckDBColumnSerializer::WriteStructSubVector(
 
   duckdb::unsafe_arena_vector<uint32_t> lengths{_arena};
   lengths.reserve(count);
-  uint32_t length_array_size = 0;
-  uint32_t total_struct_bytes = 0;
+  size_t length_array_size = 0;
+  size_t total_struct_bytes = 0;
 
   for (duckdb::idx_t i = 0; i < count; i++) {
-    uint32_t struct_size = 0;
+    size_t struct_size = 0;
     if (!have_nulls ||
         fmt.validity.RowIsValid(fmt.sel->get_index(offset + i))) {
       struct_size = WriteStructValue(rdata, offset + i, type);
@@ -1042,7 +1034,7 @@ uint32_t DuckDBColumnSerializer::WriteStructSubVector(
 }
 
 template<typename T>
-uint32_t DuckDBColumnSerializer::WriteScalarField(
+size_t DuckDBColumnSerializer::WriteScalarField(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t row_idx) {
   return WritePrimitive(
     duckdb::UnifiedVectorFormat::GetData<T>(fmt)[fmt.sel->get_index(row_idx)]);
@@ -1061,7 +1053,7 @@ static bool IsNestedType(const duckdb::LogicalType& type) {
 }
 
 // Null entries emit an empty slice.
-uint32_t DuckDBColumnSerializer::WriteScalarValue(
+size_t DuckDBColumnSerializer::WriteScalarValue(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t row_idx,
   const duckdb::LogicalType& type) {
   const auto idx = fmt.sel->get_index(row_idx);
@@ -1118,7 +1110,7 @@ uint32_t DuckDBColumnSerializer::WriteScalarValue(
   }
 }
 
-uint32_t DuckDBColumnSerializer::WriteComplexValue(
+size_t DuckDBColumnSerializer::WriteComplexValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t row_idx,
   const duckdb::LogicalType& type) {
   // Catches inner nulls (e.g. a null STRUCT child of a STRUCT) -- top-level
@@ -1145,7 +1137,7 @@ uint32_t DuckDBColumnSerializer::WriteComplexValue(
 }
 
 // Format: [varint length_data_size][lengths...][child0_value][child1_value]...
-uint32_t DuckDBColumnSerializer::WriteStructValue(
+size_t DuckDBColumnSerializer::WriteStructValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   const auto resolved = rdata.unified.sel->get_index(idx);
@@ -1161,11 +1153,11 @@ uint32_t DuckDBColumnSerializer::WriteStructValue(
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();
 
-  uint32_t total_children_bytes = 0;
+  size_t total_children_bytes = 0;
   for (size_t i = 0; i < num_children; i++) {
     const auto& child_rdata = rdata.children[i];
     auto& child_type = child_types[i].second;
-    uint32_t child_bytes =
+    size_t child_bytes =
       IsNestedType(child_type)
         ? WriteComplexValue(child_rdata, resolved, child_type)
         : WriteScalarValue(child_rdata.unified, resolved, child_type);
@@ -1176,7 +1168,7 @@ uint32_t DuckDBColumnSerializer::WriteStructValue(
     }
   }
 
-  uint32_t length_array_size = 0;
+  size_t length_array_size = 0;
   for (auto len : lengths) {
     length_array_size += irs::bytes_io<uint32_t>::vsize(len);
   }
@@ -1192,7 +1184,7 @@ uint32_t DuckDBColumnSerializer::WriteStructValue(
   return header_size + total_children_bytes;
 }
 
-uint32_t DuckDBColumnSerializer::WriteArrayValue(
+size_t DuckDBColumnSerializer::WriteArrayValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   auto& child_type = duckdb::ArrayType::GetChildType(type);
@@ -1201,7 +1193,7 @@ uint32_t DuckDBColumnSerializer::WriteArrayValue(
   auto slices_before = _row_slices.size();
   WriteSubVector(rdata.children[0], resolved * array_size, array_size,
                  child_type);
-  uint32_t bytes = 0;
+  size_t bytes = 0;
   for (size_t j = slices_before; j < _row_slices.size(); ++j) {
     bytes += _row_slices[j].size();
   }

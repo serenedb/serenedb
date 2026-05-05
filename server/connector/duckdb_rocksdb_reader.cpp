@@ -217,10 +217,11 @@ static duckdb::idx_t ReadMapColumn(rocksdb::Iterator& it,
                        });
 }
 
-// DuckDB's TupleDataStructScatter (and other code paths) read struct child
-// data unconditionally, ignoring the parent's validity bit. So a NULL row
-// also needs its child slots zero-filled or ASAN trips on uninitialized
-// reads.
+// Recursively mark a row invalid through nested STRUCT/ARRAY children.
+// DuckDB's templated scatter takes a fast path that reads a child slot
+// unconditionally when the child's validity has CannotHaveNull()=true.
+// Setting each descendant slot invalid forces the per-row validity check
+// to fire and skips the read of uninitialized data.
 void NullifyChildAt(duckdb::Vector& vec, duckdb::idx_t idx) {
   duckdb::FlatVector::ValidityMutable(vec).SetInvalid(idx);
   using duckdb::LogicalTypeId;
@@ -229,14 +230,6 @@ void NullifyChildAt(duckdb::Vector& vec, duckdb::idx_t idx) {
       for (auto& child : duckdb::StructVector::GetEntries(vec)) {
         NullifyChildAt(child, idx);
       }
-      return;
-    case LogicalTypeId::LIST:
-    case LogicalTypeId::MAP:
-      duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(vec)[idx] = {};
-      return;
-    case LogicalTypeId::VARCHAR:
-    case LogicalTypeId::BLOB:
-      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[idx] = {};
       return;
     case LogicalTypeId::ARRAY: {
       auto& child = duckdb::ArrayVector::GetEntry(vec);
@@ -247,9 +240,7 @@ void NullifyChildAt(duckdb::Vector& vec, duckdb::idx_t idx) {
       return;
     }
     default:
-      auto width = duckdb::GetTypeIdSize(vec.GetType().InternalType());
-      std::memset(duckdb::FlatVector::GetDataMutable(vec) + idx * width, 0,
-                  width);
+      return;
   }
 }
 
@@ -532,8 +523,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
     } break;
     case duckdb::LogicalTypeId::STRUCT: {
       // Mirror image of WriteStructSubVector: read the per-element length
-      // array, then deserialize each struct slot from its slice. NULL slots
-      // (length=0) recursively nullify the struct's children.
+      // array, then deserialize each struct slot from its slice.
       const uint8_t* lptr = ptr;
       ptr += length_array_size;
       for (uint32_t i = 0; i < elem_count; i++) {
@@ -616,44 +606,24 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
     } break;
     case duckdb::LogicalTypeId::LIST: {
       // Format written by WriteListSubVector (after optional null_bitmap):
-      //   [offsets: elem_count * sizeof(list_entry_t::offset) bytes]
-      //   [sizes:   elem_count * sizeof(list_entry_t::offset) bytes]
+      //   [sizes: elem_count * sizeof(uint32_t) bytes]
       //   [child sub-vector for all list elements combined]
-      // Note: each offset/size slot is sizeof(list_entry_t::offset) = 8
-      // bytes (uint64_t allocation), but the actual value written is a
-      // uint32_t in the first 4 bytes of each slot (see
-      // WriteListSubVector).
-      static constexpr size_t kSlotSize = sizeof(duckdb::list_entry_t::offset);
-
+      // Per-list offsets are recomputed here via running-sum.
       auto& list_child = duckdb::ListVector::GetEntry(child);
       auto& list_child_type = duckdb::ListType::GetChildType(child_type);
       auto current_child_size = duckdb::ListVector::GetListSize(child);
       auto* list_entries = duckdb::ListVector::GetData(child);
 
-      // The offsets/sizes arrays each occupy elem_count * kSlotSize bytes
-      // total, but the uint32 values are packed consecutively in the first
-      // elem_count * sizeof(uint32_t) bytes (the remainder is
-      // uninitialized). Offsets block: [ptr .. ptr + elem_count *
-      // kSlotSize) Sizes block:   [ptr + elem_count * kSlotSize .. ptr + 2
-      // * elem_count
-      // * kSlotSize)
-
-      const auto* sizes_start =
-        reinterpret_cast<const uint32_t*>(ptr + elem_count * kSlotSize);
-      // sizes_start[i] reads at i * sizeof(uint32_t) = consecutive uint32s.
+      const auto* sizes_array = reinterpret_cast<const uint32_t*>(ptr);
       uint32_t total_child_elems = 0;
       for (uint32_t i = 0; i < elem_count; i++) {
-        total_child_elems += sizes_start[i];
+        total_child_elems += sizes_array[i];
       }
       duckdb::ListVector::Reserve(child,
                                   current_child_size + total_child_elems);
       // Re-fetch list_entries after possible resize.
       list_entries = duckdb::ListVector::GetData(child);
 
-      ptr += elem_count * kSlotSize;  // skip entire offsets block
-
-      // Read consecutive uint32_t sizes, then skip the full sizes block.
-      const auto* sizes_array = reinterpret_cast<const uint32_t*>(ptr);
       uint32_t running_offset = current_child_size;
       for (uint32_t i = 0; i < elem_count; i++) {
         auto size = sizes_array[i];
@@ -665,7 +635,7 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           running_offset += size;
         }
       }
-      ptr += elem_count * kSlotSize;  // skip entire sizes block
+      ptr += elem_count * sizeof(uint32_t);  // skip sizes block
 
       // Parse child sub-vector (all elements from all lists combined).
       if (total_child_elems > 0) {

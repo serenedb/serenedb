@@ -174,6 +174,7 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
     }
     case STRUCT: {
       auto ext = type.GetExtensionInfo();
+      // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
       if (ext) {
         auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
         if (it != ext->properties.end()) {
@@ -793,6 +794,55 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
       }
       return duckdb::Value::LIST(elem_type, std::move(values));
     }
+    case ENUM: {
+      // PG enum binary: raw label bytes (matches text format).
+      duckdb::string_t key{data.data(), static_cast<uint32_t>(data.size())};
+      const auto pos = duckdb::EnumType::GetPos(type, key);
+      if (pos < 0) {
+        return MakeInvalid();
+      }
+      return duckdb::Value::ENUM(static_cast<uint64_t>(pos), type);
+    }
+    case STRUCT: {
+      // PG record binary: int32 nfields; for each field
+      // { int32 type_oid, int32 length (-1 = NULL), length bytes }.
+      if (data.size() < 4) {
+        return MakeInvalid();
+      }
+      const auto nfields = absl::big_endian::Load<int32_t>(data.data());
+      const auto& children = duckdb::StructType::GetChildTypes(type);
+      if (nfields < 0 || static_cast<size_t>(nfields) != children.size()) {
+        return MakeInvalid();
+      }
+      size_t offset = 4;
+      duckdb::child_list_t<duckdb::Value> fields;
+      fields.reserve(children.size());
+      for (size_t i = 0; i < children.size(); ++i) {
+        if (offset + 8 > data.size()) {
+          return MakeInvalid();
+        }
+        // field type OID at +0 (ignored; trust caller-declared type)
+        offset += 4;
+        const auto len = absl::big_endian::Load<int32_t>(data.data() + offset);
+        offset += 4;
+        const auto& child_type = children[i].second;
+        if (len == -1) {
+          fields.emplace_back(children[i].first, duckdb::Value{child_type});
+          continue;
+        }
+        if (len < 0 || static_cast<size_t>(len) > data.size() - offset) {
+          return MakeInvalid();
+        }
+        auto field = DeserializeBinaryParameter(
+          child_type, data.substr(offset, len), snapshot);
+        if (!field) {
+          return std::unexpected{field.error()};
+        }
+        fields.emplace_back(children[i].first, std::move(*field));
+        offset += len;
+      }
+      return duckdb::Value::STRUCT(std::move(fields));
+    }
     default:
       SDB_ASSERT(false, "unsupported binary parameter type");
       return MakeInvalid();
@@ -937,6 +987,112 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
         return std::unexpected{*error};
       }
       return duckdb::Value::LIST(elem_type, std::move(values));
+    }
+    case ENUM: {
+      duckdb::string_t key{data.data(), static_cast<uint32_t>(data.size())};
+      const auto pos = duckdb::EnumType::GetPos(type, key);
+      if (pos < 0) {
+        return MakeInvalid();
+      }
+      return duckdb::Value::ENUM(static_cast<uint64_t>(pos), type);
+    }
+    case STRUCT: {
+      // PG composite text: "(field1,field2,...)". An empty unquoted field
+      // is NULL; "..." is a quoted field with "" -> ", \" -> ", \\ -> \.
+      auto trimmed = data;
+      while (!trimmed.empty() && absl::ascii_isspace(trimmed.front())) {
+        trimmed.remove_prefix(1);
+      }
+      while (!trimmed.empty() && absl::ascii_isspace(trimmed.back())) {
+        trimmed.remove_suffix(1);
+      }
+      if (trimmed.size() < 2 || trimmed.front() != '(' ||
+          trimmed.back() != ')') {
+        return MakeInvalid();
+      }
+      trimmed.remove_prefix(1);
+      trimmed.remove_suffix(1);
+
+      const auto& children = duckdb::StructType::GetChildTypes(type);
+      duckdb::child_list_t<duckdb::Value> fields;
+      fields.reserve(children.size());
+
+      if (trimmed.empty() && children.empty()) {
+        return duckdb::Value::STRUCT(std::move(fields));
+      }
+      if (children.empty()) {
+        return MakeInvalid();
+      }
+
+      size_t i = 0;
+      size_t field_idx = 0;
+      while (true) {
+        if (field_idx >= children.size()) {
+          return MakeInvalid();
+        }
+        const auto& child_type = children[field_idx].second;
+        const auto& child_name = children[field_idx].first;
+
+        std::string token;
+        bool is_null = false;
+        if (i < trimmed.size() && trimmed[i] == '"') {
+          ++i;
+          while (i < trimmed.size()) {
+            if (trimmed[i] == '"') {
+              if (i + 1 < trimmed.size() && trimmed[i + 1] == '"') {
+                token += '"';
+                i += 2;
+              } else {
+                ++i;
+                break;
+              }
+            } else if (trimmed[i] == '\\' && i + 1 < trimmed.size()) {
+              token += trimmed[i + 1];
+              i += 2;
+            } else {
+              token += trimmed[i];
+              ++i;
+            }
+          }
+        } else {
+          while (i < trimmed.size() && trimmed[i] != ',') {
+            if (trimmed[i] == '\\' && i + 1 < trimmed.size()) {
+              token += trimmed[i + 1];
+              i += 2;
+            } else {
+              token += trimmed[i];
+              ++i;
+            }
+          }
+          if (token.empty()) {
+            is_null = true;
+          }
+        }
+
+        if (is_null) {
+          fields.emplace_back(child_name, duckdb::Value{child_type});
+        } else {
+          auto field = DeserializeTextParameter(child_type, token, snapshot);
+          if (!field) {
+            return std::unexpected{field.error()};
+          }
+          fields.emplace_back(child_name, std::move(*field));
+        }
+        ++field_idx;
+
+        if (i >= trimmed.size()) {
+          break;
+        }
+        if (trimmed[i] != ',') {
+          return MakeInvalid();
+        }
+        ++i;
+      }
+
+      if (field_idx != children.size()) {
+        return MakeInvalid();
+      }
+      return duckdb::Value::STRUCT(std::move(fields));
     }
     default:
       return duckdb::Value{data}.DefaultCastAs(type);

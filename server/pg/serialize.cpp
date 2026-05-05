@@ -711,12 +711,11 @@ template<SerializationFunction ElementSerialization, VarFormat Format,
          bool First = true>
 int32_t FlattenArray(SerializationContext context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                     duckdb::idx_t row, int32_t& oid) {
+                     duckdb::idx_t row) {
   const auto lid = vdata.logical_type.id();
   if (lid != duckdb::LogicalTypeId::LIST &&
       lid != duckdb::LogicalTypeId::ARRAY) {
     SerializeNullable<ElementSerialization>(context, vdata, row);
-    oid = Type2Oid(vdata.logical_type, false);
     return 0;
   }
   duckdb::idx_t array_size;
@@ -744,14 +743,14 @@ int32_t FlattenArray(SerializationContext context,
   int32_t dims = -1;
   if constexpr (First) {
     dims = FlattenArray<ElementSerialization, Format>(context, child_vdata,
-                                                      array_offset + i, oid) +
+                                                      array_offset + i) +
            1;
     i++;
   }
   for (; i < array_size; ++i) {
     auto element_row = array_offset + i;
     const auto inner_dim = FlattenArray<ElementSerialization, Format, false>(
-      context, child_vdata, element_row, oid);
+      context, child_vdata, element_row);
     SDB_ASSERT(dims == -1 || dims == inner_dim + 1);
     dims = inner_dim + 1;
   }
@@ -802,10 +801,9 @@ void SerializeArray(SerializationContext context,
   } else {
     auto* prefix_data = context.buffer->GetContiguousData(12);
     absl::big_endian::Store32(prefix_data + 4, 0);
-    int32_t element_oid;
-    const auto dims = FlattenArray<ElementSerialization, Format>(
-      context, vdata, row, element_oid);
-    absl::big_endian::Store32(prefix_data + 8, element_oid);
+    absl::big_endian::Store32(prefix_data + 8, ElementOID);
+    const auto dims =
+      FlattenArray<ElementSerialization, Format>(context, vdata, row);
     absl::big_endian::Store32(prefix_data, dims);
   }
 }

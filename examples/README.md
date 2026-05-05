@@ -6,17 +6,11 @@ End-to-end demos that show what SereneDB does, against real data, in scripts you
 
 | | What it shows | Dataset |
 |---|---|---|
-| [demo0](demo0/) | Search over **remote** Parquet -- zero ingest, point at an `hf://` URL and search it | IMDb reviews on Hugging Face (100k rows, 3 shards) |
+| [demo0](demo0/) | Zero ETL search over **remote** Parquet files | IMDb reviews on Hugging Face (100k rows, 3 shards) |
 | [demo1](demo1/) | Same demo over **local** Parquet -- same SQL, two orders of magnitude faster | IMDb reviews staged in `/tmp` |
 | [demo2](demo2/) | Same demo over a **native table** -- production shape, durable, sub-millisecond queries | IMDb reviews ingested into a SereneDB table |
 
 All three demos run the same SQL: ranked search with BM25, hybrid full-text + relational analytics, JOINs over indexed columns. They differ only in where the data lives.
-
-## Choosing a demo
-
-- **demo0** -- quickest "aha": no ingest, no schema, no storage. Per-query latency is gated on remote roundtrips.
-- **demo1** -- same SQL, no network. Useful when the source data is read-only Parquet you don't want to copy twice.
-- **demo2** -- production shape. Best query latency, supports `INSERT` / `UPDATE` / `DELETE`, persistent across restarts.
 
 ## Running a demo
 
@@ -24,4 +18,4 @@ All three demos run the same SQL: ranked search with BM25, hybrid full-text + re
 psql -h <host> -p <port> -U serenedb -d postgres -f <demo>/demo.sql
 ```
 
-Each demo's README has the full instructions and any one-time bootstrap. If you don't have a SereneDB server running yet, see [the installation docs](https://serenedb.com/docs/installation) or build from source.
+Each demo's README has the full instructions and any one-time bootstrap. If you don't have a SereneDB server running yet, check the [downloads page](https://serenedb.com/download).

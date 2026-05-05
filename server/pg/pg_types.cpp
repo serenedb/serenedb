@@ -169,9 +169,20 @@ int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
       SDB_ASSERT(ext);
       auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
       SDB_ASSERT(it != ext->properties.end());
-      return it->second.GetValue<uint64_t>();
+      const ObjectId oid{it->second.GetValue<uint64_t>()};
+      return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
     }
-    case STRUCT:
+    case STRUCT: {
+      auto ext = type.GetExtensionInfo();
+      if (ext) {
+        auto it = ext->properties.find(catalog::kPgSqlTypeOidProp);
+        if (it != ext->properties.end()) {
+          const ObjectId oid{it->second.GetValue<uint64_t>()};
+          return (in_array ? catalog::PgSqlType::ToArrayOid(oid) : oid).id();
+        }
+      }
+      return in_array ? kRecordArray : kRecord;
+    }
     case MAP:
       return in_array ? kRecordArray : kRecord;
     case VARCHAR: {

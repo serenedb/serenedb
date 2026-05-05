@@ -28,12 +28,15 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 
 #include "basics/static_strings.h"
+#include "database/ticks.h"
 
 namespace sdb::catalog {
 
 PgSqlType::PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
                      duckdb::unique_ptr<duckdb::CreateTypeInfo> info)
-  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgSqlType},
+  : SchemaObject{{},   database_id,
+                 {},   id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id,
+                 name, ObjectType::PgSqlType},
     _info{std::move(info)} {}
 
 std::shared_ptr<PgSqlType> PgSqlType::ReadInternal(vpack::Slice slice,

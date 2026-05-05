@@ -1,0 +1,576 @@
+statement ok
+CREATE TYPE address AS (
+  street VARCHAR,
+  city VARCHAR,
+  zip INTEGER
+);
+
+
+query error
+CREATE TYPE address AS (x INTEGER);
+----
+db error: ERROR: type "address" already exists
+
+
+query error
+CREATE TYPE bad_composite AS (x INTEGER, y VARCHAR, x BOOLEAN);
+----
+db error: ERROR: column "x" specified more than once
+
+
+statement ok
+CREATE TYPE coordinates AS (
+  lat DOUBLE PRECISION,
+  lon DOUBLE PRECISION
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_locations (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR,
+  addr address
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (1, 'psycho_hospital', ROW('ulica pushkina', 'moscow', 101010));
+
+
+statement count 1
+INSERT INTO vedernikoff_locations VALUES (2, 'reabilitacia', ROW('dom kolotushkina', 'spb', 202020));
+
+
+query
+SELECT id, name FROM vedernikoff_locations ORDER BY id;
+----
+id	name
+1	psycho_hospital
+2	reabilitacia
+
+
+query
+SELECT id, name, addr FROM vedernikoff_locations ORDER BY id;
+----
+id	name	addr
+1	psycho_hospital	("ulica pushkina",moscow,101010)
+2	reabilitacia	("dom kolotushkina",spb,202020)
+
+query
+SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' ORDER BY typname;
+----
+typname	typtype
+address	c
+coordinates	c
+
+
+statement ok
+DROP TABLE vedernikoff_locations;
+
+
+statement ok
+DROP TYPE coordinates;
+
+
+statement ok
+DROP TYPE address;
+
+
+query error
+DROP TYPE address;
+----
+<slt:ignore>does not exist<slt:ignore>
+
+
+statement ok
+DROP TYPE IF EXISTS address;
+
+
+query
+SELECT ROW(1, 'vedernikoff', true);
+----
+row
+(1,vedernikoff,t)
+
+query
+SELECT ROW(42, 'bipolyarka');
+----
+row
+(42,bipolyarka)
+
+statement ok
+CREATE TYPE diagnosis AS ENUM ('bipolyarka', 'shiza', 'panicataka', 'depression', 'norma');
+
+
+statement ok
+CREATE TYPE patient_info AS (
+  name VARCHAR,
+  age INTEGER,
+  illness diagnosis
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_ward (
+  room INTEGER PRIMARY KEY,
+  patient patient_info
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (101, ROW('vedernikoff', 33, 'bipolyarka'));
+
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (202, ROW('kostya', 25, 'depression'));
+
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (303, ROW('bigfgun', 40, 'shiza'));
+
+
+statement count 1
+INSERT INTO vedernikoff_ward VALUES (404, NULL);
+
+
+query
+SELECT room, patient FROM vedernikoff_ward ORDER BY room;
+----
+room	patient
+101	(vedernikoff,33,bipolyarka)
+202	(kostya,25,depression)
+303	(bigfgun,40,shiza)
+404	NULL
+
+query
+SELECT room FROM vedernikoff_ward WHERE patient IS NULL;
+----
+room
+404
+
+
+query
+SELECT room FROM vedernikoff_ward WHERE patient IS NOT NULL ORDER BY room;
+----
+room
+101
+202
+303
+
+
+statement ok
+DROP TABLE vedernikoff_ward;
+
+
+statement ok
+CREATE TYPE messy_record AS (
+  label VARCHAR,
+  value VARCHAR
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_notes (
+  id INTEGER PRIMARY KEY,
+  note messy_record
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (1, ROW('simple', 'hello'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (2, ROW('has space', 'dom kolotushkina'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (3, ROW('has,comma', 'a,b'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (4, ROW('has(paren)', 'x(y)'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (5, ROW('has"quote', 'say "hi"'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (6, ROW('has\backslash', 'path\to'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (7, ROW('', 'empty label'));
+
+
+statement count 1
+INSERT INTO vedernikoff_notes VALUES (8, ROW('null_value', NULL));
+
+
+query
+SELECT id, note FROM vedernikoff_notes ORDER BY id;
+----
+id	note
+1	(simple,hello)
+2	("has space","dom kolotushkina")
+3	("has,comma","a,b")
+4	("has(paren)","x(y)")
+5	("has""quote","say ""hi""")
+6	("has\\\\backslash","path\\\\to")
+7	("","empty label")
+8	(null_value,)
+
+statement ok
+DROP TABLE vedernikoff_notes;
+
+
+statement ok
+DROP TYPE messy_record;
+
+
+statement ok
+CREATE TYPE vitals AS (
+  heart_rate INTEGER,
+  temperature DOUBLE PRECISION,
+  systolic SMALLINT,
+  is_stable BOOLEAN
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_checkup (
+  id INTEGER PRIMARY KEY,
+  patient_name VARCHAR,
+  readings vitals
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_checkup VALUES (1, 'vedernikoff', ROW(120, 38.5, 180, false));
+
+
+statement count 1
+INSERT INTO vedernikoff_checkup VALUES (2, 'kostya', ROW(72, 36.6, 120, true));
+
+
+statement count 1
+INSERT INTO vedernikoff_checkup VALUES (3, 'bigfgun', ROW(95, 37.2, 140, true));
+
+
+query
+SELECT id, patient_name, readings FROM vedernikoff_checkup ORDER BY id;
+----
+id	patient_name	readings
+1	vedernikoff	(120,38.5,180,f)
+2	kostya	(72,36.6,120,t)
+3	bigfgun	(95,37.2,140,t)
+
+statement ok
+DROP TABLE vedernikoff_checkup;
+
+
+statement ok
+DROP TYPE vitals;
+
+
+statement ok
+CREATE TYPE visit_record AS (
+  doctor VARCHAR,
+  visited_at TIMESTAMP
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_visits (
+  id INTEGER PRIMARY KEY,
+  visit visit_record
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_visits VALUES (1, ROW('dr_psikh', '2025-03-15 14:30:00'));
+
+
+statement count 1
+INSERT INTO vedernikoff_visits VALUES (2, ROW('dr_tabletkin', '2025-03-16 09:00:00'));
+
+
+query
+SELECT id, visit FROM vedernikoff_visits ORDER BY id;
+----
+id	visit
+1	(dr_psikh,"2025-03-15 14:30:00")
+2	(dr_tabletkin,"2025-03-16 09:00:00")
+
+statement ok
+DROP TABLE vedernikoff_visits;
+
+
+statement ok
+DROP TYPE visit_record;
+
+
+query
+SELECT ROW(1, 'vedernikoff', true);
+----
+row
+(1,vedernikoff,t)
+
+query
+SELECT ROW(42, 'bipolyarka', 3.14);
+----
+row
+(42,bipolyarka,3.14)
+
+query
+SELECT ROW('has space', 'has,comma', 'has"quote');
+----
+row
+("has space","has,comma","has""quote")
+
+statement ok
+CREATE TABLE vedernikoff_history (
+  patient VARCHAR PRIMARY KEY,
+  diagnoses diagnosis[]
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_history VALUES ('vedernikoff', ARRAY['bipolyarka', 'depression']::diagnosis[]);
+
+
+statement count 1
+INSERT INTO vedernikoff_history VALUES ('kostya', ARRAY['shiza']::diagnosis[]);
+
+
+statement count 1
+INSERT INTO vedernikoff_history VALUES ('bigfgun', ARRAY[]::diagnosis[]);
+
+
+statement count 1
+INSERT INTO vedernikoff_history VALUES ('nullguy', NULL);
+
+
+statement count 1
+INSERT INTO vedernikoff_history VALUES ('hasnull', ARRAY[NULL, 'norma']::diagnosis[]);
+
+
+query
+SELECT patient, diagnoses FROM vedernikoff_history ORDER BY patient;
+----
+patient	diagnoses
+bigfgun	{}
+hasnull	{NULL,norma}
+kostya	{shiza}
+nullguy	NULL
+vedernikoff	{bipolyarka,depression}
+
+query
+SELECT patient FROM vedernikoff_history WHERE diagnoses IS NULL;
+----
+patient
+nullguy
+
+
+query
+SELECT patient FROM vedernikoff_history WHERE diagnoses IS NOT NULL ORDER BY patient;
+----
+patient
+bigfgun
+hasnull
+kostya
+vedernikoff
+
+
+query
+SELECT patient FROM vedernikoff_history WHERE 'depression' = ANY(diagnoses);
+----
+patient
+vedernikoff
+
+
+query
+SELECT patient FROM vedernikoff_history WHERE 'norma' = ANY(diagnoses);
+----
+patient
+hasnull
+
+
+statement ok
+DROP TABLE vedernikoff_history;
+
+
+statement ok
+CREATE TABLE vedernikoff_scores (
+  patient VARCHAR PRIMARY KEY,
+  scores INTEGER[]
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_scores VALUES ('vedernikoff', ARRAY[120, 95, 60]);
+
+
+statement count 1
+INSERT INTO vedernikoff_scores VALUES ('kostya', ARRAY[]::INTEGER[]);
+
+
+query
+SELECT patient, scores FROM vedernikoff_scores ORDER BY patient;
+----
+patient	scores
+kostya	{}
+vedernikoff	{120,95,60}
+
+
+statement ok
+DROP TABLE vedernikoff_scores;
+
+
+statement ok
+CREATE TYPE patient_simple AS (
+  name VARCHAR,
+  illness diagnosis
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_squad (
+  squad VARCHAR PRIMARY KEY,
+  members patient_simple[]
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_squad VALUES (
+  'morning',
+  ARRAY[
+    ROW('vedernikoff', 'bipolyarka')::patient_simple,
+    ROW('kostya', 'depression')::patient_simple
+  ]
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_squad VALUES ('empty', ARRAY[]::patient_simple[]);
+
+
+statement count 1
+INSERT INTO vedernikoff_squad VALUES ('null_squad', NULL);
+
+
+statement count 1
+INSERT INTO vedernikoff_squad VALUES (
+  'gappy',
+  ARRAY[NULL::patient_simple, ROW('bigfgun', 'shiza')::patient_simple]
+);
+
+
+query
+SELECT squad, members FROM vedernikoff_squad ORDER BY squad;
+----
+squad	members
+empty	{}
+gappy	{NULL,"(bigfgun,shiza)"}
+morning	{"(vedernikoff,bipolyarka)","(kostya,depression)"}
+null_squad	NULL
+
+
+query
+SELECT squad FROM vedernikoff_squad WHERE members IS NULL;
+----
+squad
+null_squad
+
+
+statement ok
+DROP TABLE vedernikoff_squad;
+
+
+statement ok
+DROP TYPE patient_simple;
+
+
+statement ok
+DROP TYPE diagnosis;
+
+
+statement ok
+CREATE TYPE pudge AS (x INTEGER);
+
+
+statement ok
+CREATE TYPE _pudge AS (y INTEGER);
+
+
+query
+SELECT typname, typtype FROM pg_catalog.pg_type
+  WHERE typname IN ('pudge', '_pudge', '__pudge', '___pudge')
+  ORDER BY typname;
+----
+typname	typtype
+___pudge	b
+__pudge	b
+_pudge	c
+pudge	c
+
+
+statement ok
+DROP TYPE _pudge;
+
+
+statement ok
+DROP TYPE pudge;
+
+
+statement ok
+CREATE TYPE _arelav AS (y INTEGER);
+
+
+statement ok
+CREATE TYPE arelav AS (x INTEGER);
+
+
+query
+SELECT typname, typtype FROM pg_catalog.pg_type
+  WHERE typname IN ('_arelav', '__arelav', 'arelav', '___arelav')
+  ORDER BY typname;
+----
+typname	typtype
+___arelav	b
+__arelav	b
+_arelav	c
+arelav	c
+
+
+statement ok
+DROP TYPE arelav;
+
+
+statement ok
+DROP TYPE _arelav;
+
+
+statement ok
+CREATE TYPE android AS (model VARCHAR);
+
+
+statement ok
+CREATE TYPE formichkev AS (handle VARCHAR);
+
+
+statement ok
+CREATE TYPE _android AS (rev INTEGER);
+
+
+statement ok
+DROP TYPE _android;
+
+
+statement ok
+DROP TYPE android;
+
+
+statement ok
+DROP TYPE formichkev;

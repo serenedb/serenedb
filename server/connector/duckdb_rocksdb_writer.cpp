@@ -190,43 +190,52 @@ rocksdb::Slice DuckDBColumnSerializer::Finalize(std::string& output) const {
 }
 
 template<>
-void DuckDBColumnSerializer::WritePrimitive<bool>(const bool& value) {
+uint32_t DuckDBColumnSerializer::WritePrimitive<bool>(const bool& value) {
   _row_slices.emplace_back(value ? kTrueValue : kFalseValue);
+  return 1;
 }
 
 template<>
-void DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
+uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::string_t>(
   const duckdb::string_t& value) {
   if (value.GetSize() == 0) {
     _row_slices.emplace_back(kStringPrefix);
-    return;
+    return static_cast<uint32_t>(kStringPrefix.size());
   }
   static_assert(kStringPrefix.size() == 1);
+  uint32_t bytes = 0;
   if (value.GetData()[0] == kStringPrefix.front()) {
     _row_slices.emplace_back(kStringPrefix);
+    bytes += static_cast<uint32_t>(kStringPrefix.size());
   }
   _row_slices.emplace_back(value.GetData(), value.GetSize());
+  bytes += static_cast<uint32_t>(value.GetSize());
+  return bytes;
 }
 
 // value must be in stable memory -- _row_slices stores &value.
 template<typename T>
-void DuckDBColumnSerializer::WritePrimitive(const T& value) {
+uint32_t DuckDBColumnSerializer::WritePrimitive(const T& value) {
   static_assert(std::is_trivially_copyable_v<T>);
   static_assert(basics::IsLittleEndian());
   _row_slices.emplace_back(reinterpret_cast<const char*>(&value), sizeof(T));
+  return sizeof(T);
 }
 
-template void DuckDBColumnSerializer::WritePrimitive<int8_t>(const int8_t&);
-template void DuckDBColumnSerializer::WritePrimitive<int16_t>(const int16_t&);
-template void DuckDBColumnSerializer::WritePrimitive<int32_t>(const int32_t&);
-template void DuckDBColumnSerializer::WritePrimitive<int64_t>(const int64_t&);
-template void DuckDBColumnSerializer::WritePrimitive<float>(const float&);
-template void DuckDBColumnSerializer::WritePrimitive<double>(const double&);
-template void DuckDBColumnSerializer::WritePrimitive<duckdb::timestamp_t>(
+template uint32_t DuckDBColumnSerializer::WritePrimitive<int8_t>(const int8_t&);
+template uint32_t DuckDBColumnSerializer::WritePrimitive<int16_t>(
+  const int16_t&);
+template uint32_t DuckDBColumnSerializer::WritePrimitive<int32_t>(
+  const int32_t&);
+template uint32_t DuckDBColumnSerializer::WritePrimitive<int64_t>(
+  const int64_t&);
+template uint32_t DuckDBColumnSerializer::WritePrimitive<float>(const float&);
+template uint32_t DuckDBColumnSerializer::WritePrimitive<double>(const double&);
+template uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::timestamp_t>(
   const duckdb::timestamp_t&);
-template void DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
+template uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::date_t>(
   const duckdb::date_t&);
-template void DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
+template uint32_t DuckDBColumnSerializer::WritePrimitive<duckdb::hugeint_t>(
   const duckdb::hugeint_t&);
 
 namespace {
@@ -862,7 +871,7 @@ void DuckDBColumnSerializer::WriteSubVector(
   }
 }
 
-void DuckDBColumnSerializer::WriteListValue(
+uint32_t DuckDBColumnSerializer::WriteListValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   auto& child_type = duckdb::ListType::GetChildType(type);
@@ -870,7 +879,13 @@ void DuckDBColumnSerializer::WriteListValue(
   const auto& entry =
     duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(
       rdata.unified)[resolved];
+  auto slices_before = _row_slices.size();
   WriteSubVector(rdata.children[0], entry.offset, entry.length, child_type);
+  uint32_t bytes = 0;
+  for (size_t j = slices_before; j < _row_slices.size(); ++j) {
+    bytes += _row_slices[j].size();
+  }
+  return bytes;
 }
 
 // Assumes contiguous child layout (FLAT-LIST); asserted below.
@@ -922,7 +937,7 @@ void DuckDBColumnSerializer::WriteListSubVector(
 }
 
 // MAP is LIST(STRUCT(key, value)) in DuckDB.
-void DuckDBColumnSerializer::WriteMapValue(
+uint32_t DuckDBColumnSerializer::WriteMapValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   auto& fmt = rdata.unified;
@@ -932,7 +947,7 @@ void DuckDBColumnSerializer::WriteMapValue(
 
   if (entry.length == 0) {
     _row_slices.emplace_back(kZeroLengthVector);
-    return;
+    return static_cast<uint32_t>(kZeroLengthVector.size());
   }
 
   auto header_idx = _row_slices.size();
@@ -951,19 +966,25 @@ void DuckDBColumnSerializer::WriteMapValue(
   }
 
   auto& val_type = duckdb::MapType::ValueType(type);
+  auto slices_before_vals = _row_slices.size();
   WriteSubVector(val_rdata, entry.offset, entry.length, val_type);
+  uint32_t vals_size = 0;
+  for (size_t i = slices_before_vals; i < _row_slices.size(); i++) {
+    vals_size += _row_slices[i].size();
+  }
 
   // [keys_size_varint] -- no elem_count prefix.
   auto header_size = irs::bytes_io<uint32_t>::vsize(keys_size);
   auto* header = Allocate(header_size);
   _row_slices[header_idx] = rocksdb::Slice(header, header_size);
   irs::WriteVarint(keys_size, header);
+  return header_size + keys_size + vals_size;
 }
 
 template<typename T>
-void DuckDBColumnSerializer::WriteScalarField(
+uint32_t DuckDBColumnSerializer::WriteScalarField(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t row_idx) {
-  WritePrimitive(
+  return WritePrimitive(
     duckdb::UnifiedVectorFormat::GetData<T>(fmt)[fmt.sel->get_index(row_idx)]);
 }
 
@@ -980,77 +1001,64 @@ static bool IsNestedType(const duckdb::LogicalType& type) {
 }
 
 // Null entries emit an empty slice.
-void DuckDBColumnSerializer::WriteScalarValue(
+uint32_t DuckDBColumnSerializer::WriteScalarValue(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t row_idx,
   const duckdb::LogicalType& type) {
   const auto idx = fmt.sel->get_index(row_idx);
   if (!fmt.validity.RowIsValid(idx)) {
     _row_slices.emplace_back();
-    return;
+    return 0;
   }
   switch (type.id()) {
     case duckdb::LogicalTypeId::BOOLEAN:
       // OK to pass a temporary: WritePrimitive<bool> stores a static literal
       // slice.
-      WritePrimitive(GetVectorValue<bool>(fmt, row_idx));
-      break;
+      return WritePrimitive(GetVectorValue<bool>(fmt, row_idx));
     case duckdb::LogicalTypeId::TINYINT:
-      WriteScalarField<int8_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<int8_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::SMALLINT:
-      WriteScalarField<int16_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<int16_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::INTEGER:
-      WriteScalarField<int32_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<int32_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::BIGINT:
-      WriteScalarField<int64_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<int64_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::FLOAT:
-      WriteScalarField<float>(fmt, row_idx);
-      break;
+      return WriteScalarField<float>(fmt, row_idx);
     case duckdb::LogicalTypeId::DOUBLE:
-      WriteScalarField<double>(fmt, row_idx);
-      break;
+      return WriteScalarField<double>(fmt, row_idx);
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB:
-      WritePrimitive(
+      return WritePrimitive(
         duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt)[idx]);
-      break;
     case duckdb::LogicalTypeId::TIMESTAMP:
     case duckdb::LogicalTypeId::TIMESTAMP_TZ:
-      WriteScalarField<duckdb::timestamp_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<duckdb::timestamp_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::DATE:
-      WriteScalarField<duckdb::date_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<duckdb::date_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::HUGEINT:
-      WriteScalarField<duckdb::hugeint_t>(fmt, row_idx);
-      break;
+      return WriteScalarField<duckdb::hugeint_t>(fmt, row_idx);
     case duckdb::LogicalTypeId::ENUM:
       switch (duckdb::EnumType::GetPhysicalType(type)) {
         case duckdb::PhysicalType::UINT8:
-          WriteScalarField<uint8_t>(fmt, row_idx);
-          break;
+          return WriteScalarField<uint8_t>(fmt, row_idx);
         case duckdb::PhysicalType::UINT16:
-          WriteScalarField<uint16_t>(fmt, row_idx);
-          break;
+          return WriteScalarField<uint16_t>(fmt, row_idx);
         case duckdb::PhysicalType::UINT32:
-          WriteScalarField<uint32_t>(fmt, row_idx);
-          break;
+          return WriteScalarField<uint32_t>(fmt, row_idx);
         default:
           SDB_ASSERT(false,
                      "Unsupported ENUM physical type in WriteScalarValue");
+          return 0;
       }
-      break;
     default:
       SDB_ASSERT(false,
                  "Unsupported type in WriteScalarValue: ", type.ToString(),
                  " -- nested types go through WriteComplexValue");
+      return 0;
   }
 }
 
-void DuckDBColumnSerializer::WriteComplexValue(
+uint32_t DuckDBColumnSerializer::WriteComplexValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t row_idx,
   const duckdb::LogicalType& type) {
   // Catches inner nulls (e.g. a null STRUCT child of a STRUCT) -- top-level
@@ -1058,29 +1066,26 @@ void DuckDBColumnSerializer::WriteComplexValue(
   if (!rdata.unified.validity.RowIsValid(
         rdata.unified.sel->get_index(row_idx))) {
     _row_slices.emplace_back();
-    return;
+    return 0;
   }
   switch (type.id()) {
     case duckdb::LogicalTypeId::LIST:
-      WriteListValue(rdata, row_idx, type);
-      break;
+      return WriteListValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::MAP:
-      WriteMapValue(rdata, row_idx, type);
-      break;
+      return WriteMapValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::STRUCT:
-      WriteStructValue(rdata, row_idx, type);
-      break;
+      return WriteStructValue(rdata, row_idx, type);
     case duckdb::LogicalTypeId::ARRAY:
-      WriteArrayValue(rdata, row_idx, type);
-      break;
+      return WriteArrayValue(rdata, row_idx, type);
     default:
       SDB_ASSERT(false, "Non-nested type passed to WriteComplexValue: ",
                  type.ToString());
+      return 0;
   }
 }
 
 // Format: [varint length_data_size][lengths...][child0_value][child1_value]...
-void DuckDBColumnSerializer::WriteStructValue(
+uint32_t DuckDBColumnSerializer::WriteStructValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   const auto resolved = rdata.unified.sel->get_index(idx);
@@ -1088,33 +1093,26 @@ void DuckDBColumnSerializer::WriteStructValue(
   auto num_children = rdata.children.size();
   SDB_ASSERT(num_children == child_types.size());
 
-  std::vector<uint32_t> lengths;
-  lengths.reserve(num_children);
+  duckdb::unsafe_arena_vector<uint32_t> lengths{_arena};
+  if (num_children > 1) {
+    lengths.reserve(num_children - 1);
+  }
 
   auto header_idx = _row_slices.size();
   _row_slices.emplace_back();
 
-  auto slices_before = _row_slices.size();
-  auto calculate_size = [&]() -> uint32_t {
-    uint32_t size = 0;
-    for (size_t j = slices_before; j < _row_slices.size(); j++) {
-      size += _row_slices[j].size();
-    }
-    slices_before = _row_slices.size();
-    return size;
-  };
-
+  uint32_t total_children_bytes = 0;
   for (size_t i = 0; i < num_children; i++) {
     const auto& child_rdata = rdata.children[i];
     auto& child_type = child_types[i].second;
-    if (IsNestedType(child_type)) {
-      WriteComplexValue(child_rdata, resolved, child_type);
-    } else {
-      WriteScalarValue(child_rdata.unified, resolved, child_type);
-    }
+    uint32_t child_bytes =
+      IsNestedType(child_type)
+        ? WriteComplexValue(child_rdata, resolved, child_type)
+        : WriteScalarValue(child_rdata.unified, resolved, child_type);
+    total_children_bytes += child_bytes;
     // Skip the last length: implied by total size.
     if (i + 1 < num_children) {
-      lengths.push_back(calculate_size());
+      lengths.push_back(child_bytes);
     }
   }
 
@@ -1131,16 +1129,23 @@ void DuckDBColumnSerializer::WriteStructValue(
   for (auto len : lengths) {
     irs::WriteVarint(len, header);
   }
+  return header_size + total_children_bytes;
 }
 
-void DuckDBColumnSerializer::WriteArrayValue(
+uint32_t DuckDBColumnSerializer::WriteArrayValue(
   const duckdb::RecursiveUnifiedVectorFormat& rdata, duckdb::idx_t idx,
   const duckdb::LogicalType& type) {
   auto& child_type = duckdb::ArrayType::GetChildType(type);
   auto array_size = duckdb::ArrayType::GetSize(type);
   const auto resolved = rdata.unified.sel->get_index(idx);
+  auto slices_before = _row_slices.size();
   WriteSubVector(rdata.children[0], resolved * array_size, array_size,
                  child_type);
+  uint32_t bytes = 0;
+  for (size_t j = slices_before; j < _row_slices.size(); ++j) {
+    bytes += _row_slices[j].size();
+  }
+  return bytes;
 }
 
 }  // namespace sdb::connector

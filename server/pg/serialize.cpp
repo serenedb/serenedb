@@ -71,6 +71,8 @@ enum class ArrayKind {
   MultiDimensions,
 };
 
+inline constexpr int32_t kDynamicOid = 0;
+
 #define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid)     \
   switch (kind) {                                                             \
     case ArrayKind::ListSingleDimension:                                      \
@@ -252,6 +254,24 @@ void SerializeEnumLabel(SerializationContext context,
     }
   }
   context.buffer->WriteUncommitted(value);
+}
+
+template<VarFormat Format, bool InArray>
+void SerializeEnum(SerializationContext context,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                   duckdb::idx_t row) {
+  switch (duckdb::EnumType::GetPhysicalType(vdata.logical_type)) {
+    using enum duckdb::PhysicalType;
+    case UINT8:
+      return SerializeEnumLabel<Format, InArray, uint8_t>(context, vdata, row);
+    case UINT16:
+      return SerializeEnumLabel<Format, InArray, uint16_t>(context, vdata, row);
+    case UINT32:
+      return SerializeEnumLabel<Format, InArray, uint32_t>(context, vdata, row);
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("Unsupported ENUM physical type"));
+  }
 }
 
 // Encode a value into PG numeric binary format.
@@ -666,10 +686,13 @@ void SerializeOneDimArray(SerializationContext context,
     // element_oid (4) - oid of an array element
     // dim1 size (4) - size of first(and only) dim
     // lower_bound (4) - begin offset(0 by default)
+    const int32_t element_oid = ElementOID == kDynamicOid
+                                  ? Type2Oid(child_vdata.logical_type, false)
+                                  : ElementOID;
     auto* prefix_data = context.buffer->GetContiguousData(20);
     absl::big_endian::Store32(prefix_data, 1);
     absl::big_endian::Store32(prefix_data + 4, 1);
-    absl::big_endian::Store32(prefix_data + 8, ElementOID);
+    absl::big_endian::Store32(prefix_data + 8, element_oid);
     absl::big_endian::Store32(prefix_data + 12, array_size);
     absl::big_endian::Store32(prefix_data + 16, 0);
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
@@ -732,6 +755,17 @@ int32_t FlattenArray(SerializationContext context,
   return dims;
 }
 
+const duckdb::LogicalType& ArrayLeafElementType(const duckdb::LogicalType& t) {
+  const duckdb::LogicalType* p = &t;
+  while (p->id() == duckdb::LogicalTypeId::LIST ||
+         p->id() == duckdb::LogicalTypeId::ARRAY) {
+    p = (p->id() == duckdb::LogicalTypeId::LIST)
+          ? &duckdb::ListType::GetChildType(*p)
+          : &duckdb::ArrayType::GetChildType(*p);
+  }
+  return *p;
+}
+
 template<SerializationFunction ElementSerialization, int32_t ElementOID,
          VarFormat Format>
 void SerializeArray(SerializationContext context,
@@ -773,9 +807,13 @@ void SerializeArray(SerializationContext context,
     }
     context.buffer->WriteUncommitted("}");
   } else {
+    const int32_t element_oid =
+      ElementOID == kDynamicOid
+        ? Type2Oid(ArrayLeafElementType(vdata.logical_type), false)
+        : ElementOID;
     auto* prefix_data = context.buffer->GetContiguousData(12);
     absl::big_endian::Store32(prefix_data + 4, 0);
-    absl::big_endian::Store32(prefix_data + 8, ElementOID);
+    absl::big_endian::Store32(prefix_data + 8, element_oid);
     const auto dims =
       FlattenArray<ElementSerialization, Format>(context, vdata, row);
     absl::big_endian::Store32(prefix_data, dims);
@@ -925,6 +963,111 @@ void SerializeJson(SerializationContext context,
     }
   }
   context.buffer->WriteUncommitted(value);
+}
+
+bool CompositeFieldNeedsQuoting(std::string_view s) {
+  if (s.empty()) {
+    return true;
+  }
+  for (char c : s) {
+    if (c == ',' || c == '(' || c == ')' || c == '"' || c == '\\' ||
+        absl::ascii_isspace(static_cast<unsigned char>(c))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void AppendCompositeField(std::string& out, std::string_view text) {
+  if (!CompositeFieldNeedsQuoting(text)) {
+    out.append(text);
+    return;
+  }
+  out += '"';
+  for (char c : text) {
+    if (c == '"' || c == '\\') {
+      out += c;
+    }
+    out += c;
+  }
+  out += '"';
+}
+
+std::string RenderToString(const duckdb::LogicalType& type,
+                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                           duckdb::idx_t row,
+                           const SerializationContext& base_ctx) {
+  std::string out;
+  auto callback = [&out](message::SequenceView v) {
+    for (auto chunk : v) {
+      out.append(static_cast<const char*>(chunk.data()), chunk.size());
+    }
+  };
+  message::Buffer fbuf(64, 4096, std::numeric_limits<size_t>::max(),
+                       std::move(callback));
+  SerializationContext ctx = base_ctx;
+  ctx.buffer = &fbuf;
+  auto fn = GetSerialization(type, VarFormat::Text, ctx);
+  fn(ctx, vdata, row);
+  fbuf.Commit(true);
+  // strip SerializeNullable's 4-byte length prefix.
+  if (out.size() >= 4) {
+    out.erase(0, 4);
+  }
+  return out;
+}
+
+template<VarFormat Format>
+void SerializeComposite(SerializationContext context,
+                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                        duckdb::idx_t row) {
+  if constexpr (Format == VarFormat::Text) {
+    std::string out;
+    out += '(';
+    auto& children = duckdb::StructType::GetChildTypes(vdata.logical_type);
+    for (size_t i = 0; i < children.size(); ++i) {
+      if (i > 0) {
+        out += ',';
+      }
+      const auto& child = vdata.children[i];
+      const auto cidx = child.unified.sel->get_index(row);
+      if (!child.unified.validity.RowIsValid(cidx)) {
+        continue;
+      }
+      auto scratch = RenderToString(children[i].second, child, row, context);
+      AppendCompositeField(out, scratch);
+    }
+    out += ')';
+    context.buffer->WriteUncommitted(out);
+  } else {
+    // PG record binary format: int32 nfields; for each field { int32 OID,
+    // int32 length (-1 for NULL) followed by length bytes }.
+    const auto& children =
+      duckdb::StructType::GetChildTypes(vdata.logical_type);
+    auto* nfields_data = context.buffer->GetContiguousData(4);
+    absl::big_endian::Store32(nfields_data,
+                              static_cast<int32_t>(children.size()));
+    for (size_t i = 0; i < children.size(); ++i) {
+      const auto& child_type = children[i].second;
+      const auto& child = vdata.children[i];
+      const auto oid = static_cast<int32_t>(Type2Oid(child_type, false));
+      absl::big_endian::Store32(context.buffer->GetContiguousData(4), oid);
+      auto fn = GetSerialization(child_type, VarFormat::Binary, context);
+      fn(context, child, row);
+    }
+  }
+}
+
+template<VarFormat Format>
+void SerializeCompositeInArray(
+  SerializationContext context,
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
+  if constexpr (Format == VarFormat::Text) {
+    auto rendered = RenderToString(vdata.logical_type, vdata, row, context);
+    WriteArrayItemQuotedAndEscaped(rendered, context);
+  } else {
+    SerializeComposite<VarFormat::Binary>(context, vdata, row);
+  }
 }
 
 SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
@@ -1190,6 +1333,18 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case BIT:
       RETURN_ARRAY_SERIALIZATION(SerializeBit<VarFormat::Text>,
                                  SerializeBit<VarFormat::Binary>, kVarbit);
+    case STRUCT: {
+      static constexpr auto kCompositeText =
+        SerializeCompositeInArray<VarFormat::Text>;
+      static constexpr auto kCompositeBinary =
+        SerializeComposite<VarFormat::Text>;
+      RETURN_ARRAY_SERIALIZATION(kCompositeText, kCompositeBinary, kRecord);
+    }
+    case ENUM: {
+      static constexpr auto kText = SerializeEnum<VarFormat::Text, true>;
+      static constexpr auto kBinary = SerializeEnum<VarFormat::Binary, true>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kDynamicOid);
+    }
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("Array element type not supported"));
@@ -1520,6 +1675,8 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                           ERR_MSG("Unsupported ENUM physical type"));
       }
     }
+    case STRUCT:
+      return SerializeNullable<SerializeComposite<VarFormat::Text>>;
     case LIST:
     case ARRAY: {
       const auto* element_type = &type;

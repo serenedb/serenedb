@@ -43,6 +43,11 @@ class PgSqlType final : public SchemaObject {
 
   const duckdb::CreateTypeInfo& GetInfo() const noexcept { return *_info; }
 
+  static constexpr ObjectId ToArrayOid(ObjectId scalar) noexcept {
+    return ObjectId{scalar.id() - 1};
+  }
+  ObjectId GetArrayOid() const noexcept { return ToArrayOid(GetId()); }
+
   duckdb::LogicalType GetLogicalType() const;
 
  private:

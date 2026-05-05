@@ -4,11 +4,11 @@ import {
     UseQueryOptions,
     useQueryClient,
 } from "@tanstack/react-query";
-import { ConnectionSchema } from "@serene-ui/shared-core";
+import type { ListMyConnectionOutput } from "@serene-ui/shared-core";
 import { orpc } from "../../../shared/api/orpc";
 
 export const useGetConnections = (
-    props?: Partial<UseQueryOptions<ConnectionSchema[], Error>>,
+    props?: Partial<UseQueryOptions<ListMyConnectionOutput, Error>>,
 ) => {
     return useQuery(
         orpc.connection.listMy.queryOptions({

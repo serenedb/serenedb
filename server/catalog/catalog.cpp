@@ -548,8 +548,6 @@ Result OpenDatabase::AddRoles() {
 
 Result OpenDatabase::AddTable(ObjectId db_id, ObjectId schema_id,
                               ObjectId table_id, std::shared_ptr<Table> table) {
-  // Table::WriteInternal does not serialize schema_id; restore it.
-  table->SetSchemaId(schema_id);
   auto r = _catalog.RegisterTable(db_id, schema_id, std::move(table));
   if (!r.ok()) {
     return r;

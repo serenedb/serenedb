@@ -69,8 +69,8 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   state.table_id = table.GetId();
   state.table_key = key_utils::PrepareTableKey(state.table_id);
   state.pk_columns = duckdb_primary_key::BuildPKColumns(table);
-  state.has_generated_pk = table.PKColumns().empty();
-  // generated_pk_seq is wired in GetGlobalSinkState (needs the snapshot).
+  // generated_pk_seq is wired in GetGlobalSinkState; non-null iff
+  // table.PKColumns().empty().
 
   // Build column metadata -- skip generated PK and virtual generated columns
   const auto& columns = table.Columns();
@@ -146,14 +146,8 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
-  if (state->has_generated_pk) {
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    std::string seq_name = absl::StrCat(_table->GetName(), "_pkey_seq");
-    auto seq = snapshot->GetSequence(_table->GetDatabaseId(),
-                                     _table->GetSchemaId(), seq_name);
-    SDB_ASSERT(seq);
-    state->generated_pk_seq = std::move(seq);
-  }
+  state->generated_pk_seq = _table->GetGeneratedPkSequence();
+  SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
   return state;
 }
@@ -180,7 +174,7 @@ duckdb::SinkResultType SereneDBPhysicalSSTInsert::Sink(
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
   uint64_t generated_pk_base =
-    gstate.has_generated_pk
+    gstate.generated_pk_seq
       ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
       : 0;
 

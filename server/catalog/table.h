@@ -40,6 +40,8 @@ static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
 }  // namespace sdb
 namespace sdb::catalog {
 
+class Sequence;
+
 struct NewOptions {
   std::string_view name;
   uint32_t number_of_shards = 1;
@@ -94,6 +96,10 @@ class Table : public SchemaObject {
                           std::string_view new_name) const;
   Result DropConstraint(std::shared_ptr<Table>& result,
                         std::string_view constraint_name) const;
+
+  const auto& GetGeneratedPkSequence() const noexcept {
+    return _generated_pk_sequence;
+  }
 
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
@@ -163,6 +169,8 @@ class Table : public SchemaObject {
   uint32_t _write_concern = 1;
 
   LookupCache _lookup_cache;
+
+  std::shared_ptr<Sequence> _generated_pk_sequence;
 };
 
 }  // namespace sdb::catalog

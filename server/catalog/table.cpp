@@ -44,6 +44,7 @@
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/key_generator.h"
+#include "catalog/sequence.h"
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
@@ -74,7 +75,8 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _number_of_shards{options.number_of_shards},
     _replication_factor{options.replication_factor},
     _write_concern{options.write_concern},
-    _lookup_cache{_columns, _pk_columns} {}
+    _lookup_cache{_columns, _pk_columns},
+    _generated_pk_sequence{other._generated_pk_sequence} {}
 
 Table::Table(TableOptions&& options, ObjectId database_id)
   : SchemaObject{{},
@@ -114,6 +116,14 @@ Table::Table(TableOptions&& options, ObjectId database_id)
       {.shard_keys = _shard_keys, .object_id = options.id});
   }();
   SDB_ASSERT(_sharding_strategy);
+
+  // Tables without an explicit PRIMARY KEY get an internal counter keyed by
+  // the table's ObjectId. Not registered in the catalog, not user-visible.
+  if (_pk_columns.empty() && GetId().isSet()) {
+    _generated_pk_sequence = std::make_shared<Sequence>(
+      GetDatabaseId(), GetSchemaId(), GetId(), std::string_view{},
+      SequenceOptions{});
+  }
 }
 
 // NOLINTBEGIN
@@ -303,7 +313,12 @@ Table::LookupCache::LookupCache(
 std::shared_ptr<Object> Table::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
-  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
+  auto cloned = ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
+  // The auto-PK Sequence is not part of WriteInternal; carry it through.
+  // Sharing the same Sequence across clones is intentional -- the in-memory
+  // counter and persisted state are global, not per-snapshot.
+  cloned->_generated_pk_sequence = _generated_pk_sequence;
+  return cloned;
 }
 
 }  // namespace sdb::catalog

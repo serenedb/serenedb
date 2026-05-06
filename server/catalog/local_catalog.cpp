@@ -1576,16 +1576,6 @@ Result LocalCatalog::CreateTable(
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
-  // Insert sinks find the auto-PK sequence by table->GetSchemaId();
-  // OpenDatabase::AddTable does the same on recovery.
-  table->SetSchemaId(*schema_id);
-
-  std::shared_ptr<Sequence> pk_sequence;
-  if (table->PKColumns().empty()) {
-    pk_sequence = std::make_shared<Sequence>(
-      database_id, *schema_id, ObjectId{},
-      absl::StrCat(table->GetName(), "_pkey_seq"), SequenceOptions{});
-  }
 
   return Apply(
     _snapshot,
@@ -1605,21 +1595,6 @@ Result LocalCatalog::CreateTable(
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
 
-      if (pk_sequence) {
-        r = clone->RegisterObject(pk_sequence, *schema_id, false);
-        if (!r.ok()) {
-          return r;
-        }
-        vpack::Builder seq_b;
-        pk_sequence->WriteInternal(seq_b);
-        r = _engine->CreateDefinition(*schema_id, ObjectType::Sequence,
-                                      pk_sequence->GetId(),
-                                      [&](bool) { return seq_b.slice(); });
-        if (!r.ok()) {
-          return r;
-        }
-      }
-
       vpack::Builder b;
       table->WriteInternal(b);
       r =
@@ -1636,12 +1611,7 @@ Result LocalCatalog::CreateTable(
         [&](bool) -> vpack::Slice { return shard_b.slice(); });
       return r;
     },
-    [&](auto clone) {
-      if (pk_sequence) {
-        clone->UnregisterObject(pk_sequence, *schema_id, true);
-      }
-      clone->UnregisterObject(table, *schema_id, true);
-    });
+    [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
 
 Result LocalCatalog::CreateTokenizer(ObjectId database_id,
@@ -2087,27 +2057,13 @@ Result LocalCatalog::DropTable(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto table = basics::downCast<Table>(std::move(object));
-    bool has_generated_pk = table->PKColumns().empty();
     auto task = clone->CreateTableDrop(*database_id, *schema_id, table, true);
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
     }
+    // Auto-PK Sequence (if any) dies with `table` -- it lives only on the
+    // Table object and isn't catalog-registered.
     clone->UnregisterObject(std::move(table), *schema_id);
-    if (has_generated_pk) {
-      std::string seq_name = absl::StrCat(name, "_pkey_seq");
-      auto seq_id = clone->template GetObjectId<ResolveType::Relation>(
-        *schema_id, seq_name);
-      if (seq_id) {
-        auto seq_obj = clone->GetObject(*seq_id);
-        if (seq_obj && seq_obj->GetType() == ObjectType::Sequence) {
-          auto seq = basics::downCast<Sequence>(std::move(seq_obj));
-          if (auto r = _engine->WriteTombstone(*schema_id, *seq_id); !r.ok()) {
-            return r;
-          }
-          clone->UnregisterObject(std::move(seq), *schema_id);
-        }
-      }
-    }
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     DropTask::Schedule(std::move(task)).Detach();

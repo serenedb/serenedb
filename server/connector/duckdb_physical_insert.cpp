@@ -56,14 +56,13 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;  // non-generated-PK columns
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::vector<std::string> pk_col_names;
-  bool has_generated_pk = false;
 
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
 
-  // Set when has_generated_pk. shared_ptr keeps the in-memory counter alive
-  // if the catalog snapshot rotates mid-insert.
+  // Non-null when the table uses an internal auto-PK counter (no explicit PK
+  // columns). shared_ptr keeps the counter alive across snapshot rotations.
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   // Index writers -- created once, reused per Sink() call
@@ -126,7 +125,6 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
 
   // PK column mappings
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
-  state->has_generated_pk = _table->PKColumns().empty();
   state->table_name = _table->GetName();
   for (auto pk_id : _table->PKColumns()) {
     for (const auto& col : columns) {
@@ -146,13 +144,8 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
-  if (state->has_generated_pk) {
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    std::string seq_name = absl::StrCat(_table->GetName(), "_pkey_seq");
-    state->generated_pk_seq = snapshot->GetSequence(
-      _table->GetDatabaseId(), _table->GetSchemaId(), seq_name);
-    SDB_ASSERT(state->generated_pk_seq);
-  }
+  state->generated_pk_seq = _table->GetGeneratedPkSequence();
+  SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
   return state;
 }
@@ -181,7 +174,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
   uint64_t generated_pk_base =
-    gstate.has_generated_pk
+    gstate.generated_pk_seq
       ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
       : 0;
 
@@ -205,7 +198,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
   // 2. Conflict detection for explicit PKs
   size_t rows_skipped = 0;
-  if (!gstate.has_generated_pk) {
+  if (!gstate.generated_pk_seq) {
     rows_skipped = gstate.conflict_resolver.HandleWriteConflicts<false>(
       gstate.row_keys, chunk, gstate.pk_columns, gstate.pk_col_names);
   }

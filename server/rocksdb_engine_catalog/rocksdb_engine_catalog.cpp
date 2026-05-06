@@ -1974,27 +1974,14 @@ bool RocksDBEngineCatalog::checkExistingDB(
               "found existing column families: ", names);
 
     for (const auto& it : cf_families) {
-      auto it2 = std::find(existing_column_families.begin(),
-                           existing_column_families.end(), it.name);
-      if (it2 == existing_column_families.end()) {
-        // Newly introduced CFs are auto-created by rocksdb on Open via
-        // create_missing_column_families. Only fail if a *core* CF is missing.
-        bool is_core =
-          it.name == rocksdb::kDefaultColumnFamilyName ||
-          it.name == RocksDBColumnFamilyManager::name(
-                       RocksDBColumnFamilyManager::Family::Definitions);
-        if (is_core) {
-          SDB_FATAL(
-            "xxxxx", Logger::STARTUP, "column family '", it.name,
-            "' is missing in database",
-            ". if you are upgrading from an earlier alpha or beta version "
-            "of SereneDB, it is required to restart with a new database "
-            "directory and "
-            "re-import data");
-        } else {
-          SDB_INFO("xxxxx", Logger::STARTUP, "column family '", it.name,
-                   "' will be created in existing database");
-        }
+      if (absl::c_contains(existing_column_families, it.name);) {
+        SDB_FATAL(
+          "xxxxx", Logger::STARTUP, "column family '", it.name,
+          "' is missing in database",
+          ". if you are upgrading from an earlier alpha or beta version "
+          "of SereneDB, it is required to restart with a new database "
+          "directory and "
+          "re-import data");
       }
     }
 

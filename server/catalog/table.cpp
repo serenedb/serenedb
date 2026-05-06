@@ -120,9 +120,9 @@ Table::Table(TableOptions&& options, ObjectId database_id)
   // Tables without an explicit PRIMARY KEY get an internal counter keyed by
   // the table's ObjectId. Not registered in the catalog, not user-visible.
   if (_pk_columns.empty() && GetId().isSet()) {
-    _generated_pk_sequence = std::make_shared<Sequence>(
-      GetDatabaseId(), GetSchemaId(), GetId(), std::string_view{},
-      SequenceOptions{});
+    _generated_pk_sequence =
+      std::make_shared<Sequence>(GetDatabaseId(), GetSchemaId(), GetId(),
+                                 std::string_view{}, SequenceOptions{});
   }
 }
 

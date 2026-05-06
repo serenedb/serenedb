@@ -61,7 +61,7 @@ interface PGSQLEditorProps {
 let pgsqlCompletionProvider: Monaco.IDisposable | null = null;
 let pgsqlInlineCompletionProvider: Monaco.IDisposable | null = null;
 let pgsqlAutocompleteEnabled = true;
-const INLINE_AUTOCOMPLETE_ENABLED = false;
+const INLINE_AUTOCOMPLETE_ENABLED = true;
 
 const EMPTY_AUTOCOMPLETE: NonNullable<PGSQLEditorProps["autocomplete"]> = {
     tables: [],

@@ -42,6 +42,8 @@
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
@@ -588,10 +590,12 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         }
       }
 
-      SDB_ASSERT(doc_id == gstate.search_segment_pk.iter->seek(doc_id));
-      auto pk_view = gstate.search_segment_pk.value->value;
-      std::string_view pk_bytes{reinterpret_cast<const char*>(pk_view.data()),
-                                pk_view.size()};
+      const auto pk_doc = gstate.search_segment_pk.iter->seek(doc_id);
+      SDB_ENSURE(pk_doc == doc_id, ERROR_INTERNAL);
+      const auto pk_bytes =
+        irs::ViewCast<char>(gstate.search_segment_pk.value->value);
+      SDB_ENSURE(!pk_bytes.empty(), ERROR_INTERNAL);
+
       pk_collect(pk_bytes);
       if (search.EmitOffsets()) {
         const auto& segment = reader[gstate.search_segment_idx - 1];

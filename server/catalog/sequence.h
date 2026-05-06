@@ -59,7 +59,8 @@ class Sequence final : public SchemaObject {
  public:
   Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
            std::string_view name, SequenceOptions opts);
-  ~Sequence();
+
+  ~Sequence() = default;
 
   static std::shared_ptr<Sequence> ReadInternal(vpack::Slice slice,
                                                 ReadContext ctx);

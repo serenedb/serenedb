@@ -344,7 +344,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     auto& index_col = inverted_columns[c.catalog_column->id];
 
     if (!c.json_path.empty()) {
-      if (!c.opclass_options.empty()) {
+      if (c.opclass_options.has_value()) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
           "JSON-path index entries do not accept opclass options (used on "
@@ -366,18 +366,16 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
     if (!c.opclass.empty()) {
       const bool is_builtin = (c.opclass == kHnswKind);
-      if (!c.opclass_options.empty() && !is_builtin) {
+      if (is_builtin && !c.opclass_options.has_value()) {
         return std::unexpected<Result>{std::in_place,
                                        ERROR_BAD_PARAMETER,
-                                       "Opclass '",
+                                       "Built-in opclass '",
                                        c.opclass,
                                        "' on column '",
                                        c.name,
-                                       "' is not a built-in opclass; only "
-                                       "built-in opclasses accept parameters "
-                                       "(known built-in opclasses: ",
-                                       DescribeKnownOpclassTypes(),
-                                       ")"};
+                                       "' requires options; use '",
+                                       c.opclass,
+                                       " (...)'"};
       }
       if (is_builtin) {
         // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
@@ -396,12 +394,23 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         HNSWColumnConfig cfg{
           .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
         };
-        if (auto r = ApplyHNSWOptions(c.name, c.opclass_options, cfg);
+        if (auto r = ApplyHNSWOptions(c.name, *c.opclass_options, cfg);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
         index_col.hnsw_config = cfg;
       } else {
+        if (c.opclass_options.has_value()) {
+          return std::unexpected<Result>{std::in_place,
+                                         ERROR_BAD_PARAMETER,
+                                         "Unknown built-in opclass '",
+                                         c.opclass,
+                                         "' on column '",
+                                         c.name,
+                                         "' (known: ",
+                                         DescribeKnownOpclassTypes(),
+                                         ")"};
+        }
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};

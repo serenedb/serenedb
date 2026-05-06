@@ -694,25 +694,25 @@ DROP INDEX m_real_real;
 statement error
 CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
 ----
-db error: ERROR: Failed to create index: Column 'emb': hnsw opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: hnsw (metric = 'l2')
+db error: ERROR: Failed to create index: Built-in opclass 'hnsw' on column 'emb' requires options; use 'hnsw (...)'
 
 
 statement error
 CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
 ----
-db error: ERROR: Failed to create index: Unknown opclass 'fake_idx' on column 'emb': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
 
 
 statement error
 CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
 ----
-db error: ERROR: Failed to create index: Opclass 'fake_idx' on column 'emb' is not a built-in opclass; only built-in opclasses accept parameters (known built-in opclasses: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
 
 
 statement error
 CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
 ----
-db error: ERROR: Failed to create index: Opclass 'fake_idx' on column 'emb' is not a built-in opclass; only built-in opclasses accept parameters (known built-in opclasses: hnsw)
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
 
 
 statement error

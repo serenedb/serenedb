@@ -1859,18 +1859,20 @@ x\\377
 
 # GEOPOINT TEMPLATE
 
-# --- Error: missing required latitude ---
+# --- Error: half-set (longitude without latitude) ---
+# latitude / longitude must be both set or both empty -- empty is the
+# array-mode default; half-set is ambiguous and rejected at CREATE time.
 
-statement error required parameter "latitude" was not found
+statement error 'latitude' and 'longitude' must be both set or both left empty
 CREATE TEXT SEARCH DICTIONARY t_gp_err1(
     template = 'geopoint',
     longitude = 'lng'
 )
 
 
-# --- Error: missing required longitude ---
+# --- Error: half-set (latitude without longitude) ---
 
-statement error required parameter "longitude" was not found
+statement error 'latitude' and 'longitude' must be both set or both left empty
 CREATE TEXT SEARCH DICTIONARY t_gp_err2(
     template = 'geopoint',
     latitude = 'lat'
@@ -2226,8 +2228,8 @@ Text Search Dictionary:
   copy_from:
     from[required] (string) [default: none] - the source tokenizer name
   geopoint:
-    latitude[required] (string) [default: none] - Slash-separated path to latitude field (e.g., 'coordinates/1')
-    longitude[required] (string) [default: none] - Slash-separated path to longitude field (e.g., 'coordinates/0')
+    latitude (string) - Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); empty (the default) treats the indexed JSON value as a [lat, lng] array directly. latitude and longitude must both be set or both left empty.
+    longitude (string) - Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); see latitude for empty-default semantics.
     options:
       maxcells (integer) [default: 20] - Maximum number of S2 cells
       minlevel (integer) [default: 4] - Minimum S2 cell level (0-30)

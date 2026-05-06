@@ -722,6 +722,24 @@ CREATE INDEX geo_data_g_bad_idx ON geo_data_g_bad USING inverted(id, geo geojson
 db error: ERROR: Failed to create index: Column 'geo' is GEOMETRY but the geo analyzer uses a LatLng coding;<slt:ignore>
 
 
+# --- CREATE INDEX rejection: GEOMETRY column with geopoint analyzer ---
+# geopoint's latitude / longitude options are JSON-path lookups; on a
+# GEOMETRY (WKB) column they're meaningless and resetWKB silently
+# ignores them. Force users to a geojson analyzer for GEOMETRY columns.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_dict(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng'
+)
+
+statement error
+CREATE INDEX geo_data_g_pt_idx ON geo_data_g_bad USING inverted(id, geo geopoint_dict)
+----
+db error: ERROR: Failed to create index: Column 'geo' is GEOMETRY but the analyzer is geopoint;<slt:ignore>
+
+
 # --- CREATE INDEX rejection: GEOMETRY column without CRS ---
 # A bare GEOMETRY column (no CRS metadata) is rejected at CREATE INDEX time
 # even if the dictionary uses S2Point coding -- IsCRS84Identifier check fails.
@@ -1185,3 +1203,215 @@ QUERY PLAN
 │                           │
 │          ~7 rows          │
 └───────────────────────────┘
+
+
+# --- geopoint analyzer: path mode ---
+# `geopoint` with `latitude`/`longitude` set to slash-paths extracts the
+# point coordinates from a configured location inside each JSON document.
+# vpack::Slice::get(path) walks objects only -- numeric-string keys
+# don't index arrays -- so paths must traverse object keys at every
+# step (e.g. `loc/lat` for `{"loc": {"lat": ...}}`). Documents that
+# don't have the configured paths or whose values aren't numbers are
+# silently skipped at index time (GeoPointAnalyzer::ParsePoint returns
+# false, no terms emitted). The same query operators (ST_Intersects,
+# ST_Distance_Centroid, `<->`) work as on a `geojson_shape`-indexed
+# column -- the discriminator in TryGetGeoDistanceCall and friends is
+# column-info-based, not analyzer-specific.
+
+statement ok
+CREATE TABLE geo_pt (id INTEGER PRIMARY KEY, geo JSON)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_path(
+    template = 'geopoint',
+    latitude = 'loc/lat',
+    longitude = 'loc/lng'
+)
+
+
+statement ok
+CREATE INDEX geo_pt_idx ON geo_pt USING inverted(id, geo geopoint_path)
+
+
+# Cluster points (~100m from [37.616, 55.704]).
+
+statement ok
+INSERT INTO geo_pt VALUES (1, '{"name":"a","loc":{"lat":55.703900,"lng":37.615895}}')
+
+statement ok
+INSERT INTO geo_pt VALUES (2, '{"name":"b","loc":{"lat":55.704831,"lng":37.616297}}')
+
+statement ok
+INSERT INTO geo_pt VALUES (3, '{"name":"c","loc":{"lat":55.704610,"lng":37.617053}}')
+
+
+# Far (~3.8km) and very-far (~15km) points.
+
+statement ok
+INSERT INTO geo_pt VALUES (4, '{"name":"d","loc":{"lat":55.715895,"lng":37.559509}}')
+
+statement ok
+INSERT INTO geo_pt VALUES (5, '{"name":"e","loc":{"lat":55.832144,"lng":37.701645}}')
+
+
+# Malformed: missing the configured `loc` object. The analyzer returns
+# false from ParsePoint and the row contributes no geo terms, so it
+# must NOT appear in any geo query result.
+
+statement ok
+INSERT INTO geo_pt VALUES (6, '{"name":"orphan"}')
+
+statement ok
+VACUUM (UPDATE_INDEXES) geo_pt
+
+
+# --- ST_Intersects + path-mode geopoint ---
+
+query
+SELECT id FROM geo_pt_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+1
+2
+3
+
+
+# --- ST_Distance_Centroid + path-mode geopoint ---
+
+query
+SELECT id FROM geo_pt_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+
+
+# Far rows: > 1000m from the cluster centroid.
+
+query
+SELECT id FROM geo_pt_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') > 1000.0
+ORDER BY id
+----
+id
+4
+5
+
+
+# --- `<->` synonym + path-mode geopoint ---
+
+query
+SELECT id FROM geo_pt_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+
+
+# `<->` with a GEOMETRY centroid: the column is JSON, the centroid is
+# WKB -- the (VARCHAR, GEOMETRY) overload binds.
+
+query
+SELECT id FROM geo_pt_idx
+WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+
+
+# --- geopoint analyzer: array mode (no paths) ---
+# When `latitude` and `longitude` are both omitted, the analyzer enters
+# `_from_array` mode: each indexed JSON value must be a 2-element
+# [lat, lng] array (NOT GeoJSON's [lng, lat]). GeoPointAnalyzer::
+# ParsePoint reads element 0 as latitude and element 1 as longitude.
+# Wrong-arity / non-array values silently drop from the index.
+
+statement ok
+CREATE TABLE geo_pt_arr (id INTEGER PRIMARY KEY, geo JSON)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_arr(
+    template = 'geopoint'
+)
+
+
+statement ok
+CREATE INDEX geo_pt_arr_idx ON geo_pt_arr USING inverted(id, geo geopoint_arr)
+
+
+# Same five points as the path-mode table, encoded as [lat, lng] flat arrays.
+
+statement ok
+INSERT INTO geo_pt_arr VALUES (1, '[55.703900,37.615895]')
+
+statement ok
+INSERT INTO geo_pt_arr VALUES (2, '[55.704831,37.616297]')
+
+statement ok
+INSERT INTO geo_pt_arr VALUES (3, '[55.704610,37.617053]')
+
+statement ok
+INSERT INTO geo_pt_arr VALUES (4, '[55.715895,37.559509]')
+
+statement ok
+INSERT INTO geo_pt_arr VALUES (5, '[55.832144,37.701645]')
+
+
+# Wrong-arity array: 3 elements -- ParsePoint rejects, row is dropped.
+
+statement ok
+INSERT INTO geo_pt_arr VALUES (6, '[55.704,37.616,0.0]')
+
+statement ok
+VACUUM (UPDATE_INDEXES) geo_pt_arr
+
+
+# --- ST_Distance_Centroid + array-mode geopoint ---
+
+query
+SELECT id FROM geo_pt_arr_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+
+
+# --- ST_Intersects + array-mode geopoint ---
+
+query
+SELECT id FROM geo_pt_arr_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id
+----
+id
+1
+2
+3
+
+
+# --- `<->` synonym + array-mode geopoint ---
+
+query
+SELECT id FROM geo_pt_arr_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' > 1000.0
+ORDER BY id
+----
+id
+4
+5

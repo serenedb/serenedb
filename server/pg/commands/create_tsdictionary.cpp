@@ -559,46 +559,70 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   void ParseGeoPoint(std::string_view prefix) {
-    // latitude
+    // Both latitude and longitude default to "" (empty path). When both
+    // are empty the analyzer treats the indexed JSON value as a
+    // [lat, lng] array directly (`_from_array` mode); when both are set
+    // the analyzer walks the configured object paths. Half-set is
+    // rejected here so the user gets a specific error at CREATE time
+    // instead of a deferred "Failed to create analyzer" at first use.
+    bool lat_set = false;
     if (!OptionsParser::HasOption(tokenizer_options::kGeoLatitude, prefix) &&
         !_copy_from.empty()) {
       auto [name_prefix, slice] = _copy_from.back();
       auto lat_slice = GetFromPath("latitude", prefix, name_prefix, slice);
-      if (lat_slice.isNone()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("required parameter \"", tokenizer_options::kGeoLatitude.name,
-                  "\" was not found"));
+      if (!lat_slice.isNone()) {
+        _builder.add("latitude", lat_slice);
+        // copy_from inherits a vpack array of path components; consider
+        // it set if the array is non-empty (parent was in array mode if
+        // empty, in path mode otherwise).
+        lat_set = lat_slice.isArray() && lat_slice.length() > 0;
+      } else {
+        _builder.add("latitude", vpack::Slice::emptyArraySlice());
       }
-      _builder.add("latitude", lat_slice);
     } else {
       auto lat_path =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kGeoLatitude>(
           prefix);
-      _builder.add("latitude", vpack::Value{vpack::ValueType::Array});
-      ParsePathString(lat_path);
-      _builder.close();
+      if (lat_path.empty()) {
+        _builder.add("latitude", vpack::Slice::emptyArraySlice());
+      } else {
+        _builder.add("latitude", vpack::Value{vpack::ValueType::Array});
+        ParsePathString(lat_path);
+        _builder.close();
+        lat_set = true;
+      }
     }
 
-    // longitude
+    bool lng_set = false;
     if (!OptionsParser::HasOption(tokenizer_options::kGeoLongitude, prefix) &&
         !_copy_from.empty()) {
       auto [name_prefix, slice] = _copy_from.back();
       auto lng_slice = GetFromPath("longitude", prefix, name_prefix, slice);
-      if (lng_slice.isNone()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("required parameter \"",
-                  tokenizer_options::kGeoLongitude.name, "\" was not found"));
+      if (!lng_slice.isNone()) {
+        _builder.add("longitude", lng_slice);
+        lng_set = lng_slice.isArray() && lng_slice.length() > 0;
+      } else {
+        _builder.add("longitude", vpack::Slice::emptyArraySlice());
       }
-      _builder.add("longitude", lng_slice);
     } else {
       auto lng_path =
         OptionsParser::EraseOptionOrDefault<tokenizer_options::kGeoLongitude>(
           prefix);
-      _builder.add("longitude", vpack::Value{vpack::ValueType::Array});
-      ParsePathString(lng_path);
-      _builder.close();
+      if (lng_path.empty()) {
+        _builder.add("longitude", vpack::Slice::emptyArraySlice());
+      } else {
+        _builder.add("longitude", vpack::Value{vpack::ValueType::Array});
+        ParsePathString(lng_path);
+        _builder.close();
+        lng_set = true;
+      }
+    }
+
+    if (lat_set != lng_set) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("'latitude' and 'longitude' must be both set or both "
+                "left empty for the geopoint tokenizer"));
     }
 
     // nested S2 options

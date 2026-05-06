@@ -158,11 +158,15 @@ inline constexpr OptionInfo kGeoOptimizeForSpace{
 // GeoPoint
 
 inline constexpr OptionInfo kGeoLatitude{
-  "latitude", OptionInfo::RequiredTag<std::string_view>{},
-  "Slash-separated path to latitude field (e.g., 'coordinates/1')"};
+  "latitude", ""sv,
+  "Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); "
+  "empty (the default) treats the indexed JSON value as a [lat, lng] "
+  "array directly. latitude and longitude must both be set or both left "
+  "empty."};
 inline constexpr OptionInfo kGeoLongitude{
-  "longitude", OptionInfo::RequiredTag<std::string_view>{},
-  "Slash-separated path to longitude field (e.g., 'coordinates/0')"};
+  "longitude", ""sv,
+  "Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); "
+  "see latitude for empty-default semantics."};
 
 // GeoJson
 

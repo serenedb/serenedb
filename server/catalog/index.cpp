@@ -266,6 +266,20 @@ Result ValidateGeoAnalyzerColumn(std::string_view column_name,
       return {ERROR_BAD_PARAMETER, "Column '", column_name,
               "': ", r.errorMessage()};
     }
+    if (is_geopoint) {
+      // GeoPointAnalyzer is path-based: latitude / longitude configure
+      // slash-paths into a JSON document (or `_from_array` mode treats
+      // the input as a [lat, lng] JSON array). Neither has any meaning
+      // over WKB. resetWKB silently ignores both and just accepts
+      // S2Point shapes -- so the configured paths become dead config
+      // and the user has no signal that their setup is wrong. Force
+      // GEOMETRY columns through GeoJsonAnalyzer instead, which has
+      // type-aware shape handling for the non-point cases too.
+      return {ERROR_BAD_PARAMETER, "Column '", column_name,
+              "' is GEOMETRY but the analyzer is geopoint; geopoint's "
+              "latitude/longitude paths are JSON-only -- use a geojson "
+              "analyzer for GEOMETRY columns"};
+    }
     if (is_geojson) {
       const auto& geojson =
         basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);

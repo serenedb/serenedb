@@ -1075,3 +1075,113 @@ id
 1
 3
 2
+
+
+# --- EXPLAIN: geo predicate composes with @@ inside IRESEARCH_SCAN ---
+# Locks the plan shape and the rendered filter tree:
+#   - SearchScan claims both the body @@ leaf (Term) and the geo leaf
+#     (GEO[..., op=Intersects, shape=S2Polygon]) into a single AND.
+#   - BM25 in the projection attaches as the SearchScan's Score and adds
+#     the virtual `sdb_inverted_index_score` column.
+# Regressions in TryGetGeoDistanceCall, the geo printer in
+# search_filter_printer.cpp, or the dual-prepare/scorer-attach plumbing
+# would surface here.
+
+query
+EXPLAIN SELECT id, BM25(places_idx.tableoid) > 0 as has_score FROM places_idx
+WHERE body @@ 'cafe'
+  AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│     places_idx.id ASC     │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│         has_score         │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: places_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[Term(body(string)=cafe│
+│  ) && GEO[geo(string), op │
+│     =Intersects, shape    │
+│        =S2Polygon]]       │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘
+
+
+# --- EXPLAIN: `<->` + boosted text composes inside IRESEARCH_SCAN ---
+# Locks the GEO_DISTANCE printer's range rendering (unbounded lower
+# `*`, bounded upper `<500`) and confirms the `<->` operator binds
+# through the same path as ST_Distance_Centroid -- both produce a
+# GEO_DISTANCE leaf inside the AND. The OR wraps the `^1000.0`-boosted
+# blue term together with the bare red term; current rendering doesn't
+# surface the per-leaf boost factor (pre-existing printer limitation),
+# so the OR shows the term pair only.
+
+query
+EXPLAIN SELECT id FROM places_idx
+WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
+  AND geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY BM25(places_idx.tableoid) DESC, id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│          #1 DESC          │
+│     places_idx.id ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: places_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│    AND[GEO_DISTANCE[geo   │
+│  (string), *, <500] && OR │
+│  [Term(body(string)=blue) │
+│  || Term(body(string)=red)│
+│             ]]            │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~7 rows          │
+└───────────────────────────┘

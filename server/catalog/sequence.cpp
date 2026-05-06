@@ -84,8 +84,6 @@ Sequence::Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
   _live.store(_options.Seed(), std::memory_order_release);
 }
 
-Sequence::~Sequence() = default;
-
 std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
                                                  ReadContext ctx) {
   auto name =

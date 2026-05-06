@@ -36,11 +36,18 @@ enum class VarFormat : int16_t {
   Binary = 1,
 };
 
+// Escape sequences for emitting one literal '"' or '\\' byte at the current
+// position in the wrap stack. Default (top-level): a single byte each. Each
+// containing wrap rewrites them via EnterArrayWrap / EnterRecordWrap so
+// that nested wraps produce PG-conformant escape sequences without a scratch
+// buffer.
 struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   const catalog::Snapshot* snapshot = nullptr;
+  std::string_view quote_seq{"\"", 1};
+  std::string_view backslash_seq{"\\", 1};
 };
 
 // TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
@@ -52,9 +59,13 @@ using SerializationFunction = void (*)(
 
 void FillContext(const Config& config, SerializationContext& context);
 
+// `in_record`: if true, return the in-record-field variant directly (no
+// SerializeNullable length prefix). Used by SerializeRecord's text path to
+// emit each field's bytes inline at the current escape depth.
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
-                                       SerializationContext& context);
+                                       SerializationContext& context,
+                                       bool in_record = false);
 
 template<bool NeedArrayEscaping>
 void ByteaOutHex(char* buf, std::string_view value);

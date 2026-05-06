@@ -65,9 +65,7 @@ struct SerializationContext {
   const catalog::Snapshot* snapshot = nullptr;
   std::string_view quote_seq{"\"", 1};
   std::string_view backslash_seq{"\\", 1};
-  // Optional per-portal cache of struct-field dispatch plans. Owned by the
-  // portal; nullptr disables caching (each call recomputes).
-  TypesSerializationCache* types_cache = nullptr;
+  std::shared_ptr<TypesSerializationCache> types_cache;
 };
 
 void FillContext(const Config& config, SerializationContext& context);

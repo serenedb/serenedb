@@ -1935,6 +1935,7 @@ void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
   context.snapshot = config.EnsureCatalogSnapshot().get();
+  context.types_cache = std::make_shared<TypesSerializationCache>();
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,

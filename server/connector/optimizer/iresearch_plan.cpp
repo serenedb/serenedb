@@ -125,12 +125,27 @@ std::string MakeHnswFieldName(catalog::Column::Id col_id) {
   return name;
 }
 
-bool IsDistanceFunction(std::string_view name) {
-  return name == connector::kL2Distance || name == connector::kL2DistanceOp ||
-         name == connector::kL1Distance || name == connector::kL1DistanceOp ||
-         name == connector::kCosineDistance ||
-         name == connector::kCosineDistanceOp ||
-         name == connector::kInnerProduct || name == connector::kIPDistanceOp;
+// True for vector-ANN distance calls (l2/l1/cosine/inner-product or their
+// `<->` / `<+>` / `<=>` / `<#>` operator forms) on ARRAY(FLOAT/DOUBLE, N)
+// arguments with at least two children. The `<->` op also has geo
+// overloads (registered alongside ST_Distance_Centroid in search.cpp);
+// those bind to JSON / GEOMETRY arguments and are filtered out here so
+// the vector ANN paths -- TryAnnRange, TryAnnTopk -- never claim them.
+bool IsVectorDistanceFunction(const duckdb::BoundFunctionExpression& func) {
+  const auto& name = func.function.name;
+  const bool is_distance_name =
+    name == connector::kL2Distance || name == connector::kL2DistanceOp ||
+    name == connector::kL1Distance || name == connector::kL1DistanceOp ||
+    name == connector::kCosineDistance ||
+    name == connector::kCosineDistanceOp || name == connector::kInnerProduct ||
+    name == connector::kIPDistanceOp;
+  if (!is_distance_name) {
+    return false;
+  }
+  if (func.children.size() < 2) {
+    return false;
+  }
+  return func.children[0]->return_type.id() == duckdb::LogicalTypeId::ARRAY;
 }
 
 std::optional<irs::HNSWMetric> DistanceMetricForFunction(
@@ -289,8 +304,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
     return false;
   }
   auto& func_expr = dist_expr.Cast<duckdb::BoundFunctionExpression>();
-  if (!IsDistanceFunction(func_expr.function.name) ||
-      func_expr.children.size() < 2) {
+  if (!IsVectorDistanceFunction(func_expr)) {
     return false;
   }
 
@@ -445,7 +459,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       continue;
     }
     auto& func = func_side->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsDistanceFunction(func.function.name) || func.children.size() < 2) {
+    if (!IsVectorDistanceFunction(func)) {
       continue;
     }
     if (const_side->expression_class !=

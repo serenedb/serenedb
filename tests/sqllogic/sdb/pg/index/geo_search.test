@@ -951,3 +951,127 @@ id
 1
 3
 2
+
+
+# --- `<->` operator: synonym for ST_Distance_Centroid ---
+# Mirrors the ST_Distance_Centroid tests above. The `<->` operator binds
+# to a separate set of geo overloads registered alongside the vector
+# `<->` (search.cpp's RegisterGeoFunctions); the filter builder
+# recognizes both the function-call form and the operator form via
+# TryGetGeoDistanceCall and rewrites them to GeoDistanceFilter.
+# Reference centroid (37.616, 55.704); approximate distances:
+#   id=1 ~100m  id=2 ~100m  id=3 ~100m  id=6 ~250m
+#   id=7 ~90m   id=4 ~3.8km id=5 ~15km
+
+# --- `<->` on JSON column with JSON-text centroid ---
+
+query
+SELECT id FROM geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- `<->` on JSON column: > separates far rows ---
+
+query
+SELECT id FROM geo_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' > 1000.0
+ORDER BY id
+----
+id
+4
+5
+
+
+# --- `<->` is commutative: operand order doesn't matter ---
+# Same query as above with operands swapped -- the filter builder
+# accepts the column on either side (PrepareGeoDistanceFilter mirrors
+# the column-on-either-side pattern ST_Intersects uses).
+
+query
+SELECT id FROM geo_idx
+WHERE '{"type":"Point","coordinates":[37.616,55.704]}' <-> geo > 1000.0
+ORDER BY id
+----
+id
+4
+5
+
+
+# --- `<->` on JSON column with GEOMETRY centroid (mixed) ---
+
+query
+SELECT id FROM geo_idx
+WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- `<->` on GEOMETRY column with GEOMETRY centroid ---
+
+query
+SELECT id FROM geo_data_g_idx
+WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') < 500.0
+ORDER BY id
+----
+id
+1
+2
+3
+6
+7
+
+
+# --- `<->` on GEOMETRY column: very-far threshold isolates id=5 ---
+
+query
+SELECT id FROM geo_data_g_idx
+WHERE geo <-> 'POINT(37.616 55.704)'::GEOMETRY('OGC:CRS84') > 10000.0
+ORDER BY id
+----
+id
+5
+
+
+# --- `<->` on GEOMETRY column with GeoJSON-text centroid (mixed) ---
+
+query
+SELECT id FROM geo_data_g_idx
+WHERE geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' > 1000.0
+ORDER BY id
+----
+id
+4
+5
+
+
+# --- `<->` combined with tsquery + BM25 ranking ---
+# Same shape as the ST_Distance_Centroid + boosted text test above,
+# expressed with the operator-form synonym. Verifies the `<->` claim
+# composes with @@ inside the same bool filter and keeps BM25 scoring
+# attached to the text leaf.
+
+query
+SELECT id FROM places_idx
+WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
+  AND geo <-> '{"type":"Point","coordinates":[37.616,55.704]}' < 500.0
+ORDER BY BM25(places_idx.tableoid) DESC, id
+----
+id
+4
+1
+3
+2

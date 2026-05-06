@@ -72,6 +72,7 @@
 #include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "functions/vector.h"
 #include "geo/coding.h"
 #include "geo/geo_json.h"
 #include "geo/shape_container.h"
@@ -390,7 +391,7 @@ Result FromIsNull(irs::BooleanFilter& filter, const FilterContext& ctx,
 // alongside the rest of the geo helpers but called from FromBinaryEq /
 // FromComparison below).
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
-  const duckdb::Expression& expr);
+  const FilterContext& ctx, const duckdb::Expression& expr);
 Result FromGeoDistanceBinaryEq(irs::BooleanFilter& filter,
                                const FilterContext& ctx,
                                const duckdb::BoundFunctionExpression& geo_call,
@@ -407,7 +408,7 @@ Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
   // ST_Distance_Centroid(field, centroid) = / != distance  --  rewrite to
   // range.
   if constexpr (GenericVersion) {
-    if (const auto* geo_call = TryGetGeoDistanceCall(left_expr)) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(ctx, left_expr)) {
       FilterContext geo_ctx = ctx;
       geo_ctx.negated = (ctx.negated != not_equal);
       return FromGeoDistanceBinaryEq(filter, geo_ctx, *geo_call, right_expr);
@@ -464,7 +465,7 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
   // ST_Distance_Centroid(field, centroid) </<=/>/>= distance  --  rewrite to
   // range.
   if constexpr (GenericVersion) {
-    if (const auto* geo_call = TryGetGeoDistanceCall(field_expr)) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(ctx, field_expr)) {
       return FromGeoDistanceComparison(filter, ctx, *geo_call, value_expr, op);
     }
   }
@@ -822,20 +823,49 @@ const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
   return *cast.child;
 }
 
-// Returns the inner expression as a ST_Distance_Centroid(field, centroid) call
-// when it matches that exact shape, or nullptr otherwise. Used to rewrite the
-// pattern `ST_Distance_Centroid(...) OP <const>` into an iresearch
-// GeoDistanceFilter at filter-build time.
+// Returns the inner expression as a ST_Distance_Centroid(field, centroid)
+// call -- or its `<->` operator-form synonym -- when it matches that
+// exact shape, or nullptr otherwise. Used to rewrite the pattern
+// `ST_Distance_Centroid(...) OP <const>` (and the equivalent `<->` form)
+// into an iresearch GeoDistanceFilter at filter-build time.
+//
+// `<->` shares its operator name with the vector L2 op registered in
+// vector.cpp. Disambiguate by resolving each operand against the
+// catalog: at least one side must be an indexed JSON column (catalog
+// type with the JSON logical alias preserved) or GEOMETRY column --
+// the same JSON / GEOMETRY pair the catalog enforces for geo analyzers
+// at CREATE INDEX time. The post-binding `return_type` on the bound
+// expression demotes JSON to plain VARCHAR through function-arg
+// coercion, so we read `column_info->logical_type` (catalog-stored,
+// JSON alias intact) and use `IsJSONType()` rather than an id-only
+// check. PrepareGeoDistanceFilter further validates the column's
+// analyzer before adding the iresearch GeoDistanceFilter.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
-  const duckdb::Expression& expr) {
+  const FilterContext& ctx, const duckdb::Expression& expr) {
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return nullptr;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (func.function.name != kGeoDistance || func.children.size() != 2) {
+  if (func.children.size() != 2) {
     return nullptr;
   }
-  return &func;
+  if (func.function.name == kGeoDistance) {
+    return &func;
+  }
+  if (func.function.name == kL2DistanceOp) {
+    auto is_geo_col = [&ctx](const duckdb::Expression& child) {
+      const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
+      if (!info) {
+        return false;
+      }
+      return info->logical_type.IsJSONType() ||
+             info->logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
+    };
+    if (is_geo_col(*func.children[0]) || is_geo_col(*func.children[1])) {
+      return &func;
+    }
+  }
+  return nullptr;
 }
 
 // Populate the iresearch geo filter base options from the column's geo
@@ -921,27 +951,37 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
   const duckdb::Expression& dist_expr) {
   SDB_ASSERT(geo_call.children.size() == 2);
 
+  // Distance is commutative on its first two arguments, so accept either
+  // `field <-> centroid` / `ST_Distance_Centroid(field, centroid)` or the
+  // swapped form `centroid <-> field` / `ST_Distance_Centroid(centroid,
+  // field)`. Same column-on-either-side pattern as ST_Intersects below.
+  size_t centroid_idx = 1;
   const auto* column_info =
     FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*geo_call.children[0]));
   if (!column_info) {
-    return std::unexpected<Result>{
-      std::in_place, ERROR_BAD_PARAMETER,
-      "ST_Distance_Centroid first input must be an indexed column"};
+    column_info =
+      FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(*geo_call.children[1]));
+    if (!column_info) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_BAD_PARAMETER,
+        "Geo distance: one argument must be an indexed column reference"};
+    }
+    centroid_idx = 0;
   }
 
   const auto* centroid_val =
-    TryGetConstant(PeelSameTypeIdCast(*geo_call.children[1]));
+    TryGetConstant(PeelSameTypeIdCast(*geo_call.children[centroid_idx]));
   if (!centroid_val) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "ST_Distance_Centroid centroid must be a constant"};
+      "Geo distance: centroid argument must be a constant"};
   }
 
   const auto* dist_val = TryGetConstant(dist_expr);
   if (!dist_val || dist_val->type().id() != duckdb::LogicalTypeId::DOUBLE) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "ST_Distance_Centroid comparison value must be a constant DOUBLE"};
+      "Geo distance: comparison value must be a constant DOUBLE"};
   }
   const double distance = dist_val->GetValue<double>();
 
@@ -949,12 +989,12 @@ ResultOr<std::pair<irs::GeoDistanceFilter*, double>> PrepareGeoDistanceFilter(
       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "ST_Distance_Centroid field must be JSON (GeoJSON) or GEOMETRY"};
+      "Geo distance: field must be JSON (GeoJSON) or GEOMETRY"};
   }
   if (!column_info->tokenizer.analyzer) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
-      "ST_Distance_Centroid field has no analyzer attached"};
+      "Geo distance: field has no analyzer attached"};
   }
 
   std::string field_name;

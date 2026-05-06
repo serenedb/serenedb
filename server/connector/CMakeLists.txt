@@ -8,6 +8,7 @@ add_library(
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
     search_filter_builder.cpp
+    geo_filter_builder.cpp
     ts_anyall.cpp
     ts_compound.cpp
     ts_levenshtein.cpp

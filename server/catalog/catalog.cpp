@@ -632,7 +632,6 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
     return r;
   }
-  // Sequences load before tables so insert sinks can resolve them on first use.
   if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
     return r;
   }

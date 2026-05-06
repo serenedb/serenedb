@@ -2061,8 +2061,7 @@ Result LocalCatalog::DropTable(std::string_view database,
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
     }
-    // Auto-PK Sequence (if any) dies with `table` -- it lives only on the
-    // Table object and isn't catalog-registered.
+
     clone->UnregisterObject(std::move(table), *schema_id);
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }

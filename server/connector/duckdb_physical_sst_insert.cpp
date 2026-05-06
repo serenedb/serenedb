@@ -69,8 +69,6 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
   state.table_id = table.GetId();
   state.table_key = key_utils::PrepareTableKey(state.table_id);
   state.pk_columns = duckdb_primary_key::BuildPKColumns(table);
-  // generated_pk_seq is wired in GetGlobalSinkState; non-null iff
-  // table.PKColumns().empty().
 
   // Build column metadata -- skip generated PK and virtual generated columns
   const auto& columns = table.Columns();

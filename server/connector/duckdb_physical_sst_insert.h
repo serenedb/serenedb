@@ -56,7 +56,6 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
 
-  // Non-null when the table uses an internal auto-PK counter.
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   // Index writers -- created once, reused per Sink() call

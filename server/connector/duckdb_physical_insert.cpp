@@ -61,8 +61,6 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
 
-  // Non-null when the table uses an internal auto-PK counter (no explicit PK
-  // columns). shared_ptr keeps the counter alive across snapshot rotations.
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   // Index writers -- created once, reused per Sink() call

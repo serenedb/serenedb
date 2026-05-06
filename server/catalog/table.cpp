@@ -314,9 +314,6 @@ std::shared_ptr<Object> Table::Clone() const {
   vpack::Builder b;
   WriteInternal(b);
   auto cloned = ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
-  // The auto-PK Sequence is not part of WriteInternal; carry it through.
-  // Sharing the same Sequence across clones is intentional -- the in-memory
-  // counter and persisted state are global, not per-snapshot.
   cloned->_generated_pk_sequence = _generated_pk_sequence;
   return cloned;
 }

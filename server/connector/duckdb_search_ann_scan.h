@@ -60,7 +60,7 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   std::atomic_uint32_t next_segment = 0;
 
   duckdb::idx_t MaxThreads() const override {
-    return std::max<duckdb::idx_t>(1, total_segments);
+    return std::max<duckdb::idx_t>(1, total_segments / 2);
   }
 };
 

@@ -126,7 +126,7 @@ void MergeResult(duckdb::ClientContext& context,
   const size_t take = std::min(k, total);
 
   std::vector<uint32_t> idx(total);
-  absl::c_iota(idx, 0u);
+  absl::c_iota(idx, 0);
   auto cmp = [&](uint32_t a, uint32_t b) { return g.dis[a] < g.dis[b]; };
   if (take < total) {
     absl::c_nth_element(idx, idx.begin() + take, cmp);

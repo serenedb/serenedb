@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <shared_mutex>
 #include <type_traits>
+#include <yaclib/exe/submit.hpp>
 
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
@@ -187,9 +188,9 @@ struct FlushedSegmentContext {
 // readers readers by segment name
 // meta key used to get reader for the segment to evaluate
 // Return if any new records were added (modification_queries_ modified).
-void RemoveFromExistingSegment(DocumentMask& deleted_docs,
-                               IndexWriter::QueryContext& query,
-                               const SubReader& reader) {
+void RemoveFromExistingSegment
+  [[maybe_unused]] (DocumentMask& deleted_docs,
+                    IndexWriter::QueryContext& query, const SubReader& reader) {
   if (query.filter == nullptr) {
     return;
   }
@@ -218,6 +219,45 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     if (deleted_docs.insert(doc_id).second) {
       query.ForceDone();
     }
+  }
+}
+
+void RemoveFromExistingSegmentAsync(DocumentMask& deleted_docs,
+                                    std::shared_mutex& deleted_docs_mutex,
+                                    IndexWriter::QueryContext& query,
+                                    const SubReader& reader) {
+  if (query.filter == nullptr) {
+    return;
+  }
+
+  auto prepared = query.filter->prepare({.index = reader});
+
+  if (!prepared) [[unlikely]] {
+    return;  // skip invalid prepared filters
+  }
+
+  deleted_docs_mutex.lock_shared();
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  deleted_docs_mutex.unlock_shared();
+
+  if (!itr) [[unlikely]] {
+    return;  // skip invalid iterators
+  }
+
+  const auto* docs_mask = reader.docs_mask();
+  while (itr->next()) {
+    const auto doc_id = itr->value();
+
+    // if the indexed doc_id was already masked then it should be skipped
+    if (docs_mask && docs_mask->contains(doc_id)) {
+      continue;  // the current modification query does not match any records
+    }
+    deleted_docs_mutex.lock();
+    if (deleted_docs.insert(doc_id).second) {
+      query.ForceDone();
+    }
+    deleted_docs_mutex.unlock();
   }
 }
 
@@ -1762,11 +1802,28 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
-    apply_all_queries([&](QueryContext& query) {
-      // FIXME(gnusi): optimize PK queries
-      RemoveFromExistingSegment(deleted_docs, query, existing_segment);
-    });
+    WaitGroup wg;
+    std::shared_mutex deleted_docs_mutex;
+    for (auto& segment : ctx->segments) {
+      SDB_ASSERT(segment != nullptr);
 
+      wg.Add();
+
+      auto task = [&] {
+        apply_queries(*segment, [&](QueryContext& query) {
+          // FIXME(gnusi): optimize PK queries
+          RemoveFromExistingSegmentAsync(deleted_docs, deleted_docs_mutex,
+                                         query, existing_segment);
+        });
+        wg.Done();
+      };
+      if (_executor != nullptr) {
+        yaclib::Submit(*_executor, task);
+      } else {
+        task();
+      }
+    }
+    wg.Wait();
     // Write docs_mask if masks added
     if (const size_t num_removals = deleted_docs.size(); num_removals) {
       // If all docs are masked then mask segment

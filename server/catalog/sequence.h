@@ -26,7 +26,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <string>
 
 #include "catalog/object.h"
@@ -65,19 +64,25 @@ class Sequence final : public SchemaObject {
 
   // Hand out [base, base+count-1]; returns base. Persists via Merge before
   // returning, so a crash burns the range but never reuses it.
+  // Reader-locked against `Write` (setval) -- multiple Reserves run in
+  // parallel; a concurrent Write blocks them for its duration.
   uint64_t Reserve(uint64_t count);
+
+  // Lock-free variant. Caller must guarantee that `Write` is never called
+  // for this Sequence (auto-PK sequences are the only such case).
+  uint64_t ReserveWriteUnsafe(uint64_t count);
+
   uint64_t Read() const;
   void Write(uint64_t value);
 
  private:
-  mutable std::atomic<uint64_t> _live{0};
-  mutable std::once_flag _init;
-  // Serialises Write vs Write only. Reserves are wait-free against Writes.
+  std::atomic<uint64_t> _live{0};
+  // ReaderLock for Reserve, writer Lock for Write. ReserveWriteUnsafe
+  // does not touch this -- the auto-PK path is not exposed to setval.
   mutable absl::Mutex _setval_mu;
   SequenceOptions _options;
 
   uint64_t LoadFromDb() const;
-  void EnsureInitialized() const;
 };
 
 }  // namespace sdb::catalog

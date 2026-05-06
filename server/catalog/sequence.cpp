@@ -99,8 +99,10 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
   opts.cache_size = basics::VPackHelper::getNumber<int64_t>(slice, "cache", 1);
   opts.cycle = basics::VPackHelper::getBool(slice, "cycle", false);
 
-  return std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
-                                    name, opts);
+  auto seq = std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
+                                        name, opts);
+  seq->_live.store(seq->LoadFromDb(), std::memory_order_release);
+  return seq;
 }
 
 void Sequence::WriteInternal(vpack::Builder& builder) const {
@@ -136,14 +138,8 @@ uint64_t Sequence::LoadFromDb() const {
   return DecodeFixed64Le(raw.data());
 }
 
-void Sequence::EnsureInitialized() const {
-  std::call_once(
-    _init, [this] { _live.store(LoadFromDb(), std::memory_order_release); });
-}
-
-uint64_t Sequence::Reserve(uint64_t count) {
+uint64_t Sequence::ReserveWriteUnsafe(uint64_t count) {
   SDB_ASSERT(count > 0);
-  EnsureInitialized();
 
   // Merge persists before fetch_add, so the WAL high-water always covers
   // any base we've handed out. A crash between the two burns IDs but does
@@ -159,22 +155,25 @@ uint64_t Sequence::Reserve(uint64_t count) {
   return _live.fetch_add(count, std::memory_order_acq_rel) + 1;
 }
 
+uint64_t Sequence::Reserve(uint64_t count) {
+  absl::ReaderMutexLock lock{&_setval_mu};
+  return ReserveWriteUnsafe(count);
+}
+
 uint64_t Sequence::Read() const {
-  EnsureInitialized();
   return _live.load(std::memory_order_acquire);
 }
 
 void Sequence::Write(uint64_t value) {
-  EnsureInitialized();
   std::string encoded;
   EncodeFixed64Le(encoded, value);
   auto* db = GetServerEngine().db();
   auto* cf = CounterCF();
   auto key = CounterKey(GetId());
 
-  // Lock guards Write vs Write so the persisted Put and `_live` store agree
-  // on the same value (otherwise interleaved setvals can leave them out of
-  // sync). Reserve does not contend on this.
+  // Writer lock: blocks all in-flight Reserves and serialises Writes.
+  // ReserveWriteUnsafe (auto-PK) bypasses this -- those sequences never
+  // see setval.
   absl::MutexLock lock{&_setval_mu};
   auto s = db->Put(rocksdb::WriteOptions{}, cf, key, encoded);
   if (!s.ok()) {

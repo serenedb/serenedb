@@ -65,11 +65,10 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
 // CREATE SEQUENCE seeds the counter to `start - increment`, so the first
 // Reserve(increment) post-merge yields `start`. The same sentinel is what
 // Currval inspects to detect "not yet called".
-int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
-  auto seq = ResolveSequence(context, qualified);
-  const auto& opts = seq->Options();
+int64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
+  const auto& opts = seq.Options();
   auto inc_u = static_cast<uint64_t>(opts.increment);
-  uint64_t base = seq->Reserve(inc_u);
+  uint64_t base = seq.Reserve(inc_u);
   uint64_t high_water = base + inc_u - 1;
   auto value = static_cast<int64_t>(high_water);
 
@@ -82,10 +81,14 @@ int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
     }
     // CYCLE: best-effort -- this caller still gets `value` (possibly > max);
     // strict atomic cycle is out of scope.
-    seq->Write(static_cast<uint64_t>(opts.min_value) - inc_u);
+    seq.Write(static_cast<uint64_t>(opts.min_value) - inc_u);
     value = opts.min_value;
   }
   return value;
+}
+
+int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
+  return Nextval(*ResolveSequence(context, qualified), qualified);
 }
 
 // PG's currval is per-session; we report the global last-emitted value.
@@ -116,16 +119,53 @@ int64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
   return value;
 }
 
-// Avoid UnaryExecutor: it constant-folds when the input is a constant vector,
-// collapsing N nextval calls into one. Matches upstream DuckDB's nextval impl.
+// Vectorised: when the sequence-name argument is a constant vector (the
+// usual `DEFAULT nextval('schema.t_id_seq')` case), reserve the whole chunk's
+// worth of ticks in one Sequence::Reserve call. Per-row resolution falls back
+// to the scalar Nextval helper.
 void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& context = state.GetContext();
-  args.data[0].Flatten(args.size());
-  auto* names = duckdb::FlatVector::GetData<duckdb::string_t>(args.data[0]);
+  const auto num_rows = args.size();
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto out = duckdb::FlatVector::Writer<int64_t>(result, args.size());
-  for (duckdb::idx_t i = 0; i < args.size(); ++i) {
+  auto out = duckdb::FlatVector::Writer<int64_t>(result, num_rows);
+
+  if (args.data[0].GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR &&
+      !duckdb::ConstantVector::IsNull(args.data[0])) {
+    auto* name_data =
+      duckdb::ConstantVector::GetData<duckdb::string_t>(args.data[0]);
+    auto qualified =
+      std::string_view{name_data->GetData(), name_data->GetSize()};
+    auto seq = ResolveSequence(context, qualified);
+    const auto& opts = seq->Options();
+    auto inc_u = static_cast<uint64_t>(opts.increment);
+
+    // Cycle / max are conditional on the current value -- splitting a batch
+    // at the wrap point would interleave with concurrent setvals. Fall back
+    // to the scalar path when this batch could touch max_value.
+    uint64_t cur = seq->Read();
+    uint64_t total = static_cast<uint64_t>(num_rows) * inc_u;
+    bool unsafe_for_batch =
+      opts.cycle ||
+      (cur != 0 && static_cast<uint64_t>(opts.max_value) - cur < total);
+
+    if (!unsafe_for_batch) {
+      uint64_t base = seq->Reserve(total);
+      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+        out[i] = static_cast<int64_t>(base + i * inc_u + (inc_u - 1));
+      }
+      return;
+    }
+
+    for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+      out[i] = Nextval(*seq, qualified);
+    }
+    return;
+  }
+
+  args.data[0].Flatten(num_rows);
+  auto* names = duckdb::FlatVector::GetData<duckdb::string_t>(args.data[0]);
+  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
     out[i] = Nextval(context,
                      std::string_view{names[i].GetData(), names[i].GetSize()});
   }

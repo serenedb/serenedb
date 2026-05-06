@@ -1,8 +1,3 @@
-# PG-style SERIAL / BIGSERIAL / SMALLSERIAL pseudo-types. SerenebDB expands
-# them in the connector layer (see server/connector/duckdb_schema_entry.cpp)
-# to "<base-int> NOT NULL DEFAULT nextval('<table>_<col>_seq')" plus an
-# implicit CREATE SEQUENCE IF NOT EXISTS owned by the table.
-
 statement ok
 CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
 
@@ -28,7 +23,6 @@ id	hero
 3	sas
 
 
-# Multi-row INSERT must increment per row, not once per statement.
 statement count 2
 INSERT INTO vedernikoff (hero) VALUES ('abramov'), ('pudge');
 
@@ -48,10 +42,6 @@ statement ok
 DROP TABLE vedernikoff;
 
 
-# DROP TABLE does NOT (yet) cascade the SERIAL-implied sequence -- PG's
-# OWNED BY semantics is a deferred follow-up. The rewriter emits CREATE
-# SEQUENCE IF NOT EXISTS so re-creating the same-shaped table reuses the
-# existing counter (next id picks up where the dropped table left off).
 statement ok
 CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
 
@@ -60,7 +50,6 @@ statement count 1
 INSERT INTO vedernikoff (hero) VALUES ('clickclack');
 
 
-# Counter continues from where the previous table left off.
 query
 SELECT id, hero FROM vedernikoff;
 ----
@@ -76,8 +65,6 @@ statement ok
 DROP SEQUENCE vedernikoff_id_seq;
 
 
-# BIGSERIAL -> BIGINT-backed. Verify the column type is BIGINT and that the
-# sequence advances correctly across multi-row inserts.
 statement ok
 CREATE TABLE dedsky (id BIGSERIAL PRIMARY KEY, iq INT);
 
@@ -94,7 +81,6 @@ id	iq
 2	20
 
 
-# Multi-row insert advances per row even with BIGSERIAL.
 statement count 3
 INSERT INTO dedsky (iq) VALUES (30), (40), (50);
 
@@ -118,7 +104,6 @@ statement ok
 DROP SEQUENCE dedsky_id_seq;
 
 
-# SMALLSERIAL -> SMALLINT-backed.
 statement ok
 CREATE TABLE pudge (id SMALLSERIAL PRIMARY KEY, hp INT);
 
@@ -135,8 +120,6 @@ id	hp
 2	200
 
 
-# Bulk insert via generate_series exercises the "Reserve once per chunk"
-# fast path on a SMALLSERIAL column.
 statement count 50
 INSERT INTO pudge (hp) SELECT i FROM generate_series(1000, 1049) AS s(i);
 
@@ -148,7 +131,6 @@ count
 52
 
 
-# Last id should be 52 (2 + 50), monotonically increasing.
 query
 SELECT max(id) FROM pudge;
 ----
@@ -164,7 +146,6 @@ statement ok
 DROP SEQUENCE pudge_id_seq;
 
 
-# Multiple SERIAL-like tables coexist with independent sequences.
 statement ok
 CREATE TABLE babsky (id SERIAL PRIMARY KEY, name TEXT);
 
@@ -181,7 +162,6 @@ statement count 3
 INSERT INTO deadinside (name) VALUES ('shlepach'), ('kryakva'), ('ksimironov');
 
 
-# Each table's id starts at 1 -- sequences are independent.
 query
 SELECT id, name FROM babsky ORDER BY id;
 ----
@@ -215,15 +195,10 @@ statement ok
 DROP SEQUENCE deadinside_id_seq;
 
 
-# Sequences are non-transactional: a rolled-back INSERT still consumes IDs.
-# This is the documented Postgres semantic and falls out of our atomic-counter
-# + Merge-as-WAL design (the Merge that bumps the persistent counter is not
-# undone by the user-level ROLLBACK on the data writes).
 statement ok
 CREATE TABLE enchonchinchan (id SERIAL PRIMARY KEY, iq INT);
 
 
-# Baseline: ids 1..3.
 statement count 3
 INSERT INTO enchonchinchan (iq) SELECT i FROM generate_series(1, 3) AS s(i);
 
@@ -237,8 +212,6 @@ id	iq
 3	3
 
 
-# Reserve 100 IDs inside a transaction, then ROLLBACK.
-# IDs 4..103 are burned (consumed but no rows persisted).
 statement ok
 BEGIN;
 
@@ -251,12 +224,10 @@ statement ok
 ROLLBACK;
 
 
-# Next insert picks up *after* the burned range -- not at 4.
 statement count 1
 INSERT INTO enchonchinchan (iq) VALUES (322);
 
 
-# Gap visible: 1, 2, 3, then jump to 104.
 query
 SELECT id, iq FROM enchonchinchan ORDER BY id;
 ----
@@ -273,3 +244,108 @@ DROP TABLE enchonchinchan;
 
 statement ok
 DROP SEQUENCE enchonchinchan_id_seq;
+
+
+statement ok
+CREATE TABLE shlepach (id SERIAL PRIMARY KEY, iq INT);
+
+
+statement count 5000
+INSERT INTO shlepach (iq) SELECT i FROM generate_series(1, 5000) AS s(i);
+
+
+query
+SELECT count(*), min(id), max(id) FROM shlepach;
+----
+count	min	max
+5000	1	5000
+
+
+statement ok
+DROP TABLE shlepach;
+
+
+statement ok
+DROP SEQUENCE shlepach_id_seq;
+
+
+statement ok
+CREATE TABLE myasnig (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO myasnig (hero) VALUES ('vladgalaka');
+
+
+statement ok
+DROP SEQUENCE myasnig_id_seq;
+
+
+query
+SELECT id, hero FROM myasnig ORDER BY id;
+----
+id	hero
+1	vladgalaka
+
+
+statement error
+INSERT INTO myasnig (hero) VALUES ('kryakva');
+
+
+statement ok
+CREATE SEQUENCE myasnig_id_seq START WITH 100;
+
+
+statement count 1
+INSERT INTO myasnig (hero) VALUES ('kryakva');
+
+
+query
+SELECT id, hero FROM myasnig ORDER BY id;
+----
+id	hero
+1	vladgalaka
+100	kryakva
+
+
+statement ok
+DROP TABLE myasnig;
+
+
+statement ok
+DROP SEQUENCE myasnig_id_seq;
+
+
+statement ok
+CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, x INT);
+
+
+statement count 1
+INSERT INTO bbbsky (x) VALUES (1);
+
+
+statement ok
+DROP TABLE bbbsky;
+
+
+statement ok
+CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, x INT);
+
+
+statement count 1
+INSERT INTO bbbsky (x) VALUES (2);
+
+
+query
+SELECT id, x FROM bbbsky;
+----
+id	x
+2	2
+
+
+statement ok
+DROP TABLE bbbsky;
+
+
+statement ok
+DROP SEQUENCE bbbsky_id_seq;

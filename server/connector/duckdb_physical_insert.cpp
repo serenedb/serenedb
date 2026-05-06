@@ -181,7 +181,9 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
   uint64_t generated_pk_base =
-    gstate.has_generated_pk ? gstate.generated_pk_seq->Reserve(num_rows) : 0;
+    gstate.has_generated_pk
+      ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
+      : 0;
 
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     auto& key_buffer = gstate.row_keys.emplace_back();

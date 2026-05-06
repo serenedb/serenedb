@@ -1455,20 +1455,54 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
   return FieldHasArrayTrigger(children[0].second, child, row);
 }
 
+// Get the cached field-dispatch plan for a STRUCT type, building only the
+// side (text or binary) that the requested Format needs and only on first
+// miss. The portal owns the cache and wires it into the context before
+// serialization begins (see pg_comm_task::BindStatement).
+template<VarFormat Format>
+const RecordSerializers& GetSerializersCache(
+  SerializationContext& context, const duckdb::LogicalType& struct_type) {
+  SDB_ASSERT(context.types_cache != nullptr);
+  auto [it, _] = context.types_cache->by_type.try_emplace(
+    static_cast<const void*>(&struct_type));
+  auto& cached = it->second;
+  const bool needs_build =
+    (Format == VarFormat::Text) ? !cached.text_built : !cached.binary_built;
+  if (needs_build) {
+    const auto& children = duckdb::StructType::GetChildTypes(struct_type);
+    if constexpr (Format == VarFormat::Text) {
+      cached.text_in_record.reserve(children.size());
+      for (const auto& [_, child_type] : children) {
+        cached.text_in_record.push_back(GetSerialization(
+          child_type, VarFormat::Text, context, /*in_record=*/true));
+      }
+      cached.text_built = true;
+    } else {
+      cached.binary_fns.reserve(children.size());
+      cached.binary_oids.reserve(children.size());
+      for (const auto& [_, child_type] : children) {
+        cached.binary_fns.push_back(
+          GetSerialization(child_type, VarFormat::Binary, context));
+        cached.binary_oids.push_back(Type2Oid(child_type, false));
+      }
+      cached.binary_built = true;
+    }
+  }
+  return cached;
+}
+
 template<VarFormat Format, WrapContext InContainer>
 void SerializeRecord(SerializationContext context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
-  if constexpr (Format == VarFormat::Text) {
-    const auto& children =
-      duckdb::StructType::GetChildTypes(vdata.logical_type);
+  const auto& cache = GetSerializersCache<Format>(context, vdata.logical_type);
 
+  if constexpr (Format == VarFormat::Text) {
     // Render '(field0,...,fieldN)' direct to ctx.buffer at the current depth.
-    // Each field is dispatched with in_record=true so its serializer
-    // self-wraps and self-escapes using the runtime quote_seq/backslash_seq.
+    // Each field's text-in-record dispatch is cached in `cache.text_in_record`.
     auto emit_inside = [&](SerializationContext ctx) {
       ctx.buffer->WriteUncommitted("(");
-      for (size_t i = 0; i < children.size(); ++i) {
+      for (size_t i = 0; i < cache.text_in_record.size(); ++i) {
         if (i > 0) {
           ctx.buffer->WriteUncommitted(",");
         }
@@ -1477,9 +1511,7 @@ void SerializeRecord(SerializationContext context,
               child.unified.sel->get_index(row))) {
           continue;  // empty between commas means NULL in record text
         }
-        auto fn = GetSerialization(children[i].second, VarFormat::Text, ctx,
-                                   /*in_record=*/true);
-        fn(ctx, child, row);
+        cache.text_in_record[i](ctx, child, row);
       }
       ctx.buffer->WriteUncommitted(")");
     };
@@ -1500,29 +1532,13 @@ void SerializeRecord(SerializationContext context,
   } else {
     // PG record binary format: int32 nfields; for each field { int32 OID,
     // int32 length (-1 for NULL) followed by length bytes }.
-    const auto& children =
-      duckdb::StructType::GetChildTypes(vdata.logical_type);
     auto* nfields_data = context.buffer->GetContiguousData(4);
     absl::big_endian::Store32(nfields_data,
-                              static_cast<int32_t>(children.size()));
-
-    struct ChildPlan {
-      SerializationFunction fn;
-      int32_t oid;
-    };
-    std::vector<ChildPlan> plan;
-    plan.reserve(children.size());
-    for (const auto& [_, child_type] : children) {
-      plan.push_back({
-        .fn = GetSerialization(child_type, VarFormat::Binary, context),
-        .oid = Type2Oid(child_type, false),
-      });
-    }
-
-    for (size_t i = 0; i < children.size(); ++i) {
+                              static_cast<int32_t>(cache.binary_fns.size()));
+    for (size_t i = 0; i < cache.binary_fns.size(); ++i) {
       absl::big_endian::Store32(context.buffer->GetContiguousData(4),
-                                plan[i].oid);
-      plan[i].fn(context, vdata.children[i], row);
+                                cache.binary_oids[i]);
+      cache.binary_fns[i](context, vdata.children[i], row);
     }
   }
 }

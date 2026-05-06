@@ -106,6 +106,12 @@ class PgSQLCommTaskBase : public rest::CommTask {
     DuckDBBindInfo bind_info;
     SerializationContext serialization_context;
     std::vector<SerializationFunction> columns_serializers;
+    // Per-portal cache of struct field-dispatch plans. Populated lazily on
+    // the first SerializeRecord call for each distinct STRUCT type, then
+    // reused across all rows. Heap-allocated so the pointer kept in
+    // `serialization_context.types_cache` stays stable across portal moves.
+    std::unique_ptr<TypesSerializationCache> types_cache =
+      std::make_unique<TypesSerializationCache>();
   };
 
   virtual void SetIOTimeoutImpl() = 0;

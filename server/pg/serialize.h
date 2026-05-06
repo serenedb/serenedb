@@ -26,6 +26,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 
+#include "basics/containers/node_hash_map.h"
 #include "basics/message_buffer.h"
 #include "query/config.h"
 
@@ -34,6 +35,22 @@ namespace sdb::pg {
 enum class VarFormat : int16_t {
   Text = 0,
   Binary = 1,
+};
+
+using SerializationFunction = void (*)(
+  struct SerializationContext context,
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
+
+struct RecordSerializers {
+  std::vector<SerializationFunction> text_in_record;  // for text path
+  std::vector<SerializationFunction> binary_fns;      // for binary path
+  std::vector<int32_t> binary_oids;                   // binary header OIDs
+  bool text_built = false;
+  bool binary_built = false;
+};
+
+struct TypesSerializationCache {
+  containers::NodeHashMap<const void*, RecordSerializers> by_type;
 };
 
 // Escape sequences for emitting one literal '"' or '\\' byte at the current
@@ -48,14 +65,10 @@ struct SerializationContext {
   const catalog::Snapshot* snapshot = nullptr;
   std::string_view quote_seq{"\"", 1};
   std::string_view backslash_seq{"\\", 1};
+  // Optional per-portal cache of struct-field dispatch plans. Owned by the
+  // portal; nullptr disables caching (each call recomputes).
+  TypesSerializationCache* types_cache = nullptr;
 };
-
-// TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
-// instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
-// for scalar types, and can lazily create child format for arrays).
-using SerializationFunction = void (*)(
-  SerializationContext context,
-  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
 void FillContext(const Config& config, SerializationContext& context);
 

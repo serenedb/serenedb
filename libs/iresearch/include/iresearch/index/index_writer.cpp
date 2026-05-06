@@ -201,8 +201,7 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->execute({.segment = reader});
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators

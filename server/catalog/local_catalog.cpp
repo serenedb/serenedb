@@ -1508,9 +1508,9 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       vpack::Builder b;
       sequence->WriteInternal(b);
-      return _engine->CreateDefinition(*schema_id, ObjectType::Sequence,
-                                       sequence->GetId(),
-                                       [&](bool) { return b.slice(); });
+      return _engine->CreateSequenceDefinition(
+        *schema_id, sequence->GetId(), [&](bool) { return b.slice(); },
+        sequence->Options().Seed());
     },
     [&](auto clone) { clone->UnregisterObject(sequence, *schema_id, true); });
 }

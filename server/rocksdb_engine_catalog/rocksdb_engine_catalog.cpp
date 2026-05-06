@@ -1299,6 +1299,37 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
     [&] { return properties(true); }, [] { return std::string_view{}; });
 }
 
+Result RocksDBEngineCatalog::CreateSequenceDefinition(
+  ObjectId parent_id, ObjectId id, WriteProperties properties,
+  uint64_t initial_counter) {
+  rocksdb::WriteBatch batch;
+
+  // Catalog definition row.
+  RocksDBKeyWithBuffer<DefinitionKey> def_key{
+    parent_id, catalog::ObjectType::Sequence, id};
+  auto def_value = properties(true);
+  std::string def_value_str{reinterpret_cast<const char*>(def_value.start()),
+                            def_value.byteSize()};
+  batch.Put(RocksDBColumnFamilyManager::get(
+              RocksDBColumnFamilyManager::Family::Definitions),
+            def_key.GetBuffer(), def_value_str);
+
+  std::string counter_key;
+  rocksutils::Uint64ToPersistent(counter_key, id.id());
+  uint64_t encoded = initial_counter;
+  if constexpr (std::endian::native == std::endian::big) {
+    encoded = std::byteswap(encoded);
+  }
+  rocksdb::Slice counter_value{reinterpret_cast<const char*>(&encoded),
+                               sizeof(encoded)};
+  batch.Put(RocksDBColumnFamilyManager::get(
+              RocksDBColumnFamilyManager::Family::Sequences),
+            counter_key, counter_value);
+
+  rocksdb::WriteOptions wo;
+  return rocksutils::ConvertStatus(_db->GetRootDB()->Write(wo, &batch));
+}
+
 Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
                                             catalog::ObjectType type,
                                             ObjectId id) {
@@ -1974,7 +2005,7 @@ bool RocksDBEngineCatalog::checkExistingDB(
               "found existing column families: ", names);
 
     for (const auto& it : cf_families) {
-      if (absl::c_contains(existing_column_families, it.name);) {
+      if (!absl::c_contains(existing_column_families, it.name)) {
         SDB_FATAL(
           "xxxxx", Logger::STARTUP, "column family '", it.name,
           "' is missing in database",

@@ -81,7 +81,7 @@ Sequence::Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
   : SchemaObject{{}, database_id,       schema_id,
                  id, std::string{name}, ObjectType::Sequence},
     _options{opts} {
-  _live.store(LoadFromDb(), std::memory_order_release);
+  _live.store(_options.Seed(), std::memory_order_release);
 }
 
 Sequence::~Sequence() = default;
@@ -101,8 +101,10 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
   opts.cache_size = basics::VPackHelper::getNumber<int64_t>(slice, "cache", 1);
   opts.cycle = basics::VPackHelper::getBool(slice, "cycle", false);
 
-  return std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
-                                    name, opts);
+  auto seq = std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
+                                        name, opts);
+  seq->_live.store(seq->LoadFromDb(), std::memory_order_release);
+  return seq;
 }
 
 void Sequence::WriteInternal(vpack::Builder& builder) const {

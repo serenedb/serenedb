@@ -45,9 +45,17 @@ struct SequenceOptions {
   int64_t max_value = std::numeric_limits<int64_t>::max();
   int64_t cache_size = 1;
   bool cycle = false;
+
+  uint64_t Seed() const noexcept {
+    return static_cast<uint64_t>(start_value - increment);
+  }
 };
 
+class Table;
+
 class Sequence final : public SchemaObject {
+  friend class Table;
+
  public:
   Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
            std::string_view name, SequenceOptions opts);

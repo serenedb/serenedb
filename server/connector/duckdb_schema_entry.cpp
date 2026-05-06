@@ -329,12 +329,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     if (!sr.ok()) {
       SDB_THROW(std::move(sr));
     }
-    if (seq->GetId().isSet()) {
-      const auto& opts = seq->Options();
-      auto seed = static_cast<uint64_t>(opts.start_value) -
-                  static_cast<uint64_t>(opts.increment);
-      seq->Write(seed);
-    }
   }
 
   r =
@@ -633,13 +627,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   }
   if (!r.ok()) {
     SDB_THROW(std::move(r));
-  }
-
-  // GetId() is unset on the IF NOT EXISTS hit -- nothing to seed.
-  if (sequence->GetId().isSet()) {
-    auto seed = static_cast<uint64_t>(opts.start_value) -
-                static_cast<uint64_t>(opts.increment);
-    sequence->Write(seed);
   }
   return nullptr;
 }

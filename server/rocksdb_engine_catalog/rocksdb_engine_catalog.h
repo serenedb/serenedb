@@ -224,6 +224,12 @@ class RocksDBEngineCatalog {
 
   Result CreateDefinition(ObjectId parent_id, catalog::ObjectType type,
                           ObjectId id, WriteProperties properties);
+
+  // Atomic CreateDefinition in one CF and counter definition for merge in
+  // another CF.
+  Result CreateSequenceDefinition(ObjectId parent_id, ObjectId id,
+                                  WriteProperties properties,
+                                  uint64_t initial_counter);
   Result DropDefinition(ObjectId parent_id, catalog::ObjectType type,
                         ObjectId id);
   Result DropEntry(ObjectId parent_id, catalog::ObjectType type);

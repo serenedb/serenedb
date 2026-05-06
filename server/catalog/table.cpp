@@ -183,7 +183,11 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
       !r.ok()) {
     return nullptr;
   }
-  return std::make_shared<Table>(std::move(options), ctx.database_id);
+  auto table = std::make_shared<Table>(std::move(options), ctx.database_id);
+  if (const auto& seq = table->_generated_pk_sequence) {
+    seq->_live.store(seq->LoadFromDb(), std::memory_order_release);
+  }
+  return table;
 }
 
 void catalog::Table::WriteInternal(vpack::Builder& b) const {

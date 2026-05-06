@@ -163,7 +163,8 @@ SharedExecutor MakeExecutor(int64_t threads) {
   SharedExecutor shared;
 
   if (threads != 0) {
-    shared.pool = yaclib::MakeFairThreadPool(static_cast<std::uint64_t>(threads));
+    shared.pool =
+      yaclib::MakeFairThreadPool(static_cast<std::uint64_t>(threads));
     shared.executor = shared.pool;
   }
 
@@ -289,14 +290,12 @@ BENCHMARK(BmNoExecutorBatch)
   ->Args({16, 4, 256, 0, 8})
   ->Args({32, 8, 256, 0, 8})
   ->Args({64, 16, 256, 0, 4})
-  ->UseRealTime()
   ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BmFairThreadPoolBatch)
   ->Args({16, 4, 256, 8, 8})
   ->Args({32, 8, 256, 8, 8})
   ->Args({64, 16, 256, 8, 4})
-  ->UseRealTime()
   ->Unit(benchmark::kMillisecond);
 
 }  // namespace

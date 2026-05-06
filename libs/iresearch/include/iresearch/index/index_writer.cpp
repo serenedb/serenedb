@@ -188,9 +188,9 @@ struct FlushedSegmentContext {
 // readers readers by segment name
 // meta key used to get reader for the segment to evaluate
 // Return if any new records were added (modification_queries_ modified).
-void RemoveFromExistingSegment
-  [[maybe_unused]] (DocumentMask& deleted_docs,
-                    IndexWriter::QueryContext& query, const SubReader& reader) {
+void RemoveFromExistingSegment(DocumentMask& deleted_docs,
+                               IndexWriter::QueryContext& query,
+                               const SubReader& reader) {
   if (query.filter == nullptr) {
     return;
   }
@@ -219,45 +219,6 @@ void RemoveFromExistingSegment
     if (deleted_docs.insert(doc_id).second) {
       query.ForceDone();
     }
-  }
-}
-
-void RemoveFromExistingSegmentAsync(DocumentMask& deleted_docs,
-                                    std::shared_mutex& deleted_docs_mutex,
-                                    IndexWriter::QueryContext& query,
-                                    const SubReader& reader) {
-  if (query.filter == nullptr) {
-    return;
-  }
-
-  auto prepared = query.filter->prepare({.index = reader});
-
-  if (!prepared) [[unlikely]] {
-    return;  // skip invalid prepared filters
-  }
-
-  deleted_docs_mutex.lock_shared();
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
-  deleted_docs_mutex.unlock_shared();
-
-  if (!itr) [[unlikely]] {
-    return;  // skip invalid iterators
-  }
-
-  const auto* docs_mask = reader.docs_mask();
-  while (itr->next()) {
-    const auto doc_id = itr->value();
-
-    // if the indexed doc_id was already masked then it should be skipped
-    if (docs_mask && docs_mask->contains(doc_id)) {
-      continue;  // the current modification query does not match any records
-    }
-    deleted_docs_mutex.lock();
-    if (deleted_docs.insert(doc_id).second) {
-      query.ForceDone();
-    }
-    deleted_docs_mutex.unlock();
   }
 }
 
@@ -1803,17 +1764,20 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
     WaitGroup wg;
-    std::shared_mutex deleted_docs_mutex;
+    std::vector<DocumentMask> deleted_docs_vector;
+    deleted_docs_vector.reserve(ctx->segments.size());
     for (auto& segment : ctx->segments) {
       SDB_ASSERT(segment != nullptr);
 
       wg.Add();
+      auto& deleted_docs_local = deleted_docs_vector.emplace_back(
+        DocumentMask{{*dir.ResourceManager().transactions}});
 
       auto task = [&] {
         apply_queries(*segment, [&](QueryContext& query) {
           // FIXME(gnusi): optimize PK queries
-          RemoveFromExistingSegmentAsync(deleted_docs, deleted_docs_mutex,
-                                         query, existing_segment);
+          RemoveFromExistingSegment(deleted_docs_local, query,
+                                    existing_segment);
         });
         wg.Done();
       };
@@ -1824,6 +1788,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
     }
     wg.Wait();
+    for (auto& deleted_docs_local : deleted_docs_vector) {
+      for (auto doc_id : deleted_docs_local) {
+        deleted_docs.insert(doc_id);
+      }
+    }
     // Write docs_mask if masks added
     if (const size_t num_removals = deleted_docs.size(); num_removals) {
       // If all docs are masked then mask segment

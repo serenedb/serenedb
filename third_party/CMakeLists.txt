@@ -2,12 +2,6 @@
 # External Projects used by SereneDB
 # ------------------------------------------------------------------------------
 
-# Override install/export() to no-op for third parties
-macro(install)
-endmacro()
-macro(export)
-endmacro()
-
 set(CMAKE_CXX_FLAGS
     "${CMAKE_CXX_FLAGS} -Wno-unused -Wno-sign-compare -Wno-deprecated -Wno-suggest-override -Wno-suggest-destructor-override -Wno-missing-field-initializers"
 )

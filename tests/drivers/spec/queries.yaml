@@ -1,0 +1,40 @@
+# Canonical query shapes used by every driver harness. Kept deliberately
+# simple per the plan: just SELECT from VALUES / SELECT from a tiny table.
+# Anything more complex belongs in sqllogic, not here.
+#
+# Placeholders use {oid} / {name} / {cast_sql} / {value_text} substituted
+# by the harness against types.yaml entries.
+
+protocol_modes:
+  - simple             # SimpleQuery message; no parameters at all
+  - extended-noparam   # Parse + Bind (zero params) + Execute
+  - extended-text      # Parse + Bind (text-format params) + Execute
+  - extended-binary    # Parse + Bind (binary-format params) + Execute
+
+# Round-trip a value through the server. Used both for parameterised binds
+# (extended modes) and for inline literals (simple mode).
+#
+# Simple mode: substitute {literal} -> server-side string literal cast.
+# Extended modes: bind {value} as parameter $1 with the configured format.
+roundtrip:
+  simple: |
+    SELECT {literal}::{pg_typname} AS v
+  extended: |
+    SELECT {cast_sql} AS v
+
+# Sanity smoke test sent before the type matrix on every connection.
+# Used to confirm the connection is live and ParameterStatus made it
+# through the driver intact.
+smoke:
+  - "SELECT 1"
+  - "SELECT version()"
+  - "SELECT current_schema()"
+
+# Per-language DDL used to scaffold a private schema per test-run.
+# `{schema}` is the ephemeral name (drv_<lang>_<run_id>).
+schema:
+  setup:
+    - "CREATE SCHEMA IF NOT EXISTS {schema}"
+    - "SET search_path TO {schema},public,pg_catalog"
+  teardown:
+    - "DROP SCHEMA IF EXISTS {schema} CASCADE"

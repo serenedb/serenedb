@@ -77,10 +77,16 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
 }
 
 // PostgreSQL drivers supply client_encoding in many forms (UTF8, UTF-8, utf_8,
-// utf8, ...). To tackle this we have a special overload for encoding.
+// utf8, 'utf-8', "utf-8", ...).
+// To tackle this we have a special overload for encoding.
 void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
                                duckdb::Value& value) {
   auto canonicalize = [](std::string_view name) {
+    if (name.size() >= 2 && (name.front() == '\'' || name.front() == '"') &&
+        name.front() == name.back()) {
+      name.remove_prefix(1);
+      name.remove_suffix(1);
+    }
     auto cleaned_str =
       absl::StrReplaceAll(name, {{"-", ""}, {"_", ""}, {" ", ""}});
     absl::AsciiStrToUpper(&cleaned_str);

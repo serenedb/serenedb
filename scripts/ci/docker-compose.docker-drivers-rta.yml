@@ -1,0 +1,38 @@
+services:
+  serenedb:
+    image: ${DOCKER_TEST_IMAGE}
+    command: serened --server.authentication 0
+    networks:
+      - rta-network
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    depends_on:
+      - serenedb
+    volumes:
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/logs:/logs"
+      - "${WORKSPACE}/out/drivers-tests:/out"
+    environment:
+      - HOME=/tmp/home
+      - LOG_DIR=/logs
+    networks:
+      - rta-network
+    command: >
+      sh -c '
+        echo "Waiting for serened..." &&
+        for i in $(seq 1 60); do
+          bash -c "echo > /dev/tcp/serenedb/7890" 2>/dev/null && break
+          sleep 1
+        done &&
+        exec /serenedb/tests/drivers/run.sh \
+          --host serenedb \
+          --port 7890 \
+          --junit /out
+      '
+
+networks:
+  rta-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_rta-network

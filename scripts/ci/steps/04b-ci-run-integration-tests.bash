@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs integration tests (sqllogic + recovery).
+# Runs integration tests (sqllogic + recovery + drivers).
 # Expects: BUILD_DIR, WORKSPACE, BUILD_IMAGE, CARGO_TARGET_CACHE
 
 set -e
@@ -14,6 +14,8 @@ SQLLOGIC_RC=0
 SQLLOGIC_TIME=0
 RECOVERY_RC=0
 RECOVERY_TIME=0
+DRIVER_RC=0
+DRIVER_TIME=0
 
 if [[ "${SQLLOGIC_TESTS:-true}" == "true" ]]; then
 	SQLLOGIC_START=$(date +%s)
@@ -25,6 +27,12 @@ if [[ $SQLLOGIC_RC -eq 0 && "${RECOVERY_TESTS:-true}" == "true" ]]; then
 	RECOVERY_START=$(date +%s)
 	BUILD_DIR="$BUILD_DIR" ./scripts/ci/steps/045-ci-in-docker-run-recovery-tests.bash || RECOVERY_RC=$?
 	RECOVERY_TIME=$(($(date +%s) - RECOVERY_START))
+fi
+
+if [[ $SQLLOGIC_RC -eq 0 && $RECOVERY_RC -eq 0 && "${DRIVER_TESTS:-true}" == "true" ]]; then
+	DRIVER_START=$(date +%s)
+	BUILD_DIR="$BUILD_DIR" ./scripts/ci/steps/047-ci-in-docker-run-driver-tests.bash || DRIVER_RC=$?
+	DRIVER_TIME=$(($(date +%s) - DRIVER_START))
 fi
 
 # Print summary
@@ -48,7 +56,18 @@ if [[ "${RECOVERY_TESTS:-true}" == "true" ]]; then
 		echo "  FAILED  recovery-tests (${RECOVERY_TIME}s, exit code ${RECOVERY_RC})"
 	fi
 fi
-if [[ $SQLLOGIC_RC -ne 0 || $RECOVERY_RC -ne 0 ]]; then
+if [[ "${DRIVER_TESTS:-true}" == "true" ]]; then
+	if [[ $SQLLOGIC_RC -ne 0 ]]; then
+		echo "  SKIPPED driver-tests (sqllogic failed)"
+	elif [[ $RECOVERY_RC -ne 0 ]]; then
+		echo "  SKIPPED driver-tests (recovery failed)"
+	elif [[ $DRIVER_RC -eq 0 ]]; then
+		echo "  PASSED  driver-tests (${DRIVER_TIME}s)"
+	else
+		echo "  FAILED  driver-tests (${DRIVER_TIME}s, exit code ${DRIVER_RC})"
+	fi
+fi
+if [[ $SQLLOGIC_RC -ne 0 || $RECOVERY_RC -ne 0 || $DRIVER_RC -ne 0 ]]; then
 	echo "========================================"
 	echo "  SOME INTEGRATION TESTS FAILED"
 	echo "========================================"

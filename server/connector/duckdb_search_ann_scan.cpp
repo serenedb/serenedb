@@ -88,9 +88,6 @@ void ANNSearchSegment(const irs::SubReader& segment_reader, uint32_t segment_id,
     .top_k = top_k,
     .global_threshold = gstate.global_kth_dis.load(std::memory_order_relaxed),
   };
-  // faiss caps the search at efSearch candidates with do_dis_check=true (the
-  // default), so an efSearch lower than top_k yields fewer than top_k results.
-  // Make sure the search has at least enough budget to return top_k.
   const int requested_ef =
     gstate.ef_search > 0 ? gstate.ef_search : info.params.efSearch;
   info.params.efSearch = std::max(requested_ef, static_cast<int>(top_k));
@@ -322,12 +319,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
   gstate->reader = &snapshot.reader;
   gstate->total_segments = snapshot.reader.size();
 
-  // remained_segments must match what ClaimNextLiveSegment will hand out:
-  // dead segments are skipped there, so per-worker `processed` counts only
-  // live segments. If we initialized this to total_segments, the final
-  // `remained == processed` check after fetch_sub would never be true when
-  // any segment is dead, and the merge/emit branch would never run --
-  // producing zero rows.
   size_t live = 0;
   for (size_t i = 0; i < gstate->total_segments; ++i) {
     if (snapshot.reader[i].live_docs_count() != 0) {

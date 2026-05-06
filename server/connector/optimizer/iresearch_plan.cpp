@@ -771,12 +771,11 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   };
   std::string filter_summary = irs::ToStringDemangled(*root, col_name_lookup);
 
-  auto& reader = *resolved->shard->GetInvertedIndexSnapshot()->reader;
   auto search = std::make_unique<connector::SearchScan>();
   search->snapshot = resolved->shard->GetInvertedIndexSnapshot();
-  search->reader = &reader;
   search->stored_filter = root;
-  search->query = root->prepare({.index = reader});
+  // `Query` is built lazily in SearchFullScanInitGlobal so prepare runs
+  // exactly once per execution, with the scorer if one ends up attached.
   search->filter_summary = std::move(filter_summary);
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIResearchScanFunction();
@@ -1924,10 +1923,8 @@ bool TryConvertAggregateToCount(
       if (search.EmitOffsets()) {
         return false;
       }
-      count_scan->query = std::move(search.query);
       count_scan->stored_filter = std::move(search.stored_filter);
       count_scan->snapshot = std::move(search.snapshot);
-      count_scan->reader = search.reader;
       count_scan->filter_summary = std::move(search.filter_summary);
       break;
     }
@@ -1943,7 +1940,6 @@ bool TryConvertAggregateToCount(
         return false;
       }
       count_scan->snapshot = resolved->shard->GetInvertedIndexSnapshot();
-      count_scan->reader = &*count_scan->snapshot->reader;
       break;
     }
     default:

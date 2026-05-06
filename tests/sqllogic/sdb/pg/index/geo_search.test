@@ -747,3 +747,207 @@ statement error
 CREATE INDEX geo_data_v_idx ON geo_data_v USING inverted(id, geo geojson_shape)
 ----
 db error: ERROR: Failed to create index: Column 'geo' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY<slt:ignore>
+
+
+# --- Combined geo + text + scoring with boost ---
+# Verify that a single inverted index over a geo column AND a text column
+# can serve queries mixing geo predicates (ST_Intersects, ST_Distance_Centroid)
+# with tsquery `@@` and BM25 ordering with both `^` (TSQUERY boost) and
+# `::boost(K)` (SQL-surface boost). This exercises the full pipeline:
+# bool-filter merging across heterogeneous leaves + scorer attachment +
+# boost propagation.
+#
+# Data:
+#   id=1: cluster pt    "blue cafe alpha"
+#   id=2: cluster pt    "red cafe alpha"
+#   id=3: cluster pt    "blue restaurant beta"
+#   id=4: cluster poly  "blue park"
+#   id=5: cluster pt    "yellow museum"
+#   id=6: far pt        "red cafe distant"
+#   id=7: very far pt   "blue restaurant outpost"
+# Geo positions match the rest of this file (cluster pts/poly near
+# [37.616, 55.704]; id=6 ~3.8km away; id=7 ~15km away).
+
+statement ok
+CREATE TABLE places (id INTEGER PRIMARY KEY, geo JSON, body VARCHAR)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY places_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'lower',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+)
+
+
+statement ok
+CREATE INDEX places_idx ON places USING inverted(id, geo geojson_shape, body places_en)
+
+
+statement ok
+INSERT INTO places VALUES (1, '{"type":"Point","coordinates":[37.615895,55.703900]}', 'blue cafe alpha')
+
+statement ok
+INSERT INTO places VALUES (2, '{"type":"Point","coordinates":[37.616297,55.704831]}', 'red cafe alpha')
+
+statement ok
+INSERT INTO places VALUES (3, '{"type":"Point","coordinates":[37.617053,55.704610]}', 'blue restaurant beta')
+
+statement ok
+INSERT INTO places VALUES (4, '{"type":"Polygon","coordinates":[[[37.614323,55.705898],[37.615825,55.705898],[37.615825,55.706520],[37.614323,55.706520],[37.614323,55.705898]]]}', 'blue park')
+
+statement ok
+INSERT INTO places VALUES (5, '{"type":"Point","coordinates":[37.614800,55.704500]}', 'yellow museum')
+
+statement ok
+INSERT INTO places VALUES (6, '{"type":"Point","coordinates":[37.559509,55.715895]}', 'red cafe distant')
+
+statement ok
+INSERT INTO places VALUES (7, '{"type":"Point","coordinates":[37.701645,55.832144]}', 'blue restaurant outpost')
+
+statement ok
+VACUUM (UPDATE_INDEXES) places
+
+
+# --- AND: geo predicate AND text @@ ---
+# cluster_poly contains ids 1..5 (id=6,7 are far). 'cafe' matches 1,2,6.
+# Intersection: {1, 2}.
+
+query
+SELECT id FROM places_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+  AND body @@ 'cafe'
+ORDER BY id
+----
+id
+1
+2
+
+
+# --- OR: geo predicate OR text @@ ---
+# Tiny query polygon entirely inside id=4's polygon -- only id=4 matches geo.
+# 'museum' matches only id=5. Union: {4, 5}.
+
+query
+SELECT id FROM places_idx
+WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6149,55.7060],[37.6157,55.7060],[37.6157,55.7064],[37.6149,55.7064],[37.6149,55.7060]]]}')
+   OR body @@ 'museum'
+ORDER BY id
+----
+id
+4
+5
+
+
+# --- ST_Distance_Centroid AND text @@ ---
+# Distance < 500m from [37.616, 55.704] picks the cluster (1..5).
+# 'blue' matches 1, 3, 4, 7. Intersection: {1, 3, 4}.
+
+query
+SELECT id FROM places_idx
+WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
+  AND body @@ 'blue'
+ORDER BY id
+----
+id
+1
+3
+4
+
+
+# --- BM25 scoring with combined geo + text filter ---
+# The text leg drives scoring; the geo leg constrains the candidate set.
+# All matching rows must receive a non-zero BM25 score (the bool-filter
+# merge must preserve scorer attachments from the @@ leaf).
+
+query
+SELECT id, BM25(places_idx.tableoid) > 0 as has_score FROM places_idx
+WHERE body @@ 'cafe'
+  AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER  BY  id
+----
+id has_score
+1 t
+2 t
+
+
+# --- TSQUERY `^` boost composed with geo AND ---
+# `'blue'::TSQUERY ^ 1000.0 || 'red'`: blue leg is boosted 1000x, red leg
+# is the baseline. Combined with cluster geo: blue cluster rows {1, 3, 4}
+# rank above red cluster row {2}, regardless of intra-blue scores. Within
+# blue, id=4 ("blue park", 2 tokens) wins over id=1/id=3 (3 tokens) due
+# to length norm; id=1 and id=3 tie and break by id ascending.
+
+query
+SELECT id FROM places_idx
+WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
+  AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY BM25(places_idx.tableoid) DESC, id
+----
+id
+4
+1
+3
+2
+
+
+# --- Inverse `^` boost: red leg wins ---
+# Same shape as above with the boost on the red leg. id=2 is the only
+# red row in the cluster, so it ranks first; blue rows follow ordered
+# by their intrinsic BM25.
+
+query
+SELECT id FROM places_idx
+WHERE body @@ ('blue' || 'red'::TSQUERY ^ 1000.0)
+  AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY BM25(places_idx.tableoid) DESC, id
+----
+id
+2
+4
+1
+3
+
+
+# --- SQL-surface `::boost(K)` boost composed with geo AND ---
+# `(body @@ 'blue')::boost(1000.0) OR (body @@ 'red')` boosts the blue
+# leg at the SQL surface (peeled by the BOOSTED_TSQUERY cast). AND with
+# cluster geo confines the result to {1, 2, 3, 4}. Blue rows still
+# outrank red 2 (boost is 1000x) -- demonstrating that ::boost survives
+# the geo conjunction.
+
+query
+SELECT id FROM places_idx
+WHERE ((body @@ 'blue')::boost(1000.0) OR (body @@ 'red'))
+  AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.610,55.700],[37.620,55.700],[37.620,55.710],[37.610,55.710],[37.610,55.700]]]}')
+ORDER BY BM25(places_idx.tableoid) DESC, id
+----
+id
+4
+1
+3
+2
+
+
+# --- ST_Distance_Centroid + boosted text ---
+# Distance < 500 m AND ('blue'^1000 || 'red'). Same logic as above with
+# the geo predicate switched from polygon-intersect to centroid-distance.
+# Verifies that the centroid range rewrite composes with the boosted
+# text filter and the BM25 scorer.
+
+query
+SELECT id FROM places_idx
+WHERE body @@ ('blue'::TSQUERY ^ 1000.0 || 'red')
+  AND ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 500.0
+ORDER BY BM25(places_idx.tableoid) DESC, id
+----
+id
+4
+1
+3
+2

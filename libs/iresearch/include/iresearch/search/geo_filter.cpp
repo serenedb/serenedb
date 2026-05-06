@@ -639,6 +639,14 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 }  // namespace
 
 Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
+#ifdef SDB_DEV
+  // Single-prepare guard. GeoFilter::prepare moves shape state into the
+  // returned Query, so a second prepare on the same filter would silently
+  // produce Query::empty() and the surrounding bool-filter would collapse
+  // to no rows. Surface that misuse loudly here.
+  SDB_ASSERT(!_prepared.exchange(true, std::memory_order_relaxed) &&
+             "GeoFilter::prepare() called more than once on the same instance");
+#endif
   auto& shape = const_cast<ShapeContainer&>(options().shape);
   if (shape.empty()) {
     return Filter::Query::empty();

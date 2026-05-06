@@ -43,9 +43,13 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   irs::DocIterator::ptr search_doc;
   SegmentPkIterator search_segment_pk;
 
-  // Scorer state
+  // Prepared filter query. Built once in SearchFullScanInitGlobal with
+  // `scorer_obj` (or nullptr) -- the only prepare site for SearchScan.
+  irs::Filter::Query::ptr query;
+
+  // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
+  // TFIDF / DFI / LM-* via the projection or ORDER BY rewrite.
   std::unique_ptr<irs::Scorer> scorer_obj;
-  irs::Filter::Query::ptr scored_query;
   irs::ColumnArgsFetcher score_fetcher;
   irs::ScoreFunction score_function;
 

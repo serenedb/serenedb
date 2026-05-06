@@ -35,6 +35,16 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchCountScanInitGlobal(
   // Reuse the common init for transaction isolation checks. The scan emits
   // zero columns, so projected_columns / projected_types stay empty.
   InitCommonState(*state, context, bind_data, input);
+
+  // Single prepare site for CountScan. When stored_filter is null the
+  // scan short-circuits to live_docs_count() and skips iteration.
+  const auto& count_scan = bind_data.scan_source->Cast<CountScan>();
+  if (count_scan.stored_filter) {
+    SDB_ASSERT(count_scan.snapshot);
+    state->query = count_scan.stored_filter->prepare({
+      .index = count_scan.snapshot->reader,
+    });
+  }
   return state;
 }
 
@@ -53,15 +63,15 @@ void SearchCountScanFunction(duckdb::ClientContext& /*context*/,
   // First call: compute the total match count from iresearch.
   // Mirrors server/connector/search_count_data_source.cpp:54-74.
   if (!gstate.counted) {
-    auto& reader = *count_scan.reader;
-    if (!count_scan.query) {
+    SDB_ASSERT(count_scan.snapshot);
+    auto& reader = count_scan.snapshot->reader;
+    if (!gstate.query) {
       gstate.total = reader.live_docs_count();
     } else {
       uint64_t count = 0;
       for (size_t i = 0; i < reader.size(); ++i) {
         auto& segment = reader[i];
-        auto doc =
-          segment.mask(count_scan.query->execute({.segment = segment}));
+        auto doc = segment.mask(gstate.query->execute({.segment = segment}));
         count += doc->count();
       }
       gstate.total = count;

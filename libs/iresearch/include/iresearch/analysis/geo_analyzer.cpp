@@ -216,7 +216,7 @@ class GeoJsonAnalyzerImpl final : public GeoJsonAnalyzer {
       _shape = {};
       const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                    wkb.size()};
-      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape, _cache); r.fail()) {
+      if (auto r = sdb::geo::ParseShapeWKB(bytes, _shape); r.fail()) {
         return false;
       }
       if (_type == Type::Point &&
@@ -345,10 +345,9 @@ bool GeoPointAnalyzer::reset(vpack::Slice slice) {
 bool GeoPointAnalyzer::resetWKB(bytes_view wkb) {
   // GeoPointAnalyzer accepts points only.
   sdb::geo::ShapeContainer shape;
-  std::vector<S2LatLng> cache;
   const std::string_view bytes{reinterpret_cast<const char*>(wkb.data()),
                                wkb.size()};
-  if (auto r = sdb::geo::ParseShapeWKB(bytes, shape, cache); r.fail()) {
+  if (auto r = sdb::geo::ParseShapeWKB(bytes, shape); r.fail()) {
     return false;
   }
   if (shape.type() != sdb::geo::ShapeContainer::Type::S2Point) {

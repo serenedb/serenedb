@@ -30,6 +30,7 @@
 #include <bit>
 #include <cstring>
 #include <memory>
+#include <utility>
 
 #include "basics/errors.h"
 #include "basics/misc.hpp"
@@ -55,6 +56,9 @@ enum class WkbType : uint32_t {
   MultiLineString = 5,
   MultiPolygon = 6,
   GeometryCollection = 7,
+
+  Min = Point,
+  Max = GeometryCollection,
 };
 
 // Byte-oriented cursor: byte-order-agnostic raw bytes only. The cursor is
@@ -183,7 +187,8 @@ Result ReadHeader(R& r, WkbType& type) {
   const uint32_t bare = raw_type & 0x000000FF;  // ISO WKB PointZ=1001 also
                                                 // lands here after masking,
                                                 // but Z/M check above rejects.
-  if (bare < 1 || bare > 7) {
+  if (bare < std::to_underlying(WkbType::Min) ||
+      bare > std::to_underlying(WkbType::Max)) {
     return {ERROR_BAD_PARAMETER, "WKB: unsupported geometry type"};
   }
   if (has_srid) {
@@ -236,8 +241,7 @@ Result ReadLineStringVertices(R& r, std::vector<S2LatLng>& cache) {
 // more than half the earth survive), and subsequent loops are inverted only
 // when they aren't already contained in the outer.
 template<class R>
-Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out,
-                        std::vector<S2LatLng>& cache) {
+Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
   uint32_t ring_count;
   if (!r.ReadU32(ring_count)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated Polygon ring count"};
@@ -292,8 +296,7 @@ Result ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out,
 }
 
 template<class R>
-Result ParseGeometry(R& r, ShapeContainer& region,
-                     std::vector<S2LatLng>& cache);
+Result ParseGeometry(R& r, ShapeContainer& region);
 
 template<class R>
 Result ParsePoint(R& r, ShapeContainer& region) {
@@ -306,14 +309,14 @@ Result ParsePoint(R& r, ShapeContainer& region) {
 }
 
 template<class R>
-Result ParseLineString(R& r, ShapeContainer& region,
-                       std::vector<S2LatLng>& cache) {
-  if (auto res = ReadLineStringVertices(r, cache); res.fail()) {
+Result ParseLineString(R& r, ShapeContainer& region) {
+  std::vector<S2LatLng> verts;
+  if (auto res = ReadLineStringVertices(r, verts); res.fail()) {
     return res;
   }
   std::vector<S2Point> pts;
-  pts.reserve(cache.size());
-  for (const auto& ll : cache) {
+  pts.reserve(verts.size());
+  for (const auto& ll : verts) {
     pts.push_back(ll.ToPoint());
   }
   auto line = std::make_unique<S2Polyline>(pts, S2Debug::DISABLE);
@@ -325,10 +328,9 @@ Result ParseLineString(R& r, ShapeContainer& region,
 }
 
 template<class R>
-Result ParsePolygon(R& r, ShapeContainer& region,
-                    std::vector<S2LatLng>& cache) {
+Result ParsePolygon(R& r, ShapeContainer& region) {
   std::vector<std::unique_ptr<S2Loop>> loops;
-  if (auto res = ReadPolygonLoops(r, loops, cache); res.fail()) {
+  if (auto res = ReadPolygonLoops(r, loops); res.fail()) {
     return res;
   }
   auto poly = std::make_unique<S2Polygon>();
@@ -378,14 +380,16 @@ Result ParseMultiPoint(R& r, ShapeContainer& region) {
 }
 
 template<class R>
-Result ParseMultiLineString(R& r, ShapeContainer& region,
-                            std::vector<S2LatLng>& cache) {
+Result ParseMultiLineString(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated MultiLineString count"};
   }
   auto multi = std::make_unique<S2MultiPolylineRegion>();
   multi->Impl().reserve(count);
+  // Reused across sub-iterations so per-line scratch allocations don't
+  // hit the allocator inside the loop.
+  std::vector<S2LatLng> verts;
   for (uint32_t i = 0; i < count; ++i) {
     auto res =
       WithGeometryReader(r.cursor(), [&]<class Sub>(Sub& sub) -> Result {
@@ -397,12 +401,12 @@ Result ParseMultiLineString(R& r, ShapeContainer& region,
           return {ERROR_BAD_PARAMETER, "WKB: MultiLineString member ", i,
                   " is not a LineString"};
         }
-        if (auto e = ReadLineStringVertices(sub, cache); e.fail()) {
+        if (auto e = ReadLineStringVertices(sub, verts); e.fail()) {
           return e;
         }
         std::vector<S2Point> pts;
-        pts.reserve(cache.size());
-        for (const auto& ll : cache) {
+        pts.reserve(verts.size());
+        for (const auto& ll : verts) {
           pts.push_back(ll.ToPoint());
         }
         S2Polyline line{pts, S2Debug::DISABLE};
@@ -422,8 +426,7 @@ Result ParseMultiLineString(R& r, ShapeContainer& region,
 }
 
 template<class R>
-Result ParseMultiPolygon(R& r, ShapeContainer& region,
-                         std::vector<S2LatLng>& cache) {
+Result ParseMultiPolygon(R& r, ShapeContainer& region) {
   uint32_t count;
   if (!r.ReadU32(count)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated MultiPolygon count"};
@@ -443,7 +446,7 @@ Result ParseMultiPolygon(R& r, ShapeContainer& region,
                   " is not a Polygon"};
         }
         std::vector<std::unique_ptr<S2Loop>> loops;
-        if (auto e = ReadPolygonLoops(sub, loops, cache); e.fail()) {
+        if (auto e = ReadPolygonLoops(sub, loops); e.fail()) {
           return e;
         }
         for (auto& loop : loops) {
@@ -462,8 +465,7 @@ Result ParseMultiPolygon(R& r, ShapeContainer& region,
 }
 
 template<class R>
-Result ParseGeometry(R& r, ShapeContainer& region,
-                     std::vector<S2LatLng>& cache) {
+Result ParseGeometry(R& r, ShapeContainer& region) {
   WkbType type;
   if (auto res = ReadHeader(r, type); res.fail()) {
     return res;
@@ -472,15 +474,15 @@ Result ParseGeometry(R& r, ShapeContainer& region,
     case WkbType::Point:
       return ParsePoint(r, region);
     case WkbType::LineString:
-      return ParseLineString(r, region, cache);
+      return ParseLineString(r, region);
     case WkbType::Polygon:
-      return ParsePolygon(r, region, cache);
+      return ParsePolygon(r, region);
     case WkbType::MultiPoint:
       return ParseMultiPoint(r, region);
     case WkbType::MultiLineString:
-      return ParseMultiLineString(r, region, cache);
+      return ParseMultiLineString(r, region);
     case WkbType::MultiPolygon:
-      return ParseMultiPolygon(r, region, cache);
+      return ParseMultiPolygon(r, region);
     case WkbType::GeometryCollection:
       return {ERROR_BAD_PARAMETER, "WKB: GeometryCollection is not supported"};
   }
@@ -489,12 +491,10 @@ Result ParseGeometry(R& r, ShapeContainer& region,
 
 }  // namespace
 
-Result ParseShapeWKB(std::string_view bytes, ShapeContainer& region,
-                     std::vector<S2LatLng>& cache) {
+Result ParseShapeWKB(std::string_view bytes, ShapeContainer& region) {
   WkbCursor cursor{bytes};
-  return WithGeometryReader(cursor, [&]<class R>(R& r) -> Result {
-    return ParseGeometry(r, region, cache);
-  });
+  return WithGeometryReader(
+    cursor, [&]<class R>(R& r) -> Result { return ParseGeometry(r, region); });
 }
 
 }  // namespace sdb::geo

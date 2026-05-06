@@ -891,7 +891,6 @@ Result SetupGeoFilter(const irs::analysis::Analyzer& a,
 Result ParseGeoConstant(const duckdb::Value& value,
                         sdb::geo::coding::Options coding,
                         sdb::geo::ShapeContainer& shape) {
-  std::vector<S2LatLng> cache;
   switch (value.type().id()) {
     case duckdb::LogicalTypeId::VARCHAR: {
       // StringValue::Get returns the raw stored bytes; for VARCHAR that's the
@@ -906,6 +905,9 @@ Result ParseGeoConstant(const duckdb::Value& value,
       } catch (...) {
         return {ERROR_BAD_PARAMETER, "Geo argument is not valid JSON"};
       }
+      // ParseShape (geo_json.cpp) uses the cache as scratch for LatLng
+      // pre-quantization; ParseShapeWKB no longer needs one.
+      std::vector<S2LatLng> cache;
       if (!sdb::geo::ParseShape<sdb::geo::Parsing::GeoJson>(
             vpack.slice(), shape, cache, coding, nullptr)) {
         return {ERROR_BAD_PARAMETER, "Geo argument is not valid GeoJSON"};
@@ -927,7 +929,7 @@ Result ParseGeoConstant(const duckdb::Value& value,
       // ParseShapeWKB can't read; StringValue::Get bypasses that and yields
       // the raw bytes the cast / serializer wrote.
       const auto& wkb_str = duckdb::StringValue::Get(value);
-      if (auto r = sdb::geo::ParseShapeWKB(wkb_str, shape, cache); r.fail()) {
+      if (auto r = sdb::geo::ParseShapeWKB(wkb_str, shape); r.fail()) {
         return r;
       }
       return {};

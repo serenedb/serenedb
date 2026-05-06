@@ -21,7 +21,6 @@
 #include "pg/tokenizer_options.h"
 
 #include <filesystem>
-#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
@@ -76,33 +75,6 @@ void CheckNgramSize(int value) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ngramsize must be at least 2"),
                     ERR_HINT(kNgramSize.description));
-  }
-}
-
-void CheckGeoJsonType(std::string_view value) {
-  using Type = irs::analysis::GeoJsonAnalyzer::Type;
-  if (!magic_enum::enum_cast<Type>(value, magic_enum::case_insensitive)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value in \"", kGeoJsonType.name, "\" parameter"),
-      ERR_HINT(kGeoJsonType.description));
-  }
-}
-
-void CheckGeoJsonCoding(std::string_view value) {
-  using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
-  // The iresearch analyzer still implements VPack for tests/internal use, but
-  // SereneDB doesn't expose it: VPack stores the original GeoJSON text which
-  // GEOMETRY columns don't carry, and on JSON columns has strings not VPACKs.
-  // So VPACK is useless at it does not gives "sore what we index" property and
-  // takes more space that S2 encodings.
-  const auto coding =
-    magic_enum::enum_cast<Coding>(value, magic_enum::case_insensitive);
-  if (!coding || *coding == Coding::VPack) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value in \"", kGeoJsonCoding.name, "\" parameter"),
-      ERR_HINT(kGeoJsonCoding.description));
   }
 }
 

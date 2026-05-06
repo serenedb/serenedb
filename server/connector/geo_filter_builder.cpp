@@ -20,13 +20,13 @@
 
 #include "geo_filter_builder.hpp"
 
+#include <iresearch/search/geo_filter.h>
 #include <vpack/parser.h>
 
 #include <duckdb/common/types/geometry_crs.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
-#include <iresearch/search/geo_filter.h>
 
 #include "basics/assert.h"
 #include "basics/errors.h"

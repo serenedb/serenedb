@@ -318,9 +318,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if constexpr (Group.name == tokenizer_options::kMinHashGroup.name) {
       ParseMinHash(prefix);
       return;
-    } else if constexpr (Group.name == tokenizer_options::kWildcardGroup.name) {
-      ParseWildcard(prefix);
-      return;
     } else if constexpr (Group.name == tokenizer_options::kGeoPointGroup.name) {
       ParseGeoPoint(prefix);
       return;

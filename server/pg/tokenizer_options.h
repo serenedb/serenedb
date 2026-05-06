@@ -23,7 +23,6 @@
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -45,6 +44,7 @@
 #include <variant>
 
 #include "basics/assert.h"
+#include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 
 namespace sdb::pg::tokenizer_options {
@@ -142,42 +142,8 @@ inline constexpr OptionInfo kNgramSize{
   "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
   CheckNgramSize};
 
-// Geo (shared S2 options)
-
-inline constexpr OptionInfo kGeoMaxCells{"maxcells", 20,
-                                         "Maximum number of S2 cells"};
-inline constexpr OptionInfo kGeoMinLevel{"minlevel", 4,
-                                         "Minimum S2 cell level (0-30)"};
-inline constexpr OptionInfo kGeoMaxLevel{
-  "maxlevel", 23, "Maximum S2 cell level (0-30), ~1m precision at level 23"};
-inline constexpr OptionInfo kGeoLevelMod{"levelmod", 1,
-                                         "S2 level modifier (1, 2, or 3)"};
-inline constexpr OptionInfo kGeoOptimizeForSpace{
-  "optimizeforspace", false, "Optimize S2 index for space rather than speed"};
-
-// GeoPoint
-
-inline constexpr OptionInfo kGeoLatitude{
-  "latitude", ""sv,
-  "Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); "
-  "empty (the default) treats the indexed JSON value as a [lat, lng] "
-  "array directly. latitude and longitude must both be set or both left "
-  "empty."};
-inline constexpr OptionInfo kGeoLongitude{
-  "longitude", ""sv,
-  "Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); "
-  "see latitude for empty-default semantics."};
-
-// GeoJson
-
-void CheckGeoJsonType(std::string_view value);
-void CheckGeoJsonCoding(std::string_view value);
-inline constexpr OptionInfo kGeoJsonType{
-  "type", "shape"sv, "GeoJson shape type: shape, centroid, point",
-  CheckGeoJsonType};
-inline constexpr OptionInfo kGeoJsonCoding{
-  "coding", "s2point"sv, "Encoding format: s2point, s2latlngf64, s2latlngu32",
-  CheckGeoJsonCoding};
+// Geo options (kGeoMaxCells, kGeoLatitude, kGeoJsonType, ...) live in
+// "pg/geo_tokenizer_options.h", brought in by the include above.
 
 // Segmentation
 
@@ -269,13 +235,6 @@ inline constexpr OptionInfo kMinHashOptions[] = {kNumHashes};
 
 inline constexpr OptionInfo kWildcardOptions[] = {kNgramSize};
 
-inline constexpr OptionInfo kGeoS2Options[] = {
-  kGeoMaxCells, kGeoMinLevel, kGeoMaxLevel, kGeoLevelMod, kGeoOptimizeForSpace};
-
-inline constexpr OptionInfo kGeoPointOptions[] = {kGeoLatitude, kGeoLongitude};
-
-inline constexpr OptionInfo kGeoJsonOptions[] = {kGeoJsonType, kGeoJsonCoding};
-
 inline constexpr OptionInfo kNormOptions[] = {kLocale, kCase, kAccent};
 
 inline constexpr OptionInfo kSegmentationOptions[] = {kCase, kBreak};
@@ -362,19 +321,6 @@ inline constexpr OptionGroup kWildcardGroup{
   irs::analysis::WildcardAnalyzer::type_name(),
   kWildcardOptions,
   {},
-};
-inline constexpr OptionGroup kGeoS2Subgroup{"options", kGeoS2Options, {}};
-inline constexpr OptionGroup kGeoPointSubgroups[] = {kGeoS2Subgroup};
-inline constexpr OptionGroup kGeoJsonSubgroups[] = {kGeoS2Subgroup};
-inline constexpr OptionGroup kGeoPointGroup{
-  irs::analysis::GeoPointAnalyzer::type_name(),
-  kGeoPointOptions,
-  kGeoPointSubgroups,
-};
-inline constexpr OptionGroup kGeoJsonGroup{
-  irs::analysis::GeoJsonAnalyzer::type_name(),
-  kGeoJsonOptions,
-  kGeoJsonSubgroups,
 };
 inline constexpr OptionGroup kNormGroup{
   irs::analysis::NormalizingTokenizer::type_name(),

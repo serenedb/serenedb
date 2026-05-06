@@ -276,26 +276,36 @@ BENCHMARK(BmNoExecutor)
   ->Args({16, 4, 256, 0})
   ->Args({32, 8, 256, 0})
   ->Args({64, 16, 256, 0})
-  ->UseRealTime()
+  ->Args({128, 32, 256, 0})
+  ->Args({256, 64, 256, 0})
+  ->Args({512, 64, 256, 0})
   ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BmFairThreadPool)
   ->Args({16, 4, 256, 8})
   ->Args({32, 8, 256, 8})
   ->Args({64, 16, 256, 8})
-  ->UseRealTime()
+  ->Args({128, 32, 256, 8})
+  ->Args({256, 64, 256, 8})
+  ->Args({512, 64, 256, 8})
   ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BmNoExecutorBatch)
   ->Args({16, 4, 256, 0, 8})
   ->Args({32, 8, 256, 0, 8})
-  ->Args({64, 16, 256, 0, 4})
+  ->Args({64, 16, 256, 0, 16})
+  ->Args({128, 32, 256, 0, 32})
+  ->Args({256, 64, 256, 0, 32})
+  ->Args({512, 128, 256, 0, 32})
   ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BmFairThreadPoolBatch)
   ->Args({16, 4, 256, 8, 8})
   ->Args({32, 8, 256, 8, 8})
-  ->Args({64, 16, 256, 8, 4})
+  ->Args({64, 16, 256, 8, 16})
+  ->Args({128, 32, 256, 8, 32})
+  ->Args({256, 64, 256, 8, 32})
+  ->Args({512, 128, 256, 8, 32})
   ->Unit(benchmark::kMillisecond);
 
 }  // namespace

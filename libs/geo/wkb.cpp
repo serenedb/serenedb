@@ -20,6 +20,7 @@
 
 #include "geo/wkb.h"
 
+#include <absl/base/internal/endian.h>
 #include <s2/s2latlng.h>
 #include <s2/s2loop.h>
 #include <s2/s2point.h>
@@ -27,7 +28,6 @@
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 
-#include <bit>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -61,11 +61,11 @@ enum class WkbType : uint32_t {
   Max = GeometryCollection,
 };
 
-// Byte-oriented cursor: byte-order-agnostic raw bytes only. The cursor is
-// the only stateful piece; templated readers are stateless lenses that
-// share it by reference, so a sub-geometry can be parsed with a different
-// Byteswap value than the parent and the cursor advance flows back through
-// the parent reader transparently.
+// Byte-oriented cursor with typed little-/big-endian fixed-size readers.
+// The cursor is the only stateful piece; templated readers are stateless
+// lenses that share it by reference, so a sub-geometry can be parsed with
+// a different LittleEndian value than the parent and the cursor advance
+// flows back through the parent reader transparently.
 class WkbCursor {
  public:
   explicit WkbCursor(std::string_view bytes) noexcept
@@ -80,12 +80,39 @@ class WkbCursor {
     return true;
   }
 
-  bool ReadRaw(void* dst, size_t n) noexcept {
-    if (static_cast<size_t>(_end - _ptr) < n) {
+  bool ReadU32LE(uint32_t& out) noexcept {
+    if (static_cast<size_t>(_end - _ptr) < sizeof(uint32_t)) {
       return false;
     }
-    std::memcpy(dst, _ptr, n);
-    _ptr += n;
+    out = absl::little_endian::Load32(_ptr);
+    _ptr += sizeof(uint32_t);
+    return true;
+  }
+
+  bool ReadU32BE(uint32_t& out) noexcept {
+    if (static_cast<size_t>(_end - _ptr) < sizeof(uint32_t)) {
+      return false;
+    }
+    out = absl::big_endian::Load32(_ptr);
+    _ptr += sizeof(uint32_t);
+    return true;
+  }
+
+  bool ReadDoubleLE(double& out) noexcept {
+    if (static_cast<size_t>(_end - _ptr) < sizeof(double)) {
+      return false;
+    }
+    out = absl::little_endian::Load<double>(_ptr);
+    _ptr += sizeof(double);
+    return true;
+  }
+
+  bool ReadDoubleBE(double& out) noexcept {
+    if (static_cast<size_t>(_end - _ptr) < sizeof(double)) {
+      return false;
+    }
+    out = absl::big_endian::Load<double>(_ptr);
+    _ptr += sizeof(double);
     return true;
   }
 
@@ -96,36 +123,30 @@ class WkbCursor {
   const char* _end;
 };
 
-// Stateless typed lens over a WkbCursor. `Byteswap` is set at construction
-// from the byte-order byte of the geometry currently being parsed; the swap
-// branch in ReadU32/ReadDouble collapses to an `if constexpr`, so the
-// hot vertex loop is branch-free. Sub-geometries get their own
-// instantiation via WithGeometryReader.
-template<bool Byteswap>
+// Stateless typed lens over a WkbCursor. `LittleEndian` is set at
+// construction from the byte-order byte of the geometry currently being
+// parsed (1 = LE, 0 = BE per OGC); the dispatch in ReadU32/ReadDouble
+// collapses to an `if constexpr`, so the hot vertex loop is branch-free.
+// Sub-geometries get their own instantiation via WithGeometryReader.
+template<bool LittleEndian>
 class WkbReader {
  public:
   explicit WkbReader(WkbCursor& cursor) noexcept : _cursor{&cursor} {}
 
   bool ReadU32(uint32_t& out) noexcept {
-    if (!_cursor->ReadRaw(&out, sizeof(out))) {
-      return false;
+    if constexpr (LittleEndian) {
+      return _cursor->ReadU32LE(out);
+    } else {
+      return _cursor->ReadU32BE(out);
     }
-    if constexpr (Byteswap) {
-      out = std::byteswap(out);
-    }
-    return true;
   }
 
   bool ReadDouble(double& out) noexcept {
-    uint64_t raw;
-    if (!_cursor->ReadRaw(&raw, sizeof(raw))) {
-      return false;
+    if constexpr (LittleEndian) {
+      return _cursor->ReadDoubleLE(out);
+    } else {
+      return _cursor->ReadDoubleBE(out);
     }
-    if constexpr (Byteswap) {
-      raw = std::byteswap(raw);
-    }
-    std::memcpy(&out, &raw, sizeof(out));
-    return true;
   }
 
   // WKB coordinate order is (lng, lat).
@@ -144,28 +165,25 @@ class WkbReader {
   WkbCursor* _cursor;
 };
 
-// Reads the byte-order byte from the cursor, resolves Byteswap at
-// compile time via irs::ResolveBool, constructs a WkbReader<Byteswap>
-// over the same cursor, and invokes `func` with that reader. Used both
-// at the top level (ParseShapeWKB) and at every Multi* sub-geometry
-// header so each sub-geometry can carry its own byte order per OGC.
+// Reads the byte-order byte from the cursor (1 = LE, 0 = BE per OGC),
+// resolves LittleEndian at compile time via irs::ResolveBool, constructs
+// a WkbReader<LittleEndian> over the same cursor, and invokes `func`
+// with that reader. Used both at the top level (ParseShapeWKB) and at
+// every Multi* sub-geometry header so each sub-geometry can carry its
+// own byte order per OGC.
 template<typename Func>
 Result WithGeometryReader(WkbCursor& cursor, Func&& func) {
   uint8_t b;
   if (!cursor.ReadByte(b)) {
     return {ERROR_BAD_PARAMETER, "WKB: truncated byte-order byte"};
   }
-  bool byteswap;
-  if (b == 0) {
-    byteswap = std::endian::native != std::endian::big;
-  } else if (b == 1) {
-    byteswap = std::endian::native != std::endian::little;
-  } else {
+  if (b > 1) {
     return {ERROR_BAD_PARAMETER, "WKB: bad byte-order byte"};
   }
-  return irs::ResolveBool(byteswap, [&]<bool Byteswap> {
-    WkbReader<Byteswap> r{cursor};
-    return std::forward<Func>(func).template operator()<WkbReader<Byteswap>>(r);
+  return irs::ResolveBool(b == 1, [&]<bool LittleEndian> {
+    WkbReader<LittleEndian> r{cursor};
+    return std::forward<Func>(func)
+      .template operator()<WkbReader<LittleEndian>>(r);
   });
 }
 

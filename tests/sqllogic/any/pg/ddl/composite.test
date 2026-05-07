@@ -566,6 +566,7 @@ statement ok
 CREATE TYPE _pudge AS (y INTEGER);
 
 
+skipif pg
 query
 SELECT typname, typtype FROM pg_catalog.pg_type
   WHERE typname IN ('pudge', '_pudge', '__pudge', '___pudge')
@@ -594,6 +595,7 @@ statement ok
 CREATE TYPE arelav AS (x INTEGER);
 
 
+skipif pg
 query
 SELECT typname, typtype FROM pg_catalog.pg_type
   WHERE typname IN ('_arelav', '__arelav', 'arelav', '___arelav')

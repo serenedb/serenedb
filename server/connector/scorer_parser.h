@@ -25,12 +25,12 @@
 #include <string_view>
 
 #include "basics/result_or.h"
-#include "catalog/wand_scorer.h"
+#include "catalog/scorer.h"
 
 namespace sdb::connector {
 
 // Parse a `WITH (optimize_top_k = '<scorer-expr>')` value into a
-// catalog::WandScorer. Accepts the same scorer call shapes the optimizer
+// catalog::Scorer. Accepts the same scorer call shapes the optimizer
 // recognises in `BM25(idx.tableoid, ...)` / `TFIDF(idx.tableoid, ...)` SQL
 // expressions, minus the tableoid anchor:
 //
@@ -55,7 +55,7 @@ namespace sdb::connector {
 // `context` is needed to construct the binder; in practice the DDL paths
 // already hold a ClientContext (CatalogTransaction::GetContext or the
 // PhysicalCreateIndex sink's ClientContext).
-ResultOr<catalog::WandScorer> ParseWandScorerExpression(
+ResultOr<catalog::Scorer> ParseScorerExpression(
   duckdb::ClientContext& context, std::string_view input);
 
 }  // namespace sdb::connector

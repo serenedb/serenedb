@@ -25,7 +25,6 @@
 #include <cmath>
 
 #include "basics/errors.h"
-#include "connector/functions/search.h"
 
 namespace sdb::connector {
 namespace {
@@ -39,13 +38,13 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
 
 }  // namespace
 
-ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
+ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name) {
-  using WS = catalog::WandScorer;
-  catalog::WandScorer scorer;
+  using S = catalog::Scorer;
+  catalog::Scorer scorer;
 
-  if (name == kBm25) {
-    WS::Bm25 p;
+  if (name == S::Bm25::kName) {
+    S::Bm25 p;
     if (func.children.size() == 3) {
       auto* k1v = TryGetConstantValue(*func.children[1]);
       auto* bv = TryGetConstantValue(*func.children[2]);
@@ -56,8 +55,8 @@ ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
       p.b = static_cast<float>(bv->GetValue<double>());
     }
     scorer.params = p;
-  } else if (name == kTfidf) {
-    WS::Tfidf p;
+  } else if (name == S::Tfidf::kName) {
+    S::Tfidf p;
     if (func.children.size() == 2) {
       auto* cv = TryGetConstantValue(*func.children[1]);
       if (!cv) {
@@ -66,10 +65,10 @@ ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
       p.with_norms = cv->GetValue<bool>();
     }
     scorer.params = p;
-  } else if (name == kRawTf) {
-    scorer.params = WS::RawTf{};
-  } else if (name == kLmJm) {
-    WS::LmJm p;
+  } else if (name == S::RawTf::kName) {
+    scorer.params = S::RawTf{};
+  } else if (name == S::LmJm::kName) {
+    S::LmJm p;
     if (func.children.size() == 2) {
       auto* lv = TryGetConstantValue(*func.children[1]);
       if (!lv) {
@@ -83,8 +82,8 @@ ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
       }
     }
     scorer.params = p;
-  } else if (name == kLmDirichlet) {
-    WS::LmDirichlet p;
+  } else if (name == S::LmDirichlet::kName) {
+    S::LmDirichlet p;
     if (func.children.size() == 2) {
       auto* mv = TryGetConstantValue(*func.children[1]);
       if (!mv) {
@@ -98,8 +97,8 @@ ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
       }
     }
     scorer.params = p;
-  } else if (name == kIndriDirichlet) {
-    WS::IndriDirichlet p;
+  } else if (name == S::IndriDirichlet::kName) {
+    S::IndriDirichlet p;
     if (func.children.size() == 2) {
       auto* mv = TryGetConstantValue(*func.children[1]);
       if (!mv) {
@@ -114,8 +113,8 @@ ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
       }
     }
     scorer.params = p;
-  } else if (name == kDfi) {
-    WS::Dfi p;
+  } else if (name == S::Dfi::kName) {
+    S::Dfi p;
     if (func.children.size() == 2) {
       auto* mv = TryGetConstantValue(*func.children[1]);
       if (!mv) {
@@ -123,11 +122,11 @@ ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
       }
       auto s = mv->GetValue<std::string>();
       if (s == "standardized") {
-        p.measure = WS::DfiMeasure::Standardized;
+        p.measure = S::DfiMeasure::Standardized;
       } else if (s == "saturated") {
-        p.measure = WS::DfiMeasure::Saturated;
+        p.measure = S::DfiMeasure::Saturated;
       } else if (s == "chi_squared" || s == "chisquared") {
-        p.measure = WS::DfiMeasure::ChiSquared;
+        p.measure = S::DfiMeasure::ChiSquared;
       } else {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,

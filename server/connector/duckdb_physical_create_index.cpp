@@ -44,6 +44,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
+#include "connector/scorer_parser.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
@@ -338,16 +339,22 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it != _info->options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
-    bool optimize_top_k = false;
+    std::optional<catalog::Scorer> wand_scorer;
     it = _info->options.find("optimize_top_k");
     if (it != _info->options.end()) {
-      optimize_top_k =
-        it->second.DefaultCastAs(duckdb::LogicalType::BOOLEAN).GetValue<bool>();
+      auto value =
+        it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      auto parsed = ParseScorerExpression(context, value);
+      if (!parsed) {
+        throw duckdb::CatalogException(
+          "%s", std::move(parsed).error().errorMessage());
+      }
+      wand_scorer = std::move(*parsed);
     }
     create_result = catalog_impl.CreateInvertedIndex(
       _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
       std::move(idx_columns), shard_options, {.create_with_tombstone = true},
-      optimize_top_k);
+      std::move(wand_scorer));
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);

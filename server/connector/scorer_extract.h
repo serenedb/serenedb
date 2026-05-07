@@ -26,11 +26,11 @@
 #include <string_view>
 
 #include "basics/result_or.h"
-#include "catalog/wand_scorer.h"
+#include "catalog/scorer.h"
 
 namespace sdb::connector {
 
-// Extract a `catalog::WandScorer` from a bound scorer function call. The
+// Extract a `catalog::Scorer` from a bound scorer function call. The
 // expression must be one of the connector's scorer pseudo-functions
 // (bm25, tfidf, raw_tf, lm_jm, lm_dirichlet, indri_dirichlet, dfi). The
 // caller has already resolved the function name from `func.function.name`.
@@ -43,7 +43,7 @@ namespace sdb::connector {
 // Returns nullopt if any param child is non-constant (the optimizer rule
 // uses this signal to refuse to claim the expression). Throws via the
 // returned Result on out-of-range param values.
-ResultOr<std::optional<catalog::WandScorer>> ExtractWandScorerFromBound(
+ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
 }  // namespace sdb::connector

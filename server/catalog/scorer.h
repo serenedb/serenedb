@@ -26,10 +26,12 @@
 #include <iresearch/search/lm_dirichlet.hpp>
 #include <iresearch/search/lm_jelinek_mercer.hpp>
 #include <iresearch/search/raw_tf.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <vpack/serializer.h>
 
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <variant>
 
@@ -37,17 +39,19 @@
 
 namespace sdb::catalog {
 
-// Scorer specification persisted on an inverted index whose user opted in to
-// `WITH (optimize_top_k = '<scorer-expr>')`. The writer instantiates this
-// concrete scorer at shard creation time so the WAND impact data baked into
-// each posting is consistent with the coefficients the user expects at
-// query time. Mirrors the scorer kinds the optimizer recognises in
-// `BM25(...)` / `TFIDF(...)` / etc. SQL expressions.
+// Discriminated scorer specification shared by the catalog (persisted as the
+// `wand_scorer` field on an InvertedIndex when the user opts in via
+// `WITH (optimize_top_k = '<scorer-expr>')`) and by the connector's runtime
+// SearchScan (the scorer parsed from `ORDER BY BM25(idx.tableoid, ...)`).
 //
-// Each per-arm struct exposes `kName == irs::<Scorer>::type_name()` so the
+// Each per-arm struct carries `kName == irs::<Scorer>::type_name()` so the
 // persisted discriminator and the user-visible `WITH` keyword stay in lock
 // step with the iresearch scorer registration -- no parallel name table.
-struct WandScorer {
+//
+// Defaulted `operator==` is used by iresearch_plan.cpp's conflict-detection
+// path: two scorer references in the same query plan must agree on kind and
+// every parameter, otherwise we throw "Only one scorer function allowed".
+struct Scorer {
   enum class DfiMeasure : uint8_t {
     Standardized,
     Saturated,
@@ -58,35 +62,44 @@ struct WandScorer {
     static constexpr std::string_view kName = irs::BM25::type_name();
     float k1 = 1.2f;
     float b = 0.75f;
+    bool operator==(const Bm25&) const = default;
   };
   struct Tfidf {
     static constexpr std::string_view kName = irs::TFIDF::type_name();
     bool with_norms = false;
+    bool operator==(const Tfidf&) const = default;
   };
   struct RawTf {
     static constexpr std::string_view kName = irs::RawTF::type_name();
+    bool operator==(const RawTf&) const = default;
   };
   struct LmJm {
     static constexpr std::string_view kName = irs::LMJelinekMercer::type_name();
     float lambda = 0.1f;
+    bool operator==(const LmJm&) const = default;
   };
   struct LmDirichlet {
     static constexpr std::string_view kName = irs::LMDirichlet::type_name();
     float mu = 2000.0f;
+    bool operator==(const LmDirichlet&) const = default;
   };
   struct IndriDirichlet {
     static constexpr std::string_view kName = irs::IndriDirichlet::type_name();
     float mu = 2000.0f;
+    bool operator==(const IndriDirichlet&) const = default;
   };
   struct Dfi {
     static constexpr std::string_view kName = irs::DFI::type_name();
     DfiMeasure measure = DfiMeasure::Standardized;
+    bool operator==(const Dfi&) const = default;
   };
 
   using Params = std::variant<Bm25, Tfidf, RawTf, LmJm, LmDirichlet,
                               IndriDirichlet, Dfi>;
 
   Params params;
+
+  bool operator==(const Scorer&) const = default;
 
   // Lowercase short scorer name -- always matches the active arm's kName.
   std::string_view Name() const noexcept {
@@ -96,14 +109,20 @@ struct WandScorer {
   }
 };
 
-// vpack serialisation hook for WandScorer. The persisted shape is a 2-tuple
+// Materialise the iresearch scorer described by `spec`. Used both by the
+// shard (to install the WAND-aware scorer on `IndexWriterOptions.
+// reader_options.scorer`) and by the runtime SearchScan (to score docs in
+// the top-K loop).
+std::unique_ptr<irs::Scorer> MakeIrsScorer(const Scorer& spec);
+
+// vpack serialisation hook for Scorer. The persisted shape is a 2-tuple
 // `[name, arm_fields]`: `name` discriminates which variant arm follows, and
 // the arm itself is written via WriteTuple so each per-arm aggregate is
 // (de)serialised positionally by boost::pfr (no per-field code here). The
 // hook is picked up via ADL by the standard vpack::WriteTuple /
 // vpack::ReadTuple machinery.
 template<typename Context>
-void VPackWrite(Context ctx, const WandScorer& s) {
+void VPackWrite(Context ctx, const Scorer& s) {
   auto& b = ctx.vpack();
   b.openArray(true);
   b.add(s.Name());
@@ -113,37 +132,35 @@ void VPackWrite(Context ctx, const WandScorer& s) {
 }
 
 template<typename Context>
-void VPackRead(Context ctx, WandScorer& s) {
+void VPackRead(Context ctx, Scorer& s) {
   vpack::ArrayIterator it{ctx.vpack()};
   if (!it.valid() || !(*it).isString()) {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Invalid 'wand_scorer' tuple: missing scorer name");
+              "Invalid 'scorer' tuple: missing scorer name");
   }
   // 1. Discriminator -> default-construct the matching variant arm.
   const auto name = (*it).stringView();
-  if (name == WandScorer::Bm25::kName) {
-    s.params = WandScorer::Bm25{};
-  } else if (name == WandScorer::Tfidf::kName) {
-    s.params = WandScorer::Tfidf{};
-  } else if (name == WandScorer::RawTf::kName) {
-    s.params = WandScorer::RawTf{};
-  } else if (name == WandScorer::LmJm::kName) {
-    s.params = WandScorer::LmJm{};
-  } else if (name == WandScorer::LmDirichlet::kName) {
-    s.params = WandScorer::LmDirichlet{};
-  } else if (name == WandScorer::IndriDirichlet::kName) {
-    s.params = WandScorer::IndriDirichlet{};
-  } else if (name == WandScorer::Dfi::kName) {
-    s.params = WandScorer::Dfi{};
+  if (name == Scorer::Bm25::kName) {
+    s.params = Scorer::Bm25{};
+  } else if (name == Scorer::Tfidf::kName) {
+    s.params = Scorer::Tfidf{};
+  } else if (name == Scorer::RawTf::kName) {
+    s.params = Scorer::RawTf{};
+  } else if (name == Scorer::LmJm::kName) {
+    s.params = Scorer::LmJm{};
+  } else if (name == Scorer::LmDirichlet::kName) {
+    s.params = Scorer::LmDirichlet{};
+  } else if (name == Scorer::IndriDirichlet::kName) {
+    s.params = Scorer::IndriDirichlet{};
+  } else if (name == Scorer::Dfi::kName) {
+    s.params = Scorer::Dfi{};
   } else {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Unknown 'wand_scorer' name '", name,
-              "'");
+    SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Unknown 'scorer' name '", name, "'");
   }
   it.next();
   if (!it.valid()) {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Invalid 'wand_scorer' tuple: missing arm payload for '", name,
-              "'");
+              "Invalid 'scorer' tuple: missing arm payload for '", name, "'");
   }
   // 2. Fill the active arm via the standard tuple reader (boost::pfr).
   std::visit([&](auto& p) { vpack::ReadTuple(*it, p, ctx.arg()); }, s.params);

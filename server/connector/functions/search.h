@@ -172,13 +172,10 @@ inline constexpr std::string_view kGeoContains = "ST_Contains";
 // the binding survives projection pushdown. offsets takes the
 // indexed column directly (the column ref's own binding.table_index
 // is enough -- no separate anchor needed).
-inline constexpr std::string_view kBm25 = "bm25";
-inline constexpr std::string_view kTfidf = "tfidf";
-inline constexpr std::string_view kRawTf = "raw_tf";
-inline constexpr std::string_view kLmJm = "lm_jm";
-inline constexpr std::string_view kLmDirichlet = "lm_dirichlet";
-inline constexpr std::string_view kIndriDirichlet = "indri_dirichlet";
-inline constexpr std::string_view kDfi = "dfi";
+// Scorer function names live on `catalog::Scorer::<arm>::kName` (each
+// equal to `irs::<Scorer>::type_name()`) so the SQL function names, the
+// catalog discriminator persisted on the inverted index, and the iresearch
+// scorer registry can never drift apart.
 inline constexpr std::string_view kOffsets = "offsets";
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);

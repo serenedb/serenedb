@@ -55,6 +55,7 @@
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
+#include "connector/scorer_extract.h"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
@@ -993,7 +994,8 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   // `Query` is built lazily in SearchFullScanInitGlobal so prepare runs
   // exactly once per execution, with the scorer if one ends up attached.
   search->filter_summary = std::move(filter_summary);
-  search->optimize_top_k = resolved->index && resolved->index->IsOptimizeTopK();
+  search->optimize_top_k =
+    resolved->index && resolved->index->GetWandScorer().has_value();
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIResearchScanFunction();
 
@@ -1243,17 +1245,7 @@ duckdb::idx_t AddScoreColumn(connector::SereneDBScanBindData& bind_data,
   return get_col_idx;
 }
 
-// Extract a constant Value pointer from `expr`, or null if not a
-// BoundConstantExpression. Used by the scorer-param parser to read
-// compile-time k1 / b / with_norms arguments.
-const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
-    return nullptr;
-  }
-  return &expr.Cast<duckdb::BoundConstantExpression>().value;
-}
-
-bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
+bool TrySetScorer(std::optional<catalog::Scorer>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name);
 
@@ -1398,8 +1390,7 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
       return nullptr;  // Non-constant params.
     }
   } else {
-    if (found->search_scan->scorer.kind ==
-        connector::SearchScan::ScorerKind::None) {
+    if (!found->search_scan->scorer.has_value()) {
       return nullptr;  // Not claimed in pass 1 -- leave for stub.
     }
   }
@@ -1440,160 +1431,46 @@ catalog::Column::Id ResolveColumnId(
   return bind_data.column_ids[phys];
 }
 
-// True iff `name` is one of the supported scorer function names.
+// True iff `name` is one of the supported scorer function names. Sourced
+// from catalog::Scorer's per-arm `kName` constants, which themselves come
+// from `irs::<Scorer>::type_name()`, so this matches everything the
+// catalog can persist as a `wand_scorer`.
 bool IsScorerFunctionName(std::string_view name) {
-  return name == connector::kBm25 || name == connector::kTfidf ||
-         name == connector::kRawTf || name == connector::kLmJm ||
-         name == connector::kLmDirichlet ||
-         name == connector::kIndriDirichlet || name == connector::kDfi;
+  using S = catalog::Scorer;
+  return name == S::Bm25::kName || name == S::Tfidf::kName ||
+         name == S::RawTf::kName || name == S::LmJm::kName ||
+         name == S::LmDirichlet::kName || name == S::IndriDirichlet::kName ||
+         name == S::Dfi::kName;
 }
 
 // Parse scorer parameters from `func` into `scorer`. Returns false if the
-// parameters are non-constant (rule refuses to claim; stub raises).
-// Also validates scorer kind conflicts: same kind+params is idempotent,
-// different kind/params throws.
-bool TrySetScorer(connector::SearchScan::ScorerParams& scorer,
+// parameters are non-constant (rule refuses to claim; stub raises). Also
+// validates scorer kind conflicts: identical scorer is idempotent,
+// divergent throws.
+//
+// Per-arm extraction is delegated to the shared connector helper that the
+// `WITH (optimize_top_k = '...')` parser also uses, so the two entry
+// points cannot drift on argument shapes or value-range checks.
+bool TrySetScorer(std::optional<catalog::Scorer>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
-  using ScorerParams = connector::SearchScan::ScorerParams;
-  using ScorerKind = connector::SearchScan::ScorerKind;
-  ScorerParams candidate;
-
-  if (name == connector::kBm25) {
-    candidate.kind = ScorerKind::Bm25;
-    candidate.bm25 = ScorerParams::Bm25{};
-    if (func.children.size() == 3) {
-      auto* k1v = TryGetConstantValue(*func.children[1]);
-      auto* bv = TryGetConstantValue(*func.children[2]);
-      if (!k1v || !bv) {
-        return false;
-      }
-      candidate.bm25.k1 = k1v->GetValue<double>();
-      candidate.bm25.b = bv->GetValue<double>();
-    }
-  } else if (name == connector::kTfidf) {
-    candidate.kind = ScorerKind::Tfidf;
-    candidate.tfidf = ScorerParams::Tfidf{};
-    if (func.children.size() == 2) {
-      auto* cv = TryGetConstantValue(*func.children[1]);
-      if (!cv) {
-        return false;
-      }
-      candidate.tfidf.with_norms = cv->GetValue<bool>();
-    }
-  } else if (name == connector::kRawTf) {
-    candidate.kind = ScorerKind::RawTf;
-    // raw_tf has no parameters; `raw_tf` arm already default-constructed.
-  } else if (name == connector::kLmJm) {
-    candidate.kind = ScorerKind::LmJm;
-    candidate.lm_jm = ScorerParams::LmJm{};
-    if (func.children.size() == 2) {
-      auto* lv = TryGetConstantValue(*func.children[1]);
-      if (!lv) {
-        return false;
-      }
-      candidate.lm_jm.lambda = lv->GetValue<double>();
-      if (!(candidate.lm_jm.lambda > 0.0 && candidate.lm_jm.lambda <= 1.0)) {
-        throw duckdb::InvalidInputException(
-          "lm_jm lambda must be in (0, 1], got " +
-          std::to_string(candidate.lm_jm.lambda));
-      }
-    }
-  } else if (name == connector::kLmDirichlet) {
-    candidate.kind = ScorerKind::LmDirichlet;
-    candidate.lm_dirichlet = ScorerParams::LmDirichlet{};
-    if (func.children.size() == 2) {
-      auto* mv = TryGetConstantValue(*func.children[1]);
-      if (!mv) {
-        return false;
-      }
-      candidate.lm_dirichlet.mu = mv->GetValue<double>();
-      if (candidate.lm_dirichlet.mu < 0.0 ||
-          !std::isfinite(candidate.lm_dirichlet.mu)) {
-        throw duckdb::InvalidInputException(
-          "lm_dirichlet mu must be a non-negative finite value, got " +
-          std::to_string(candidate.lm_dirichlet.mu));
-      }
-    }
-  } else if (name == connector::kIndriDirichlet) {
-    candidate.kind = ScorerKind::IndriDirichlet;
-    candidate.indri_dirichlet = ScorerParams::IndriDirichlet{};
-    if (func.children.size() == 2) {
-      auto* mv = TryGetConstantValue(*func.children[1]);
-      if (!mv) {
-        return false;
-      }
-      candidate.indri_dirichlet.mu = mv->GetValue<double>();
-      if (candidate.indri_dirichlet.mu < 0.0 ||
-          !std::isfinite(candidate.indri_dirichlet.mu)) {
-        throw duckdb::InvalidInputException(
-          "indri_dirichlet mu must be a non-negative finite value, got " +
-          std::to_string(candidate.indri_dirichlet.mu));
-      }
-    }
-  } else if (name == connector::kDfi) {
-    candidate.kind = ScorerKind::Dfi;
-    candidate.dfi = ScorerParams::Dfi{};
-    if (func.children.size() == 2) {
-      auto* mv = TryGetConstantValue(*func.children[1]);
-      if (!mv) {
-        return false;
-      }
-      auto s = mv->GetValue<std::string>();
-      if (s == "standardized") {
-        candidate.dfi.measure = connector::SearchScan::DfiMeasure::Standardized;
-      } else if (s == "saturated") {
-        candidate.dfi.measure = connector::SearchScan::DfiMeasure::Saturated;
-      } else if (s == "chi_squared" || s == "chisquared") {
-        candidate.dfi.measure = connector::SearchScan::DfiMeasure::ChiSquared;
-      } else {
-        throw duckdb::InvalidInputException(
-          "dfi measure must be one of: standardized, saturated, chi_squared; "
-          "got '" +
-          s + "'");
-      }
-    }
-  } else {
-    return false;  // Unreachable -- caller filters on IsScorerFunctionName.
+  auto extracted = connector::ExtractScorerFromBound(func, name);
+  if (!extracted) {
+    // Out-of-range param values (e.g., lm_jm lambda outside (0, 1])
+    // surface as InvalidInputException to keep the today's user-facing
+    // error shape.
+    throw duckdb::InvalidInputException(
+      "%s", std::move(extracted).error().errorMessage());
   }
-
-  if (scorer.kind == ScorerKind::None) {
-    scorer = candidate;
+  if (!*extracted) {
+    return false;  // non-constant arg
+  }
+  if (!scorer) {
+    scorer = std::move(**extracted);
     return true;
   }
-  // Already set -- check for conflict. Compare only the live arm; other
-  // arms of the union may be uninitialized.
-  if (scorer.kind == candidate.kind) {
-    bool same = false;
-    switch (scorer.kind) {
-      case ScorerKind::Bm25:
-        same = scorer.bm25.k1 == candidate.bm25.k1 &&
-               scorer.bm25.b == candidate.bm25.b;
-        break;
-      case ScorerKind::Tfidf:
-        same = scorer.tfidf.with_norms == candidate.tfidf.with_norms;
-        break;
-      case ScorerKind::RawTf:
-        same = true;
-        break;
-      case ScorerKind::LmJm:
-        same = scorer.lm_jm.lambda == candidate.lm_jm.lambda;
-        break;
-      case ScorerKind::LmDirichlet:
-        same = scorer.lm_dirichlet.mu == candidate.lm_dirichlet.mu;
-        break;
-      case ScorerKind::IndriDirichlet:
-        same = scorer.indri_dirichlet.mu == candidate.indri_dirichlet.mu;
-        break;
-      case ScorerKind::Dfi:
-        same = scorer.dfi.measure == candidate.dfi.measure;
-        break;
-      case ScorerKind::None:
-        break;  // unreachable -- covered by outer if above
-    }
-    if (same) {
-      return true;  // Idempotent.
-    }
+  if (*scorer == **extracted) {
+    return true;  // Idempotent.
   }
   throw duckdb::InvalidInputException(
     "Only one scorer function is allowed per inverted index\n"
@@ -2005,8 +1882,7 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!found) {
     return false;
   }
-  if (found->search_scan->scorer.kind ==
-      connector::SearchScan::ScorerKind::None) {
+  if (!found->search_scan->scorer.has_value()) {
     return false;  // No scoring requested -- nothing to prune.
   }
   if (found->search_scan->score_top_k) {
@@ -2094,7 +1970,7 @@ bool TryConvertAggregateToCount(
   switch (bind_data.scan_source->Kind()) {
     case connector::ScanSourceKind::Search: {
       auto& search = bind_data.scan_source->Cast<connector::SearchScan>();
-      if (search.scorer.kind != connector::SearchScan::ScorerKind::None) {
+      if (search.scorer.has_value()) {
         return false;
       }
       if (search.EmitOffsets()) {

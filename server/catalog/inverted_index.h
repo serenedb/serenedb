@@ -29,6 +29,7 @@
 
 #include "basics/object_pool.hpp"
 #include "catalog/index.h"
+#include "catalog/scorer.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
@@ -70,7 +71,7 @@ class InvertedIndex final : public Index {
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
                 std::vector<Column::Id> column_ids, ColumnOptions columns,
-                bool optimize_top_k = false)
+                std::optional<Scorer> wand_scorer = std::nullopt)
     : Index{database_id,
             schema_id,
             id,
@@ -79,7 +80,7 @@ class InvertedIndex final : public Index {
             std::move(column_ids),
             ObjectType::InvertedIndex},
       _columns{std::move(columns)},
-      _optimize_top_k{optimize_top_k} {}
+      _wand_scorer{std::move(wand_scorer)} {}
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
@@ -102,16 +103,18 @@ class InvertedIndex final : public Index {
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;
 
-  // When true, the writer encodes WAND impact data per posting so top-K
-  // queries that use a matching scorer can prune
-  // low-scoring documents at search time.
-  bool IsOptimizeTopK() const noexcept { return _optimize_top_k; }
+  // When set, the writer encodes WAND impact data per posting using this
+  // scorer; top-K queries with a matching scorer can prune low-scoring
+  // docs. Empty == WAND disabled.
+  const std::optional<Scorer>& GetWandScorer() const noexcept {
+    return _wand_scorer;
+  }
 
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
   ColumnOptions _columns;
-  bool _optimize_top_k = false;
+  std::optional<Scorer> _wand_scorer;
 };
 
 }  // namespace sdb::catalog

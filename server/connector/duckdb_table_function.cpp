@@ -487,50 +487,48 @@ void SearchScan::AppendSummary(
   if (!filter_summary.empty()) {
     out.insert("Filter", filter_summary);
   }
-  switch (scorer.kind) {
-    case SearchScan::ScorerKind::Bm25:
-      out.insert("Score", absl::StrCat("bm25(k1=", scorer.bm25.k1,
-                                       ", b=", scorer.bm25.b, ")"));
-      break;
-    case SearchScan::ScorerKind::Tfidf:
-      out.insert("Score",
-                 absl::StrCat("tfidf(with_norms=",
-                              scorer.tfidf.with_norms ? "true" : "false", ")"));
-      break;
-    case SearchScan::ScorerKind::RawTf:
-      out.insert("Score", "raw_tf()");
-      break;
-    case SearchScan::ScorerKind::LmJm:
-      out.insert("Score",
-                 absl::StrCat("lm_jm(lambda=", scorer.lm_jm.lambda, ")"));
-      break;
-    case SearchScan::ScorerKind::LmDirichlet:
-      out.insert("Score",
-                 absl::StrCat("lm_dirichlet(mu=", scorer.lm_dirichlet.mu, ")"));
-      break;
-    case SearchScan::ScorerKind::IndriDirichlet:
-      out.insert(
-        "Score",
-        absl::StrCat("indri_dirichlet(mu=", scorer.indri_dirichlet.mu, ")"));
-      break;
-    case SearchScan::ScorerKind::Dfi: {
-      const char* m = "standardized";
-      switch (scorer.dfi.measure) {
-        case SearchScan::DfiMeasure::Standardized:
-          m = "standardized";
-          break;
-        case SearchScan::DfiMeasure::Saturated:
-          m = "saturated";
-          break;
-        case SearchScan::DfiMeasure::ChiSquared:
-          m = "chi_squared";
-          break;
-      }
-      out.insert("Score", absl::StrCat("dfi(measure=", m, ")"));
-      break;
-    }
-    case SearchScan::ScorerKind::None:
-      break;
+  if (scorer) {
+    using S = catalog::Scorer;
+    out.insert("Score", std::visit(
+                          [&](const auto& p) -> std::string {
+                            using P = std::decay_t<decltype(p)>;
+                            if constexpr (std::is_same_v<P, S::Bm25>) {
+                              return absl::StrCat("bm25(k1=", p.k1,
+                                                  ", b=", p.b, ")");
+                            } else if constexpr (std::is_same_v<P, S::Tfidf>) {
+                              return absl::StrCat(
+                                "tfidf(with_norms=",
+                                p.with_norms ? "true" : "false", ")");
+                            } else if constexpr (std::is_same_v<P, S::RawTf>) {
+                              return "raw_tf()";
+                            } else if constexpr (std::is_same_v<P, S::LmJm>) {
+                              return absl::StrCat("lm_jm(lambda=", p.lambda,
+                                                  ")");
+                            } else if constexpr (std::is_same_v<
+                                                   P, S::LmDirichlet>) {
+                              return absl::StrCat("lm_dirichlet(mu=", p.mu,
+                                                  ")");
+                            } else if constexpr (std::is_same_v<
+                                                   P, S::IndriDirichlet>) {
+                              return absl::StrCat("indri_dirichlet(mu=", p.mu,
+                                                  ")");
+                            } else if constexpr (std::is_same_v<P, S::Dfi>) {
+                              const char* m = "standardized";
+                              switch (p.measure) {
+                                case S::DfiMeasure::Standardized:
+                                  m = "standardized";
+                                  break;
+                                case S::DfiMeasure::Saturated:
+                                  m = "saturated";
+                                  break;
+                                case S::DfiMeasure::ChiSquared:
+                                  m = "chi_squared";
+                                  break;
+                              }
+                              return absl::StrCat("dfi(measure=", m, ")");
+                            }
+                          },
+                          scorer->params));
   }
   if (score_top_k) {
     std::string topk_val = std::to_string(*score_top_k);

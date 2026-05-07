@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "catalog/object.h"
+#include "catalog/scorer.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 
@@ -85,7 +86,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot, bool optimize_top_k);
+  const std::shared_ptr<const Snapshot>& snapshot,
+  std::optional<Scorer> wand_scorer);
 
 }  // namespace catalog
 }  // namespace sdb

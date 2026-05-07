@@ -34,6 +34,7 @@
 #include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
+#include "catalog/scorer.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/rocksdb_filter.hpp"
@@ -122,54 +123,11 @@ struct SearchScan : ScanSource {
   // Empty when the filter is trivial.
   std::string filter_summary;
 
-  enum class ScorerKind : uint8_t {
-    None,
-    Bm25,
-    Tfidf,
-    RawTf,
-    LmJm,
-    LmDirichlet,
-    IndriDirichlet,
-    Dfi,
-  };
-  // Must stay in sync with irs::DFIMeasure.
-  enum class DfiMeasure : uint8_t {
-    Standardized,
-    Saturated,
-    ChiSquared,
-  };
-  struct ScorerParams {
-    struct Bm25 {
-      double k1 = 1.2;
-      double b = 0.75;
-    };
-    struct Tfidf {
-      bool with_norms = false;
-    };
-    struct LmJm {
-      double lambda = 0.1;
-    };
-    struct LmDirichlet {
-      double mu = 2000.0;
-    };
-    struct IndriDirichlet {
-      double mu = 2000.0;
-    };
-    struct Dfi {
-      DfiMeasure measure = DfiMeasure::Standardized;
-    };
-
-    ScorerKind kind = ScorerKind::None;
-    union {
-      Bm25 bm25{};
-      Tfidf tfidf;
-      LmJm lm_jm;
-      LmDirichlet lm_dirichlet;
-      IndriDirichlet indri_dirichlet;
-      Dfi dfi;
-    };
-  };
-  ScorerParams scorer;
+  // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
+  // / etc. Empty when the query has no scoring projection. Same shape as
+  // the catalog's `optimize_top_k` scorer so iresearch_plan can compare
+  // them with `operator==`.
+  std::optional<catalog::Scorer> scorer;
   std::optional<size_t> score_top_k;
 
   // Mirrors catalog::InvertedIndex::IsOptimizeTopK(). When true and the

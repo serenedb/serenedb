@@ -33,7 +33,6 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -47,6 +46,7 @@
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/scorer.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
 #include "rest_server/flush_feature.h"
@@ -188,8 +188,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
 
-  if (index.IsOptimizeTopK()) {
-    _wand_scorer = std::make_unique<irs::BM25>();
+  if (const auto& spec = index.GetWandScorer()) {
+    _wand_scorer = catalog::MakeIrsScorer(*spec);
     writer_options.reader_options.scorer = _wand_scorer.get();
   }
 

@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "connector/wand_scorer_parser.h"
+#include "connector/scorer_parser.h"
 
 #include <absl/strings/ascii.h>
 #include <duckdb/common/exception.hpp>
@@ -86,7 +86,7 @@ ResultOr<duckdb::unique_ptr<duckdb::ParsedExpression>> WrapWithPlaceholder(
 
 }  // namespace
 
-ResultOr<catalog::WandScorer> ParseWandScorerExpression(
+ResultOr<catalog::Scorer> ParseScorerExpression(
   duckdb::ClientContext& context, std::string_view input) {
   using namespace duckdb;
   std::string source(input);
@@ -139,7 +139,7 @@ ResultOr<catalog::WandScorer> ParseWandScorerExpression(
   }
   const auto& bound_fn = bound->Cast<BoundFunctionExpression>();
 
-  auto extracted = ExtractWandScorerFromBound(bound_fn, name);
+  auto extracted = ExtractScorerFromBound(bound_fn, name);
   if (!extracted) {
     return std::unexpected<Result>(std::move(extracted).error());
   }

@@ -94,7 +94,7 @@ class LocalCatalog final : public LogicalCatalog,
                              std::vector<CreateIndexColumn>&& columns,
                              IndexShardOptions& shard_options,
                              CreateIndexOperationOptions operation_options,
-                             bool optimize_top_k) final;
+                             std::optional<Scorer> wand_scorer) final;
   Result CreateTokenizer(ObjectId database_id, std::string_view schema,
                          std::shared_ptr<Tokenizer> dict) final;
   Result CreateType(ObjectId database_id, std::string_view schema,

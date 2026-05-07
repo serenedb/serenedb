@@ -55,6 +55,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_entry_cache.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/scorer_parser.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
@@ -377,16 +378,22 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (it != info.options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
-    bool optimize_top_k = false;
+    std::optional<catalog::Scorer> wand_scorer;
     it = info.options.find("optimize_top_k");
     if (it != info.options.end()) {
-      optimize_top_k =
-        it->second.DefaultCastAs(duckdb::LogicalType::BOOLEAN).GetValue<bool>();
+      auto value =
+        it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      auto parsed = ParseScorerExpression(transaction.GetContext(), value);
+      if (!parsed) {
+        throw duckdb::CatalogException(
+          "%s", std::move(parsed).error().errorMessage());
+      }
+      wand_scorer = std::move(*parsed);
     }
     create_result = catalog_impl.CreateInvertedIndex(
       database_id, name, sdb_table->GetName(), info.index_name,
       std::move(idx_columns), shard_options, /*operation_options=*/{},
-      optimize_top_k);
+      std::move(wand_scorer));
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(

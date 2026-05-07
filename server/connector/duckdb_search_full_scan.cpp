@@ -47,6 +47,7 @@
 #include "basics/string_utils.h"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
+#include "catalog/scorer.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_reader.h"
@@ -302,52 +303,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   InitCommonState(*state, context, bind_data, input);
 
-  // Build scorer object for BM25/TFIDF if requested by the scan plan.
   const auto& ss = bind_data.scan_source->Cast<SearchScan>();
-  using SK = SearchScan::ScorerKind;
-  switch (ss.scorer.kind) {
-    case SK::Bm25:
-      state->scorer_obj =
-        std::make_unique<irs::BM25>(static_cast<float>(ss.scorer.bm25.k1),
-                                    static_cast<float>(ss.scorer.bm25.b));
-      break;
-    case SK::Tfidf:
-      state->scorer_obj =
-        std::make_unique<irs::TFIDF>(ss.scorer.tfidf.with_norms);
-      break;
-    case SK::RawTf:
-      state->scorer_obj = std::make_unique<irs::RawTF>();
-      break;
-    case SK::LmJm:
-      state->scorer_obj = std::make_unique<irs::LMJelinekMercer>(
-        static_cast<float>(ss.scorer.lm_jm.lambda));
-      break;
-    case SK::LmDirichlet:
-      state->scorer_obj = std::make_unique<irs::LMDirichlet>(
-        static_cast<float>(ss.scorer.lm_dirichlet.mu));
-      break;
-    case SK::IndriDirichlet:
-      state->scorer_obj = std::make_unique<irs::IndriDirichlet>(
-        static_cast<float>(ss.scorer.indri_dirichlet.mu));
-      break;
-    case SK::Dfi: {
-      irs::DFIMeasure m;
-      switch (ss.scorer.dfi.measure) {
-        case SearchScan::DfiMeasure::Standardized:
-          m = irs::DFIMeasure::Standardized;
-          break;
-        case SearchScan::DfiMeasure::Saturated:
-          m = irs::DFIMeasure::Saturated;
-          break;
-        case SearchScan::DfiMeasure::ChiSquared:
-          m = irs::DFIMeasure::ChiSquared;
-          break;
-      }
-      state->scorer_obj = std::make_unique<irs::DFI>(m);
-      break;
-    }
-    case SK::None:
-      break;
+  if (ss.scorer) {
+    state->scorer_obj = catalog::MakeIrsScorer(*ss.scorer);
   }
   // Single prepare site for SearchScan. We pass the scorer here (or null
   // when no BM25/TFIDF was attached by the planner) so any IDF/norm

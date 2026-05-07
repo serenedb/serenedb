@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "connector/functions/search.h"
+#include "catalog/scorer.h"
 
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
@@ -743,7 +744,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // extracted at compile time by the iresearch_plan rule; defaults
   // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
   {
-    duckdb::ScalarFunctionSet set{std::string{kBm25}};
+    duckdb::ScalarFunctionSet set{std::string{catalog::Scorer::Bm25::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -756,7 +757,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // tfidf(tableoid) / tfidf(tableoid, with_norms) -> DOUBLE -- emits
   // TF-IDF. `with_norms` toggles length normalisation (default false).
   {
-    duckdb::ScalarFunctionSet set{std::string{kTfidf}};
+    duckdb::ScalarFunctionSet set{std::string{catalog::Scorer::Tfidf::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -769,7 +770,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Shape mirrors bm25/tfidf: anchor is tableoid; the iresearch_plan rule
   // claims the call at compile time and threads the scorer into bind_data.
   {
-    duckdb::ScalarFunctionSet set{std::string{kRawTf}};
+    duckdb::ScalarFunctionSet set{std::string{catalog::Scorer::RawTf::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -779,7 +780,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Language model with Jelinek-Mercer (linear interpolation) smoothing.
   // lambda in (0, 1]; iresearch default is 0.1.
   {
-    duckdb::ScalarFunctionSet set{std::string{kLmJm}};
+    duckdb::ScalarFunctionSet set{std::string{catalog::Scorer::LmJm::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -792,7 +793,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Language model with Bayesian (Dirichlet) smoothing. mu >= 0;
   // iresearch default is 2000.
   {
-    duckdb::ScalarFunctionSet set{std::string{kLmDirichlet}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::Scorer::LmDirichlet::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -805,7 +807,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Indri-style Dirichlet: same smoothing as lm_dirichlet but without the
   // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
   {
-    duckdb::ScalarFunctionSet set{std::string{kIndriDirichlet}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::Scorer::IndriDirichlet::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -818,7 +821,7 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Divergence-From-Independence. `measure` selects the independence
   // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
   {
-    duckdb::ScalarFunctionSet set{std::string{kDfi}};
+    duckdb::ScalarFunctionSet set{std::string{catalog::Scorer::Dfi::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(

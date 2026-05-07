@@ -88,15 +88,17 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  bool optimize_top_k = false;
-  if (auto s = slice.get("optimize_top_k"); s.isBool()) {
-    optimize_top_k = s.getBool();
+  std::optional<Scorer> wand_scorer;
+  if (auto s = slice.get("wand_scorer"); !s.isNone() && !s.isNull()) {
+    if (auto r = vpack::ReadTupleNothrow(s, wand_scorer); !r.ok()) {
+      return nullptr;
+    }
   }
 
   return std::make_shared<InvertedIndex>(
     ctx.database_id, ctx.schema_id, ctx.id, ctx.relation_id,
     std::string{name_slice.stringView()}, std::move(column_ids),
-    std::move(columns), optimize_top_k);
+    std::move(columns), std::move(wand_scorer));
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& b) const {
@@ -106,7 +108,10 @@ void InvertedIndex::WriteInternal(vpack::Builder& b) const {
     vpack::WriteTuple(b, _column_ids);
     b.add("columns");
     vpack::WriteTuple(b, _columns);
-    b.add("optimize_top_k", _optimize_top_k);
+    if (_wand_scorer) {
+      b.add("wand_scorer");
+      vpack::WriteTuple(b, *_wand_scorer);
+    }
   });
   b.close();
 }

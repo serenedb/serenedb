@@ -19,6 +19,7 @@ namespace {
 static constexpr size_t kPostingListSize = 1000;
 static constexpr size_t kPostingListCount = 20;
 
+// Build uniformly random set of deleted_count ids to be put as deleted in mask
 DocumentHashMask BuildHashMask(size_t doc_count, size_t deleted_count,
                                int seed) {
   DocumentHashMask mask{irs::IResourceManager::gNoop};
@@ -51,6 +52,10 @@ DocumentBitMask BuildMask<DocumentBitMask>(size_t doc_count,
   return DocumentBitMask{irs::IResourceManager::gNoop, doc_count, source};
 }
 
+// Builds a vector of size kPostingListSize of document ids to lookup in
+// document mask. It allows to set a fixed amount of deleted ones in the list to
+// immitate a real posting list, where a fraction of documents may be deleted
+// and a the others are not.
 vector<doc_id_t> BuildPostingList(size_t doc_count,
                                   size_t posting_deleted_count,
                                   const DocumentMask& mask, size_t seed) {
@@ -79,20 +84,24 @@ vector<doc_id_t> BuildPostingList(size_t doc_count,
   return posting_list;
 }
 
+// Generates a set of posting lists (with proportional amount of deleted
+// documents) to benchmark DocumentMask implementations' IsDeleted method.
+// Technically benchmarks a random lookups in document mask with the specifics
+// that lookups are splitted into sorted blocks.
 template<typename MaskType>
 void BmIsDeleted(benchmark::State& state) {
   constexpr size_t kSeed = 43;
 
-  const auto docs_count = static_cast<uint32_t>(state.range(0));
-  const auto delete_percent = static_cast<int>(state.range(1));
+  const auto doc_count = static_cast<size_t>(state.range(0));
+  const auto delete_permille = static_cast<size_t>(state.range(1));
 
   auto mask =
-    BuildMask<MaskType>(docs_count, docs_count * delete_percent / 100, kSeed);
+    BuildMask<MaskType>(doc_count, doc_count * delete_permille / 1000, kSeed);
 
   vector<vector<doc_id_t>> posting_lists(kPostingListCount);
   for (size_t i = 0; i < kPostingListCount; ++i) {
     posting_lists[i] = BuildPostingList(
-      docs_count, kPostingListSize * delete_percent / 100, mask, kSeed + i);
+      doc_count, kPostingListSize * delete_permille / 1000, mask, kSeed + i);
   }
 
   size_t posting_list_ind = 0;
@@ -104,16 +113,91 @@ void BmIsDeleted(benchmark::State& state) {
   }
 }
 
+// Benchmarks a sequential scan of document mask.
+template<typename MaskType>
+void BmScanIsDeleted(benchmark::State& state) {
+  constexpr size_t kSeed = 43;
+
+  const auto doc_count = static_cast<size_t>(state.range(0));
+  const auto delete_permille = static_cast<size_t>(state.range(1));
+
+  auto mask =
+    BuildMask<MaskType>(doc_count, doc_count * delete_permille / 1000, kSeed);
+
+  for (auto _ : state) {
+    for (doc_id_t doc_id = irs::doc_limits::min();
+         doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
+      benchmark::DoNotOptimize(mask.IsDeleted(doc_id));
+    }
+  }
+}
+
 void MaskArgs(benchmark::internal::Benchmark* b) {
-  for (int doc_cnt : {10000, 100000, 1000000}) {
-    for (int pct : {1, 10, 30, 50, 70, 90, 99}) {
-      b->Args({doc_cnt, pct});
+  for (auto doc_cnt : {10000, 100000, 1000000}) {
+    for (auto pmle : {10, 100, 300, 500, 700, 900, 990}) {
+      b->Args({doc_cnt, pmle});
+    }
+  }
+}
+
+void BmDispatchInsideLoop(benchmark::State& state) {
+  constexpr size_t kSeed = 43;
+
+  const auto doc_count = static_cast<size_t>(state.range(0));
+  const auto delete_permille = static_cast<size_t>(state.range(1));
+
+  auto mask = BuildMask<DocumentBitMask>(
+    doc_count, doc_count * delete_permille / 1000, kSeed);
+  auto handle = irs::BuildImmutableRepresentation(irs::IResourceManager::gNoop,
+                                                  DocumentMaskKind::DenseBitset,
+                                                  std::move(mask));
+  for (auto _ : state) {
+    for (doc_id_t doc_id = irs::doc_limits::min();
+         doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
+      benchmark::DoNotOptimize(handle.IsDeleted(doc_id));
+    }
+  }
+}
+
+template<typename MaskType>
+void RunLoopIsDeleted(const irs::DocumentMaskHandle& handle, size_t doc_count) {
+  for (doc_id_t doc_id = irs::doc_limits::min();
+       doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
+    benchmark::DoNotOptimize(
+      static_cast<const MaskType*>(handle.mask.get())->IsDeleted(doc_id));
+  }
+}
+void BmDispatchOutsideLoop(benchmark::State& state) {
+  constexpr size_t kSeed = 43;
+
+  const auto doc_count = static_cast<size_t>(state.range(0));
+  const auto delete_permille = static_cast<size_t>(state.range(1));
+
+  auto mask = BuildMask<DocumentBitMask>(
+    doc_count, doc_count * delete_permille / 1000, kSeed);
+  const auto handle = irs::BuildImmutableRepresentation(
+    irs::IResourceManager::gNoop, DocumentMaskKind::DenseBitset,
+    std::move(mask));
+  for (auto _ : state) {
+    switch (handle.kind) {
+      case DocumentMaskKind::DenseBitset:
+        RunLoopIsDeleted<DocumentBitMask>(handle, doc_count);
+        break;
+      case DocumentMaskKind::DeletedHashSet:
+        RunLoopIsDeleted<DocumentHashMask>(handle, doc_count);
+        break;
+      case DocumentMaskKind::None:
+        break;
     }
   }
 }
 
 BENCHMARK_TEMPLATE(BmIsDeleted, DocumentHashMask)->Apply(MaskArgs);
 BENCHMARK_TEMPLATE(BmIsDeleted, DocumentBitMask)->Apply(MaskArgs);
+BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentHashMask)->Apply(MaskArgs);
+BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentBitMask)->Apply(MaskArgs);
+BENCHMARK(BmDispatchInsideLoop)->Args({1000000, 30});
+BENCHMARK(BmDispatchOutsideLoop)->Args({1000000, 30});
 
 }  // namespace
 

@@ -420,9 +420,9 @@ void EncodeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
       if (format == "escape") {
         // PG escape format -- same as byteaout escape
-        auto required = pg::ByteaOutEscapeLength<false>(input);
+        auto required = pg::ByteaOutEscapeLength(input);
         auto target = duckdb::StringVector::EmptyString(result, required);
-        pg::ByteaOutEscape<false>(target.GetDataWriteable(), input);
+        pg::ByteaOutEscape(target.GetDataWriteable(), input);
         target.Finalize();
         return target;
       }

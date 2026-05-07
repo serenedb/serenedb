@@ -20,6 +20,10 @@
 
 #include "pg/pg_catalog/pg_type.h"
 
+#include <deque>
+#include <string>
+
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/catalog.h"
 #include "catalog/user_type.h"
 #include "pg/pg_catalog/fwd.h"
@@ -1374,6 +1378,25 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     rows.push_back(row);
   }
 
+  containers::FlatHashSet<std::string_view> taken;
+  for (const auto& schema : snapshot->GetSchemas(database_id)) {
+    auto types = snapshot->GetTypes(database_id, schema->GetName());
+    taken.reserve(taken.size() + types.size() * 2);
+    for (const auto& type : types) {
+      taken.insert(type->GetName());
+    }
+  }
+  std::deque<std::string> array_names;
+  auto make_array_name = [&](std::string_view scalar) -> std::string_view {
+    std::string name = "_" + std::string{scalar};
+    while (taken.contains(name)) {
+      name.insert(0, "_");
+    }
+    array_names.push_back(std::move(name));
+    taken.insert(array_names.back());
+    return array_names.back();
+  };
+
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
     for (const auto& type :
          snapshot->GetTypes(database_id, schema->GetName())) {
@@ -1381,44 +1404,58 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
       const auto kind = info.type.id();
       const bool is_enum = kind == duckdb::LogicalTypeId::ENUM;
       const bool is_composite = kind == duckdb::LogicalTypeId::STRUCT;
-      rows.push_back({
-        .oid = type->GetId().id(),
-        .typname = type->GetName(),
-        .typnamespace = schema->GetId().id(),
-        .typowner = id::kRootUser.id(),
-        .typlen = is_enum ? int16_t{4} : int16_t{-1},
-        .typbyval = is_enum,
-        .typtype = is_enum        ? PgType::Typetype::Enum
-                   : is_composite ? PgType::Typetype::Composite
-                                  : PgType::Typetype::Base,
-        .typcategory = is_enum        ? PgType::Typcategory::Enum
-                       : is_composite ? PgType::Typcategory::Composite
-                                      : PgType::Typcategory::UserDefined,
-        .typispreferred = false,
-        .typisdefined = true,
-        .typdelim = ',',
-        .typrelid = 0,
-        .typsubscript = 0,
-        .typelem = 0,
-        .typarray = 0,
-        .typinput = 0,
-        .typoutput = 0,
-        .typreceive = 0,
-        .typsend = 0,
-        .typmodin = 0,
-        .typmodout = 0,
-        .typanalyze = 0,
-        .typalign = PgType::Typalign::Int,
-        .typstorage = PgType::Typstorage::Plain,
-        .typnotnull = false,
-        .typbasetype = 0,
-        .typtypmod = -1,
-        .typndims = 0,
-        .typcollation = 0,
-        .typdefaultbin = {},
-        .typdefault = {},
-        .typacl = {},
-      });
+
+      const auto type_oid = type->GetId().id();
+      const auto namespace_oid = schema->GetId().id();
+      const auto array_oid = type->GetArrayOid().id();
+      const auto array_name = make_array_name(type->GetName());
+
+      auto make_row = [&](bool as_array) {
+        return PgType{
+          .oid = as_array ? array_oid : type_oid,
+          .typname = as_array ? array_name : std::string_view{type->GetName()},
+          .typnamespace = namespace_oid,
+          .typowner = id::kRootUser.id(),
+          .typlen = (!as_array && is_enum) ? int16_t{4} : int16_t{-1},
+          .typbyval = !as_array && is_enum,
+          .typtype = as_array       ? PgType::Typetype::Base
+                     : is_enum      ? PgType::Typetype::Enum
+                     : is_composite ? PgType::Typetype::Composite
+                                    : PgType::Typetype::Base,
+          .typcategory = as_array       ? PgType::Typcategory::Array
+                         : is_enum      ? PgType::Typcategory::Enum
+                         : is_composite ? PgType::Typcategory::Composite
+                                        : PgType::Typcategory::UserDefined,
+          .typispreferred = false,
+          .typisdefined = true,
+          .typdelim = ',',
+          .typrelid = (!as_array && is_composite) ? type_oid : 0,
+          .typsubscript = 0,
+          .typelem = as_array ? type_oid : 0,
+          .typarray = as_array ? 0 : array_oid,
+          .typinput = 0,
+          .typoutput = 0,
+          .typreceive = 0,
+          .typsend = 0,
+          .typmodin = 0,
+          .typmodout = 0,
+          .typanalyze = 0,
+          .typalign = PgType::Typalign::Int,
+          .typstorage =
+            as_array ? PgType::Typstorage::Extended : PgType::Typstorage::Plain,
+          .typnotnull = false,
+          .typbasetype = 0,
+          .typtypmod = -1,
+          .typndims = 0,
+          .typcollation = 0,
+          .typdefaultbin = {},
+          .typdefault = {},
+          .typacl = {},
+        };
+      };
+
+      rows.emplace_back(make_row(false));
+      rows.emplace_back(make_row(true));
     }
   }
 

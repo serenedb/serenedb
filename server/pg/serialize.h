@@ -37,46 +37,59 @@ enum class VarFormat : int16_t {
   Binary = 1,
 };
 
+// TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
+// instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
+// for scalar types, and can lazily create child format for arrays).
 using SerializationFunction = void (*)(
   struct SerializationContext context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
 struct RecordSerializers {
-  std::vector<SerializationFunction> text_in_record;  // for text path
-  std::vector<SerializationFunction> binary_fns;      // for binary path
-  std::vector<int32_t> binary_oids;                   // binary header OIDs
-  bool text_built = false;
-  bool binary_built = false;
+  std::vector<SerializationFunction> fns;
+  std::vector<int32_t> oids;  // populated for binary, empty for text
 };
 
+// Per-type field-dispatch cache. Within one portal each struct type is
+// resolved at exactly one format, so a single map suffices; try_emplace's
+// `inserted` flag is the build trigger.
 struct TypesSerializationCache {
-  containers::NodeHashMap<const void*, RecordSerializers> by_type;
+  containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>
+    by_type;
 };
 
 // Escape sequences for emitting one literal '"' or '\\' byte at the current
-// position in the wrap stack. Default (top-level): a single byte each. Each
-// containing wrap rewrites them via EnterArrayWrap / EnterRecordWrap so
+// position in the wrap stack. Default (top-level): one byte / count of one.
+// Each containing wrap rewrites them via EnterArrayWrap / EnterRecordWrap so
 // that nested wraps produce PG-conformant escape sequences without a scratch
 // buffer.
+//
+// `backslash_seq` is encoded as a count because every wrap rule sets
+// new_b = old_b + old_b, so it stays a homogeneous run of '\\' bytes
+// (length 2^depth). `quote_seq` cannot collapse to a count: Array's rule
+// (new_q = old_b + old_q) and Record's rule (new_q = old_q + old_q) produce
+// different interleaved byte patterns depending on the wrap stack order.
 struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   const catalog::Snapshot* snapshot = nullptr;
   std::string_view quote_seq{"\"", 1};
-  std::string_view backslash_seq{"\\", 1};
+  uint32_t backslash_count = 1;
+  // When true, GetSerialization returns the in-record-field text variant
+  // (raw bytes, no SerializeNullable length prefix). Only meaningful at
+  // function-pointer-resolution time; callers set it on a local copy.
+  bool in_record = false;
   std::shared_ptr<TypesSerializationCache> types_cache;
 };
 
 void FillContext(const Config& config, SerializationContext& context);
 
-// `in_record`: if true, return the in-record-field variant directly (no
-// SerializeNullable length prefix). Used by SerializeRecord's text path to
-// emit each field's bytes inline at the current escape depth.
+// Set `context.in_record = true` (typically on a local copy of the context)
+// to get the in-record-field text variant (raw bytes, no SerializeNullable
+// length prefix). Used by SerializeRecord's text path.
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
-                                       SerializationContext& context,
-                                       bool in_record = false);
+                                       SerializationContext& context);
 
 template<bool NeedArrayEscaping>
 void ByteaOutHex(char* buf, std::string_view value);

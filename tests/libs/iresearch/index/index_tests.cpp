@@ -196,7 +196,7 @@ class SubReaderMock final : public irs::SubReader {
 
   const irs::SegmentInfo& Meta() const final { return _meta; }
 
-  const irs::DocumentMask* docs_mask() const final { return nullptr; }
+  irs::DocumentMaskView docs_mask() const final { return irs::DocumentMaskView{nullptr, irs::DocumentMaskKind::None}; }
 
   irs::DocIterator::ptr docs_iterator() const final {
     EXPECT_FALSE(true);
@@ -247,8 +247,8 @@ void AssertSnapshotEquality(irs::DirectoryReader lhs,
     ASSERT_EQ(lhs_segment.docs_count(), rhs_segment->docs_count());
     ASSERT_EQ(lhs_segment.live_docs_count(), rhs_segment->live_docs_count());
     ASSERT_EQ(lhs_segment.Meta(), rhs_segment->Meta());
-    ASSERT_TRUE(!lhs_segment.docs_mask() && !rhs_segment->docs_mask() ||
-                (lhs_segment.docs_mask() && rhs_segment->docs_mask() &&
+    ASSERT_TRUE(!lhs_segment.docs_mask().mask && !rhs_segment->docs_mask().mask ||
+                (lhs_segment.docs_mask().mask && rhs_segment->docs_mask().mask &&
                  *lhs_segment->docs_mask() == *rhs_segment->docs_mask()));
     ++rhs_segment;
   }

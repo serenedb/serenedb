@@ -424,12 +424,12 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.docs_count = 43;
     expected.live_docs_count = 42;
     expected.version = 0;
-    expected.docs_mask = [&] {
+    expected.docs_mask = {.mask = [&] {
       auto docs_mask =
         std::make_shared<irs::DocumentHashMask>(irs::IResourceManager::gNoop);
       docs_mask->MarkDeleted(4);
       return docs_mask;
-    }();
+    }(), .kind = irs::DocumentMaskKind::DeletedHashSet};
     writer->write(dir, filename, expected);
 
     irs::SegmentMeta meta;
@@ -450,12 +450,12 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.docs_count = 43;
     expected.live_docs_count = 42;
     expected.version = 1;
-    expected.docs_mask = [&] {
+    expected.docs_mask = {.mask = [&] {
       auto docs_mask =
         std::make_shared<irs::DocumentHashMask>(irs::IResourceManager::gNoop);
       docs_mask->MarkDeleted(4);
       return docs_mask;
-    }();
+    }(), .kind = irs::DocumentMaskKind::DeletedHashSet};
     writer->write(dir, filename, expected);
 
     irs::SegmentMeta meta;

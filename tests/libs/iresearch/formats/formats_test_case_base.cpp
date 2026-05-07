@@ -962,19 +962,14 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.live_docs_count = 451;
     meta.byte_size = 666;
     meta.version = 100;
-<<<<<<< HEAD
-    meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMask docs_mask{irs::IResourceManager::gNoop};
-      docs_mask.insert({42, 100});
-=======
-    meta.column_store = true;
-    meta.docs_mask = std::make_shared<irs::DocumentHashMask>([&] {
-      irs::DocumentHashMask docs_mask{irs::IResourceManager::gNoop};
-      docs_mask.MarkDeleted(42);
-      docs_mask.MarkDeleted(100);
->>>>>>> fdb639bf (refactor all the usages of DocumentMask)
-      return docs_mask;
-    }());
+    meta.docs_mask = {
+      .mask = std::make_shared<irs::DocumentHashMask>([&] {
+        irs::DocumentHashMask docs_mask{irs::IResourceManager::gNoop};
+        docs_mask.MarkDeleted(42);
+        docs_mask.MarkDeleted(100);
+        return docs_mask;
+      }()),
+      .kind = irs::DocumentMaskKind::DeletedHashSet};
     meta.files.emplace_back("file1");
     meta.files.emplace_back("index_file2");
     meta.files.emplace_back("file3");
@@ -1003,7 +998,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.version, read_meta.version);
       ASSERT_EQ(meta.byte_size, read_meta.byte_size);
       ASSERT_EQ(meta.files, read_meta.files);
-      ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
+      ASSERT_EQ(*meta.docs_mask.mask, *read_meta.docs_mask.mask);
     }
   }
 

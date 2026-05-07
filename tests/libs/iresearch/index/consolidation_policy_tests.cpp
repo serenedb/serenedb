@@ -96,7 +96,7 @@ class SubReaderMock final : public irs::SubReader {
 
   // Live & deleted docs
 
-  const irs::DocumentMask* docs_mask() const final { return nullptr; }
+  irs::DocumentMaskView docs_mask() const final { return irs::DocumentMaskView{nullptr, irs::DocumentMaskKind::None}; }
 
   // Returns an iterator over live documents in current segment.
   irs::DocIterator::ptr docs_iterator() const final {

@@ -78,7 +78,7 @@ class AllIterator : public DocIterator {
 
 class MaskDocIterator : public DocIterator {
  public:
-  MaskDocIterator(DocIterator::ptr&& it, const DocumentMask& mask) noexcept
+  MaskDocIterator(DocIterator::ptr&& it, DocumentMaskView mask) noexcept
     : _mask{mask}, _it{std::move(it)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -115,14 +115,14 @@ class MaskDocIterator : public DocIterator {
   }
 
  private:
-  const DocumentMask& _mask;
+  DocumentMaskView _mask;
   DocIterator::ptr _it;
 };
 
 class MaskedDocIterator : public DocIterator {
  public:
   MaskedDocIterator(doc_id_t begin, doc_id_t end,
-                    const DocumentMask& docs_mask) noexcept
+                    DocumentMaskView docs_mask) noexcept
     : _docs_mask{docs_mask}, _end{end}, _next{begin} {
     SDB_ASSERT(begin <= end);
     SDB_ASSERT(doc_limits::valid(begin));
@@ -161,7 +161,7 @@ class MaskedDocIterator : public DocIterator {
   }
 
  private:
-  const DocumentMask& _docs_mask;
+  DocumentMaskView _docs_mask;
   const doc_id_t _end;
   doc_id_t _next;
 };
@@ -253,23 +253,23 @@ const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
-  if (!_docs_mask) {
+  if (!_docs_mask.mask) {
     return memory::make_managed<AllIterator>(_info.docs_count);
   }
-  SDB_ASSERT(_docs_mask->DeletedDocCount() > 0);
+  SDB_ASSERT(_docs_mask.mask->DeletedDocCount() > 0);
 
   return memory::make_managed<MaskedDocIterator>(
-    doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
+    doc_limits::min(), doc_limits::min() + _info.docs_count, _docs_mask.View());
 }
 
 DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
   SDB_ASSERT(it);
-  if (!_docs_mask) {
+  if (!_docs_mask.mask) {
     return std::move(it);
   }
-  SDB_ASSERT(_docs_mask->DeletedDocCount() > 0);
+  SDB_ASSERT(_docs_mask.mask->DeletedDocCount() > 0);
 
-  return memory::make_managed<MaskDocIterator>(std::move(it), *_docs_mask);
+  return memory::make_managed<MaskDocIterator>(std::move(it), _docs_mask.View());
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

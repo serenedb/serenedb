@@ -116,7 +116,7 @@ struct SubReader final : irs::SubReader {
   uint64_t CountMappedMemory() const final { return 0; }
 
   const irs::SegmentInfo& Meta() const noexcept final { return info; }
-  const irs::DocumentMask* docs_mask() const noexcept final { return nullptr; }
+  irs::DocumentMaskView docs_mask() const noexcept final { return irs::DocumentMaskView{nullptr, irs::DocumentMaskKind::None}; }
   irs::DocIterator::ptr docs_iterator() const final {
     return irs::DocIterator::empty();
   }

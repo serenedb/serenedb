@@ -156,7 +156,7 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual const SegmentInfo& Meta() const = 0;
 
-  virtual const DocumentMask* docs_mask() const = 0;
+  virtual DocumentMaskView docs_mask() const = 0;
 
   virtual DocIterator::ptr docs_iterator() const = 0;
 

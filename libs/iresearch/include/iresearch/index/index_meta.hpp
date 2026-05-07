@@ -64,12 +64,12 @@ struct SegmentMeta : SegmentInfo {
 
   std::vector<std::string> files;
   std::shared_ptr<const Format> codec;
-  std::shared_ptr<const DocumentMask> docs_mask;
+  DocumentMaskHandle docs_mask;
   uint64_t docs_mask_size = 0;
 };
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {
-  return meta.docs_mask ? static_cast<doc_id_t>(meta.docs_mask->DeletedDocCount()) : 0;
+  return meta.docs_mask.mask ? static_cast<doc_id_t>(meta.docs_mask.mask->DeletedDocCount()) : 0;
 }
 
 inline bool HasRemovals(const SegmentInfo& meta) noexcept {

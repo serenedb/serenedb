@@ -9,6 +9,7 @@ using irs::doc_id_t;
 using irs::DocumentBitMask;
 using irs::DocumentHashMask;
 using irs::DocumentMask;
+using irs::DocumentMaskKind;
 using std::vector;
 
 namespace {

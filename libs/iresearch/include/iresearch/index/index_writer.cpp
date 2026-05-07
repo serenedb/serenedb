@@ -33,7 +33,6 @@
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
 #include "basics/shared.hpp"
-#include "document_mask.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/directory_reader_impl.hpp"
@@ -199,19 +198,21 @@ void RemoveFromExistingSegment(DocumentBitMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->execute(
+    {.segment = reader,
+     .pending_docs_mask = {.mask = &deleted_docs,
+                           .kind = DocumentMaskKind::DenseBitset}});
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
   }
 
-  const auto* docs_mask = reader.docs_mask();
+  const auto docs_mask = reader.docs_mask();
   while (itr->next()) {
     const auto doc_id = itr->value();
 
     // if the indexed doc_id was already masked then it should be skipped
-    if (docs_mask && docs_mask->IsDeleted(doc_id)) {
+    if (docs_mask.IsDeleted(doc_id)) {
       continue;  // the current modification query does not match any records
     }
     if (deleted_docs.MarkDeleted(doc_id)) {
@@ -232,8 +233,10 @@ bool RemoveFromImportedSegment(DocumentBitMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->execute(
+    {.segment = reader,
+     .pending_docs_mask = {.mask = &deleted_docs,
+                           .kind = DocumentMaskKind::DenseBitset}});
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -273,7 +276,9 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
   }
 
   auto itr = prepared->execute(
-    {.segment = *reader, .pending_docs_mask = &document_mask});
+    {.segment = *reader,
+     .pending_docs_mask = {.mask = &document_mask,
+                           .kind = DocumentMaskKind::DenseBitset}});
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators
@@ -1463,13 +1468,17 @@ ConsolidationResult IndexWriter::Consolidate(
       }
 
       SDB_ASSERT(!docs_mask->IsEmpty());
-      consolidation_segment.meta.docs_mask = std::move(docs_mask);
+      consolidation_segment.meta.docs_mask = BuildImmutableRepresentation(
+        *dir.ResourceManager().readers,
+        ChooseImmutableRepresentation(consolidation_segment.meta.docs_count,
+                                      docs_mask->DeletedDocCount()),
+        std::move(*docs_mask));
     }
   }
 
   index_utils::FlushIndexSegment(dir, consolidation_segment, false);
 
-  if (consolidation_segment.meta.docs_mask) {
+  if (consolidation_segment.meta.docs_mask.mask) {
     pending_reader =
       pending_reader->UpdateMeta(dir, consolidation_segment.meta);
   }
@@ -1784,7 +1793,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       segment.meta.docs_mask = [&] {
         auto docs_mask = CopyMaskAsBitMask(dir, existing_segment);
         docs_mask->Merge(deleted_docs);
-        return docs_mask;
+        return BuildImmutableRepresentation(
+          *dir.ResourceManager().readers,
+          ChooseImmutableRepresentation(segment.meta.docs_count,
+                                        docs_mask->DeletedDocCount()),
+          std::move(*docs_mask));
       }();
       deleted_docs.Clear();
 
@@ -1904,7 +1917,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
 
     if (docs_mask_modified) {
-      meta.docs_mask = std::move(import_docs_mask);
+      meta.docs_mask = BuildImmutableRepresentation(
+        *dir.ResourceManager().readers,
+        ChooseImmutableRepresentation(meta.docs_count,
+                                      import_docs_mask->DeletedDocCount()),
+        std::move(*import_docs_mask));
     }
 
     if (docs_mask_modified || pending_consolidation) {
@@ -2021,7 +2038,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
         SDB_ASSERT(flushed.meta.live_docs_count != 0);
         SDB_ASSERT(flushed.meta.live_docs_count <= flushed.meta.docs_count);
-        SDB_ASSERT(!flushed.meta.docs_mask);
+        SDB_ASSERT(!flushed.meta.docs_mask.mask);
 
         auto reader = [&] {
           if (auto it = curr_cached.find(&flushed); it != curr_cached.end()) {
@@ -2085,8 +2102,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         ++segment_ctx.flushed.meta.version;
       }
       if (!document_mask.IsEmpty()) {
-        new_segment.meta.docs_mask =
-          std::make_shared<DocumentHashMask>(std::move(document_mask));
+        new_segment.meta.docs_mask = BuildImmutableRepresentation(
+          *dir.ResourceManager().readers,
+          ChooseImmutableRepresentation(new_segment.meta.docs_count,
+                                        document_mask.DeletedDocCount()),
+          std::move(document_mask));
       }
       index_utils::FlushIndexSegment(dir, new_segment, false);
       if (need_flush) {

@@ -64,7 +64,7 @@ DocIterator::ptr SegmentReader::docs_iterator() const {
 
 const SegmentInfo& SegmentReader::Meta() const { return _impl->Meta(); }
 
-const DocumentMask* SegmentReader::docs_mask() const {
+DocumentMaskView SegmentReader::docs_mask() const {
   return _impl->docs_mask();
 }
 

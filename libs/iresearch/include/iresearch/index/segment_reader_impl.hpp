@@ -66,7 +66,7 @@ class SegmentReaderImpl final : public SubReader {
 
   const SegmentInfo& Meta() const final { return _info; }
 
-  const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
+  DocumentMaskView docs_mask() const final { return _docs_mask.View(); }
 
   DocIterator::ptr docs_iterator() const final;
 
@@ -99,7 +99,7 @@ class SegmentReaderImpl final : public SubReader {
 
   FileRefs _refs;
   SegmentInfo _info;
-  std::shared_ptr<const DocumentMask> _docs_mask;
+  DocumentMaskHandle _docs_mask;
   FieldReader::ptr _field_reader;
   std::shared_ptr<ColumnData> _data;
 };

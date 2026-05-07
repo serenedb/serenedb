@@ -427,10 +427,10 @@ void FlushIndexSegment(Directory& dir, IndexSegment& segment,
   SDB_ASSERT(segment.meta.docs_mask_size <= segment.meta.byte_size);
 
   meta.live_docs_count = meta.docs_count;
-  if (const auto& docs_mask = meta.docs_mask; docs_mask) {
-    SDB_ASSERT(!docs_mask->IsEmpty());
-    SDB_ASSERT(docs_mask->DeletedDocCount() < meta.docs_count);
-    meta.live_docs_count -= static_cast<doc_id_t>(meta.docs_mask->DeletedDocCount());
+  if (const auto& docs_mask_ptr = meta.docs_mask.mask; docs_mask_ptr) {
+    SDB_ASSERT(!docs_mask_ptr->IsEmpty());
+    SDB_ASSERT(docs_mask_ptr->DeletedDocCount() < meta.docs_count);
+    meta.live_docs_count -= static_cast<doc_id_t>(docs_mask_ptr->DeletedDocCount());
     meta.version += uint64_t{increment_version};
   }
 

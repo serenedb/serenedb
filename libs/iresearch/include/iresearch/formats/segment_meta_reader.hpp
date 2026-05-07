@@ -55,7 +55,7 @@ ReadDocumentMaskV0(DataInput& in, IResourceManager& rm) {
   auto count = in.ReadV32();
 
   if (!count) {
-    return {};
+    return {DocumentMaskHandle{.mask = nullptr, .kind = DocumentMaskKind::None}, 0};
   }
 
   auto docs_mask = std::make_shared<DocumentHashMask>(rm);
@@ -214,7 +214,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
     }
   }();
   const auto docs_count =
-    live_docs_count + static_cast<doc_id_t>(docs_mask ? docs_mask->DeletedDocCount() : 0);
+    live_docs_count + static_cast<doc_id_t>(docs_mask.mask ? docs_mask.mask->DeletedDocCount() : 0);
   const auto size = in->ReadV64();
   auto files = ReadStrings(*in);
   format_utils::CheckFooter(*in, checksum);

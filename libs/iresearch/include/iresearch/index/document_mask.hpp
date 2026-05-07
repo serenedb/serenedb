@@ -132,4 +132,84 @@ class DocumentBitMask final : public DocumentMask {
     0};  // to not run popcount each DeletedDocCount call
 };
 
+enum class DocumentMaskKind {
+  None,
+  DeletedHashSet,
+  DenseBitset,
+};
+
+// Stores pointer with tag and runs bounded dispatching of lookups into document
+// mask, allowing compiler to inline function calls and prevent full vtable
+// lookup.
+struct DocumentMaskView {
+  const DocumentMask* mask;
+  DocumentMaskKind kind;
+
+  bool IsDeleted(doc_id_t doc_id) const {
+    switch (kind) {
+      case DocumentMaskKind::None:
+        return false;
+      case DocumentMaskKind::DeletedHashSet:
+        return mask &&
+               static_cast<const DocumentHashMask*>(mask)->IsDeleted(doc_id);
+      case DocumentMaskKind::DenseBitset:
+        return mask &&
+               static_cast<const DocumentBitMask*>(mask)->IsDeleted(doc_id);
+    }
+  }
+
+  bool operator==(const DocumentMaskView& rhs) const {
+    if (mask == rhs.mask) {
+      return true;
+    }
+    if ((!mask && rhs.mask->DeletedDocCount() == 0) ||
+        (!rhs.mask && mask->DeletedDocCount() == 0)) {
+      return true;
+    }
+    return *mask == *rhs.mask;
+  }
+
+  const DocumentMask* operator->() const { return mask; }
+  const DocumentMask& operator*() const { return *mask; }
+};
+
+struct DocumentMaskHandle {
+  std::shared_ptr<const DocumentMask> mask;
+  DocumentMaskKind kind;
+
+  DocumentMaskView View() const { return {.mask = mask.get(), .kind = kind}; }
+
+  bool IsDeleted(doc_id_t doc_id) const { return View().IsDeleted(doc_id); }
+
+  bool operator==(const DocumentMaskHandle& rhs) const {
+    return View() == rhs.View();
+  }
+
+  const DocumentMask* operator->() const { return mask.get(); }
+  const DocumentMask& operator*() const { return *mask; }
+};
+
+inline DocumentMaskKind ChooseImmutableRepresentation(
+  size_t doc_count, size_t deleted_doc_count) {
+  if (deleted_doc_count < doc_count / 100) {  // 0 <= x <1% of documents
+    return DocumentMaskKind::DeletedHashSet;
+  } else {  // 1 <= x <= 100% of documents
+    return DocumentMaskKind::DenseBitset;
+  }
+}
+
+inline DocumentMaskHandle BuildImmutableRepresentation(
+  IResourceManager& rm, DocumentMaskKind kind, DocumentBitMask&& bit_mask) {
+  switch (kind) {
+    case DocumentMaskKind::None:
+      return {nullptr, DocumentMaskKind::None};
+    case DocumentMaskKind::DeletedHashSet:
+      return {std::make_shared<DocumentHashMask>(rm, bit_mask),
+              DocumentMaskKind::DeletedHashSet};
+    case DocumentMaskKind::DenseBitset:
+      return {std::make_shared<DocumentBitMask>(std::move(bit_mask)),
+              DocumentMaskKind::DenseBitset};
+  }
+}
+
 }  // namespace irs

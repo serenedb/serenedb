@@ -713,6 +713,24 @@ SELECT ROW(ARRAY[TIMESTAMP '2024-01-15 12:00:00']) AS kostya;
 kostya
 ("{""2024-01-15 12:00:00""}")
 
+query
+SELECT ROW(INTERVAL '0') AS kostya;
+----
+kostya
+(00:00:00)
+
+query
+SELECT ARRAY[ROW(INTERVAL '0')] AS kostya;
+----
+kostya
+{(00:00:00)}
+
+query
+SELECT ARRAY[INTERVAL '0', INTERVAL '1 day'] AS kostya;
+----
+kostya
+{00:00:00,"1 day"}
+
 # Numeric / bool / uuid / date / time in containers
 
 query

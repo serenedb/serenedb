@@ -1174,8 +1174,21 @@ void SerializeInterval(SerializationContext& context,
       .GetData<duckdb::interval_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Interval::ToString(interval);
-    WithWrapIfNested<InContainer>(
-      context, [&] { context.buffer->WriteUncommitted(str); });
+    std::string_view value{str};
+    if constexpr (InContainer == WrapContext::Array) {
+      if (ArrayItemNeedQuotesAndEscape(value)) {
+        WriteWrapped<WrapContext::Array>(context,
+                                         [&] { EmitEscaped(context, value); });
+        return;
+      }
+    } else if constexpr (InContainer == WrapContext::Record) {
+      if (RecordItemNeedsQuoting(value)) {
+        WriteWrapped<WrapContext::Record>(context,
+                                          [&] { EmitEscaped(context, value); });
+        return;
+      }
+    }
+    context.buffer->WriteUncommitted(value);
   } else {
     // PG binary: microseconds(8) + days(4) + months(4)
     auto* data = context.buffer->GetContiguousData(16);
@@ -1285,10 +1298,17 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP:
     case TIMESTAMP_NS:
     case TIMESTAMP_TZ:
-    case INTERVAL:
     case BLOB:
     case STRUCT:
       return true;
+    case INTERVAL: {
+      const auto interval =
+        vdata.unified
+          .GetData<duckdb::interval_t>()[vdata.unified.sel->get_index(row)];
+      auto str = duckdb::Interval::ToString(interval);
+      std::string_view v{str};
+      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+    }
     case CHAR:
     case VARCHAR: {
       const auto& raw =

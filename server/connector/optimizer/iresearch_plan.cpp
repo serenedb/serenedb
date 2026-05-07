@@ -995,10 +995,12 @@ duckdb::LogicalProjection* FindProjectionByTableIndex(
 // analysis): reuse a column ref in that projection that already
 // forwards the target, or inject one. Used by both the BM25/TFIDF score
 // rewrite and the OFFSETS rewrite.
-duckdb::ColumnBinding ExposeGetColumnAt(
-  duckdb::LogicalOperator& root, duckdb::TableIndex anchor_ti,
-  const duckdb::LogicalGet& target_get, duckdb::idx_t get_col_idx,
-  std::string_view col_name, const duckdb::LogicalType& col_type) {
+duckdb::ColumnBinding ExposeGetColumnAt(duckdb::LogicalOperator& root,
+                                        duckdb::TableIndex anchor_ti,
+                                        const duckdb::LogicalGet& target_get,
+                                        duckdb::idx_t get_col_idx,
+                                        std::string_view col_name,
+                                        const duckdb::LogicalType& col_type) {
   if (anchor_ti == target_get.table_index) {
     return {target_get.table_index, duckdb::ProjectionIndex{get_col_idx}};
   }
@@ -1777,14 +1779,12 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
   // operator that table_index identifies. ExposeGetColumnAt handles
   // both the direct-on-GET and projection-between cases (injecting a
   // forwarder in the latter).
-  auto& col_ref =
-    func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
-  const auto binding = ExposeGetColumnAt(root, col_ref.binding.table_index,
-                                         *parsed.scan.get, get_col_idx,
-                                         col_name, col_type);
-  auto col = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(col_name,
-                                                                 col_type,
-                                                                 binding);
+  auto& col_ref = func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+  const auto binding =
+    ExposeGetColumnAt(root, col_ref.binding.table_index, *parsed.scan.get,
+                      get_col_idx, col_name, col_type);
+  auto col = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+    col_name, col_type, binding);
   col->alias = expr.alias;
   return col;
 }

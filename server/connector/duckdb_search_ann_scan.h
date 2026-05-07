@@ -106,6 +106,7 @@ struct SearchRangeScanLocalState : public CommonScanLocalState {
   PrimaryKeyBatch pk_batch;
   size_t current_idx = 0;
   irs::HNSWRangeSearchBuffer range_buffer;
+  std::vector<uint32_t> lookup_scratch;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

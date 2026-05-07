@@ -274,13 +274,12 @@ void RangeSearchSegment(duckdb::ClientContext& context,
       if constexpr (std::is_same_v<T, std::monostate>) {
         SDB_ASSERT(false, "pk_batch must be initialised");
       } else {
-        std::vector<uint32_t> lookup_scratch;
         LookupSegmentsValues(
           ids,
           [](int64_t id) {
             return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
           },
-          *g.reader, lookup_scratch,
+          *g.reader, l.lookup_scratch,
           [&](size_t /*orig*/, std::string_view pk_bytes) {
             AppendPrimaryKey(pk, pk_bytes);
           });

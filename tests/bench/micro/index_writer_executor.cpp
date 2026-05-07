@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 // Measures IndexWriter Commit() with and without an executor on a Stage 1-heavy
-// workload: many already committed segments plus many removal query contexts.
+// workload: many already committed segments plus many term removal contexts.
 
 #include <benchmark/benchmark.h>
 
@@ -30,11 +30,12 @@
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/all_filter.hpp>
+#include <iresearch/search/term_filter.hpp>
 #include <iresearch/store/data_output.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <string_view>
 #include <vector>
 #include <yaclib/runtime/fair_thread_pool.hpp>
@@ -92,13 +93,33 @@ irs::IndexWriterOptions MakeWriterOptions(
   return options;
 }
 
+std::vector<std::string> MakeTerms(int64_t term_count) {
+  std::vector<std::string> terms;
+  terms.reserve(static_cast<size_t>(term_count));
+
+  for (int64_t i = 0; i != term_count; ++i) {
+    terms.emplace_back("bucket_" + std::to_string(i));
+  }
+
+  return terms;
+}
+
+irs::Filter::ptr MakeTermFilter(std::string_view term) {
+  auto filter = std::make_unique<irs::ByTerm>();
+  *filter->mutable_field() = kFieldName;
+  filter->mutable_options()->term = irs::ViewCast<irs::byte_type>(term);
+  return filter;
+}
+
 void BuildCommittedSegments(irs::IndexWriter& writer, int64_t segment_count,
-                            int64_t docs_per_segment) {
+                            int64_t docs_per_segment,
+                            const std::vector<std::string>& terms) {
   StringField field{kFieldName};
-  field.Value("x");
 
   const auto docs_count = segment_count * docs_per_segment;
   for (int64_t i = 0; i != docs_count; ++i) {
+    field.Value(terms[static_cast<size_t>(i % terms.size())]);
+
     auto trx = writer.GetBatch();
     auto doc = trx.Insert();
     const auto ok = doc.Insert<irs::Action::INDEX>(field);
@@ -113,14 +134,14 @@ void BuildCommittedSegments(irs::IndexWriter& writer, int64_t segment_count,
   benchmark::DoNotOptimize(committed);
 }
 
-void AddRemovalQueryContexts(irs::IndexWriter& writer, int64_t query_contexts) {
+void AddRemovalQueryContexts(irs::IndexWriter& writer, int64_t query_contexts,
+                             const std::vector<std::string>& terms) {
   std::vector<irs::IndexWriter::Transaction> transactions;
   transactions.reserve(static_cast<size_t>(query_contexts));
 
   for (int64_t i = 0; i != query_contexts; ++i) {
     auto& trx = transactions.emplace_back(writer.GetBatch());
-    irs::Filter::ptr filter = std::make_unique<irs::All>();
-    trx.Remove(std::move(filter));
+    trx.Remove(MakeTermFilter(terms[static_cast<size_t>(i % terms.size())]));
   }
 
   for (auto& trx : transactions) {
@@ -134,17 +155,19 @@ struct Workload {
 };
 
 Workload PrepareWorkload(int64_t segment_count, int64_t query_contexts,
-                         int64_t docs_per_segment,
+                         int64_t docs_per_segment, int64_t term_count,
                          const yaclib::IExecutorPtr& executor) {
   Workload workload;
+  auto terms = MakeTerms(term_count);
 
   workload.dir = std::make_unique<irs::MemoryDirectory>();
   workload.writer = irs::IndexWriter::Make(
     *workload.dir, GetFormat(), irs::kOmCreate,
     MakeWriterOptions(static_cast<uint32_t>(docs_per_segment), executor));
 
-  BuildCommittedSegments(*workload.writer, segment_count, docs_per_segment);
-  AddRemovalQueryContexts(*workload.writer, query_contexts);
+  BuildCommittedSegments(*workload.writer, segment_count, docs_per_segment,
+                         terms);
+  AddRemovalQueryContexts(*workload.writer, query_contexts, terms);
 
   return workload;
 }
@@ -180,30 +203,48 @@ void StopExecutor(SharedExecutor& shared) {
   }
 }
 
+int64_t EstimatedMatchedDocs(int64_t segment_count, int64_t query_contexts,
+                             int64_t docs_per_segment, int64_t term_count) {
+  int64_t docs_per_segment_sum = 0;
+  for (int64_t i = 0; i != query_contexts; ++i) {
+    const auto term = i % term_count;
+    docs_per_segment_sum += docs_per_segment / term_count;
+    if (term < docs_per_segment % term_count) {
+      ++docs_per_segment_sum;
+    }
+  }
+  return segment_count * docs_per_segment_sum;
+}
+
 void SetCounters(benchmark::State& state, int64_t segment_count,
                  int64_t query_contexts, int64_t docs_per_segment,
-                 int64_t threads, int64_t batch_size) {
-  state.SetItemsProcessed(state.iterations() * segment_count * query_contexts *
-                          docs_per_segment);
+                 int64_t term_count, int64_t threads) {
+  const auto matched_docs = EstimatedMatchedDocs(segment_count, query_contexts,
+                                                 docs_per_segment, term_count);
+
+  state.SetItemsProcessed(state.iterations() * matched_docs);
   state.counters["segments"] = static_cast<double>(segment_count);
   state.counters["queries"] = static_cast<double>(query_contexts);
   state.counters["docs_per_segment"] = static_cast<double>(docs_per_segment);
+  state.counters["terms"] = static_cast<double>(term_count);
+  state.counters["matched_docs"] = static_cast<double>(matched_docs);
   state.counters["threads"] = static_cast<double>(threads);
-  state.counters["batch_size"] = static_cast<double>(batch_size);
 }
 
-void BmCommitAllRemovals(benchmark::State& state, bool use_executor) {
+void BmCommitRemovals(benchmark::State& state, bool use_executor) {
   const auto segment_count = state.range(0);
   const auto query_contexts = state.range(1);
   const auto docs_per_segment = state.range(2);
-  const auto threads = use_executor ? state.range(3) : 0;
+  const auto term_count = state.range(3);
+  const auto threads = use_executor ? state.range(4) : 0;
 
   auto shared_executor = MakeExecutor(threads);
 
   for (auto _ : state) {
     state.PauseTiming();
-    auto workload = PrepareWorkload(segment_count, query_contexts,
-                                    docs_per_segment, shared_executor.executor);
+    auto workload =
+      PrepareWorkload(segment_count, query_contexts, docs_per_segment,
+                      term_count, shared_executor.executor);
     state.ResumeTiming();
 
     const auto modified = workload.writer->Commit();
@@ -215,98 +256,33 @@ void BmCommitAllRemovals(benchmark::State& state, bool use_executor) {
   }
 
   StopExecutor(shared_executor);
-  SetCounters(state, segment_count, query_contexts, docs_per_segment, threads,
-              1);
+  SetCounters(state, segment_count, query_contexts, docs_per_segment,
+              term_count, threads);
 }
 
-void BmCommitAllRemovalsBatch(benchmark::State& state, bool use_executor) {
-  const auto segment_count = state.range(0);
-  const auto query_contexts = state.range(1);
-  const auto docs_per_segment = state.range(2);
-  const auto threads = use_executor ? state.range(3) : 0;
-  const auto batch_size = state.range(4);
-
-  auto shared_executor = MakeExecutor(threads);
-
-  while (state.KeepRunningBatch(batch_size)) {
-    state.PauseTiming();
-    std::vector<Workload> workloads;
-    workloads.reserve(static_cast<size_t>(batch_size));
-    for (int64_t i = 0; i != batch_size; ++i) {
-      workloads.emplace_back(PrepareWorkload(segment_count, query_contexts,
-                                             docs_per_segment,
-                                             shared_executor.executor));
-    }
-    state.ResumeTiming();
-
-    for (auto& workload : workloads) {
-      const auto modified = workload.writer->Commit();
-      benchmark::DoNotOptimize(modified);
-    }
-
-    state.PauseTiming();
-    for (auto& workload : workloads) {
-      CleanupWorkload(workload);
-    }
-    state.ResumeTiming();
-  }
-
-  StopExecutor(shared_executor);
-  SetCounters(state, segment_count, query_contexts, docs_per_segment, threads,
-              batch_size);
-}
-
-void BmNoExecutor(benchmark::State& state) {
-  BmCommitAllRemovals(state, false);
-}
+void BmNoExecutor(benchmark::State& state) { BmCommitRemovals(state, false); }
 
 void BmFairThreadPool(benchmark::State& state) {
-  BmCommitAllRemovals(state, true);
-}
-
-void BmNoExecutorBatch(benchmark::State& state) {
-  BmCommitAllRemovalsBatch(state, false);
-}
-
-void BmFairThreadPoolBatch(benchmark::State& state) {
-  BmCommitAllRemovalsBatch(state, true);
+  BmCommitRemovals(state, true);
 }
 
 BENCHMARK(BmNoExecutor)
-  ->Args({16, 4, 256, 0})
-  ->Args({32, 8, 256, 0})
-  ->Args({64, 16, 256, 0})
-  ->Args({128, 32, 256, 0})
-  ->Args({256, 64, 256, 0})
-  ->Args({512, 64, 256, 0})
-  ->Unit(benchmark::kMillisecond);
+  ->Args({64, 8, 4096, 16, 0})
+  ->Args({128, 16, 4096, 64, 0})
+  ->Args({256, 32, 4096, 256, 0})
+  ->Args({512, 64, 256, 1, 0})
+  ->ArgNames({"segments", "queries", "docs_per_segment", "terms", "threads"})
+  ->Unit(benchmark::kMillisecond)
+  ->UseRealTime();
 
 BENCHMARK(BmFairThreadPool)
-  ->Args({16, 4, 256, 8})
-  ->Args({32, 8, 256, 8})
-  ->Args({64, 16, 256, 8})
-  ->Args({128, 32, 256, 8})
-  ->Args({256, 64, 256, 8})
-  ->Args({512, 64, 256, 8})
-  ->Unit(benchmark::kMillisecond);
-
-BENCHMARK(BmNoExecutorBatch)
-  ->Args({16, 4, 256, 0, 8})
-  ->Args({32, 8, 256, 0, 8})
-  ->Args({64, 16, 256, 0, 16})
-  ->Args({128, 32, 256, 0, 32})
-  ->Args({256, 64, 256, 0, 32})
-  ->Args({512, 128, 256, 0, 32})
-  ->Unit(benchmark::kMillisecond);
-
-BENCHMARK(BmFairThreadPoolBatch)
-  ->Args({16, 4, 256, 8, 8})
-  ->Args({32, 8, 256, 8, 8})
-  ->Args({64, 16, 256, 8, 16})
-  ->Args({128, 32, 256, 8, 32})
-  ->Args({256, 64, 256, 8, 32})
-  ->Args({512, 128, 256, 8, 32})
-  ->Unit(benchmark::kMillisecond);
+  ->Args({64, 8, 4096, 16, 8})
+  ->Args({128, 16, 4096, 64, 8})
+  ->Args({256, 32, 4096, 256, 8})
+  ->Args({512, 64, 256, 1, 8})
+  ->ArgNames({"segments", "queries", "docs_per_segment", "terms", "threads"})
+  ->Unit(benchmark::kMillisecond)
+  ->UseRealTime();
 
 }  // namespace
 

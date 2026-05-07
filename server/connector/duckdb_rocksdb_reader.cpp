@@ -34,7 +34,6 @@
 
 namespace sdb::connector {
 
-// Forward declarations -- defined below after anonymous namespace
 void DeserializeListValue(std::string_view value, duckdb::Vector& output,
                           const duckdb::LogicalType& type, duckdb::idx_t idx);
 void DeserializeArrayValue(std::string_view value, duckdb::Vector& output,
@@ -44,8 +43,6 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
 void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
                          const duckdb::LogicalType& type, duckdb::idx_t idx);
 
-// Iterate a RocksDB column iterator, calling `func(row_idx, value)` for each
-// row. Returns the number of rows iterated.
 template<typename Func>
 static duckdb::idx_t IterateColumn(rocksdb::Iterator& it,
                                    duckdb::idx_t max_rows, Func&& func) {
@@ -290,24 +287,18 @@ duckdb::idx_t ReadColumnWithRowId(rocksdb::Iterator& it,
                                   duckdb::Vector& rowid_output,
                                   size_t key_prefix_size,
                                   duckdb::idx_t max_rows) {
-  // We need to read both value AND key for each row in one pass.
-  // Can't use the typed readers (they advance the iterator).
-  // Instead, do a generic loop extracting both.
+  // Generic loop: typed readers advance the iterator independently, so we
+  // can't use them when we need both key and value per row.
   duckdb::idx_t count = 0;
-
   while (it.Valid() && count < max_rows) {
-    // Extract PK bytes from key
     auto key = it.key().ToStringView();
     SDB_ASSERT(key.size() >= key_prefix_size);
     auto pk_bytes = key.substr(key_prefix_size);
     duckdb::FlatVector::GetDataMutable<duckdb::string_t>(rowid_output)[count] =
       duckdb::StringVector::AddStringOrBlob(rowid_output, pk_bytes.data(),
                                             pk_bytes.size());
-
-    // Read column value via shared helper
     DeserializeValueIntoDuckDB(it.value().ToStringView(), col_output, type,
                                count);
-
     ++count;
     it.Next();
   }
@@ -441,7 +432,6 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
 
 namespace {
 
-// Deserialize sub-vector elements into a DuckDB child Vector.
 // Port of ArrayColumnDecoder::AddImpl (rocksdb_column_decoder.cpp:129).
 void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
                                   duckdb::Vector& child,
@@ -472,7 +462,6 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
     } break;
     case duckdb::LogicalTypeId::VARCHAR:
     case duckdb::LogicalTypeId::BLOB: {
-      // Variable-length: read length array, then string data
       const uint8_t* lptr = ptr;
       ptr += length_array_size;
       for (uint32_t i = 0; i < elem_count; i++) {
@@ -490,8 +479,6 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
       }
     } break;
     case duckdb::LogicalTypeId::STRUCT: {
-      // Mirror image of WriteStructSubVector: read the per-element length
-      // array, then deserialize each struct slot from its slice.
       const uint8_t* lptr = ptr;
       ptr += length_array_size;
       for (uint32_t i = 0; i < elem_count; i++) {
@@ -507,8 +494,6 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
       }
     } break;
     default: {
-      // Fixed-width types -- dispatch by type to get correct
-      // GetDataMutable<T>
       auto copy_fixed = [&]<typename T>(T*) {
         auto* out = duckdb::FlatVector::GetDataMutable<T>(child);
         std::memcpy(&out[child_offset], ptr, elem_count * sizeof(T));
@@ -600,9 +585,8 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           running_offset += size;
         }
       }
-      ptr += elem_count * sizeof(uint32_t);  // skip sizes block
+      ptr += elem_count * sizeof(uint32_t);
 
-      // Parse child sub-vector (all elements from all lists combined).
       if (total_child_elems > 0) {
         auto sub_count = irs::vread<uint32_t>(ptr);
         SDB_ASSERT(sub_count == total_child_elems);
@@ -679,17 +663,14 @@ void DeserializeListValue(std::string_view value, duckdb::Vector& output,
   auto& child_type = duckdb::ListType::GetChildType(type);
 
   if (is_constant) {
-    // Constant: single value replicated
     SDB_ASSERT(!have_nulls);
     auto remaining = static_cast<size_t>(end - ptr);
     if (remaining == 0) {
-      // All NULLs
       auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
       for (uint32_t i = 0; i < elem_count; i++) {
         child_validity.SetInvalid(current_size + i);
       }
     } else {
-      // Single value, replicate
       for (uint32_t i = 0; i < elem_count; i++) {
         auto val_sv =
           std::string_view{reinterpret_cast<const char*>(ptr), remaining};
@@ -724,7 +705,6 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
   auto& children = duckdb::StructVector::GetEntries(output);
   const auto num_children = children.size();
 
-  // Read length_array_size header, then the n-1 per-child lengths.
   auto length_array_size = irs::vread<uint32_t>(ptr);
   const uint8_t* data_start = ptr + length_array_size;
 
@@ -733,7 +713,6 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
   for (size_t i = 0; i + 1 < num_children; ++i) {
     lengths.push_back(irs::vread<uint32_t>(ptr));
   }
-  // Advance past the length array to the start of child data.
   ptr = data_start;
 
   for (size_t i = 0; i < num_children; ++i) {
@@ -741,7 +720,7 @@ void DeserializeStructValue(std::string_view value, duckdb::Vector& output,
     if (i + 1 < num_children) {
       child_len = lengths[i];
     } else {
-      // Last child: consume all remaining bytes.
+      // Last child's length is implicit (all remaining bytes).
       child_len = static_cast<size_t>(end - ptr);
     }
 
@@ -777,7 +756,6 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
 
   auto keys_size = irs::vread<uint32_t>(ptr);
   if (!keys_size) {
-    // Empty MAP
     duckdb::ListVector::GetData(output)[idx] =
       duckdb::list_entry_t{duckdb::ListVector::GetListSize(output), 0};
     return;
@@ -785,8 +763,8 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   const uint8_t* keys_start = ptr;
   const uint8_t* keys_end = ptr + keys_size;
 
-  // Peek at elem_count from keys sub-vector to reserve capacity before
-  // writing.
+  // Peek elem_count out of the keys sub-vector header to size the result
+  // before writing -- the actual ptr advance happens inside parse_sub_vector.
   const uint8_t* peek = keys_start;
   auto elem_count = irs::vread<uint32_t>(peek);
   SDB_ASSERT(elem_count > 0);
@@ -803,12 +781,9 @@ void DeserializeMapValue(std::string_view value, duckdb::Vector& output,
   auto& key_type = duckdb::MapType::KeyType(type);
   auto& val_type = duckdb::MapType::ValueType(type);
 
-  // Parse sub-vector header at ptr into flags/have_*/length_array_size.
-  // Fills `child` starting at child_offset. Advances ptr.
   auto parse_sub_vector = [&](const uint8_t* sub_end, duckdb::Vector& child,
                               duckdb::idx_t child_offset,
                               const duckdb::LogicalType& child_type) {
-    // elem_count already consumed via peek; re-consume from actual ptr.
     [[maybe_unused]] auto n = irs::vread<uint32_t>(ptr);
     auto sub_flags = static_cast<ValueFlags>(*ptr++);
     bool is_constant = (sub_flags & ValueFlags::Constant) != ValueFlags::None;
@@ -865,7 +840,6 @@ void DeserializeArrayValue(std::string_view value, duckdb::Vector& output,
 
   auto elem_count = irs::vread<uint32_t>(ptr);
   if (elem_count == 0) {
-    // Zero-element ARRAY: mark child slots invalid
     auto& child_validity = duckdb::FlatVector::ValidityMutable(child);
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
       child_validity.SetInvalid(idx * array_size + i);

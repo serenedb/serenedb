@@ -527,7 +527,6 @@ void DuckDBColumnSerializer::WriteColumn(
                                                  row_keys, index_writers);
       break;
     case duckdb::LogicalTypeId::ENUM:
-      // ENUM stored as ordinals matching the physical type.
       switch (duckdb::EnumType::GetPhysicalType(type)) {
         case duckdb::PhysicalType::UINT8:
           WriteFlatColumn<Writer, uint8_t>(writer, vec, num_rows, row_keys,
@@ -550,7 +549,6 @@ void DuckDBColumnSerializer::WriteColumn(
   }
 }
 
-// Explicit instantiations for both writer types
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
   TxnWriter&, const duckdb::Vector&, const duckdb::LogicalType&, duckdb::idx_t,
@@ -704,8 +702,6 @@ template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint16_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
 template size_t DuckDBColumnSerializer::WriteSubVectorPrimitive<uint32_t>(
   const duckdb::UnifiedVectorFormat&, duckdb::idx_t, duckdb::idx_t);
-
-// --- WriteSubVectorBool ---
 
 size_t DuckDBColumnSerializer::WriteSubVectorBool(
   const duckdb::UnifiedVectorFormat& fmt, duckdb::idx_t offset,
@@ -910,9 +906,6 @@ size_t DuckDBColumnSerializer::WriteListSubVector(
   }
   _row_slices.emplace_back(sizes_buf, sizes_bytes);
 
-  // Elements: emit the contiguous range covering all selected list bodies.
-  // The child sub-vector encoder handles its own format dispatch via
-  // rdata.children[0].unified.
   auto& child_type = duckdb::ListType::GetChildType(type);
   size_t child_bytes = 0;
   if (total_child_count > 0) {

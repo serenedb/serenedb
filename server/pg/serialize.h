@@ -49,44 +49,24 @@ struct RecordSerializers {
   std::vector<int32_t> oids;  // populated for binary, empty for text
 };
 
-// Per-type field-dispatch cache. Within one portal each struct type is
-// resolved at exactly one format, so a single map suffices; try_emplace's
-// `inserted` flag is the build trigger.
 struct TypesSerializationCache {
   containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>
     by_type;
 };
 
-// Escape sequences for emitting one literal '"' or '\\' byte at the current
-// position in the wrap stack. Default (top-level): one byte / count of one.
-// Each containing wrap rewrites them via EnterArrayWrap / EnterRecordWrap so
-// that nested wraps produce PG-conformant escape sequences without a scratch
-// buffer.
-//
-// `backslash_seq` is encoded as a count because every wrap rule sets
-// new_b = old_b + old_b, so it stays a homogeneous run of '\\' bytes
-// (length 2^depth). `quote_seq` cannot collapse to a count: Array's rule
-// (new_q = old_b + old_q) and Record's rule (new_q = old_q + old_q) produce
-// different interleaved byte patterns depending on the wrap stack order.
 struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   const catalog::Snapshot* snapshot = nullptr;
-  std::string_view quote_seq{"\"", 1};
+  std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
-  // When true, GetSerialization returns the in-record-field text variant
-  // (raw bytes, no SerializeNullable length prefix). Only meaningful at
-  // function-pointer-resolution time; callers set it on a local copy.
   bool in_record = false;
   std::shared_ptr<TypesSerializationCache> types_cache;
 };
 
 void FillContext(const Config& config, SerializationContext& context);
 
-// Set `context.in_record = true` (typically on a local copy of the context)
-// to get the in-record-field text variant (raw bytes, no SerializeNullable
-// length prefix). Used by SerializeRecord's text path.
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);

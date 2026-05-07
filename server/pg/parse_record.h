@@ -71,7 +71,6 @@ void ParsePgTextRecord(std::string_view input, OnField&& on_field,
     bool is_null = false;
 
     if (i < input.size() && input[i] == '"') {
-      // Quoted field: "" -> ", \X -> X. Closing quote ends the field.
       ++i;
       while (i < input.size()) {
         if (input[i] == '"') {
@@ -79,7 +78,7 @@ void ParsePgTextRecord(std::string_view input, OnField&& on_field,
             buf += '"';
             i += 2;
           } else {
-            ++i;  // closing '"'
+            ++i;
             break;
           }
         } else if (input[i] == '\\' && i + 1 < input.size()) {
@@ -90,7 +89,6 @@ void ParsePgTextRecord(std::string_view input, OnField&& on_field,
         }
       }
     } else {
-      // Unquoted field: ends at ','. Empty -> NULL. Backslash escapes.
       while (i < input.size() && input[i] != ',') {
         if (input[i] == '\\' && i + 1 < input.size()) {
           buf += input[++i];
@@ -113,7 +111,7 @@ void ParsePgTextRecord(std::string_view input, OnField&& on_field,
       on_error("malformed record literal: unexpected character after field");
       return;
     }
-    ++i;  // skip comma
+    ++i;
   }
 }
 

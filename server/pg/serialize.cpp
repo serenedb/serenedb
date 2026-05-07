@@ -62,18 +62,12 @@
 namespace sdb::pg {
 namespace {
 
-// For types whose Text serializer doesn't take a separate in-record
-// instantiation: the same `text` function is called raw for in-record
-// fields (no SerializeNullable length prefix), or wrapped in SerializeNullable
-// at top-level/array.
-#define RETURN_SERIALIZATION(serialize_text, serialize_binary)             \
-  return format == VarFormat::Binary                                       \
-           ? SerializeNullable<serialize_binary>                           \
-           : (context.in_record ? serialize_text                           \
+#define RETURN_SERIALIZATION(serialize_text, serialize_binary) \
+  return format == VarFormat::Binary                           \
+           ? SerializeNullable<serialize_binary>               \
+           : (context.in_record ? serialize_text               \
                                 : SerializeNullable<serialize_text>)
 
-// For types with a distinct in-record text variant (varchar, enum, json,
-// bytea, timestamps, interval, struct).
 #define RETURN_IN_RECORD_SERIALIZATION(text, text_in_record, binary) \
   return format == VarFormat::Binary                                 \
            ? SerializeNullable<binary>                               \
@@ -87,24 +81,18 @@ enum class ArrayKind {
 
 inline constexpr int32_t kDynamicOid = -2;
 
-// Internal wrap-style tag used by WriteWrapped to pick the deepening rule.
 enum class WrapContext : uint8_t {
   None,
   Array,
   Record,
 };
 
-// Forward decls: defined further down, used by leaf serializers and the array
-// record-wrap predicate.
 bool RecordItemNeedsQuoting(std::string_view s);
 template<WrapContext InContainer>
 bool NeedsQuotingIn(const duckdb::LogicalType& type,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row);
 
-// Emit `s` to ctx.buffer, replacing each '"' with ctx.quote_seq and each '\\'
-// with `ctx.backslash_count` consecutive '\\' bytes. At top level (count of 1
-// and a single-byte quote_seq) this degenerates to a raw write.
 inline void EmitEscaped(SerializationContext ctx, std::string_view s) {
   if (ctx.quote_seq.size() == 1 && ctx.backslash_count == 1) {
     ctx.buffer->WriteUncommitted(s);
@@ -137,7 +125,7 @@ inline void EmitEscaped(SerializationContext ctx, std::string_view s) {
   });
 }
 
-// Push a new array-style wrap as the innermost level. Array rule:
+// Array escape rule:
 //   source '"'  -> previous '\\' encoding + previous '"' encoding
 //   source '\\' -> two previous '\\' encodings (count doubles)
 inline void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
@@ -148,7 +136,7 @@ inline void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
   ctx.backslash_count *= 2;
 }
 
-// Push a new record-style wrap. Record rule:
+// Record escape rule:
 //   source '"'  -> two previous '"' encodings
 //   source '\\' -> two previous '\\' encodings (count doubles)
 inline void EnterRecordWrap(SerializationContext& ctx, std::string& q_buf) {
@@ -158,9 +146,6 @@ inline void EnterRecordWrap(SerializationContext& ctx, std::string& q_buf) {
   ctx.backslash_count *= 2;
 }
 
-// Emit body(inner_ctx) enclosed in quotes - "..."; The outer context's escape
-// sequences are used for the wrap delimiters; inside the wrap, escape
-// sequences are deepened by Wrap's rule.
 template<WrapContext Wrap, typename Body>
 void WriteWrapped(SerializationContext outer_ctx, Body&& body) {
   static_assert(Wrap != WrapContext::None);
@@ -176,56 +161,59 @@ void WriteWrapped(SerializationContext outer_ctx, Body&& body) {
   outer_ctx.buffer->WriteUncommitted(outer_ctx.quote_seq);
 }
 
-#define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid)      \
-  switch (kind) {                                                              \
-    case ArrayKind::ListSingleDimension: {                                     \
-      static constexpr auto kArrText =                                         \
-        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,             \
-                             ArrayKind::ListSingleDimension,                   \
-                             WrapContext::None>;                               \
-      static constexpr auto kArrTextInRecord =                                 \
-        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,             \
-                             ArrayKind::ListSingleDimension,                   \
-                             WrapContext::Record>;                             \
-      static constexpr auto kArrBinary =                                       \
-        SerializeOneDimArray<serialize_binary, oid, VarFormat::Binary,         \
-                             ArrayKind::ListSingleDimension,                   \
-                             WrapContext::None>;                               \
-      return format == VarFormat::Binary                                       \
-               ? SerializeNullable<kArrBinary>                                 \
-               : (context.in_record ? kArrTextInRecord : SerializeNullable<kArrText>); \
-    }                                                                          \
-    case ArrayKind::ArraySingleDimension: {                                    \
-      static constexpr auto kArrText =                                         \
-        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,             \
-                             ArrayKind::ArraySingleDimension,                  \
-                             WrapContext::None>;                               \
-      static constexpr auto kArrTextInRecord =                                 \
-        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,             \
-                             ArrayKind::ArraySingleDimension,                  \
-                             WrapContext::Record>;                             \
-      static constexpr auto kArrBinary =                                       \
-        SerializeOneDimArray<serialize_binary, oid, VarFormat::Binary,         \
-                             ArrayKind::ArraySingleDimension,                  \
-                             WrapContext::None>;                               \
-      return format == VarFormat::Binary                                       \
-               ? SerializeNullable<kArrBinary>                                 \
-               : (context.in_record ? kArrTextInRecord : SerializeNullable<kArrText>); \
-    }                                                                          \
-    case ArrayKind::MultiDimensions: {                                         \
-      static constexpr auto kArrText =                                         \
-        SerializeArray<serialize_text, oid, VarFormat::Text,                   \
-                       WrapContext::None>;                                     \
-      static constexpr auto kArrTextInRecord =                                 \
-        SerializeArray<serialize_text, oid, VarFormat::Text,                   \
-                       WrapContext::Record>;                                   \
-      static constexpr auto kArrBinary =                                       \
-        SerializeArray<serialize_binary, oid, VarFormat::Binary,               \
-                       WrapContext::None>;                                     \
-      return format == VarFormat::Binary                                       \
-               ? SerializeNullable<kArrBinary>                                 \
-               : (context.in_record ? kArrTextInRecord : SerializeNullable<kArrText>); \
-    }                                                                          \
+#define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid) \
+  switch (kind) {                                                         \
+    case ArrayKind::ListSingleDimension: {                                \
+      static constexpr auto kArrText =                                    \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ListSingleDimension,              \
+                             WrapContext::None>;                          \
+      static constexpr auto kArrTextInRecord =                            \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ListSingleDimension,              \
+                             WrapContext::Record>;                        \
+      static constexpr auto kArrBinary =                                  \
+        SerializeOneDimArray<serialize_binary, oid, VarFormat::Binary,    \
+                             ArrayKind::ListSingleDimension,              \
+                             WrapContext::None>;                          \
+      return format == VarFormat::Binary                                  \
+               ? SerializeNullable<kArrBinary>                            \
+               : (context.in_record ? kArrTextInRecord                    \
+                                    : SerializeNullable<kArrText>);       \
+    }                                                                     \
+    case ArrayKind::ArraySingleDimension: {                               \
+      static constexpr auto kArrText =                                    \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ArraySingleDimension,             \
+                             WrapContext::None>;                          \
+      static constexpr auto kArrTextInRecord =                            \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ArraySingleDimension,             \
+                             WrapContext::Record>;                        \
+      static constexpr auto kArrBinary =                                  \
+        SerializeOneDimArray<serialize_binary, oid, VarFormat::Binary,    \
+                             ArrayKind::ArraySingleDimension,             \
+                             WrapContext::None>;                          \
+      return format == VarFormat::Binary                                  \
+               ? SerializeNullable<kArrBinary>                            \
+               : (context.in_record ? kArrTextInRecord                    \
+                                    : SerializeNullable<kArrText>);       \
+    }                                                                     \
+    case ArrayKind::MultiDimensions: {                                    \
+      static constexpr auto kArrText =                                    \
+        SerializeArray<serialize_text, oid, VarFormat::Text,              \
+                       WrapContext::None>;                                \
+      static constexpr auto kArrTextInRecord =                            \
+        SerializeArray<serialize_text, oid, VarFormat::Text,              \
+                       WrapContext::Record>;                              \
+      static constexpr auto kArrBinary =                                  \
+        SerializeArray<serialize_binary, oid, VarFormat::Binary,          \
+                       WrapContext::None>;                                \
+      return format == VarFormat::Binary                                  \
+               ? SerializeNullable<kArrBinary>                            \
+               : (context.in_record ? kArrTextInRecord                    \
+                                    : SerializeNullable<kArrText>);       \
+    }                                                                     \
   }
 
 template<SerializationFunction ValueSerialization>
@@ -354,8 +342,6 @@ void SerializeVarchar(SerializationContext context,
         return;
       }
     }
-    // No-trigger branch: value contains no '"' or '\\' (both are triggers in
-    // both rule sets), so no escape translation is needed -- write raw.
     context.buffer->WriteUncommitted(value);
   } else {
     context.buffer->WriteUncommitted(value);
@@ -558,10 +544,8 @@ void SerializeUhugeint(SerializationContext context,
   }
 }
 
-// Emit '\\xnnnn' bytea-hex form via the context's buffer, with the leading
-// '\\' going through `ctx.backslash_count` repetitions so nested wraps emit
-// the depth-correct escape sequence. At top level this degenerates to writing
-// a literal '\\x' prefix.
+// The leading '\\' goes through ctx.backslash_count so nested wraps emit
+// the depth-correct escape sequence; the rest is hex-only and never triggers.
 inline void ByteaOutHex(SerializationContext ctx, std::string_view value) {
   EmitEscaped(ctx, std::string_view{"\\", 1});
   const auto body_size = 1 + 2 * value.size();
@@ -958,9 +942,9 @@ void SerializeOneDimArray(SerializationContext context,
 }
 
 // Multi-dim array serialization (text only for now, binary uses FlattenArray).
-// `leaf_oid` is filled in once the leaf element type is reached -- either via
-// the data-driven recursion (the base case) or, for empty arrays, by walking
-// the remaining type since the data path never reaches a leaf.
+// `leaf_oid` is filled at the leaf -- via the data-driven recursion (base
+// case) or, for empty arrays, by walking the remaining type since the data
+// path never reaches a leaf.
 template<SerializationFunction ElementSerialization, VarFormat Format,
          bool First = true>
 int32_t FlattenArray(SerializationContext context,
@@ -1273,17 +1257,6 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row);
 
-// Would this value, when rendered bare at the current depth, contain any
-// char that triggers `InContainer`'s container-wrap rule? Drives the
-// "should I be wrapped in `"..."` as a child of `InContainer`" decision at
-// each callsite.
-//
-// Both Array and Record share the same answer for nearly every type: the
-// rendered bytes either always contain a trigger char (timestamp/interval/
-// blob/struct), never do (numeric/uuid/bit/date/time), or it depends on the
-// payload (varchar/enum). Only nested containers differ -- a multi-dim
-// array renders bare `{...}` whose `{`/`}` are array triggers but not record
-// triggers.
 template<WrapContext InContainer>
 bool NeedsQuotingIn(const duckdb::LogicalType& type,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
@@ -1324,11 +1297,6 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
       return true;
     case CHAR:
     case VARCHAR: {
-      // Either the bytes contain Outer's trigger directly, or they contain
-      // the inner-context trigger and the inner self-wraps to `"..."`,
-      // producing `"` -- which is a trigger for both Array and Record.
-      // Keep the string_t alive while we peek (short strings store their
-      // bytes inline in the string_t itself).
       const auto& raw =
         vdata.unified
           .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
@@ -1382,9 +1350,6 @@ bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
   return NeedsQuotingIn<WrapContext::Array>(children[0].second, child, row);
 }
 
-// Get the cached field-dispatch plan for a STRUCT type, building it only on
-// first miss. The portal owns the cache and wires it into the context before
-// serialization begins (see pg_comm_task::BindStatement).
 template<VarFormat Format>
 const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
@@ -1421,7 +1386,6 @@ void SerializeRecord(SerializationContext context,
   const auto& cache = GetSerializersCache<Format>(context, vdata.logical_type);
 
   if constexpr (Format == VarFormat::Text) {
-    // Render '(field0,...,fieldN)' direct to ctx.buffer at the current depth.
     auto emit_inside = [&](SerializationContext ctx) {
       ctx.buffer->WriteUncommitted("(");
       for (size_t i = 0; i < cache.fns.size(); ++i) {
@@ -1439,14 +1403,13 @@ void SerializeRecord(SerializationContext context,
     };
 
     if constexpr (InContainer == WrapContext::Array) {
-      // wrap if the rendered '(...)' would have any array trigger char.
       if (RecordHasArrayTrigger(vdata.logical_type, vdata, row)) {
         WriteWrapped<WrapContext::Array>(context, emit_inside);
       } else {
         emit_inside(context);
       }
     } else if constexpr (InContainer == WrapContext::Record) {
-      // record contains (, so we always wrap it
+      // '(' is a record trigger, so a record-in-record always wraps.
       WriteWrapped<WrapContext::Record>(context, emit_inside);
     } else {
       emit_inside(context);

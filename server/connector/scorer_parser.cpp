@@ -21,6 +21,7 @@
 #include "connector/scorer_parser.h"
 
 #include <absl/strings/ascii.h>
+
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -28,7 +29,6 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
-
 #include <string>
 
 #include "basics/errors.h"
@@ -86,25 +86,32 @@ ResultOr<duckdb::unique_ptr<duckdb::ParsedExpression>> WrapWithPlaceholder(
 
 }  // namespace
 
-ResultOr<catalog::Scorer> ParseScorerExpression(
-  duckdb::ClientContext& context, std::string_view input) {
+ResultOr<catalog::Scorer> ParseScorerExpression(duckdb::ClientContext& context,
+                                                std::string_view input) {
   using namespace duckdb;
   std::string source(input);
 
-  auto parsed = basics::SafeCallT(
-    [&] { return Parser::ParseExpressionList(source); });
+  auto parsed =
+    basics::SafeCallT([&] { return Parser::ParseExpressionList(source); });
   if (!parsed) {
     return std::unexpected<Result>{
-      std::in_place, ERROR_BAD_PARAMETER,
-      "Cannot parse 'optimize_top_k' scorer expression '", input,
-      "': ", parsed.error().errorMessage()};
+      std::in_place,
+      ERROR_BAD_PARAMETER,
+      "Cannot parse 'optimize_top_k' scorer expression '",
+      input,
+      "': ",
+      parsed.error().errorMessage()};
   }
   auto& exprs = *parsed;
   if (exprs.size() != 1) {
     return std::unexpected<Result>{
-      std::in_place, ERROR_BAD_PARAMETER,
+      std::in_place,
+      ERROR_BAD_PARAMETER,
       "'optimize_top_k' must be a single scorer expression, got ",
-      exprs.size(), " in '", input, "'"};
+      exprs.size(),
+      " in '",
+      input,
+      "'"};
   }
 
   auto wrapped = WrapWithPlaceholder(std::move(exprs[0]), input);
@@ -125,14 +132,15 @@ ResultOr<catalog::Scorer> ParseScorerExpression(
 
   auto bound_result = basics::SafeCallT([&] { return cb.Bind(fn_expr); });
   if (!bound_result) {
-    return std::unexpected<Result>{
-      std::in_place, ERROR_BAD_PARAMETER,
-      "Cannot bind 'optimize_top_k' scorer '", input,
-      "': ", bound_result.error().errorMessage()};
+    return std::unexpected<Result>{std::in_place,
+                                   ERROR_BAD_PARAMETER,
+                                   "Cannot bind 'optimize_top_k' scorer '",
+                                   input,
+                                   "': ",
+                                   bound_result.error().errorMessage()};
   }
   auto bound = std::move(*bound_result);
-  if (!bound ||
-      bound->expression_class != ExpressionClass::BOUND_FUNCTION) {
+  if (!bound || bound->expression_class != ExpressionClass::BOUND_FUNCTION) {
     return std::unexpected<Result>{
       std::in_place, ERROR_BAD_PARAMETER,
       "'optimize_top_k' did not bind to a scorer function: '", input, "'"};

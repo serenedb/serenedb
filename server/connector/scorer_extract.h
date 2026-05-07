@@ -21,7 +21,6 @@
 #pragma once
 
 #include <duckdb/planner/expression/bound_function_expression.hpp>
-
 #include <optional>
 #include <string_view>
 

@@ -44,7 +44,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
-#include "connector/scorer_parser.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_search_sink_writer.h"
 #include "connector/duckdb_secondary_sink_writer.h"
@@ -52,6 +51,7 @@
 #include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
+#include "connector/scorer_parser.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -342,8 +342,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     std::optional<catalog::Scorer> wand_scorer;
     it = _info->options.find("optimize_top_k");
     if (it != _info->options.end()) {
-      auto value =
-        it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                     .GetValue<std::string>();
       auto parsed = ParseScorerExpression(context, value);
       if (!parsed) {
         throw duckdb::CatalogException(

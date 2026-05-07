@@ -21,6 +21,7 @@
 #include "catalog/scorer.h"
 
 #include <absl/strings/str_cat.h>
+
 #include <magic_enum/magic_enum.hpp>
 
 namespace sdb::catalog {
@@ -31,8 +32,8 @@ std::string Scorer::ToString() const {
       if constexpr (std::is_same_v<P, Bm25>) {
         return absl::StrCat("bm25(k1=", p.k1, ", b=", p.b, ")");
       } else if constexpr (std::is_same_v<P, Tfidf>) {
-        return absl::StrCat("tfidf(with_norms=",
-                            p.with_norms ? "true" : "false", ")");
+        return absl::StrCat(
+          "tfidf(with_norms=", p.with_norms ? "true" : "false", ")");
       } else if constexpr (std::is_same_v<P, RawTf>) {
         return "raw_tf()";
       } else if constexpr (std::is_same_v<P, LmJm>) {
@@ -42,8 +43,8 @@ std::string Scorer::ToString() const {
       } else if constexpr (std::is_same_v<P, IndriDirichlet>) {
         return absl::StrCat("indri_dirichlet(mu=", p.mu, ")");
       } else if constexpr (std::is_same_v<P, Dfi>) {
-        return absl::StrCat("dfi(measure=",
-                            magic_enum::enum_name(p.measure), ")");
+        return absl::StrCat("dfi(measure=", magic_enum::enum_name(p.measure),
+                            ")");
       }
     },
     params);

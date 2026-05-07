@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "connector/functions/search.h"
-#include "catalog/scorer.h"
 
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/extension_type_info.hpp>
@@ -39,6 +38,7 @@
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
+#include "catalog/scorer.h"
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/vector.h"

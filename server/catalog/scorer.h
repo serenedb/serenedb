@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <vpack/serializer.h>
+
+#include <cstdint>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/dfi.hpp>
 #include <iresearch/search/indri_dirichlet.hpp>
@@ -28,9 +31,6 @@
 #include <iresearch/search/raw_tf.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
-#include <vpack/serializer.h>
-
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -95,8 +95,8 @@ struct Scorer {
     bool operator==(const Dfi&) const = default;
   };
 
-  using Params = std::variant<Bm25, Tfidf, RawTf, LmJm, LmDirichlet,
-                              IndriDirichlet, Dfi>;
+  using Params =
+    std::variant<Bm25, Tfidf, RawTf, LmJm, LmDirichlet, IndriDirichlet, Dfi>;
 
   Params params;
 

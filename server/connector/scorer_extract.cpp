@@ -21,10 +21,10 @@
 #include "connector/scorer_extract.h"
 
 #include <absl/strings/str_join.h>
-#include <duckdb/planner/expression/bound_constant_expression.hpp>
-#include <magic_enum/magic_enum.hpp>
 
 #include <cmath>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "basics/errors.h"
 
@@ -110,8 +110,7 @@ ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
       if (p.mu < 0.0f || !std::isfinite(p.mu)) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
-          "indri_dirichlet mu must be a non-negative finite value, got ",
-          p.mu};
+          "indri_dirichlet mu must be a non-negative finite value, got ", p.mu};
       }
     }
     scorer.params = p;
@@ -123,14 +122,17 @@ ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
         return std::nullopt;
       }
       auto s = mv->GetValue<std::string>();
-      auto parsed = magic_enum::enum_cast<S::DfiMeasure>(
-        s, magic_enum::case_insensitive);
+      auto parsed =
+        magic_enum::enum_cast<S::DfiMeasure>(s, magic_enum::case_insensitive);
       if (!parsed) {
         return std::unexpected<Result>{
-          std::in_place, ERROR_BAD_PARAMETER,
+          std::in_place,
+          ERROR_BAD_PARAMETER,
           "dfi measure must be one of: ",
           absl::StrJoin(magic_enum::enum_names<S::DfiMeasure>(), ", "),
-          "; got '", s, "'"};
+          "; got '",
+          s,
+          "'"};
       }
       p.measure = *parsed;
     }

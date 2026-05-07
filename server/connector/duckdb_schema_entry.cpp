@@ -381,8 +381,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     std::optional<catalog::Scorer> wand_scorer;
     it = info.options.find("optimize_top_k");
     if (it != info.options.end()) {
-      auto value =
-        it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR).GetValue<std::string>();
+      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                     .GetValue<std::string>();
       auto parsed = ParseScorerExpression(transaction.GetContext(), value);
       if (!parsed) {
         throw duckdb::CatalogException(

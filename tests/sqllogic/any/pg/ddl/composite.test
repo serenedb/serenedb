@@ -55,7 +55,7 @@ id	name	addr
 2	reabilitacia	("dom kolotushkina",spb,202020)
 
 
-skipif pg
+skipif postgres
 query
 SELECT typname, typtype FROM pg_catalog.pg_type WHERE typtype = 'c' ORDER BY typname;
 ----
@@ -566,7 +566,7 @@ statement ok
 CREATE TYPE _pudge AS (y INTEGER);
 
 
-skipif pg
+skipif postgres
 query
 SELECT typname, typtype FROM pg_catalog.pg_type
   WHERE typname IN ('pudge', '_pudge', '__pudge', '___pudge')
@@ -595,7 +595,7 @@ statement ok
 CREATE TYPE arelav AS (x INTEGER);
 
 
-skipif pg
+skipif postgres
 query
 SELECT typname, typtype FROM pg_catalog.pg_type
   WHERE typname IN ('_arelav', '__arelav', 'arelav', '___arelav')

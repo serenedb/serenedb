@@ -590,6 +590,158 @@ id	bo
 2	{0,3}
 
 
+# Top-K + OFFSETS combined with an arithmetic-on-BM25 expression in the
+# SELECT list. DuckDB inserts an intermediate projection above TopN to
+# materialise the ORDER BY value (the bare BM25 call) without exposing it
+# in the user's output, which previously misaligned OFFSETS()'s column ref
+# against the GET column_ids. The host projection now forwards the
+# offsets virtual column through that intermediate layer.
+query
+SELECT id, OFFSETS(body) AS bo, BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo	pos
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	t
+1	{6,9}	t
+2	{0,3}	t
+
+
+# Top-K + OFFSETS with BM25 wrapped in a cast (numeric) in SELECT. Same
+# intermediate-projection shape as the comparison case above.
+query
+SELECT id, OFFSETS(body) AS bo,
+       round(BM25(offsets_test_idx.tableoid)::numeric, 2) AS s
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo	s
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	0.76
+1	{6,9}	0.53
+2	{0,3}	0.53
+
+
+# Plan check: secondary ORDER BY (id ASC) defeats top-K pull-up, so the
+# TopN node stays. Combined with OFFSETS + BM25-in-expression this is
+# the shape that produces the intermediate projection above the scan
+# (PROJECTION -> TOP_N -> PROJECTION -> IRESEARCH_SCAN). The lower
+# projection forwards the offsets virtual column up to the outer
+# projection that hosts OFFSETS().
+query
+EXPLAIN SELECT id, OFFSETS(body) AS bo,
+              BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│                           │
+│         Order By:         │
+│          #3 DESC          │
+│  offsets_test_idx.id ASC  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             bo            │
+│            pos            │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Plan check: ORDER BY BM25 DESC alone -- top-K pull-up succeeds, the
+# TopN node is dropped, and the BM25-in-expression case still produces
+# a correctly-bound OFFSETS column (single PROJECTION above the scan).
+query
+EXPLAIN SELECT id, OFFSETS(body) AS bo,
+              BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             bo            │
+│            pos            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│          TopK: 3          │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
 statement ok
 DROP TABLE offsets_test;
 

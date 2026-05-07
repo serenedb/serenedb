@@ -20,7 +20,9 @@
 
 #include "connector/scorer_extract.h"
 
+#include <absl/strings/str_join.h>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include <cmath>
 
@@ -121,19 +123,16 @@ ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
         return std::nullopt;
       }
       auto s = mv->GetValue<std::string>();
-      if (s == "standardized") {
-        p.measure = S::DfiMeasure::Standardized;
-      } else if (s == "saturated") {
-        p.measure = S::DfiMeasure::Saturated;
-      } else if (s == "chi_squared" || s == "chisquared") {
-        p.measure = S::DfiMeasure::ChiSquared;
-      } else {
+      auto parsed = magic_enum::enum_cast<S::DfiMeasure>(
+        s, magic_enum::case_insensitive);
+      if (!parsed) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
-          "dfi measure must be one of: standardized, saturated, chi_squared; "
-          "got '",
-          s, "'"};
+          "dfi measure must be one of: ",
+          absl::StrJoin(magic_enum::enum_names<S::DfiMeasure>(), ", "),
+          "; got '", s, "'"};
       }
+      p.measure = *parsed;
     }
     scorer.params = p;
   } else {

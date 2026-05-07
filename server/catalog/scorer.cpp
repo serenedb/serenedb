@@ -21,6 +21,7 @@
 #include "catalog/scorer.h"
 
 #include <absl/strings/str_cat.h>
+#include <magic_enum/magic_enum.hpp>
 
 namespace sdb::catalog {
 
@@ -41,19 +42,8 @@ std::string Scorer::ToString() const {
       } else if constexpr (std::is_same_v<P, IndriDirichlet>) {
         return absl::StrCat("indri_dirichlet(mu=", p.mu, ")");
       } else if constexpr (std::is_same_v<P, Dfi>) {
-        std::string_view m = "standardized";
-        switch (p.measure) {
-          case DfiMeasure::Standardized:
-            m = "standardized";
-            break;
-          case DfiMeasure::Saturated:
-            m = "saturated";
-            break;
-          case DfiMeasure::ChiSquared:
-            m = "chi_squared";
-            break;
-        }
-        return absl::StrCat("dfi(measure=", m, ")");
+        return absl::StrCat("dfi(measure=",
+                            magic_enum::enum_name(p.measure), ")");
       }
     },
     params);

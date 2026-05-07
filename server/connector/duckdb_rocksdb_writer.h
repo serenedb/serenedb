@@ -68,12 +68,16 @@ class DuckDBColumnSerializer {
 
   explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
 
-  // Empty row_keys[i] = skip row i.
+  // Empty row_keys[i] = skip row i. `col` describes the catalog column being
+  // serialized; stashed on the serializer so the per-row helpers
+  // (WriteRowSlices, WriteConstantColumn, ...) can branch on column-level
+  // attributes without threading the descriptor through every recursive call.
+  // `col.type` is the column's logical type used for the dispatch.
   template<typename Writer>
   void WriteColumn(Writer& writer, const duckdb::Vector& vec,
-                   const duckdb::LogicalType& type, duckdb::idx_t num_rows,
-                   std::vector<std::string>& row_keys,
-                   std::span<DuckDBSinkIndexWriter*> index_writers);
+                   duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
+                   std::span<DuckDBSinkIndexWriter*> index_writers,
+                   ColumnDescriptor col);
 
   size_t WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                         duckdb::idx_t offset, duckdb::idx_t count,
@@ -170,6 +174,9 @@ class DuckDBColumnSerializer {
                       std::span<DuckDBSinkIndexWriter*> index_writers);
   duckdb::ArenaAllocator _arena;
   std::vector<rocksdb::Slice> _row_slices;
+  // Set by WriteColumn before any per-row helper runs; describes the column
+  // currently being serialized.
+  ColumnDescriptor _current_col{};
 };
 
 }  // namespace sdb::connector

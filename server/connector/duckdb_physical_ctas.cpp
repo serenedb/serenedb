@@ -100,6 +100,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // CTAS syntax doesn't support PK/UNIQUE constraints -- pkColumns stays empty,
   // so MakeTableOptions will assign a generated PK.
 
+  ApplyColumnModes(request, table_info.options);
+
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog_impl = catalog_feature.Global();

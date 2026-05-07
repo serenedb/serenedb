@@ -1,0 +1,77 @@
+## sdb_indexonly column-store-mode option in CREATE TABLE WITH-clause.
+## NOTE: SELECT on an index-only column will be made an error once the feature
+## is finished. Tests below avoid querying the marked columns directly.
+
+# Happy path: single column marked. Only non-indexonly columns are queried.
+statement ok
+CREATE TABLE indexonly_t1 (
+  a INTEGER NOT NULL,
+  b VARCHAR NOT NULL,
+  c BIGINT NOT NULL,
+  PRIMARY KEY (a)
+) WITH (sdb_indexonly = [b]);
+
+statement ok
+INSERT INTO indexonly_t1 VALUES (1, 'one', 100), (2, 'two', 200);
+
+query
+SELECT a, c FROM indexonly_t1 ORDER BY a;
+----
+a	c
+1	100
+2	200
+
+statement ok
+DROP TABLE indexonly_t1;
+
+
+# Multiple columns marked.
+statement ok
+CREATE TABLE indexonly_t2 (
+  a INTEGER NOT NULL,
+  b VARCHAR NOT NULL,
+  c BIGINT NOT NULL,
+  PRIMARY KEY (a)
+) WITH (sdb_indexonly = [b, c]);
+
+statement ok
+INSERT INTO indexonly_t2 VALUES (1, 'x', 10);
+
+query
+SELECT a FROM indexonly_t2;
+----
+a
+1
+
+statement ok
+DROP TABLE indexonly_t2;
+
+
+# Error: list references unknown column.
+statement error
+CREATE TABLE indexonly_err1 (
+  a INTEGER NOT NULL,
+  PRIMARY KEY (a)
+) WITH (sdb_indexonly = [missing]);
+----
+db error: ERROR: WITH option "sdb_indexonly" references unknown column "missing"
+
+
+# Error: scalar value instead of list.
+statement error
+CREATE TABLE indexonly_err2 (
+  a INTEGER NOT NULL,
+  PRIMARY KEY (a)
+) WITH (sdb_indexonly = 1);
+----
+db error: ERROR: WITH option "sdb_indexonly" expects a list literal, e.g. [col1, col2]
+
+
+# Error: list element is not an identifier.
+statement error
+CREATE TABLE indexonly_err3 (
+  a INTEGER NOT NULL,
+  PRIMARY KEY (a)
+) WITH (sdb_indexonly = [1, 2]);
+----
+db error: ERROR: WITH option "sdb_indexonly" list element is not a column name

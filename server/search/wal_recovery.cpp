@@ -90,6 +90,7 @@ struct ShardState {
   struct IndexedColumn {
     catalog::Column::Id id;
     duckdb::LogicalType type;
+    catalog::ColumnStoreMode store_mode;
   };
   std::vector<IndexedColumn> indexed_columns;
 
@@ -150,7 +151,7 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
     if (it == table_columns.end()) {
       return false;
     }
-    s.indexed_columns.emplace_back(col_id, it->type);
+    s.indexed_columns.emplace_back(col_id, it->type, it->store_mode);
   }
 
   s.index = std::move(inverted);
@@ -218,7 +219,8 @@ void FlushShard(ShardState& s,
     rocksdb::PinnableSlice value_buffer;
     for (size_t col_idx = 0; col_idx < s.indexed_columns.size(); ++col_idx) {
       const auto& col = s.indexed_columns[col_idx];
-      const bool switched = sink.SwitchColumnImpl(col.type, true, col.id);
+      const bool switched = sink.SwitchColumnImpl(connector::ColumnDescriptor{
+        col.id, col.store_mode, col.type, /*have_nulls=*/true});
       SDB_ASSERT(switched);
       absl::big_endian::Store(get_key_buffer.data() + sizeof(ObjectId), col.id);
       for (const auto* row : insert_entries) {

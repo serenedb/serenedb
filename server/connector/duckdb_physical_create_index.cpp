@@ -120,6 +120,7 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
+  catalog::ColumnStoreMode store_mode;
 };
 
 std::vector<duckdb_secondary_key::SKColumn> BuildSKColumnsForBackfill(
@@ -391,6 +392,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       .id = columns[i].id,
       .duckdb_type = columns[i].type,
       .input_col_idx = i,
+      .store_mode = columns[i].store_mode,
     });
   }
   state->file_row_number_col_idx = columns.size();
@@ -576,8 +578,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       continue;
     }
 
-    if (!gstate.writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
-                                     col.id)) {
+    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                /*have_nulls=*/true};
+    if (!gstate.writer->SwitchColumn(desc)) {
       continue;
     }
 
@@ -587,8 +590,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
     DuckDBSinkIndexWriter* writer_ptr = gstate.writer.get();
     gstate.serializer->WriteColumn(noop, chunk.data[col.input_col_idx],
-                                   col.duckdb_type, num_rows, gstate.row_keys,
-                                   {&writer_ptr, 1});
+                                   num_rows, gstate.row_keys, {&writer_ptr, 1},
+                                   desc);
   }
 
   gstate.writer->Finish();

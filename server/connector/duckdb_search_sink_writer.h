@@ -45,8 +45,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
     InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
-                    catalog::Column::Id column_id) final;
+  bool SwitchColumn(const ColumnDescriptor& col) final;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {
@@ -94,8 +93,7 @@ class DuckDBSearchSinkUpdateWriter final : public DuckDBSinkIndexWriter,
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(const duckdb::LogicalType& type, bool have_nulls,
-                    catalog::Column::Id column_id) final;
+  bool SwitchColumn(const ColumnDescriptor& col) final;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) final {

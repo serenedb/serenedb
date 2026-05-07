@@ -45,6 +45,7 @@ struct InsertColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   size_t input_col_idx;
+  catalog::ColumnStoreMode store_mode;
 };
 
 struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
@@ -118,6 +119,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
       .id = columns[i].id,
       .duckdb_type = columns[i].type,
       .input_col_idx = input_idx++,
+      .store_mode = columns[i].store_mode,
     });
   }
 
@@ -211,13 +213,16 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       continue;
     }
 
+    auto& vec = chunk.data[col.input_col_idx];
+    const bool may_have_nulls =
+      vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
+      !duckdb::FlatVector::Validity(vec).CannotHaveNull();
+    const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                may_have_nulls};
+
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      auto& vec = chunk.data[col.input_col_idx];
-      bool may_have_nulls =
-        vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-        !duckdb::FlatVector::Validity(vec).CannotHaveNull();
-      if (writer->SwitchColumn(col.duckdb_type, may_have_nulls, col.id)) {
+      if (writer->SwitchColumn(desc)) {
         gstate.active_writers.push_back(writer.get());
       }
     }
@@ -229,9 +234,8 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       }
     }
 
-    gstate.serializer->WriteColumn(txn_writer, chunk.data[col.input_col_idx],
-                                   col.duckdb_type, num_rows, gstate.row_keys,
-                                   gstate.active_writers);
+    gstate.serializer->WriteColumn(txn_writer, vec, num_rows, gstate.row_keys,
+                                   gstate.active_writers, desc);
   }
 
   // 5. Finish index writers

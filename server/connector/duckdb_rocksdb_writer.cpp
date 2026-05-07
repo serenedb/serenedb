@@ -453,9 +453,11 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
 
 template<typename Writer>
 void DuckDBColumnSerializer::WriteColumn(
-  Writer& writer, const duckdb::Vector& vec, const duckdb::LogicalType& type,
-  duckdb::idx_t num_rows, std::vector<std::string>& row_keys,
-  std::span<DuckDBSinkIndexWriter*> index_writers) {
+  Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
+  std::vector<std::string>& row_keys,
+  std::span<DuckDBSinkIndexWriter*> index_writers, ColumnDescriptor col) {
+  _current_col = col;
+  const auto& type = col.type;
   switch (vec.GetVectorType()) {
     case duckdb::VectorType::FLAT_VECTOR:
       break;
@@ -551,12 +553,12 @@ void DuckDBColumnSerializer::WriteColumn(
 
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::TxnWriter>(
-  TxnWriter&, const duckdb::Vector&, const duckdb::LogicalType&, duckdb::idx_t,
-  std::vector<std::string>&, std::span<DuckDBSinkIndexWriter*>);
+  TxnWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
 template void
 DuckDBColumnSerializer::WriteColumn<DuckDBColumnSerializer::SstWriter>(
-  SstWriter&, const duckdb::Vector&, const duckdb::LogicalType&, duckdb::idx_t,
-  std::vector<std::string>&, std::span<DuckDBSinkIndexWriter*>);
+  SstWriter&, const duckdb::Vector&, duckdb::idx_t, std::vector<std::string>&,
+  std::span<DuckDBSinkIndexWriter*>, ColumnDescriptor);
 
 template<typename Writer, typename T>
 void DuckDBColumnSerializer::WriteFlatColumn(

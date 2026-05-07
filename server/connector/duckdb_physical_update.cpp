@@ -47,6 +47,7 @@ struct UpdateColumnMeta {
   catalog::Column::Id id;
   duckdb::LogicalType duckdb_type;
   duckdb::idx_t table_col_idx;
+  catalog::ColumnStoreMode store_mode;
 };
 
 struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
@@ -63,6 +64,7 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   struct ColumnMeta {
     catalog::Column::Id id;
     duckdb::LogicalType duckdb_type;
+    catalog::ColumnStoreMode store_mode;
   };
   std::vector<ColumnMeta> all_columns;
 
@@ -102,6 +104,7 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
     catalog::Column::Id id;
     duckdb::LogicalType duckdb_type;
     duckdb::idx_t chunk_idx;
+    catalog::ColumnStoreMode store_mode;
   };
   std::vector<NonUpdateIdxColMeta> non_update_idx_cols;
 
@@ -201,6 +204,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     state->all_columns.push_back(SereneDBUpdateGlobalState::ColumnMeta{
       .id = col.id,
       .duckdb_type = col.type,
+      .store_mode = col.store_mode,
     });
   }
 
@@ -211,6 +215,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
       .id = col.id,
       .duckdb_type = col.type,
       .table_col_idx = table_col_idx,
+      .store_mode = col.store_mode,
     });
     state->update_col_id_set.insert(col.id);
   }
@@ -319,6 +324,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
               .id = col_id,
               .duckdb_type = col.type,
               .chunk_idx = _indexed_col_indices[i],
+              .store_mode = col.store_mode,
             });
           break;
         }
@@ -356,6 +362,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
               .id = pk_col_id,
               .duckdb_type = col.type,
               .chunk_idx = _pk_col_indices[i],
+              .store_mode = col.store_mode,
             });
           break;
         }
@@ -538,19 +545,20 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     // Updated columns: from SET positions in the chunk.
     for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
       const auto& col = gstate.update_columns[i];
+      const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                  /*have_nulls=*/true};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
-                                 col.id)) {
+        if (writer->SwitchColumn(desc)) {
           gstate.active_writers.push_back(writer.get());
         }
       }
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
       }
-      gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
-                                    num_rows, gstate.new_row_keys,
-                                    gstate.active_writers);
+      gstate.serializer.WriteColumn(txn_writer, chunk.data[i], num_rows,
+                                    gstate.new_row_keys, gstate.active_writers,
+                                    desc);
     }
 
     // Trigger index writers whose first column is not in the SET clause.
@@ -559,10 +567,11 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     {
       DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
       for (const auto& col : gstate.non_update_idx_cols) {
+        const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                    /*have_nulls=*/true};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
-          if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
-                                   col.id)) {
+          if (writer->SwitchColumn(desc)) {
             gstate.active_writers.push_back(writer.get());
           }
         }
@@ -572,9 +581,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           key_utils::SetupColumnForKey(gstate.new_row_keys[row], col.id);
         }
-        gstate.serializer.WriteColumn(
-          noop_writer, chunk.data[col.chunk_idx], col.duckdb_type, num_rows,
-          gstate.new_row_keys, gstate.active_writers);
+        gstate.serializer.WriteColumn(noop_writer, chunk.data[col.chunk_idx],
+                                      num_rows, gstate.new_row_keys,
+                                      gstate.active_writers, desc);
       }
     }
 
@@ -626,10 +635,11 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
 
     for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
       const auto& col = gstate.update_columns[i];
+      const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                  /*have_nulls=*/true};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
-                                 col.id)) {
+        if (writer->SwitchColumn(desc)) {
           gstate.active_writers.push_back(writer.get());
         }
       }
@@ -637,19 +647,20 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       for (duckdb::idx_t row = 0; row < num_rows; ++row) {
         key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
       }
-      gstate.serializer.WriteColumn(txn_writer, chunk.data[i], col.duckdb_type,
-                                    num_rows, gstate.row_keys,
-                                    gstate.active_writers);
+      gstate.serializer.WriteColumn(txn_writer, chunk.data[i], num_rows,
+                                    gstate.row_keys, gstate.active_writers,
+                                    desc);
     }
 
     // Trigger index writers whose first column is not in the SET clause.
     {
       DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
       for (const auto& col : gstate.non_update_idx_cols) {
+        const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
+                                    /*have_nulls=*/true};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
-          if (writer->SwitchColumn(col.duckdb_type, /*have_nulls=*/true,
-                                   col.id)) {
+          if (writer->SwitchColumn(desc)) {
             gstate.active_writers.push_back(writer.get());
           }
         }
@@ -660,8 +671,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
           key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
         }
         gstate.serializer.WriteColumn(noop_writer, chunk.data[col.chunk_idx],
-                                      col.duckdb_type, num_rows,
-                                      gstate.row_keys, gstate.active_writers);
+                                      num_rows, gstate.row_keys,
+                                      gstate.active_writers, desc);
       }
     }
   }

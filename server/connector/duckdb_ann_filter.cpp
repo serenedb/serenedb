@@ -20,6 +20,9 @@
 
 #include "connector/duckdb_ann_filter.h"
 
+#include <array>
+
+#include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/index_source.h"
@@ -30,43 +33,19 @@
 
 namespace sdb::connector {
 
-ANNFilter::ANNFilter(duckdb::ClientContext& context,
-                     const irs::IndexReader& reader,
-                     const SereneDBScanBindData& bind_data,
-                     const rocksdb::Snapshot* snapshot,
-                     rocksdb::Transaction* txn,
-                     std::vector<duckdb::idx_t> filter_projected_columns,
-                     std::vector<duckdb::LogicalType> filter_types,
-                     std::vector<catalog::Column::Id> filter_bind_column_ids,
-                     std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs)
-  : _context(context),
-    _reader(reader),
-    _bind_data(bind_data),
-    _snapshot(snapshot),
-    _txn(txn),
-    _filter_projected_columns(std::move(filter_projected_columns)),
-    _filter_types(std::move(filter_types)),
-    _filter_bind_column_ids(std::move(filter_bind_column_ids)),
-    _exprs(std::move(exprs)),
-    _executor(context) {
-  for (const auto& e : _exprs) {
-    _executor.AddExpression(*e);
-  }
-  duckdb::vector<duckdb::LogicalType> scratch_types(_filter_types.begin(),
-                                                    _filter_types.end());
-  _scratch.Initialize(duckdb::Allocator::DefaultAllocator(), scratch_types);
-
-  duckdb::vector<duckdb::LogicalType> bool_types(_exprs.size(),
-                                                 duckdb::LogicalType::BOOLEAN);
-  _bool_out.Initialize(duckdb::Allocator::DefaultAllocator(), bool_types);
-}
-
-void InitAnnFilter(
-  std::unique_ptr<ANNFilter>& filter, duckdb::ClientContext& context,
-  const std::vector<duckdb::unique_ptr<duckdb::Expression>>& filter_expressions,
+void InitAnnFilterContext(
+  std::unique_ptr<ANNFilterContext>& filter, duckdb::ClientContext& context,
+  const duckdb::Expression* filter_expression,
   const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
   const rocksdb::Snapshot* rocks_snapshot,
   const SereneDBScanBindData& bind_data) {
+  if (!filter_expression || filter_column_ids.empty()) {
+    return;
+  }
+  containers::FlatHashMap<catalog::Column::Id, size_t> columns_to_indexes;
+  for (size_t i = 0; i < bind_data.column_ids.size(); ++i) {
+    columns_to_indexes[bind_data.column_ids[i]] = i;
+  }
   std::vector<duckdb::idx_t> filter_projection(filter_column_ids.size());
   std::vector<duckdb::LogicalType> filter_types(filter_column_ids.size());
   for (size_t i = 0; i < filter_column_ids.size(); ++i) {
@@ -87,31 +66,38 @@ void InitAnnFilter(
     return;
   }
 
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> expr_copies;
-  expr_copies.reserve(filter_expressions.size());
-  for (const auto& e : filter_expressions) {
-    expr_copies.push_back(e->Copy());
-  }
+  GetSereneDBContext(context).EnsureSearchSnapshot(index_id);
 
-  auto& search_snapshot =
-    GetSereneDBContext(context).EnsureSearchSnapshot(index_id);
+  filter = std::make_unique<ANNFilterContext>(ANNFilterContext{
+    .context = context,
+    .filter_expr = filter_expression->Copy(),
+    .filter_types = std::move(filter_types),
+    .bind_data = bind_data,
+    .rocksdb_snapshot = rocks_snapshot,
+    .filter_projection = std::move(filter_projection),
+    .filter_column_ids = filter_column_ids,
+  });
+}
 
-  filter = std::make_unique<ANNFilter>(
-    context, search_snapshot.reader, bind_data, rocks_snapshot, /*txn=*/nullptr,
-    std::move(filter_projection), std::move(filter_types),
-    std::vector<catalog::Column::Id>(bind_data.column_ids.begin(),
-                                     bind_data.column_ids.end()),
-    std::move(expr_copies));
+ANNFilter::ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment)
+  : _ctx{ctx}, _segment{segment}, _executor{ctx.context} {
+  _executor.AddExpression(*ctx.filter_expr);
+  duckdb::vector<duckdb::LogicalType> scratch_types{ctx.filter_types.begin(),
+                                                    ctx.filter_types.end()};
+  _scratch.Initialize(duckdb::Allocator::Get(ctx.context), scratch_types);
+
+  duckdb::vector<duckdb::LogicalType> bool_types{1,
+                                                 duckdb::LogicalType::BOOLEAN};
+  _bool_out.Initialize(duckdb::Allocator::Get(ctx.context), bool_types);
+
+  auto opened = OpenSegmentPkIterator(_segment, _it);
+  SDB_ASSERT(opened);
 }
 
 bool ANNFilter::is_member(faiss::idx_t id) const {
-  auto [seg_id, doc_id] = irs::UnpackSegmentWithDoc(id);
-  if (_it_segment_id != seg_id || !_it.iter) {
-    if (!OpenSegmentPkIterator(_reader[seg_id], _it)) {
-      return false;
-    }
-    _it_segment_id = seg_id;
-  } else if (_it.iter->value() > doc_id) {
+  SDB_ASSERT(_it);
+  auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
+  if (_it.iter->value() > doc_id) {
     _it.iter->reset();
   }
   if (_it.iter->seek(doc_id) != doc_id) {
@@ -121,9 +107,9 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
   std::string_view pk = irs::ViewCast<char>(_it.value->value);
 
   if (!_index_source) {
-    _index_source = MakeIndexSource(_context, _bind_data, _snapshot, _txn,
-                                    _filter_projected_columns, _filter_types,
-                                    _filter_bind_column_ids);
+    _index_source = MakeIndexSource(
+      _ctx.context, _ctx.bind_data, _ctx.rocksdb_snapshot, _ctx.rocksdb_txn,
+      _ctx.filter_projection, _ctx.filter_types, _ctx.bind_data.column_ids);
   }
   if (std::holds_alternative<std::monostate>(_pk_batch)) {
     _pk_batch = _index_source->CreatePkBatch();
@@ -145,7 +131,7 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
     _pk_batch);
 
   _scratch.Reset();
-  _index_source->Materialize(_context, _pk_batch, 0, 1, _scratch);
+  _index_source->Materialize(_ctx.context, _pk_batch, 0, 1, _scratch);
   _scratch.SetCardinality(1);
 
   _bool_out.Reset();

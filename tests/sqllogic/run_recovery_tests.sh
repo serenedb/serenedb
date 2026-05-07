@@ -145,6 +145,22 @@ if [[ "$EXTERNAL_MODE" == "false" ]]; then
 	SERENED_LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/serened-logs-XXXXXX")
 fi
 
+# Pre-build sqllogictest once. Without this, each forked worker would invoke
+# `cargo build` against the same target dir; cargo races on its lock files
+# under that load and a worker can exit non-zero even when the cached binary
+# is still functional (which then surfaces as a passing test reported as a
+# failure). Workers honour SDB_SKIP_SQLLOGIC_BUILD and skip cargo entirely.
+SQLLOGIC_RUNNER="${RUNNER_ARGS[1]:-$(realpath "$SCRIPT_DIR/../../third_party/sqllogictest-rs")}"
+SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-$(realpath "$SCRIPT_DIR/../../.cache/cargo-target")}"
+mkdir -p "$SQLLOGIC_TARGET"
+echo "Pre-building sqllogictest..."
+cargo build --manifest-path "$SQLLOGIC_RUNNER/sqllogictest-bin/Cargo.toml" \
+	--target-dir "$SQLLOGIC_TARGET" --release --quiet || {
+	echo "ERROR: failed to pre-build sqllogictest"
+	exit 1
+}
+export SDB_SKIP_SQLLOGIC_BUILD=1
+
 # Start a fresh serened instance (restart loop + empty datadir) and wait for
 # the port to accept connections. Each test gets its own, so one test's crash
 # cannot cascade into the next. Writes to: $log_file, tracks pid in $pid_var,

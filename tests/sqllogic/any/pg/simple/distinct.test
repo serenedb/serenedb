@@ -97,7 +97,7 @@ FROM
     ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
 ) as tindex(name, grade, iq)
-ORDER BY clickclack.name DESC;
+ORDER BY clickclack.name DESC, tindex.name;
 ----
 name	name
 vedernikoff	babsky
@@ -115,7 +115,7 @@ FROM
     ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
 ) as clickclack(name, grade, iq)
-ORDER BY grade DESC;
+ORDER BY grade DESC, iq;
 ----
 iq
 -5
@@ -208,13 +208,15 @@ kek
 
 
 query
-SELECT DISTINCT ON(ROW_NUMBER() OVER(PARTITION BY name ORDER BY grade DESC)) name
-FROM
-(
-  VALUES
+SELECT DISTINCT ON (rn) name
+FROM (
+  SELECT name, ROW_NUMBER() OVER (PARTITION BY name ORDER BY grade DESC) AS rn
+  FROM (VALUES
     ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
-) as clickclack(name, grade, iq)
+  ) AS t(name, grade, iq)
+) s
+ORDER BY rn, name;
 ----
 name
 babsky

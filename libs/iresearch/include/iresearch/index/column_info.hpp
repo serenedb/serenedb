@@ -42,9 +42,8 @@ enum class ValueType : uint8_t {
 };
 
 enum class HNSWMetric : uint8_t {
-  L2 = 0,
-  L2Sqr,
-  InnerProduct,
+  L2Sqr = 0,
+  NegativeIP,
   Cosine,
   L1,
 };
@@ -59,7 +58,7 @@ struct HNSWInfo {
   int m = 32;
 
   // HNSW metric
-  HNSWMetric metric = HNSWMetric::L2;
+  HNSWMetric metric = HNSWMetric::L2Sqr;
 
   // expansion factor at construction time
   int ef_construction = 40;

@@ -82,9 +82,8 @@ static void ResetOffsetsForSegment(SearchFullScanGlobalState& gstate,
     search::mangling::MangleString(field_names[i]);
   }
   OffsetsCollector visitor(field_names, gstate.offsets_field_state);
-  const auto& query =
-    gstate.scored_query ? *gstate.scored_query : *search.query;
-  query.visit(segment, visitor, irs::kNoBoost);
+  SDB_ASSERT(gstate.query);
+  gstate.query->visit(segment, visitor, irs::kNoBoost);
 }
 
 // Per doc, dedupe + sort offset pairs in `gstate.offsets_doc_scratch[fi]`,
@@ -241,15 +240,14 @@ static void EnsureDefaultMatchAllSearchScan(SereneDBScanBindData& bind_data) {
   SDB_ASSERT(shard);
   auto idx_snapshot = shard->GetInvertedIndexSnapshot();
   SDB_ASSERT(idx_snapshot);
-  auto& reader = *idx_snapshot->reader;
 
   auto root = std::make_shared<irs::And>();
   root->add<irs::All>();
   auto search = std::make_unique<SearchScan>();
   search->snapshot = std::move(idx_snapshot);
-  search->reader = &reader;
   search->stored_filter = root;
-  search->query = root->prepare({.index = reader});
+  // `Query` is built lazily in SearchFullScanInitGlobal -- single
+  // prepare site per execution.
   search->filter_summary = "All";
   bind_data.scan_source = std::move(search);
 }
@@ -310,13 +308,18 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
     case SK::None:
       break;
   }
-  // Re-prepare the query with scorer so IDF/norm stats are collected correctly.
-  if (state->scorer_obj && ss.stored_filter) {
-    state->scored_query = ss.stored_filter->prepare({
-      .index = *ss.reader,
-      .scorer = state->scorer_obj.get(),
-    });
-  }
+  // Single prepare site for SearchScan. We pass the scorer here (or null
+  // when no BM25/TFIDF was attached by the planner) so any IDF/norm
+  // stats that the scorer requires are collected during this one
+  // prepare; an earlier optimizer-time prepare with a null scorer used
+  // to break filters that mutate options() (GeoFilter) when this
+  // scorer-aware re-prepare ran afterwards.
+  SDB_ASSERT(ss.stored_filter);
+  SDB_ASSERT(ss.snapshot);
+  state->query = ss.stored_filter->prepare({
+    .index = ss.snapshot->reader,
+    .scorer = state->scorer_obj.get(),
+  });
 
   // Offsets output-slot mapping. InitCommonState walks input.column_ids
   // in order and pushes one projected_columns entry per valid input
@@ -365,8 +368,9 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
 
   const duckdb::idx_t batch_size = STANDARD_VECTOR_SIZE;
   auto& search = bind_data.scan_source->Cast<SearchScan>();
-  auto& reader = *search.reader;
-  auto& query = gstate.scored_query ? *gstate.scored_query : *search.query;
+  auto& reader = search.snapshot->reader;
+  SDB_ASSERT(gstate.query);
+  auto& query = *gstate.query;
 
   const bool has_real = std::any_of(
     gstate.projected_columns.begin(), gstate.projected_columns.end(),

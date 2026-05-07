@@ -21,9 +21,11 @@
 #include "search_sink_writer.hpp"
 
 #include <duckdb/common/enum_util.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/endian.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
@@ -196,6 +198,10 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
       SetupColumnWriter<duckdb::LogicalTypeId::ARRAY>(column_id, have_nulls);
       break;
     }
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      SetupColumnWriter<duckdb::LogicalTypeId::GEOMETRY>(column_id, have_nulls);
+      break;
+    }
     default:
       // Unsupported type for inverted index (e.g. INTEGER without opclass).
       // Skip this column rather than crashing in WriteImpl.
@@ -293,16 +299,52 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
-    // HNSW vector field: stored as raw float32 bytes via Action::STORE.
+    // HNSW vector field: non-null rows STORE raw float32 bytes (no inverted
+    // index); null rows fall through to INDEX-only via the null-stream
+    // analyzer so IS NULL queries still work.
     // No name mangling: the field name is the raw big-endian column ID,
     // matching the column_info key registered in InvertedIndexShard.
-    // Null vectors are skipped (not stored) so they never appear in HNSW.
     _field.PrepareForVectorValue();
     if (have_nulls) {
       _current_writer =
         MakeStoreWriter(make_nullable_writer_func(&WriteVectorValue));
     } else {
       _current_writer = MakeStoreWriter(&WriteVectorValue);
+    }
+  } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
+    // GEOMETRY column: WKB bytes arrive in cell_slices and go straight to
+    // the geo analyzer via resetWKB. The analyzer parses internally, which
+    // lets future LatLng-coding work fuse the WKB read with the encoder
+    // write without changing this call site.
+    search::mangling::MangleString(_name_buffer);
+    _field.PrepareForStringValue(_tokenizer_provider(column_id));
+    const bool has_store = _field.store_attr != nullptr;
+    auto geo_writer = [](std::string_view,
+                         std::span<const rocksdb::Slice> cell_slices,
+                         Field& field) -> Field& {
+      SDB_ASSERT(!cell_slices.empty());
+      // Raw WKB: last slice (row-prefix serialization may prepend other
+      // slices, so use back()).
+      const auto& slice = cell_slices.back();
+      const irs::bytes_view wkb{
+        reinterpret_cast<const irs::byte_type*>(slice.data()), slice.size()};
+      auto& geo =
+        basics::downCast<irs::analysis::GeoAnalyzer>(*field.string_analyzer);
+      // Parse failure is treated silently (option A from the port plan): the
+      // analyzer keeps whatever state it had, which at worst means this row
+      // contributes no new terms. Matches the VARCHAR path behavior on bad
+      // input.
+      (void)geo.resetWKB(wkb);
+      return field;
+    };
+    if (has_store) {
+      _current_writer =
+        have_nulls ? MakeIndexStoreWriter(make_nullable_writer_func(geo_writer))
+                   : MakeIndexStoreWriter(geo_writer);
+    } else {
+      _current_writer =
+        have_nulls ? MakeIndexWriter(make_nullable_writer_func(geo_writer))
+                   : MakeIndexWriter(geo_writer);
     }
   } else {
     // Defensive: SwitchColumnImpl only calls this for Kinds handled above.

@@ -22,6 +22,7 @@
 
 #include <simdjson.h>
 
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <span>
 #include <string>

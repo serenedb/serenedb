@@ -83,9 +83,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind) {
   if (bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search) {
     const auto& ss = bind.scan_source->Cast<SearchScan>();
-    if (ss.reader) {
+    if (ss.snapshot) {
       return duckdb::make_uniq<duckdb::NodeStatistics>(
-        static_cast<duckdb::idx_t>(ss.reader->live_docs_count()));
+        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count()));
     }
   }
   auto shard = ResolveInvertedIndexShard(context, bind);

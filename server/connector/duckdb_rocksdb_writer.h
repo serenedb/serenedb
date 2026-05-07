@@ -122,6 +122,12 @@ class DuckDBColumnSerializer {
   template<typename T>
   size_t WritePrimitive(const T& value);
 
+  // GEOMETRY write path: raw WKB bytes, no kStringPrefix disambiguation --
+  // empty value means NULL (valid WKB is at least 5 bytes: byte-order + type).
+  // value must be in stable memory (vector buffer, arena, or ConstantVector
+  // data). NOT a stack temporary.
+  size_t WriteGeometryRaw(const duckdb::string_t& value);
+
   template<typename T>
   size_t WriteScalarField(const duckdb::UnifiedVectorFormat& fmt,
                           duckdb::idx_t row_idx);

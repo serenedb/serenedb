@@ -146,43 +146,66 @@ std::string MakeHnswFieldName(catalog::Column::Id col_id) {
 struct ExpectedHNSW {
   irs::HNSWMetric metric;
   duckdb::OrderType order;
+  bool is_norm;
 };
 
-std::optional<ExpectedHNSW> ExpectedHNSWForFunction(std::string_view name) {
+// Returns the expected HNSW metric / sort order / norm-arity for `func`
+// when it's a vector-ANN-shaped call we can rewrite into an HNSW scan,
+// or nullopt otherwise.
+//
+// Beyond the name->metric mapping this also enforces:
+//   - arity (norms take 1 child, distances take 2);
+//   - the geo guard: `<->` / `<+>` and friends are also registered with
+//     geo overloads (JSON / GEOMETRY) in search.cpp, so an ARRAY column
+//     on children[0] is what proves we're on the vector overload here.
+// Keeping these inside the lookup means the call sites (TryAnnTopk /
+// TryAnnRange) can't drift apart on what makes a call "vector ANN".
+std::optional<ExpectedHNSW> ExpectedHNSWForFunction(
+  const duckdb::BoundFunctionExpression& func) {
+  const auto& name = func.function.name;
+  ExpectedHNSW result;
   if (name == connector::kL2Distance || name == connector::kL2DistanceOp ||
       name == connector::kL2SqrDistance) {
-    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
+    result = {irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING, false};
+  } else if (name == connector::kL1Distance ||
+             name == connector::kL1DistanceOp) {
+    result = {irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING, false};
+  } else if (name == connector::kCosineDistance ||
+             name == connector::kCosineDistanceOp) {
+    result = {irs::HNSWMetric::Cosine, duckdb::OrderType::ASCENDING, false};
+  } else if (name == connector::kCosineSimilarity) {
+    result = {irs::HNSWMetric::Cosine, duckdb::OrderType::DESCENDING, false};
+  } else if (name == connector::kIP) {
+    result = {irs::HNSWMetric::NegativeIP, duckdb::OrderType::DESCENDING,
+              false};
+  } else if (name == connector::kNegativeIP ||
+             name == connector::kNegativeIPDistanceOp) {
+    result = {irs::HNSWMetric::NegativeIP, duckdb::OrderType::ASCENDING, false};
+  } else if (name == connector::kL2Norm) {
+    result = {irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING, true};
+  } else if (name == connector::kL1Norm) {
+    result = {irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING, true};
+  } else {
+    return std::nullopt;
   }
-  if (name == connector::kL1Distance || name == connector::kL1DistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING};
+  if (result.is_norm ? func.children.size() != 1 : func.children.size() < 2) {
+    return std::nullopt;
   }
-  if (name == connector::kCosineDistance ||
-      name == connector::kCosineDistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::Cosine, duckdb::OrderType::ASCENDING};
+  const auto& arg_type = func.children[0]->return_type;
+  duckdb::LogicalTypeId element_id;
+  if (arg_type.id() == duckdb::LogicalTypeId::ARRAY) {
+    element_id = duckdb::ArrayType::GetChildType(arg_type).id();
+  } else if (arg_type.id() == duckdb::LogicalTypeId::LIST) {
+    element_id = duckdb::ListType::GetChildType(arg_type).id();
+  } else {
+    return std::nullopt;
   }
-  if (name == connector::kCosineSimilarity) {
-    return ExpectedHNSW{irs::HNSWMetric::Cosine, duckdb::OrderType::DESCENDING};
+  if (element_id != duckdb::LogicalTypeId::FLOAT &&
+      element_id != duckdb::LogicalTypeId::DOUBLE) {
+    return std::nullopt;
   }
-  if (name == connector::kIP) {
-    return ExpectedHNSW{irs::HNSWMetric::NegativeIP,
-                        duckdb::OrderType::DESCENDING};
-  }
-  if (name == connector::kNegativeIP ||
-      name == connector::kNegativeIPDistanceOp) {
-    return ExpectedHNSW{irs::HNSWMetric::NegativeIP,
-                        duckdb::OrderType::ASCENDING};
-  }
-  if (name == connector::kL2Norm) {
-    return ExpectedHNSW{irs::HNSWMetric::L2Sqr, duckdb::OrderType::ASCENDING};
-  }
-  if (name == connector::kL1Norm) {
-    return ExpectedHNSW{irs::HNSWMetric::L1, duckdb::OrderType::ASCENDING};
-  }
-  return std::nullopt;
-}
 
-bool IsNormFunction(std::string_view name) {
-  return name == connector::kL2Norm || name == connector::kL1Norm;
+  return result;
 }
 
 // Pull a flat float vector from a constant ARRAY Value. Rejects mixed /
@@ -324,18 +347,11 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
     return false;
   }
   auto& func_expr = dist_expr.Cast<duckdb::BoundFunctionExpression>();
-  auto expected_func = ExpectedHNSWForFunction(func_expr.function.name);
+  auto expected_func = ExpectedHNSWForFunction(func_expr);
   if (!expected_func) {
     return false;
   }
-  const bool is_norm = IsNormFunction(func_expr.function.name);
-  if (is_norm) {
-    if (func_expr.children.size() != 1) {
-      return false;
-    }
-  } else if (func_expr.children.size() < 2) {
-    return false;
-  }
+  const bool is_norm = expected_func->is_norm;
 
   if (projection.children.size() != 1) {
     return false;
@@ -511,18 +527,11 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
       continue;
     }
     auto& func = func_side->Cast<duckdb::BoundFunctionExpression>();
-    auto expected_current = ExpectedHNSWForFunction(func.function.name);
+    auto expected_current = ExpectedHNSWForFunction(func);
     if (!expected_current) {
       continue;
     }
-    const bool is_norm = IsNormFunction(func.function.name);
-    if (is_norm) {
-      if (func.children.size() != 1) {
-        continue;
-      }
-    } else if (func.children.size() < 2) {
-      continue;
-    }
+    const bool is_norm = expected_current->is_norm;
     if (expected_current->order != duckdb::OrderType::ASCENDING) {
       continue;
     }
@@ -870,12 +879,11 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   };
   std::string filter_summary = irs::ToStringDemangled(*root, col_name_lookup);
 
-  auto& reader = *resolved->shard->GetInvertedIndexSnapshot()->reader;
   auto search = std::make_unique<connector::SearchScan>();
   search->snapshot = resolved->shard->GetInvertedIndexSnapshot();
-  search->reader = &reader;
   search->stored_filter = root;
-  search->query = root->prepare({.index = reader});
+  // `Query` is built lazily in SearchFullScanInitGlobal so prepare runs
+  // exactly once per execution, with the scorer if one ends up attached.
   search->filter_summary = std::move(filter_summary);
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIResearchScanFunction();
@@ -2023,10 +2031,8 @@ bool TryConvertAggregateToCount(
       if (search.EmitOffsets()) {
         return false;
       }
-      count_scan->query = std::move(search.query);
       count_scan->stored_filter = std::move(search.stored_filter);
       count_scan->snapshot = std::move(search.snapshot);
-      count_scan->reader = search.reader;
       count_scan->filter_summary = std::move(search.filter_summary);
       break;
     }
@@ -2042,7 +2048,6 @@ bool TryConvertAggregateToCount(
         return false;
       }
       count_scan->snapshot = resolved->shard->GetInvertedIndexSnapshot();
-      count_scan->reader = &*count_scan->snapshot->reader;
       break;
     }
     default:

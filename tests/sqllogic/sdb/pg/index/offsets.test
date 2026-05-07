@@ -590,12 +590,10 @@ id	bo
 2	{0,3}
 
 
-# Top-K + OFFSETS combined with an arithmetic-on-BM25 expression in the
-# SELECT list. DuckDB inserts an intermediate projection above TopN to
-# materialise the ORDER BY value (the bare BM25 call) without exposing it
-# in the user's output, which previously misaligned OFFSETS()'s column ref
-# against the GET column_ids. The host projection now forwards the
-# offsets virtual column through that intermediate layer.
+# Top-K + OFFSETS with a BM25-in-expression in SELECT (and bare BM25 in
+# ORDER BY). DuckDB inserts an intermediate projection above TopN to
+# materialise the ORDER BY value, which used to misalign OFFSETS()'s
+# column ref against the GET.
 query
 SELECT id, OFFSETS(body) AS bo, BM25(offsets_test_idx.tableoid) > 0 AS pos
 FROM offsets_test_idx
@@ -608,8 +606,7 @@ id	bo	pos
 2	{0,3}	t
 
 
-# Top-K + OFFSETS with BM25 wrapped in a cast (numeric) in SELECT. Same
-# intermediate-projection shape as the comparison case above.
+# Same intermediate-projection shape with BM25 wrapped in a cast.
 query
 SELECT id, OFFSETS(body) AS bo,
        round(BM25(offsets_test_idx.tableoid)::numeric, 2) AS s
@@ -623,12 +620,9 @@ id	bo	s
 2	{0,3}	0.53
 
 
-# Plan check: secondary ORDER BY (id ASC) defeats top-K pull-up, so the
-# TopN node stays. Combined with OFFSETS + BM25-in-expression this is
-# the shape that produces the intermediate projection above the scan
-# (PROJECTION -> TOP_N -> PROJECTION -> IRESEARCH_SCAN). The lower
-# projection forwards the offsets virtual column up to the outer
-# projection that hosts OFFSETS().
+# Plan check: secondary ORDER BY (id ASC) keeps the TopN node, producing
+# the PROJECTION -> TOP_N -> PROJECTION -> IRESEARCH_SCAN shape. The
+# inner projection forwards the offsets virtual column up to the outer.
 query
 EXPLAIN SELECT id, OFFSETS(body) AS bo,
               BM25(offsets_test_idx.tableoid) > 0 AS pos
@@ -694,9 +688,8 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-# Plan check: ORDER BY BM25 DESC alone -- top-K pull-up succeeds, the
-# TopN node is dropped, and the BM25-in-expression case still produces
-# a correctly-bound OFFSETS column (single PROJECTION above the scan).
+# Plan check: ORDER BY BM25 DESC alone -- top-K pull-up drops the TopN,
+# leaving a single PROJECTION above the scan even with BM25-in-expression.
 query
 EXPLAIN SELECT id, OFFSETS(body) AS bo,
               BM25(offsets_test_idx.tableoid) > 0 AS pos

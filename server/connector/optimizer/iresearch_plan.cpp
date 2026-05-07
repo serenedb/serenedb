@@ -987,6 +987,51 @@ duckdb::LogicalProjection* FindProjectionByTableIndex(
   return nullptr;
 }
 
+// Build the binding an expression at `anchor_ti` should use to reference
+// `target_get->column_ids[get_col_idx]`. When `anchor_ti` is the GET's
+// table_index, the binding is direct. Otherwise the anchor sits on an
+// intermediate LogicalProjection (DuckDB rebinds refs through one when
+// ORDER BY references a value not in SELECT, or after column-lifetime
+// analysis): reuse a column ref in that projection that already
+// forwards the target, or inject one. Used by both the BM25/TFIDF score
+// rewrite and the OFFSETS rewrite.
+duckdb::ColumnBinding ExposeGetColumnAt(
+  duckdb::LogicalOperator& root, duckdb::TableIndex anchor_ti,
+  const duckdb::LogicalGet& target_get, duckdb::idx_t get_col_idx,
+  std::string_view col_name, const duckdb::LogicalType& col_type) {
+  if (anchor_ti == target_get.table_index) {
+    return {target_get.table_index, duckdb::ProjectionIndex{get_col_idx}};
+  }
+  auto* proj = FindProjectionByTableIndex(root, anchor_ti);
+  if (!proj) [[unlikely]] {
+    throw duckdb::InternalException(
+      "scan rewrite: anchor binds to table_index %llu with no matching "
+      "LogicalProjection in the plan",
+      static_cast<unsigned long long>(anchor_ti.index));
+  }
+  for (duckdb::idx_t i = 0; i < proj->expressions.size(); ++i) {
+    auto& e = *proj->expressions[i];
+    if (e.type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      continue;
+    }
+    auto& ref = e.Cast<duckdb::BoundColumnRefExpression>();
+    if (ref.binding.table_index == target_get.table_index &&
+        ref.binding.column_index.GetIndex() == get_col_idx) {
+      return {proj->table_index, duckdb::ProjectionIndex{i}};
+    }
+  }
+  proj->expressions.push_back(
+    duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
+      std::string{col_name}, col_type,
+      duckdb::ColumnBinding{target_get.table_index,
+                            duckdb::ProjectionIndex{get_col_idx}}));
+  if (!proj->types.empty()) {
+    proj->types.push_back(col_type);
+  }
+  return {proj->table_index,
+          duckdb::ProjectionIndex{proj->expressions.size() - 1}};
+}
+
 bool BindingIsScoreColumn(duckdb::LogicalOperator& op,
                           duckdb::ColumnBinding binding) {
   if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
@@ -1085,79 +1130,6 @@ duckdb::idx_t AddScoreColumn(connector::SereneDBScanBindData& bind_data,
   // projection_ids was used.
   get.types.push_back(duckdb::LogicalType::FLOAT);
   return get_col_idx;
-}
-
-// When a score column is added to a LogicalGet, intermediate LogicalFilter
-// operators above it may have a non-empty `projection_map` that drops the
-// new column from their upward-exposed bindings. Walk the subtree rooted at
-// `op` and extend each such projection_map so the score column remains
-// visible to operators above (TopN ORDER BY, outer Projections, etc.).
-//
-// Returns the position of the score column in `op`'s output bindings, or
-// INVALID_INDEX if the target Get isn't below `op`.
-duckdb::idx_t ExposeScoreThroughSubtree(duckdb::LogicalOperator& op,
-                                        const duckdb::LogicalGet* target_get,
-                                        duckdb::idx_t score_pos_in_child) {
-  if (op.type == duckdb::LogicalOperatorType::LOGICAL_GET) {
-    auto* get = &op.Cast<duckdb::LogicalGet>();
-    return (get == target_get) ? score_pos_in_child
-                               : duckdb::DConstants::INVALID_INDEX;
-  }
-  // Extend a projection_map-style vector so `pos` survives upward.
-  // Returns the new column's position in the operator's output bindings,
-  // or INVALID_INDEX if the map already includes it.
-  auto extend_map = [](std::vector<duckdb::ProjectionIndex>& map,
-                       duckdb::idx_t pos) -> duckdb::idx_t {
-    if (map.empty()) {
-      return pos;  // map is inactive -> all child bindings pass through
-    }
-    for (const auto& p : map) {
-      if (p.GetIndex() == pos) {
-        return duckdb::DConstants::INVALID_INDEX;
-      }
-    }
-    map.emplace_back(duckdb::ProjectionIndex(pos));
-    return map.size() - 1;
-  };
-  for (duckdb::idx_t child_idx = 0; child_idx < op.children.size();
-       ++child_idx) {
-    auto& child = op.children[child_idx];
-    auto pos =
-      ExposeScoreThroughSubtree(*child, target_get, score_pos_in_child);
-    if (pos == duckdb::DConstants::INVALID_INDEX) {
-      continue;
-    }
-    if (op.type == duckdb::LogicalOperatorType::LOGICAL_FILTER) {
-      return extend_map(op.Cast<duckdb::LogicalFilter>().projection_map, pos);
-    }
-    if (op.type == duckdb::LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
-        op.type == duckdb::LogicalOperatorType::LOGICAL_ANY_JOIN ||
-        op.type == duckdb::LogicalOperatorType::LOGICAL_DELIM_JOIN ||
-        op.type == duckdb::LogicalOperatorType::LOGICAL_ASOF_JOIN ||
-        op.type == duckdb::LogicalOperatorType::LOGICAL_CROSS_PRODUCT ||
-        op.type == duckdb::LogicalOperatorType::LOGICAL_POSITIONAL_JOIN) {
-      auto& j = op.Cast<duckdb::LogicalJoin>();
-      auto& map =
-        child_idx == 0 ? j.left_projection_map : j.right_projection_map;
-      const auto new_pos = extend_map(map, pos);
-      if (new_pos == duckdb::DConstants::INVALID_INDEX) {
-        return duckdb::DConstants::INVALID_INDEX;
-      }
-      // Join's output concatenates left bindings then right bindings, so
-      // a right-side column sits after all of the left's exposed columns.
-      if (child_idx == 1) {
-        const auto left_count = j.left_projection_map.empty()
-                                  ? j.children[0]->GetColumnBindings().size()
-                                  : j.left_projection_map.size();
-        return left_count + new_pos;
-      }
-      return new_pos;
-    }
-    // Pass-through operators (Filter without projection_map, Limit, Order,
-    // etc.): column position is preserved in child-to-parent mapping.
-    return pos;
-  }
-  return duckdb::DConstants::INVALID_INDEX;
 }
 
 // Extract a constant Value pointer from `expr`, or null if not a
@@ -1321,44 +1293,9 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
     }
   }
   auto idx = AddScoreColumn(*found->bind_data, *found->get);
-  // Ensure any LogicalFilter between the Get and the rewrite site exposes
-  // the new score column through its projection_map. Without this, upstream
-  // operators (e.g. TopN ORDER BY) can't resolve the column reference.
-  ExposeScoreThroughSubtree(root, found->get, idx);
-
-  duckdb::ColumnBinding result_binding;
-  if (anchor.binding.table_index == found->get->table_index) {
-    // Anchor is directly on the Get -- the rewrite site sees Get columns,
-    // so a Get binding resolves.
-    result_binding = {found->get->table_index, duckdb::ProjectionIndex{idx}};
-  } else {
-    // Anchor is on an intermediate LogicalProjection (DuckDB rebound
-    // the ref during column-lifetime analysis). A Get binding won't
-    // resolve past the projection boundary; find an already-materialised
-    // score ref in that projection and reference its output column.
-    auto* proj = FindProjectionByTableIndex(root, anchor.binding.table_index);
-    if (!proj) {
-      return nullptr;
-    }
-    auto score_col_in_proj = duckdb::DConstants::INVALID_INDEX;
-    for (duckdb::idx_t i = 0; i < proj->expressions.size(); ++i) {
-      auto& e = *proj->expressions[i];
-      if (e.type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
-        continue;
-      }
-      auto& ref = e.Cast<duckdb::BoundColumnRefExpression>();
-      if (ref.binding.table_index == found->get->table_index &&
-          ref.binding.column_index.GetIndex() == idx) {
-        score_col_in_proj = i;
-        break;
-      }
-    }
-    if (score_col_in_proj == duckdb::DConstants::INVALID_INDEX) {
-      return nullptr;
-    }
-    result_binding = {proj->table_index,
-                      duckdb::ProjectionIndex{score_col_in_proj}};
-  }
+  const auto result_binding =
+    ExposeGetColumnAt(root, anchor.binding.table_index, *found->get, idx,
+                      catalog::Column::kScoreName, duckdb::LogicalType::FLOAT);
   changed = true;
   return duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
     std::string{catalog::Column::kScoreName}, duckdb::LogicalType::FLOAT,
@@ -1371,13 +1308,13 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
 // Column::Id via `bind_data.column_ids`. Returns kInvalidId if the ref
 // doesn't belong to the scan.
 catalog::Column::Id ResolveColumnId(
-  const duckdb::BoundColumnRefExpression& ref,
+  duckdb::ColumnBinding binding,
   const connector::SereneDBScanBindData& bind_data,
   const duckdb::LogicalGet& get) {
-  if (ref.binding.table_index != get.table_index) {
+  if (binding.table_index != get.table_index) {
     return std::numeric_limits<catalog::Column::Id>::max();
   }
-  const auto col_idx = ref.binding.column_index;
+  const auto col_idx = binding.column_index.GetIndex();
   const auto& column_ids = get.GetColumnIds();
   if (col_idx >= column_ids.size()) {
     return std::numeric_limits<catalog::Column::Id>::max();
@@ -1688,18 +1625,39 @@ struct ParsedOffsetsCall {
   std::string col_name;
 };
 
-// Catalog column name for `ref`. Falls back to the ref's alias for
-// error messages when the scan hasn't been resolved yet.
-std::string OffsetsColumnName(const duckdb::BoundColumnRefExpression& ref,
+// Catalog column name of the column at `binding` on `get`. Falls back to
+// `alias_fallback` for error messages when the scan hasn't been resolved
+// or the binding is out of range.
+std::string OffsetsColumnName(duckdb::ColumnBinding binding,
+                              std::string_view alias_fallback,
                               const duckdb::LogicalGet* get) {
   if (get) {
     const auto& col_ids = get->GetColumnIds();
-    const auto col_idx = ref.binding.column_index;
+    const auto col_idx = binding.column_index.GetIndex();
     if (col_idx < col_ids.size()) {
       return get->GetColumnName(col_ids[col_idx]);
     }
   }
-  return ref.alias;
+  return std::string{alias_fallback};
+}
+
+// Walk a column binding through LogicalProjection forwarders until it
+// lands on a GET. Needed because DuckDB inserts an intermediate
+// projection above TopN when ORDER BY references a value not in SELECT.
+duckdb::ColumnBinding ResolveBindingToGet(duckdb::LogicalOperator& root,
+                                          duckdb::ColumnBinding binding) {
+  while (auto* proj = FindProjectionByTableIndex(root, binding.table_index)) {
+    const auto idx = binding.column_index.GetIndex();
+    if (idx >= proj->expressions.size()) {
+      break;
+    }
+    auto& forwarded = *proj->expressions[idx];
+    if (forwarded.type != duckdb::ExpressionType::BOUND_COLUMN_REF) {
+      break;
+    }
+    binding = forwarded.Cast<duckdb::BoundColumnRefExpression>().binding;
+  }
+  return binding;
 }
 
 // Validate an OFFSETS() projection call and resolve it against the
@@ -1715,7 +1673,9 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
     throw duckdb::InvalidInputException(
       "OFFSETS() first argument must be a column reference");
   }
-  auto& col_ref = func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+  const auto& col_ref =
+    func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+  const auto resolved = ResolveBindingToGet(root, col_ref.binding);
 
   // Default cap applied when no explicit limit is given. Matches the
   // Velox-era default in server/pg/sql_collector.h:kDefaultOffsetsLimit.
@@ -1738,16 +1698,16 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
     limit = static_cast<size_t>(raw);
   }
 
-  auto found = FindSearchScanByTableIndex(root, col_ref.binding.table_index);
+  auto found = FindSearchScanByTableIndex(root, resolved.table_index);
   if (!found) {
     throw duckdb::InvalidInputException(
       "OFFSETS(%s) requires an inverted index scan in the same sub-query",
-      OffsetsColumnName(col_ref, nullptr));
+      OffsetsColumnName(resolved, col_ref.alias, nullptr));
   }
 
   // Require FROM <idx_name>. OFFSETS() on a base-table scan that was
   // opportunistically promoted to a SearchScan is not supported.
-  const auto col_name = OffsetsColumnName(col_ref, found->get);
+  const auto col_name = OffsetsColumnName(resolved, col_ref.alias, found->get);
   if (!found->bind_data->IsInvertedIndexEntry()) {
     throw duckdb::InvalidInputException(
       "OFFSETS(%s) requires an inverted index scan in the same sub-query",
@@ -1755,7 +1715,7 @@ ParsedOffsetsCall ParseOffsetsCall(duckdb::BoundFunctionExpression& func,
   }
 
   const auto target_col_id =
-    ResolveColumnId(col_ref, *found->bind_data, *found->get);
+    ResolveColumnId(resolved, *found->bind_data, *found->get);
   if (target_col_id == std::numeric_limits<catalog::Column::Id>::max()) {
     throw duckdb::InvalidInputException(
       "OFFSETS(): column '%s' not found in table", col_name);
@@ -1810,21 +1770,21 @@ duckdb::unique_ptr<duckdb::Expression> RewriteOffsetsCall(
     {.column_id = parsed.target_col_id, .limit = parsed.limit});
   const auto get_col_idx = AddOffsetsColumn(
     *parsed.scan.bind_data, *parsed.scan.get, parsed.target_col_id);
-  // Expose the new column through any Filter projection_map between the
-  // Get and this projection. projection_map indexes into
-  // children[0]->GetColumnBindings(), which has size column_ids.size()
-  // when get.projection_ids is empty, else projection_ids.size(). We
-  // just appended to whichever applies, so the new position is size-1.
-  const auto binding_position = parsed.scan.get->projection_ids.empty()
-                                  ? get_col_idx
-                                  : parsed.scan.get->projection_ids.size() - 1;
-  ExposeScoreThroughSubtree(root, parsed.scan.get, binding_position);
-
-  duckdb::ColumnBinding binding{parsed.scan.get->table_index,
-                                duckdb::ProjectionIndex{get_col_idx}};
-  auto col = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    catalog::Column::MakeOffsetsName(parsed.target_col_id),
-    catalog::Column::MakeOffsetsType(), binding);
+  const auto col_name = catalog::Column::MakeOffsetsName(parsed.target_col_id);
+  const auto col_type = catalog::Column::MakeOffsetsType();
+  // Anchor for the new column ref is the original OFFSETS argument's
+  // table_index -- the host expression sees columns through whatever
+  // operator that table_index identifies. ExposeGetColumnAt handles
+  // both the direct-on-GET and projection-between cases (injecting a
+  // forwarder in the latter).
+  auto& col_ref =
+    func.children[0]->Cast<duckdb::BoundColumnRefExpression>();
+  const auto binding = ExposeGetColumnAt(root, col_ref.binding.table_index,
+                                         *parsed.scan.get, get_col_idx,
+                                         col_name, col_type);
+  auto col = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(col_name,
+                                                                 col_type,
+                                                                 binding);
   col->alias = expr.alias;
   return col;
 }

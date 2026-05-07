@@ -191,9 +191,20 @@ std::optional<ExpectedHNSW> ExpectedHNSWForFunction(
   if (result.is_norm ? func.children.size() != 1 : func.children.size() < 2) {
     return std::nullopt;
   }
-  if (func.children[0]->return_type.id() != duckdb::LogicalTypeId::ARRAY) {
+  const auto& arg_type = func.children[0]->return_type;
+  duckdb::LogicalTypeId element_id;
+  if (arg_type.id() == duckdb::LogicalTypeId::ARRAY) {
+    element_id = duckdb::ArrayType::GetChildType(arg_type).id();
+  } else if (arg_type.id() == duckdb::LogicalTypeId::LIST) {
+    element_id = duckdb::ListType::GetChildType(arg_type).id();
+  } else {
     return std::nullopt;
   }
+  if (element_id != duckdb::LogicalTypeId::FLOAT &&
+      element_id != duckdb::LogicalTypeId::DOUBLE) {
+    return std::nullopt;
+  }
+
   return result;
 }
 

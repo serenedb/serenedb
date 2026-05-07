@@ -51,23 +51,14 @@ struct SegmentPkIterator {
 bool OpenSegmentPkIterator(const irs::SubReader& segment,
                            SegmentPkIterator& out);
 
-// `scratch_idx.size() == n` is the "already sorted" signal: caller has
-// pre-populated the permutation and we trust it (asserted in debug).
-// Anything else (including empty, the common case) triggers a fresh sort.
 template<typename Hits, typename Proj, typename OnSegment, typename OnDoc>
 void WalkSegmentsSorted(const Hits& hits, Proj&& proj,
                         std::vector<uint32_t>& scratch_idx,
                         OnSegment&& on_segment, OnDoc&& on_doc) {
   const size_t n = std::ranges::size(hits);
-  if (scratch_idx.size() != n) {
-    scratch_idx.resize(n);
-    std::iota(scratch_idx.begin(), scratch_idx.end(), uint32_t{0});
-    std::ranges::sort(scratch_idx, {},
-                      [&](uint32_t i) { return proj(hits[i]); });
-  } else {
-    SDB_ASSERT(std::ranges::is_sorted(
-      scratch_idx, {}, [&](uint32_t i) { return proj(hits[i]); }));
-  }
+  scratch_idx.resize(n);
+  std::iota(scratch_idx.begin(), scratch_idx.end(), uint32_t{0});
+  std::ranges::sort(scratch_idx, {}, [&](uint32_t i) { return proj(hits[i]); });
 
   size_t i = 0;
   while (i < n) {
@@ -93,7 +84,6 @@ template<typename Hits, typename Proj, typename Sink>
 void LookupSegmentsValues(const Hits& hits, Proj&& proj,
                           const irs::IndexReader& reader,
                           std::vector<uint32_t>& scratch_idx, Sink&& sink) {
-  scratch_idx.clear();
   SegmentPkIterator it;
   WalkSegmentsSorted(
     hits, std::forward<Proj>(proj), scratch_idx,

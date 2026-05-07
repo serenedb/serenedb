@@ -20,13 +20,13 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -70,9 +70,8 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   bool topk_executed = false;
 
   // Reusable scratch for LookupSegmentsValues / WalkSegmentsSorted -- avoids
-  // per-call heap alloc. Single-threaded usage; both LSV (top-K execute) and
-  // OFFSETS dispatch (pagination) clear it at the start of their call so
-  // WSS sees an empty buffer and sorts fresh.
+  // per-call heap alloc. Single-threaded usage (top-K execute then pagination
+  // are serialised).
   std::vector<uint32_t> lookup_scratch;
 
   // Populated only when SearchScan requests OFFSETS columns.

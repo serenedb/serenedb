@@ -238,11 +238,6 @@ static void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
     child.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   }
 
-  // Force a fresh sort: LSV's leftover permutation in `lookup_scratch` was
-  // built over pre-compact `valid_hits`, not over this batch's slice, so it
-  // must not be trusted by WSS's "already sorted" signal even if sizes
-  // happen to match.
-  gstate.lookup_scratch.clear();
   WalkSegmentsSorted(
     hit_slice,
     [](const irs::ScoreDoc& sd) {

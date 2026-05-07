@@ -25,6 +25,7 @@
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <memory>
 
 #include "basics/containers/node_hash_map.h"
 #include "basics/message_buffer.h"
@@ -41,7 +42,7 @@ enum class VarFormat : int16_t {
 // instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
 // for scalar types, and can lazily create child format for arrays).
 using SerializationFunction = void (*)(
-  struct SerializationContext context,
+  struct SerializationContext& context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
 struct RecordSerializers {
@@ -51,7 +52,7 @@ struct RecordSerializers {
 
 struct TypesSerializationCache {
   containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>
-    by_type;
+    type2serializers;
 };
 
 struct SerializationContext {
@@ -62,7 +63,7 @@ struct SerializationContext {
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
   bool in_record = false;
-  std::shared_ptr<TypesSerializationCache> types_cache;
+  std::unique_ptr<TypesSerializationCache> types_cache;
 };
 
 void FillContext(const Config& config, SerializationContext& context);

@@ -274,9 +274,9 @@ Result ValidateInvertedIndexColumns(
 //     doesn't implement yet -- reject to avoid silent data loss at read
 //     time. (VPack coding is rejected at dictionary creation time, so it
 //     can't reach this check via SQL.)
-Result ValidateGeoAnalyzerColumn(std::string_view column_name,
-                                 const duckdb::LogicalType& col_type,
-                                 const irs::analysis::Analyzer& analyzer) {
+Result ValidateGeoTokenizerColumn(std::string_view column_name,
+                                  const duckdb::LogicalType& col_type,
+                                  const irs::analysis::Analyzer& analyzer) {
   const auto type_id = analyzer.type();
   const bool is_geojson =
     type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
@@ -505,8 +505,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                          "' failed to instantiate: ",
                                          analyzer.error().errorMessage()};
         }
-        if (auto res = ValidateGeoAnalyzerColumn(c.name, c.catalog_column->type,
-                                                 **analyzer);
+        if (auto res = ValidateGeoTokenizerColumn(
+              c.name, c.catalog_column->type, **analyzer);
             res.fail()) {
           return std::unexpected<Result>(std::move(res));
         }

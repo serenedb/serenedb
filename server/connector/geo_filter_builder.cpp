@@ -115,19 +115,10 @@ Result ParseGeoConstant(const duckdb::Value& value,
       return {};
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
-      // Mirror the column-side rule from ValidateGeoAnalyzerColumn: a
-      // GEOMETRY constant must declare a CRS84-compatible CRS. The function
-      // signatures are registered with bare GEOMETRY so DuckDB binds any-CRS
-      // values, and our cast peeling in TryGetConstant exposes them; without
-      // this check the bytes would be silently interpreted as CRS84.
       if (auto r = sdb::catalog::ValidateGeometryCRS84(value.type());
           r.fail()) {
         return {ERROR_BAD_PARAMETER, "GEOMETRY constant: ", r.errorMessage()};
       }
-      // GEOMETRY values store WKB bytes internally. Value::GetValue<string>()
-      // would call Geometry::ToString() and return the WKT text form, which
-      // ParseShapeWKB can't read; StringValue::Get bypasses that and yields
-      // the raw bytes the cast / serializer wrote.
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (auto r = sdb::geo::ParseShapeWKB(wkb_str, shape); r.fail()) {
         return r;

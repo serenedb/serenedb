@@ -261,6 +261,24 @@ void StringifyWildcard(std::string* out, const ByWildcard& filter, FT&& ft) {
 }
 
 template<typename FT>
+void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
+  absl::StrAppend(out, "REGEXP[", ft(filter.field()), ", ",
+                  TermToString(filter.options().pattern), "]");
+}
+
+template<typename FT>
+void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
+  std::string parts_str;
+  for (const auto& part : filter.options()) {
+    std::string part_str;
+    part.part.visit(PhrasePartVisitor{.out = &part_str});
+    absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
+                    part.offs_min, ")", "; ");
+  }
+  absl::StrAppend(out, "PHRASE[", ft(filter.field()), " = <", parts_str, ">]");
+}
+
+template<typename FT>
 void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
                             FT&& ft) {
   std::string parts_str;
@@ -278,12 +296,6 @@ void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
                   TermToString(filter.options().token),
                   "', has_pos=", filter.options().has_pos, ", parts=[",
                   parts_str, "]]");
-}
-
-template<typename FT>
-void StringifyRegexp(std::string* out, const ByRegexp& filter, FT&& ft) {
-  absl::StrAppend(out, "REGEXP[", ft(filter.field()), ", ",
-                  TermToString(filter.options().pattern), "]");
 }
 
 std::string_view GeoFilterTypeName(GeoFilterType type) {
@@ -342,18 +354,6 @@ void StringifyGeoDistance(std::string* out, const GeoDistanceFilter& filter,
                     range.max);
   }
   absl::StrAppend(out, "]");
-}
-
-template<typename FT>
-void StringifyPhrase(std::string* out, const ByPhrase& filter, FT&& ft) {
-  std::string parts_str;
-  for (const auto& part : filter.options()) {
-    std::string part_str;
-    part.part.visit(PhrasePartVisitor{.out = &part_str});
-    absl::StrAppend(&parts_str, part_str, "(", part.offs_max, ", ",
-                    part.offs_min, ")", "; ");
-  }
-  absl::StrAppend(out, "PHRASE[", ft(filter.field()), " = <", parts_str, ">]");
 }
 
 template<typename FT>

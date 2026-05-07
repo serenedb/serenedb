@@ -379,16 +379,7 @@ db error: ERROR: Inverted index function called outside inverted index context.<
 
 # --- GEOMETRY column ---
 #
-# A GEOMETRY column carries WKB bytes internally. The catalog's
-# ValidateGeoAnalyzerColumn requires a CRS84-compatible CRS to be declared on
-# the column (CREATE INDEX rejects bare GEOMETRY without a CRS), and the
-# geojson analyzer must use `coding = 's2point'` -- LatLng codings are
-# rejected for GEOMETRY columns. (VPack coding is rejected at dictionary
-# creation time, so it never reaches the index.)
-#
-# DuckDB has implicit casts between VARCHAR (WKT) and GEOMETRY, so test data
-# is written in human-readable WKT form. Same shapes as the VARCHAR test
-# above, identical query semantics + result sets.
+# A GEOMETRY column carries WKB bytes internally.
 
 statement ok
 CREATE TABLE geo_data_g (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
@@ -704,8 +695,6 @@ id
 
 # --- CREATE INDEX rejection: GEOMETRY column with non-S2Point geojson coding ---
 # A geojson dictionary with a LatLng coding cannot index a GEOMETRY column --
-# the catalog's ValidateGeoAnalyzerColumn check rejects at index creation
-# because there is no shape -> LatLng-bytes encoder yet.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY geojson_latlng(

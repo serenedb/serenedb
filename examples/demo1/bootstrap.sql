@@ -4,7 +4,7 @@
 -- parquet branch on Hugging Face and writes a local file per shard.
 --
 -- Run:
---   psql -h <host> -p <port> -U serenedb -d postgres -f bootstrap.sql
+--   psql -h <host> -p <port> -U postgres -d postgres -f bootstrap.sql
 
 \timing on
 

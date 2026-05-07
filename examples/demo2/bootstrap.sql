@@ -4,7 +4,7 @@
 -- the rows into a rocksdb-backed table.
 --
 -- Run:
---   psql -h <host> -p <port> -U serenedb -d postgres -f bootstrap.sql
+--   psql -h <host> -p <port> -U postgres -d postgres -f bootstrap.sql
 
 \timing on
 

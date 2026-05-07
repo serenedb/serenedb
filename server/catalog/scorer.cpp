@@ -20,7 +20,44 @@
 
 #include "catalog/scorer.h"
 
+#include <absl/strings/str_cat.h>
+
 namespace sdb::catalog {
+
+std::string Scorer::ToString() const {
+  return std::visit(
+    [&]<typename P>(const P& p) -> std::string {
+      if constexpr (std::is_same_v<P, Bm25>) {
+        return absl::StrCat("bm25(k1=", p.k1, ", b=", p.b, ")");
+      } else if constexpr (std::is_same_v<P, Tfidf>) {
+        return absl::StrCat("tfidf(with_norms=",
+                            p.with_norms ? "true" : "false", ")");
+      } else if constexpr (std::is_same_v<P, RawTf>) {
+        return "raw_tf()";
+      } else if constexpr (std::is_same_v<P, LmJm>) {
+        return absl::StrCat("lm_jm(lambda=", p.lambda, ")");
+      } else if constexpr (std::is_same_v<P, LmDirichlet>) {
+        return absl::StrCat("lm_dirichlet(mu=", p.mu, ")");
+      } else if constexpr (std::is_same_v<P, IndriDirichlet>) {
+        return absl::StrCat("indri_dirichlet(mu=", p.mu, ")");
+      } else if constexpr (std::is_same_v<P, Dfi>) {
+        std::string_view m = "standardized";
+        switch (p.measure) {
+          case DfiMeasure::Standardized:
+            m = "standardized";
+            break;
+          case DfiMeasure::Saturated:
+            m = "saturated";
+            break;
+          case DfiMeasure::ChiSquared:
+            m = "chi_squared";
+            break;
+        }
+        return absl::StrCat("dfi(measure=", m, ")");
+      }
+    },
+    params);
+}
 
 std::unique_ptr<irs::Scorer> MakeIrsScorer(const Scorer& spec) {
   return std::visit(

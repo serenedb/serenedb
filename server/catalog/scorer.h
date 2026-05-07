@@ -32,6 +32,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <variant>
 
@@ -107,12 +108,14 @@ struct Scorer {
       []<typename P>(const P&) -> std::string_view { return P::kName; },
       params);
   }
+
+  // `bm25(k1=1.2, b=0.75)`, `tfidf(with_norms=false)`, etc. -- the
+  // user-visible spelling rendered in EXPLAIN.
+  std::string ToString() const;
 };
 
 // Materialise the iresearch scorer described by `spec`. Used both by the
-// shard (to install the WAND-aware scorer on `IndexWriterOptions.
-// reader_options.scorer`) and by the runtime SearchScan (to score docs in
-// the top-K loop).
+// shard (writer-side WAND data) and by the runtime SearchScan (top-K).
 std::unique_ptr<irs::Scorer> MakeIrsScorer(const Scorer& spec);
 
 // vpack serialisation hook for Scorer. The persisted shape is a 2-tuple

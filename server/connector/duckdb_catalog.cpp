@@ -955,6 +955,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
       if (leaf_get->bind_data) {
         pinned_iceberg_snapshot_id =
           ExtractIcebergSnapshotId(*leaf_get->bind_data);
+        EnableIcebergSort(leaf_get->bind_data.get());
       }
     }
   } else {

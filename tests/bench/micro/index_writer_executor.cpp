@@ -45,6 +45,12 @@ namespace {
 constexpr std::string_view kFormatName = "1_5simd";
 constexpr std::string_view kFieldName = "value";
 
+constexpr int64_t kCommittedSegments = 1024;
+constexpr int64_t kPendingSegmentContexts = 256;
+constexpr int64_t kDocsPerSegment = 8092;
+constexpr int64_t kTerms = 16;
+constexpr int64_t kThreads = 8;
+
 class StringField {
  public:
   explicit StringField(std::string_view name) noexcept : _name{name} {}
@@ -139,6 +145,9 @@ void AddRemovalQueryContexts(irs::IndexWriter& writer, int64_t query_contexts,
   std::vector<irs::IndexWriter::Transaction> transactions;
   transactions.reserve(static_cast<size_t>(query_contexts));
 
+  // Keep transactions alive until all Remove calls are registered. This forces
+  // one active SegmentContext per transaction, so the next Commit() observes
+  // query_contexts entries in ctx->segments during PrepareFlush().
   for (int64_t i = 0; i != query_contexts; ++i) {
     auto& trx = transactions.emplace_back(writer.GetBatch());
     trx.Remove(MakeTermFilter(terms[static_cast<size_t>(i % terms.size())]));
@@ -223,7 +232,8 @@ void SetCounters(benchmark::State& state, int64_t segment_count,
                                                  docs_per_segment, term_count);
 
   state.SetItemsProcessed(state.iterations() * matched_docs);
-  state.counters["segments"] = static_cast<double>(segment_count);
+  state.counters["committed_segments"] = static_cast<double>(segment_count);
+  state.counters["segments"] = static_cast<double>(query_contexts);
   state.counters["queries"] = static_cast<double>(query_contexts);
   state.counters["docs_per_segment"] = static_cast<double>(docs_per_segment);
   state.counters["terms"] = static_cast<double>(term_count);
@@ -267,20 +277,18 @@ void BmFairThreadPool(benchmark::State& state) {
 }
 
 BENCHMARK(BmNoExecutor)
-  ->Args({64, 8, 4096, 16, 0})
-  ->Args({128, 16, 4096, 64, 0})
-  ->Args({256, 32, 4096, 256, 0})
-  ->Args({512, 64, 256, 1, 0})
-  ->ArgNames({"segments", "queries", "docs_per_segment", "terms", "threads"})
+  ->Args({kCommittedSegments, kPendingSegmentContexts, kDocsPerSegment, kTerms,
+          0})
+  ->ArgNames({"committed_segments", "segments", "docs_per_segment", "terms",
+              "threads"})
   ->Unit(benchmark::kMillisecond)
   ->UseRealTime();
 
 BENCHMARK(BmFairThreadPool)
-  ->Args({64, 8, 4096, 16, 8})
-  ->Args({128, 16, 4096, 64, 8})
-  ->Args({256, 32, 4096, 256, 8})
-  ->Args({512, 64, 256, 1, 8})
-  ->ArgNames({"segments", "queries", "docs_per_segment", "terms", "threads"})
+  ->Args({kCommittedSegments, kPendingSegmentContexts, kDocsPerSegment, kTerms,
+          kThreads})
+  ->ArgNames({"committed_segments", "segments", "docs_per_segment", "terms",
+              "threads"})
   ->Unit(benchmark::kMillisecond)
   ->UseRealTime();
 

@@ -151,16 +151,16 @@ bool PgBlobToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
     source, result, count, [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view value{input.GetData(), input.GetSize()};
       if (use_escape) {
-        const auto required_size = pg::ByteaOutEscapeLength<false>(value);
+        const auto required_size = pg::ByteaOutEscapeLength(value);
         auto target = duckdb::StringVector::EmptyString(result, required_size);
-        pg::ByteaOutEscape<false>(target.GetDataWriteable(), value);
+        pg::ByteaOutEscape(target.GetDataWriteable(), value);
         target.Finalize();
         return target;
       }
       // Hex format: \x prefix + 2 hex chars per byte
       const auto required_size = 2 + 2 * value.size();
       auto target = duckdb::StringVector::EmptyString(result, required_size);
-      pg::ByteaOutHex<false>(target.GetDataWriteable(), value);
+      pg::ByteaOutHex(target.GetDataWriteable(), value);
       target.Finalize();
       return target;
     });

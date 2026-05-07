@@ -46,14 +46,12 @@ using SerializationFunction = void (*)(
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
 
 struct RecordSerializers {
-  std::vector<SerializationFunction> fns;
+  std::vector<SerializationFunction> functions;
   std::vector<int32_t> oids;  // populated for binary, empty for text
 };
 
-struct TypesSerializationCache {
-  containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>
-    type2serializers;
-};
+using TypesSerializationCache =
+  containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
 
 struct SerializationContext {
   message::Buffer* buffer;
@@ -72,13 +70,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
 
-template<bool NeedArrayEscaping>
 void ByteaOutHex(char* buf, std::string_view value);
 
-template<bool NeedArrayEscaping>
 void ByteaOutEscape(char* buf, std::string_view value);
 
-template<bool InArray>
 size_t ByteaOutEscapeLength(std::string_view value);
 
 }  // namespace sdb::pg

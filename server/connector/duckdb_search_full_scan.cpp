@@ -216,6 +216,54 @@ static void WriteVirtualColumns(SearchFullScanGlobalState& gstate,
   }
 }
 
+static void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
+                             const SearchScan& search,
+                             const irs::IndexReader& reader,
+                             duckdb::DataChunk& output,
+                             std::span<const irs::ScoreDoc> hit_slice) {
+  if (gstate.offsets_doc_scratch.size() != search.offsets.size()) {
+    gstate.offsets_doc_scratch.assign(search.offsets.size(),
+                                      std::vector<int64_t>{});
+  } else {
+    for (auto& s : gstate.offsets_doc_scratch) {
+      s.clear();
+    }
+  }
+  std::vector<duckdb::idx_t> offsets_running_size(search.offsets.size(), 0);
+  for (auto out_slot : gstate.offsets_output_idx) {
+    auto& list_vec = output.data[out_slot];
+    list_vec.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    duckdb::ListVector::SetListSize(list_vec, 0);
+    auto& child = duckdb::ListVector::GetChildMutable(list_vec);
+    child.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  }
+
+  // Force a fresh sort: LSV's leftover permutation in `lookup_scratch` was
+  // built over pre-compact `valid_hits`, not over this batch's slice, so it
+  // must not be trusted by WSS's "already sorted" signal even if sizes
+  // happen to match.
+  gstate.lookup_scratch.clear();
+  WalkSegmentsSorted(
+    hit_slice,
+    [](const irs::ScoreDoc& sd) {
+      return std::pair{sd.segment_idx, static_cast<uint32_t>(sd.doc)};
+    },
+    gstate.lookup_scratch,
+    [&](uint32_t seg) {
+      ResetOffsetsForSegment(gstate, search, reader[seg]);
+      return true;
+    },
+    [&](uint32_t orig, uint32_t seg, uint32_t doc) {
+      CollectAndWriteDocOffsets(gstate, search, reader[seg], doc, output, orig,
+                                offsets_running_size);
+    });
+
+  for (size_t fi = 0; fi < gstate.offsets_output_idx.size(); ++fi) {
+    duckdb::ListVector::SetListSize(output.data[gstate.offsets_output_idx[fi]],
+                                    offsets_running_size[fi]);
+  }
+}
+
 // Bare `SELECT * FROM idx;` lands here with the default FullTableScan
 // scan_source -- promote it to a match-all SearchScan so the rest of init
 // can assume a SearchScan. Optimizer rewrites for filtered/scored queries
@@ -395,9 +443,10 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
   if (search.score_top_k && gstate.scorer_obj) {
     if (!gstate.topk_executed) {
       const size_t k = *search.score_top_k;
-      std::vector<irs::ScoreDoc> hits(irs::BlockSize(k));
+      gstate.hits.resize(irs::BlockSize(k));
       irs::score_t score_threshold = std::numeric_limits<irs::score_t>::min();
-      irs::NthPartitionScoreCollector collector{score_threshold, k, hits};
+      irs::NthPartitionScoreCollector collector{score_threshold, k,
+                                                gstate.hits};
       irs::ColumnArgsFetcher fetcher;
       uint32_t seg_idx = 0;
 
@@ -418,20 +467,15 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
 
       size_t valid = 0;
       for (size_t i = 0; i < k; ++i) {
-        const auto& sd = hits[i];
+        const auto& sd = gstate.hits[i];
         if (irs::doc_limits::eof(sd.doc) || sd.segment_idx >= reader.size()) {
           break;
         }
         ++valid;
       }
 
-      auto valid_hits = std::span<const irs::ScoreDoc>{hits.data(), valid};
-      auto segments =
-        valid_hits | std::views::transform(
-                       [](const irs::ScoreDoc& sd) { return sd.segment_idx; });
-      auto doc_ids =
-        valid_hits |
-        std::views::transform([](const irs::ScoreDoc& sd) { return sd.doc; });
+      const auto valid_hits =
+        std::span<const irs::ScoreDoc>{gstate.hits.data(), valid};
 
       gstate.topk_scores.resize(valid);
       for (size_t i = 0; i < valid; ++i) {
@@ -451,13 +495,21 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
                 topk.EnsureInit(duckdb::Allocator::DefaultAllocator());
               }
               PkResize(topk, valid);
-              // Sink writes resolved PKs at their HNSW-positional slot;
-              // unresolved slots are compacted below alongside topk_scores.
-              LookupSegmentsValues(segments, doc_ids, reader, valid,
-                                   [&](size_t orig, std::string_view pk) {
-                                     SetPrimaryKey(topk, orig, pk);
-                                   });
-              PkCompactResolved(topk, valid, &gstate.topk_scores);
+              LookupSegmentsValues(
+                valid_hits,
+                [](const irs::ScoreDoc& sd) {
+                  return std::pair{sd.segment_idx,
+                                   static_cast<uint32_t>(sd.doc)};
+                },
+                reader, gstate.lookup_scratch,
+                [&](size_t orig, std::string_view pk) {
+                  SetPrimaryKey(topk, orig, pk);
+                });
+              if (search.EmitOffsets()) {
+                PkCompactResolved(topk, valid, gstate.topk_scores, gstate.hits);
+              } else {
+                PkCompactResolved(topk, valid, gstate.topk_scores);
+              }
             }
           },
           gstate.pk_batch);
@@ -473,14 +525,15 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
     const size_t num_rows = std::min<size_t>(remaining, batch_size);
 
-    // top-K collects hits across segments without position iteration, so
-    // OFFSETS() can't be served from this path.
-    SDB_ASSERT(!search.EmitOffsets(),
-               "OFFSETS() combined with top-K scoring is not supported");
-
     std::span<const float> score_slice{
       gstate.topk_scores.data() + gstate.topk_offset, num_rows};
     WriteVirtualColumns(gstate, num_rows, output, score_slice);
+
+    if (search.EmitOffsets()) {
+      std::span<const irs::ScoreDoc> hit_slice{
+        gstate.hits.data() + gstate.topk_offset, num_rows};
+      WriteTopkOffsets(gstate, search, reader, output, hit_slice);
+    }
 
     if (has_real) {
       gstate.index_source->Materialize(context, gstate.pk_batch,
@@ -645,8 +698,9 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
   }
 
-  // Empty span: scores already inline -- WriteVirtualColumns skips the copy
-  // path.
+  // Empty span: streaming path wrote scores and offsets inline during the
+  // scan loop -- WriteVirtualColumns leaves those columns alone, fills only
+  // tableoid / rowid here.
   WriteVirtualColumns(gstate, collected, output, std::span<const float>{});
   output.SetCardinality(collected);
   gstate.produced_rows.fetch_add(collected, std::memory_order_relaxed);

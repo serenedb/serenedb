@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_table_function.h"
 
+#include <absl/strings/str_join.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -519,13 +521,11 @@ void SearchScan::AppendSummary(
     out.insert("TopK", std::to_string(*score_top_k));
   }
   if (EmitOffsets()) {
-    std::string cols;
-    for (size_t i = 0; i < offsets.size(); ++i) {
-      if (i) {
-        absl::StrAppend(&cols, ", ");
-      }
-      absl::StrAppend(&cols, ColumnNameFor(bind, offsets[i].column_id));
-    }
+    auto cols =
+      absl::StrJoin(offsets | std::views::transform([&](const auto& off) {
+                      return ColumnNameFor(bind, off.column_id);
+                    }),
+                    ", ");
     out.insert("Offsets", std::move(cols));
   }
 }

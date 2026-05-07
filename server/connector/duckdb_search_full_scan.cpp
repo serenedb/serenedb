@@ -240,9 +240,7 @@ static void WriteTopkOffsets(SearchFullScanGlobalState& gstate,
 
   WalkSegmentsSorted(
     hit_slice,
-    [](const irs::ScoreDoc& sd) {
-      return std::pair{sd.segment_idx, static_cast<uint32_t>(sd.doc)};
-    },
+    [](const irs::ScoreDoc& sd) { return std::pair{sd.segment_idx, sd.doc}; },
     gstate.lookup_scratch,
     [&](uint32_t seg) {
       ResetOffsetsForSegment(gstate, search, reader[seg]);

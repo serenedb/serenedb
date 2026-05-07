@@ -3,39 +3,40 @@ CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
 
 
 statement count 1
-INSERT INTO vedernikoff (hero) VALUES ('kostya');
+INSERT INTO vedernikoff (hero) VALUES ('iceberg_partition_review_v17');
 
 
 statement count 1
-INSERT INTO vedernikoff (hero) VALUES ('babsky');
+INSERT INTO vedernikoff (hero) VALUES ('iceberg_manifest_audit');
 
 
 statement count 1
-INSERT INTO vedernikoff (hero) VALUES ('sas');
+INSERT INTO vedernikoff (hero) VALUES ('loves_solid_ironically');
 
 
 query
 SELECT id, hero FROM vedernikoff ORDER BY id;
 ----
 id	hero
-1	kostya
-2	babsky
-3	sas
+1	iceberg_partition_review_v17
+2	iceberg_manifest_audit
+3	loves_solid_ironically
 
 
 statement count 2
-INSERT INTO vedernikoff (hero) VALUES ('abramov'), ('pudge');
+INSERT INTO vedernikoff (hero) VALUES
+  ('updated_resume_for_mop'), ('mop_recruiter_replied');
 
 
 query
 SELECT id, hero FROM vedernikoff ORDER BY id;
 ----
 id	hero
-1	kostya
-2	babsky
-3	sas
-4	abramov
-5	pudge
+1	iceberg_partition_review_v17
+2	iceberg_manifest_audit
+3	loves_solid_ironically
+4	updated_resume_for_mop
+5	mop_recruiter_replied
 
 
 statement ok
@@ -47,14 +48,14 @@ CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
 
 
 statement count 1
-INSERT INTO vedernikoff (hero) VALUES ('clickclack');
+INSERT INTO vedernikoff (hero) VALUES ('mop_offer_letter_arrived');
 
 
 query
 SELECT id, hero FROM vedernikoff;
 ----
 id	hero
-6	clickclack
+6	mop_offer_letter_arrived
 
 
 statement ok
@@ -155,28 +156,32 @@ CREATE TABLE deadinside (id BIGSERIAL PRIMARY KEY, name TEXT);
 
 
 statement count 2
-INSERT INTO babsky (name) VALUES ('vladgalaka'), ('myasnig');
+INSERT INTO babsky (name) VALUES
+  ('iceberg_only_iceberg_more_iceberg'), ('only_iceberg_no_other_work');
 
 
 statement count 3
-INSERT INTO deadinside (name) VALUES ('shlepach'), ('kryakva'), ('ksimironov');
+INSERT INTO deadinside (name) VALUES
+  ('reread_solid_principles'),
+  ('signals_dont_replace_thinking'),
+  ('eight_classes_for_one_check');
 
 
 query
 SELECT id, name FROM babsky ORDER BY id;
 ----
 id	name
-1	vladgalaka
-2	myasnig
+1	iceberg_only_iceberg_more_iceberg
+2	only_iceberg_no_other_work
 
 
 query
 SELECT id, name FROM deadinside ORDER BY id;
 ----
 id	name
-1	shlepach
-2	kryakva
-3	ksimironov
+1	reread_solid_principles
+2	signals_dont_replace_thinking
+3	eight_classes_for_one_check
 
 
 statement ok
@@ -274,7 +279,7 @@ CREATE TABLE myasnig (id SERIAL PRIMARY KEY, hero TEXT);
 
 
 statement count 1
-INSERT INTO myasnig (hero) VALUES ('vladgalaka');
+INSERT INTO myasnig (hero) VALUES ('mop_take_home_assignment');
 
 
 statement ok
@@ -285,11 +290,11 @@ query
 SELECT id, hero FROM myasnig ORDER BY id;
 ----
 id	hero
-1	vladgalaka
+1	mop_take_home_assignment
 
 
 statement error
-INSERT INTO myasnig (hero) VALUES ('kryakva');
+INSERT INTO myasnig (hero) VALUES ('mop_round2_scheduled');
 
 
 statement ok
@@ -297,15 +302,15 @@ CREATE SEQUENCE myasnig_id_seq START WITH 100;
 
 
 statement count 1
-INSERT INTO myasnig (hero) VALUES ('kryakva');
+INSERT INTO myasnig (hero) VALUES ('mop_round2_scheduled');
 
 
 query
 SELECT id, hero FROM myasnig ORDER BY id;
 ----
 id	hero
-1	vladgalaka
-100	kryakva
+1	mop_take_home_assignment
+100	mop_round2_scheduled
 
 
 statement ok

@@ -1,0 +1,154 @@
+control substitution on
+
+# Vedernikoff's iceberg-boring metrics dashboard (auto-PK, no catalog Sequence).
+# He does iceberg only; "loves" SOLID ironically; eyes glued to MOP listings.
+# Recovery must reload the counter from Sequences CF; otherwise next-session
+# inserts collide with already-persisted rows.
+
+statement ok
+CREATE TABLE clickclack_iceberg_metrics (
+  metric TEXT,
+  value INT
+);
+
+
+statement count 4
+INSERT INTO clickclack_iceberg_metrics VALUES
+  ('iceberg_partitions_reviewed', 9001),
+  ('iceberg_manifests_inspected', 1488),
+  ('solid_principles_violated_ironically', 322),
+  ('mop_job_listings_open_in_tab', 14);
+
+
+# Multi-chunk bulk insert -- pushes the auto-PK counter past one DataChunk.
+statement count 5000
+INSERT INTO clickclack_iceberg_metrics
+  SELECT 'iceberg_partition_audit_' || i::TEXT, i
+    FROM generate_series(1, 5000) AS s(i);
+
+
+query
+SELECT count(*) FROM clickclack_iceberg_metrics;
+----
+count
+5004
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# All rows present after recovery (auto-PK counter persisted in the
+# Sequences CF; rows persisted in the data CF; both come back).
+connection after_crash
+query
+SELECT count(*) FROM clickclack_iceberg_metrics;
+----
+count
+5004
+
+
+connection after_crash
+query
+SELECT metric, value FROM clickclack_iceberg_metrics
+  WHERE metric IN ('iceberg_partitions_reviewed',
+                   'iceberg_manifests_inspected',
+                   'solid_principles_violated_ironically',
+                   'mop_job_listings_open_in_tab')
+  ORDER BY metric;
+----
+metric	value
+iceberg_manifests_inspected	1488
+iceberg_partitions_reviewed	9001
+mop_job_listings_open_in_tab	14
+solid_principles_violated_ironically	322
+
+
+# Critical: next INSERT must NOT collide with the 5004 existing rows. If
+# Table::ReadInternal failed to load the Sequence's counter from disk, the
+# in-memory counter would reset to 0 and inserts would re-issue PKs that
+# already exist on disk -- duplicate-key violation on the very next write.
+connection after_crash
+statement count 1
+INSERT INTO clickclack_iceberg_metrics
+  VALUES ('mop_application_submitted', 1);
+
+
+connection after_crash
+query
+SELECT count(*) FROM clickclack_iceberg_metrics;
+----
+count
+5005
+
+
+# Bulk insert post-recovery -- multiple chunks, no collisions.
+connection after_crash
+statement count 3000
+INSERT INTO clickclack_iceberg_metrics
+  SELECT 'iceberg_metadata_skim_' || i::TEXT, i
+    FROM generate_series(1, 3000) AS s(i);
+
+
+connection after_crash
+query
+SELECT count(*) FROM clickclack_iceberg_metrics;
+----
+count
+8005
+
+
+# Second crash mid-life: counter advances must persist again.
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash_2
+query
+SELECT count(*) FROM clickclack_iceberg_metrics;
+----
+count
+8005
+
+
+# Inserts after the second crash also don't collide.
+connection after_crash_2
+statement count 10
+INSERT INTO clickclack_iceberg_metrics
+  SELECT 'still_iceberging_only_iceberg_' || i::TEXT, i
+    FROM generate_series(1, 10) AS s(i);
+
+
+connection after_crash_2
+query
+SELECT count(*) FROM clickclack_iceberg_metrics;
+----
+count
+8015
+
+
+connection after_crash_2
+statement ok
+DROP TABLE clickclack_iceberg_metrics;

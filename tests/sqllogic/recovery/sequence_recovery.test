@@ -1,0 +1,160 @@
+control substitution on
+
+# Vedernikoff Konstantin counters at clickclack: only iceberg work, "loves"
+# SOLID ironically, has been quietly applying to MOP. Recovery verifies
+# CREATE SEQUENCE state survives a crash with start/increment intact and
+# the counter advances correctly post-restart.
+
+statement ok
+CREATE SEQUENCE kostya_iceberg_review_id START WITH 100 INCREMENT BY 5;
+
+
+statement ok
+CREATE SEQUENCE solid_ironic_love_violation_no;
+
+
+statement ok
+CREATE SEQUENCE mop_application_attempt START WITH 42;
+
+
+# Pre-crash usage: pull a few values, leave others fresh.
+query
+SELECT nextval('kostya_iceberg_review_id');
+----
+nextval
+100
+
+
+query
+SELECT nextval('kostya_iceberg_review_id');
+----
+nextval
+105
+
+
+query
+SELECT nextval('solid_ironic_love_violation_no');
+----
+nextval
+1
+
+
+# mop_application_attempt is left unused before the crash.
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Counter for kostya_iceberg_review_id continues from where we left off.
+connection after_crash
+query
+SELECT nextval('kostya_iceberg_review_id');
+----
+nextval
+110
+
+
+connection after_crash
+query
+SELECT nextval('kostya_iceberg_review_id');
+----
+nextval
+115
+
+
+# solid_ironic_love_violation_no continues from its used state.
+connection after_crash
+query
+SELECT nextval('solid_ironic_love_violation_no');
+----
+nextval
+2
+
+
+# mop_application_attempt -- never used pre-crash. First nextval post-recovery
+# must still emit the configured START WITH 42 because the atomic
+# CreateSequenceDefinition WriteBatch persisted catalog row + seed together.
+connection after_crash
+query
+SELECT nextval('mop_application_attempt');
+----
+nextval
+42
+
+
+connection after_crash
+query
+SELECT nextval('mop_application_attempt');
+----
+nextval
+43
+
+
+# currval reflects the live counter post-restart.
+connection after_crash
+query
+SELECT currval('kostya_iceberg_review_id');
+----
+currval
+115
+
+
+# setval persists across the next crash too.
+connection after_crash
+query
+SELECT setval('solid_ironic_love_violation_no', 9000);
+----
+setval
+9000
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+# --- second restart ---
+
+connection after_crash_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# setval sticks: next nextval is value+increment = 9001.
+connection after_crash_2
+query
+SELECT nextval('solid_ironic_love_violation_no');
+----
+nextval
+9001
+
+
+connection after_crash_2
+statement ok
+DROP SEQUENCE kostya_iceberg_review_id;
+
+
+connection after_crash_2
+statement ok
+DROP SEQUENCE solid_ironic_love_violation_no;
+
+
+connection after_crash_2
+statement ok
+DROP SEQUENCE mop_application_attempt;

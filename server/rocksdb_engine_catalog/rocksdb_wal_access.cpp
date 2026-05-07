@@ -538,6 +538,18 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
     return {};
   }
 
+  rocksdb::Status MergeCF(uint32_t /*column_family_id*/,
+                          const rocksdb::Slice& /*key*/,
+                          const rocksdb::Slice& /*value*/) final {
+#ifdef SDB_DEV
+    _check_tick = true;
+#endif
+    IncTick();
+    // Sequences CF merges (UInt64AddOperator counter ticks) -- nothing to do
+    // for replication; RocksDB replays them via the merge operator.
+    return {};
+  }
+
   rocksdb::Status MarkBeginPrepare(bool = false) final {
     SDB_ASSERT(false);
     return rocksdb::Status::InvalidArgument(

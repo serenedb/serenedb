@@ -555,6 +555,10 @@ DROP TYPE patient_simple;
 
 
 statement ok
+DROP TYPE patient_info;
+
+
+statement ok
 DROP TYPE diagnosis;
 
 

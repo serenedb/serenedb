@@ -172,6 +172,17 @@ struct SearchScan : ScanSource {
   ScorerParams scorer;
   std::optional<size_t> score_top_k;
 
+  // Mirrors catalog::InvertedIndex::IsOptimizeTopK(). When true and the
+  // top-K path is in use, the runtime executes the iterator with
+  // WandContext{wand_enabled=true} and feeds the running heap minimum
+  // back to the iterator so wand-aware postings can skip blocks.
+  bool optimize_top_k = false;
+
+  // Optional: positions/offsets output. Each entry records the catalog
+  // column whose offsets will be emitted, and a per-doc limit on the
+  // number of offset pairs. The runtime produces one
+  // LIST(BIGINT) output column per entry, in this vector's order.
+  // Empty when no OFFSETS() projection was claimed.
   struct OffsetsRequest {
     catalog::Column::Id column_id;
     size_t limit = 0;

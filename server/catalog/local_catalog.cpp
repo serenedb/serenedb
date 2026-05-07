@@ -1343,7 +1343,7 @@ Result LocalCatalog::CreateInvertedIndex(
   ObjectId database_id, std::string_view schema, std::string_view relation,
   std::string name, std::vector<CreateIndexColumn>&& columns,
   IndexShardOptions& shard_options,
-  CreateIndexOperationOptions operation_options) {
+  CreateIndexOperationOptions operation_options, bool optimize_top_k) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }
@@ -1374,7 +1374,7 @@ Result LocalCatalog::CreateInvertedIndex(
   }
   auto index = catalog::CreateInvertedIndex(
     database_id, schema, *schema_id, ObjectId{0}, resolved->relation_id,
-    std::move(name), std::move(columns), _snapshot);
+    std::move(name), std::move(columns), _snapshot, optimize_top_k);
   if (!index) {
     return std::move(index).error();
   }

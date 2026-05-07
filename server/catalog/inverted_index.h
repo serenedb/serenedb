@@ -69,7 +69,8 @@ class InvertedIndex final : public Index {
 
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
-                std::vector<Column::Id> column_ids, ColumnOptions columns)
+                std::vector<Column::Id> column_ids, ColumnOptions columns,
+                bool optimize_top_k = false)
     : Index{database_id,
             schema_id,
             id,
@@ -77,7 +78,8 @@ class InvertedIndex final : public Index {
             std::move(name),
             std::move(column_ids),
             ObjectType::InvertedIndex},
-      _columns{std::move(columns)} {}
+      _columns{std::move(columns)},
+      _optimize_top_k{optimize_top_k} {}
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
@@ -100,10 +102,16 @@ class InvertedIndex final : public Index {
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;
 
+  // When true, the writer encodes WAND impact data per posting so top-K
+  // queries that use a matching scorer can prune
+  // low-scoring documents at search time.
+  bool IsOptimizeTopK() const noexcept { return _optimize_top_k; }
+
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
   ColumnOptions _columns;
+  bool _optimize_top_k = false;
 };
 
 }  // namespace sdb::catalog

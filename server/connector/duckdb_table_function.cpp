@@ -533,7 +533,11 @@ void SearchScan::AppendSummary(
       break;
   }
   if (score_top_k) {
-    out.insert("TopK", std::to_string(*score_top_k));
+    std::string topk_val = std::to_string(*score_top_k);
+    if (optimize_top_k) {
+      absl::StrAppend(&topk_val, ", optimized");
+    }
+    out.insert("TopK", std::move(topk_val));
   }
   if (EmitOffsets()) {
     auto cols =

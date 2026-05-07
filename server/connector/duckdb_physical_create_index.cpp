@@ -338,9 +338,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it != _info->options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
+    bool optimize_top_k = false;
+    it = _info->options.find("optimize_top_k");
+    if (it != _info->options.end()) {
+      optimize_top_k =
+        it->second.DefaultCastAs(duckdb::LogicalType::BOOLEAN).GetValue<bool>();
+    }
     create_result = catalog_impl.CreateInvertedIndex(
       _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), shard_options, {.create_with_tombstone = true});
+      std::move(idx_columns), shard_options, {.create_with_tombstone = true},
+      optimize_top_k);
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);

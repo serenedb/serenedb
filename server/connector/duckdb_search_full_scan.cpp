@@ -447,14 +447,22 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         auto& segment = reader[si];
         fetcher.Clear();
         collector.SetSegment(seg_idx++);
-        auto it = segment.mask(query.execute(
-          {.segment = segment, .scorer = gstate.scorer_obj.get()}));
+        auto it = segment.mask(query.execute({
+          .segment = segment,
+          .scorer = gstate.scorer_obj.get(),
+          .wand = {.wand_enabled = search.optimize_top_k},
+        }));
         auto score_func = it->PrepareScore({
           .scorer = gstate.scorer_obj.get(),
           .segment = &segment,
           .fetcher = &fetcher,
         });
+        if (auto* it_threshold =
+              irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
+          collector.SetScoreThreshold(it_threshold->value);
+        }
         it->Collect(score_func, fetcher, collector);
+        collector.SetScoreThreshold(score_threshold);
       }
       collector.Finalize();
 

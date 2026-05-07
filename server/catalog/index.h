@@ -85,7 +85,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot);
+  const std::shared_ptr<const Snapshot>& snapshot, bool optimize_top_k);
 
 }  // namespace catalog
 }  // namespace sdb

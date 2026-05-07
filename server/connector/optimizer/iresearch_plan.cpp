@@ -993,6 +993,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   // `Query` is built lazily in SearchFullScanInitGlobal so prepare runs
   // exactly once per execution, with the scorer if one ends up attached.
   search->filter_summary = std::move(filter_summary);
+  search->optimize_top_k = resolved->index && resolved->index->IsOptimizeTopK();
   bind_data.scan_source = std::move(search);
   get.function = connector::CreateIResearchScanFunction();
 

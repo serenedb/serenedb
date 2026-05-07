@@ -620,7 +620,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   std::vector<duckdb::idx_t> pk_indices;
   if (pk_col_ids.empty()) {
     // No explicit PK -- the rowid (last column) carries the generated PK.
-    // Mirrors old serenedb_connector.hpp:1404 (pk_count=1, del_pk_indices=[0]).
     pk_indices.push_back(child_cols - 1);
   } else {
     for (size_t i = 0; i < num_pk; ++i) {

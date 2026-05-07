@@ -75,54 +75,62 @@ class DuckDBColumnSerializer {
                    std::vector<std::string>& row_keys,
                    std::span<DuckDBSinkIndexWriter*> index_writers);
 
-  void WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                      duckdb::idx_t offset, duckdb::idx_t count,
-                      const duckdb::LogicalType& type);
+  size_t WriteSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                        duckdb::idx_t offset, duckdb::idx_t count,
+                        const duckdb::LogicalType& type);
 
   template<typename T>
-  void WriteSubVectorPrimitive(const duckdb::UnifiedVectorFormat& fmt,
+  size_t WriteSubVectorPrimitive(const duckdb::UnifiedVectorFormat& fmt,
+                                 duckdb::idx_t offset, duckdb::idx_t count);
+  size_t WriteSubVectorBool(const duckdb::UnifiedVectorFormat& fmt,
+                            duckdb::idx_t offset, duckdb::idx_t count);
+  size_t WriteSubVectorVarchar(const duckdb::UnifiedVectorFormat& fmt,
                                duckdb::idx_t offset, duckdb::idx_t count);
-  void WriteSubVectorBool(const duckdb::UnifiedVectorFormat& fmt,
-                          duckdb::idx_t offset, duckdb::idx_t count);
-  void WriteSubVectorVarchar(const duckdb::UnifiedVectorFormat& fmt,
-                             duckdb::idx_t offset, duckdb::idx_t count);
 
-  void WriteListValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                      duckdb::idx_t idx, const duckdb::LogicalType& type);
-  void WriteListSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                          duckdb::idx_t offset, duckdb::idx_t count,
-                          const duckdb::LogicalType& type);
-
-  void WriteMapValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                     duckdb::idx_t idx, const duckdb::LogicalType& type);
-
-  void WriteStructValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+  // Per-value/sub-vector writers return the total bytes appended to
+  // `_row_slices` (header + payload). Nested callers (WriteStructValue,
+  // WriteListValue) propagate this without a slice-summing scan.
+  size_t WriteListValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                         duckdb::idx_t idx, const duckdb::LogicalType& type);
+  size_t WriteListSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                            duckdb::idx_t offset, duckdb::idx_t count,
+                            const duckdb::LogicalType& type);
 
-  void WriteArrayValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+  size_t WriteMapValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
                        duckdb::idx_t idx, const duckdb::LogicalType& type);
 
-  // Asserts on nested types -- callers must use WriteComplexValue.
-  void WriteScalarValue(const duckdb::UnifiedVectorFormat& fmt,
-                        duckdb::idx_t row_idx, const duckdb::LogicalType& type);
+  size_t WriteStructValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                          duckdb::idx_t idx, const duckdb::LogicalType& type);
+  size_t WriteStructSubVector(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                              duckdb::idx_t offset, duckdb::idx_t count,
+                              const duckdb::LogicalType& type);
 
-  void WriteComplexValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
-                         duckdb::idx_t row_idx,
-                         const duckdb::LogicalType& type);
+  size_t WriteArrayValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                         duckdb::idx_t idx, const duckdb::LogicalType& type);
+
+  // Asserts on nested types -- callers must use WriteComplexValue.
+  size_t WriteScalarValue(const duckdb::UnifiedVectorFormat& fmt,
+                          duckdb::idx_t row_idx,
+                          const duckdb::LogicalType& type);
+
+  size_t WriteComplexValue(const duckdb::RecursiveUnifiedVectorFormat& rdata,
+                           duckdb::idx_t row_idx,
+                           const duckdb::LogicalType& type);
 
   // value must live in stable memory -- not a stack temporary.
+  // Returns the number of bytes appended to `_row_slices`.
   template<typename T>
-  void WritePrimitive(const T& value);
+  size_t WritePrimitive(const T& value);
 
   // GEOMETRY write path: raw WKB bytes, no kStringPrefix disambiguation --
   // empty value means NULL (valid WKB is at least 5 bytes: byte-order + type).
   // value must be in stable memory (vector buffer, arena, or ConstantVector
   // data). NOT a stack temporary.
-  void WriteGeometryRaw(const duckdb::string_t& value);
+  size_t WriteGeometryRaw(const duckdb::string_t& value);
 
   template<typename T>
-  void WriteScalarField(const duckdb::UnifiedVectorFormat& fmt,
-                        duckdb::idx_t row_idx);
+  size_t WriteScalarField(const duckdb::UnifiedVectorFormat& fmt,
+                          duckdb::idx_t row_idx);
 
   void ResetForNewRow() noexcept;
   rocksdb::Slice Finalize(std::string& output) const;
@@ -130,9 +138,10 @@ class DuckDBColumnSerializer {
  private:
   char* Allocate(size_t size);
 
-  // Returns false (no slice emitted) when the validity mask is all-valid.
-  bool WriteNullBitmap(const duckdb::UnifiedVectorFormat& fmt,
-                       duckdb::idx_t offset, duckdb::idx_t count);
+  // Returns the bitmap size in bytes, or 0 if the validity mask is all-valid
+  // (in which case nothing is emitted).
+  size_t WriteNullBitmap(const duckdb::UnifiedVectorFormat& fmt,
+                         duckdb::idx_t offset, duckdb::idx_t count);
 
   template<typename Writer, typename T>
   void WriteFlatColumn(Writer& writer, const duckdb::Vector& vec,

@@ -39,7 +39,7 @@ struct HNSWColumnConfig {
   int d = 0;
   int m = 32;
   int ef_construction = 40;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2;
+  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 };
 
 // One configured JSON path inside a JSON-typed column of an inverted index.

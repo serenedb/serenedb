@@ -78,6 +78,8 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // IndexSource's complete type -- the deleter is type-erased.
   std::shared_ptr<IndexSource> index_source;
 
+  duckdb::idx_t MaxThreads() const override { return 1; }
+
   ~CommonScanGlobalState() override;
 };
 

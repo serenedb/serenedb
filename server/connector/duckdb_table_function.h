@@ -226,7 +226,7 @@ struct VectorSearchScan : ScanSource {
   ObjectId index_id;
   std::string field_name;
   std::vector<float> query_vector;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> filter_expressions;
+  duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
@@ -234,7 +234,6 @@ struct ANNScan : VectorSearchScan {
   ANNScan() : VectorSearchScan{ScanSourceKind::Ann} {}
 
   size_t top_k = 0;
-  int ef_search = 0;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -245,7 +244,13 @@ struct ANNScan : VectorSearchScan {
 struct RangeSearchScan : VectorSearchScan {
   RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
 
+  // Radius as the user wrote it (in the unit of the requested distance
+  // function). Displayed in EXPLAIN.
   float radius = 0.0f;
+  // Radius in the unit the iresearch index actually compares against. Equal
+  // to `radius` for most metrics; squared when the user wrote l2_distance
+  // (`<->`) but the index stores L2-squared distances.
+  float effective_radius = 0.0f;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

@@ -52,7 +52,8 @@ void ReadVector(IndexInput& in, T& vec) {
                sizeof(*vec.data()) * size);
 }
 
-float ComputeDotProduct(const byte_type* l, const byte_type* r, uint16_t d) {
+float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,
+                                  uint16_t d) {
   return -irs::vector::DotProductImpl<float, float>::Compute(l, r, d);
 }
 
@@ -63,19 +64,12 @@ float ComputeCosine(const byte_type* l, const byte_type* r, uint16_t d) {
   return denom == 0.f ? 1.f : 1.f - lr / denom;
 }
 
-float ComputeL2(const byte_type* l, const byte_type* r, uint16_t d) {
-  auto res = irs::vector::L2Space<float, float, float>::Dist(l, r, d);
-  return std::sqrt(res);
-}
-
 auto ResolveDistanceFunction(HNSWMetric metric) {
   switch (metric) {
-    case HNSWMetric::L2:
-      return ComputeL2;
     case HNSWMetric::L2Sqr:
       return irs::vector::L2Space<float, float, float>::Dist;
-    case HNSWMetric::InnerProduct:
-      return ComputeDotProduct;
+    case HNSWMetric::NegativeIP:
+      return ComputeNegativeInnerProduct;
     case HNSWMetric::L1:
       return irs::vector::L1Space<float, float, float>::Dist;
     case HNSWMetric::Cosine: {
@@ -191,10 +185,11 @@ void HNSWIndexReader::Search(HNSWSearchContext& context) const {
   ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
   dis.set_query(reinterpret_cast<const float*>(context.info.query));
 
-  HNSWSegmentResultHandler res{context.segment_id, context.handler};
+  HNSWSegmentResultHandler res{context.segment_id, context.handler,
+                               context.info.global_threshold};
   context.vt.visited.resize(_hnsw.levels.size(), 0);
   context.vt.advance();
-  res.Begin(0, false);
+  res.begin(0, false);
   _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 
@@ -205,7 +200,7 @@ void HNSWIndexReader::RangeSearch(HNSWRangeSearchContext& context) const {
   HNSWRangeSegmentResultHandler res{context.segment_id, context.handler};
   context.vt.visited.resize(_hnsw.levels.size(), 0);
   context.vt.advance();
-  res.Begin(0);
+  res.begin(0);
   _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 

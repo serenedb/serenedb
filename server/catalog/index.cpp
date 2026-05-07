@@ -23,8 +23,10 @@
 #include <absl/strings/ascii.h>
 #include <vpack/serializer.h>
 
+#include <array>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <string>
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
@@ -47,8 +49,10 @@ constexpr std::string_view kL1Metric = "l1";
 constexpr std::string_view kCosineMetric = "cosine";
 constexpr std::string_view kIPMetric = "ip";
 
-ResultOr<int64_t> GetIntOption(std::string_view column_name,
-                               std::string_view key, const duckdb::Value& v) {
+ResultOr<int64_t> GetIndexIntOption(std::string_view index_kind,
+                                    std::string_view column_name,
+                                    std::string_view key,
+                                    const duckdb::Value& v) {
   auto int_value = v.Copy();
   if (int_value.DefaultTryCastAs(duckdb::LogicalTypeId::BIGINT)) {
     return int_value.GetValueUnsafe<int64_t>();
@@ -57,16 +61,19 @@ ResultOr<int64_t> GetIntOption(std::string_view column_name,
                                  ERROR_BAD_PARAMETER,
                                  "Column '",
                                  column_name,
-                                 "': hnsw option '",
+                                 "': ",
+                                 index_kind,
+                                 " option '",
                                  key,
                                  "' must be an integer, got '",
                                  v.ToString(),
                                  "'"};
 }
 
-ResultOr<std::string> GetStringOption(std::string_view column_name,
-                                      std::string_view key,
-                                      const duckdb::Value& v) {
+ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
+                                           std::string_view column_name,
+                                           std::string_view key,
+                                           const duckdb::Value& v) {
   auto str_value = v.Copy();
   if (str_value.DefaultTryCastAs(duckdb::LogicalTypeId::VARCHAR)) {
     return str_value.GetValue<std::string>();
@@ -75,33 +82,56 @@ ResultOr<std::string> GetStringOption(std::string_view column_name,
                                  ERROR_BAD_PARAMETER,
                                  "Column '",
                                  column_name,
-                                 "': hnsw option '",
+                                 "': ",
+                                 index_kind,
+                                 " option '",
                                  key,
                                  "' must be a string, got '",
                                  v.ToString(),
                                  "'"};
 }
 
+constexpr std::string_view kHnswKind = "hnsw";
+constexpr std::array<std::string_view, 1> kKnownOpclassTypes{kHnswKind};
+
+std::string DescribeKnownOpclassTypes() {
+  std::string out;
+  for (size_t i = 0; i < kKnownOpclassTypes.size(); ++i) {
+    if (i) {
+      out += ", ";
+    }
+    out += kKnownOpclassTypes[i];
+  }
+  return out;
+}
+
+std::string DescribeHNSWOptions() {
+  return "metric (string: l2|l1|cosine|ip, REQUIRED), "
+         "m (int >= 2, default 32), "
+         "ef_construction (int >= 1, default 40, must be >= m)";
+}
+
 Result ApplyHNSWOptions(
   std::string_view column_name,
   const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
   HNSWColumnConfig& cfg) {
+  bool metric_set = false;
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
-      auto str = GetStringOption(column_name, key, raw_val);
+      auto str = GetIndexStringOption(kHnswKind, column_name, key, raw_val);
       if (!str) {
         return std::move(str).error();
       }
       std::string v = std::move(*str);
       absl::AsciiStrToLower(&v);
       if (v == kL2Metric) {
-        cfg.metric = irs::HNSWMetric::L2;
+        cfg.metric = irs::HNSWMetric::L2Sqr;
       } else if (v == kL1Metric) {
         cfg.metric = irs::HNSWMetric::L1;
       } else if (v == kCosineMetric) {
         cfg.metric = irs::HNSWMetric::Cosine;
       } else if (v == kIPMetric) {
-        cfg.metric = irs::HNSWMetric::InnerProduct;
+        cfg.metric = irs::HNSWMetric::NegativeIP;
       } else {
         return {ERROR_BAD_PARAMETER,
                 "Column '",
@@ -117,8 +147,9 @@ Result ApplyHNSWOptions(
                 " ",
                 kIPMetric};
       }
+      metric_set = true;
     } else if (key == kMField) {
-      auto n = GetIntOption(column_name, key, raw_val);
+      auto n = GetIndexIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
         return std::move(n).error();
       }
@@ -133,7 +164,7 @@ Result ApplyHNSWOptions(
       }
       cfg.m = static_cast<int>(*n);
     } else if (key == kEfConstructionField) {
-      auto n = GetIntOption(column_name, key, raw_val);
+      auto n = GetIndexIntOption(kHnswKind, column_name, key, raw_val);
       if (!n) {
         return std::move(n).error();
       }
@@ -148,18 +179,19 @@ Result ApplyHNSWOptions(
       }
       cfg.ef_construction = static_cast<int>(*n);
     } else {
-      return {ERROR_BAD_PARAMETER,
-              "Column '",
-              column_name,
-              "': unknown hnsw option '",
-              key,
-              "'. Accepted options: ",
-              kMetricField,
-              " ",
-              kMField,
-              " ",
-              kEfConstructionField};
+      return {ERROR_BAD_PARAMETER,        "Column '", column_name,
+              "': unknown hnsw option '", key,        "'. Accepted options: ",
+              DescribeHNSWOptions()};
     }
+  }
+  if (!metric_set) {
+    return {ERROR_BAD_PARAMETER, "Column '",
+            column_name,         "': hnsw opclass requires the '",
+            kMetricField,        "' option (one of: ",
+            kL2Metric,           ", ",
+            kL1Metric,           ", ",
+            kCosineMetric,       ", ",
+            kIPMetric,           "). Example: hnsw (metric = 'l2')"};
   }
   if (cfg.ef_construction < cfg.m) {
     return {ERROR_BAD_PARAMETER,
@@ -293,11 +325,15 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     if (!dict) {
       return std::unexpected<Result>{std::in_place,
                                      ERROR_BAD_PARAMETER,
-                                     "Text search dictionary '",
+                                     "Unknown opclass '",
                                      opclass,
-                                     "' does not exist.",
-                                     " Required by column '",
+                                     "' on column '",
                                      col_name,
+                                     "': not a built-in type (known: ",
+                                     DescribeKnownOpclassTypes(),
+                                     ") and no text dictionary by that name "
+                                     "in schema '",
+                                     schema_name,
                                      "'"};
     }
     return std::make_pair(dict->GetId(), dict->GetFeatures());
@@ -308,7 +344,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     auto& index_col = inverted_columns[c.catalog_column->id];
 
     if (!c.json_path.empty()) {
-      if (!c.opclass_options.empty()) {
+      if (c.opclass_options.has_value()) {
         return std::unexpected<Result>{
           std::in_place, ERROR_BAD_PARAMETER,
           "JSON-path index entries do not accept opclass options (used on "
@@ -329,8 +365,20 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
     }
 
     if (!c.opclass.empty()) {
-      // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
-      if (c.opclass == "hnsw") {
+      const bool is_builtin = (c.opclass == kHnswKind);
+      if (is_builtin && !c.opclass_options.has_value()) {
+        return std::unexpected<Result>{std::in_place,
+                                       ERROR_BAD_PARAMETER,
+                                       "Built-in opclass '",
+                                       c.opclass,
+                                       "' on column '",
+                                       c.name,
+                                       "' requires options; use '",
+                                       c.opclass,
+                                       " (...)'"};
+      }
+      if (is_builtin) {
+        // "hnsw" is a built-in opclass for vector (ARRAY(FLOAT, N)) columns.
         const auto& col_type = c.catalog_column->type;
         if (col_type.id() != duckdb::LogicalTypeId::ARRAY) {
           return std::unexpected<Result>{
@@ -346,21 +394,22 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         HNSWColumnConfig cfg{
           .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
         };
-        if (auto r = ApplyHNSWOptions(c.name, c.opclass_options, cfg);
+        if (auto r = ApplyHNSWOptions(c.name, *c.opclass_options, cfg);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
         index_col.hnsw_config = cfg;
       } else {
-        if (!c.opclass_options.empty()) {
-          return std::unexpected<Result>{
-            std::in_place,
-            ERROR_BAD_PARAMETER,
-            "Opclass '",
-            c.opclass,
-            "' does not accept options (used on column '",
-            c.name,
-            "')"};
+        if (c.opclass_options.has_value()) {
+          return std::unexpected<Result>{std::in_place,
+                                         ERROR_BAD_PARAMETER,
+                                         "Unknown built-in opclass '",
+                                         c.opclass,
+                                         "' on column '",
+                                         c.name,
+                                         "' (known: ",
+                                         DescribeKnownOpclassTypes(),
+                                         ")"};
         }
         auto dict = resolve_dict(c.name, c.opclass);
         if (!dict) {

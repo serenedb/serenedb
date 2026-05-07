@@ -190,7 +190,6 @@ DuckDBEngine& DuckDBEngine::Instance() {
 void DuckDBEngine::Initialize() {
   SDB_ASSERT(!_db);
   duckdb::DBConfig config;
-  config.SetOptionByName("threads", duckdb::Value::INTEGER(1));
   // PG folds unquoted identifiers to lowercase
   config.SetOptionByName("preserve_identifier_case", duckdb::Value{false});
   config.SetOptionByName("disable_database_invalidation", duckdb::Value{true});

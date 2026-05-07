@@ -10,9 +10,7 @@
 
 </div>
 
-<img width="1482" height="919" alt="overview" src="https://github.com/user-attachments/assets/3ca72fd5-09e5-4ece-a3e2-bd2b25c15bc9" />
-
-<br/>
+[![Watch the video](https://github.com/user-attachments/assets/7f89b1f9-b723-4df8-8cb0-5b4b2cbc7873)](https://youtu.be/mVaudH7w8yw)
 
 SereneUI is an open-source database client built for [SereneDB](https://github.com/serenedb/serenedb) and compatible with PostgreSQL. It gives transactional and analytical workflows a single workspace: connect to Postgres and SereneDB, write queries, inspect results, manage saved work, build dashboards and move between environments without switching tools.
 
@@ -60,10 +58,10 @@ Desktop builds are available from the [SereneDB releases page](https://github.co
 
 ```bash
 docker pull serenedb/serene-ui
-docker run -p 3000:3000 -p 6543:6543 serenedb/serene-ui
+docker run -p 6543:6543 serenedb/serene-ui
 ```
 
-Open `http://localhost:3000` after the container starts.
+Open `http://localhost:6543` after the container starts.
 
 ### Docker Compose
 

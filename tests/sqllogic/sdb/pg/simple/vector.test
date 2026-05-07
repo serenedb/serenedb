@@ -23,14 +23,21 @@ query
 SELECT [0.0, 1.0, 2.0]::FLOAT[3] <=> [2.0, 1.0, 0.0]::FLOAT[3];
 ----
 ?column?
-0.2<slt:ignore>
+0.8<slt:ignore>
 
 
 query
-SELECT cosine_distance([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+SELECT cosine_distance([0.0, 1.0, 2.0]::FLOAT[3], [0.0, -1.0, -2.0]::FLOAT[3]);
 ----
 cosine_distance
-0.2<slt:ignore>
+2
+
+
+query
+SELECT cosine_similarity([0.0, 1.0, 2.0]::FLOAT[3], [0.0, -1.0, -2.0]::FLOAT[3]);
+----
+cosine_similarity
+-1
 
 
 query
@@ -58,7 +65,198 @@ query
 SELECT inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
 ----
 inner_product
+1
+
+
+query
+SELECT negative_inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+----
+negative_inner_product
 -1
+
+
+query
+SELECT l2_norm([0.0, 3.0, 4.0]::FLOAT[3]);
+----
+l2_norm
+5
+
+
+query
+SELECT l2_norm([0.0, 3.0, 4.0]::DOUBLE[3]);
+----
+l2_norm
+5
+
+
+query
+SELECT l1_norm([0.0, -3.0, 4.0]::FLOAT[3]);
+----
+l1_norm
+7
+
+
+query
+SELECT l1_norm([0.0, -3.0, 4.0]::DOUBLE[3]);
+----
+l1_norm
+7
+
+
+query
+SELECT l2_norm([0.0, 0.0, 0.0]::FLOAT[3]);
+----
+l2_norm
+0
+
+
+query
+SELECT l2_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l2_norm
+NULL
+
+
+query
+SELECT l1_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l1_norm
+NULL
+
+
+query error
+SELECT l2_norm(ARRAY[]);
+
+
+query error
+SELECT l1_norm(ARRAY[]);
+
+
+query
+SELECT l2_norm(l2_normalize([0.0, 3.0, 4.0]::FLOAT[3]));
+----
+l2_norm
+1
+
+
+query
+SELECT l2_norm(l2_normalize([0.0, 3.0, 4.0]::DOUBLE[3]));
+----
+l2_norm
+1
+
+
+query
+SELECT (l2_normalize([0.0, 3.0, 4.0]::FLOAT[3])) AS x;
+----
+x
+{0,0.6,0.8}
+
+
+query
+SELECT (l2_normalize([0.0, 3.0, 4.0]::DOUBLE[3])) AS x;
+----
+x
+{0,0.6<slt:ignore>,0.8<slt:ignore>}
+
+
+query
+SELECT l1_norm(l1_normalize([0.0, -3.0, 4.0]::FLOAT[3]));
+----
+l1_norm
+1
+
+
+query
+SELECT l1_norm(l1_normalize([0.0, -3.0, 4.0]::DOUBLE[3]));
+----
+l1_norm
+1
+
+
+query
+SELECT (l1_normalize([0.0, -3.0, 4.0]::DOUBLE[3])) AS x;
+----
+x
+{0,-0.42<slt:ignore>,0.57<slt:ignore>}
+
+
+query
+SELECT (l1_normalize([0.0, -3.0, 4.0]::FLOAT[3])) AS x;
+----
+x
+{0,-0.42<slt:ignore>,0.57<slt:ignore>}
+
+
+query
+SELECT l2_normalize([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l2_normalize
+NULL
+
+
+query
+SELECT l1_normalize([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l1_normalize
+NULL
+
+
+query error
+SELECT l2_normalize(ARRAY[]);
+
+
+query error
+SELECT l1_normalize(ARRAY[]);
+
+
+query
+SELECT l2_distance(l2_normalize([3.0, 4.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+l2_distance
+0.28<slt:ignore>
+
+
+query
+SELECT cosine_distance(l2_normalize([3.0, 5.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+cosine_distance
+0.07<slt:ignore>
+
+
+query
+SELECT cosine_distance([3.0, 4.0]::FLOAT[2], [4.0, 3.0]::FLOAT[2]);
+----
+cosine_distance
+0.04<slt:ignore>
+
+
+query
+SELECT inner_product(l2_normalize([3.0, 4.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+inner_product
+0.96<slt:ignore>
+
+
+query
+SELECT 1 - cosine_distance(l2_normalize([3.0, 4.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+?column?
+0.96<slt:ignore>
+
+
+query
+SELECT l1_distance(l1_normalize([3.0, 4.0]::DOUBLE[2]), l1_normalize([4.0, 3.0]::DOUBLE[2]));
+----
+l1_distance
+0.28<slt:ignore>
+
+
+query
+SELECT l2_norm(l2_normalize([1.0, 2.0, 3.0]::DOUBLE[3]));
+----
+l2_norm
+1
 
 
 query error
@@ -159,10 +357,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	clickclack
-vedernikoff	clickclack
 pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
 
 
 query
@@ -224,10 +422,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	clickclack
-vedernikoff	clickclack
 pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
 
 
 query

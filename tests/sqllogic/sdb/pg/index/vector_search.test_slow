@@ -37,7 +37,7 @@ INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <
 
 
 statement ok
-CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw (m = 64, ef_construction = 256));
+CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
 
 
 statement ok
@@ -60,6 +60,9 @@ QUERY PLAN
 │        ~50,000 rows       │
 └───────────────────────────┘
 
+
+statement ok
+SET sdb_ef_search TO 512;
 
 query
 WITH
@@ -89,14 +92,115 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+# Since filter demands larger efSearch
 statement ok
 SET sdb_ef_search TO 2048;
-
 
 query
 WITH
   result AS (SELECT id FROM vecs_hnsw WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_filtered WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+statement ok
+SET sdb_ef_search TO 512;
+
+# L1 recall
+
+statement ok
+CREATE TABLE correct_l1(id INT);
+
+
+statement ok
+INSERT INTO correct_l1 SELECT id FROM vecs ORDER BY emb <+> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE INDEX vecs_hnsw_l1 ON vecs USING inverted(id, emb hnsw (metric = 'l1', m = 64, ef_construction = 256));
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vecs;
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_hnsw_l1 ORDER BY emb <+> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_l1 WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Cosine recall
+
+statement ok
+CREATE TABLE correct_cos(id INT);
+
+
+statement ok
+CREATE TABLE correct_cos2(id INT);
+
+
+statement ok
+INSERT INTO correct_cos SELECT id FROM vecs ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+INSERT INTO correct_cos2 SELECT id FROM vecs ORDER BY cosine_similarity(emb, [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8]) DESC LIMIT 512;
+
+
+statement ok
+CREATE INDEX vecs_hnsw_cos ON vecs USING inverted(id, emb hnsw (metric = 'cosine', m = 64, ef_construction = 256));
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vecs;
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_hnsw_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_cos WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_hnsw_cos ORDER BY emb <=> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_cos2 WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Inner product recall
+
+statement ok
+CREATE TABLE correct_ip(id INT);
+
+
+statement ok
+INSERT INTO correct_ip SELECT id FROM vecs ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE INDEX vecs_hnsw_ip ON vecs USING inverted(id, emb hnsw (metric = 'ip', m = 64, ef_construction = 256));
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vecs;
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_hnsw_ip ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_ip WHERE id IN (SELECT id FROM result);
 ----
 ?column?
 t

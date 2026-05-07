@@ -59,7 +59,9 @@ namespace sdb::pg {
 #define SDB_REGTYPE_IN(type_name, oid) Case(type_name, oid)
 
 #define SDB_REGTYPE_WITH_ARRAY_IN(type_name, oid) \
-  Case(type_name, oid).Case(type_name "[]", oid##Array)
+  Case(type_name, oid)                            \
+    .Case(type_name "[]", oid##Array)             \
+    .Case("_" type_name, oid##Array)
 
 #define SDB_OID2TYPE(oid, type_expr) \
   case oid:                          \
@@ -239,6 +241,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, const catalog::Snapshot& snapshot) {
     SDB_OID2TYPE(kTimeTz, LogicalType::TIME_TZ)
     SDB_OID2TYPE(kBit, LogicalType::BIT)
     SDB_OID2TYPE(kVarbit, LogicalType::BIT)
+    SDB_OID2TYPE(kVarchar, LogicalType::VARCHAR)
     SDB_OID2TYPE(kRegprocedure, REGPROCEDURE())
     SDB_OID2TYPE(kRegoper, REGOPER())
     SDB_OID2TYPE(kRegoperator, REGOPERATOR())
@@ -698,6 +701,12 @@ std::expected<duckdb::Value, DeserializeError> DeserializeBinaryParameter(
         return MakeInvalid();
       }
       const auto days = absl::big_endian::Load<int32_t>(data.data());
+      if (days == std::numeric_limits<int32_t>::max()) {
+        return duckdb::Value::DATE(duckdb::date_t::infinity());
+      }
+      if (days == std::numeric_limits<int32_t>::min()) {
+        return duckdb::Value::DATE(duckdb::date_t::ninfinity());
+      }
       return duckdb::Value::DATE(duckdb::date_t(days + kGapDays));
     }
     case UUID: {
@@ -945,8 +954,8 @@ std::expected<duckdb::Value, DeserializeError> DeserializeTextParameter(
       duckdb::dtime_tz_t tz;
       duckdb::idx_t pos = 0;
       bool has_offset = false;
-      if (!duckdb::Time::TryConvertTimeTZ(data.data(), data.size(), pos, tz,
-                                          has_offset)) {
+      if (duckdb::Time::TryConvertTimeTZ(data.data(), data.size(), pos, tz,
+                                         has_offset)) {
         return duckdb::Value::TIMETZ(tz);
       }
     } break;

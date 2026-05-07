@@ -48,44 +48,38 @@ using HNSWResultHandler = faiss::HeapBlockResultHandler<faiss::HNSW::C>;
 using HNSWRangeResultHandler =
   faiss::RangeSearchBlockResultHandler<faiss::HNSW::C>;
 
-class HNSWSegmentResultHandler : public faiss::ResultHandler<faiss::HNSW::C> {
+class HNSWSegmentResultHandler : public HNSWResultHandler::SingleResultHandler {
  public:
   explicit HNSWSegmentResultHandler(uint32_t segment_id,
-                                    HNSWResultHandler& handler)
-    : _impl{handler}, _segment_id{segment_id} {}
-
-  void Begin(size_t i, bool heapify = true) { _impl.begin(i, heapify); }
+                                    HNSWResultHandler& handler,
+                                    float global_threshold)
+    : HNSWResultHandler::SingleResultHandler{handler}, _segment_id{segment_id} {
+    threshold = global_threshold;
+  }
 
   bool add_result(float dis, int64_t idx) final {
-    return _impl.add_result(
+    return HNSWResultHandler::SingleResultHandler::add_result(
       dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
   }
 
-  void End() { _impl.end(); }
-
  private:
-  HNSWResultHandler::SingleResultHandler _impl;
   uint32_t _segment_id;
 };
 
 class HNSWRangeSegmentResultHandler
-  : public faiss::ResultHandler<faiss::HNSW::C> {
+  : public HNSWRangeResultHandler::SingleResultHandler {
  public:
   explicit HNSWRangeSegmentResultHandler(uint32_t segment_id,
                                          HNSWRangeResultHandler& handler)
-    : _impl{handler}, _segment_id{segment_id} {}
-
-  void Begin(size_t i) { _impl.begin(i); }
+    : HNSWRangeResultHandler::SingleResultHandler{handler},
+      _segment_id{segment_id} {}
 
   bool add_result(float dis, int64_t idx) final {
-    return _impl.add_result(
+    return HNSWRangeResultHandler::SingleResultHandler::add_result(
       dis, PackSegmentWithDoc(_segment_id, static_cast<doc_id_t>(idx)));
   }
 
-  void End() {}
-
  private:
-  HNSWRangeResultHandler::SingleResultHandler _impl;
   uint32_t _segment_id;
 };
 
@@ -140,16 +134,40 @@ class ColumnIndexDistance final : public ColumnDistanceBase {
   ResettableDocIterator::ptr _lit;
   ResettableDocIterator::ptr _rit;
 };
+
+struct HNSWSearchBuffer {
+  std::span<float> dis;
+  std::span<int64_t> ids;
+  float max_dist;
+  faiss::VisitedTable vt{0};
+
+  HNSWSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
+                   float max_dist = std::numeric_limits<float>::max())
+    : dis{dis_data, size}, ids{ids_data, size}, max_dist{max_dist} {
+    ResetValues();
+  }
+
+  void ReorderResult() {
+    faiss::heap_reorder<faiss::HNSW::C>(dis.size(), dis.data(), ids.data());
+  }
+
+  void ResetValues() {
+    std::ranges::fill(dis, max_dist);
+    std::ranges::fill(ids, -1);
+  }
+};
+
 struct HNSWSearchInfo {
   const byte_type* query;
   size_t top_k;
   faiss::SearchParametersHNSW params;
+  float global_threshold = faiss::HNSW::C::neutral();
 };
 
 struct HNSWSearchContext {
   HNSWSearchInfo info;
   uint32_t segment_id;
-  faiss::VisitedTable vt;
+  faiss::VisitedTable& vt;
   HNSWResultHandler& handler;
 };
 
@@ -159,10 +177,16 @@ struct HNSWRangeSearchInfo {
   faiss::SearchParametersHNSW params;
 };
 
+struct HNSWRangeSearchBuffer {
+  std::vector<float> dis;
+  std::vector<int64_t> ids;
+  faiss::VisitedTable vt{0};
+};
+
 struct HNSWRangeSearchContext {
   HNSWRangeSearchInfo info;
   uint32_t segment_id;
-  faiss::VisitedTable vt;
+  faiss::VisitedTable& vt;
   HNSWRangeResultHandler& handler;
 };
 

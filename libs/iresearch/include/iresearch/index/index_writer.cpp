@@ -233,8 +233,7 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr =
-    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
+  auto itr = prepared->execute({.segment = reader});
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -1671,6 +1670,8 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   };
 }
 
+int gCnt = 0;
+
 IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto tick = info.tick;
   SDB_ASSERT(writer_limits::kMinTick < tick);
@@ -1912,14 +1913,45 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // merged segment. Pending already imported/consolidated segment, apply
       // removals mask documents matching filters from segment_contexts
       // (i.e. from new operations)
-      apply_all_queries([&](QueryContext& query) {
-        // skip queries which not affect this
-        if (import.tick <= query.tick) {
-          // FIXME(gnusi): optimize PK queries
-          docs_mask_modified |=
-            RemoveFromImportedSegment(*import_docs_mask, query, *import_reader);
+      WaitGroup wg;
+      std::vector<DocumentMask> import_docs_vector;
+      std::vector<int64_t> has_removals_vector;
+      import_docs_vector.reserve(ctx->segments.size());
+      has_removals_vector.reserve(ctx->segments.size());
+      for (auto& segment : ctx->segments) {
+        SDB_ASSERT(segment != nullptr);
+
+        wg.Add();
+        auto& import_docs_local =
+          import_docs_vector.emplace_back(*import_docs_mask);
+        auto& has_removals_local = has_removals_vector.emplace_back(false);
+
+        auto task = [&] {
+          apply_queries(*segment, [&](QueryContext& query) {
+            // skip queries which not affect this
+            if (import.tick <= query.tick) {
+              // FIXME(gnusi): optimize PK queries
+              has_removals_local = RemoveFromImportedSegment(
+                import_docs_local, query, *import_reader);
+            }
+          });
+          wg.Done();
+        };
+        if (_executor != nullptr) {
+          yaclib::Submit(*_executor, task);
+        } else {
+          task();
         }
-      });
+      }
+      wg.Wait();
+      for (auto& import_docs_local : import_docs_vector) {
+        for (auto doc_id : import_docs_local) {
+          import_docs_mask->insert(doc_id);
+        }
+      }
+      docs_mask_modified |=
+        std::any_of(has_removals_vector.begin(), has_removals_vector.end(),
+                    [](int64_t v) -> bool { return v; });
     }
 
     // Skip empty segments

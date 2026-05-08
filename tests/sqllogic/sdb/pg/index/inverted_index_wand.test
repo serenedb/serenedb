@@ -419,3 +419,67 @@ SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
 ----
 count
 0
+
+
+# ---------------------------------------------------------------------------
+# Fault-injection trip-wire: `irs::WandIterator` fires inside iresearch's
+# WandIterator dispatch, proving the connector wired WAND through and the
+# engine actually picked the WAND-capable iterator at runtime. EXPLAIN's
+# `, optimized` suffix is a connector-side hint -- this is the runtime
+# proof.
+# ---------------------------------------------------------------------------
+
+# Positive: WAND-on index + matching scorer + DESC + LIMIT -> fault trips.
+
+statement ok
+SET sdb_faults = 'irs::WandIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_big_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10;
+
+
+# Negative: same query against the plain (non-WAND) index does not trip.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM plain_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(plain_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Negative: ASC on the WAND index -- TopK rule doesn't pull up, no WAND.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(wand_big_idx.tableoid) ASC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Negative: mismatched scorer (TFIDF query against BM25-WAND index) --
+# WandEnabled() returns false, no WAND iterator picked.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY TFIDF(wand_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+statement ok
+SET sdb_faults = '-irs::WandIterator';

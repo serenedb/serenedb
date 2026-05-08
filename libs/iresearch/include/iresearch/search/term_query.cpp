@@ -53,7 +53,6 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto* reader = state->reader;
   SDB_ASSERT(reader);
   DocIterator::ptr docs;
-  IteratorOptions options{ctx.wand};
 
   const auto features = GetFeatures(ctx.scorer);
   auto it = reader->Iterator(features,
@@ -63,7 +62,7 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
                                .boost = _boost,
                                .field = reader->meta(),
                              },
-                             options);
+                             ctx.wand);
   if (!it) {
     return DocIterator::empty();
   }

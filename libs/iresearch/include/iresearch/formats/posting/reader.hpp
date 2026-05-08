@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include "basics/debugging.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -442,6 +445,12 @@ template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
+  // Trip-wire: this entry point is reached only when the dispatcher in
+  // Iterator() above selects a WAND-capable iterator (wand requested + Freq
+  // feature present + no Pos/Offs required + min_match==1). Tests
+  // SET sdb_faults to assert WAND was actually instantiated for a given
+  // query/index combo.
+  SDB_IF_FAILURE("irs::WandIterator") { SDB_THROW(sdb::ERROR_DEBUG); }
   return ResolveWandType(
     field_features, options.has_wand, _doc_in->GetType(),
     [&]<bool Pos, bool Offs, bool HasWand, typename InputType>()
@@ -488,7 +497,10 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     return {};
   }
 
-  if (options.Enabled() &&
+  // Dispatch to WandIterator when (1) the caller asked for WAND, (2) the
+  // field has wand metadata persisted, (3) the field exposes Freq, (4) the
+  // query doesn't need positional/offset data, and (5) min_match is 1.
+  if (options.wand_enabled && options.has_wand &&
       IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
       IndexFeatures::None ==
         (required_features & (IndexFeatures::Pos | IndexFeatures::Offs)) &&

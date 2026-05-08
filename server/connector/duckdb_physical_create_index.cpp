@@ -274,7 +274,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
                             ? _info->column_opclasses[i]
                             : std::string{};
 
-    duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
+    std::optional<duckdb::case_insensitive_map_t<duckdb::Value>>
+      opclass_options;
     if (i < _info->column_opclass_options.size()) {
       opclass_options = _info->column_opclass_options[i];
     }

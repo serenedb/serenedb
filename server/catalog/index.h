@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/types/value.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,7 +47,9 @@ struct CreateIndexColumn {
   std::string_view name;
   std::string opclass;
   std::vector<std::string> json_path;
-  duckdb::case_insensitive_map_t<duckdb::Value> opclass_options;
+  // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
+  // parens were present, distinguishing `col opclass` from `col opclass ()`.
+  std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
 };
 
 class Index : public SchemaObject {

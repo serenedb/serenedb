@@ -122,6 +122,42 @@ duckdb::LogicalType MakeTSQueryType();
 catalog::Tokenizer::TokenizerWrapper ResolveTokenizerAnalyzer(
   duckdb::ClientContext& context, std::string_view name);
 
+// Geo range search:
+//   ST_Distance_Between(field, centroid, min_distance, max_distance,
+//                       [include_min, [include_max]]) -> BOOLEAN
+// Matches rows whose centroid-to-centroid geodesic distance to `centroid`
+// lies between min_distance and max_distance metres. The brackets
+// (inclusive vs exclusive) default to inclusive on both sides. The name
+// follows the PostGIS / DuckDB ST_* convention; the `_Between` suffix
+// reads naturally with two distance bounds and avoids confusion with
+// PostGIS's interior `ST_DWithin` / one-sided `ST_DFullyWithin`.
+inline constexpr std::string_view kGeoInRange = "ST_Distance_Between";
+
+// Geo distance pseudo-function:
+//   ST_Distance_Centroid(field, centroid) -> DOUBLE
+// Returns the geodesic distance (metres) between the indexed value's
+// centroid and the centroid argument. Cannot be evaluated outside an
+// inverted-index scan; the filter builder recognizes
+// `ST_Distance_Centroid(field, centroid) OP constant` patterns and rewrites
+// them into iresearch GeoDistanceFilter range queries. The name follows the
+// PostGIS / DuckDB ST_* convention; the `_Centroid` suffix flags that this
+// is the centroid-to-centroid distance the indexer is built around (not the
+// edge-to-edge ST_Distance semantics).
+inline constexpr std::string_view kGeoDistance = "ST_Distance_Centroid";
+
+// Geo set-relation predicates (build into iresearch GeoFilter):
+//   ST_Intersects(field, shape)  -> BOOLEAN  -- shape ∩ indexed != ∅
+//   ST_Intersects(shape, field)  -> BOOLEAN  -- commutative
+//   ST_Contains(field, shape)    -> BOOLEAN  -- indexed ⊇ shape
+//   ST_Contains(shape, field)    -> BOOLEAN  -- shape ⊇ indexed
+// `field` is a column reference (JSON GeoJSON, or GEOMETRY).
+// `shape` is a constant (JSON GeoJSON, or GEOMETRY).
+// Names follow the PostGIS / DuckDB ST_* convention. ST_Contains semantics
+// match the closed (boundary-inclusive, reflexive) definition -- not the
+// strict-interior ST_Contains_Properly variant.
+inline constexpr std::string_view kGeoIntersects = "ST_Intersects";
+inline constexpr std::string_view kGeoContains = "ST_Contains";
+
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running
 // per-row at execution time. Scorer parameters are constants; the

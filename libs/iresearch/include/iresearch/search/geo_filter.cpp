@@ -601,8 +601,11 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 
   const auto ring = coverer.GetCovering(max_bound).Difference(
     coverer.GetInteriorCovering(min_bound));
-  const auto geo_terms =
-    indexer.GetQueryTermsForCanonicalCovering(ring, options.prefix);
+  // S2CellUnion::Difference has no level cap: GetDifferenceInternal recurses
+  // until cells are disjoint or fully contained, so `ring` can have cells
+  // beyond options.max_level. Re-cover through GetQueryTerms so the coverer
+  // enforces min/max level before GetQueryTermsForCanonicalCovering runs.
+  const auto geo_terms = indexer.GetQueryTerms(ring, options.prefix);
 
   if (geo_terms.empty()) {
     return Filter::Query::empty();
@@ -636,6 +639,14 @@ Filter::Query::ptr PrepareInterval(const PrepareContext& ctx,
 }  // namespace
 
 Filter::Query::ptr GeoFilter::prepare(const PrepareContext& ctx) const {
+#ifdef SDB_DEV
+  // Single-prepare guard. GeoFilter::prepare moves shape state into the
+  // returned Query, so a second prepare on the same filter would silently
+  // produce Query::empty() and the surrounding bool-filter would collapse
+  // to no rows. Surface that misuse loudly here.
+  SDB_ASSERT(!_prepared.exchange(true, std::memory_order_relaxed) &&
+             "GeoFilter::prepare() called more than once on the same instance");
+#endif
   auto& shape = const_cast<ShapeContainer&>(options().shape);
   if (shape.empty()) {
     return Filter::Query::empty();

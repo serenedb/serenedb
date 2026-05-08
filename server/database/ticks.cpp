@@ -43,7 +43,9 @@ Tick NewTickHybridLogicalClock(Tick received) {
   return gHybridLogicalClock.getTimeStamp(received);
 }
 
-Tick NewTickServer() { return ++gCurrentTick; }
+Tick NewTickServer(uint64_t count) {
+  return gCurrentTick.fetch_add(count, std::memory_order_relaxed) + 1;
+}
 
 void UpdateTickServer(Tick tick) {
   Tick t = tick;

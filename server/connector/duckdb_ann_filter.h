@@ -40,34 +40,29 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
+struct ANNFilterContext {
+  duckdb::ClientContext& context;
+  duckdb::unique_ptr<duckdb::Expression> filter_expr;
+  std::vector<duckdb::LogicalType> filter_types;
+
+  const SereneDBScanBindData& bind_data;
+  const rocksdb::Snapshot* rocksdb_snapshot;
+  rocksdb::Transaction* rocksdb_txn;
+  std::vector<duckdb::idx_t> filter_projection;
+  std::vector<catalog::Column::Id> filter_column_ids;
+};
+
 // faiss IDSelector: per HNSW candidate, materializes the row's filter
 // columns and evaluates the filter expressions to gate inclusion.
 class ANNFilter final : public faiss::IDSelector {
  public:
-  ANNFilter(duckdb::ClientContext& context, const irs::IndexReader& reader,
-            const SereneDBScanBindData& bind_data,
-            const rocksdb::Snapshot* snapshot, rocksdb::Transaction* txn,
-            std::vector<duckdb::idx_t> filter_projected_columns,
-            std::vector<duckdb::LogicalType> filter_types,
-            std::vector<catalog::Column::Id> filter_bind_column_ids,
-            std::vector<duckdb::unique_ptr<duckdb::Expression>> exprs);
+  ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
 
   bool is_member(faiss::idx_t id) const final;
 
  private:
-  duckdb::ClientContext& _context;
-  const irs::IndexReader& _reader;
-  const SereneDBScanBindData& _bind_data;
-  const rocksdb::Snapshot* _snapshot;
-  rocksdb::Transaction* _txn;
-
-  // Filter expressions reference only a subset of the table's columns;
-  // this projection is independent of the outer scan's projection.
-  std::vector<duckdb::idx_t> _filter_projected_columns;
-  std::vector<duckdb::LogicalType> _filter_types;
-  std::vector<catalog::Column::Id> _filter_bind_column_ids;
-
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> _exprs;
+  const ANNFilterContext& _ctx;
+  const irs::SubReader& _segment;
   mutable duckdb::ExpressionExecutor _executor;
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
@@ -77,15 +72,12 @@ class ANNFilter final : public faiss::IDSelector {
 
   mutable std::shared_ptr<IndexSource> _index_source;
 
-  // TODO(codeworse): Will be erased, because filter should be per-segment
-  // using parallel index execution.
   mutable SegmentPkIterator _it;
-  mutable uint32_t _it_segment_id = std::numeric_limits<uint32_t>::max();
 };
 
-void InitAnnFilter(
-  std::unique_ptr<ANNFilter>& filter, duckdb::ClientContext& context,
-  const std::vector<duckdb::unique_ptr<duckdb::Expression>>& filter_expressions,
+void InitAnnFilterContext(
+  std::unique_ptr<ANNFilterContext>& filter, duckdb::ClientContext& context,
+  const duckdb::Expression* filter_expression,
   const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
   const rocksdb::Snapshot* rocks_snapshot,
   const SereneDBScanBindData& bind_data);

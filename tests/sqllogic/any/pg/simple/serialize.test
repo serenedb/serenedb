@@ -1,0 +1,1058 @@
+# PG-byte-correct text serialization for composites and arrays.
+# Covers wrap-decision predicates, composite-style "" escape, array-style \"
+# escape, and their composition for nested cases.
+
+
+# Plain composites: bare emission when no field triggers a wrap.
+query
+SELECT ROW(1, 2, 3) AS kostya;
+----
+kostya
+(1,2,3)
+
+query
+SELECT ROW('a', 'b', 'c') AS kostya;
+----
+kostya
+(a,b,c)
+
+
+query
+SELECT ROW(1, 'hello world', TIMESTAMP '2024-01-15 12:34:56') AS kostya;
+----
+kostya
+(1,"hello world","2024-01-15 12:34:56")
+
+
+# Empty / NULL fields: empty-between-commas is the NULL marker.
+query
+SELECT ROW('') AS kostya;
+----
+kostya
+("")
+
+
+query
+SELECT ROW('', '') AS kostya;
+----
+kostya
+("","")
+
+
+query
+SELECT ROW(NULL::text, 'x') AS kostya;
+----
+kostya
+(,x)
+
+
+query
+SELECT ROW('a', NULL::text, 'c') AS kostya;
+----
+kostya
+(a,,c)
+
+
+query
+SELECT ROW(NULL::int, 'x', NULL::int) AS kostya;
+----
+kostya
+(,x,)
+
+
+# Composite escape: " doubles to "".
+query
+SELECT ROW('has"quote') AS kostya;
+----
+kostya
+("has""quote")
+
+
+# Composite escape: \ doubles to \\.
+query
+SELECT ROW('has\backslash') AS kostya;
+----
+kostya
+("has\\\\backslash")
+
+
+# Composite-in-composite: each level doubles the previous level's escapes.
+query
+SELECT ROW(ROW('a"b')) AS kostya;
+----
+kostya
+("(""a""""b"")")
+
+
+query
+SELECT ROW(ROW(ROW(42))) AS kostya;
+----
+kostya
+("(""(42)"")")
+
+
+# Array elements use \"-style escape, distinct from composite "" style.
+query
+SELECT ARRAY[ROW('a"b')] AS kostya;
+----
+kostya
+{"(\\"a\\"\\"b\\")"}
+
+
+# Mixed: composite-in-array combines both styles per level.
+query
+SELECT ARRAY[ROW(ROW('a"b'))] AS kostya;
+----
+kostya
+{"(\\"(\\"\\"a\\"\\"\\"\\"b\\"\\")\\")"}
+
+
+query
+SELECT ARRAY[ROW('has\backslash')] AS kostya;
+----
+kostya
+{"(\\"has\\\\\\\\backslash\\")"}
+
+
+# Array of structs: single-field non-trigger struct stays bare.
+query
+SELECT ARRAY[ROW(42)] AS kostya;
+----
+kostya
+{(42)}
+
+
+query
+SELECT ARRAY[ROW(1), ROW(2)] AS kostya;
+----
+kostya
+{(1),(2)}
+
+
+# Composite-of-array predicate: empty / single-element-non-trigger -> no wrap.
+query
+SELECT ROW(ARRAY[]::int[]) AS kostya;
+----
+kostya
+({})
+
+
+query
+SELECT ROW(ARRAY[1]) AS kostya;
+----
+kostya
+({1})
+
+
+query
+SELECT ROW(ARRAY['hi']) AS kostya;
+----
+kostya
+({hi})
+
+
+# Multi-element array in composite: ',' triggers wrap.
+query
+SELECT ROW(ARRAY[1,2,3]) AS kostya;
+----
+kostya
+("{1,2,3}")
+
+
+# Multi-dim array in composite: outer dim size 1, inner dim non-trigger ->
+# bare.
+query
+SELECT ROW(ARRAY[ARRAY[1]]) AS kostya;
+----
+kostya
+({{1}})
+
+
+# Single-element array of struct: struct rendering has '(' which IS a
+# composite trigger -> wrap.
+query
+SELECT ROW(ARRAY[ROW(1)]) AS kostya;
+----
+kostya
+("{(1)}")
+
+
+# Varchar trigger sets differ: '{' is array trigger but not composite.
+query
+SELECT ROW(ARRAY['{x}']) AS kostya;
+----
+kostya
+("{""{x}""}")
+
+
+# Varchar with case-insensitive "null" triggers array wrap; composite of a
+# single-element array of "null" inherits via composite trigger on '"' from
+# the element's array-context wrap.
+query
+SELECT ROW(ARRAY['NULL']) AS kostya;
+----
+kostya
+("{""NULL""}")
+
+
+query
+SELECT ROW(ARRAY['']) AS kostya;
+----
+kostya
+("{""""}")
+
+
+# Varchar '(x)' triggers composite wrap (paren) but NOT array wrap.
+query
+SELECT ROW(ARRAY['(x)']) AS kostya;
+----
+kostya
+("{(x)}")
+
+
+# Timestamp / interval in array: always wrap due to whitespace.
+query
+SELECT ARRAY[TIMESTAMP '2024-01-15 12:00:00'] AS kostya;
+----
+kostya
+{"2024-01-15 12:00:00"}
+
+
+query
+SELECT ARRAY[INTERVAL '1 day'] AS kostya;
+----
+kostya
+{"1 day"}
+
+
+# Timestamp in composite: wrap because whitespace.
+query
+SELECT ROW(TIMESTAMP '2024-01-15 12:34:56') AS kostya;
+----
+kostya
+("2024-01-15 12:34:56")
+
+
+# Timestamp in array in composite: composite-style "" outside, array-style \"
+# inside. The inner array's element wrap delimiters become composite-escaped.
+query
+SELECT ROW(ARRAY[TIMESTAMP '2024-01-15 12:00:00']) AS kostya;
+----
+kostya
+("{""2024-01-15 12:00:00""}")
+
+
+# Date / time / int never trigger.
+query
+SELECT ROW(DATE '2024-01-15') AS kostya;
+----
+kostya
+(2024-01-15)
+
+
+query
+SELECT ROW(TIME '12:34:56') AS kostya;
+----
+kostya
+(12:34:56)
+
+
+# Bytea hex always has '\x' prefix -> '\' is composite + array trigger.
+query
+SELECT ROW('\x68'::bytea) AS kostya;
+----
+kostya
+("\\\\x68")
+
+
+query
+SELECT ARRAY['\x68'::bytea] AS kostya;
+----
+kostya
+{"\\\\x68"}
+
+
+# Bytea in array in composite: \-doubling cascades.
+query
+SELECT ROW(ARRAY['\x68'::bytea]) AS kostya;
+----
+kostya
+("{""\\\\\\\\x68""}")
+
+
+# Multi-dim arrays: structural braces stay bare, only leaf wraps.
+query
+SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]] AS kostya;
+----
+kostya
+{{1,2},{3,4}}
+
+
+query
+SELECT ARRAY[ARRAY[ARRAY[1]]] AS kostya;
+----
+kostya
+{{{1}}}
+
+
+# Mixed strings with both " and \: each escaped per level.
+query
+SELECT ROW('has\and"both') AS kostya;
+----
+kostya
+("has\\\\and""both")
+
+
+query
+SELECT ARRAY[ROW('has\and"both')] AS kostya;
+----
+kostya
+{"(\\"has\\\\\\\\and\\"\\"both\\")"}
+
+
+# Four-level nesting: array -> struct -> array -> struct -> varchar with '"'.
+# The single '"' byte at the innermost level emits 16 bytes on the wire by
+# the time it traverses all four wraps. Pins the ctx-seq stack composition.
+query
+SELECT ARRAY[ROW(ARRAY[ROW('a"b')])] AS kostya;
+----
+kostya
+{"(\\"{\\"\\"(\\\\\\\\\\"\\"a\\\\\\\\\\"\\"\\\\\\\\\\"\\"b\\\\\\\\\\"\\")\\"\\"}\\")"}
+
+
+# ============================================================
+# Extended PG-byte-exact coverage: nested struct/array combos,
+# leaf types in containers, special chars, NULL/empty edges.
+# ============================================================
+
+# Multi-dim arrays: basic shapes
+
+query
+SELECT ARRAY[ARRAY[1,2],ARRAY[3,4]] AS kostya;
+----
+kostya
+{{1,2},{3,4}}
+
+query
+SELECT ARRAY[ARRAY[ARRAY[1,2],ARRAY[3,4]]] AS kostya;
+----
+kostya
+{{{1,2},{3,4}}}
+
+query
+SELECT ARRAY[ARRAY[ARRAY[ARRAY[1]]]] AS kostya;
+----
+kostya
+{{{{1}}}}
+
+# query
+# SELECT ARRAY[ARRAY[]::int[]] AS kostya;
+# ----
+# kostya
+# {}
+
+query
+SELECT ARRAY[ARRAY[1,NULL,3]] AS kostya;
+----
+kostya
+{{1,NULL,3}}
+
+# Multi-dim arrays: element triggers wrap
+
+query
+SELECT ARRAY[ARRAY['a{,}b']] AS kostya;
+----
+kostya
+{{"a{,}b"}}
+
+query
+SELECT ARRAY[ARRAY['ab']] AS kostya;
+----
+kostya
+{{ab}}
+
+query
+SELECT ARRAY[ARRAY['a,b']] AS kostya;
+----
+kostya
+{{"a,b"}}
+
+query
+SELECT ARRAY[ARRAY['a"b']] AS kostya;
+----
+kostya
+{{"a\\"b"}}
+
+query
+SELECT ARRAY[ARRAY['{ab}']] AS kostya;
+----
+kostya
+{{"{ab}"}}
+
+query
+SELECT ARRAY[ARRAY['NULL','a']] AS kostya;
+----
+kostya
+{{"NULL",a}}
+
+query
+SELECT ARRAY[ARRAY['','x']] AS kostya;
+----
+kostya
+{{"",x}}
+
+query
+SELECT ARRAY[ARRAY[' spaces ']] AS kostya;
+----
+kostya
+{{" spaces "}}
+
+# Disabled: sqllogic uses literal '\t' as column separator in the expected
+# output, so a value containing a literal tab confuses the parser.
+# skipif pg-wire-extended
+# query
+# SELECT ARRAY[ARRAY[E'tab\there']] AS kostya;
+# ----
+# kostya
+# {{"tab	here"}}
+
+# Nested structs (depth)
+
+query
+SELECT ROW(ROW(1,2), ROW(3,4)) AS kostya;
+----
+kostya
+("(1,2)","(3,4)")
+
+query
+SELECT ROW(1, ROW(2,3)) AS kostya;
+----
+kostya
+(1,"(2,3)")
+
+query
+SELECT ROW(ROW(NULL::int, 1)) AS kostya;
+----
+kostya
+("(,1)")
+
+query
+SELECT ROW(ROW(NULL::text, 'x')) AS kostya;
+----
+kostya
+("(,x)")
+
+query
+SELECT ROW(ROW('a, b'), ROW('c')) AS kostya;
+----
+kostya
+("(""a, b"")","(c)")
+
+query
+SELECT ROW(ROW(ROW('a"b'))) AS kostya;
+----
+kostya
+("(""(""""a""""""""b"""")"")")
+
+query
+SELECT ROW(ROW(1, 'has,comma'), 'plain') AS kostya;
+----
+kostya
+("(1,""has,comma"")",plain)
+
+query
+SELECT ROW(ROW(' leading'), ROW('trailing ')) AS kostya;
+----
+kostya
+("("" leading"")","(""trailing "")")
+
+query
+SELECT ROW(NULL::int, NULL::int, NULL::int) AS kostya;
+----
+kostya
+(,,)
+
+query
+SELECT ROW(ROW(ROW(ROW(42)))) AS kostya;
+----
+kostya
+("(""(""""(42)"""")"")")
+
+# Struct in array (varied)
+
+query
+SELECT ARRAY[ROW(NULL::int, 1)] AS kostya;
+----
+kostya
+{"(,1)"}
+
+query
+SELECT ARRAY[ROW('a, b'), ROW('c')] AS kostya;
+----
+kostya
+{"(\\"a, b\\")",(c)}
+
+query
+SELECT ARRAY[ROW(ROW(1))] AS kostya;
+----
+kostya
+{"(\\"(1)\\")"}
+
+query
+SELECT ARRAY[ROW(ARRAY[1,2,3])] AS kostya;
+----
+kostya
+{"(\\"{1,2,3}\\")"}
+
+query
+SELECT ARRAY[ROW(NULL::int)] AS kostya;
+----
+kostya
+{()}
+
+query
+SELECT ARRAY[ROW(NULL::int, NULL::int)] AS kostya;
+----
+kostya
+{"(,)"}
+
+query
+SELECT ARRAY[ROW(1,'a'), ROW(2,'b,c')] AS kostya;
+----
+kostya
+{"(1,a)","(2,\\"b,c\\")"}
+
+query
+SELECT ARRAY[ROW(1,2), ROW(3,4), ROW(5,6)] AS kostya;
+----
+kostya
+{"(1,2)","(3,4)","(5,6)"}
+
+# Array in struct (varied)
+
+query
+SELECT ROW(ARRAY[ARRAY[1]]) AS kostya;
+----
+kostya
+({{1}})
+
+query
+SELECT ROW(ARRAY[ROW(1)]) AS kostya;
+----
+kostya
+("{(1)}")
+
+query
+SELECT ROW(ARRAY[ROW(1,2)]) AS kostya;
+----
+kostya
+("{""(1,2)""}")
+
+query
+SELECT ROW(ARRAY[ROW('a,b')]) AS kostya;
+----
+kostya
+("{""(\\\\""a,b\\\\"")""}")
+
+query
+SELECT ROW(ARRAY[1, NULL, 3]) AS kostya;
+----
+kostya
+("{1,NULL,3}")
+
+query
+SELECT ROW(ARRAY[1,2,3], ARRAY[4,5]) AS kostya;
+----
+kostya
+("{1,2,3}","{4,5}")
+
+query
+SELECT ROW(ARRAY['a','b'], 'c') AS kostya;
+----
+kostya
+("{a,b}",c)
+
+query
+SELECT ROW(ARRAY[ARRAY[1,2]]) AS kostya;
+----
+kostya
+("{{1,2}}")
+
+query
+SELECT ROW(ARRAY[ARRAY['x']]) AS kostya;
+----
+kostya
+({{x}})
+
+query
+SELECT ROW(ARRAY[NULL::int]) AS kostya;
+----
+kostya
+({NULL})
+
+query
+SELECT ROW(ARRAY[NULL::int, NULL::int]) AS kostya;
+----
+kostya
+("{NULL,NULL}")
+
+# Deep nesting
+
+query
+SELECT ARRAY[ROW(ARRAY[ROW(ARRAY[1,2])])] AS kostya;
+----
+kostya
+{"(\\"{\\"\\"(\\\\\\\\\\"\\"{1,2}\\\\\\\\\\"\\")\\"\\"}\\")"}
+
+query
+SELECT ROW(ARRAY[ROW(ARRAY[ROW(1)])]) AS kostya;
+----
+kostya
+("{""(\\\\""{(1)}\\\\"")""}")
+
+query
+SELECT ARRAY[ROW(ROW(ROW(1)))] AS kostya;
+----
+kostya
+{"(\\"(\\"\\"(1)\\"\\")\\")"}
+
+query
+SELECT ARRAY[ARRAY[ARRAY[ROW(1)]]] AS kostya;
+----
+kostya
+{{{(1)}}}
+
+query
+SELECT ROW(ARRAY[ROW(ARRAY[1,2])]) AS kostya;
+----
+kostya
+("{""(\\\\""{1,2}\\\\"")""}")
+
+# Special chars in arrays
+
+query
+SELECT ARRAY['  spaces  '] AS kostya;
+----
+kostya
+{"  spaces  "}
+
+query
+SELECT ARRAY[E'tab\there'] AS kostya;
+----
+kostya
+{"tab\there"}
+
+query
+SELECT ARRAY['has\backslash'] AS kostya;
+----
+kostya
+{"has\\\\backslash"}
+
+query
+SELECT ARRAY['null','NULL','Null'] AS kostya;
+----
+kostya
+{"null","NULL","Null"}
+
+# Special chars in structs
+
+query
+SELECT ROW(' leading space') AS kostya;
+----
+kostya
+(" leading space")
+
+query
+SELECT ROW('trailing ') AS kostya;
+----
+kostya
+("trailing ")
+
+query
+SELECT ROW(E'tab\there') AS kostya;
+----
+kostya
+("tab\there")
+
+query
+SELECT ROW('a','b','c') AS kostya;
+----
+kostya
+(a,b,c)
+
+# Timestamps / intervals in containers
+
+query
+SELECT ARRAY[TIMESTAMP '2024-01-15 12:00:00', TIMESTAMP '2025-06-30 23:59:59'] AS kostya;
+----
+kostya
+{"2024-01-15 12:00:00","2025-06-30 23:59:59"}
+
+query
+SELECT ARRAY[INTERVAL '1 day', INTERVAL '2 hours 30 minutes'] AS kostya;
+----
+kostya
+{"1 day",02:30:00}
+
+query
+SELECT ROW(TIMESTAMP '2024-01-15 12:00:00', INTERVAL '3 days') AS kostya;
+----
+kostya
+("2024-01-15 12:00:00","3 days")
+
+query
+SELECT ARRAY[ROW(TIMESTAMP '2024-01-15 12:00:00')] AS kostya;
+----
+kostya
+{"(\\"2024-01-15 12:00:00\\")"}
+
+query
+SELECT ROW(ARRAY[TIMESTAMP '2024-01-15 12:00:00']) AS kostya;
+----
+kostya
+("{""2024-01-15 12:00:00""}")
+
+query
+SELECT ROW(INTERVAL '0 seconds') AS kostya;
+----
+kostya
+(00:00:00)
+
+query
+SELECT ARRAY[ROW(INTERVAL '0 seconds')] AS kostya;
+----
+kostya
+{(00:00:00)}
+
+query
+SELECT ARRAY[INTERVAL '0 seconds', INTERVAL '1 day'] AS kostya;
+----
+kostya
+{00:00:00,"1 day"}
+
+query
+SELECT ARRAY[1.5::float4, 2.5::float4] AS kostya;
+----
+kostya
+{1.5,2.5}
+
+query
+SELECT ARRAY[true, false, NULL::bool] AS kostya;
+----
+kostya
+{t,f,NULL}
+
+query
+SELECT ROW(true, false) AS kostya;
+----
+kostya
+(t,f)
+
+query
+SELECT ARRAY[UUID '00000000-0000-0000-0000-000000000001'] AS kostya;
+----
+kostya
+{00000000-0000-0000-0000-000000000001}
+
+query
+SELECT ROW(UUID '00000000-0000-0000-0000-000000000001') AS kostya;
+----
+kostya
+(00000000-0000-0000-0000-000000000001)
+
+query
+SELECT ARRAY[DATE '2024-01-15', DATE '2025-06-30'] AS kostya;
+----
+kostya
+{2024-01-15,2025-06-30}
+
+query
+SELECT ARRAY[TIME '12:34:56', TIME '23:59:59'] AS kostya;
+----
+kostya
+{12:34:56,23:59:59}
+
+query
+SELECT ROW(DATE '2024-01-15', TIME '12:34:56') AS kostya;
+----
+kostya
+(2024-01-15,12:34:56)
+
+# Bytea in containers
+
+query
+SELECT ARRAY['\x68'::bytea, '\x6869'::bytea] AS kostya;
+----
+kostya
+{"\\\\x68","\\\\x6869"}
+
+query
+SELECT ARRAY[ROW('\x68'::bytea)] AS kostya;
+----
+kostya
+{"(\\"\\\\\\\\x68\\")"}
+
+query
+SELECT ROW(ARRAY['\x68'::bytea]) AS kostya;
+----
+kostya
+("{""\\\\\\\\x68""}")
+
+query
+SELECT ROW('\x68'::bytea, '\x6869'::bytea) AS kostya;
+----
+kostya
+("\\\\x68","\\\\x6869")
+
+query
+SELECT ROW(ROW('\x68'::bytea)) AS kostya;
+----
+kostya
+("(""\\\\\\\\x68"")")
+
+# Edge: empty / null containers
+
+# skipif pg-wire-extended
+# query
+# SELECT ARRAY[]::int[] AS kostya;
+# ----
+# kostya
+# {}
+
+query
+SELECT ROW(NULL::int[]) AS kostya;
+----
+kostya
+()
+
+query
+SELECT ROW(ARRAY[]::int[], ARRAY[1]) AS kostya;
+----
+kostya
+({},{1})
+
+query
+SELECT ARRAY[NULL::int] AS kostya;
+----
+kostya
+{NULL}
+
+# Trivial sanity
+
+query
+SELECT ARRAY[1] AS kostya;
+----
+kostya
+{1}
+
+query
+SELECT ARRAY[1,2,3] AS kostya;
+----
+kostya
+{1,2,3}
+
+query
+SELECT ROW(1) AS kostya;
+----
+kostya
+(1)
+
+query
+SELECT ROW(1,2,3) AS kostya;
+----
+kostya
+(1,2,3)
+
+query
+SELECT ARRAY['a','b'] AS kostya;
+----
+kostya
+{a,b}
+
+query
+SELECT ARRAY[''] AS kostya;
+----
+kostya
+{""}
+
+query
+SELECT ROW('') AS kostya;
+----
+kostya
+("")
+
+
+# Extra bytea hex coverage for the depth-aware ByteaOutHex(ctx, value) overload.
+
+# Top-level bytea: bare '\\x' + hex digits via ByteaOutHex<false>.
+query
+SELECT ''::bytea AS kostya;
+----
+kostya
+\\x
+
+
+query
+SELECT '\xdeadbeef'::bytea AS kostya;
+----
+kostya
+\\xdeadbeef
+
+
+query
+SELECT '\x00ff'::bytea AS kostya;
+----
+kostya
+\\x00ff
+
+
+# Empty/multi-byte bytea inside a record. The leading '\\' is record trigger,
+# wrapping forces ctx.backslash_seq doubling.
+query
+SELECT ROW(''::bytea) AS kostya;
+----
+kostya
+("\\\\x")
+
+
+query
+SELECT ROW('\xdeadbeef'::bytea) AS kostya;
+----
+kostya
+("\\\\xdeadbeef")
+
+
+# Multi-field record mixing bytea with simple types.
+query
+SELECT ROW(1, '\x68'::bytea, 'kostya') AS kostya;
+----
+kostya
+(1,"\\\\x68",kostya)
+
+
+query
+SELECT ROW('\x68'::bytea, '\x6869'::bytea, '\x686f'::bytea) AS kostya;
+----
+kostya
+("\\\\x68","\\\\x6869","\\\\x686f")
+
+
+# Bytea inside an array. '\\' → array trigger → wrap, then array-style escape
+# emits ctx.backslash_seq for the leading '\\'.
+query
+SELECT ARRAY[''::bytea] AS kostya;
+----
+kostya
+{"\\\\x"}
+
+
+query
+SELECT ARRAY['\xdeadbeef'::bytea] AS kostya;
+----
+kostya
+{"\\\\xdeadbeef"}
+
+
+query
+SELECT ARRAY['\x00'::bytea, '\xff'::bytea] AS kostya;
+----
+kostya
+{"\\\\x00","\\\\xff"}
+
+
+# NULL bytea inside container -- emits the bare 'NULL' marker, no wrap.
+query
+SELECT ARRAY[NULL::bytea] AS kostya;
+----
+kostya
+{NULL}
+
+
+query
+SELECT ARRAY[NULL::bytea, '\x68'::bytea] AS kostya;
+----
+kostya
+{NULL,"\\\\x68"}
+
+
+query
+SELECT ROW(NULL::bytea, '\x68'::bytea) AS kostya;
+----
+kostya
+(,"\\\\x68")
+
+
+# Multi-dim array of bytea -- inner array bare in array context, leaf bytea
+# wraps with array-style escape at depth 1.
+query
+SELECT ARRAY[ARRAY['\x68'::bytea]] AS kostya;
+----
+kostya
+{{"\\\\x68"}}
+
+
+query
+SELECT ARRAY[ARRAY['\xdead'::bytea, '\xbeef'::bytea]] AS kostya;
+----
+kostya
+{{"\\\\xdead","\\\\xbeef"}}
+
+
+# Record-of-array-of-bytea: cascade of three escape transforms. Leaf bytea
+# wraps with array-escape inside, the array's '"' becomes a record trigger,
+# outer record wraps and doubles each '"' / '\\'.
+query
+SELECT ROW(ARRAY['\xff'::bytea, '\x00'::bytea]) AS kostya;
+----
+kostya
+("{""\\\\\\\\xff"",""\\\\\\\\x00""}")
+
+
+# Multi-field record where one field is bytea and forces a wrap by content.
+query
+SELECT ROW('hi world', '\x68'::bytea) AS kostya;
+----
+kostya
+("hi world","\\\\x68")
+
+
+# bytea field with hex content that still has only printable ASCII bytes.
+query
+SELECT ROW('\x6b6f7374796130'::bytea) AS kostya;
+----
+kostya
+("\\\\x6b6f7374796130")
+
+
+# Multi-field record-of-array, mixing bytea and varchar arrays.
+query
+SELECT ROW(ARRAY['\x68'::bytea], ARRAY['kostya','vedernikoff']) AS kostya;
+----
+kostya
+("{""\\\\\\\\x68""}","{kostya,vedernikoff}")
+
+
+# Single-element array of single-field bytea record. The record's rendering
+# starts with '(' then '\\' from bytea hex; after array peek the '"' from
+# self-wrap is an array trigger so the whole record gets array-wrapped.
+query
+SELECT ARRAY[ROW('\x6869'::bytea)] AS kostya;
+----
+kostya
+{"(\\"\\\\\\\\x6869\\")"}
+
+
+# Multi-element array of single-field bytea records.
+query
+SELECT ARRAY[ROW('\x68'::bytea), ROW('\x6869'::bytea)] AS kostya;
+----
+kostya
+{"(\\"\\\\\\\\x68\\")","(\\"\\\\\\\\x6869\\")"}
+
+
+# Record-in-record-in-bytea cascade.
+query
+SELECT ROW(ROW('\x68'::bytea)) AS kostya;
+----
+kostya
+("(""\\\\\\\\x68"")")

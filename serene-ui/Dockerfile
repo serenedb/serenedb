@@ -50,5 +50,5 @@ COPY cookbooks ./cookbooks
 COPY --from=builder /usr/src/apps/backend/dist ./backend/dist
 COPY --from=builder /usr/src/apps/web/dist/docker /var/www
 
-EXPOSE 3000 6543
+EXPOSE 6543
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

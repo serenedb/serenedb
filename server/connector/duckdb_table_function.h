@@ -113,11 +113,12 @@ struct FullTableScan : ScanSource {
 struct SearchScan : ScanSource {
   SearchScan() : ScanSource(ScanSourceKind::Search) {}
 
-  irs::Filter::Query::ptr query;
-  // Held to outlive `query`: prepare() is const but stats need the scorer.
+  // The prepared `Query` is built in SearchFullScanInitGlobal so prepare
+  // happens exactly once per execution, with the scorer if requested.
+  // This struct only carries the unprepared filter; the reader lives on
+  // `snapshot` and callers reach it via `snapshot->reader`.
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
-  const irs::IndexReader* reader = nullptr;
   // Empty when the filter is trivial.
   std::string filter_summary;
 
@@ -195,13 +196,13 @@ struct SearchScan : ScanSource {
 struct CountScan : ScanSource {
   CountScan() : ScanSource(ScanSourceKind::Count) {}
 
-  // Null => match-all short-circuit via IndexReader::live_docs_count().
-  irs::Filter::Query::ptr query;
-  // Kept alive like SearchScan.stored_filter so filter_summary references
-  // remain valid and for debuggability.
+  // Null `stored_filter` => match-all short-circuit via
+  // IndexReader::live_docs_count(). Otherwise the prepared `Query` is
+  // built once in SearchCountScanInitGlobal so every CountScan is
+  // prepared exactly once per execution. The reader lives on `snapshot`
+  // and callers reach it via `snapshot->reader`.
   std::shared_ptr<irs::Filter> stored_filter;
   search::InvertedIndexSnapshotPtr snapshot;
-  const irs::IndexReader* reader = nullptr;
   // Demangled boolean-filter tree for EXPLAIN. Empty when query is null.
   std::string filter_summary;
 
@@ -226,7 +227,7 @@ struct VectorSearchScan : ScanSource {
   ObjectId index_id;
   std::string field_name;
   std::vector<float> query_vector;
-  std::vector<duckdb::unique_ptr<duckdb::Expression>> filter_expressions;
+  duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
@@ -234,7 +235,6 @@ struct ANNScan : VectorSearchScan {
   ANNScan() : VectorSearchScan{ScanSourceKind::Ann} {}
 
   size_t top_k = 0;
-  int ef_search = 0;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -245,7 +245,13 @@ struct ANNScan : VectorSearchScan {
 struct RangeSearchScan : VectorSearchScan {
   RangeSearchScan() : VectorSearchScan{ScanSourceKind::RangeSearch} {}
 
+  // Radius as the user wrote it (in the unit of the requested distance
+  // function). Displayed in EXPLAIN.
   float radius = 0.0f;
+  // Radius in the unit the iresearch index actually compares against. Equal
+  // to `radius` for most metrics; squared when the user wrote l2_distance
+  // (`<->`) but the index stores L2-squared distances.
+  float effective_radius = 0.0f;
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

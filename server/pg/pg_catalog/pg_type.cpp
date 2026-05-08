@@ -20,6 +20,10 @@
 
 #include "pg/pg_catalog/pg_type.h"
 
+#include <deque>
+#include <string>
+
+#include "basics/containers/flat_hash_set.h"
 #include "catalog/catalog.h"
 #include "catalog/user_type.h"
 #include "pg/pg_catalog/fwd.h"
@@ -32,7 +36,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 16,
     .typname = "bool",
-    .typnamespace = 11,  // pg_catalog
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 1,
     .typbyval = true,
@@ -67,7 +71,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 21,
     .typname = "int2",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 2,
     .typbyval = true,
@@ -102,7 +106,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 23,
     .typname = "int4",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 4,
     .typbyval = true,
@@ -137,7 +141,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 20,
     .typname = "int8",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 8,
     .typbyval = true,
@@ -168,11 +172,181 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
+  {
+    .oid = 26,
+    .typname = "oid",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = true,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 1028,    // oid
+    .typinput = 1798,    // oidin
+    .typoutput = 1799,   // oidout
+    .typreceive = 2418,  // oidrecv
+    .typsend = 2419,     // oidsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  {
+    .oid = 27,
+    .typname = "tid",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 6,
+    .typbyval = false,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::UserDefined,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 1010,    // tid
+    .typinput = 48,      // tidin
+    .typoutput = 49,     // tidout
+    .typreceive = 2438,  // tidrecv
+    .typsend = 2439,     // tidsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Short,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  {
+    .oid = 28,
+    .typname = "xid",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::UserDefined,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 1011,    // xid
+    .typinput = 50,      // xidin
+    .typoutput = 51,     // xidout
+    .typreceive = 2440,  // xidrecv
+    .typsend = 2441,     // xidsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  {
+    .oid = 29,
+    .typname = "cid",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::UserDefined,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 1012,    // cid
+    .typinput = 52,      // cidin
+    .typoutput = 53,     // cidout
+    .typreceive = 2442,  // cidrecv
+    .typsend = 2443,     // cidsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  {
+    .oid = 5069,
+    .typname = "xid8",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 8,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::UserDefined,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 271,     // xid8
+    .typinput = 5070,    // xid8in
+    .typoutput = 5081,   // xid8out
+    .typreceive = 5082,  // xid8recv
+    .typsend = 5083,     // xid8send
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Double,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
   // float4/real (OID 700)
   {
     .oid = 700,
     .typname = "float4",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 4,
     .typbyval = true,
@@ -207,7 +381,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 701,
     .typname = "float8",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 8,
     .typbyval = true,
@@ -242,7 +416,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 25,
     .typname = "text",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = -1,
     .typbyval = false,
@@ -277,7 +451,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 18,
     .typname = "char",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 1,
     .typbyval = true,
@@ -312,7 +486,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1043,
     .typname = "varchar",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = -1,
     .typbyval = false,
@@ -347,7 +521,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 17,
     .typname = "bytea",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = -1,
     .typbyval = false,
@@ -382,7 +556,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 114,
     .typname = "json",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = -1,
     .typbyval = false,
@@ -417,7 +591,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2950,
     .typname = "uuid",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 16,
     .typbyval = false,
@@ -452,7 +626,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1700,
     .typname = "numeric",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = -1,
     .typbyval = false,
@@ -487,7 +661,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1082,
     .typname = "date",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 4,
     .typbyval = true,
@@ -522,7 +696,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1114,
     .typname = "timestamp",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 8,
     .typbyval = true,
@@ -557,7 +731,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 1184,
     .typname = "timestamptz",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 8,
     .typbyval = true,
@@ -592,7 +766,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2206,
     .typname = "regtype",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 4,
     .typbyval = true,
@@ -627,7 +801,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 2205,
     .typname = "regclass",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 4,
     .typbyval = true,
@@ -662,7 +836,7 @@ constexpr auto kSampleData = std::to_array<PgType>({
   {
     .oid = 4089,
     .typname = "regnamespace",
-    .typnamespace = 11,
+    .typnamespace = id::kPgCatalogSchema.id(),
     .typowner = id::kRootUser.id(),
     .typlen = 4,
     .typbyval = true,
@@ -693,6 +867,496 @@ constexpr auto kSampleData = std::to_array<PgType>({
     .typdefault = {},
     .typacl = {},
   },
+  // regproc (OID 24)
+  {
+    .oid = 24,
+    .typname = "regproc",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 1008,    // _regproc
+    .typinput = 44,      // regprocin
+    .typoutput = 45,     // regprocout
+    .typreceive = 2444,  // regprocrecv
+    .typsend = 2445,     // regprocsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regprocedure (OID 2202)
+  {
+    .oid = 2202,
+    .typname = "regprocedure",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 2207,    // _regprocedure
+    .typinput = 2212,    // regprocedurein
+    .typoutput = 2213,   // regprocedureout
+    .typreceive = 2446,  // regprocedurerecv
+    .typsend = 2447,     // regproceduresend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regoper (OID 2203)
+  {
+    .oid = 2203,
+    .typname = "regoper",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 2208,    // _regoper
+    .typinput = 2214,    // regoperin
+    .typoutput = 2215,   // regoperout
+    .typreceive = 2448,  // regoperrecv
+    .typsend = 2449,     // regopersend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regoperator (OID 2204)
+  {
+    .oid = 2204,
+    .typname = "regoperator",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 2209,    // _regoperator
+    .typinput = 2216,    // regoperatorin
+    .typoutput = 2217,   // regoperatorout
+    .typreceive = 2450,  // regoperatorrecv
+    .typsend = 2451,     // regoperatorsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regrole (OID 4096)
+  {
+    .oid = 4096,
+    .typname = "regrole",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 4097,    // _regrole
+    .typinput = 4098,    // regrolein
+    .typoutput = 4092,   // regroleout
+    .typreceive = 4094,  // regrolerecv
+    .typsend = 4095,     // regrolesend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regconfig (OID 3734)
+  {
+    .oid = 3734,
+    .typname = "regconfig",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 3735,    // _regconfig
+    .typinput = 3736,    // regconfigin
+    .typoutput = 3737,   // regconfigout
+    .typreceive = 3738,  // regconfigrecv
+    .typsend = 3739,     // regconfigsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regdictionary (OID 3769)
+  {
+    .oid = 3769,
+    .typname = "regdictionary",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 3770,    // _regdictionary
+    .typinput = 3771,    // regdictionaryin
+    .typoutput = 3772,   // regdictionaryout
+    .typreceive = 3773,  // regdictionaryrecv
+    .typsend = 3774,     // regdictionarysend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // regcollation (OID 4191)
+  {
+    .oid = 4191,
+    .typname = "regcollation",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 4192,    // _regcollation
+    .typinput = 4193,    // regcollationin
+    .typoutput = 4194,   // regcollationout
+    .typreceive = 4196,  // regcollationrecv
+    .typsend = 4197,     // regcollationsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // name (OID 19)
+  {
+    .oid = 19,
+    .typname = "name",
+    .typnamespace = id::kPgCatalogSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 64,  // NAMEDATALEN
+    .typbyval = false,
+    .typtype = PgType::Typetype::Base,
+    .typcategory = PgType::Typcategory::String,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 18,       // char
+    .typarray = 1003,    // _name
+    .typinput = 34,      // namein
+    .typoutput = 35,     // nameout
+    .typreceive = 2422,  // namerecv
+    .typsend = 2423,     // namesend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Char,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 0,
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 950,  // C_COLLATION_OID
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // information_schema.cardinal_number (domain over int4)
+  {
+    .oid = 13873,
+    .typname = "cardinal_number",
+    .typnamespace = id::kPgInformationSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 4,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Domain,
+    .typcategory = PgType::Typcategory::Numeric,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 13872,   // _cardinal_number
+    .typinput = 2597,    // domain_in
+    .typoutput = 43,     // int4out
+    .typreceive = 2598,  // domain_recv
+    .typsend = 2407,     // int4send
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 23,  // int4
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // information_schema.character_data (domain over varchar)
+  {
+    .oid = 13876,
+    .typname = "character_data",
+    .typnamespace = id::kPgInformationSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = -1,
+    .typbyval = false,
+    .typtype = PgType::Typetype::Domain,
+    .typcategory = PgType::Typcategory::String,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 13875,   // _character_data
+    .typinput = 2597,    // domain_in
+    .typoutput = 1047,   // varcharout
+    .typreceive = 2598,  // domain_recv
+    .typsend = 2433,     // varcharsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Extended,
+    .typnotnull = false,
+    .typbasetype = 1043,  // varchar
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 950,  // C_COLLATION_OID
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // information_schema.sql_identifier (domain over name)
+  {
+    .oid = 13878,
+    .typname = "sql_identifier",
+    .typnamespace = id::kPgInformationSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 64,  // NAMEDATALEN
+    .typbyval = false,
+    .typtype = PgType::Typetype::Domain,
+    .typcategory = PgType::Typcategory::String,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 13877,   // _sql_identifier
+    .typinput = 2597,    // domain_in
+    .typoutput = 35,     // nameout
+    .typreceive = 2598,  // domain_recv
+    .typsend = 2423,     // namesend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Char,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 19,  // name
+    .typtypmod = -1,
+    .typndims = 0,
+    .typcollation = 950,  // C_COLLATION_OID
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // information_schema.time_stamp (domain over timestamptz(2))
+  {
+    .oid = 13884,
+    .typname = "time_stamp",
+    .typnamespace = id::kPgInformationSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = 8,
+    .typbyval = true,
+    .typtype = PgType::Typetype::Domain,
+    .typcategory = PgType::Typcategory::DateTime,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 13883,   // _time_stamp
+    .typinput = 2597,    // domain_in
+    .typoutput = 1151,   // timestamptz_out
+    .typreceive = 2598,  // domain_recv
+    .typsend = 2477,     // timestamptz_send
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Double,
+    .typstorage = PgType::Typstorage::Plain,
+    .typnotnull = false,
+    .typbasetype = 1184,  // timestamptz
+    .typtypmod = 2,       // timestamptz(2)
+    .typndims = 0,
+    .typcollation = 0,
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
+  // information_schema.yes_or_no (domain over varchar(3))
+  {
+    .oid = 13886,
+    .typname = "yes_or_no",
+    .typnamespace = id::kPgInformationSchema.id(),
+    .typowner = id::kRootUser.id(),
+    .typlen = -1,
+    .typbyval = false,
+    .typtype = PgType::Typetype::Domain,
+    .typcategory = PgType::Typcategory::String,
+    .typispreferred = false,
+    .typisdefined = true,
+    .typdelim = ',',
+    .typrelid = 0,
+    .typsubscript = 0,
+    .typelem = 0,
+    .typarray = 13885,   // _yes_or_no
+    .typinput = 2597,    // domain_in
+    .typoutput = 1047,   // varcharout
+    .typreceive = 2598,  // domain_recv
+    .typsend = 2433,     // varcharsend
+    .typmodin = 0,
+    .typmodout = 0,
+    .typanalyze = 0,
+    .typalign = PgType::Typalign::Int,
+    .typstorage = PgType::Typstorage::Extended,
+    .typnotnull = false,
+    .typbasetype = 1043,  // varchar
+    .typtypmod = 7,       // varchar(3) -- typmod is len + VARHDRSZ(4)
+    .typndims = 0,
+    .typcollation = 950,  // C_COLLATION_OID
+    .typdefaultbin = {},
+    .typdefault = {},
+    .typacl = {},
+  },
 });
 
 constexpr uint64_t kNullMask = MaskFromNulls({
@@ -714,6 +1378,25 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     rows.push_back(row);
   }
 
+  containers::FlatHashSet<std::string_view> taken;
+  for (const auto& schema : snapshot->GetSchemas(database_id)) {
+    auto types = snapshot->GetTypes(database_id, schema->GetName());
+    taken.reserve(taken.size() + types.size() * 2);
+    for (const auto& type : types) {
+      taken.insert(type->GetName());
+    }
+  }
+  std::deque<std::string> array_names;
+  auto make_array_name = [&](std::string_view scalar) -> std::string_view {
+    std::string name = "_" + std::string{scalar};
+    while (taken.contains(name)) {
+      name.insert(0, "_");
+    }
+    array_names.push_back(std::move(name));
+    taken.insert(array_names.back());
+    return array_names.back();
+  };
+
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
     for (const auto& type :
          snapshot->GetTypes(database_id, schema->GetName())) {
@@ -721,44 +1404,58 @@ catalog::MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
       const auto kind = info.type.id();
       const bool is_enum = kind == duckdb::LogicalTypeId::ENUM;
       const bool is_composite = kind == duckdb::LogicalTypeId::STRUCT;
-      rows.push_back({
-        .oid = type->GetId().id(),
-        .typname = type->GetName(),
-        .typnamespace = schema->GetId().id(),
-        .typowner = id::kRootUser.id(),
-        .typlen = is_enum ? int16_t{4} : int16_t{-1},
-        .typbyval = is_enum,
-        .typtype = is_enum        ? PgType::Typetype::Enum
-                   : is_composite ? PgType::Typetype::Composite
-                                  : PgType::Typetype::Base,
-        .typcategory = is_enum        ? PgType::Typcategory::Enum
-                       : is_composite ? PgType::Typcategory::Composite
-                                      : PgType::Typcategory::UserDefined,
-        .typispreferred = false,
-        .typisdefined = true,
-        .typdelim = ',',
-        .typrelid = 0,
-        .typsubscript = 0,
-        .typelem = 0,
-        .typarray = 0,
-        .typinput = 0,
-        .typoutput = 0,
-        .typreceive = 0,
-        .typsend = 0,
-        .typmodin = 0,
-        .typmodout = 0,
-        .typanalyze = 0,
-        .typalign = PgType::Typalign::Int,
-        .typstorage = PgType::Typstorage::Plain,
-        .typnotnull = false,
-        .typbasetype = 0,
-        .typtypmod = -1,
-        .typndims = 0,
-        .typcollation = 0,
-        .typdefaultbin = {},
-        .typdefault = {},
-        .typacl = {},
-      });
+
+      const auto type_oid = type->GetId().id();
+      const auto namespace_oid = schema->GetId().id();
+      const auto array_oid = type->GetArrayOid().id();
+      const auto array_name = make_array_name(type->GetName());
+
+      auto make_row = [&](bool as_array) {
+        return PgType{
+          .oid = as_array ? array_oid : type_oid,
+          .typname = as_array ? array_name : std::string_view{type->GetName()},
+          .typnamespace = namespace_oid,
+          .typowner = id::kRootUser.id(),
+          .typlen = (!as_array && is_enum) ? int16_t{4} : int16_t{-1},
+          .typbyval = !as_array && is_enum,
+          .typtype = as_array       ? PgType::Typetype::Base
+                     : is_enum      ? PgType::Typetype::Enum
+                     : is_composite ? PgType::Typetype::Composite
+                                    : PgType::Typetype::Base,
+          .typcategory = as_array       ? PgType::Typcategory::Array
+                         : is_enum      ? PgType::Typcategory::Enum
+                         : is_composite ? PgType::Typcategory::Composite
+                                        : PgType::Typcategory::UserDefined,
+          .typispreferred = false,
+          .typisdefined = true,
+          .typdelim = ',',
+          .typrelid = (!as_array && is_composite) ? type_oid : 0,
+          .typsubscript = 0,
+          .typelem = as_array ? type_oid : 0,
+          .typarray = as_array ? 0 : array_oid,
+          .typinput = 0,
+          .typoutput = 0,
+          .typreceive = 0,
+          .typsend = 0,
+          .typmodin = 0,
+          .typmodout = 0,
+          .typanalyze = 0,
+          .typalign = PgType::Typalign::Int,
+          .typstorage =
+            as_array ? PgType::Typstorage::Extended : PgType::Typstorage::Plain,
+          .typnotnull = false,
+          .typbasetype = 0,
+          .typtypmod = -1,
+          .typndims = 0,
+          .typcollation = 0,
+          .typdefaultbin = {},
+          .typdefault = {},
+          .typacl = {},
+        };
+      };
+
+      rows.emplace_back(make_row(false));
+      rows.emplace_back(make_row(true));
     }
   }
 

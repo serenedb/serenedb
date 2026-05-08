@@ -111,10 +111,13 @@ inline void PkResize(T& pk, size_t n) {
   }
 }
 
-// Compact in place, optionally taking an aligned scores vector along.
-template<typename T>
+// Compact in place, optionally taking any number of aligned vectors along.
+// Each aligned vector is reordered / resized in lockstep with the resolved-PK
+// slots -- e.g. top-K passes its hits vector so score and (segment_idx, doc)
+// stay aligned with the PK batch through compaction.
+template<typename T, typename... AlignedVectors>
 inline size_t PkCompactResolved(T& pk, size_t valid,
-                                std::vector<float>* aligned_scores = nullptr) {
+                                AlignedVectors&... aligned) {
   size_t w = 0;
   for (size_t r = 0; r < valid; ++r) {
     if (!PkSlotResolved(pk, r)) {
@@ -122,16 +125,12 @@ inline size_t PkCompactResolved(T& pk, size_t valid,
     }
     if (w != r) {
       PkMoveSlot(pk, w, r);
-      if (aligned_scores) {
-        (*aligned_scores)[w] = (*aligned_scores)[r];
-      }
+      (((aligned)[w] = (aligned)[r]), ...);
     }
     ++w;
   }
   PkResize(pk, w);
-  if (aligned_scores) {
-    aligned_scores->resize(w);
-  }
+  ((aligned.resize(w)), ...);
   return w;
 }
 

@@ -820,6 +820,153 @@ TEST_F(DuckDBColumnSerializerTest, MapDictionaryEncoded) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/// GEOMETRY columns
+///
+/// GEOMETRY rides on PhysicalType::VARCHAR but is stored as raw WKB bytes --
+/// no kStringPrefix disambiguation. These tests exercise the writer/reader
+/// round-trip at the column-serializer level; downstream WKB parsing is
+/// covered by libs/geo/wkb_parser_test.cpp and geo_analyzer_test.cpp.
+///
+/// Uses valid 2D Point WKB (21 bytes: byte-order + type + lng + lat) so the
+/// tests remain correct if DuckDB later adds per-row GEOMETRY validation at
+/// the Vector level.
+////////////////////////////////////////////////////////////////////////////////
+
+namespace {
+
+// Build a valid little-endian 2D Point WKB for (lng, lat). 21 bytes:
+//   0x01                -- little-endian
+//   0x01 0x00 0x00 0x00 -- WKB type 1 (Point)
+//   <lng:double LE>
+//   <lat:double LE>
+std::string MakeWkbPoint(double lng, double lat) {
+  std::string out;
+  out.reserve(21);
+  out.push_back(static_cast<char>(1));  // LE
+  uint32_t type = 1;                    // Point
+  if (std::endian::native != std::endian::little) {
+    type = std::byteswap(type);
+  }
+  out.append(reinterpret_cast<const char*>(&type), sizeof(type));
+  auto push_le_double = [&](double d) {
+    uint64_t raw;
+    std::memcpy(&raw, &d, sizeof(raw));
+    if (std::endian::native != std::endian::little) {
+      raw = std::byteswap(raw);
+    }
+    out.append(reinterpret_cast<const char*>(&raw), sizeof(raw));
+  };
+  push_le_double(lng);
+  push_le_double(lat);
+  return out;
+}
+
+duckdb::Value WkbPointValue(double lng, double lat) {
+  auto bytes = MakeWkbPoint(lng, lat);
+  return duckdb::Value::GEOMETRY(
+    reinterpret_cast<const duckdb::const_data_ptr_t>(bytes.data()),
+    bytes.size());
+}
+
+duckdb::Vector MakeFlatGeometry(std::span<const duckdb::Value> values) {
+  duckdb::Vector result(duckdb::LogicalType::GEOMETRY(), values.size());
+  for (duckdb::idx_t i = 0; i < values.size(); ++i) {
+    result.SetValue(i, values[i]);
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST_F(DuckDBColumnSerializerTest, FlatGeometry) {
+  duckdb::Value vals[] = {WkbPointValue(6.5, 50.3), WkbPointValue(0.0, 0.0),
+                          WkbPointValue(-122.4, 37.7),
+                          WkbPointValue(180.0, 90.0),
+                          WkbPointValue(-180.0, -90.0)};
+  auto vec = MakeFlatGeometry(std::span(vals));
+  CheckColumn(vec, duckdb::LogicalType::GEOMETRY(), 5);
+}
+
+TEST_F(DuckDBColumnSerializerTest, FlatGeometryNulls) {
+  duckdb::Vector vec(duckdb::LogicalType::GEOMETRY(), 5);
+  vec.SetValue(0, WkbPointValue(6.5, 50.3));
+  duckdb::FlatVector::ValidityMutable(vec).SetInvalid(1);
+  vec.SetValue(2, WkbPointValue(0.0, 0.0));
+  duckdb::FlatVector::ValidityMutable(vec).SetInvalid(3);
+  vec.SetValue(4, WkbPointValue(-122.4, 37.7));
+  CheckColumn(vec, duckdb::LogicalType::GEOMETRY(), 5);
+}
+
+TEST_F(DuckDBColumnSerializerTest, ConstantGeometry) {
+  duckdb::Vector vec(WkbPointValue(6.5, 50.3));
+  CheckColumn(vec, duckdb::LogicalType::GEOMETRY(), 6);
+}
+
+TEST_F(DuckDBColumnSerializerTest, ListGeometry) {
+  // LIST<GEOMETRY>: 4 rows of Point lists (including one empty).
+  duckdb::LogicalType elem_type = duckdb::LogicalType::GEOMETRY();
+  duckdb::LogicalType list_type = duckdb::LogicalType::LIST(elem_type);
+
+  std::vector<std::vector<duckdb::Value>> rows = {
+    {WkbPointValue(1.0, 2.0), WkbPointValue(3.0, 4.0)},
+    {},
+    {WkbPointValue(5.0, 6.0)},
+    {WkbPointValue(7.0, 8.0), WkbPointValue(9.0, 10.0),
+     WkbPointValue(11.0, 12.0)}};
+  duckdb::idx_t total = 0;
+  for (const auto& r : rows) {
+    total += r.size();
+  }
+
+  duckdb::Vector vec(list_type, rows.size());
+  duckdb::ListVector::Reserve(vec, total);
+  auto& child = duckdb::ListVector::GetEntry(vec);
+  auto* entries = duckdb::ListVector::GetData(vec);
+  duckdb::idx_t offset = 0;
+  for (duckdb::idx_t i = 0; i < rows.size(); ++i) {
+    entries[i] = {offset, rows[i].size()};
+    for (const auto& v : rows[i]) {
+      child.SetValue(offset++, v);
+    }
+  }
+  duckdb::ListVector::SetListSize(vec, total);
+
+  CheckColumn(vec, list_type, rows.size());
+}
+
+TEST_F(DuckDBColumnSerializerTest, StructWithGeometry) {
+  duckdb::child_list_t<duckdb::LogicalType> fields{
+    {"id", duckdb::LogicalType::INTEGER},
+    {"geom", duckdb::LogicalType::GEOMETRY()},
+    {"flag", duckdb::LogicalType::BOOLEAN}};
+  auto struct_type = duckdb::LogicalType::STRUCT(fields);
+
+  duckdb::Value geoms[] = {WkbPointValue(6.5, 50.3), WkbPointValue(0.0, 0.0),
+                           WkbPointValue(-122.4, 37.7)};
+  auto vec = MakeStruct(
+    struct_type,
+    Vecs(MakeFlat<int32_t>({1, 2, 3}), MakeFlatGeometry(std::span(geoms)),
+         MakeFlat<bool>({true, false, true})),
+    3);
+  CheckColumn(vec, struct_type, 3);
+}
+
+TEST_F(DuckDBColumnSerializerTest, MapIntToGeometry) {
+  auto map_type = duckdb::LogicalType::MAP(duckdb::LogicalType::INTEGER,
+                                           duckdb::LogicalType::GEOMETRY());
+
+  auto keys = MakeFlat<int32_t>({1, 2, 3, 4});
+  duckdb::Value geoms[] = {WkbPointValue(1.0, 1.0), WkbPointValue(2.0, 2.0),
+                           WkbPointValue(3.0, 3.0), WkbPointValue(4.0, 4.0)};
+  auto vals = MakeFlatGeometry(std::span(geoms));
+  std::vector<duckdb::list_entry_t> entries{{0, 2}, {2, 1}, {3, 1}, {4, 0}};
+
+  auto vec =
+    MakeMap(map_type, std::move(keys), std::move(vals), std::span(entries));
+  CheckColumn(vec, map_type, 4);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 /// Multi-column test
 ////////////////////////////////////////////////////////////////////////////////
 

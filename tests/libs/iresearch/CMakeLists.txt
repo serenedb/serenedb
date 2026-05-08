@@ -88,6 +88,7 @@ set(iresearch-tests_sources
     ./search/wand_scoring_test.cpp
     ./search/search_bench_test.cpp
     ./utils/async_utils_tests.cpp
+    ./utils/wkb_parser_test.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/encryption_test.cpp

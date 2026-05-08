@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_table_function.h"
 
+#include <absl/strings/str_join.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -40,7 +42,6 @@
 #include "connector/duckdb_search_ann_scan.h"
 #include "connector/duckdb_search_count_scan.hpp"
 #include "connector/duckdb_search_full_scan.hpp"
-#include "connector/duckdb_search_range_scan.h"
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
@@ -84,9 +85,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   duckdb::ClientContext& context, const SereneDBScanBindData& bind) {
   if (bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search) {
     const auto& ss = bind.scan_source->Cast<SearchScan>();
-    if (ss.reader) {
+    if (ss.snapshot) {
       return duckdb::make_uniq<duckdb::NodeStatistics>(
-        static_cast<duckdb::idx_t>(ss.reader->live_docs_count()));
+        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count()));
     }
   }
   auto shard = ResolveInvertedIndexShard(context, bind);
@@ -426,38 +427,36 @@ void SkRangeScan::AppendSummary(
   }
 }
 
+namespace {
+
+void AppendVectorSearchSummary(
+  const VectorSearchScan& scan,
+  duckdb::InsertionOrderPreservingMap<std::string>& out) {
+  out.insert("Dims", std::to_string(scan.query_vector.size()));
+  if (!scan.filter_expression) {
+    return;
+  }
+  auto repr = scan.filter_expression->ToString();
+  if (repr.empty()) {
+    return;
+  }
+  out.insert("Filter", std::move(repr));
+}
+
+}  // namespace
+
 void ANNScan::AppendSummary(
   const SereneDBScanBindData& /*bind*/,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("TopK", std::to_string(top_k));
-  out.insert("Dims", std::to_string(query_vector.size()));
-  if (!filter_expressions.empty()) {
-    std::string summary;
-    for (const auto& expr : filter_expressions) {
-      if (!summary.empty()) {
-        summary += " AND ";
-      }
-      summary += expr->ToString();
-    }
-    out.insert("Filter", summary);
-  }
+  AppendVectorSearchSummary(*this, out);
 }
 
 void RangeSearchScan::AppendSummary(
   const SereneDBScanBindData& /*bind*/,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("Radius", std::to_string(radius));
-  out.insert("Dims", std::to_string(query_vector.size()));
-  if (!filter_expressions.empty()) {
-    std::string summary;
-    for (const auto& expr : filter_expressions) {
-      if (!summary.empty()) {
-        summary += " AND ";
-      }
-      summary += expr->ToString();
-    }
-    out.insert("Filter", summary);
-  }
+  AppendVectorSearchSummary(*this, out);
 }
 
 void CountScan::AppendSummary(
@@ -522,13 +521,11 @@ void SearchScan::AppendSummary(
     out.insert("TopK", std::to_string(*score_top_k));
   }
   if (EmitOffsets()) {
-    std::string cols;
-    for (size_t i = 0; i < offsets.size(); ++i) {
-      if (i) {
-        absl::StrAppend(&cols, ", ");
-      }
-      absl::StrAppend(&cols, ColumnNameFor(bind, offsets[i].column_id));
-    }
+    auto cols =
+      absl::StrJoin(offsets | std::views::transform([&](const auto& off) {
+                      return ColumnNameFor(bind, off.column_id);
+                    }),
+                    ", ");
     out.insert("Offsets", std::move(cols));
   }
 }
@@ -676,6 +673,7 @@ duckdb::TableFunction CreateIResearchANNScanFunction() {
     SearchAnnScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.init_local = SearchAnnScanInitLocal;
   return func;
 }
 
@@ -685,6 +683,7 @@ duckdb::TableFunction CreateIResearchANNRangeScanFunction() {
     SearchRangeScanInitGlobal,
   };
   SetCommonCallbacks(func);
+  func.init_local = SearchRangeScanInitLocal;
   return func;
 }
 

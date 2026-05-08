@@ -52,59 +52,66 @@ const EmptySubReader kEmpty;
 }  // namespace
 
 void IndexReader::Search(std::string_view field, HNSWSearchInfo info,
-                         float* dis, int64_t* ids) const {
-  faiss::heap_heapify<faiss::HNSW::C>(info.top_k, dis, ids);
+                         HNSWSearchBuffer& buffer) const {
+  for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
+    const auto& segment = (*this)[segment_id];
+    segment.Search(field, std::move(info), buffer, segment_id);
+  }
+}
+
+void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
+                              HNSWRangeSearchBuffer& buffer) const {
+  for (uint32_t segment_id = 0; segment_id < this->size(); ++segment_id) {
+    const auto& segment = (*this)[segment_id];
+    segment.RangeSearch(field, info, buffer, segment_id);
+  }
+}
+
+void SubReader::Search(std::string_view field, HNSWSearchInfo info,
+                       HNSWSearchBuffer& buffer, uint32_t segment_id) const {
   HNSWResultHandler handler{
     1,
-    dis,
-    ids,
+    buffer.dis.data(),
+    buffer.ids.data(),
     info.top_k,
   };
 
   HNSWSearchContext context{
     info,
-    0,
-    faiss::VisitedTable{0},
+    segment_id,
+    buffer.vt,
     handler,
   };
 
-  for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
-    const auto& segment = (*this)[segment_id];
-    const auto* column = segment.column(field);
-    if (!column) {
-      continue;
-    }
-    context.segment_id = segment_id;
-    column->Search(context);
+  const auto* column = (*this).column(field);
+  if (!column) {
+    return;
   }
-  faiss::heap_reorder<faiss::HNSW::C>(info.top_k, dis, ids);
+  column->Search(context);
 }
 
-void IndexReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
-                              std::vector<float>& dis,
-                              std::vector<int64_t>& ids) const {
-  for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
-    const auto& segment = (*this)[segment_id];
-    const auto* column = segment.column(field);
-    if (!column) {
-      continue;
-    }
-    faiss::RangeSearchResult seg_result{1};
-    HNSWRangeResultHandler handler{&seg_result, info.radius};
-    HNSWRangeSearchContext context{
-      info,
-      static_cast<uint32_t>(segment_id),
-      faiss::VisitedTable{0},
-      handler,
-    };
-    column->RangeSearch(context);
-    size_t sz = seg_result.lims[1] - seg_result.lims[0];
-    dis.reserve(dis.size() + sz);
-    ids.reserve(ids.size() + sz);
-    for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
-      dis.emplace_back(seg_result.distances[i]);
-      ids.emplace_back(seg_result.labels[i]);
-    }
+void SubReader::RangeSearch(std::string_view field, HNSWRangeSearchInfo info,
+                            HNSWRangeSearchBuffer& buffer,
+                            uint32_t segment_id) const {
+  const auto* column = (*this).column(field);
+  if (!column) {
+    return;
+  }
+  faiss::RangeSearchResult seg_result{1};
+  HNSWRangeResultHandler handler{&seg_result, info.radius};
+  HNSWRangeSearchContext context{
+    info,
+    segment_id,
+    buffer.vt,
+    handler,
+  };
+  column->RangeSearch(context);
+  size_t sz = seg_result.lims[1] - seg_result.lims[0];
+  buffer.dis.reserve(buffer.dis.size() + sz);
+  buffer.ids.reserve(buffer.ids.size() + sz);
+  for (size_t i = seg_result.lims[0]; i < seg_result.lims[1]; ++i) {
+    buffer.dis.emplace_back(seg_result.distances[i]);
+    buffer.ids.emplace_back(seg_result.labels[i]);
   }
 }
 

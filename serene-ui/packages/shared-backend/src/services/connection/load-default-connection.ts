@@ -16,6 +16,12 @@ type SocketConnection = Omit<
 >;
 type DefaultConnection = HostConnection | SocketConnection;
 
+export const getDefaultConnectionName = (): string | undefined => {
+    const connectionName = process.env[DEFAULT_CONNECTION_NAME_ENV]?.trim();
+
+    return connectionName || undefined;
+};
+
 const decodeUriComponentSafe = (value: string): string => {
     try {
         return decodeURIComponent(value);
@@ -169,7 +175,7 @@ const parseDefaultConnection = (
 };
 
 export const loadDefaultConnection = (): void => {
-    const connectionName = process.env[DEFAULT_CONNECTION_NAME_ENV]?.trim();
+    const connectionName = getDefaultConnectionName();
     const connectionString = process.env[DEFAULT_CONNECTION_STRING_ENV]?.trim();
 
     if (!connectionName && !connectionString) {

@@ -41,5 +41,17 @@ if [[ "$log_lines" -eq 0 ]]; then
 	test_rc=1
 fi
 
+# Optional drivers RTA. Gated on RTA_DRIVERS for the same reason as
+# the .deb / tarball paths.
+if [[ $test_rc -eq 0 && "${RTA_DRIVERS:-false}" == "true" ]]; then
+	echo "=== Drivers RTA (python+java) ==="
+	DRIVERS_COMPOSE="${CI_DIR}/docker-compose.docker-drivers-rta.yml"
+	docker compose -p "${PREFIX}-drv" -f "$DRIVERS_COMPOSE" \
+		up --attach tests --exit-code-from tests --remove-orphans \
+		2>&1 | tee "${WORKSPACE}/logs/docker-rta-drivers.log" || test_rc=$?
+	docker compose -p "${PREFIX}-drv" -f "$DRIVERS_COMPOSE" \
+		down --volumes --remove-orphans >/dev/null 2>&1 || true
+fi
+
 echo "DOCKER_RTA=$([ $test_rc -eq 0 ] && echo PASSED || echo FAILED)"
 exit $test_rc

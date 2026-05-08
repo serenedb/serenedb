@@ -437,6 +437,20 @@ duckdb::TableFunction MakeFastPathLookupFunction(const ViewFastPath& fp) {
   return entry->make_lookup();
 }
 
+void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept {
+  if (!bind_data) {
+    return;
+  }
+  auto* multi_bd = dynamic_cast<duckdb::MultiFileBindData*>(bind_data);
+  if (!multi_bd || !multi_bd->file_list) {
+    return;
+  }
+  if (auto* iceberg_list = dynamic_cast<duckdb::IcebergMultiFileList*>(
+        multi_bd->file_list.get())) {
+    iceberg_list->need_sort = true;
+  }
+}
+
 duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   duckdb::ClientContext& context, const ViewFastPath& fp) {
   SDB_ASSERT(!catalog::IsRocksPK(fp.pk_spec));
@@ -460,6 +474,9 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
     auto fn = entry.GetScanFunction(context, bind_data, lookup);
     if (fn.get_virtual_columns && bind_data) {
       fn.get_virtual_columns(context, bind_data.get());
+    }
+    if (fp.function_name == "iceberg_scan" && bind_data) {
+      EnableIcebergSort(bind_data.get());
     }
     return bind_data;
   }
@@ -502,6 +519,10 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
   if (reader.get_virtual_columns && bind_data) {
     reader.get_virtual_columns(context, bind_data.get());
   }
+  if (fp.function_name == "iceberg_scan" && bind_data) {
+    EnableIcebergSort(bind_data.get());
+  }
+
   return bind_data;
 }
 

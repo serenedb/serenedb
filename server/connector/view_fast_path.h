@@ -77,6 +77,8 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFastPathSource(
 // 0 for non-iceberg.
 int64_t ExtractIcebergSnapshotId(duckdb::FunctionData& bind_data) noexcept;
 
+void EnableIcebergSort(duckdb::FunctionData* bind_data) noexcept;
+
 std::string FormatLookupLabel(const ViewFastPath& fp);
 
 }  // namespace sdb::connector

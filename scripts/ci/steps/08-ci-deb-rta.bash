@@ -52,6 +52,23 @@ if [[ $test_rc -ne 0 ]]; then
 	exit $test_rc
 fi
 
+# Optional drivers RTA (python+java only). Gated on RTA_DRIVERS to keep
+# normal RTA wall time bounded; turn on once D1 driver harness is stable.
+if [[ "${RTA_DRIVERS:-false}" == "true" ]]; then
+	echo "=== Drivers RTA (python+java) ==="
+	DRIVERS_COMPOSE="${CI_DIR}/docker-compose.deb-drivers-rta.yml"
+	drivers_rc=0
+	docker compose -p "${PREFIX}-drv" -f "$DRIVERS_COMPOSE" \
+		up --attach tests --exit-code-from tests --remove-orphans \
+		2>&1 | tee "${WORKSPACE}/logs/deb-rta-drivers.log" || drivers_rc=$?
+	docker compose -p "${PREFIX}-drv" -f "$DRIVERS_COMPOSE" \
+		down --volumes --remove-orphans >/dev/null 2>&1 || true
+	if [[ $drivers_rc -ne 0 ]]; then
+		echo "DEB_RTA=FAILED (drivers)"
+		exit $drivers_rc
+	fi
+fi
+
 # Service lifecycle tests
 check() {
 	local desc="$1"

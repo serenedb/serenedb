@@ -14528,7 +14528,7 @@ struct SearchTestFeatureBase {
   size_t values_per_segment;
   size_t segments;
   size_t queries;
-  irs::HNSWMetric metric = irs::HNSWMetric::L2;
+  irs::HNSWMetric metric = irs::HNSWMetric::L2Sqr;
 
   // Pre-generated data (vectors and queries are created at construction time)
   std::vector<std::pair<uint64_t, std::vector<float>>> vectors;
@@ -14583,9 +14583,9 @@ struct RangeSearchFeature : public SearchTestFeatureBase {
 static float ComputeExpectedDistance(const float* q, const float* v, size_t dim,
                                      irs::HNSWMetric metric) {
   switch (metric) {
-    case irs::HNSWMetric::L2:
+    case irs::HNSWMetric::L2Sqr:
       return faiss::fvec_L2sqr(q, v, dim);
-    case irs::HNSWMetric::InnerProduct:
+    case irs::HNSWMetric::NegativeIP:
       return -faiss::fvec_inner_product(q, v, dim);
     case irs::HNSWMetric::L1:
       return faiss::fvec_L1(q, v, dim);
@@ -14620,10 +14620,7 @@ class VectorSearchTestBase
       case irs::HNSWMetric::L2Sqr:
         name += "_L2Sqr";
         break;
-      case irs::HNSWMetric::L2:
-        name += "_L2";
-        break;
-      case irs::HNSWMetric::InnerProduct:
+      case irs::HNSWMetric::NegativeIP:
         name += "_IP";
         break;
       case irs::HNSWMetric::Cosine:
@@ -14759,14 +14756,15 @@ TEST_P(ANNSearchTest, hnsw_search_basic) {
       expected.resize(f.top_k);
 
       std::vector<float> dis(f.top_k, 0.0f);
-      std::vector<uint64_t> docs(f.top_k);
+      std::vector<int64_t> docs(f.top_k);
       irs::HNSWSearchInfo info{
         reinterpret_cast<const irs::byte_type*>(query.data()),
         f.top_k,
         params,
       };
-      reader.Search("vec", info, reinterpret_cast<float*>(dis.data()),
-                    reinterpret_cast<int64_t*>(docs.data()));
+      irs::HNSWSearchBuffer buffer{dis.data(), docs.data(), f.top_k};
+      reader.Search("vec", info, buffer);
+      buffer.ReorderResult();
       size_t correct = 0;
       for (size_t k = 0; k < f.top_k; ++k) {
         correct +=
@@ -14898,11 +14896,10 @@ TEST_P(RangeSearchTest, hnsw_range_search_basic) {
         radius,
         params,
       };
-      std::vector<float> dis;
-      std::vector<int64_t> ids;
-      reader.RangeSearch(kColumnName, info, dis, ids);
+      irs::HNSWRangeSearchBuffer buffer;
+      reader.RangeSearch(kColumnName, info, buffer);
 
-      for (auto dist : dis) {
+      for (auto dist : buffer.dis) {
         EXPECT_LT(dist, radius);
       }
 
@@ -14910,7 +14907,7 @@ TEST_P(RangeSearchTest, hnsw_range_search_basic) {
         continue;
       }
       size_t correct = 0;
-      for (auto id : ids) {
+      for (auto id : buffer.ids) {
         correct +=
           std::find(expected.begin(), expected.end(), id) != expected.end();
       }
@@ -14967,8 +14964,8 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(
     kTestDirs, kTestFormats,
     ::testing::ValuesIn(std::vector<ANNSearchFeature>{
-      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L2, 10},
-      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::InnerProduct, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L2Sqr, 10},
+      ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::NegativeIP, 10},
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::Cosine, 10},
       ANNSearchFeature{128, 256, 4, 256, irs::HNSWMetric::L1, 10},
     })),
@@ -14979,8 +14976,8 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Combine(
     kTestDirs, kTestFormats,
     ::testing::ValuesIn(std::vector<RangeSearchFeature>{
-      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L2},
-      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::InnerProduct},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L2Sqr},
+      RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::NegativeIP},
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::Cosine},
       RangeSearchFeature{128, 256, 4, 64, irs::HNSWMetric::L1},
     })),

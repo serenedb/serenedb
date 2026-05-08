@@ -22,6 +22,7 @@
 
 #include <iresearch/formats/posting/skip_list.hpp>
 #include <iresearch/utils/type_limits.hpp>
+
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -72,10 +73,6 @@ struct WandPostingAdapter : PostingAdapter<PostingImpl> {
   template<typename... Args>
   IRS_FORCE_INLINE auto ScoreCandidates(Args&&... args) {
     return this->self().ScoreCandidates(std::forward<Args>(args)...);
-  }
-
-  void SetSkipWandBelow(doc_id_t max) noexcept {
-    this->self().SetSkipWandBelow(max);
   }
 };
 
@@ -280,38 +277,39 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, const term_provider_f& provider,
   size_t* set, bool has_wand) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-//   uint32_t enc_buf[doc_limits::kBlockSize];
-//   doc_id_t docs[doc_limits::kBlockSize
-// #ifdef __AVX2__
-//                 + 8  // placeholder for bitset materialize
-// #endif
-//   ];
-//   const bool has_freq =
-//     IndexFeatures::None != (field_features & IndexFeatures::Freq);
+  //   uint32_t enc_buf[doc_limits::kBlockSize];
+  //   doc_id_t docs[doc_limits::kBlockSize
+  // #ifdef __AVX2__
+  //                 + 8  // placeholder for bitset materialize
+  // #endif
+  //   ];
+  //   const bool has_freq =
+  //     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 
-//   SDB_ASSERT(_doc_in);
-//   auto doc_in = _doc_in->Reopen();
+  //   SDB_ASSERT(_doc_in);
+  //   auto doc_in = _doc_in->Reopen();
 
-//   if (!doc_in) {
-//     // implementation returned wrong pointer
-//     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-//               "Failed to reopen document input");
+  //   if (!doc_in) {
+  //     // implementation returned wrong pointer
+  //     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+  //               "Failed to reopen document input");
 
-//     throw IoError("failed to reopen document input");
-//   }
+  //     throw IoError("failed to reopen document input");
+  //   }
 
   size_t count = 0;
   while (const TermMeta* meta = provider()) {
     auto& term_state = static_cast<const TermMetaImpl&>(*meta);
 
     CookieImpl cookie(term_state);
-    PostingCookie post_cookie {
-      .cookie = &cookie
-    };
+    PostingCookie post_cookie{.cookie = &cookie};
 
     IndexFeatures required = field_features & IndexFeatures::Freq;
 
-    auto it = Iterator(field_features, required, std::span<const PostingCookie>{&post_cookie, 1}, IteratorFieldOptions{has_wand}, 1, ScoreMergeType::Noop);
+    auto it = Iterator(field_features, required,
+                       std::span<const PostingCookie>{&post_cookie, 1},
+                       IteratorFieldOptions{has_wand}, 1, ScoreMergeType::Noop);
+    it->advance();
     for (; it->value() != doc_limits::eof(); it->advance()) {
       auto doc = it->value();
       SetBit(set[doc / kBits], doc % kBits);
@@ -328,11 +326,13 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
 
     //   if (has_freq) {
     //     using FieldTraits = IteratorTraits<true, false, false>;
-    //     BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
+    //     BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs,
+    //     enc_buf,
     //                               set);
     //   } else {
     //     using FieldTraits = IteratorTraits<false, false, false>;
-    //     BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
+    //     BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs,
+    //     enc_buf,
     //                               set);
     //   }
 

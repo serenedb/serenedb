@@ -232,21 +232,21 @@ inline constexpr uint32_t ByteSize1234(uint32_t value) {
 }
 
 class Features {
-   public:
-    void Reset(IndexFeatures features) noexcept {
-      _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
-      _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
-      _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-    }
+ public:
+  void Reset(IndexFeatures features) noexcept {
+    _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
+    _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
+    _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
+  }
 
-    bool HasFrequency() const noexcept { return _has_freq; }
-    bool HasPosition() const noexcept { return _has_pos; }
-    bool HasOffset() const noexcept { return _has_offs; }
+  bool HasFrequency() const noexcept { return _has_freq; }
+  bool HasPosition() const noexcept { return _has_pos; }
+  bool HasOffset() const noexcept { return _has_offs; }
 
-   private:
-    bool _has_freq{};
-    bool _has_pos{};
-    bool _has_offs{};
-  };
+ private:
+  bool _has_freq{};
+  bool _has_pos{};
+  bool _has_offs{};
+};
 
 }  // namespace irs

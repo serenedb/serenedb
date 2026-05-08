@@ -23,6 +23,7 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
+
 #include "basics/assert.h"
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -134,7 +135,9 @@ class PostingIteratorBase : public DocIterator {
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
     _collected_freqs = nullptr;
 
-  std::conditional_t<IteratorTraits::Frequency(), uint32_t[doc_limits::kBlockSize], uint32_t*> _freqs;
+  std::conditional_t<IteratorTraits::Frequency(),
+                     uint32_t[doc_limits::kBlockSize], uint32_t*>
+    _freqs;
   // [[no_unique_address]] utils::Need<IteratorTraits::Frequency(),
   //                                   uint32_t[doc_limits::kBlockSize]> _freqs;
   doc_id_t _docs[doc_limits::kBlockSize];
@@ -146,6 +149,7 @@ class PostingIteratorBase : public DocIterator {
   uint32_t _left_in_list = 0;
   IndexInput::ptr _doc_in;
   Attributes _attrs;
+  uint32_t _docs_count{};
 };
 
 template<typename IteratorTraits>
@@ -177,7 +181,12 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     return _doc;
   }
 
-  if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
+  if (_docs_count == 1) [[unlikely]] {
+    if (_max_in_leaf < target) {
+      _left_in_leaf = 0;
+      return _doc = doc_limits::eof();
+    }
+  } else if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
     _left_in_leaf = 0;
     return _doc = doc_limits::eof();
   }
@@ -201,9 +210,10 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
       return _doc = doc;
     }
   }
-  SDB_ASSERT(false); // It seems that we should find 
+  SDB_ASSERT(_docs_count <
+             doc_limits::kBlockSize);  // It seems that we should find
 
-  SDB_ASSERT(_left_in_list == 0); // It seems that it should be tail
+  SDB_ASSERT(_left_in_list == 0);  // It seems that it should be tail
 
   _left_in_leaf = 0;
   return _doc = doc_limits::eof();
@@ -224,8 +234,12 @@ doc_id_t PostingIteratorBase<IteratorTraits>::LazySeek(doc_id_t target) {
       return _doc = doc_limits::eof();
     };
 
-    if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
-      return seal();
+    if (_docs_count == 1) [[unlikely]] {
+      if (_max_in_leaf < target) {
+        seal();
+      }
+    } else if (_max_in_leaf < target && !SeekToLeaf(target)) [[unlikely]] {
+      seal();
     }
 
     auto next = [&](uint32_t left_in_leaf, doc_id_t doc) IRS_FORCE_INLINE {
@@ -406,13 +420,11 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   IRS_FORCE_INLINE void ReadTail(doc_id_t prev_doc);
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
   IRS_FORCE_INLINE void ReadLeaf(doc_id_t prev_doc) final;
-  IRS_FORCE_INLINE bool SeekAfterInit(SkipState& last, doc_id_t target);
-  IRS_NO_INLINE bool InitAndSeek(SkipState& last, doc_id_t target);
   bool SeekToLeaf(doc_id_t target) final;
 
   uint64_t _skip_offs{};
-  NewSkipReader<FieldTraits, IteratorTraits, HasWand, InputType> _new_skip_reader;
-  uint32_t _docs_count{};
+  NewSkipReader<FieldTraits, IteratorTraits, HasWand, InputType>
+    _new_skip_reader;
 };
 
 template<typename IteratorTraits, typename FieldTraits, bool HasWand,
@@ -487,16 +499,15 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
     std::get<Position>(this->_attrs).template Prepare<InputType>(state);
   }
 
-  if (term_state.docs_count > doc_limits::kBlockSize) {
+  if (term_state.docs_count >= doc_limits::kBlockSize) {
     // Allow using skip-list for long enough postings
-    // _skip.Reader().Enable(term_state);
     _new_skip_reader.Prepare(term_state, GetDocIn());
     _skip_offs = term_state.doc_start + term_state.e_skip_start;
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < doc_limits::kBlockSize && !wand_enabled) {
-    _new_skip_reader.Reader().SkipWandData(GetDocIn());
+    _new_skip_reader.Reader().SkipWandRoot(GetDocIn());
   }
-  _docs_count = term_state.docs_count;
+  this->_docs_count = term_state.docs_count;
 }
 
 template<typename IteratorTraits, typename FieldTraits, bool HasWand,
@@ -555,13 +566,16 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand, InputType>::FillBlock(
             uint32_t words;
             if (this->_left_in_list >= doc_limits::kBlockSize) {
               // Full Block
-              const auto [d, w] = _new_skip_reader.ReadInlineBlockForFillBlock(GetDocIn(), this->_enc_buf, this->_docs, this->_freqs, base);
+              const auto [d, w] = _new_skip_reader.ReadInlineBlockForFillBlock(
+                GetDocIn(), this->_enc_buf, this->_docs, this->_freqs, base);
               bitset = reinterpret_cast<const uint64_t*>(d);
               data = d;
               words = w;
               tail = doc_limits::kBlockSize;
             } else {
-              const auto [d, w] = IteratorTraits::ReadTailForFill(this->_left_in_list, GetDocIn(), this->_enc_buf, this->_docs, base);
+              const auto [d, w] = IteratorTraits::ReadTailForFill(
+                this->_left_in_list, GetDocIn(), this->_enc_buf, this->_docs,
+                base);
               bitset = reinterpret_cast<const uint64_t*>(d);
               data = d;
               words = w;
@@ -694,8 +708,8 @@ template<typename IteratorTraits, typename FieldTraits, bool HasWand,
          typename InputType>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
                          InputType>::ReadBlock(doc_id_t prev_doc) {
-  
-  _new_skip_reader.ReadInlineBlock(GetDocIn(), this->_enc_buf, this->_docs, this->_freqs, prev_doc);
+  _new_skip_reader.ReadInlineBlock(GetDocIn(), this->_enc_buf, this->_docs,
+                                   this->_freqs, prev_doc);
   this->_max_in_leaf = *(std::end(this->_docs) - 1);
   this->_left_in_leaf = doc_limits::kBlockSize;
   this->_left_in_list -= doc_limits::kBlockSize;
@@ -720,14 +734,36 @@ bool PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand,
   if (target <= this->_max_in_leaf) {
     // don't need seek
     return true;
+  } else if (this->_left_in_list == 0) {
+    return false;
   }
 
-  bool found = _new_skip_reader.SeekAndReadNewBlock(target, GetDocIn(), this->_enc_buf, this->_docs, this->_freqs);
-  this->_left_in_list = _new_skip_reader.LeftDocsCount();
+  bool found = false;
+  auto prev_doc = this->_doc;
+  if (this->_docs_count >= doc_limits::kBlockSize) {
+    std::pair<doc_id_t, bool> tmp;
+    if constexpr (IteratorTraits::Position()) {
+      tmp = _new_skip_reader.SeekAndReadNewBlock(
+        target, GetDocIn(), this->_enc_buf, this->_docs, this->_freqs,
+        &std::get<Position>(this->_attrs));
+    } else {
+      tmp = _new_skip_reader.SeekAndReadNewBlock(
+        target, GetDocIn(), this->_enc_buf, this->_docs, this->_freqs, nullptr);
+    }
+
+    prev_doc = tmp.first;
+    found = tmp.second;
+
+    this->_left_in_list = _new_skip_reader.LeftDocsCount();
+    // found = prev_doc >= target;
+  }
 
   if (!found) {
-    ReadTail(_new_skip_reader.GetMaxDocInInlineBlock());
-    return this->_max_in_leaf >= target;
+    if (this->_left_in_list > 0) {
+      ReadTail(prev_doc);
+      return this->_max_in_leaf >= target;
+    }
+    return false;
   }
 
   this->_max_in_leaf = *(std::end(this->_docs) - 1);

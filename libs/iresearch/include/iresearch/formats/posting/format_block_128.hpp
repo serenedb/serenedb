@@ -28,10 +28,10 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "iresearch/formats/posting/common.hpp"
 
 namespace irs {
 
@@ -55,17 +55,25 @@ struct FormatTraits128 {
     WriteTailDelta(doc_limits::kBlockSize, out, in, prev, buf);
   }
 
-  IRS_FORCE_INLINE static std::pair<byte_type, uint32_t> CalculateBestEncodingAndSizeBlockDelta(uint32_t* in, uint32_t prev, uint32_t* buf) {
-    return CalculateBestEncodingAndSizeTailDelta(doc_limits::kBlockSize, in, prev, buf);
+  IRS_FORCE_INLINE static std::pair<byte_type, uint32_t>
+  CalculateBestEncodingAndSizeBlockDelta(uint32_t* in, uint32_t prev,
+                                         uint32_t* buf) {
+    return CalculateBestEncodingAndSizeTailDelta(doc_limits::kBlockSize, in,
+                                                 prev, buf);
   }
 
-  IRS_FORCE_INLINE static void WriteBlockDelta(byte_type best_encoding, uint32_t best_size, BufferedOutput& out,
-                                              uint32_t* in, uint32_t prev,
-                                              uint32_t* buf) {
-    WriteTailDelta(best_encoding, best_size, doc_limits::kBlockSize, out, in, prev, buf);
+  IRS_FORCE_INLINE static void WriteBlockDelta(byte_type best_encoding,
+                                               uint32_t best_size,
+                                               BufferedOutput& out,
+                                               uint32_t* in, uint32_t prev,
+                                               uint32_t* buf) {
+    WriteTailDelta(best_encoding, best_size, doc_limits::kBlockSize, out, in,
+                   prev, buf);
   }
 
-  IRS_FORCE_INLINE static std::pair<byte_type, uint32_t> CalculateBestEncodingAndSizeTailDelta(uint32_t len, uint32_t* in, uint32_t prev, uint32_t* buf) {
+  IRS_FORCE_INLINE static std::pair<byte_type, uint32_t>
+  CalculateBestEncodingAndSizeTailDelta(uint32_t len, uint32_t* in,
+                                        uint32_t prev, uint32_t* buf) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
     SDB_ASSERT(std::is_sorted(in, in + len));
@@ -165,9 +173,10 @@ struct FormatTraits128 {
     return {best_encoding, best_size};
   }
 
-  IRS_FORCE_INLINE static void WriteTailDelta(byte_type best_encoding, uint32_t best_size, uint32_t len, BufferedOutput& out,
-                                              uint32_t* in, uint32_t prev,
-                                              uint32_t* buf) {
+  IRS_FORCE_INLINE static void WriteTailDelta(byte_type best_encoding,
+                                              uint32_t best_size, uint32_t len,
+                                              BufferedOutput& out, uint32_t* in,
+                                              uint32_t prev, uint32_t* buf) {
     uint32_t delta_prev = prev;
     uint32_t delta_max = in[0] - delta_prev;
     SDB_ASSERT(delta_max != 0);
@@ -263,7 +272,8 @@ struct FormatTraits128 {
   IRS_FORCE_INLINE static void WriteTailDelta(uint32_t len, BufferedOutput& out,
                                               uint32_t* in, uint32_t prev,
                                               uint32_t* buf) {
-    auto [best_encoding, best_size] = CalculateBestEncodingAndSizeTailDelta(len, in, prev, buf);
+    auto [best_encoding, best_size] =
+      CalculateBestEncodingAndSizeTailDelta(len, in, prev, buf);
     WriteTailDelta(best_encoding, best_size, len, out, in, prev, buf);
   }
 
@@ -278,16 +288,19 @@ struct FormatTraits128 {
     uint32_t max_el;
   };
 
-  IRS_FORCE_INLINE static BestBlockEncoding CalculateBestEncodingBlock(uint32_t* in, uint32_t* buf) {
+  IRS_FORCE_INLINE static BestBlockEncoding CalculateBestEncodingBlock(
+    uint32_t* in, uint32_t* buf) {
     return CalculateBestEncodingTail(doc_limits::kBlockSize, in, buf);
   }
 
-  IRS_FORCE_INLINE static void WriteBlock(BestBlockEncoding best_encoding, BufferedOutput& out,
-                                         uint32_t* in, uint32_t* buf) {
-    WriteTail(best_encoding, doc_limits::kBlockSize, out, in, buf);                                    
+  IRS_FORCE_INLINE static void WriteBlock(BestBlockEncoding best_encoding,
+                                          BufferedOutput& out, uint32_t* in,
+                                          uint32_t* buf) {
+    WriteTail(best_encoding, doc_limits::kBlockSize, out, in, buf);
   }
 
-  IRS_FORCE_INLINE static BestBlockEncoding CalculateBestEncodingTail(uint32_t len, uint32_t* in, uint32_t* buf) {
+  IRS_FORCE_INLINE static BestBlockEncoding CalculateBestEncodingTail(
+    uint32_t len, uint32_t* in, uint32_t* buf) {
     SDB_ASSERT(1 <= len);
     SDB_ASSERT(len <= doc_limits::kBlockSize);
     byte_type best_encoding = e_values;
@@ -350,7 +363,8 @@ struct FormatTraits128 {
     return {best_encoding, best_size, max};
   }
 
-  IRS_FORCE_INLINE static void WriteTail(BestBlockEncoding best_enc, uint32_t len, BufferedOutput& out,
+  IRS_FORCE_INLINE static void WriteTail(BestBlockEncoding best_enc,
+                                         uint32_t len, BufferedOutput& out,
                                          uint32_t* in, uint32_t* buf) {
     auto [best_encoding, best_size, max_el] = best_enc;
     out.WriteByte(best_encoding);

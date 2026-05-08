@@ -21,6 +21,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "skip_list.hpp"
+
 #include <cstdint>
 #include <iresearch/types.hpp>
 
@@ -29,10 +30,10 @@
 #include "basics/shared.hpp"
 #include "basics/std.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "iresearch/formats/posting/common.hpp"
 
 namespace irs {
 namespace {
@@ -58,7 +59,7 @@ constexpr uint32_t ByteSize124ForSkipEntry(uint32_t value) {
   return 3;  // actually should be 4, but return 3 to encode correctly
 }
 
-template <typename Output>
+template<typename Output>
 void Serialize124ForSkipEntry(uint32_t code, uint32_t value, Output& out) {
   switch (code) {
     case 1:
@@ -92,7 +93,7 @@ constexpr uint32_t ByteSize1248ForSkipEntry(uint64_t value) {
   return 3;
 }
 
-template <typename Output>
+template<typename Output>
 void Serialize1248ForSkipEntry(uint32_t code, uint64_t value, Output& out) {
   switch (code) {
     case 0:
@@ -112,7 +113,7 @@ void Serialize1248ForSkipEntry(uint32_t code, uint64_t value, Output& out) {
   }
 }
 
-template <typename Output>
+template<typename Output>
 void SerializeFor1234(uint32_t code, uint32_t value, Output& out) {
   out.WriteBytes(reinterpret_cast<byte_type*>(&value), code);
 }
@@ -121,9 +122,11 @@ void SerializeFor1234(uint32_t code, uint32_t value, Output& out) {
 
 void NewSkipWriter::Prepare(size_t) {
   _level1.Reset();
+  _count_entries_level1 = 0;
 }
 
-void NewSkipWriter::WriteInlineSkipEntry(const InlineSkipEntry& skip_entry, IndexOutput& out) {
+void NewSkipWriter::WriteInlineSkipEntry(const InlineSkipEntry& skip_entry,
+                                         IndexOutput& out) {
   auto max_doc_delta_size = ByteSize1234(skip_entry.max_doc_delta);
   uint32_t wand_freq_code = 0;
   uint32_t wand_norm_code = 0;
@@ -134,8 +137,10 @@ void NewSkipWriter::WriteInlineSkipEntry(const InlineSkipEntry& skip_entry, Inde
     }
   }
 
-  out.WriteByte((max_doc_delta_size - 1) | (wand_freq_code << 2) | (wand_norm_code << 4));  // encoding byte
-  out.WriteBytes(reinterpret_cast<const byte_type*>(&skip_entry.max_doc_delta), max_doc_delta_size);
+  out.WriteByte((max_doc_delta_size - 1) | (wand_freq_code << 2) |
+                (wand_norm_code << 4));  // encoding byte
+  out.WriteBytes(reinterpret_cast<const byte_type*>(&skip_entry.max_doc_delta),
+                 max_doc_delta_size);
   if (wand_freq_code > 0) {
     Serialize124ForSkipEntry(wand_freq_code, skip_entry.wand_data->freq, out);
   }
@@ -146,18 +151,21 @@ void NewSkipWriter::WriteInlineSkipEntry(const InlineSkipEntry& skip_entry, Inde
   out.WriteU16(skip_entry.rest_block_size);
 }
 
-void NewSkipWriter::WriteInlinePosPayMetadata(const PosPayMetadata& meta, const Features& features, IndexOutput& out) {
+void NewSkipWriter::WriteInlinePosPayMetadata(const PosPayMetadata& meta,
+                                              const Features& features,
+                                              IndexOutput& out) {
   if (features.HasPosition()) {
-
     uint32_t pos_pay_enc = 0;
     uint32_t pos_ptr_size = ByteSize1234(meta.pos_ptr);
     pos_pay_enc |= (pos_ptr_size - 1);
-    out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pos_ptr), pos_ptr_size);
+    out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pos_ptr),
+                   pos_ptr_size);
 
     uint32_t pay_ptr_size = ByteSize1234(meta.pay_ptr);
     if (features.HasOffset()) {
       pos_pay_enc |= ((pay_ptr_size - 1) << 2);
-      out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pay_ptr), pay_ptr_size);
+      out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pay_ptr),
+                     pay_ptr_size);
     }
 
     out.WriteByte(meta.pos_block_idx);
@@ -165,7 +173,9 @@ void NewSkipWriter::WriteInlinePosPayMetadata(const PosPayMetadata& meta, const 
   }
 }
 
-void NewSkipWriter::WriteSkipEntry(const SkipEntry& skip_entry, const Features& features, MemoryIndexOutput& out) {
+void NewSkipWriter::WriteSkipEntry(const SkipEntry& skip_entry,
+                                   const Features& features,
+                                   MemoryIndexOutput& out) {
   auto max_doc_delta_code = ByteSize1234(skip_entry.max_doc_delta);
   auto doc_ptr_code = ByteSize1248ForSkipEntry(skip_entry.doc_ptr);
   uint32_t pos_ptr_code = 0;
@@ -177,10 +187,10 @@ void NewSkipWriter::WriteSkipEntry(const SkipEntry& skip_entry, const Features& 
     }
   }
 
-  out.WriteByte((max_doc_delta_code - 1) | (doc_ptr_code << 2) | (pos_ptr_code << 4) | (pay_ptr_code << 6));
+  out.WriteByte((max_doc_delta_code - 1) | (doc_ptr_code << 2) |
+                (pos_ptr_code << 4) | (pay_ptr_code << 6));
 
   SerializeFor1234(max_doc_delta_code, skip_entry.max_doc_delta, out);
-  Serialize124ForSkipEntry(max_doc_delta_code, skip_entry.max_doc_delta, out);
   Serialize1248ForSkipEntry(doc_ptr_code, skip_entry.doc_ptr, out);
   if (features.HasPosition()) {
     Serialize1248ForSkipEntry(pos_ptr_code, skip_entry.meta.pos_ptr, out);
@@ -197,15 +207,17 @@ void NewSkipWriter::WriteWandData(WandWriter::WandData data, IndexOutput& out) {
   out.WriteByte((freq_size - 1) | (norm_code << 2));
 
   SerializeFor1234(freq_size, data.freq, out);
-  if (norm_code > 0)
+  if (norm_code > 0) {
     Serialize124ForSkipEntry(norm_code, *data.norm, out);
+  }
 }
 
-size_t NewSkipWriter::CalculatePosPayMetaSize(PosPayMetadata meta, const Features& features) {
+size_t NewSkipWriter::CalculatePosPayMetaSize(PosPayMetadata meta,
+                                              const Features& features) {
   size_t byte_count = 0;
   if (features.HasPosition()) {
-    ++byte_count; // encoding byte
-    ++byte_count; // pos_block_idx
+    ++byte_count;  // encoding byte
+    ++byte_count;  // pos_block_idx
     byte_count += ByteSize1234(meta.pos_ptr);
     if (features.HasOffset()) {
       byte_count += ByteSize1234(meta.pay_ptr);
@@ -219,8 +231,7 @@ void NewSkipWriter::FlushLevel(size_t num_levels, IndexOutput& out) {
   if (num_levels == 2) {
     auto& stream = _level1.stream;
     stream.Flush();  // update length of each buffer
-
-    out.WriteU32(_count_entries_level1); // TODO(afigor2701): maybe delete this
+    out.WriteU32(_count_entries_level1);
     _level1.file >> out;
   }
 }

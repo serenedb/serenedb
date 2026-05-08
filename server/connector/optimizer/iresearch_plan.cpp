@@ -1388,10 +1388,11 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
   if (found->bind_data->entry_kind == connector::ScanEntryKind::BaseTable) {
     return nullptr;
   }
-  if (set_scorer && !TrySetScorer(found->search_scan->scorer, func, name)) {
-    return nullptr;  // Non-constant params.
-  }
-  if (!found->search_scan->scorer) {
+  if (set_scorer) {
+    if (!TrySetScorer(found->search_scan->scorer, func, name)) {
+      return nullptr;  // Non-constant params.
+    }
+  } else if (!found->search_scan->scorer) {
     return nullptr;  // Not claimed in pass 1 -- leave for stub.
   }
   auto idx = AddScoreColumn(*found->bind_data, *found->get);

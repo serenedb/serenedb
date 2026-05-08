@@ -1327,8 +1327,7 @@ Result LocalCatalog::CreateSecondaryIndex(
                     "\" does not exist"};
     }
     if (it->store_mode == ColumnStoreMode::kIndexOnly) {
-      return Result{ERROR_BAD_PARAMETER,
-                    "cannot include column \"", c.name,
+      return Result{ERROR_BAD_PARAMETER, "cannot include column \"", c.name,
                     "\" in a secondary index: column has sdb_indexonly "
                     "storage and is only readable through an inverted index"};
     }

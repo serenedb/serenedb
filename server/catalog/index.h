@@ -26,7 +26,7 @@
 #include <vector>
 
 #include "catalog/object.h"
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 

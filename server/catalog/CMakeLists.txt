@@ -24,7 +24,7 @@ target_sources(
         identity_analyzer.cpp
         inverted_index.cpp
         mangling.cpp
-        scorer.cpp
+        scorer_options.cpp
         tokenizer.cpp
 )
 

@@ -34,7 +34,7 @@
 #include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/rocksdb_filter.hpp"

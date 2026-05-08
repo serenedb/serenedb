@@ -46,7 +46,7 @@
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
 #include "rest_server/flush_feature.h"

@@ -25,7 +25,7 @@
 #include <string_view>
 
 #include "basics/result_or.h"
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 
 namespace sdb::connector {
 

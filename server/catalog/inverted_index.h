@@ -27,9 +27,8 @@
 #include <string>
 #include <vector>
 
-#include "basics/object_pool.hpp"
 #include "catalog/index.h"
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"

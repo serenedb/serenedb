@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 
 #include <absl/strings/str_cat.h>
 

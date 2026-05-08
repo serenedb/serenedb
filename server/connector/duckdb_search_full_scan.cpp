@@ -48,7 +48,7 @@
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "catalog/mangling.h"
-#include "catalog/scorer.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"

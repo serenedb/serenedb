@@ -54,7 +54,7 @@ namespace sdb::connector {
 // `context` is needed to construct the binder; in practice the DDL paths
 // already hold a ClientContext (CatalogTransaction::GetContext or the
 // PhysicalCreateIndex sink's ClientContext).
-ResultOr<catalog::Scorer> ParseScorerExpression(duckdb::ClientContext& context,
-                                                std::string_view input);
+ResultOr<catalog::ScorerOptions> ParseScorerExpression(
+  duckdb::ClientContext& context, std::string_view input);
 
 }  // namespace sdb::connector

@@ -42,7 +42,7 @@ namespace sdb::connector {
 // Returns nullopt if any param child is non-constant (the optimizer rule
 // uses this signal to refuse to claim the expression). Throws via the
 // returned Result on out-of-range param values.
-ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
+ResultOr<std::optional<catalog::ScorerOptions>> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
 }  // namespace sdb::connector

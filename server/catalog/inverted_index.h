@@ -71,7 +71,7 @@ class InvertedIndex final : public Index {
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
                 std::vector<Column::Id> column_ids, ColumnOptions columns,
-                std::optional<Scorer> wand_scorer = std::nullopt)
+                std::optional<ScorerOptions> wand_scorer = std::nullopt)
     : Index{database_id,
             schema_id,
             id,
@@ -103,10 +103,7 @@ class InvertedIndex final : public Index {
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;
 
-  // When set, the writer encodes WAND impact data per posting using this
-  // scorer; top-K queries with a matching scorer can prune low-scoring
-  // docs. Empty == WAND disabled.
-  const std::optional<Scorer>& GetWandScorer() const noexcept {
+  const std::optional<ScorerOptions>& GetWandScorer() const noexcept {
     return _wand_scorer;
   }
 
@@ -114,7 +111,7 @@ class InvertedIndex final : public Index {
 
  private:
   ColumnOptions _columns;
-  std::optional<Scorer> _wand_scorer;
+  std::optional<ScorerOptions> _wand_scorer;
 };
 
 }  // namespace sdb::catalog

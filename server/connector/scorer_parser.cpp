@@ -86,8 +86,8 @@ ResultOr<duckdb::unique_ptr<duckdb::ParsedExpression>> WrapWithPlaceholder(
 
 }  // namespace
 
-ResultOr<catalog::Scorer> ParseScorerExpression(duckdb::ClientContext& context,
-                                                std::string_view input) {
+ResultOr<catalog::ScorerOptions> ParseScorerExpression(
+  duckdb::ClientContext& context, std::string_view input) {
   using namespace duckdb;
   std::string source(input);
 

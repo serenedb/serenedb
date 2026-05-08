@@ -88,8 +88,8 @@ std::shared_ptr<InvertedIndex> InvertedIndex::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  std::optional<Scorer> wand_scorer;
-  if (auto s = slice.get("wand_scorer"); !s.isNone() && !s.isNull()) {
+  std::optional<ScorerOptions> wand_scorer;
+  if (auto s = slice.get("wand_scorer"); !s.isNone()) {
     if (auto r = vpack::ReadTupleNothrow(s, wand_scorer); !r.ok()) {
       return nullptr;
     }

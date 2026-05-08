@@ -339,7 +339,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it != _info->options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
-    std::optional<catalog::Scorer> wand_scorer;
+    std::optional<catalog::ScorerOptions> wand_scorer;
     it = _info->options.find("optimize_top_k");
     if (it != _info->options.end()) {
       auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)

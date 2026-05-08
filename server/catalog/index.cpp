@@ -379,7 +379,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
   const std::shared_ptr<const Snapshot>& snapshot,
-  std::optional<Scorer> wand_scorer) {
+  std::optional<ScorerOptions> wand_scorer) {
   auto column_validation_res = ValidateInvertedIndexColumns(columns);
   if (column_validation_res.fail()) {
     return std::unexpected<Result>(std::move(column_validation_res));

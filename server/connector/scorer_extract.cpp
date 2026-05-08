@@ -40,10 +40,10 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
 
 }  // namespace
 
-ResultOr<std::optional<catalog::Scorer>> ExtractScorerFromBound(
+ResultOr<std::optional<catalog::ScorerOptions>> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name) {
-  using S = catalog::Scorer;
-  catalog::Scorer scorer;
+  using S = catalog::ScorerOptions;
+  catalog::ScorerOptions scorer;
 
   if (name == S::Bm25::kName) {
     S::Bm25 p;

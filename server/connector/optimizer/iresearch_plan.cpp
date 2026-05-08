@@ -1245,7 +1245,7 @@ duckdb::idx_t AddScoreColumn(connector::SereneDBScanBindData& bind_data,
   return get_col_idx;
 }
 
-bool TrySetScorer(std::optional<catalog::Scorer>& scorer,
+bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name);
 
@@ -1436,7 +1436,7 @@ catalog::Column::Id ResolveColumnId(
 // from `irs::<Scorer>::type_name()`, so this matches everything the
 // catalog can persist as a `wand_scorer`.
 bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::Scorer;
+  using S = catalog::ScorerOptions;
   return name == S::Bm25::kName || name == S::Tfidf::kName ||
          name == S::RawTf::kName || name == S::LmJm::kName ||
          name == S::LmDirichlet::kName || name == S::IndriDirichlet::kName ||
@@ -1451,7 +1451,7 @@ bool IsScorerFunctionName(std::string_view name) {
 // Per-arm extraction is delegated to the shared connector helper that the
 // `WITH (optimize_top_k = '...')` parser also uses, so the two entry
 // points cannot drift on argument shapes or value-range checks.
-bool TrySetScorer(std::optional<catalog::Scorer>& scorer,
+bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
   auto extracted = connector::ExtractScorerFromBound(func, name);

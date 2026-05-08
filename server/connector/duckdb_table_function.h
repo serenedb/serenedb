@@ -127,7 +127,7 @@ struct SearchScan : ScanSource {
   // / etc. Empty when the query has no scoring projection. Same shape as
   // the catalog's `optimize_top_k` scorer so iresearch_plan can compare
   // them with `operator==`.
-  std::optional<catalog::Scorer> scorer;
+  std::optional<catalog::ScorerOptions> scorer;
   std::optional<size_t> score_top_k;
 
   // Mirrors catalog::InvertedIndex::IsOptimizeTopK(). When true and the

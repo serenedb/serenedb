@@ -189,7 +189,7 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   writer_options.lock_repository = false;  // RocksDB has its own lock
 
   if (const auto& spec = index.GetWandScorer()) {
-    _wand_scorer = catalog::MakeIrsScorer(*spec);
+    _wand_scorer = catalog::MakeScorer(*spec);
     writer_options.reader_options.scorer = _wand_scorer.get();
   }
 

@@ -305,7 +305,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   const auto& ss = bind_data.scan_source->Cast<SearchScan>();
   if (ss.scorer) {
-    state->scorer_obj = catalog::MakeIrsScorer(*ss.scorer);
+    state->scorer_obj = catalog::MakeScorer(*ss.scorer);
   }
   // Single prepare site for SearchScan. We pass the scorer here (or null
   // when no BM25/TFIDF was attached by the planner) so any IDF/norm

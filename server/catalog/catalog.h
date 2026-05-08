@@ -264,7 +264,7 @@ struct LogicalCatalog {
     std::string name, std::vector<CreateIndexColumn>&& columns,
     IndexShardOptions& shard_options,
     CreateIndexOperationOptions operation_options,
-    std::optional<Scorer> wand_scorer) = 0;
+    std::optional<ScorerOptions> wand_scorer) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

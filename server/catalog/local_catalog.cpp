@@ -1344,7 +1344,7 @@ Result LocalCatalog::CreateInvertedIndex(
   std::string name, std::vector<CreateIndexColumn>&& columns,
   IndexShardOptions& shard_options,
   CreateIndexOperationOptions operation_options,
-  std::optional<Scorer> wand_scorer) {
+  std::optional<ScorerOptions> wand_scorer) {
   if (columns.empty()) {
     return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
   }

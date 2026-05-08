@@ -40,19 +40,7 @@
 
 namespace sdb::catalog {
 
-// Discriminated scorer specification shared by the catalog (persisted as the
-// `wand_scorer` field on an InvertedIndex when the user opts in via
-// `WITH (optimize_top_k = '<scorer-expr>')`) and by the connector's runtime
-// SearchScan (the scorer parsed from `ORDER BY BM25(idx.tableoid, ...)`).
-//
-// Each per-arm struct carries `kName == irs::<Scorer>::type_name()` so the
-// persisted discriminator and the user-visible `WITH` keyword stay in lock
-// step with the iresearch scorer registration -- no parallel name table.
-//
-// Defaulted `operator==` is used by iresearch_plan.cpp's conflict-detection
-// path: two scorer references in the same query plan must agree on kind and
-// every parameter, otherwise we throw "Only one scorer function allowed".
-struct Scorer {
+struct ScorerOptions {
   enum class DfiMeasure : uint8_t {
     Standardized,
     Saturated,
@@ -100,7 +88,7 @@ struct Scorer {
 
   Params params;
 
-  bool operator==(const Scorer&) const = default;
+  bool operator==(const ScorerOptions&) const = default;
 
   // Lowercase short scorer name -- always matches the active arm's kName.
   std::string_view Name() const noexcept {
@@ -116,7 +104,7 @@ struct Scorer {
 
 // Materialise the iresearch scorer described by `spec`. Used both by the
 // shard (writer-side WAND data) and by the runtime SearchScan (top-K).
-std::unique_ptr<irs::Scorer> MakeIrsScorer(const Scorer& spec);
+std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
 
 // vpack serialisation hook for Scorer. The persisted shape is a 2-tuple
 // `[name, arm_fields]`: `name` discriminates which variant arm follows, and
@@ -125,7 +113,7 @@ std::unique_ptr<irs::Scorer> MakeIrsScorer(const Scorer& spec);
 // hook is picked up via ADL by the standard vpack::WriteTuple /
 // vpack::ReadTuple machinery.
 template<typename Context>
-void VPackWrite(Context ctx, const Scorer& s) {
+void VPackWrite(Context ctx, const ScorerOptions& s) {
   auto& b = ctx.vpack();
   b.openArray(true);
   b.add(s.Name());
@@ -135,7 +123,7 @@ void VPackWrite(Context ctx, const Scorer& s) {
 }
 
 template<typename Context>
-void VPackRead(Context ctx, Scorer& s) {
+void VPackRead(Context ctx, ScorerOptions& s) {
   vpack::ArrayIterator it{ctx.vpack()};
   if (!it.valid() || !(*it).isString()) {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER,
@@ -143,20 +131,20 @@ void VPackRead(Context ctx, Scorer& s) {
   }
   // 1. Discriminator -> default-construct the matching variant arm.
   const auto name = (*it).stringView();
-  if (name == Scorer::Bm25::kName) {
-    s.params = Scorer::Bm25{};
-  } else if (name == Scorer::Tfidf::kName) {
-    s.params = Scorer::Tfidf{};
-  } else if (name == Scorer::RawTf::kName) {
-    s.params = Scorer::RawTf{};
-  } else if (name == Scorer::LmJm::kName) {
-    s.params = Scorer::LmJm{};
-  } else if (name == Scorer::LmDirichlet::kName) {
-    s.params = Scorer::LmDirichlet{};
-  } else if (name == Scorer::IndriDirichlet::kName) {
-    s.params = Scorer::IndriDirichlet{};
-  } else if (name == Scorer::Dfi::kName) {
-    s.params = Scorer::Dfi{};
+  if (name == ScorerOptions::Bm25::kName) {
+    s.params = ScorerOptions::Bm25{};
+  } else if (name == ScorerOptions::Tfidf::kName) {
+    s.params = ScorerOptions::Tfidf{};
+  } else if (name == ScorerOptions::RawTf::kName) {
+    s.params = ScorerOptions::RawTf{};
+  } else if (name == ScorerOptions::LmJm::kName) {
+    s.params = ScorerOptions::LmJm{};
+  } else if (name == ScorerOptions::LmDirichlet::kName) {
+    s.params = ScorerOptions::LmDirichlet{};
+  } else if (name == ScorerOptions::IndriDirichlet::kName) {
+    s.params = ScorerOptions::IndriDirichlet{};
+  } else if (name == ScorerOptions::Dfi::kName) {
+    s.params = ScorerOptions::Dfi{};
   } else {
     SDB_THROW(sdb::ERROR_BAD_PARAMETER, "Unknown 'scorer' name '", name, "'");
   }

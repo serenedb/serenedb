@@ -113,8 +113,9 @@ struct WandWriter {
   using ptr = std::unique_ptr<WandWriter>;
 
   struct WandData {
-    uint32_t freq;
-    std::optional<uint32_t> norm;
+    uint32_t freq{1};
+    // Stored as delta from freq; 0 means norm == freq (i.e. "no norm written").
+    uint32_t norm{0};
   };
 
   static constexpr byte_type kMaxSize = 127;

@@ -60,13 +60,17 @@ constexpr uint32_t ByteSize124ForSkipEntry(uint32_t value) {
 }
 
 template<typename Output>
-void Serialize124ForSkipEntry(uint32_t code, uint32_t value, Output& out) {
+IRS_FORCE_INLINE void Serialize124ForSkipEntry(uint32_t code, uint32_t value,
+                                               Output& out) {
   switch (code) {
     case 1:
+      out.WriteByte(static_cast<byte_type>(value));
+      break;
     case 2:
-      out.WriteBytes(reinterpret_cast<byte_type*>(&value), code);
+      out.WriteU16(static_cast<uint16_t>(value));
       break;
     case 3:
+      // 3 in this encoding actually means 4 bytes (1/2/4-byte family).
       out.WriteU32(value);
       break;
     default:
@@ -114,8 +118,28 @@ void Serialize1248ForSkipEntry(uint32_t code, uint64_t value, Output& out) {
 }
 
 template<typename Output>
-void SerializeFor1234(uint32_t code, uint32_t value, Output& out) {
-  out.WriteBytes(reinterpret_cast<byte_type*>(&value), code);
+IRS_FORCE_INLINE void SerializeFor1234(uint32_t code, uint32_t value,
+                                       Output& out) {
+  // Writes the low `code` bytes of `value`. Same byte sequence as
+  // WriteBytes(&value, code) on a little-endian host, but inlined and
+  // dispatched per width.
+  switch (code) {
+    case 1:
+      out.WriteByte(static_cast<byte_type>(value));
+      break;
+    case 2:
+      out.WriteU16(static_cast<uint16_t>(value));
+      break;
+    case 3:
+      out.WriteU16(static_cast<uint16_t>(value));
+      out.WriteByte(static_cast<byte_type>(value >> 16));
+      break;
+    case 4:
+      out.WriteU32(value);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
 }
 
 }  // namespace
@@ -130,23 +154,22 @@ void NewSkipWriter::WriteInlineSkipEntry(const InlineSkipEntry& skip_entry,
   auto max_doc_delta_size = ByteSize1234(skip_entry.max_doc_delta);
   uint32_t wand_freq_code = 0;
   uint32_t wand_norm_code = 0;
-  if (skip_entry.wand_data) {
-    wand_freq_code = ByteSize124ForSkipEntry(skip_entry.wand_data->freq);
-    if (skip_entry.wand_data->norm) {
-      wand_norm_code = ByteSize124ForSkipEntry(*skip_entry.wand_data->norm);
+  if (skip_entry.has_wand) {
+    wand_freq_code = ByteSize124ForSkipEntry(skip_entry.wand_data.freq);
+    if (skip_entry.wand_data.norm != 0) {
+      wand_norm_code = ByteSize124ForSkipEntry(skip_entry.wand_data.norm);
     }
   }
 
   out.WriteByte((max_doc_delta_size - 1) | (wand_freq_code << 2) |
                 (wand_norm_code << 4));  // encoding byte
-  out.WriteBytes(reinterpret_cast<const byte_type*>(&skip_entry.max_doc_delta),
-                 max_doc_delta_size);
+  SerializeFor1234(max_doc_delta_size, skip_entry.max_doc_delta, out);
   if (wand_freq_code > 0) {
-    Serialize124ForSkipEntry(wand_freq_code, skip_entry.wand_data->freq, out);
+    Serialize124ForSkipEntry(wand_freq_code, skip_entry.wand_data.freq, out);
   }
 
   if (wand_norm_code > 0) {
-    Serialize124ForSkipEntry(wand_norm_code, *skip_entry.wand_data->norm, out);
+    Serialize124ForSkipEntry(wand_norm_code, skip_entry.wand_data.norm, out);
   }
   out.WriteU16(skip_entry.rest_block_size);
 }
@@ -158,14 +181,12 @@ void NewSkipWriter::WriteInlinePosPayMetadata(const PosPayMetadata& meta,
     uint32_t pos_pay_enc = 0;
     uint32_t pos_ptr_size = ByteSize1234(meta.pos_ptr);
     pos_pay_enc |= (pos_ptr_size - 1);
-    out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pos_ptr),
-                   pos_ptr_size);
+    SerializeFor1234(pos_ptr_size, meta.pos_ptr, out);
 
-    uint32_t pay_ptr_size = ByteSize1234(meta.pay_ptr);
     if (features.HasOffset()) {
+      uint32_t pay_ptr_size = ByteSize1234(meta.pay_ptr);
       pos_pay_enc |= ((pay_ptr_size - 1) << 2);
-      out.WriteBytes(reinterpret_cast<const byte_type*>(&meta.pay_ptr),
-                     pay_ptr_size);
+      SerializeFor1234(pay_ptr_size, meta.pay_ptr, out);
     }
 
     out.WriteByte(meta.pos_block_idx);
@@ -203,12 +224,12 @@ void NewSkipWriter::WriteSkipEntry(const SkipEntry& skip_entry,
 
 void NewSkipWriter::WriteWandData(WandWriter::WandData data, IndexOutput& out) {
   uint32_t freq_size = ByteSize1234(data.freq);
-  uint32_t norm_code = (data.norm ? ByteSize124ForSkipEntry(*data.norm) : 0);
+  uint32_t norm_code = (data.norm != 0 ? ByteSize124ForSkipEntry(data.norm) : 0);
   out.WriteByte((freq_size - 1) | (norm_code << 2));
 
   SerializeFor1234(freq_size, data.freq, out);
   if (norm_code > 0) {
-    Serialize124ForSkipEntry(norm_code, *data.norm, out);
+    Serialize124ForSkipEntry(norm_code, data.norm, out);
   }
 }
 

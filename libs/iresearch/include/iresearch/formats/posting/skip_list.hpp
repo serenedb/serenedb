@@ -40,8 +40,11 @@ namespace irs {
 
 struct InlineSkipEntry {
   uint32_t max_doc_delta = 0;
-  std::optional<WandWriter::WandData> wand_data;
+  WandWriter::WandData wand_data{};
   uint16_t rest_block_size = 0;
+  // Whether wand_data is meaningful for serialization. When reading with
+  // HasWand=true the field is always populated, so callers can ignore this.
+  bool has_wand = false;
 };
 
 struct PosPayMetadata {
@@ -407,24 +410,38 @@ doc_id_t SkipReader<Read, InputType>::Seek(doc_id_t target) {
 }
 
 template<typename InputType>
-uint32_t ReadByteSize1234(uint32_t code, InputType& in) {
-  uint32_t result = 0;
-  in.ReadBytes(reinterpret_cast<byte_type*>(&result), code);
-  return result;
+IRS_FORCE_INLINE uint32_t ReadByteSize1234(uint32_t code, InputType& in) {
+  switch (code) {
+    case 1:
+      return in.ReadByte();
+    case 2:
+      return static_cast<uint16_t>(in.ReadI16());
+    case 3: {
+      uint32_t lo = static_cast<uint16_t>(in.ReadI16());
+      uint32_t hi = in.ReadByte();
+      return lo | (hi << 16);
+    }
+    case 4:
+      return in.ReadI32();
+    default:
+      SDB_UNREACHABLE();
+  }
 }
 
 template<typename InputType>
-uint32_t ReadByteSize124ForSkipEntry(uint32_t code, InputType& in) {
-  uint32_t result = 0;
+IRS_FORCE_INLINE uint32_t ReadByteSize124ForSkipEntry(uint32_t code,
+                                                     InputType& in) {
   switch (code) {
     case 1:
+      return in.ReadByte();
     case 2:
-      in.ReadBytes(reinterpret_cast<byte_type*>(&result), code);
-      break;
+      return static_cast<uint16_t>(in.ReadI16());
     case 3:
-      result = in.ReadI32();
+      // 3 in this encoding actually means 4 bytes.
+      return in.ReadI32();
+    default:
+      SDB_UNREACHABLE();
   }
-  return result;
 }
 
 template<typename InputType>
@@ -590,14 +607,16 @@ class NewSkipReader {
 
     entry.max_doc_delta = ReadByteSize1234(max_doc_delta_code, in);
     if constexpr (HasWand) {
-      WandWriter::WandData data;
-      data.freq = ReadByteSize124ForSkipEntry(wand_freq_code, in);
-      if (wand_norm_code > 0) {
-        data.norm = ReadByteSize124ForSkipEntry(wand_norm_code, in);
+      if (wand_freq_code != 0) {
+        entry.wand_data.freq =
+          ReadByteSize124ForSkipEntry(wand_freq_code, in);
+        if (wand_norm_code != 0) {
+          entry.wand_data.norm =
+            ReadByteSize124ForSkipEntry(wand_norm_code, in);
+        }
       }
-      entry.wand_data = data;
     }
-    entry.rest_block_size = in.ReadI16();
+    entry.rest_block_size = static_cast<uint16_t>(in.ReadI16());
 
     return entry;
   }
@@ -620,7 +639,7 @@ class NewSkipReader {
 
       result.pos_ptr = ReadByteSize1234(pos_ptr_code, in);
       if constexpr (FieldTraits::Offset()) {
-        result.pay_ptr = result.pay_ptr = ReadByteSize1234(pay_ptr_code, in);
+        result.pay_ptr = ReadByteSize1234(pay_ptr_code, in);
       }
       result.pos_block_idx = in.ReadByte();
       in.Skip(1);
@@ -672,7 +691,7 @@ class NewSkipReader {
       auto skip_zone = ReadInlineSkipZone(in);
       entry.max_doc_delta += skip_zone.max_doc_delta;
       if constexpr (HasWand) {
-        Reader().SetWandScore(0, *skip_zone.wand_data);
+        Reader().SetWandScore(0, skip_zone.wand_data);
       }
 
       if (IsBlockSuits(0, target)) {
@@ -876,7 +895,7 @@ void NewSkipReader<FieldTraits, IteratorTraits, HasWand, InputType,
 
   auto skip_zone = ReadInlineSkipZone(in);
   if constexpr (HasWand) {
-    Reader().SetWandScore(0, *skip_zone.wand_data);
+    Reader().SetWandScore(0, skip_zone.wand_data);
   }
 
   auto& entry = _entries[0];

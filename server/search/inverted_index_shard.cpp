@@ -188,8 +188,8 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
 
-  if (const auto& spec = index.GetWandScorer()) {
-    _wand_scorer = catalog::MakeScorer(*spec);
+  if (const auto& options = index.GetWandScorer()) {
+    _wand_scorer = catalog::MakeScorer(*options);
     writer_options.reader_options.scorer = _wand_scorer.get();
   }
 

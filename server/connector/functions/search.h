@@ -160,22 +160,8 @@ inline constexpr std::string_view kGeoContains = "ST_Contains";
 
 // Pseudo-functions that are claimed by the iresearch_plan rule and
 // turn into projected columns on the SearchScan rather than running
-// per-row at execution time. Scorer parameters are constants; the
-// rule extracts them at compile time and threads them into bind_data
-// so the runtime executor doesn't re-parse per row.
-//
-//   bm25(tableoid [, k1 DOUBLE, b DOUBLE])    -> FLOAT
-//   tfidf(tableoid [, with_norms BOOLEAN])    -> FLOAT
+// per-row at execution time.
 //   offsets(col)                          -> BIGINT[]
-//
-// bm25 / tfidf need a scan anchor; the convention is `tableoid` so
-// the binding survives projection pushdown. offsets takes the
-// indexed column directly (the column ref's own binding.table_index
-// is enough -- no separate anchor needed).
-// Scorer function names live on `catalog::Scorer::<arm>::kName` (each
-// equal to `irs::<Scorer>::type_name()`) so the SQL function names, the
-// catalog discriminator persisted on the inverted index, and the iresearch
-// scorer registry can never drift apart.
 inline constexpr std::string_view kOffsets = "offsets";
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);

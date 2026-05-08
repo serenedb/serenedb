@@ -62,8 +62,6 @@ add_library(
     duckdb_physical_delete.cpp
     duckdb_physical_update.cpp
     duckdb_transaction.cpp
-    scorer_extract.cpp
-    scorer_parser.cpp
 )
 
 target_link_libraries(

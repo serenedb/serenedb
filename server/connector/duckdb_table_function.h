@@ -126,16 +126,12 @@ struct SearchScan : ScanSource {
   std::string filter_summary;
 
   // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
-  // / etc. Empty when the query has no scoring projection. Same shape as
-  // the catalog's `optimize_top_k` scorer so iresearch_plan can compare
-  // them with `operator==`.
+  // / etc. Empty when the query has no scoring projection.
   std::optional<catalog::ScorerOptions> scorer;
   std::optional<size_t> score_top_k;
 
   // Catalog-side wand scorer carried verbatim from the InvertedIndex. WAND
-  // pruning is engaged at runtime iff this matches `scorer` -- iresearch's
-  // per-block max-impact data is only valid for the same scorer kind +
-  // params it was written with.
+  // pruning is engaged at runtime iff this matches `scorer`.
   std::optional<catalog::ScorerOptions> wand_scorer;
 
   // Optional: positions/offsets output. Each entry records the catalog

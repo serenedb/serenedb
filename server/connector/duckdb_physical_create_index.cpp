@@ -38,6 +38,7 @@
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
+#include "catalog/scorer_options.h"
 #include "catalog/secondary_index.h"
 #include "catalog/view.h"
 #include "connector/duckdb_catalog.h"
@@ -51,7 +52,6 @@
 #include "connector/json_extract_names.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
-#include "connector/scorer_parser.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
@@ -344,12 +344,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it != _info->options.end()) {
       auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
                      .GetValue<std::string>();
-      auto parsed = ParseScorerExpression(context, value);
-      if (!parsed) {
-        throw duckdb::CatalogException(
-          "%s", std::move(parsed).error().errorMessage());
-      }
-      wand_scorer = std::move(*parsed);
+      wand_scorer = catalog::ParseScorerExpression(context, value);
     }
     create_result = catalog_impl.CreateInvertedIndex(
       _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,

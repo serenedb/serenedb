@@ -52,12 +52,12 @@
 #include "basics/resource_manager.hpp"
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
+#include "catalog/scorer_options.h"
 #include "connector/duckdb_index_scan_entry.h"
 #include "connector/duckdb_table_function.h"
 #include "connector/functions/search.h"
 #include "connector/functions/vector.h"
 #include "connector/optimizer/flatten_projection_ids.h"
-#include "connector/scorer_extract.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "search/inverted_index_shard.h"
@@ -1386,14 +1386,11 @@ duckdb::unique_ptr<duckdb::Expression> RewriteScoreCallInExpr(
   if (found->bind_data->entry_kind == connector::ScanEntryKind::BaseTable) {
     return nullptr;
   }
-  if (set_scorer) {
-    if (!TrySetScorer(found->search_scan->scorer, func, name)) {
-      return nullptr;  // Non-constant params.
-    }
-  } else {
-    if (!found->search_scan->scorer.has_value()) {
-      return nullptr;  // Not claimed in pass 1 -- leave for stub.
-    }
+  if (set_scorer && !TrySetScorer(found->search_scan->scorer, func, name)) {
+    return nullptr;  // Non-constant params.
+  }
+  if (!found->search_scan->scorer) {
+    return nullptr;  // Not claimed in pass 1 -- leave for stub.
   }
   auto idx = AddScoreColumn(*found->bind_data, *found->get);
   const auto result_binding =
@@ -1432,10 +1429,6 @@ catalog::Column::Id ResolveColumnId(
   return bind_data.column_ids[phys];
 }
 
-// True iff `name` is one of the supported scorer function names. Sourced
-// from catalog::Scorer's per-arm `kName` constants, which themselves come
-// from `irs::<Scorer>::type_name()`, so this matches everything the
-// catalog can persist as a `wand_scorer`.
 bool IsScorerFunctionName(std::string_view name) {
   using S = catalog::ScorerOptions;
   return name == S::Bm25::kName || name == S::Tfidf::kName ||
@@ -1445,32 +1438,21 @@ bool IsScorerFunctionName(std::string_view name) {
 }
 
 // Parse scorer parameters from `func` into `scorer`. Returns false if the
-// parameters are non-constant (rule refuses to claim; stub raises). Also
-// validates scorer kind conflicts: identical scorer is idempotent,
-// divergent throws.
-//
-// Per-arm extraction is delegated to the shared connector helper that the
-// `WITH (optimize_top_k = '...')` parser also uses, so the two entry
-// points cannot drift on argument shapes or value-range checks.
+// parameters are non-constant (rule refuses to claim; stub raises).
+// Out-of-range param values throw via SqlException from the catalog helper.
+// Conflicting scorer kinds throw too; identical scorers are idempotent.
 bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {
-  auto extracted = connector::ExtractScorerFromBound(func, name);
+  auto extracted = catalog::ExtractScorerFromBound(func, name);
   if (!extracted) {
-    // Out-of-range param values (e.g., lm_jm lambda outside (0, 1])
-    // surface as InvalidInputException to keep the today's user-facing
-    // error shape.
-    throw duckdb::InvalidInputException(
-      "%s", std::move(extracted).error().errorMessage());
-  }
-  if (!*extracted) {
     return false;  // non-constant arg
   }
   if (!scorer) {
-    scorer = std::move(**extracted);
+    scorer = std::move(*extracted);
     return true;
   }
-  if (*scorer == **extracted) {
+  if (*scorer == *extracted) {
     return true;  // Idempotent.
   }
   throw duckdb::InvalidInputException(
@@ -1883,7 +1865,7 @@ bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (!found) {
     return false;
   }
-  if (!found->search_scan->scorer.has_value()) {
+  if (!found->search_scan->scorer) {
     return false;  // No scoring requested -- nothing to prune.
   }
   if (found->search_scan->score_top_k) {

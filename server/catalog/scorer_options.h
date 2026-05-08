@@ -32,12 +32,19 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
 
 #include "basics/exceptions.h"
 
+namespace duckdb {
+
+class BoundFunctionExpression;
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 struct ScorerOptions {
@@ -105,6 +112,23 @@ struct ScorerOptions {
 // Materialise the iresearch scorer described by `spec`. Used both by the
 // shard (writer-side WAND data) and by the runtime SearchScan (top-K).
 std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
+
+// Returns nullopt if any param child is non-constant (the optimizer rule
+// uses this to refuse to claim the expression). Throws sdb::SqlException
+// on out-of-range param values or unknown scorer name.
+std::optional<ScorerOptions> ExtractScorerFromBound(
+  const duckdb::BoundFunctionExpression& func, std::string_view name);
+
+// Parse a `WITH (optimize_top_k = '<scorer-expr>')` value into a
+// ScorerOptions. Implementation: rewrites the user string into a
+// `bm25(0::BIGINT, ...)`-shaped call (placeholder satisfies the scorer
+// functions' first-arg type), binds through DuckDB's ConstantBinder, then
+// feeds the BoundFunctionExpression to `ExtractScorerFromBound`. Function
+// overload resolution and implicit numeric coercion therefore come from
+// DuckDB and stay consistent across the `WITH` and `ORDER BY` paths.
+// Throws sdb::SqlException on parse / bind / value errors.
+ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
+                                    std::string input);
 
 // vpack serialisation hook for Scorer. The persisted shape is a 2-tuple
 // `[name, arm_fields]`: `name` discriminates which variant arm follows, and

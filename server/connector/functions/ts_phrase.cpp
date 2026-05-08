@@ -30,10 +30,10 @@
 
 #include "basics/assert.h"
 #include "catalog/mangling.h"
-#include "functions/search.h"
-#include "functions/string.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search.h"
+#include "string.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -264,6 +264,49 @@ PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr) {
 
 namespace {
 
+// Parse the third argument of tsquery_phrase(q1, q2, distance) using PG
+// semantics: `distance` is "exactly N lexemes apart", N >= 1, where N=1
+// is adjacent. Unlike ParsePhraseSeqGap, this does NOT add `+1` -- the
+// user-facing N matches the internal PhraseGap directly. Arrays and
+// non-positive values are rejected (PG only specifies a scalar integer).
+PhraseGap ParseTsqueryPhraseDistance(const duckdb::Expression& expr) {
+  static constexpr std::string_view kHint =
+    "Use a literal positive INTEGER (e.g. tsquery_phrase(q1, q2, 3)). "
+    "Distance follows PG semantics: 1 = adjacent.";
+  const auto& unwrapped = UnwrapTSQueryCast(expr);
+  const auto* val = TryGetConstant(unwrapped);
+  if (!val) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("tsquery_phrase distance must be a constant"),
+                    ERR_HINT(kHint));
+  }
+  const auto id = val->type().id();
+  if (id == duckdb::LogicalTypeId::LIST || id == duckdb::LogicalTypeId::ARRAY) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("tsquery_phrase distance must be a scalar INTEGER, got "
+              "LIST/ARRAY"),
+      ERR_HINT(kHint));
+  }
+  duckdb::Value out;
+  if (val->IsNull() || !val->type().IsNumeric() ||
+      !val->DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
+                             /*error_message=*/nullptr, /*strict=*/true)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("tsquery_phrase distance must be a non-null integer, got ",
+              val->ToString(), " of type ", val->type().ToString()),
+      ERR_HINT(kHint));
+  }
+  const auto raw = out.GetValue<int64_t>();
+  if (raw < 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("tsquery_phrase distance must be >= 1, got ", raw),
+                    ERR_HINT(kHint));
+  }
+  return {.min = static_cast<size_t>(raw), .max = static_cast<size_t>(raw)};
+}
+
 bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
   const auto& type = expr.return_type;
   const auto id = type.id();
@@ -271,14 +314,16 @@ bool IsPhraseSeqGapType(const duckdb::Expression& expr) {
          id == duckdb::LogicalTypeId::ARRAY;
 }
 
-// True iff `expr` is a ## FunctionExpression.
+// True iff `expr` is a `##` operator call OR a `tsquery_phrase` function
+// call -- both flatten into the same PhraseSeq machinery.
 bool IsPhraseSeqNode(const duckdb::Expression& expr) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
   if (unwrapped.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
   }
   const auto& f = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  return f.function.name == kTSQueryPhraseSeq;
+  return f.function.name == kTSQueryPhraseSeq ||
+         f.function.name == kTsqueryPhrase;
 }
 
 }  // namespace
@@ -329,6 +374,26 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
     return;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
+  if (func.function.name == kTsqueryPhrase) {
+    // tsquery_phrase(q1, q2 [, distance]). Flatten q1, fold the optional
+    // PG-semantic distance into seq.pending, then attach q2.
+    SDB_ASSERT(func.children.size() == 2 || func.children.size() == 3);
+    FlattenPhraseSeq(*func.children[0], seq);
+    if (func.children.size() == 3) {
+      if (seq.pending) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("tsquery_phrase distance follows a pending phrase gap"),
+          ERR_HINT("A `##` gap must be followed by a part, not by another "
+                   "tsquery_phrase distance."));
+      }
+      seq.pending = ParseTsqueryPhraseDistance(*func.children[2]);
+    }
+    AttachPart(seq, *func.children[1]);
+    return;
+  }
+  // `##` operator: left-associative binary tree.
+  SDB_ASSERT(func.function.name == kTSQueryPhraseSeq);
   SDB_ASSERT(func.children.size() == 2);
   FlattenPhraseSeq(*func.children[0], seq);
   const auto& right = *func.children[1];

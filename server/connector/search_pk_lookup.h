@@ -52,9 +52,9 @@ bool OpenSegmentPkIterator(const irs::SubReader& segment,
                            SegmentPkIterator& out);
 
 template<typename Hits, typename Proj, typename OnSegment, typename OnDoc>
-void WalkSegmentsSorted(const Hits& hits, Proj&& proj,
-                        std::vector<uint32_t>& scratch_idx,
-                        OnSegment&& on_segment, OnDoc&& on_doc) {
+void VisitSegmentsSorted(const Hits& hits, Proj&& proj,
+                         std::vector<uint32_t>& scratch_idx,
+                         OnSegment&& on_segment, OnDoc&& on_doc) {
   const size_t n = std::ranges::size(hits);
   scratch_idx.resize(n);
   std::iota(scratch_idx.begin(), scratch_idx.end(), uint32_t{0});
@@ -85,7 +85,7 @@ void LookupSegmentsValues(const Hits& hits, Proj&& proj,
                           const irs::IndexReader& reader,
                           std::vector<uint32_t>& scratch_idx, Sink&& sink) {
   SegmentPkIterator it;
-  WalkSegmentsSorted(
+  VisitSegmentsSorted(
     hits, std::forward<Proj>(proj), scratch_idx,
     [&](uint32_t seg) { return OpenSegmentPkIterator(reader[seg], it); },
     [&](uint32_t orig, uint32_t /*seg*/, uint32_t doc) {

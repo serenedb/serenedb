@@ -67,11 +67,11 @@
 #include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "functions/ts_common.hpp"
 #include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
-#include "ts_common.hpp"
 
 namespace magic_enum {
 
@@ -1078,7 +1078,7 @@ bool TryDispatchTokenizeCast(irs::BooleanFilter& parent,
       ERR_MSG("::tokenize('keyword'): inner expression has unsupported "
               "shape"));
   }
-  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, tokenizer);
+  auto wrapper = AcquireTokenizer(ctx.client_context, tokenizer);
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1231,10 +1231,21 @@ Result FromExpression(irs::BooleanFilter& filter, const FilterContext& ctx,
 }  // namespace
 
 const duckdb::Value* TryGetConstant(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  // Peel cast wrappers: the standalone ts_offsets/ts_highlight forms
+  // run the filter builder mid-bind, before the optimizer folds
+  // redundant casts the binder may have inserted around literals.
+  const auto* cur = &expr;
+  while (cur->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    const auto& cast = cur->Cast<duckdb::BoundCastExpression>();
+    if (!cast.child) {
+      return nullptr;
+    }
+    cur = cast.child.get();
+  }
+  if (cur->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &expr.Cast<duckdb::BoundConstantExpression>().value;
+  return &cur->Cast<duckdb::BoundConstantExpression>().value;
 }
 
 const SearchColumnInfo* FindColumnRefInfo(
@@ -1475,6 +1486,25 @@ const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr) {
   return *cur;
 }
 
+// After cast-peel the peeled Value's type may not match the target
+// (e.g. binder rewrites BOOLEAN literal as `Cast(BOOLEAN, Const(VARCHAR
+// "t"))` in standalone bind paths). Coerce via DefaultTryCastAs.
+template<typename T>
+bool TryCoerce(const duckdb::Value& val, duckdb::LogicalTypeId target_id,
+               T& out) {
+  if (val.type().id() == target_id) {
+    out = val.GetValue<T>();
+    return true;
+  }
+  duckdb::Value coerced;
+  std::string err;
+  if (!val.DefaultTryCastAs(duckdb::LogicalType{target_id}, coerced, &err)) {
+    return false;
+  }
+  out = coerced.GetValue<T>();
+  return true;
+}
+
 Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,
                      std::string& out) {
   const auto& unwrapped = UnwrapTSQueryCast(expr);
@@ -1482,10 +1512,9 @@ Result GetVarcharArg(const duckdb::Expression& expr, std::string_view label,
   if (!val || val->IsNull()) {
     return {ERROR_BAD_PARAMETER, label, " must be a non-null VARCHAR constant"};
   }
-  if (val->type().id() != duckdb::LogicalTypeId::VARCHAR) {
+  if (!TryCoerce(*val, duckdb::LogicalTypeId::VARCHAR, out)) {
     return {ERROR_BAD_PARAMETER, label, " must be a VARCHAR constant"};
   }
-  out = val->GetValue<std::string>();
   return {};
 }
 
@@ -1507,7 +1536,10 @@ Result GetIntArg(const duckdb::Expression& expr, std::string_view label,
       out = val->GetValue<int64_t>();
       return {};
     default:
-      return {ERROR_BAD_PARAMETER, label, " must be an INTEGER constant"};
+      if (!TryCoerce(*val, duckdb::LogicalTypeId::BIGINT, out)) {
+        return {ERROR_BAD_PARAMETER, label, " must be an INTEGER constant"};
+      }
+      return {};
   }
 }
 
@@ -1517,10 +1549,9 @@ Result GetBoolArg(const duckdb::Expression& expr, std::string_view label,
   if (!val || val->IsNull()) {
     return {ERROR_BAD_PARAMETER, label, " must be a non-null BOOLEAN constant"};
   }
-  if (val->type().id() != duckdb::LogicalTypeId::BOOLEAN) {
+  if (!TryCoerce(*val, duckdb::LogicalTypeId::BOOLEAN, out)) {
     return {ERROR_BAD_PARAMETER, label, " must be a BOOLEAN constant"};
   }
-  out = val->GetValue<bool>();
   return {};
 }
 
@@ -1541,7 +1572,10 @@ Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
       out = val->GetValue<double>();
       return {};
     default:
-      return {ERROR_BAD_PARAMETER, label, " must be a numeric constant"};
+      if (!TryCoerce(*val, duckdb::LogicalTypeId::DOUBLE, out)) {
+        return {ERROR_BAD_PARAMETER, label, " must be a numeric constant"};
+      }
+      return {};
   }
 }
 

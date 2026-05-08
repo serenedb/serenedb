@@ -56,8 +56,8 @@ inline constexpr OptionInfo kGeoLongitude{
 
 // GeoJson
 
-void CheckGeoJsonType(std::string_view value);
-void CheckGeoJsonCoding(std::string_view value);
+void CheckGeoJsonType(std::string_view option, std::string_view value);
+void CheckGeoJsonCoding(std::string_view option, std::string_view value);
 inline constexpr OptionInfo kGeoJsonType{
   "type", "shape"sv, "GeoJson shape type: shape, centroid, point",
   CheckGeoJsonType};

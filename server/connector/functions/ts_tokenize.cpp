@@ -22,9 +22,9 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/utils/string.hpp>
 
-#include "functions/search.h"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
+#include "search.h"
 #include "ts_common.hpp"
 
 namespace sdb::connector {
@@ -56,7 +56,7 @@ void FromTokenize(irs::BooleanFilter& parent, const FilterContext& ctx,
     BuildFtsTerm(parent, ctx, column_info, duckdb::Value(text));
     return;
   }
-  auto wrapper = ResolveTokenizerAnalyzer(ctx.client_context, analyzer_name);
+  auto wrapper = AcquireTokenizer(ctx.client_context, analyzer_name);
   if (!wrapper) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("ts_tokenize(text, '", analyzer_name,

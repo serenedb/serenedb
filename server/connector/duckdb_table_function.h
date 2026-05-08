@@ -137,11 +137,21 @@ struct SearchScan : ScanSource {
   // Optional: positions/offsets output. Each entry records the catalog
   // column whose offsets will be emitted, and a per-doc limit on the
   // number of offset pairs. The runtime produces one
-  // LIST(BIGINT) output column per entry, in this vector's order.
-  // Empty when no OFFSETS() projection was claimed.
+  // LIST(INTEGER) output column per entry, in this vector's order.
+  // Empty when no ts_offsets() projection was claimed.
   struct OffsetsRequest {
     catalog::Column::Id column_id;
-    size_t limit = 0;
+    // Per-doc cap on emitted offset pairs. SIZE_MAX means "no cap";
+    // the user-facing 0-means-unlimited convention is translated at
+    // parse time so the runtime can use this value directly.
+    size_t limit = std::numeric_limits<size_t>::max();
+    // get_col_idx of the offsets-virtual column in the LogicalGet. Used
+    // by the rewrite pass to dedup repeated ts_offsets(col [, limit]) calls
+    // with identical args -- the second call reuses the first's column
+    // instead of allocating another (multiple identical entries here
+    // would all collide in OffsetsCollector::FindField, leaving the
+    // duplicates' output slots empty).
+    duckdb::idx_t get_col_idx = 0;
   };
   std::vector<OffsetsRequest> offsets;
 

@@ -420,9 +420,6 @@ void InitSearchColumnContextForGet(
     });
   auto columns = resolved.index->GetColumnIds();
   ctx.indexed_column_ids.insert(columns.begin(), columns.end());
-  for (auto col_id : resolved.index->GetColumnIds()) {
-    ctx.indexed_column_ids.insert(col_id);
-  }
   auto index_ptr = resolved.index;
   ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
     return index_ptr->GetColumnTokenizer(snapshot, col_id);

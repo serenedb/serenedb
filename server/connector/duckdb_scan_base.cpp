@@ -140,6 +140,31 @@ void InitCommonState(CommonScanGlobalState& state,
         // happens in the search-scan operators where we know whether the
         // optimizer actually swapped the function to one that bypasses
         // materialisation (e.g. IRESEARCH_COUNT for count(*)).
+        //
+        // sdb_indexonly columns have no main-storage data; they exist only
+        // inside an inverted index. They are valid in inverted-index search
+        // predicates (which the optimizer claims into the IRESEARCH_* scan
+        // path and removes from the projected column list). If the column
+        // still reaches this point, the query needs the value materialised,
+        // and there is no main-storage source to read it from.
+        //
+        // CREATE INDEX backfill is exempt: it is allowed to project the
+        // IndexOnly column (the backfill scan simply finds no main-storage
+        // data, which is the intended outcome -- the index is populated
+        // via DML, not from main storage).
+        if (!bind_data.IsViewBacked() && !bind_data.is_create_index) {
+          const auto& tbd = bind_data.As<TableScanBindData>();
+          for (const auto& col : tbd.table->Columns()) {
+            if (col.id == catalog_col_id &&
+                col.store_mode == catalog::ColumnStoreMode::kIndexOnly) {
+              throw duckdb::CatalogException(
+                "column \"%s\" has sdb_indexonly storage and cannot be read "
+                "directly; it is only accessible through an inverted-index "
+                "search predicate",
+                col.name);
+            }
+          }
+        }
         state.projected_columns.push_back(col_id);
         state.projected_types.push_back(bind_data.column_types[col_id]);
       }

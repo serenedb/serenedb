@@ -64,6 +64,7 @@
 #include "connector/duckdb_physical_update.h"
 #include "connector/duckdb_schema_entry.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/duckdb_table_function.h"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -1058,6 +1059,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         get.types.push_back(duckdb::LogicalType::BIGINT);
       }
     }
+    // Mark the scan as a CREATE INDEX backfill so InitCommonState relaxes
+    // the read-side check on sdb_indexonly columns (the inverted index may
+    // include them as indexed columns, and the backfill is the legitimate
+    // path that consumes their values).
+    SDB_ASSERT(get.bind_data,
+               "base-table LogicalGet missing SereneDB bind_data");
+    get.bind_data->Cast<SereneDBScanBindData>().is_create_index = true;
     create_index_info->names = get.names;
     create_index_info->schema = resolved_table->schema.name;
     create_index_info->catalog = resolved_table->catalog.GetName();

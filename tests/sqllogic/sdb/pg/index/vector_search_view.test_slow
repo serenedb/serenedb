@@ -35,8 +35,6 @@ statement ok
 INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
 
 
-# Text-side ground truths
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
 
@@ -120,17 +118,6 @@ statement ok
 SET sdb_ef_search TO 512;
 
 
-# =============================================================================
-# ANN over a parquet-backed view inverted index.
-#
-# Mirrors the recall tests above (same data, same query vector, same ground
-# truths in `correct`, `correct_filtered`, `correct_text_*`), but the source
-# is a single-file parquet read through a view instead of the base table.
-# Exercises the optimizer + IRESEARCH_ANN_SCAN path against
-# ViewFileSingleFileIndexSource for row materialisation.
-# =============================================================================
-
-# --- plain ANN top-k over a parquet view -------------------------------------
 
 statement ok
 COPY (SELECT id, emb FROM vecs)
@@ -147,7 +134,6 @@ CREATE INDEX vecs_pq_hnsw ON vecs_pq
 USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
 
 
-# Confirm the planner picks IRESEARCH_ANN_SCAN over the view-backed index.
 query
 EXPLAIN SELECT id FROM vecs_pq_hnsw ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 10;
 ----
@@ -174,8 +160,6 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct WHERE id IN (SELECT id FROM resu
 t
 
 
-# Filtered ANN over the view: residual scalar filter must materialise rows
-# from parquet via ViewFileSingleFileIndexSource.
 statement ok
 SET sdb_ef_search TO 2048;
 
@@ -211,8 +195,6 @@ statement ok
 SET sdb_ef_search TO 512;
 
 
-# --- hybrid: text filter + ANN over a parquet view --------------------------
-
 statement ok
 COPY (SELECT id, body, emb FROM vecs_text)
 TO '/tmp/${__DATABASE__}_vecs_text.parquet' (FORMAT PARQUET);
@@ -232,7 +214,6 @@ statement ok
 SET sdb_ef_search TO 4096;
 
 
-# Text filter (ts_phrase) + ANN
 query
 WITH
   result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_phrase('red') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
@@ -242,7 +223,6 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_phrase WHERE id IN (SELECT 
 t
 
 
-# Text filter (ts_any) + ANN
 query
 WITH
   result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
@@ -252,7 +232,6 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_any WHERE id IN (SELECT id 
 t
 
 
-# Text filter (ts_starts_with) + ANN
 query
 WITH
   result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_starts_with('gr') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
@@ -262,7 +241,6 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_starts WHERE id IN (SELECT 
 t
 
 
-# Text filter (ts_all) + ANN
 query
 WITH
   result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_all(['blue', 'cat']) ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
@@ -272,7 +250,6 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_all WHERE id IN (SELECT id 
 t
 
 
-# Hybrid: text filter + scalar (id) filter materialised from parquet + ANN
 query
 WITH
   result AS (SELECT id FROM vecs_text_pq_idx WHERE body @@ ts_any(['red', 'blue']) AND id > 10000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)

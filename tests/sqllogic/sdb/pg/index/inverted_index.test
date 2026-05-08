@@ -340,9 +340,9 @@ QUERY PLAN
 │   Table: biksalen_memes   │
 │                           │
 │        Projections:       │
-│             a             │
 │             b             │
 │             c             │
+│             a             │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -361,9 +361,9 @@ QUERY PLAN
 │   Table: biksalen_memes   │
 │                           │
 │        Projections:       │
-│             a             │
 │             b             │
 │             c             │
+│             a             │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -382,9 +382,9 @@ QUERY PLAN
 │   Table: biksalen_memes   │
 │                           │
 │        Projections:       │
-│             a             │
 │             b             │
 │             c             │
+│             a             │
 │                           │
 │          ~3 rows          │
 └───────────────────────────┘
@@ -428,9 +428,9 @@ EXPLAIN ANALYZE CREATE INDEX donsimon_idx ON biksalen_memes USING inverted(b tes
 │   Table: biksalen_memes   │
 │                           │
 │        Projections:       │
-│             a             │
 │             b             │
 │             c             │
+│             a             │
 │                           │
 │                           │
 │                           │

@@ -128,7 +128,10 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     }
     DuckDBColumnSerializer serializer{duckdb::Allocator::DefaultAllocator()};
     DuckDBColumnSerializer::TxnWriter writer{txn, _cf_handles.front()};
-    serializer.WriteColumn(writer, vec, type, num_rows, col_keys, {});
+    serializer.WriteColumn(
+      writer, vec, num_rows, col_keys, {},
+      ColumnDescriptor{col_id, catalog::ColumnStoreMode::kNormal, type,
+                       /*have_nulls=*/false});
   }
 
   // Read back `num_rows` rows of column `col_id` into a fresh Vector.

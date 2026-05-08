@@ -124,17 +124,21 @@ struct InsertColumnMeta {
   catalog::ColumnStoreMode store_mode;
 };
 
+// `chunk_columns` is the chunk-ordered list of columns the scan projects
+// (state->columns). For each indexed column, find its chunk position; the
+// secondary writer's BuildSK reads from chunk.data[input_col_idx].
 std::vector<duckdb_secondary_key::SKColumn> BuildSKColumnsForBackfill(
-  const catalog::Index& index, std::span<const catalog::Column> columns) {
+  const catalog::Index& index,
+  std::span<const InsertColumnMeta> chunk_columns) {
   std::vector<duckdb_secondary_key::SKColumn> result;
   result.reserve(index.GetColumnIds().size());
 
   for (auto col_id : index.GetColumnIds()) {
-    for (size_t i = 0; i < columns.size(); ++i) {
-      if (columns[i].id == col_id) {
+    for (size_t i = 0; i < chunk_columns.size(); ++i) {
+      if (chunk_columns[i].id == col_id) {
         result.push_back(duckdb_secondary_key::SKColumn{
           .input_col_idx = i,
-          .type = columns[i].type,
+          .type = chunk_columns[i].duckdb_type,
         });
         break;
       }
@@ -496,7 +500,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
     auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
-    auto sk_columns = BuildSKColumnsForBackfill(*index, columns);
+    auto sk_columns = BuildSKColumnsForBackfill(*index, state->columns);
     auto& trx = conn_ctx.EnsureRocksDBTransaction();
 
     if (sec_index.IsUnique()) {

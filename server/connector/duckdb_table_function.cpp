@@ -492,7 +492,7 @@ void SearchScan::AppendSummary(
   }
   if (score_top_k) {
     std::string topk_val = std::to_string(*score_top_k);
-    if (optimize_top_k) {
+    if (WandEnabled()) {
       absl::StrAppend(&topk_val, ", optimized");
     }
     out.insert("TopK", std::move(topk_val));

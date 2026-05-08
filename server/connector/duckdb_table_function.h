@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <__memory/shared_ptr.h>
+
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -130,11 +132,11 @@ struct SearchScan : ScanSource {
   std::optional<catalog::ScorerOptions> scorer;
   std::optional<size_t> score_top_k;
 
-  // Mirrors catalog::InvertedIndex::IsOptimizeTopK(). When true and the
-  // top-K path is in use, the runtime executes the iterator with
-  // WandContext{wand_enabled=true} and feeds the running heap minimum
-  // back to the iterator so wand-aware postings can skip blocks.
-  bool optimize_top_k = false;
+  // Catalog-side wand scorer carried verbatim from the InvertedIndex. WAND
+  // pruning is engaged at runtime iff this matches `scorer` -- iresearch's
+  // per-block max-impact data is only valid for the same scorer kind +
+  // params it was written with.
+  std::optional<catalog::ScorerOptions> wand_scorer;
 
   // Optional: positions/offsets output. Each entry records the catalog
   // column whose offsets will be emitted, and a per-doc limit on the
@@ -148,6 +150,7 @@ struct SearchScan : ScanSource {
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
+  bool WandEnabled() const { return wand_scorer && wand_scorer == scorer; }
 
   void AppendSummary(
     const SereneDBScanBindData& bind,

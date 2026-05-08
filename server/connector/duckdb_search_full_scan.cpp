@@ -401,6 +401,8 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       irs::ColumnArgsFetcher fetcher;
       uint32_t seg_idx = 0;
 
+      const bool wand_enabled = search.WandEnabled();
+
       for (size_t si = 0; si < reader.size(); ++si) {
         auto& segment = reader[si];
         fetcher.Clear();
@@ -408,7 +410,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         auto it = segment.mask(query.execute({
           .segment = segment,
           .scorer = gstate.scorer_obj.get(),
-          .wand = {.wand_enabled = search.optimize_top_k},
+          .wand = {.wand_enabled = wand_enabled},
         }));
         auto score_func = it->PrepareScore({
           .scorer = gstate.scorer_obj.get(),

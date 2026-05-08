@@ -229,6 +229,9 @@ struct VectorSearchScan : ScanSource {
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
+
+  std::unique_ptr<irs::Filter> stored_text_filter;
+  std::string text_filter_summary;
 };
 
 struct ANNScan : VectorSearchScan {

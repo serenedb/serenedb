@@ -433,6 +433,9 @@ void AppendVectorSearchSummary(
   const VectorSearchScan& scan,
   duckdb::InsertionOrderPreservingMap<std::string>& out) {
   out.insert("Dims", std::to_string(scan.query_vector.size()));
+  if (!scan.text_filter_summary.empty()) {
+    out.insert("TextFilter", scan.text_filter_summary);
+  }
   if (!scan.filter_expression) {
     return;
   }

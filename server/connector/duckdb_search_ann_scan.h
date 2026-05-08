@@ -25,6 +25,8 @@
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <iresearch/formats/column/hnsw_index.hpp>
+#include <iresearch/search/filter.hpp>
+#include <iresearch/search/proxy_filter.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -72,6 +74,7 @@ struct SearchAnnScanLocalState : public CommonScanLocalState {
   SearchAnnScanLocalState(float* dis_data, int64_t* ids_data, size_t size)
     : buffer{dis_data, ids_data, size} {}
   irs::HNSWSearchBuffer buffer;
+  irs::Filter::Query::ptr text_filter_query;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchAnnScanInitGlobal(
@@ -107,6 +110,7 @@ struct SearchRangeScanLocalState : public CommonScanLocalState {
   size_t current_idx = 0;
   irs::HNSWRangeSearchBuffer range_buffer;
   std::vector<uint32_t> lookup_scratch;
+  irs::Filter::Query::ptr text_filter_query;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchRangeScanInitGlobal(

@@ -24,8 +24,10 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <iresearch/search/filter.hpp>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include "connector/index_source.h"
 #include "connector/search_pk_lookup.h"
@@ -40,6 +42,17 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 
+class ScanFilter {
+ public:
+  virtual ~ScanFilter() = default;
+
+  virtual bool Accept(faiss::idx_t id) const = 0;
+
+  virtual int Cost() const = 0;
+
+  virtual void Reset(const irs::SubReader& segment) = 0;
+};
+
 struct ANNFilterContext {
   duckdb::ClientContext& context;
   duckdb::unique_ptr<duckdb::Expression> filter_expr;
@@ -52,26 +65,25 @@ struct ANNFilterContext {
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
-// faiss IDSelector: per HNSW candidate, materializes the row's filter
-// columns and evaluates the filter expressions to gate inclusion.
-class ANNFilter final : public faiss::IDSelector {
+// Row-by-row filter: per HNSW candidate, materializes the row's filter
+// columns and evaluates the filter expression. Expensive (RocksDB lookup
+// per candidate).
+class ANNFilter final : public ScanFilter {
  public:
-  ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
+  ANNFilter(const ANNFilterContext& ctx);
 
-  bool is_member(faiss::idx_t id) const final;
+  void Reset(const irs::SubReader& segment);
+  bool Accept(faiss::idx_t id) const final;
+  int Cost() const final { return 100; }
 
  private:
   const ANNFilterContext& _ctx;
-  const irs::SubReader& _segment;
   mutable duckdb::ExpressionExecutor _executor;
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
 
-  // Default-constructed to std::monostate; switched on first is_member call.
   mutable PrimaryKeyBatch _pk_batch;
-
   mutable std::shared_ptr<IndexSource> _index_source;
-
   mutable SegmentPkIterator _it;
 };
 
@@ -81,5 +93,33 @@ void InitAnnFilterContext(
   const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
   const rocksdb::Snapshot* rocks_snapshot,
   const SereneDBScanBindData& bind_data);
+
+class TextScanFilter final : public ScanFilter {
+ public:
+  TextScanFilter(const irs::Filter::Query& query);
+
+  bool Accept(faiss::idx_t id) const final;
+  int Cost() const final { return 1; }
+  void Reset(const irs::SubReader& segment);
+
+ private:
+  const irs::Filter::Query& _query;
+  mutable irs::DocIterator::ptr _it;
+};
+
+class CompositeScanFilter final : public faiss::IDSelector {
+ public:
+  CompositeScanFilter() = default;
+  explicit CompositeScanFilter(std::vector<std::unique_ptr<ScanFilter>> fs);
+
+  bool Empty() const { return _filters.empty(); }
+
+  bool is_member(faiss::idx_t id) const final;
+
+  void Reset(const irs::SubReader& reader);
+
+ private:
+  std::vector<std::unique_ptr<ScanFilter>> _filters;
+};
 
 }  // namespace sdb::connector

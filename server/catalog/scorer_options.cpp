@@ -25,10 +25,10 @@
 #include <absl/strings/str_join.h>
 
 #include <cmath>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
-#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -43,18 +43,11 @@
 namespace sdb::catalog {
 namespace {
 
-// ConstantBinder may wrap a literal in a BoundCastExpression for type
-// coercion (`1.2` parses as DECIMAL, gets cast to DOUBLE). Peek through
-// such casts; downstream `Value::GetValue<T>()` handles the conversion.
 const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
-  const auto* e = &expr;
-  while (e->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
-    e = e->Cast<duckdb::BoundCastExpression>().child.get();
-  }
-  if (e->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &e->Cast<duckdb::BoundConstantExpression>().value;
+  return &expr.Cast<duckdb::BoundConstantExpression>().value;
 }
 
 }  // namespace
@@ -265,8 +258,16 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
               "'"));
   }
 
-  auto extracted =
-    ExtractScorerFromBound(bound->Cast<BoundFunctionExpression>(), name);
+  auto& bound_fn = bound->Cast<BoundFunctionExpression>();
+  for (auto& child : bound_fn.children) {
+    if (child->expression_class != ExpressionClass::BOUND_CONSTANT &&
+        child->IsFoldable()) {
+      auto val = ExpressionExecutor::EvaluateScalar(context, *child);
+      child = make_uniq<BoundConstantExpression>(std::move(val));
+    }
+  }
+
+  auto extracted = ExtractScorerFromBound(bound_fn, name);
   if (!extracted) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

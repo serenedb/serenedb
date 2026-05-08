@@ -298,7 +298,9 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
   Writer& writer, std::string_view key,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
-  writer.Write(_row_slices, key);
+  if (!IsIndexOnly()) {
+    writer.Write(_row_slices, key);
+  }
   for (auto* iw : index_writers) {
     iw->Write(_row_slices, key);
   }
@@ -314,7 +316,9 @@ void DuckDBColumnSerializer::WriteConstantColumn(
       if (row_keys[row].empty()) {
         continue;
       }
-      writer.WriteNull(row_keys[row]);
+      if (!IsIndexOnly()) {
+        writer.WriteNull(row_keys[row]);
+      }
       for (auto* iw : index_writers) {
         iw->Write({}, row_keys[row]);
       }
@@ -357,7 +361,9 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   auto write_null = [&](duckdb::idx_t row) {
-    writer.WriteNull(row_keys[row]);
+    if (!IsIndexOnly()) {
+      writer.WriteNull(row_keys[row]);
+    }
     for (auto* iw : index_writers) {
       iw->Write({}, row_keys[row]);
     }
@@ -574,7 +580,9 @@ void DuckDBColumnSerializer::WriteFlatColumn(
       continue;
     }
     if (may_have_nulls && !validity.RowIsValid(row)) {
-      writer.WriteNull(row_keys[row]);
+      if (!IsIndexOnly()) {
+        writer.WriteNull(row_keys[row]);
+      }
       const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);
@@ -601,7 +609,9 @@ void DuckDBColumnSerializer::WriteComplexColumn(
     }
     auto idx = rdata.unified.sel->get_index(row);
     if (!rdata.unified.validity.RowIsValid(idx)) {
-      writer.WriteNull(row_keys[row]);
+      if (!IsIndexOnly()) {
+        writer.WriteNull(row_keys[row]);
+      }
       const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);

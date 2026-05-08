@@ -136,6 +136,13 @@ class DuckDBColumnSerializer {
  private:
   char* Allocate(size_t size);
 
+  // True when the current column should not be written through the main
+  // RocksDB writer (Txn/Sst); its values live only in the search/inverted
+  // index. Index writers are still driven so they can pick the value up.
+  bool IsIndexOnly() const noexcept {
+    return _current_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
+  }
+
   // Returns the bitmap size in bytes, or 0 if the validity mask is all-valid
   // (in which case nothing is emitted).
   size_t WriteNullBitmap(const duckdb::UnifiedVectorFormat& fmt,

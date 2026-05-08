@@ -43,9 +43,6 @@ SELECT a FROM indexonly_t2;
 a
 1
 
-statement ok
-DROP TABLE indexonly_t2;
-
 
 # Error: list references unknown column.
 statement error
@@ -75,3 +72,36 @@ CREATE TABLE indexonly_err3 (
 ) WITH (sdb_indexonly = [1, 2]);
 ----
 db error: ERROR: WITH option "sdb_indexonly" list element is not a column name
+
+
+# Secondary index over an IndexOnly column must be rejected -- the column's
+# values exist only inside inverted indexes, so a btree/secondary key over
+# them would have nothing to read. Reuses indexonly_t2 (b, c are IndexOnly).
+
+# Single-column secondary index on an IndexOnly column.
+statement error
+CREATE INDEX indexonly_t2_b ON indexonly_t2 (b);
+----
+db error: ERROR: Failed to create index: cannot include column "b" in a secondary index: column has sdb_indexonly storage and is only readable through an inverted index
+
+
+# Composite secondary index mixing a normal and an IndexOnly column.
+statement error
+CREATE INDEX indexonly_t2_ab ON indexonly_t2 (a, b);
+----
+db error: ERROR: Failed to create index: cannot include column "b" in a secondary index: column has sdb_indexonly storage and is only readable through an inverted index
+
+
+# UNIQUE secondary index over an IndexOnly column.
+statement error
+CREATE UNIQUE INDEX indexonly_t2_uniq_c ON indexonly_t2 (c);
+----
+db error: ERROR: Failed to create index: cannot include column "c" in a secondary index: column has sdb_indexonly storage and is only readable through an inverted index
+
+
+# Sanity: secondary index over the normal column is fine.
+statement ok
+CREATE INDEX indexonly_t2_a ON indexonly_t2 (a);
+
+statement ok
+DROP TABLE indexonly_t2;

@@ -20,50 +20,28 @@
 
 #include "catalog/database.h"
 
-#include <vpack/serializer.h>
-
-#include "basics/assert.h"
-#include "basics/static_strings.h"
-#include "catalog/table_options.h"
-#include "general_server/server_options_feature.h"
-
 namespace sdb::catalog {
 
-DatabaseOptions MakeDatabaseOptions(std::string_view name, ObjectId id) {
-  const auto& server_options = GetServerOptions();
-  return {
-    .name = std::string{name},
-    .replicationFactor = server_options.cluster_default_replication_factor,
-    .writeConcern = server_options.cluster_write_concern,
-  };
-}
-
-DatabaseOptions MakeSystemDatabaseOptions() {
-  return MakeDatabaseOptions(StaticStrings::kDefaultDatabase, id::kSystemDB);
-}
+Database::Database(ObjectId id, std::string_view name)
+  : Object{{}, id, std::string{name}, ObjectType::Database} {}
 
 std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
                                                  ReadContext ctx) {
-  DatabaseOptions options;
-  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+  auto name_slice = slice.get("name");
+  if (!name_slice.isString()) {
     return nullptr;
   }
-  return std::make_shared<Database>(ctx.id, std::move(options));
+  return std::make_shared<Database>(ctx.id, name_slice.stringView());
 }
 
 void Database::WriteInternal(vpack::Builder& b) const {
-  const DatabaseOptions options{
-    .name = _name,
-    .replicationFactor = _replication_factor,
-    .writeConcern = _write_concern,
-  };
-  vpack::WriteTuple(b, options);
+  b.openObject();
+  WriteObject(b, [](vpack::Builder&) {});
+  b.close();
 }
 
 std::shared_ptr<Object> Database::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {.id = GetId()});
+  return std::make_shared<Database>(GetId(), GetName());
 }
 
 }  // namespace sdb::catalog

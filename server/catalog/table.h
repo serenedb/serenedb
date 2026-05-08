@@ -23,39 +23,18 @@
 
 #include <vpack/slice.h>
 
-#include <duckdb/common/types.hpp>
-
-#include "catalog/identifiers/identifier.h"
-#include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "catalog/table_options.h"
-#include "catalog/types.h"
-#include "general_server/state.h"
 
-namespace sdb {
-
-// Read from storage engine if unknown
-static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
-
-}  // namespace sdb
 namespace sdb::catalog {
 
 class Sequence;
 
-struct NewOptions {
-  std::string_view name;
-  uint32_t number_of_shards = 1;
-  uint32_t replication_factor = 1;
-  uint32_t write_concern = 1;
-  bool wait_for_sync = false;
-};
-
-NewOptions ParseTableChange(vpack::Slice slice);
-
-class Table : public SchemaObject {
+class Table final : public SchemaObject {
  public:
-  Table(TableOptions&& options, ObjectId database_id);
-  Table(const catalog::Table& other, NewOptions options);
+  Table(ObjectId database_id, ObjectId id, std::string_view name,
+        std::vector<Column> columns, std::vector<Column::Id> pk_columns,
+        std::vector<CheckConstraint> check_constraints);
 
   static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
                                              ReadContext ctx);
@@ -65,29 +44,6 @@ class Table : public SchemaObject {
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
-  auto GetTableType() const noexcept { return _type; }
-  auto& sharding(this auto& self) noexcept { return self._sharding; }
-  bool waitForSync() const noexcept { return _wait_for_sync; }
-  auto& keyGenerator() const noexcept {
-    SDB_ASSERT(_key_generator);
-    return *_key_generator;
-  }
-  auto from() const noexcept { return _from; }
-  auto to() const noexcept { return _to; }
-  auto planId() const noexcept { return _plan_id; }
-  auto planDb() const noexcept { return _plan_db; }
-  auto numberOfShards() const noexcept { return _number_of_shards; }
-  auto replicationFactor() const noexcept { return _replication_factor; }
-  auto writeConcern() const noexcept { return _write_concern; }
-  auto& shardKeys() const noexcept { return _shard_keys; }
-  auto& distributeShardsLike() const noexcept {
-    return _distribute_shards_like;
-  }
-  auto& shardIds() const noexcept { return _shard_ids; }
-  auto& shardingStrategy() const noexcept {
-    SDB_ASSERT(_sharding_strategy);
-    return *_sharding_strategy;
-  }
 
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
@@ -101,74 +57,10 @@ class Table : public SchemaObject {
     return _generated_pk_sequence;
   }
 
-#ifdef SDB_GTEST
-  // TODO(gnusi): remove
-  void setShardMap(std::shared_ptr<ShardMap> map) {
-    SDB_ASSERT(map);
-    _shard_ids = std::move(map);
-    _number_of_shards = _shard_ids->size();
-  }
-#endif
-
-  const auto& PKType() const noexcept { return _lookup_cache.pk_type; }
-  const auto& RowType() const noexcept { return _lookup_cache.row_type; }
-
-  using NameToColumnMap =
-    containers::FlatHashMap<std::string_view, const catalog::Column*>;
-
-  const auto& NameToColumn() const noexcept {
-    return _lookup_cache.name2column;
-  }
-
-  using IdToColumnMap =
-    containers::FlatHashMap<catalog::Column::Id, const catalog::Column*>;
-
-  const auto& IdToColumn() const noexcept { return _lookup_cache.id2column; }
-
-  duckdb::LogicalType MakeTypeFromColIds(
-    std::span<const catalog::Column::Id> ids) const;
-
  private:
-  NewOptions MakeNewOptions() const;
-
-  struct TableOutput;
-  TableOutput MakeTableOptions() const;
-
-  struct LookupCache {
-    LookupCache(std::span<const catalog::Column> columns,
-                std::span<const catalog::Column::Id> pk_columns);
-
-    duckdb::LogicalType MakeTypeFromColIds(
-      std::span<const catalog::Column::Id> ids) const;
-
-    NameToColumnMap name2column;
-    IdToColumnMap id2column;
-    duckdb::LogicalType pk_type;
-    duckdb::LogicalType row_type;
-  };
-
-  const TableType _type = TableType::Unknown;
-  bool _wait_for_sync = false;
-  std::vector<std::string> _shard_keys;
   std::vector<Column> _columns;
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;
-  const ObjectId _plan_id;
-  const ObjectId _plan_db;
-  ObjectId _distribute_shards_like;
-  ObjectId _from;
-  ObjectId _to;
-  std::shared_ptr<KeyGenerator> _key_generator;
-  std::shared_ptr<ShardingStrategy> _sharding_strategy;
-  // name of other table this table's shards should be distributed like
-  std::shared_ptr<ShardMap> _shard_ids = std::make_shared<ShardMap>();
-  uint32_t _number_of_shards = 1;
-  uint32_t _replication_factor = 1;
-  // writes will be disallowed if we know we cannot fulfill it.
-  // _write_concern <= _replication_factor
-  uint32_t _write_concern = 1;
-
-  LookupCache _lookup_cache;
 
   std::shared_ptr<Sequence> _generated_pk_sequence;
 };

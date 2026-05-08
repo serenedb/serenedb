@@ -46,9 +46,7 @@ struct SequenceOptions {
   int64_t cache_size = 1;
   bool cycle = false;
 
-  uint64_t Seed() const noexcept {
-    return static_cast<uint64_t>(start_value - increment);
-  }
+  uint64_t Seed() const noexcept { return start_value - increment; }
 };
 
 class Table;
@@ -58,7 +56,8 @@ class Sequence final : public SchemaObject {
 
  public:
   Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
-           std::string_view name, SequenceOptions opts);
+           std::string_view name, SequenceOptions opts,
+           ObjectId owner_table_id = ObjectId{});
 
   ~Sequence() = default;
 
@@ -69,7 +68,11 @@ class Sequence final : public SchemaObject {
   std::shared_ptr<Object> Clone() const final;
 
   const SequenceOptions& Options() const noexcept { return _options; }
-  SequenceOptions& MutableOptions() noexcept { return _options; }
+
+  // Set when this sequence was implicitly created by a SERIAL column. Used
+  // by the catalog to wire it into TableDependency::owned_sequences for
+  // PG OWNED BY cascade.
+  ObjectId GetOwnerTableId() const noexcept { return _owner_table_id; }
 
   // Hand out [base, base+count-1]; returns base. Persists via Merge before
   // returning, so a crash burns the range but never reuses it.
@@ -90,6 +93,7 @@ class Sequence final : public SchemaObject {
   // does not touch this -- the auto-PK path is not exposed to setval.
   mutable absl::Mutex _setval_mu;
   SequenceOptions _options;
+  ObjectId _owner_table_id;
 
   uint64_t LoadFromDb() const;
 };

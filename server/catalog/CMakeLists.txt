@@ -10,7 +10,6 @@ target_sources(
         catalog.cpp
         object.cpp
         table_options.cpp
-        key_generator.cpp
         search_analyzer_impl.cpp
         table.cpp
         index.cpp
@@ -18,8 +17,6 @@ target_sources(
         sequence.cpp
         function.cpp
         user_type.cpp
-        sharding_strategy.cpp
-        replication_common.cpp
         role.cpp
         secondary_index.cpp
         identity_analyzer.cpp

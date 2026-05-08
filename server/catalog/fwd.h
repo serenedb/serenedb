@@ -35,7 +35,6 @@ class Schema;
 class Database;
 struct FunctionSignature;
 struct CreateTableOptions;
-struct CreateTableRequest;
 class VirtualTable;
 class VirtualTableSnapshot;
 
@@ -45,7 +44,6 @@ namespace sdb {
 class TableShard;
 class KeyGenerator;
 struct ShardingStrategy;
-struct TableOptions;
 class ObjectId;
 
 }  // namespace sdb

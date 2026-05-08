@@ -217,9 +217,6 @@ class SchemaObject : public DatabaseObject {
  public:
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
 
-  // TODO(gnusi): remove it after schema management is done
-  void SetSchemaId(ObjectId schema_id) noexcept { _schema_id = schema_id; }
-
   bool Tombstoned() const noexcept {
     return _tombstoned.load(std::memory_order_acquire);
   }

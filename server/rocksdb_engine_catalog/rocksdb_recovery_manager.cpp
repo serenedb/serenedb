@@ -44,7 +44,6 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/key_generator.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
 #include "general_server/scheduler_feature.h"

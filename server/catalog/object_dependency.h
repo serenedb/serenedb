@@ -41,6 +41,7 @@ struct RelationDependency : ObjectDependencyBase {
 
 struct TableDependency : RelationDependency {
   ObjectId shard_id;
+  containers::FlatHashSet<ObjectId> owned_sequences;
   std::shared_ptr<ObjectDependencyBase> Clone() const final {
     return std::make_shared<TableDependency>(*this);
   }

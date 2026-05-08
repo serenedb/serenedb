@@ -20,47 +20,18 @@
 
 #pragma once
 
-#include <absl/base/thread_annotations.h>
-#include <absl/synchronization/mutex.h>
-
-#include <cstdint>
-
 #include "catalog/object.h"
 
 namespace sdb::catalog {
 
-// NOLINTBEGIN
-struct DatabaseOptions {
-  std::string name;  // TODO(gnusi): change to std::string_view
-  ObjectId owner_id;
-  uint32_t replicationFactor = 1;  // 0 for redundant
-  uint32_t writeConcern = 1;
-};
-// NOLINTEND
-
-DatabaseOptions MakeDatabaseOptions(std::string_view name = {},
-                                    ObjectId id = {});
-DatabaseOptions MakeSystemDatabaseOptions();
-
 class Database final : public Object {
  public:
-  explicit Database(ObjectId id, DatabaseOptions options)
-    : Object{options.owner_id, id, std::move(options.name),
-             ObjectType::Database},
-      _replication_factor{options.replicationFactor},
-      _write_concern{options.writeConcern} {}
+  Database(ObjectId id, std::string_view name);
 
   static std::shared_ptr<Database> ReadInternal(vpack::Slice slice,
                                                 ReadContext ctx);
   void WriteInternal(vpack::Builder&) const final;
   std::shared_ptr<Object> Clone() const final;
-
-  auto GetReplicationFactor() const noexcept { return _replication_factor; }
-  auto GetWriteConcern() const noexcept { return _write_concern; }
-
- private:
-  uint32_t _replication_factor;
-  uint32_t _write_concern;
 };
 
 }  // namespace sdb::catalog

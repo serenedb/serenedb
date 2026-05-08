@@ -57,8 +57,7 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
       kSereneDBClientStateKey);
     const auto& exec_ctx =
       state ? state->GetConnectionContext() : ExecContext::superuser();
-    auto r =
-      catalog::CreateDatabase(exec_ctx, catalog::DatabaseOptions{.name = name});
+    auto r = catalog::CreateDatabase(exec_ctx, name);
     if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
       if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),

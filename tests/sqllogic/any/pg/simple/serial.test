@@ -43,6 +43,8 @@ statement ok
 DROP TABLE vedernikoff;
 
 
+# PG OWNED BY: DROP TABLE drops the implicit sequence too, so the next
+# CREATE TABLE starts fresh from id=1 instead of resuming at id=6.
 statement ok
 CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
 
@@ -55,15 +57,21 @@ query
 SELECT id, hero FROM vedernikoff;
 ----
 id	hero
-6	mop_offer_letter_arrived
+1	mop_offer_letter_arrived
+
+
+# Sequence was dropped together with the table; explicit DROP SEQUENCE
+# would fail without IF EXISTS.
+statement error
+DROP SEQUENCE vedernikoff_id_seq;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS vedernikoff_id_seq;
 
 
 statement ok
 DROP TABLE vedernikoff;
-
-
-statement ok
-DROP SEQUENCE vedernikoff_id_seq;
 
 
 statement ok
@@ -282,6 +290,8 @@ statement count 1
 INSERT INTO myasnig (hero) VALUES ('mop_take_home_assignment');
 
 
+# Explicitly dropping the implicit sequence breaks the table's nextval
+# default; subsequent INSERT errors out.
 statement ok
 DROP SEQUENCE myasnig_id_seq;
 
@@ -313,6 +323,8 @@ id	hero
 100	mop_round2_scheduled
 
 
+# myasnig_id_seq was created explicitly (no OWNED BY), so DROP TABLE leaves
+# it alone -- still has to be cleaned up by hand.
 statement ok
 DROP TABLE myasnig;
 
@@ -321,12 +333,16 @@ statement ok
 DROP SEQUENCE myasnig_id_seq;
 
 
+# OWNED BY cascade (the SERIAL way): DROP TABLE wipes the implicit sequence
+# so the second CREATE TABLE starts at id=1, not where the previous one left
+# off. Vedernikoff stops touching iceberg pipelines and starts MOP onboarding.
 statement ok
-CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, x INT);
+CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, hero TEXT);
 
 
-statement count 1
-INSERT INTO bbbsky (x) VALUES (1);
+statement count 2
+INSERT INTO bbbsky (hero) VALUES
+  ('iceberg_pager_keeps_firing'), ('declines_iceberg_oncall_rotation');
 
 
 statement ok
@@ -334,23 +350,176 @@ DROP TABLE bbbsky;
 
 
 statement ok
-CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, x INT);
+CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, hero TEXT);
 
 
 statement count 1
-INSERT INTO bbbsky (x) VALUES (2);
+INSERT INTO bbbsky (hero) VALUES ('mop_first_day_swag');
 
 
 query
-SELECT id, x FROM bbbsky;
+SELECT id, hero FROM bbbsky;
 ----
-id	x
-2	2
+id	hero
+1	mop_first_day_swag
 
 
+# DROP TABLE alone is enough now -- the SERIAL sequence dies with it.
 statement ok
 DROP TABLE bbbsky;
 
 
-statement ok
+statement error
 DROP SEQUENCE bbbsky_id_seq;
+
+
+# Name mangling: a pre-existing sequence with the SERIAL's natural name
+# pushes the implicit one to a `_seq1` suffix instead of failing.
+statement ok
+CREATE SEQUENCE clickclack_id_seq START WITH 1000;
+
+
+statement ok
+CREATE TABLE clickclack (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO clickclack (hero) VALUES ('two_weeks_notice_drafted');
+
+
+# Mangled sequence (clickclack_id_seq1) starts at 1, not 1000.
+query
+SELECT id, hero FROM clickclack;
+----
+id	hero
+1	two_weeks_notice_drafted
+
+
+# Pre-existing sequence is still around with its own counter.
+query
+SELECT nextval('clickclack_id_seq');
+----
+nextval
+1000
+
+
+# DROP TABLE drops only the OWNED BY sequence (clickclack_id_seq1), the
+# pre-existing clickclack_id_seq survives.
+statement ok
+DROP TABLE clickclack;
+
+
+statement error
+DROP SEQUENCE clickclack_id_seq1;
+
+
+statement ok
+DROP SEQUENCE clickclack_id_seq;
+
+
+# Counter cleanup: a sequence dropped via DROP SEQUENCE doesn't leave its
+# counter behind. Re-creating with the same name starts from start_value.
+statement ok
+CREATE SEQUENCE mop_offer_seq START WITH 50;
+
+
+query
+SELECT nextval('mop_offer_seq'), nextval('mop_offer_seq');
+----
+nextval	nextval
+50	51
+
+
+statement ok
+DROP SEQUENCE mop_offer_seq;
+
+
+statement ok
+CREATE SEQUENCE mop_offer_seq START WITH 50;
+
+
+# Fresh counter -- not 52.
+query
+SELECT nextval('mop_offer_seq');
+----
+nextval
+50
+
+
+statement ok
+DROP SEQUENCE mop_offer_seq;
+
+
+# Same cleanup must hold for owned (SERIAL) sequences: drop the table, the
+# counter goes too, and the next CREATE TABLE doesn't inherit it.
+statement ok
+CREATE TABLE quitclickclack (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 3
+INSERT INTO quitclickclack (hero) VALUES
+  ('iceberg_partition_review_postponed'),
+  ('mop_relocation_package_signed'),
+  ('clickclack_exit_interview_scheduled');
+
+
+query
+SELECT max(id) FROM quitclickclack;
+----
+max
+3
+
+
+statement ok
+DROP TABLE quitclickclack;
+
+
+statement ok
+CREATE TABLE quitclickclack (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO quitclickclack (hero) VALUES ('mop_first_paycheck');
+
+
+query
+SELECT id, hero FROM quitclickclack;
+----
+id	hero
+1	mop_first_paycheck
+
+
+statement ok
+DROP TABLE quitclickclack;
+
+
+# Multiple SERIAL columns: each gets its own owned sequence and both die
+# with the table.
+statement ok
+CREATE TABLE goodbyeclickclack (
+  id SERIAL PRIMARY KEY, ticket_no SERIAL, summary TEXT);
+
+
+statement count 2
+INSERT INTO goodbyeclickclack (summary) VALUES
+  ('cancelled_iceberg_oncall_subscription'), ('mop_badge_arrived');
+
+
+query
+SELECT id, ticket_no, summary FROM goodbyeclickclack ORDER BY id;
+----
+id	ticket_no	summary
+1	1	cancelled_iceberg_oncall_subscription
+2	2	mop_badge_arrived
+
+
+statement ok
+DROP TABLE goodbyeclickclack;
+
+
+statement error
+DROP SEQUENCE goodbyeclickclack_id_seq;
+
+
+statement error
+DROP SEQUENCE goodbyeclickclack_ticket_no_seq;

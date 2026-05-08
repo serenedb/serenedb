@@ -53,7 +53,7 @@ class SnapshotImpl;
 class LocalCatalog final : public LogicalCatalog,
                            public std::enable_shared_from_this<LocalCatalog> {
  public:
-  explicit LocalCatalog(bool skip_background_errors);
+  explicit LocalCatalog();
 
   Result RegisterRole(std::shared_ptr<Role> role) final;
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
@@ -148,10 +148,6 @@ class LocalCatalog final : public LogicalCatalog,
 
   std::shared_ptr<const Snapshot> GetCatalogSnapshot() const noexcept final;
 
-  bool GetSkipBackgroundErrors() const noexcept {
-    return _skip_background_errors;
-  }
-
  private:
   Result CreateIndexImpl(std::string_view schema, std::shared_ptr<Index> index,
                          IndexShardOptions& shard_options,
@@ -164,7 +160,6 @@ class LocalCatalog final : public LogicalCatalog,
   mutable absl::Mutex _mutex;
   std::shared_ptr<const SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
-  bool _skip_background_errors;
 };
 
 }  // namespace sdb::catalog

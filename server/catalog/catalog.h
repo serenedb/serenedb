@@ -66,8 +66,6 @@ class SecondaryIndex;
 class InvertedIndex;
 
 struct CreateTableOperationOptions {
-  bool wait_for_sync_replication = false;
-  bool enforce_replication_factor = false;
   bool create_with_tombstone = false;
 };
 

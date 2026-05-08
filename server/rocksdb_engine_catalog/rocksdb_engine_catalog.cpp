@@ -116,7 +116,6 @@
 #include "rocksdb_engine_catalog/rocksdb_sync_thread.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "rocksdb_engine_catalog/rocksdb_wal_access.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
@@ -364,7 +363,6 @@ RocksDBEngineCatalog::RocksDBEngineCatalog(
   metrics::MetricsFeature& metrics)
   : _options_provider(options_provider),
     _metrics(metrics),
-    _wal_access(std::make_unique<RocksDBWalAccess>(*this)),
     _metrics_index_estimator_memory_usage(
       metrics.add(serenedb_index_estimates_memory_usage{})),
     _metrics_wal_released_tick_flush(
@@ -1246,26 +1244,21 @@ void RocksDBEngineCatalog::pruneWalFiles() {
 
 void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
-  std::ignore = VisitDefinitions(
-    id::kInstance, catalog::ObjectType::Database,
-    [&](DefinitionKey key, vpack::Slice result) -> Result {
-      catalog::DatabaseOptions options;
-
-      if (auto r = vpack::ReadTupleNothrow(result, options); r.ok()) {
-        has_system = key.GetObjectId() == id::kSystemDB;
-      }
-
-      return {ERROR_INTERNAL};  // stop iteration
-    });
+  std::ignore =
+    VisitDefinitions(id::kInstance, catalog::ObjectType::Database,
+                     [&](DefinitionKey key, vpack::Slice) -> Result {
+                       has_system = key.GetObjectId() == id::kSystemDB;
+                       return {ERROR_INTERNAL};  // stop iteration
+                     });
 
   if (has_system) {
     SDB_TRACE("xxxxx", Logger::STARTUP, "Found system database");
     return;
   }
 
-  const auto database = catalog::MakeSystemDatabaseOptions();
+  catalog::Database database{id::kSystemDB, StaticStrings::kDefaultDatabase};
   vpack::Builder builder;
-  vpack::WriteTuple(builder, database);
+  database.WriteInternal(builder);
   auto r =
     CreateDefinition(id::kInstance, catalog::ObjectType::Database,
                      id::kSystemDB, [&](bool) { return builder.slice(); });
@@ -1299,33 +1292,38 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
     [&] { return properties(true); }, [] { return std::string_view{}; });
 }
 
-Result RocksDBEngineCatalog::CreateSequenceDefinition(
-  ObjectId parent_id, ObjectId id, WriteProperties properties,
-  uint64_t initial_counter) {
-  rocksdb::WriteBatch batch;
+void RocksDBEngineCatalog::CatalogWriteContext::PutDefinition(
+  ObjectId parent_id, catalog::ObjectType type, ObjectId id, vpack::Slice def) {
+  RocksDBKeyWithBuffer<DefinitionKey> key{parent_id, type, id};
+  // rocksdb::WriteBatch::Put copies key/value bytes into its internal buffer,
+  // so the local key buffer + caller's slice may go out of scope after.
+  _batch.Put(RocksDBColumnFamilyManager::get(
+               RocksDBColumnFamilyManager::Family::Definitions),
+             key.GetBuffer(),
+             std::string_view{reinterpret_cast<const char*>(def.start()),
+                              def.byteSize()});
+}
 
-  // Catalog definition row.
-  RocksDBKeyWithBuffer<DefinitionKey> def_key{
-    parent_id, catalog::ObjectType::Sequence, id};
-  auto def_value = properties(true);
-  std::string def_value_str{reinterpret_cast<const char*>(def_value.start()),
-                            def_value.byteSize()};
-  batch.Put(RocksDBColumnFamilyManager::get(
-              RocksDBColumnFamilyManager::Family::Definitions),
-            def_key.GetBuffer(), def_value_str);
-
-  std::string counter_key;
-  rocksutils::Uint64ToPersistent(counter_key, id.id());
-  uint64_t encoded = initial_counter;
+void RocksDBEngineCatalog::CatalogWriteContext::PutSequence(
+  ObjectId sequence_id, uint64_t value) {
+  std::string key;
+  rocksutils::Uint64ToPersistent(key, sequence_id.id());
+  uint64_t encoded = value;
   if constexpr (std::endian::native == std::endian::big) {
     encoded = std::byteswap(encoded);
   }
-  rocksdb::Slice counter_value{reinterpret_cast<const char*>(&encoded),
-                               sizeof(encoded)};
-  batch.Put(RocksDBColumnFamilyManager::get(
-              RocksDBColumnFamilyManager::Family::Sequences),
-            counter_key, counter_value);
+  _batch.Put(
+    RocksDBColumnFamilyManager::get(
+      RocksDBColumnFamilyManager::Family::Sequences),
+    key,
+    rocksdb::Slice{reinterpret_cast<const char*>(&encoded), sizeof(encoded)});
+}
 
+Result RocksDBEngineCatalog::Write(
+  absl::FunctionRef<void(CatalogWriteContext&)> fill) {
+  rocksdb::WriteBatch batch;
+  CatalogWriteContext ctx{batch};
+  fill(ctx);
   rocksdb::WriteOptions wo;
   return rocksutils::ConvertStatus(_db->GetRootDB()->Write(wo, &batch));
 }
@@ -1337,6 +1335,15 @@ Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
     _db->GetRootDB(),
     [&] { return RocksDBKeyWithBuffer<DefinitionKey>{parent_id, type, id}; },
     [] { return std::string_view{}; });
+}
+
+Result RocksDBEngineCatalog::DropSequence(ObjectId sequence_id) {
+  std::string key;
+  rocksutils::Uint64ToPersistent(key, sequence_id.id());
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Sequences);
+  return rocksutils::ConvertStatus(
+    _db->GetRootDB()->Delete(rocksdb::WriteOptions{}, cf, key));
 }
 
 Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
@@ -1760,63 +1767,6 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   builder.add("rocksdb.wal-sequence", sequence_number);
 
   builder.close();
-}
-
-Result RocksDBEngineCatalog::createTickRanges(vpack::Builder& builder) {
-  rocksdb::VectorLogPtr wal_files;
-  rocksdb::Status s = _db->GetSortedWalFiles(wal_files);
-
-  Result res = rocksutils::ConvertStatus(s);
-  if (res.fail()) {
-    return res;
-  }
-
-  builder.openArray();
-  for (auto lfile = wal_files.begin(); lfile != wal_files.end(); ++lfile) {
-    auto& logfile = *lfile;
-    builder.openObject();
-    // filename and state are already of type string
-    builder.add("datafile", logfile->PathName());
-    if (logfile->Type() == rocksdb::WalFileType::kAliveLogFile) {
-      builder.add("status", "open");
-    } else if (logfile->Type() == rocksdb::WalFileType::kArchivedLogFile) {
-      builder.add("status", "collected");
-    }
-    rocksdb::SequenceNumber min = logfile->StartSequence();
-    builder.add("tickMin", std::to_string(min));
-    rocksdb::SequenceNumber max;
-    if (std::next(lfile) != wal_files.end()) {
-      max = (*std::next(lfile))->StartSequence();
-    } else {
-      max = _db->GetLatestSequenceNumber();
-    }
-    builder.add("tickMax", std::to_string(max));
-    builder.close();
-  }
-  builder.close();
-
-  return {};
-}
-
-Result RocksDBEngineCatalog::firstTick(uint64_t& tick) {
-  rocksdb::VectorLogPtr wal_files;
-  rocksdb::Status s = _db->GetSortedWalFiles(wal_files);
-
-  Result res;
-  if (!s.ok()) {
-    res = rocksutils::ConvertStatus(s);
-  } else {
-    // read minium possible tick
-    if (!wal_files.empty()) {
-      tick = wal_files[0]->StartSequence();
-    }
-  }
-  return res;
-}
-
-const WalAccess* RocksDBEngineCatalog::walAccess() const {
-  SDB_ASSERT(_wal_access);
-  return _wal_access.get();
 }
 
 /// get compression supported by RocksDB

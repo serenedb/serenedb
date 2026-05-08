@@ -27,7 +27,7 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
-#include "catalog/identifiers/revision_id.h"
+#include "catalog/object.h"
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
@@ -87,7 +87,7 @@ void SereneDBPhysicalSSTInsert::SetupSSTState(SSTInsertGlobalState& state,
 
   // Create SST directory
   state.sst_directory = absl::StrCat(engine.path(), "/", kBulkInsertDir, "/",
-                                     RevisionId::create().id());
+                                     catalog::NextId().id());
   std::filesystem::create_directories(state.sst_directory);
 
   // Configure SstFileWriter options

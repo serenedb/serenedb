@@ -5,6 +5,5 @@ target_sources(
         health_data.cpp
         table_shard.cpp
         index_shard.cpp
-        wal_access.cpp
         search_engine.cpp
 )

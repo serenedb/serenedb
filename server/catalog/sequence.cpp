@@ -77,10 +77,12 @@ rocksdb::ColumnFamilyHandle* CounterCF() {
 }  // namespace
 
 Sequence::Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
-                   std::string_view name, SequenceOptions opts)
+                   std::string_view name, SequenceOptions opts,
+                   ObjectId owner_table_id)
   : SchemaObject{{}, database_id,       schema_id,
                  id, std::string{name}, ObjectType::Sequence},
-    _options{opts} {
+    _options{opts},
+    _owner_table_id{owner_table_id} {
   _live.store(_options.Seed(), std::memory_order_release);
 }
 
@@ -98,9 +100,11 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
     slice, "max", std::numeric_limits<int64_t>::max());
   opts.cache_size = basics::VPackHelper::getNumber<int64_t>(slice, "cache", 1);
   opts.cycle = basics::VPackHelper::getBool(slice, "cycle", false);
+  ObjectId owner_table_id{
+    basics::VPackHelper::getNumber<uint64_t>(slice, "owner_table_id", 0)};
 
   auto seq = std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
-                                        name, opts);
+                                        name, opts, owner_table_id);
   seq->_live.store(seq->LoadFromDb(), std::memory_order_release);
   return seq;
 }
@@ -114,12 +118,15 @@ void Sequence::WriteInternal(vpack::Builder& builder) const {
   builder.add("max", _options.max_value);
   builder.add("cache", _options.cache_size);
   builder.add("cycle", _options.cycle);
+  if (_owner_table_id.isSet()) {
+    builder.add("owner_table_id", _owner_table_id.id());
+  }
   builder.close();
 }
 
 std::shared_ptr<Object> Sequence::Clone() const {
   return std::make_shared<Sequence>(GetDatabaseId(), GetSchemaId(), GetId(),
-                                    GetName(), _options);
+                                    GetName(), _options, _owner_table_id);
 }
 
 uint64_t Sequence::LoadFromDb() const {

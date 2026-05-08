@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
@@ -31,6 +32,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -44,6 +47,7 @@
 #include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
+#include "app/name_validator.h"
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
@@ -87,6 +91,7 @@
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/sql_utils.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -184,9 +189,12 @@ class SnapshotImpl : public Snapshot {
                                             index, is_root);
                    }) |
                    std::ranges::to<std::vector>();
+    auto owned_sequences =
+      table_deps->owned_sequences | std::ranges::to<std::vector>();
 
     return std::make_shared<TableDrop>(table, shard, std::move(indexes),
-                                       schema_id, is_root);
+                                       std::move(owned_sequences), schema_id,
+                                       is_root);
   }
 
   std::shared_ptr<IndexDrop> CreateIndexDrop(
@@ -382,6 +390,11 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::Sequence: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->sequences.insert(object->GetId());
+        const auto& seq = basics::downCast<Sequence>(*object);
+        if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
+          auto table_deps = GetDependencyForWrite<TableDependency>(owner);
+          table_deps->owned_sequences.insert(object->GetId());
+        }
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
@@ -941,6 +954,12 @@ class SnapshotImpl : public Snapshot {
           auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
           SDB_ASSERT(schema_deps);
           schema_deps->sequences.erase(id);
+          const auto& seq = basics::downCast<Sequence>(*obj);
+          if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
+            auto table_deps = GetDependencyForWrite<TableDependency>(owner);
+            SDB_ASSERT(table_deps);
+            table_deps->owned_sequences.erase(id);
+          }
         } break;
         default:
           SDB_UNREACHABLE();
@@ -970,6 +989,17 @@ class SnapshotImpl : public Snapshot {
             basics::downCast<TableDependency>(*relation_deps);
           if (table_deps.shard_id.isSet()) {
             RemoveObjectDefinition(id, table_deps.shard_id);
+          }
+          // Owned SERIAL sequences live in schema scope -- same parent_id
+          // as the table being dropped.
+          auto owned_sequences = table_deps.owned_sequences;
+          for (auto seq_id : owned_sequences) {
+            if (root) {
+              auto seq = GetObject<Sequence>(seq_id);
+              UnregisterObject(seq, parent_id, false);
+            } else {
+              RemoveObjectDefinition(parent_id, seq_id);
+            }
           }
         }
         // TODO(codeworse): Avoid copy, maybe erase_if?
@@ -1059,10 +1089,8 @@ class SnapshotImpl : public Snapshot {
   mutable connector::DuckDBEntryCache _duckdb_cache;
 };
 
-LocalCatalog::LocalCatalog(bool skip_background_errors)
-  : _snapshot(std::make_shared<SnapshotImpl>()),
-    _engine{&GetServerEngine()},
-    _skip_background_errors{skip_background_errors} {}
+LocalCatalog::LocalCatalog()
+  : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetServerEngine()} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
   SDB_INFO("xxxxx", Logger::FIXME, "Register role ", role->GetName());
@@ -1473,16 +1501,6 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
                                     std::string_view schema,
                                     std::shared_ptr<Sequence> sequence,
                                     bool if_not_exists) {
-  if (sequence->Options().increment <= 0) {
-    return {ERROR_BAD_PARAMETER,
-            "sequence INCREMENT must be positive (negative increments not yet "
-            "supported)"};
-  }
-  if (sequence->Options().start_value < sequence->Options().min_value ||
-      sequence->Options().start_value > sequence->Options().max_value) {
-    return {ERROR_BAD_PARAMETER, "sequence START is out of range [MIN, MAX]"};
-  }
-
   absl::MutexLock lock{&_mutex};
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1496,7 +1514,6 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
     }
     return {ERROR_SERVER_DUPLICATE_NAME};
   }
-  sequence->SetSchemaId(*schema_id);
 
   return Apply(
     _snapshot,
@@ -1506,11 +1523,13 @@ Result LocalCatalog::CreateSequence(ObjectId database_id,
         return r;
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
-      vpack::Builder b;
-      sequence->WriteInternal(b);
-      return _engine->CreateSequenceDefinition(
-        *schema_id, sequence->GetId(), [&](bool) { return b.slice(); },
-        sequence->Options().Seed());
+      return _engine->Write([&](auto& ctx) {
+        vpack::Builder b;
+        sequence->WriteInternal(b);
+        ctx.PutDefinition(*schema_id, ObjectType::Sequence, sequence->GetId(),
+                          b.slice());
+        ctx.PutSequence(sequence->GetId(), sequence->Options().Seed());
+      });
     },
     [&](auto clone) { clone->UnregisterObject(sequence, *schema_id, true); });
 }
@@ -1546,29 +1565,15 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
-  for (auto pk_id : options.pkColumns) {
+  if (auto r = TableNameValidator::validateName(options.name); !r.ok()) {
+    return r;
+  }
+  for (auto pk_id : options.pk_columns) {
     auto col = absl::c_find_if(options.columns,
                                [&](const auto& c) { return c.id == pk_id; });
     SDB_ASSERT(col != options.columns.end());
-    // // PK must be default sortable or we can not guarantee table scan order
-    // if (col->type->providesCustomComparison()) {
-    //   return {
-    //     ERROR_BAD_PARAMETER, "Column ", col->name,
-    //     " has type with custom comparison and can not be part of primary
-    //     key"};
-    // }
-    // // this is current limitation of our pirmary key builder. And might be
-    // // lifted some day.
-    // if (!col->type->isPrimitiveType()) {
-    //   return {ERROR_BAD_PARAMETER, "Column ", col->name,
-    //           " has non primitive type and can not be part of primary key"};
-    // }
   }
-  auto table = std::make_shared<Table>(std::move(options), database_id);
-  if (operation_options.create_with_tombstone) {
-    table->SetTombstoned(true);
-  }
-  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
+  auto sequence_specs = std::move(options.sequences);
 
   absl::MutexLock lock{&_mutex};
   auto schema_id =
@@ -1576,6 +1581,53 @@ Result LocalCatalog::CreateTable(
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+
+  // PG SERIAL: pick a unique name `<table>_<col>_seq`, mangling with a
+  // numeric suffix if the bare form collides with a pre-existing relation.
+  // Done under the mutex so two concurrent CREATE TABLEs can't race on it.
+  auto pick_unique_name = [&](std::string_view base) {
+    std::string candidate{base};
+    for (size_t i = 1;
+         _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, candidate);
+         ++i) {
+      candidate = absl::StrCat(base, i);
+    }
+    return candidate;
+  };
+
+  auto make_nextval_default = [](std::string_view qualified) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
+    args.emplace_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+      duckdb::Value{std::string{qualified}}));
+    return std::make_shared<ColumnExpr>(
+      duckdb::make_uniq<duckdb::FunctionExpression>("nextval",
+                                                    std::move(args)));
+  };
+
+  // Pre-allocate the table id so SERIAL sequences can stamp it as their
+  // owner before the Table object exists.
+  auto table_id = NextId();
+
+  std::vector<std::shared_ptr<Sequence>> sequences;
+  sequences.reserve(sequence_specs.size());
+  for (const auto& spec : sequence_specs) {
+    auto col_it = absl::c_find_if(
+      options.columns, [&](const auto& c) { return c.id == spec.column_id; });
+    SDB_ASSERT(col_it != options.columns.end());
+    auto resolved =
+      pick_unique_name(absl::StrCat(options.name, "_", col_it->name, "_seq"));
+    col_it->expr = make_nextval_default(absl::StrCat(schema, ".", resolved));
+    sequences.push_back(std::make_shared<Sequence>(
+      database_id, *schema_id, ObjectId{}, resolved, spec.options, table_id));
+  }
+
+  auto table = std::make_shared<Table>(
+    database_id, table_id, options.name, std::move(options.columns),
+    std::move(options.pk_columns), std::move(options.check_constraints));
+  if (operation_options.create_with_tombstone) {
+    table->SetTombstoned(true);
+  }
+  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   return Apply(
     _snapshot,
@@ -1587,6 +1639,12 @@ Result LocalCatalog::CreateTable(
 
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
+      for (const auto& seq : sequences) {
+        r = clone->RegisterObject(seq, *schema_id, false);
+        if (!r.ok()) {
+          return r;
+        }
+      }
       if (operation_options.create_with_tombstone) {
         r = _engine->WriteTombstone(*schema_id, table->GetId());
         if (!r.ok()) {
@@ -1594,22 +1652,25 @@ Result LocalCatalog::CreateTable(
         }
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      return _engine->Write([&](auto& ctx) {
+        vpack::Builder b;
+        table->WriteInternal(b);
+        ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
+                          b.slice());
 
-      vpack::Builder b;
-      table->WriteInternal(b);
-      r =
-        _engine->CreateDefinition(*schema_id, ObjectType::Table, table->GetId(),
-                                  [&](bool) { return b.slice(); });
-      if (!r.ok()) {
-        return r;
-      }
+        vpack::Builder shard_b;
+        shard->WriteInternal(shard_b);
+        ctx.PutDefinition(table->GetId(), ObjectType::TableShard,
+                          shard->GetId(), shard_b.slice());
 
-      vpack::Builder shard_b;
-      shard->WriteInternal(shard_b);
-      r = _engine->CreateDefinition(
-        shard->GetTableId(), ObjectType::TableShard, shard->GetId(),
-        [&](bool) -> vpack::Slice { return shard_b.slice(); });
-      return r;
+        for (const auto& seq : sequences) {
+          vpack::Builder seq_b;
+          seq->WriteInternal(seq_b);
+          ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
+                            seq_b.slice());
+          ctx.PutSequence(seq->GetId(), seq->Options().Seed());
+        }
+      });
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
@@ -2228,6 +2289,9 @@ Result LocalCatalog::DropSequence(std::string_view database,
       _engine->DropDefinition(*schema_id, ObjectType::Sequence, seq->GetId());
     if (!r.ok()) {
       return r;
+    }
+    if (auto cr = _engine->DropSequence(seq->GetId()); !cr.ok()) {
+      return cr;
     }
     clone->UnregisterObject(std::move(seq), *schema_id);
     return Result{};

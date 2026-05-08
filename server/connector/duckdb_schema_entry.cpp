@@ -102,58 +102,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   auto& create_info = info.Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
-  // Build SereneDB CreateTableRequest from DuckDB types
-  catalog::CreateTableRequest request;
-  request.name = table_info.table;
+  catalog::CreateTableOptions options;
+  options.name = table_info.table;
 
-  // SERIAL/BIGSERIAL/SMALLSERIAL expand to base int + DEFAULT nextval(seq)
-  // + NOT NULL, mirroring PG's parse_utilcmd. The NOT NULL is appended in
-  // the constraint pass below via append_not_null.
-  struct SerialPending {
-    duckdb::idx_t col_idx;
-    std::string sequence_name;
-  };
-  std::vector<SerialPending> serial_pending;
-
-  catalog::Column::Id next_col_id = 0;
-  for (auto& col : table_info.columns.Logical()) {
-    catalog::Column sdb_col;
-    sdb_col.id = next_col_id++;
-    sdb_col.name = col.Name();
-    sdb_col.type = col.Type();
-
-    bool is_serial = pg::IsSerial(sdb_col.type) ||
-                     pg::IsBigserial(sdb_col.type) ||
-                     pg::IsSmallserial(sdb_col.type);
-    if (is_serial) {
-      sdb_col.type = duckdb::LogicalType{sdb_col.type.id()};
-      auto sequence_name =
-        absl::StrCat(table_info.table, "_", sdb_col.name, "_seq");
-
-      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
-      args.emplace_back(duckdb::make_uniq<duckdb::ConstantExpression>(
-        duckdb::Value(absl::StrCat(name, ".", sequence_name))));
-      auto default_expr = duckdb::make_uniq<duckdb::FunctionExpression>(
-        std::string{"nextval"}, std::move(args));
-      sdb_col.expr = std::make_shared<ColumnExpr>(std::move(default_expr));
-
-      serial_pending.push_back(SerialPending{
-        .col_idx = static_cast<duckdb::idx_t>(request.columns.size()),
-        .sequence_name = std::move(sequence_name),
-      });
-    } else if (col.Generated()) {
-      sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
-      sdb_col.expr =
-        std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
-    } else if (col.HasDefaultValue()) {
-      sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
-    }
-    request.columns.push_back(std::move(sdb_col));
-  }
-
-  // --- Constraint helpers (ported from old create_table.cpp) ---
-
-  // PG-style constraint name generator with dedup
+  // PG-style constraint name generator with dedup.
   auto choose_constraint_name = [&](std::string_view tbl,
                                     std::string_view column,
                                     std::string_view label) -> std::string {
@@ -164,7 +116,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
       base_name = absl::StrCat(tbl, "_", column, "_", label);
     }
     auto name_exists = [&](std::string_view candidate) {
-      return std::ranges::any_of(request.checkConstraints, [&](const auto& c) {
+      return std::ranges::any_of(options.check_constraints, [&](const auto& c) {
         return c.name == candidate;
       });
     };
@@ -179,9 +131,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
   };
 
-  // Find the column name for constraint naming (PG convention):
-  // returns the column name if all column refs point to the same column
-  // (column-level CHECK), empty otherwise (table-level CHECK).
   auto find_constraint_column =
     [](const duckdb::ParsedExpression& root) -> std::string {
     std::string result;
@@ -207,19 +156,27 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     return multiple ? std::string{} : result;
   };
 
-  // Track which columns already have NOT NULL to avoid duplicates
-  std::vector<bool> has_not_null(request.columns.size(), false);
+  // Track which columns already have NOT NULL to avoid duplicates. Sized
+  // dynamically so it works whether called from the column loop (SERIAL) or
+  // the constraint pass (PK / NOT NULL).
+  std::vector<bool> has_not_null;
 
   auto append_not_null = [&](duckdb::idx_t col_idx) {
-    if (col_idx >= request.columns.size() || has_not_null[col_idx]) {
+    if (col_idx >= options.columns.size()) {
+      return;
+    }
+    if (col_idx >= has_not_null.size()) {
+      has_not_null.resize(col_idx + 1, false);
+    }
+    if (has_not_null[col_idx]) {
       return;
     }
     has_not_null[col_idx] = true;
-    auto& col_name = request.columns[col_idx].name;
+    auto& col_name = options.columns[col_idx].name;
     auto col_ref = duckdb::make_uniq<duckdb::ColumnRefExpression>(col_name);
     auto is_not_null = duckdb::make_uniq<duckdb::OperatorExpression>(
       duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, std::move(col_ref));
-    request.checkConstraints.push_back(catalog::CheckConstraint{
+    options.check_constraints.push_back(catalog::CheckConstraint{
       .id = catalog::NextId(),
       .name = choose_constraint_name(table_info.table, col_name, "not_null"),
       .expr = std::make_shared<ColumnExpr>(std::move(is_not_null)),
@@ -227,17 +184,42 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
   };
 
   auto append_pk = [&](catalog::Column::Id col_id) {
-    if (absl::c_linear_search(request.pkColumns, col_id)) {
+    if (absl::c_linear_search(options.pk_columns, col_id)) {
       throw duckdb::CatalogException(
         "column \"%s\" appears twice in primary key constraint",
-        request.columns[col_id].name);
+        options.columns[col_id].name);
     }
     // PK implies NOT NULL
     append_not_null(col_id);
-    request.pkColumns.push_back(col_id);
+    options.pk_columns.push_back(col_id);
   };
 
-  // --- Single pass over all constraints ---
+  // SERIAL/BIGSERIAL/SMALLSERIAL expand to base int + DEFAULT nextval(seq) +
+  // NOT NULL, mirroring PG's parse_utilcmd. The sequence name and the
+  // column's nextval default are resolved by LocalCatalog under its mutex
+  // (race-free name mangling).
+  catalog::Column::Id next_col_id = 0;
+  for (auto& col : table_info.columns.Logical()) {
+    auto& sdb_col = options.columns.emplace_back();
+    sdb_col.id = next_col_id++;
+    sdb_col.name = col.Name();
+    sdb_col.type = col.Type();
+
+    bool is_serial = pg::IsSmallserial(sdb_col.type) ||
+                     pg::IsSerial(sdb_col.type) ||
+                     pg::IsBigserial(sdb_col.type);
+    if (is_serial) {
+      sdb_col.type = duckdb::LogicalType{sdb_col.type.id()};
+      options.sequences.emplace_back(sdb_col.id, catalog::SequenceOptions{});
+      append_not_null(options.columns.size() - 1);
+    } else if (col.Generated()) {
+      sdb_col.generated_type = catalog::Column::GeneratedType::kStored;
+      sdb_col.expr =
+        std::make_shared<ColumnExpr>(col.GeneratedExpression().Copy());
+    } else if (col.HasDefaultValue()) {
+      sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
+    }
+  }
 
   for (auto& constraint : table_info.constraints) {
     switch (constraint->type) {
@@ -248,14 +230,14 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         }
         if (unique.HasIndex()) {
           auto idx = unique.GetIndex().index;
-          SDB_ASSERT(idx < request.columns.size());
-          append_pk(request.columns[idx].id);
+          SDB_ASSERT(idx < options.columns.size());
+          append_pk(options.columns[idx].id);
         } else {
           for (auto& pk_name : unique.GetColumnNames()) {
-            auto it = absl::c_find_if(request.columns, [&](const auto& col) {
+            auto it = absl::c_find_if(options.columns, [&](const auto& col) {
               return col.name == pk_name;
             });
-            if (it == request.columns.end()) {
+            if (it == options.columns.end()) {
               throw duckdb::CatalogException(
                 "column \"%s\" named in key does not exist", pk_name);
             }
@@ -278,7 +260,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
           auto col = find_constraint_column(*check.expression);
           name = choose_constraint_name(table_info.table, col, "check");
         }
-        request.checkConstraints.push_back(catalog::CheckConstraint{
+        options.check_constraints.push_back(catalog::CheckConstraint{
           .id = catalog::NextId(),
           .name = std::move(name),
           .expr = std::make_shared<ColumnExpr>(check.expression->Copy()),
@@ -290,48 +272,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     }
   }
 
-  // SERIAL columns implicitly carry NOT NULL.
-  for (const auto& sp : serial_pending) {
-    append_not_null(sp.col_idx);
-  }
-
-  // Get database info
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto& catalog_impl = catalog_feature.Global();
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
+  auto& catalog_impl =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto database_id = GetDatabaseId();
-  auto database = snapshot->GetDatabase(database_id);
-  SDB_ASSERT(database);
-
-  // Create table options
-  catalog::CreateTableOptions options;
-  auto r = catalog::MakeTableOptions(std::move(request), database_id, options,
-                                     database->GetReplicationFactor(),
-                                     database->GetWriteConcern(), false);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
 
   bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
 
-  // Sequences must exist before the table so CREATE TABLE's DEFAULT
-  // expression resolves. IF NOT EXISTS lets re-runs reuse the counter
-  // (cascade-drop on DROP TABLE is a follow-up).
-  for (const auto& sp : serial_pending) {
-    auto seq = std::make_shared<catalog::Sequence>(database_id, ObjectId{},
-                                                   ObjectId{}, sp.sequence_name,
-                                                   catalog::SequenceOptions{});
-    auto sr = catalog_impl.CreateSequence(database_id, name, seq,
-                                          /*if_not_exists=*/true);
-    if (!sr.ok()) {
-      SDB_THROW(std::move(sr));
-    }
-  }
-
-  r =
+  auto r =
     catalog_impl.CreateTable(database_id, name, std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
@@ -610,10 +559,18 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   opts.cycle = info.cycle;
   opts.cache_size = 1;  // DuckDB CreateSequenceInfo has no CACHE field
 
+  if (opts.increment <= 0) {
+    SDB_THROW(ERROR_BAD_PARAMETER,
+              "sequence INCREMENT must be positive (negative increments not "
+              "yet supported)");
+  }
+  if (opts.start_value < opts.min_value || opts.start_value > opts.max_value) {
+    SDB_THROW(ERROR_BAD_PARAMETER, "sequence START is out of range [MIN, MAX]");
+  }
+
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
-  // schema_id is filled in by LocalCatalog::CreateSequence.
   auto sequence = std::make_shared<catalog::Sequence>(
     database_id, ObjectId{}, ObjectId{}, info.name, opts);
 

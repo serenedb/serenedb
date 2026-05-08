@@ -201,7 +201,8 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = reader});
+  auto itr =
+    prepared->execute({.segment = reader});  // todo add all deleted_docs
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -233,7 +234,8 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = reader});
+  auto itr =
+    prepared->execute({.segment = reader});  // todo add all deleted_docs
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -1746,8 +1748,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
 
-  for (DocumentMask deleted_docs{{*dir.ResourceManager().transactions}};
-       const auto& existing_segment : committed_reader.GetReaders()) {
+  for (const auto& existing_segment : committed_reader.GetReaders()) {
     auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];
     progress("Stage 1: Apply removals to the existing segments",
@@ -1759,19 +1760,26 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
 
     // We don't want to call clear here because even for empty map it costs O(n)
-    SDB_ASSERT(deleted_docs.empty());
+    // SDB_ASSERT(deleted_docs.empty());
 
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
     WaitGroup wg;
     std::vector<DocumentMask> deleted_docs_vector;
-    deleted_docs_vector.reserve(ctx->segments.size());
+    if (_executor != nullptr) {
+      deleted_docs_vector.reserve(ctx->segments.size());
+    }
+
     for (auto& segment : ctx->segments) {
       SDB_ASSERT(segment != nullptr);
 
-      wg.Add();
-      auto& deleted_docs_local = deleted_docs_vector.emplace_back(
-        DocumentMask{{*dir.ResourceManager().transactions}});
+      auto& deleted_docs_local = [&] -> DocumentMask& {
+        if (_executor == nullptr && !deleted_docs_vector.empty()) {
+          return deleted_docs_vector.back();
+        }
+        return deleted_docs_vector.emplace_back(
+          DocumentMask{{*dir.ResourceManager().transactions}});
+      }();
 
       auto task = [&] {
         apply_queries(*segment, [&](QueryContext& query) {
@@ -1781,6 +1789,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         });
         wg.Done();
       };
+
+      wg.Add();
       if (_executor != nullptr) {
         yaclib::Submit(*_executor, task);
       } else {
@@ -1788,16 +1798,14 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
     }
     wg.Wait();
-    for (auto& deleted_docs_local : deleted_docs_vector) {
-      for (auto doc_id : deleted_docs_local) {
-        deleted_docs.insert(doc_id);
-      }
-    }
+
     // Write docs_mask if masks added
-    if (const size_t num_removals = deleted_docs.size(); num_removals) {
+    const size_t num_removals = std::accumulate(
+      deleted_docs_vector.begin(), deleted_docs_vector.end(), size_t(0),
+      [](size_t acc, const DocumentMask& mask) { return acc + mask.size(); });
+    if (num_removals) {
       // If all docs are masked then mask segment
       if (existing_segment.live_docs_count() == num_removals) {
-        deleted_docs.clear();
         // It's important to mask empty segment to rollback
         // the affected consolidations
 
@@ -1810,10 +1818,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       IndexSegment segment{.meta = index_segment.meta};
       segment.meta.docs_mask = [&] {
         auto docs_mask = CopyMask(dir, existing_segment);
-        docs_mask->merge(deleted_docs);
+        for (auto& deleted_docs_local : deleted_docs_vector) {
+          docs_mask->merge(deleted_docs_local);
+        }
         return docs_mask;
       }();
-      deleted_docs.clear();
 
       index_utils::FlushIndexSegment(dir, segment);  // Write with new mask
       auto new_segment =
@@ -1915,28 +1924,32 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // (i.e. from new operations)
       WaitGroup wg;
       std::vector<DocumentMask> import_docs_vector;
-      std::vector<int64_t> has_removals_vector;
-      import_docs_vector.reserve(ctx->segments.size());
-      has_removals_vector.reserve(ctx->segments.size());
+      if (_executor != nullptr) {
+        import_docs_vector.reserve(ctx->segments.size());
+      }
       for (auto& segment : ctx->segments) {
         SDB_ASSERT(segment != nullptr);
 
-        wg.Add();
-        auto& import_docs_local =
-          import_docs_vector.emplace_back(*import_docs_mask);
-        auto& has_removals_local = has_removals_vector.emplace_back(false);
+        auto& import_docs_local = [&] -> DocumentMask& {
+          if (_executor == nullptr && !import_docs_vector.empty()) {
+            return import_docs_vector.back();
+          }
+          return import_docs_vector.emplace_back(*import_docs_mask);
+        }();
 
         auto task = [&] {
           apply_queries(*segment, [&](QueryContext& query) {
             // skip queries which not affect this
             if (import.tick <= query.tick) {
               // FIXME(gnusi): optimize PK queries
-              has_removals_local = RemoveFromImportedSegment(
-                import_docs_local, query, *import_reader);
+              RemoveFromImportedSegment(import_docs_local, query,
+                                        *import_reader);
             }
           });
           wg.Done();
         };
+
+        wg.Add();
         if (_executor != nullptr) {
           yaclib::Submit(*_executor, task);
         } else {
@@ -1945,13 +1958,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
       wg.Wait();
       for (auto& import_docs_local : import_docs_vector) {
-        for (auto doc_id : import_docs_local) {
-          import_docs_mask->insert(doc_id);
+        if (import_docs_local.size() > import_docs_mask->size()) {
+          import_docs_mask->merge(import_docs_local);
+          modified = true;
         }
       }
-      docs_mask_modified |=
-        std::any_of(has_removals_vector.begin(), has_removals_vector.end(),
-                    [](int64_t v) -> bool { return v; });
     }
 
     // Skip empty segments

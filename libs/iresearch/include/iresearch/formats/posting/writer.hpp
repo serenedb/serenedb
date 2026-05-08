@@ -638,7 +638,7 @@ void PostingsWriterImpl<FormatTraits>::EndDocument(size_t processed_docs) {
       auto decode_zone_start = _doc_out->Position();
       FormatTraits::WriteBlockDelta(best_encoding_doc, best_size_doc, *_doc_out,
                                     _doc.docs.data(), _doc.block_last, _buf);
-      SDB_ASSERT(best_size_doc + 1 != _doc_out->Position() - decode_zone_start);
+      SDB_ASSERT(best_size_doc + 1 == _doc_out->Position() - decode_zone_start);
       if (_features.HasFrequency()) {
         auto frequencies_zone_start = _doc_out->Position();
         FormatTraits::WriteBlock(*best_encoding_freq_opt, *_doc_out,
@@ -648,7 +648,7 @@ void PostingsWriterImpl<FormatTraits>::EndDocument(size_t processed_docs) {
       }
 
       NewSkipWriter::WriteInlinePosPayMetadata(meta, _features, *_doc_out);
-      SDB_ASSERT(skip_entry.rest_block_size !=
+      SDB_ASSERT(skip_entry.rest_block_size ==
                  _doc_out->Position() - decode_zone_start);
     }
 

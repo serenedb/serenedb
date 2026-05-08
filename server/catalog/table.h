@@ -28,13 +28,12 @@
 
 namespace sdb::catalog {
 
-class Sequence;
-
 class Table final : public SchemaObject {
  public:
   Table(ObjectId database_id, ObjectId id, std::string_view name,
         std::vector<Column> columns, std::vector<Column::Id> pk_columns,
-        std::vector<CheckConstraint> check_constraints);
+        std::vector<CheckConstraint> check_constraints,
+        ObjectId generated_pk_seq_id);
 
   static std::shared_ptr<Table> ReadInternal(vpack::Slice slice,
                                              ReadContext ctx);
@@ -45,6 +44,11 @@ class Table final : public SchemaObject {
   const auto& PKColumns() const noexcept { return _pk_columns; }
   const auto& CheckConstraints() const noexcept { return _check_constraints; }
 
+  // Id of the auto-generated PK sequence (created when the table has no
+  // explicit PK). Unset for tables with an explicit PK. Look it up via
+  // `Snapshot::GetObject<Sequence>(GetGeneratedPkSeqId())`.
+  ObjectId GetGeneratedPkSeqId() const noexcept { return _generated_pk_seq_id; }
+
   Result RenameColumn(std::shared_ptr<Table>& result, std::string_view old_name,
                       std::string_view new_name) const;
   Result RenameConstraint(std::shared_ptr<Table>& result,
@@ -53,16 +57,11 @@ class Table final : public SchemaObject {
   Result DropConstraint(std::shared_ptr<Table>& result,
                         std::string_view constraint_name) const;
 
-  const auto& GetGeneratedPkSequence() const noexcept {
-    return _generated_pk_sequence;
-  }
-
  private:
   std::vector<Column> _columns;
   std::vector<Column::Id> _pk_columns;
   std::vector<CheckConstraint> _check_constraints;
-
-  std::shared_ptr<Sequence> _generated_pk_sequence;
+  ObjectId _generated_pk_seq_id;
 };
 
 }  // namespace sdb::catalog

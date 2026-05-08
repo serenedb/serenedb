@@ -1609,7 +1609,7 @@ Result LocalCatalog::CreateTable(
   auto table_id = NextId();
 
   std::vector<std::shared_ptr<Sequence>> sequences;
-  sequences.reserve(sequence_specs.size());
+  sequences.reserve(sequence_specs.size() + 1);
   for (const auto& spec : sequence_specs) {
     auto col_it = absl::c_find_if(
       options.columns, [&](const auto& c) { return c.id == spec.column_id; });
@@ -1621,9 +1621,23 @@ Result LocalCatalog::CreateTable(
       database_id, *schema_id, ObjectId{}, resolved, spec.options, table_id));
   }
 
+  // Tables without an explicit PK get an auto-PK owned sequence. It's a
+  // regular queryable sequence -- name `<table>_pk_seq`, mangled on
+  // collision; Table holds its id for the insert path's fast lookup.
+  ObjectId generated_pk_seq_id;
+  if (options.pk_columns.empty()) {
+    auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
+    auto pk_seq =
+      std::make_shared<Sequence>(database_id, *schema_id, ObjectId{}, resolved,
+                                 SequenceOptions{}, table_id);
+    generated_pk_seq_id = pk_seq->GetId();
+    sequences.push_back(std::move(pk_seq));
+  }
+
   auto table = std::make_shared<Table>(
     database_id, table_id, options.name, std::move(options.columns),
-    std::move(options.pk_columns), std::move(options.check_constraints));
+    std::move(options.pk_columns), std::move(options.check_constraints),
+    generated_pk_seq_id);
   if (operation_options.create_with_tombstone) {
     table->SetTombstoned(true);
   }

@@ -161,6 +161,7 @@ struct Snapshot {
                                           std::string_view name) const = 0;
   virtual std::shared_ptr<Sequence> GetSequence(
     ObjectId database, ObjectId schema_id, std::string_view name) const = 0;
+
   virtual bool HasIndexes(ObjectId relation_id) const = 0;
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 

@@ -57,7 +57,7 @@ class Sequence final : public SchemaObject {
  public:
   Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
            std::string_view name, SequenceOptions opts,
-           ObjectId owner_table_id = ObjectId{});
+           ObjectId owner_table_id);
 
   ~Sequence() = default;
 
@@ -69,9 +69,9 @@ class Sequence final : public SchemaObject {
 
   const SequenceOptions& Options() const noexcept { return _options; }
 
-  // Set when this sequence was implicitly created by a SERIAL column. Used
-  // by the catalog to wire it into TableDependency::owned_sequences for
-  // PG OWNED BY cascade.
+  // Set when this sequence is implicitly created by a SERIAL column or as
+  // the auto-PK for a table without an explicit PK. Wires the sequence into
+  // TableDependency::owned_sequences for PG OWNED BY cascade.
   ObjectId GetOwnerTableId() const noexcept { return _owner_table_id; }
 
   // Hand out [base, base+count-1]; returns base. Persists via Merge before

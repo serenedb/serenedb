@@ -140,7 +140,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_name = table_info.table;
   SetupSSTState(*state, *catalog_table);
 
-  state->generated_pk_seq = catalog_table->GetGeneratedPkSequence();
+  state->generated_pk_seq = snapshot->GetObject<catalog::Sequence>(
+    catalog_table->GetGeneratedPkSeqId());
   SDB_ASSERT(state->generated_pk_seq || !catalog_table->PKColumns().empty());
 
   auto& conn_ctx = GetSereneDBContext(context);

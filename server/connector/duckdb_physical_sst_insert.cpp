@@ -144,7 +144,9 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
 
-  state->generated_pk_seq = _table->GetGeneratedPkSequence();
+  state->generated_pk_seq =
+    conn_ctx.EnsureCatalogSnapshot()->GetObject<catalog::Sequence>(
+      _table->GetGeneratedPkSeqId());
   SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
   return state;

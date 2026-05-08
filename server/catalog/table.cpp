@@ -26,32 +26,24 @@
 #include <vpack/serializer.h>
 #include <vpack/slice.h>
 
-#include <atomic>
 #include <memory>
 #include <utility>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
-#include "catalog/sequence.h"
+#include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
 
 Table::Table(ObjectId database_id, ObjectId id, std::string_view name,
              std::vector<Column> columns, std::vector<Column::Id> pk_columns,
-             std::vector<CheckConstraint> check_constraints)
+             std::vector<CheckConstraint> check_constraints,
+             ObjectId generated_pk_seq_id)
   : SchemaObject{{}, database_id, {}, id, std::string{name}, ObjectType::Table},
     _columns{std::move(columns)},
     _pk_columns{std::move(pk_columns)},
-    _check_constraints{std::move(check_constraints)} {
-  if (_pk_columns.empty() && GetId().isSet()) {
-    _generated_pk_sequence = std::make_shared<Sequence>(
-      GetDatabaseId(), GetSchemaId(), GetId(), std::string_view{},
-      SequenceOptions{
-        .start_value = 1,
-        .increment = 1,
-      });
-  }
-}
+    _check_constraints{std::move(check_constraints)},
+    _generated_pk_seq_id{generated_pk_seq_id} {}
 
 std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
                                            ReadContext ctx) {
@@ -77,13 +69,12 @@ std::shared_ptr<Table> Table::ReadInternal(vpack::Slice slice,
     return nullptr;
   }
 
-  auto table = std::make_shared<Table>(
+  ObjectId generated_pk_seq_id{
+    basics::VPackHelper::getNumber<uint64_t>(slice, "generated_pk_seq_id", 0)};
+
+  return std::make_shared<Table>(
     ctx.database_id, ctx.id, name_slice.stringView(), std::move(columns),
-    std::move(pk_columns), std::move(check_constraints));
-  if (const auto& seq = table->_generated_pk_sequence) {
-    seq->_live.store(seq->LoadFromDb(), std::memory_order_release);
-  }
-  return table;
+    std::move(pk_columns), std::move(check_constraints), generated_pk_seq_id);
 }
 
 void Table::WriteInternal(vpack::Builder& b) const {
@@ -95,6 +86,9 @@ void Table::WriteInternal(vpack::Builder& b) const {
     vpack::WriteTuple(b, _pk_columns);
     b.add("check_constraints");
     vpack::WriteTuple(b, _check_constraints);
+    if (_generated_pk_seq_id.isSet()) {
+      b.add("generated_pk_seq_id", _generated_pk_seq_id.id());
+    }
   });
   b.close();
 }
@@ -166,10 +160,9 @@ Result Table::DropConstraint(std::shared_ptr<Table>& result,
 }
 
 std::shared_ptr<Object> Table::Clone() const {
-  auto cloned =
-    std::make_shared<Table>(GetDatabaseId(), GetId(), GetName(), _columns,
-                            _pk_columns, _check_constraints);
-  cloned->_generated_pk_sequence = _generated_pk_sequence;
+  auto cloned = std::make_shared<Table>(
+    GetDatabaseId(), GetId(), GetName(), _columns, _pk_columns,
+    _check_constraints, _generated_pk_seq_id);
   cloned->SetTombstoned(Tombstoned());
   return cloned;
 }

@@ -44,8 +44,8 @@ namespace {
 std::shared_ptr<catalog::Sequence> ResolveSequence(
   duckdb::ClientContext& context, std::string_view qualified) {
   auto qname = duckdb::QualifiedName::Parse(std::string{qualified});
-  std::string schema_name =
-    qname.schema.empty() ? std::string{StaticStrings::kPublic} : qname.schema;
+  std::string_view schema_name =
+    qname.schema.empty() ? StaticStrings::kPublic : qname.schema;
 
   auto& conn_ctx = GetSereneDBContext(context);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();

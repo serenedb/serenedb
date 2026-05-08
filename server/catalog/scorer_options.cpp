@@ -237,19 +237,16 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
       ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
   }
 
-  // Prepend a tableoid placeholder so the parsed call matches the SQL
-  // `BM25(idx.tableoid, ...)` overload that ConstantBinder will resolve.
+  // Prepend a tableoid placeholder to match the SQL `BM25(idx.tableoid, ...)`
+  // overload that ConstantBinder will resolve.
   auto& fn = fn_expr->Cast<FunctionExpression>();
   fn.children.insert(fn.children.begin(),
                      make_uniq<ConstantExpression>(Value::BIGINT(0)));
 
-  // Capture the function name now -- after Bind() the wrapper's identity
-  // moves into the BoundFunctionExpression.
+  // Capture the name now -- Bind() consumes fn_expr.
   std::string name = fn.function_name;
   absl::AsciiStrToLower(&name);
 
-  // ConstantBinder rejects column refs, subqueries, defaults, windows --
-  // exactly the shape we want for a scalar scorer-config call.
   auto binder = Binder::CreateBinder(context);
   ConstantBinder cb(*binder, context, "optimize_top_k");
   auto bound = cb.Bind(fn_expr);

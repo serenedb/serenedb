@@ -97,36 +97,27 @@ struct ScorerOptions {
 
   bool operator==(const ScorerOptions&) const = default;
 
-  // Lowercase short scorer name -- always matches the active arm's kName.
   std::string_view Name() const noexcept {
     return std::visit(
       []<typename P>(const P&) -> std::string_view { return P::kName; },
       params);
   }
 
-  // `bm25(k1=1.2, b=0.75)`, `tfidf(with_norms=false)`, etc. -- the
-  // user-visible spelling rendered in EXPLAIN.
+  // EXPLAIN-friendly spelling, e.g. `bm25(k1=1.2, b=0.75)`.
   std::string ToString() const;
 };
 
-// Materialise the iresearch scorer described by `spec`. Used both by the
-// shard (writer-side WAND data) and by the runtime SearchScan (top-K).
+// Used by the shard (writer-side WAND data) and by the runtime SearchScan.
 std::unique_ptr<irs::Scorer> MakeScorer(const ScorerOptions& spec);
 
-// Returns nullopt if any param child is non-constant (the optimizer rule
-// uses this to refuse to claim the expression). Throws sdb::SqlException
-// on out-of-range param values or unknown scorer name.
+// Returns nullopt if any param child is non-constant; throws sdb::SqlException
+// on out-of-range values or unknown scorer name.
 std::optional<ScorerOptions> ExtractScorerFromBound(
   const duckdb::BoundFunctionExpression& func, std::string_view name);
 
-// Parse a `WITH (optimize_top_k = '<scorer-expr>')` value into a
-// ScorerOptions. Implementation: rewrites the user string into a
-// `bm25(0::BIGINT, ...)`-shaped call (placeholder satisfies the scorer
-// functions' first-arg type), binds through DuckDB's ConstantBinder, then
-// feeds the BoundFunctionExpression to `ExtractScorerFromBound`. Function
-// overload resolution and implicit numeric coercion therefore come from
-// DuckDB and stay consistent across the `WITH` and `ORDER BY` paths.
-// Throws sdb::SqlException on parse / bind / value errors.
+// Parse `WITH (optimize_top_k = '<expr>')` via DuckDB's binder so overload
+// resolution / implicit coercion match `ORDER BY BM25(...)`. Throws
+// sdb::SqlException on any parse / bind / value error.
 ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
                                     std::string input);
 

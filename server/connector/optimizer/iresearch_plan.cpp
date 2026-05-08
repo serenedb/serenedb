@@ -1439,10 +1439,8 @@ bool IsScorerFunctionName(std::string_view name) {
          name == S::Dfi::kName;
 }
 
-// Parse scorer parameters from `func` into `scorer`. Returns false if the
-// parameters are non-constant (rule refuses to claim; stub raises).
-// Out-of-range param values throw via SqlException from the catalog helper.
-// Conflicting scorer kinds throw too; identical scorers are idempotent.
+// Returns false if args are non-constant (caller refuses to claim). Throws
+// on conflicting scorer kinds; identical scorers are idempotent.
 bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
                   const duckdb::BoundFunctionExpression& func,
                   std::string_view name) {

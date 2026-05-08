@@ -26,7 +26,6 @@
 
 #include <cmath>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/parser.hpp>
@@ -48,47 +47,6 @@ const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
     return nullptr;
   }
   return &expr.Cast<duckdb::BoundConstantExpression>().value;
-}
-
-// Wrap a parsed user expression into a scorer-shaped function call by
-// prepending a tableoid placeholder constant. Two input shapes:
-//   bare ident `bm25`          -> ColumnRefExpression  -> bm25(0::BIGINT)
-//   call       `bm25(1.5, ..)` -> FunctionExpression   -> bm25(0::BIGINT, ..)
-// Anything else (literal, binary op, subquery, ...) is rejected.
-duckdb::unique_ptr<duckdb::ParsedExpression> WrapWithPlaceholder(
-  duckdb::unique_ptr<duckdb::ParsedExpression> expr,
-  std::string_view input_for_error) {
-  using namespace duckdb;
-  auto placeholder = []() {
-    return make_uniq<ConstantExpression>(Value::BIGINT(0));
-  };
-  switch (expr->GetExpressionType()) {
-    case ExpressionType::COLUMN_REF: {
-      auto& colref = expr->Cast<ColumnRefExpression>();
-      if (colref.IsQualified()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("'optimize_top_k' scorer name must be unqualified, got '",
-                  input_for_error, "'"));
-      }
-      auto name = colref.GetColumnName();
-      vector<unique_ptr<ParsedExpression>> children;
-      children.emplace_back(placeholder());
-      return unique_ptr<ParsedExpression>(
-        make_uniq<FunctionExpression>(std::move(name), std::move(children)));
-    }
-    case ExpressionType::FUNCTION: {
-      auto& fn = expr->Cast<FunctionExpression>();
-      fn.children.insert(fn.children.begin(), placeholder());
-      return expr;
-    }
-    default:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("'optimize_top_k' expects a scorer name or function call, "
-                "got '",
-                input_for_error, "'"));
-  }
 }
 
 }  // namespace
@@ -270,10 +228,24 @@ ScorerOptions ParseScorerExpression(duckdb::ClientContext& context,
               exprs.size(), " in '", input, "'"));
   }
 
-  auto fn_expr = WrapWithPlaceholder(std::move(exprs[0]), input);
+  auto fn_expr = std::move(exprs[0]);
+  if (fn_expr->GetExpressionType() != ExpressionType::FUNCTION) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("'optimize_top_k' expects a scorer function call, got '", input,
+              "'"),
+      ERR_HINT("Use e.g. 'tfidf()' or 'bm25(1.2, 0.75)'"));
+  }
+
+  // Prepend a tableoid placeholder so the parsed call matches the SQL
+  // `BM25(idx.tableoid, ...)` overload that ConstantBinder will resolve.
+  auto& fn = fn_expr->Cast<FunctionExpression>();
+  fn.children.insert(fn.children.begin(),
+                     make_uniq<ConstantExpression>(Value::BIGINT(0)));
+
   // Capture the function name now -- after Bind() the wrapper's identity
   // moves into the BoundFunctionExpression.
-  std::string name = fn_expr->Cast<FunctionExpression>().function_name;
+  std::string name = fn.function_name;
   absl::AsciiStrToLower(&name);
 
   // ConstantBinder rejects column refs, subqueries, defaults, windows --

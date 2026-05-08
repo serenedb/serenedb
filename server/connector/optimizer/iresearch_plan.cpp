@@ -60,6 +60,8 @@
 #include "connector/optimizer/flatten_projection_ids.h"
 #include "connector/search_filter_builder.hpp"
 #include "connector/search_filter_printer.hpp"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 
@@ -1455,10 +1457,11 @@ bool TrySetScorer(std::optional<catalog::ScorerOptions>& scorer,
   if (*scorer == *extracted) {
     return true;  // Idempotent.
   }
-  throw duckdb::InvalidInputException(
-    "Only one scorer function is allowed per inverted index\n"
-    "HINT: Use UNION to combine different score functions for same "
-    "inverted index");
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("Only one scorer function is allowed per inverted index"),
+    ERR_HINT("Use UNION to combine different score functions for the same "
+             "inverted index"));
 }
 
 // True iff `expr` is a BoundFunctionExpression named bm25/tfidf whose first

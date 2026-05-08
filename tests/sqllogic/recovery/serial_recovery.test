@@ -159,4 +159,4 @@ DROP TABLE kostya_iceberg_only_jira;
 
 connection after_crash_2
 statement ok
-DROP SEQUENCE kostya_iceberg_only_jira_id_seq;
+DROP SEQUENCE IF EXISTS kostya_iceberg_only_jira_id_seq;

@@ -159,7 +159,7 @@ DROP TABLE konstantin_iceberg_meetings;
 
 connection after_crash
 statement ok
-DROP SEQUENCE konstantin_iceberg_meetings_id_seq;
+DROP SEQUENCE IF EXISTS konstantin_iceberg_meetings_id_seq;
 
 
 connection after_crash
@@ -169,7 +169,7 @@ DROP TABLE vedernikoff_iceberg_proposals;
 
 connection after_crash
 statement ok
-DROP SEQUENCE vedernikoff_iceberg_proposals_id_seq;
+DROP SEQUENCE IF EXISTS vedernikoff_iceberg_proposals_id_seq;
 
 
 connection after_crash

@@ -60,18 +60,14 @@ id	hero
 1	mop_offer_letter_arrived
 
 
-# Sequence was dropped together with the table; explicit DROP SEQUENCE
-# would fail without IF EXISTS.
-statement error
-DROP SEQUENCE vedernikoff_id_seq;
-
-
-statement ok
-DROP SEQUENCE IF EXISTS vedernikoff_id_seq;
-
-
 statement ok
 DROP TABLE vedernikoff;
+
+
+# DROP TABLE already cascade-dropped vedernikoff_id_seq; the explicit
+# follow-up errors without IF EXISTS.
+statement error
+DROP SEQUENCE vedernikoff_id_seq;
 
 
 statement ok
@@ -109,8 +105,9 @@ statement ok
 DROP TABLE dedsky;
 
 
-statement ok
-DROP SEQUENCE dedsky_id_seq;
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE dedsky_id_seq;
 
 
 statement ok
@@ -151,8 +148,9 @@ statement ok
 DROP TABLE pudge;
 
 
-statement ok
-DROP SEQUENCE pudge_id_seq;
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE pudge_id_seq;
 
 
 statement ok
@@ -196,16 +194,18 @@ statement ok
 DROP TABLE babsky;
 
 
-statement ok
-DROP SEQUENCE babsky_id_seq;
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE babsky_id_seq;
 
 
 statement ok
 DROP TABLE deadinside;
 
 
-statement ok
-DROP SEQUENCE deadinside_id_seq;
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE deadinside_id_seq;
 
 
 statement ok
@@ -255,8 +255,9 @@ statement ok
 DROP TABLE enchonchinchan;
 
 
-statement ok
-DROP SEQUENCE enchonchinchan_id_seq;
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE enchonchinchan_id_seq;
 
 
 statement ok
@@ -278,8 +279,9 @@ statement ok
 DROP TABLE shlepach;
 
 
-statement ok
-DROP SEQUENCE shlepach_id_seq;
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE shlepach_id_seq;
 
 
 statement ok
@@ -290,9 +292,7 @@ statement count 1
 INSERT INTO myasnig (hero) VALUES ('mop_take_home_assignment');
 
 
-# Explicitly dropping the implicit sequence breaks the table's nextval
-# default; subsequent INSERT errors out.
-statement ok
+statement error cannot drop sequence myasnig_id_seq because other objects depend on it
 DROP SEQUENCE myasnig_id_seq;
 
 
@@ -303,11 +303,11 @@ id	hero
 1	mop_take_home_assignment
 
 
-statement error
+statement ok
 INSERT INTO myasnig (hero) VALUES ('mop_round2_scheduled');
 
 
-statement ok
+statement error (?i)(relation|sequence).*myasnig_id_seq.*already exists
 CREATE SEQUENCE myasnig_id_seq START WITH 100;
 
 
@@ -320,7 +320,8 @@ SELECT id, hero FROM myasnig ORDER BY id;
 ----
 id	hero
 1	mop_take_home_assignment
-100	mop_round2_scheduled
+2	mop_round2_scheduled
+3	mop_round2_scheduled
 
 
 # myasnig_id_seq was created explicitly (no OWNED BY), so DROP TABLE leaves
@@ -329,7 +330,7 @@ statement ok
 DROP TABLE myasnig;
 
 
-statement ok
+statement error myasnig_id_seq.*does not exist
 DROP SEQUENCE myasnig_id_seq;
 
 

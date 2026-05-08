@@ -553,15 +553,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   opts.min_value = info.min_value;
   opts.max_value = info.max_value;
   opts.cycle = info.cycle;
-  opts.cache_size = 1;  // DuckDB CreateSequenceInfo has no CACHE field
 
   if (opts.increment <= 0) {
-    SDB_THROW(ERROR_BAD_PARAMETER,
-              "sequence INCREMENT must be positive (negative increments not "
-              "yet supported)");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("sequence INCREMENT must be positive (negative increments not "
+              "yet supported)"));
   }
   if (opts.start_value < opts.min_value || opts.start_value > opts.max_value) {
-    SDB_THROW(ERROR_BAD_PARAMETER, "sequence START is out of range [MIN, MAX]");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("sequence START is out of range [MIN, MAX]"));
   }
 
   bool if_not_exists =

@@ -37,6 +37,9 @@
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::connector {
 namespace {
@@ -52,52 +55,52 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
   auto database_id = conn_ctx.GetDatabaseId();
   auto schema = snapshot->GetSchema(database_id, schema_name);
   if (!schema) {
-    throw duckdb::CatalogException("schema \"%s\" does not exist", schema_name);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                    ERR_MSG("schema \"", schema_name, "\" does not exist"));
   }
   auto seq = snapshot->GetSequence(database_id, schema->GetId(), qname.name);
   if (!seq) {
-    throw duckdb::CatalogException("relation \"%s\" does not exist",
-                                   std::string{qualified});
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("relation \"", qualified, "\" does not exist"));
   }
   return seq;
 }
 
-int64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
+int64_t NextVal(catalog::Sequence& seq, int64_t value,
+                std::string_view qualified) {
   const auto& opts = seq.Options();
-  auto inc_u = static_cast<uint64_t>(opts.increment);
-  uint64_t base = seq.Reserve(inc_u);
-  auto value = static_cast<int64_t>(base + inc_u - 1);
-
-  if (value > opts.max_value) {
-    if (!opts.cycle) {
-      throw duckdb::Exception(duckdb::ExceptionType::SEQUENCE,
-                              "nextval: reached maximum value of sequence \"" +
-                                std::string{qualified} + "\" (" +
-                                std::to_string(opts.max_value) + ")");
-    }
-    // CYCLE wrap is best-effort: this caller still gets `value` (possibly
-    // past max). Strict atomic cycle is out of scope.
-    seq.Write(static_cast<uint64_t>(opts.min_value) - inc_u);
-    value = opts.min_value;
+  if (value <= opts.max_value) [[likely]] {
+    return value;
   }
-  return value;
+  if (!opts.cycle) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("nextval: reached maximum value of sequence \"",
+                            qualified, "\" (", opts.max_value, ")"));
+  }
+  auto new_cycle = static_cast<uint64_t>(opts.min_value) -
+                   static_cast<uint64_t>(opts.increment);
+  seq.Write(new_cycle);
+  return opts.min_value;
+}
+
+int64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
+  auto inc_u = static_cast<uint64_t>(seq.Options().increment);
+  uint64_t base = seq.Reserve(inc_u);
+  return NextVal(seq, static_cast<int64_t>(base + inc_u - 1), qualified);
 }
 
 int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
   return Nextval(*ResolveSequence(context, qualified), qualified);
 }
 
-// PG's currval is per-session; we report the global last-emitted value.
-// "Not yet defined" is detected by comparing against the seed sentinel,
-// which misfires if a setval intentionally puts the counter back there.
 int64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
   auto seq = ResolveSequence(context, qualified);
   const auto& opts = seq->Options();
   auto persisted = static_cast<int64_t>(seq->Read());
   if (persisted == opts.start_value - opts.increment) {
-    throw duckdb::Exception(duckdb::ExceptionType::SEQUENCE,
-                            "currval: sequence \"" + std::string{qualified} +
-                              "\" is not yet defined in this session");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("currval: sequence \"", qualified,
+                            "\" is not yet defined in this session"));
   }
   return persisted;
 }
@@ -107,18 +110,15 @@ int64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
   auto seq = ResolveSequence(context, qualified);
   const auto& opts = seq->Options();
   if (value < opts.min_value || value > opts.max_value) {
-    throw duckdb::Exception(duckdb::ExceptionType::SEQUENCE,
-                            "setval: value out of bounds for sequence \"" +
-                              std::string{qualified} + "\"");
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("setval: value out of bounds for sequence \"", qualified, "\""));
   }
-  auto to_persist = is_called ? static_cast<uint64_t>(value)
-                              : static_cast<uint64_t>(value - opts.increment);
+  uint64_t to_persist = is_called ? value : value - opts.increment;
   seq->Write(to_persist);
   return value;
 }
 
-// Constant-vector fast path collapses a chunk's worth of nextvals into one
-// Sequence::Reserve. Falls back to per-row when wrap could happen mid-batch.
 void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& context = state.GetContext();
@@ -130,50 +130,53 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       !duckdb::ConstantVector::IsNull(args.data[0])) {
     auto* name_data =
       duckdb::ConstantVector::GetData<duckdb::string_t>(args.data[0]);
-    auto qualified =
-      std::string_view{name_data->GetData(), name_data->GetSize()};
+    std::string_view qualified{name_data->GetData(), name_data->GetSize()};
     auto seq = ResolveSequence(context, qualified);
     const auto& opts = seq->Options();
-    auto inc_u = static_cast<uint64_t>(opts.increment);
-
-    uint64_t cur = seq->Read();
-    uint64_t total = static_cast<uint64_t>(num_rows) * inc_u;
-    bool unsafe_for_batch =
-      opts.cycle ||
-      (cur != 0 && static_cast<uint64_t>(opts.max_value) - cur < total);
-
-    if (!unsafe_for_batch) {
-      uint64_t base = seq->Reserve(total);
-      for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-        out[i] = static_cast<int64_t>(base + i * inc_u + (inc_u - 1));
-      }
-      return;
-    }
+    uint64_t inc_u = opts.increment;
+    uint64_t base = seq->Reserve(num_rows * inc_u);
 
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-      out[i] = Nextval(*seq, qualified);
+      out[i] = NextVal(*seq, base + i * inc_u + (inc_u - 1), qualified);
     }
     return;
   }
 
-  args.data[0].Flatten(num_rows);
-  auto* names = duckdb::FlatVector::GetData<duckdb::string_t>(args.data[0]);
+  duckdb::UnifiedVectorFormat fmt;
+  args.data[0].ToUnifiedFormat(num_rows, fmt);
+  auto* names = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
   for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-    out[i] = Nextval(context,
-                     std::string_view{names[i].GetData(), names[i].GetSize()});
+    auto idx = fmt.sel->get_index(i);
+    std::string_view seq_name{names[idx].GetData(), names[idx].GetSize()};
+    out[i] = Nextval(context, seq_name);
   }
 }
 
 void CurrvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& context = state.GetContext();
-  args.data[0].Flatten(args.size());
-  auto* names = duckdb::FlatVector::GetData<duckdb::string_t>(args.data[0]);
+  const auto num_rows = args.size();
+
+  if (args.data[0].GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR &&
+      !duckdb::ConstantVector::IsNull(args.data[0])) {
+    auto* name_data =
+      duckdb::ConstantVector::GetData<duckdb::string_t>(args.data[0]);
+    std::string_view qualified{name_data->GetData(), name_data->GetSize()};
+    result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+    *duckdb::ConstantVector::GetData<int64_t>(result) =
+      Currval(context, qualified);
+    return;
+  }
+
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  auto out = duckdb::FlatVector::Writer<int64_t>(result, args.size());
-  for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    out[i] = Currval(context,
-                     std::string_view{names[i].GetData(), names[i].GetSize()});
+  auto out = duckdb::FlatVector::Writer<int64_t>(result, num_rows);
+  duckdb::UnifiedVectorFormat fmt;
+  args.data[0].ToUnifiedFormat(num_rows, fmt);
+  auto* names = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  for (duckdb::idx_t i = 0; i < num_rows; ++i) {
+    auto idx = fmt.sel->get_index(i);
+    std::string_view seq_name{names[idx].GetData(), names[idx].GetSize()};
+    out[i] = Currval(context, seq_name);
   }
 }
 
@@ -183,8 +186,8 @@ void Setval2Function(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, int64_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t name, int64_t value) -> int64_t {
-      return Setval(context, std::string_view{name.GetData(), name.GetSize()},
-                    value, /*is_called=*/true);
+      std::string_view seq_name{name.GetData(), name.GetSize()};
+      return Setval(context, seq_name, value, /*is_called=*/true);
     });
 }
 
@@ -194,8 +197,8 @@ void Setval3Function(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   duckdb::TernaryExecutor::Execute<duckdb::string_t, int64_t, bool, int64_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, int64_t value, bool is_called) -> int64_t {
-      return Setval(context, std::string_view{name.GetData(), name.GetSize()},
-                    value, is_called);
+      std::string_view seq_name{name.GetData(), name.GetSize()};
+      return Setval(context, seq_name, value, is_called);
     });
 }
 

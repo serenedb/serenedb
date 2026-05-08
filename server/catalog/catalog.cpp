@@ -507,7 +507,9 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
       if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        auto table = Table::ReadInternal(slice, {.database_id = db_id});
+        auto table = Table::ReadInternal(
+          slice,
+          {.id = table_id, .database_id = db_id, .schema_id = schema_id});
         if (!table) {
           return Result{ERROR_INTERNAL, "Failed to read table definition"};
         }
@@ -636,10 +638,13 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
     return r;
   }
-  if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
+  // Tables must register before Sequences: owned (SERIAL / auto-PK)
+  // sequences look up their owner Table's TableDependency in the dep map
+  // when registered, so the Table needs to be there first.
+  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
     return r;
   }
-  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
+  if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
     return r;
   }
   return {};

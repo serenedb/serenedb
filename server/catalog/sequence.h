@@ -43,7 +43,6 @@ struct SequenceOptions {
   int64_t increment = 1;
   int64_t min_value = 1;
   int64_t max_value = std::numeric_limits<int64_t>::max();
-  int64_t cache_size = 1;
   bool cycle = false;
 
   uint64_t Seed() const noexcept { return start_value - increment; }
@@ -85,8 +84,9 @@ class Sequence final : public SchemaObject {
   void Write(uint64_t value);
 
  private:
-  std::atomic<uint64_t> _live{0};
-  mutable absl::Mutex _setval_mu;  // reader-held by Reserve, writer by Write
+  std::atomic_uint64_t _cnt{0};
+  // Reader-held by Reserve, writer-held by Write (setval).
+  mutable absl::Mutex _cnt_mtx;
   SequenceOptions _options;
   ObjectId _owner_table_id;
 

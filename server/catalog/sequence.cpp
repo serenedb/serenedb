@@ -20,6 +20,7 @@
 
 #include "catalog/sequence.h"
 
+#include <absl/base/internal/endian.h>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/slice.h>
@@ -28,13 +29,13 @@
 #include <vpack/slice.h>
 #include <vpack/vpack_helper.h>
 
-#include <bit>
 #include <cstring>
 #include <string>
 
 #include "basics/assert.h"
 #include "basics/exceptions.h"
 #include "basics/static_strings.h"
+#include "basics/string_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_format.h"
@@ -43,24 +44,6 @@
 
 namespace sdb::catalog {
 namespace {
-
-// Wire-compatible with rocksdb::UInt64AddOperator (PutFixed64). Hand-rolled
-// because rocksdb's util/coding.h isn't surfaced to consumers.
-void EncodeFixed64Le(std::string& dst, uint64_t value) {
-  if constexpr (std::endian::native == std::endian::big) {
-    value = std::byteswap(value);
-  }
-  dst.append(reinterpret_cast<const char*>(&value), sizeof(value));
-}
-
-uint64_t DecodeFixed64Le(const char* src) {
-  uint64_t value;
-  std::memcpy(&value, src, sizeof(value));
-  if constexpr (std::endian::native == std::endian::big) {
-    value = std::byteswap(value);
-  }
-  return value;
-}
 
 std::string CounterKey(ObjectId id) {
   std::string key;
@@ -82,7 +65,7 @@ Sequence::Sequence(ObjectId database_id, ObjectId schema_id, ObjectId id,
                  id, std::string{name}, ObjectType::Sequence},
     _options{opts},
     _owner_table_id{owner_table_id} {
-  _live.store(_options.Seed(), std::memory_order_release);
+  _cnt.store(_options.Seed(), std::memory_order_release);
 }
 
 std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
@@ -97,14 +80,13 @@ std::shared_ptr<Sequence> Sequence::ReadInternal(vpack::Slice slice,
   opts.min_value = basics::VPackHelper::getNumber<int64_t>(slice, "min", 1);
   opts.max_value = basics::VPackHelper::getNumber<int64_t>(
     slice, "max", std::numeric_limits<int64_t>::max());
-  opts.cache_size = basics::VPackHelper::getNumber<int64_t>(slice, "cache", 1);
   opts.cycle = basics::VPackHelper::getBool(slice, "cycle", false);
   ObjectId owner_table_id{
     basics::VPackHelper::getNumber<uint64_t>(slice, "owner_table_id", 0)};
 
   auto seq = std::make_shared<Sequence>(ctx.database_id, ctx.schema_id, ctx.id,
                                         name, opts, owner_table_id);
-  seq->_live.store(seq->LoadFromDb(), std::memory_order_release);
+  seq->_cnt.store(seq->LoadFromDb(), std::memory_order_release);
   return seq;
 }
 
@@ -115,7 +97,6 @@ void Sequence::WriteInternal(vpack::Builder& builder) const {
   builder.add("increment", _options.increment);
   builder.add("min", _options.min_value);
   builder.add("max", _options.max_value);
-  builder.add("cache", _options.cache_size);
   builder.add("cycle", _options.cycle);
   if (_owner_table_id.isSet()) {
     builder.add("owner_table_id", _owner_table_id.id());
@@ -141,7 +122,7 @@ uint64_t Sequence::LoadFromDb() const {
     SDB_THROW(rocksutils::ConvertStatus(s));
   }
   SDB_ASSERT(raw.size() == sizeof(uint64_t));
-  return DecodeFixed64Le(raw.data());
+  return rocksutils::UintFromPersistentLittleEndian<uint64_t>(raw.data());
 }
 
 uint64_t Sequence::ReserveWriteUnsafe(uint64_t count) {
@@ -150,38 +131,36 @@ uint64_t Sequence::ReserveWriteUnsafe(uint64_t count) {
   // Merge persists before the atomic fetch_add: a crash between burns the
   // range but never reuses it.
   std::string operand;
-  EncodeFixed64Le(operand, count);
+  rocksutils::UintToPersistentLittleEndian<uint64_t>(operand, count);
   auto* db = GetServerEngine().db();
   auto* cf = CounterCF();
   auto s = db->Merge(rocksdb::WriteOptions{}, cf, CounterKey(GetId()), operand);
   if (!s.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(s));
   }
-  return _live.fetch_add(count, std::memory_order_acq_rel) + 1;
+  return _cnt.fetch_add(count, std::memory_order_acq_rel) + 1;
 }
 
 uint64_t Sequence::Reserve(uint64_t count) {
-  absl::ReaderMutexLock lock{&_setval_mu};
+  absl::ReaderMutexLock lock{&_cnt_mtx};
   return ReserveWriteUnsafe(count);
 }
 
-uint64_t Sequence::Read() const {
-  return _live.load(std::memory_order_acquire);
-}
+uint64_t Sequence::Read() const { return _cnt.load(std::memory_order_acquire); }
 
 void Sequence::Write(uint64_t value) {
   std::string encoded;
-  EncodeFixed64Le(encoded, value);
+  rocksutils::UintToPersistentLittleEndian<uint64_t>(encoded, value);
   auto* db = GetServerEngine().db();
   auto* cf = CounterCF();
   auto key = CounterKey(GetId());
 
-  absl::MutexLock lock{&_setval_mu};
+  absl::MutexLock lock{&_cnt_mtx};
   auto s = db->Put(rocksdb::WriteOptions{}, cf, key, encoded);
   if (!s.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(s));
   }
-  _live.store(value, std::memory_order_release);
+  _cnt.store(value, std::memory_order_release);
 }
 
 }  // namespace sdb::catalog

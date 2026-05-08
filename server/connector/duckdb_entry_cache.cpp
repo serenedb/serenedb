@@ -695,8 +695,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
         return nullptr;
       }
       duckdb::CreateSequenceInfo info;
-      info.schema = std::string{schema};
-      info.name = std::string{name};
+      info.schema = schema;
+      info.name = name;
       info.start_value = seq->Options().start_value;
       info.increment = seq->Options().increment;
       info.min_value = seq->Options().min_value;
@@ -705,7 +705,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
       info.usage_count = 0;
       return duckdb::make_uniq<duckdb::SequenceCatalogEntry>(catalog, entry,
                                                              info);
-    } break;
+    }
     default:
       return nullptr;
   }

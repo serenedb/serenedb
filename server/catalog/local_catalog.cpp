@@ -388,12 +388,18 @@ class SnapshotImpl : public Snapshot {
         schema_deps->types.insert(object->GetId());
       } break;
       case ObjectType::Sequence: {
-        auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-        schema_deps->sequences.insert(object->GetId());
+        // Owned (SERIAL or auto-PK) sequences live under the table only --
+        // putting them in SchemaDep.sequences too would cause a double
+        // cascade on DROP SCHEMA / DROP DATABASE (schema iterates its
+        // sequences AND its tables, the table cascade already handles its
+        // owned sequences).
         const auto& seq = basics::downCast<Sequence>(*object);
         if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
           auto table_deps = GetDependencyForWrite<TableDependency>(owner);
           table_deps->owned_sequences.insert(object->GetId());
+        } else {
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
+          schema_deps->sequences.insert(object->GetId());
         }
       } break;
       case ObjectType::SecondaryIndex:
@@ -951,14 +957,18 @@ class SnapshotImpl : public Snapshot {
           schema_deps->types.erase(id);
         } break;
         case ObjectType::Sequence: {
-          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
-          SDB_ASSERT(schema_deps);
-          schema_deps->sequences.erase(id);
+          // owned sequences live under the table;
+          // free-standing CREATE SEQUENCE under the schema.
           const auto& seq = basics::downCast<Sequence>(*obj);
           if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
             auto table_deps = GetDependencyForWrite<TableDependency>(owner);
             SDB_ASSERT(table_deps);
             table_deps->owned_sequences.erase(id);
+          } else {
+            auto schema_deps =
+              GetDependencyForWrite<SchemaDependency>(parent_id);
+            SDB_ASSERT(schema_deps);
+            schema_deps->sequences.erase(id);
           }
         } break;
         default:
@@ -1666,21 +1676,23 @@ Result LocalCatalog::CreateTable(
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
       return _engine->Write([&](auto& ctx) {
+        // PutDefinition copies the slice; one Builder is reused across all
+        // writes, cleared between each.
         vpack::Builder b;
         table->WriteInternal(b);
         ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
                           b.slice());
 
-        vpack::Builder shard_b;
-        shard->WriteInternal(shard_b);
+        b.clear();
+        shard->WriteInternal(b);
         ctx.PutDefinition(table->GetId(), ObjectType::TableShard,
-                          shard->GetId(), shard_b.slice());
+                          shard->GetId(), b.slice());
 
         for (const auto& seq : sequences) {
-          vpack::Builder seq_b;
-          seq->WriteInternal(seq_b);
+          b.clear();
+          seq->WriteInternal(b);
           ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
-                            seq_b.slice());
+                            b.slice());
           ctx.PutSequence(seq->GetId(), seq->Options().Seed());
         }
       });

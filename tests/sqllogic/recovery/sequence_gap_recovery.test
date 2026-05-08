@@ -134,4 +134,4 @@ DROP TABLE konstantin_iceberg_audit_log;
 
 connection after_crash
 statement ok
-DROP SEQUENCE konstantin_iceberg_audit_log_id_seq;
+DROP SEQUENCE IF EXISTS konstantin_iceberg_audit_log_id_seq;

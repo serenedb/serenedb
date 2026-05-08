@@ -248,8 +248,7 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       bool if_exists =
         info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
       r = catalog.DropSequence(info.catalog, info.schema, info.name, if_exists);
-      break;
-    }
+    } break;
     case SCHEMA_ENTRY:
       if (info.name == StaticStrings::kPgCatalogSchema ||
           info.name == StaticStrings::kInformationSchema) {

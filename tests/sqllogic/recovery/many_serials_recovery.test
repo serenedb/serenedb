@@ -453,7 +453,7 @@ DROP TABLE iceberg_partition_reviews;
 
 connection after_crash
 statement ok
-DROP SEQUENCE iceberg_partition_reviews_id_seq;
+DROP SEQUENCE IF EXISTS iceberg_partition_reviews_id_seq;
 
 
 connection after_crash
@@ -463,7 +463,7 @@ DROP TABLE iceberg_manifest_audits;
 
 connection after_crash
 statement ok
-DROP SEQUENCE iceberg_manifest_audits_id_seq;
+DROP SEQUENCE IF EXISTS iceberg_manifest_audits_id_seq;
 
 
 connection after_crash
@@ -473,7 +473,7 @@ DROP TABLE iceberg_compaction_proposals;
 
 connection after_crash
 statement ok
-DROP SEQUENCE iceberg_compaction_proposals_id_seq;
+DROP SEQUENCE IF EXISTS iceberg_compaction_proposals_id_seq;
 
 
 connection after_crash
@@ -483,7 +483,7 @@ DROP TABLE solid_principles_violated;
 
 connection after_crash
 statement ok
-DROP SEQUENCE solid_principles_violated_id_seq;
+DROP SEQUENCE IF EXISTS solid_principles_violated_id_seq;
 
 
 connection after_crash
@@ -493,7 +493,7 @@ DROP TABLE solid_ironic_love_notes;
 
 connection after_crash
 statement ok
-DROP SEQUENCE solid_ironic_love_notes_id_seq;
+DROP SEQUENCE IF EXISTS solid_ironic_love_notes_id_seq;
 
 
 connection after_crash
@@ -503,7 +503,7 @@ DROP TABLE mop_recruiter_pings;
 
 connection after_crash
 statement ok
-DROP SEQUENCE mop_recruiter_pings_id_seq;
+DROP SEQUENCE IF EXISTS mop_recruiter_pings_id_seq;
 
 
 connection after_crash
@@ -513,7 +513,7 @@ DROP TABLE mop_take_home_assignments;
 
 connection after_crash
 statement ok
-DROP SEQUENCE mop_take_home_assignments_id_seq;
+DROP SEQUENCE IF EXISTS mop_take_home_assignments_id_seq;
 
 
 connection after_crash
@@ -523,7 +523,7 @@ DROP TABLE mop_interview_rounds;
 
 connection after_crash
 statement ok
-DROP SEQUENCE mop_interview_rounds_id_seq;
+DROP SEQUENCE IF EXISTS mop_interview_rounds_id_seq;
 
 
 connection after_crash
@@ -533,7 +533,7 @@ DROP TABLE kostya_resume_revisions;
 
 connection after_crash
 statement ok
-DROP SEQUENCE kostya_resume_revisions_id_seq;
+DROP SEQUENCE IF EXISTS kostya_resume_revisions_id_seq;
 
 
 connection after_crash
@@ -543,4 +543,4 @@ DROP TABLE clickclack_iceberg_jira_tickets;
 
 connection after_crash
 statement ok
-DROP SEQUENCE clickclack_iceberg_jira_tickets_id_seq;
+DROP SEQUENCE IF EXISTS clickclack_iceberg_jira_tickets_id_seq;

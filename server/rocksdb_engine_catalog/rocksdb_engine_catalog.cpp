@@ -1306,15 +1306,11 @@ void RocksDBEngineCatalog::CatalogWriteContext::PutSequence(
   ObjectId sequence_id, uint64_t value) {
   std::string key;
   rocksutils::Uint64ToPersistent(key, sequence_id.id());
-  uint64_t encoded = value;
-  if constexpr (std::endian::native == std::endian::big) {
-    encoded = std::byteswap(encoded);
-  }
-  _batch.Put(
-    RocksDBColumnFamilyManager::get(
-      RocksDBColumnFamilyManager::Family::Sequences),
-    key,
-    rocksdb::Slice{reinterpret_cast<const char*>(&encoded), sizeof(encoded)});
+  std::string encoded;
+  rocksutils::UintToPersistentLittleEndian<uint64_t>(encoded, value);
+  _batch.Put(RocksDBColumnFamilyManager::get(
+               RocksDBColumnFamilyManager::Family::Sequences),
+             key, encoded);
 }
 
 Result RocksDBEngineCatalog::Write(

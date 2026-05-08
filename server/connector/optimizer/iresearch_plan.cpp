@@ -418,6 +418,8 @@ void InitSearchColumnContextForGet(
     [&](catalog::Column::Id id, const duckdb::LogicalType& type) {
       ctx.column_type_by_id.emplace(id, type);
     });
+  auto columns = resolved.index->GetColumnIds();
+  ctx.indexed_column_ids.insert(columns.begin(), columns.end());
   for (auto col_id : resolved.index->GetColumnIds()) {
     ctx.indexed_column_ids.insert(col_id);
   }
@@ -613,7 +615,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
         any_claimed = true;
       }
     }
-    claimed_per_filter.push_back(std::move(claimed));
+    claimed_per_filter.emplace_back(std::move(claimed));
   }
 
   bool pushdown_filter = true;
@@ -641,8 +643,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       CombineFilterExpressions(std::move(rewritten_exprs));
     ann->filter_column_ids = std::move(filter_col_ids);
     if (any_claimed) {
-      ann->text_filter_summary =
-        irs::ToStringDemangled(and_root, MakeColumnNameLookup(bind_data));
+      ann->text_filter_root = &and_root;
       ann->stored_text_filter = std::move(proxy);
     }
   }
@@ -858,8 +859,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
       CombineFilterExpressions(std::move(rewritten_exprs));
     rss->filter_column_ids = std::move(filter_col_ids);
     if (any_claimed) {
-      rss->text_filter_summary =
-        irs::ToStringDemangled(and_root, MakeColumnNameLookup(bind_data));
+      rss->text_filter_root = &and_root;
       rss->stored_text_filter = std::move(proxy);
     }
     filter.expressions.clear();

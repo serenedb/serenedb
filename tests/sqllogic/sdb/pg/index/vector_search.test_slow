@@ -359,7 +359,3 @@ SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid2 WHERE id IN (SELECT
 ----
 ?column?
 t
-
-
-statement ok
-SET sdb_ef_search TO 512;

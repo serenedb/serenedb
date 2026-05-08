@@ -46,6 +46,7 @@
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
 #include "connector/rocksdb_filter.hpp"
+#include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
 #include "pg/connection_context.h"
 #include "search/inverted_index_shard.h"
@@ -430,11 +431,22 @@ void SkRangeScan::AppendSummary(
 namespace {
 
 void AppendVectorSearchSummary(
-  const VectorSearchScan& scan,
+  const SereneDBScanBindData& bind, const VectorSearchScan& scan,
   duckdb::InsertionOrderPreservingMap<std::string>& out) {
   out.insert("Dims", std::to_string(scan.query_vector.size()));
-  if (!scan.text_filter_summary.empty()) {
-    out.insert("TextFilter", scan.text_filter_summary);
+  if (scan.text_filter_root) {
+    auto col_name = [&bind](catalog::Column::Id col_id) -> std::string_view {
+      static thread_local std::string fallback;
+      auto name = bind.ColumnNameById(col_id);
+      if (!name.empty()) {
+        return name;
+      }
+      fallback = absl::StrCat("col", col_id);
+      return fallback;
+    };
+    SDB_ASSERT(scan.text_filter_root);
+    out.insert("TextFilter",
+               irs::ToStringDemangled(*scan.text_filter_root, col_name));
   }
   if (!scan.filter_expression) {
     return;
@@ -449,17 +461,17 @@ void AppendVectorSearchSummary(
 }  // namespace
 
 void ANNScan::AppendSummary(
-  const SereneDBScanBindData& /*bind*/,
+  const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("TopK", std::to_string(top_k));
-  AppendVectorSearchSummary(*this, out);
+  AppendVectorSearchSummary(bind, *this, out);
 }
 
 void RangeSearchScan::AppendSummary(
-  const SereneDBScanBindData& /*bind*/,
+  const SereneDBScanBindData& bind,
   duckdb::InsertionOrderPreservingMap<std::string>& out) const {
   out.insert("Radius", std::to_string(radius));
-  AppendVectorSearchSummary(*this, out);
+  AppendVectorSearchSummary(bind, *this, out);
 }
 
 void CountScan::AppendSummary(

@@ -411,11 +411,10 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   const bool field_has_freq =
     irs::IndexFeatures::None != (field_features & irs::IndexFeatures::Freq);
   EXPECT_EQ((field_features & features), features);
-  irs::IteratorFieldOptions options(field_has_freq ? 1 : 0);
+  irs::IteratorFieldOptions options(field_has_freq);
   if (iterator_has_freq) {
     options.wand_enabled = true;
     options.strict = strict;
-    options.enabled = true;
   }
 
   irs::CookieImpl cookie{static_cast<const irs::TermMetaImpl&>(meta)};

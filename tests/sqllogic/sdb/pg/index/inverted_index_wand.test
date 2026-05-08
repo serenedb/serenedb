@@ -519,7 +519,7 @@ count
 10
 
 
-# Mismatched scorer (TFIDF query against BM25-WAND index) --
+# Mismatched scorer type (TFIDF query against BM25-WAND index) --
 # WandEnabled() in the connector returns false.
 
 query I
@@ -527,6 +527,49 @@ SELECT COUNT(*) FROM (
   SELECT id FROM wand_big_idx
   WHERE body @@ ts_phrase('fox')
   ORDER BY TFIDF(wand_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Same scorer type, different params (index `bm25(1.2, 0.75)`, query
+# `BM25(idx.tableoid, 1.5, 0.8)`). The catalog::ScorerOptions equality
+# is exact on params, so WandEnabled() returns false.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(wand_big_idx.tableoid, 1.5, 0.8) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Scorer not the primary sort key -- score_top_k rule only matches
+# `ORDER BY <scorer>(...) DESC` as the first / only key.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY id ASC, BM25(wand_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Scorer wrapped in arithmetic -- the optimizer rule wants a bare
+# BM25(idx.tableoid) call, not an expression of it.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY 2 * BM25(wand_big_idx.tableoid) DESC LIMIT 10
 ) x;
 ----
 count

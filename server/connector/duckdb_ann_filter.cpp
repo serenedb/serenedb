@@ -20,9 +20,6 @@
 
 #include "connector/duckdb_ann_filter.h"
 
-#include <algorithm>
-#include <array>
-
 #include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
@@ -170,24 +167,21 @@ bool TextScanFilter::Accept(faiss::idx_t id) const {
   return _it->seek(doc_id) == doc_id;
 }
 
-CompositeScanFilter::CompositeScanFilter(
-  std::vector<std::unique_ptr<ScanFilter>> fs)
-  : _filters{std::move(fs)} {
-  std::sort(_filters.begin(), _filters.end(),
-            [](const auto& a, const auto& b) { return a->Cost() < b->Cost(); });
-}
-
 void CompositeScanFilter::Reset(const irs::SubReader& segment) {
-  for (auto& f : _filters) {
-    f->Reset(segment);
+  if (_text) {
+    _text->Reset(segment);
+  }
+  if (_ann) {
+    _ann->Reset(segment);
   }
 }
 
 bool CompositeScanFilter::is_member(faiss::idx_t id) const {
-  for (const auto& f : _filters) {
-    if (!f->Accept(id)) {
-      return false;
-    }
+  if (_text && !_text->Accept(id)) {
+    return false;
+  }
+  if (_ann && !_ann->Accept(id)) {
+    return false;
   }
   return true;
 }

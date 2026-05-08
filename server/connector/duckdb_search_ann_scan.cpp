@@ -363,15 +363,13 @@ void SearchAnnScanFunction(duckdb::ClientContext& context,
   size_t processed = 0;
   uint32_t segment;
   SDB_ASSERT(g.reader);
-  std::vector<std::unique_ptr<ScanFilter>> filters;
+  CompositeScanFilter composite;
   if (l.text_filter_query) {
-    filters.emplace_back(
-      std::make_unique<TextScanFilter>(*l.text_filter_query));
+    composite.EnableText(*l.text_filter_query);
   }
   if (g.filter_ctx) {
-    filters.emplace_back(std::make_unique<ANNFilter>(*g.filter_ctx));
+    composite.EnableAnn(*g.filter_ctx);
   }
-  CompositeScanFilter composite{std::move(filters)};
   while (ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {
     const auto& reader = (*g.reader)[segment];
@@ -434,15 +432,13 @@ void SearchRangeScanFunction(duckdb::ClientContext& context,
   auto& bind_data = data.bind_data->Cast<SereneDBScanBindData>();
 
   uint32_t segment;
-  std::vector<std::unique_ptr<ScanFilter>> filters;
+  CompositeScanFilter composite;
   if (l.text_filter_query) {
-    filters.emplace_back(
-      std::make_unique<TextScanFilter>(*l.text_filter_query));
+    composite.EnableText(*l.text_filter_query);
   }
   if (g.filter_ctx) {
-    filters.emplace_back(std::make_unique<ANNFilter>(*g.filter_ctx));
+    composite.EnableAnn(*g.filter_ctx);
   }
-  CompositeScanFilter composite{std::move(filters)};
   while (LocalPkSize(l.pk_batch) - l.current_idx < STANDARD_VECTOR_SIZE &&
          ClaimNextLiveSegment(g.next_segment, g.total_segments, *g.reader,
                               segment)) {

@@ -422,17 +422,24 @@ count
 
 
 # ---------------------------------------------------------------------------
-# Fault-injection trip-wire: `irs::WandIterator` fires inside iresearch's
-# WandIterator dispatch, proving the connector wired WAND through and the
-# engine actually picked the WAND-capable iterator at runtime. EXPLAIN's
-# `, optimized` suffix is a connector-side hint -- this is the runtime
-# proof.
+# Fault-injection trip-wires for the WAND dispatch in iresearch. EXPLAIN's
+# `, optimized` suffix is a connector-side hint; these probes prove the
+# engine actually picked a WAND-capable iterator at runtime.
+#
+# Three nested probes:
+#   irs::WandIterator        -- any WAND dispatch fires.
+#   irs::SingleWandIterator  -- single-cookie path (1 posting list, e.g. a
+#                               bare term filter).
+#   irs::MaxScoreIterator    -- multi-cookie path (Block-Max WAND across
+#                               postings, e.g. ts_any over distinct terms).
 # ---------------------------------------------------------------------------
 
-# Positive: WAND-on index + matching scorer + DESC + LIMIT -> fault trips.
+# === Positive: shapes that should engage WAND ===
+
+# Single term -> SingleWandIterator path.
 
 statement ok
-SET sdb_faults = 'irs::WandIterator';
+SET sdb_faults = 'irs::SingleWandIterator';
 
 
 statement error db error: ERROR: intentional debug error
@@ -441,7 +448,52 @@ WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10;
 
 
-# Negative: same query against the plain (non-WAND) index does not trip.
+statement ok
+SET sdb_faults = '-irs::SingleWandIterator';
+
+
+# Term disjunction with distinct terms -> MaxScoreIterator path.
+
+statement ok
+SET sdb_faults = 'irs::MaxScoreIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_big_idx
+WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
+ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10;
+
+
+statement ok
+SET sdb_faults = '-irs::MaxScoreIterator';
+
+
+# Single-term disjunction collapses to ByTerm -> SingleWandIterator path,
+# NOT MaxScoreIterator (verified by mutual exclusion).
+
+statement ok
+SET sdb_faults = 'irs::SingleWandIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_big_idx
+WHERE body @@ ts_any(['fox'])
+ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10;
+
+
+statement ok
+SET sdb_faults = '-irs::SingleWandIterator';
+
+
+# === Negative: shapes that should NOT engage WAND ===
+# Arm `irs::WandIterator` (catches both Single and MaxScore paths) and
+# expect each query to succeed without tripping.
+
+statement ok
+SET sdb_faults = 'irs::WandIterator';
+
+
+# Plain (non-WAND) index -- has_wand is false, dispatch falls through.
 
 query I
 SELECT COUNT(*) FROM (
@@ -454,7 +506,7 @@ count
 10
 
 
-# Negative: ASC on the WAND index -- TopK rule doesn't pull up, no WAND.
+# ASC ordering -- score_top_k rule only matches DESC.
 
 query I
 SELECT COUNT(*) FROM (
@@ -467,8 +519,8 @@ count
 10
 
 
-# Negative: mismatched scorer (TFIDF query against BM25-WAND index) --
-# WandEnabled() returns false, no WAND iterator picked.
+# Mismatched scorer (TFIDF query against BM25-WAND index) --
+# WandEnabled() in the connector returns false.
 
 query I
 SELECT COUNT(*) FROM (
@@ -479,6 +531,48 @@ SELECT COUNT(*) FROM (
 ----
 count
 10
+
+
+# Multi-token phrase -- compiles to FixedPhraseQuery, which does not thread
+# ctx.wand. (Single-token ts_phrase short-circuits to ByTerm and DOES use
+# WAND -- covered in the positive section above.)
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox', 'lazy')
+  ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Boolean with NOT child disables WAND on the And iterator
+# (boolean_query.cpp:133).
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox') AND NOT (body @@ ts_phrase('lazy'))
+  ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# No LIMIT -- score_top_k rule doesn't pull up, scan emits the full set.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('rare_token')
+  ORDER BY BM25(wand_big_idx.tableoid) DESC
+) x;
+----
+count
+5000
 
 
 statement ok

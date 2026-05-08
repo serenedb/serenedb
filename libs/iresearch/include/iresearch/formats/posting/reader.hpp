@@ -445,12 +445,10 @@ template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
-  // Trip-wire: this entry point is reached only when the dispatcher in
-  // Iterator() above selects a WAND-capable iterator (wand requested + Freq
-  // feature present + no Pos/Offs required + min_match==1). Tests
-  // SET sdb_faults to assert WAND was actually instantiated for a given
-  // query/index combo.
-  SDB_IF_FAILURE("irs::WandIterator") { SDB_THROW(sdb::ERROR_DEBUG); }
+  SDB_IF_FAILURE("irs::WandIterator") {  //
+    SDB_THROW(sdb::ERROR_DEBUG);
+  }
+
   return ResolveWandType(
     field_features, options.has_wand, _doc_in->GetType(),
     [&]<bool Pos, bool Offs, bool HasWand, typename InputType>()
@@ -464,6 +462,9 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
         };
 
       if (metas.size() == 1) {
+        SDB_IF_FAILURE("irs::SingleWandIterator") {
+          SDB_THROW(sdb::ERROR_DEBUG);
+        }
         return make_postings_iterator.template operator()<true>(metas[0]);
       }
 
@@ -479,6 +480,9 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
         SingleWandIterator<FormatTraits, false, Pos, Offs, InputType>;
       using Adapter = WandPostingAdapter<Iterator>;
 
+      SDB_IF_FAILURE("irs::MaxScoreIterator") {  //
+        SDB_THROW(sdb::ERROR_DEBUG);
+      }
       return memory::make_managed<MaxScoreIterator<Adapter>>(
         std::move(iterators));
     });

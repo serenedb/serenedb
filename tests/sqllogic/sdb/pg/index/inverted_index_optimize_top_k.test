@@ -10,14 +10,13 @@ hash-threshold 100
 # EXPLAIN reflects the option by suffixing the `TopK` row in the
 # IRESEARCH_SCAN box with `, optimized` when WAND pruning is engaged.
 #
-# DuckDB's CREATE INDEX option grammar rejects bare `true`/`false` keywords
-# (must be a constant expression). The Postgres-style bare form
-# `WITH (optimize_top_k)` evaluates to BOOLEAN(true) and is the canonical way
-# to enable. Integer 0/1 and string 'false'/'true' are also accepted because
-# the connector casts the value through BOOLEAN.
+# `optimize_top_k` is a string-encoded scorer expression, e.g.
+# `'bm25(1.2, 0.75)'`, `'tfidf()'`, `'raw_tf()'`. Omitting the option leaves
+# WAND off. The catalog stores the parsed `ScorerOptions`; WAND fires only
+# when the index's stored scorer matches the ORDER BY scorer.
 #
-# Uses TERM_EQ predicates: WAND only requires Freq + Norm features which all
-# token analyzers expose, and the simple form keeps the EXPLAIN box stable.
+# Single-token `body @@ ts_phrase('x')` collapses to a ByTerm filter, which
+# is the simplest WAND-eligible iterator (only needs Freq + Norm features).
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -57,11 +56,9 @@ CREATE TEXT SEARCH DICTIONARY en_wand(
 );
 
 
-# Bare-keyword form enables WAND.
-
 statement ok
 CREATE INDEX docs_wand_idx ON docs_wand USING inverted(id, body en_wand)
-  WITH (optimize_top_k);
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -73,7 +70,7 @@ VACUUM (UPDATE_INDEXES) docs_wand;
 
 query I
 SELECT id FROM docs_wand_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
 LIMIT 3;
 ----
@@ -119,7 +116,7 @@ VACUUM (UPDATE_INDEXES) docs_plain;
 
 query I
 SELECT id FROM docs_plain_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_plain_idx.tableoid) DESC, id
 LIMIT 3;
 ----
@@ -133,7 +130,7 @@ id
 
 query I
 SELECT id FROM docs_wand_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
 LIMIT 10;
 ----
@@ -149,19 +146,18 @@ id
 # path so the marker is bundled into the same row instead of a separate one.
 
 query
-EXPLAIN SELECT id FROM docs_wand_idx WHERE TERM_EQ(body, 'fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Table: docs_wand     │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│    Index: docs_wand_idx   │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│AND[Term(body(string)=fox)]│
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -174,19 +170,18 @@ QUERY PLAN
 
 
 query
-EXPLAIN SELECT id FROM docs_plain_idx WHERE TERM_EQ(body, 'fox') ORDER BY BM25(docs_plain_idx.tableoid) DESC LIMIT 3;
+EXPLAIN SELECT id FROM docs_plain_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_plain_idx.tableoid) DESC LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│     Table: docs_plain     │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│   Index: docs_plain_idx   │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│AND[Term(body(string)=fox)]│
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -222,7 +217,7 @@ VACUUM (UPDATE_INDEXES) docs_default;
 
 query I
 SELECT id FROM docs_default_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY id;
 ----
 id
@@ -238,7 +233,7 @@ id
 
 query I
 SELECT id FROM docs_wand_idx
-WHERE TERM_EQ(body, 'fox') AND TERM_EQ(body, 'lazy')
+WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('lazy')
 ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
 LIMIT 3;
 ----
@@ -248,7 +243,7 @@ id
 
 query I
 SELECT id FROM docs_plain_idx
-WHERE TERM_EQ(body, 'fox') AND TERM_EQ(body, 'lazy')
+WHERE body @@ ts_phrase('fox') AND body @@ ts_phrase('lazy')
 ORDER BY BM25(docs_plain_idx.tableoid) DESC, id
 LIMIT 3;
 ----
@@ -258,7 +253,7 @@ id
 
 query I
 SELECT id FROM docs_wand_idx
-WHERE TERM_EQ(body, 'fox') OR TERM_EQ(body, 'lazy')
+WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
 ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
 LIMIT 4;
 ----
@@ -271,7 +266,7 @@ id
 
 query I
 SELECT id FROM docs_plain_idx
-WHERE TERM_EQ(body, 'fox') OR TERM_EQ(body, 'lazy')
+WHERE body @@ ts_phrase('fox') OR body @@ ts_phrase('lazy')
 ORDER BY BM25(docs_plain_idx.tableoid) DESC, id
 LIMIT 4;
 ----
@@ -324,7 +319,7 @@ VACUUM (UPDATE_INDEXES) docs_plain;
 
 query I
 SELECT id FROM docs_wand_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
 LIMIT 3;
 ----
@@ -336,7 +331,7 @@ id
 
 query I
 SELECT id FROM docs_plain_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_plain_idx.tableoid) DESC, id
 LIMIT 3;
 ----
@@ -350,7 +345,7 @@ id
 
 query I
 SELECT id FROM docs_wand_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_wand_idx.tableoid) DESC, id
 LIMIT 100;
 ----
@@ -365,7 +360,7 @@ id
 
 query I
 SELECT id FROM docs_plain_idx
-WHERE TERM_EQ(body, 'fox')
+WHERE body @@ ts_phrase('fox')
 ORDER BY BM25(docs_plain_idx.tableoid) DESC, id
 LIMIT 100;
 ----
@@ -386,7 +381,7 @@ id
 #    not the index has optimize_top_k set). Filtering still happens.
 
 query
-EXPLAIN SELECT id, BM25(docs_wand_idx.tableoid) AS s FROM docs_wand_idx WHERE TERM_EQ(body, 'fox') ORDER BY s DESC;
+EXPLAIN SELECT id, BM25(docs_wand_idx.tableoid) AS s FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY s DESC;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -400,13 +395,12 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Table: docs_wand     │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│    Index: docs_wand_idx   │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│AND[Term(body(string)=fox)]│
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -423,7 +417,7 @@ QUERY PLAN
 #    DESC). No `TopK` row, no `optimized` suffix.
 
 query
-EXPLAIN SELECT id FROM docs_wand_idx WHERE TERM_EQ(body, 'fox') ORDER BY BM25(docs_wand_idx.tableoid) ASC LIMIT 3;
+EXPLAIN SELECT id FROM docs_wand_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_wand_idx.tableoid) ASC LIMIT 3;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
@@ -444,13 +438,12 @@ QUERY PLAN
 ┌─────────────┴─────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│      Table: docs_wand     │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│    Index: docs_wand_idx   │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│AND[Term(body(string)=fox)]│
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
 │                           │
 │           Score:          │
 │    bm25(k1=1.2, b=0.75)   │
@@ -464,81 +457,51 @@ QUERY PLAN
 
 
 # ---------------------------------------------------------------------------
-# Option-value forms accepted by the connector. DuckDB rejects bare
-# `true`/`false` so users opt in via the bare keyword, an integer, or a
-# string. All four shapes drive the same catalog flag.
+# Scorer-expression forms. The string is parsed via DuckDB's binder so
+# overload resolution / coercion match `ORDER BY <scorer>(...)`. Each scorer
+# in the catalog::ScorerOptions variant is exercised here.
 # ---------------------------------------------------------------------------
 
-# 3a. Integer 0 -> false (no `, optimized` suffix).
+# tfidf with default args.
 
 statement ok
-CREATE TABLE docs_int_off (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_tfidf (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement count 1
-INSERT INTO docs_int_off VALUES (1, 'fox');
+INSERT INTO docs_tfidf VALUES (1, 'fox');
+
+
+statement count 1
+INSERT INTO docs_tfidf VALUES (2, 'fox bar');
 
 
 statement ok
-CREATE INDEX docs_int_off_idx ON docs_int_off
+CREATE INDEX docs_tfidf_idx ON docs_tfidf
   USING inverted(id, body en_wand)
-  WITH (optimize_top_k = 0);
+  WITH (optimize_top_k = 'tfidf()');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_int_off;
-
-
-query I
-SELECT id FROM docs_int_off_idx
-WHERE TERM_EQ(body, 'fox')
-ORDER BY id;
-----
-id
-1
-
-
-# 3b. Integer 1 -> true (EXPLAIN shows `, optimized`).
-
-statement ok
-CREATE TABLE docs_int_on (id INTEGER PRIMARY KEY, body VARCHAR);
-
-
-statement count 1
-INSERT INTO docs_int_on VALUES (1, 'fox');
-
-
-statement count 1
-INSERT INTO docs_int_on VALUES (2, 'fox bar');
-
-
-statement ok
-CREATE INDEX docs_int_on_idx ON docs_int_on
-  USING inverted(id, body en_wand)
-  WITH (optimize_top_k = 1);
-
-
-statement ok
-VACUUM (UPDATE_INDEXES) docs_int_on;
+VACUUM (UPDATE_INDEXES) docs_tfidf;
 
 
 query
-EXPLAIN SELECT id FROM docs_int_on_idx WHERE TERM_EQ(body, 'fox') ORDER BY BM25(docs_int_on_idx.tableoid) DESC LIMIT 2;
+EXPLAIN SELECT id FROM docs_tfidf_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(docs_tfidf_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│     Table: docs_int_on    │
-│                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│   Index: docs_tfidf_idx   │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│AND[Term(body(string)=fox)]│
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
 │                           │
 │           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
+│  tfidf(with_norms=false)  │
 │                           │
 │     TopK: 2, optimized    │
 │      Projections: id      │
@@ -547,47 +510,49 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-# 3c. String 'true' -> true (EXPLAIN shows `, optimized`).
+# bm25 with explicit non-default args -- both `optimize_top_k` and the
+# `ORDER BY BM25(...)` use the same params, so WAND engages.
 
 statement ok
-CREATE TABLE docs_str_on (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE docs_bm25_args (id INTEGER PRIMARY KEY, body VARCHAR);
 
 
 statement count 1
-INSERT INTO docs_str_on VALUES (1, 'fox');
+INSERT INTO docs_bm25_args VALUES (1, 'fox');
 
 
 statement count 1
-INSERT INTO docs_str_on VALUES (2, 'fox bar');
+INSERT INTO docs_bm25_args VALUES (2, 'fox bar');
 
 
 statement ok
-CREATE INDEX docs_str_on_idx ON docs_str_on
+CREATE INDEX docs_bm25_args_idx ON docs_bm25_args
   USING inverted(id, body en_wand)
-  WITH (optimize_top_k = 'true');
+  WITH (optimize_top_k = 'bm25(1.5, 0.8)');
 
 
 statement ok
-VACUUM (UPDATE_INDEXES) docs_str_on;
+VACUUM (UPDATE_INDEXES) docs_bm25_args;
 
 
 query
-EXPLAIN SELECT id FROM docs_str_on_idx WHERE TERM_EQ(body, 'fox') ORDER BY BM25(docs_str_on_idx.tableoid) DESC LIMIT 2;
+EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_bm25_args_idx.tableoid, 1.5, 0.8) DESC LIMIT 2;
 ----
 QUERY PLAN
 ┌───────────────────────────┐
 │       IRESEARCH_SCAN      │
 │    ────────────────────   │
-│     Table: docs_str_on    │
+│           Index:          │
+│     docs_bm25_args_idx    │
 │                           │
-│       Materializer:       │
-│    rocksdb (point Get)    │
+│      Lookup: rocksdb      │
 │                           │
 │          Filter:          │
-│AND[Term(body(string)=fox)]│
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
 │                           │
 │           Score:          │
-│    bm25(k1=1.2, b=0.75)   │
+│    bm25(k1=1.5, b=0.8)    │
 │                           │
 │     TopK: 2, optimized    │
 │      Projections: id      │
@@ -596,43 +561,64 @@ QUERY PLAN
 └───────────────────────────┘
 
 
-# 3d. String 'false' -> false.
+# Mismatched scorer -- index says BM25, query orders by TFIDF. WAND off
+# (no `, optimized` suffix). Top-K still pulls up; results are correct.
 
-statement ok
-CREATE TABLE docs_str_off (id INTEGER PRIMARY KEY, body VARCHAR);
-
-
-statement count 1
-INSERT INTO docs_str_off VALUES (1, 'fox');
-
-
-statement ok
-CREATE INDEX docs_str_off_idx ON docs_str_off
-  USING inverted(id, body en_wand)
-  WITH (optimize_top_k = 'false');
-
-
-statement ok
-VACUUM (UPDATE_INDEXES) docs_str_off;
-
-
-query I
-SELECT id FROM docs_str_off_idx
-WHERE TERM_EQ(body, 'fox')
-ORDER BY id;
+query
+EXPLAIN SELECT id FROM docs_bm25_args_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(docs_bm25_args_idx.tableoid) DESC LIMIT 2;
 ----
-id
-1
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│     docs_bm25_args_idx    │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│  tfidf(with_norms=false)  │
+│                           │
+│          TopK: 2          │
+│      Projections: id      │
+│                           │
+│          ~2 rows          │
+└───────────────────────────┘
 
 
 # ---------------------------------------------------------------------------
-# Negative case: bare `true` keyword is rejected by DuckDB's CREATE INDEX
-# grammar (value must be a constant expression, and the bare boolean
-# keyword is not). Documented here so users know to use the bare-key form,
-# an integer, or a string literal instead.
+# Negative cases for `optimize_top_k`.
 # ---------------------------------------------------------------------------
 
+# Unknown scorer name.
+statement error scorer
+CREATE INDEX docs_default_bad_unknown ON docs_default
+  USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'mystery_scorer()');
+
+
+# Out-of-range parameter.
+statement error lambda
+CREATE INDEX docs_default_bad_lambda ON docs_default
+  USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'lm_jm(2.0)');
+
+
+# Bare identifier (no parentheses) is rejected -- caller must spell out a
+# function call.
+statement error scorer function call
+CREATE INDEX docs_default_bad_bare ON docs_default
+  USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'bm25');
+
+
+# DuckDB's CREATE INDEX grammar still rejects non-constant values like the
+# bare `true` keyword.
 statement error db error: ERROR: Create index option must be a constant value
-CREATE INDEX docs_default_bad ON docs_default
+CREATE INDEX docs_default_bad_keyword ON docs_default
   USING inverted(id, body en_wand)
   WITH (optimize_top_k = true);

@@ -28,6 +28,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -42,11 +43,18 @@
 namespace sdb::catalog {
 namespace {
 
+// ConstantBinder may wrap a literal in a BoundCastExpression for type
+// coercion (`1.2` parses as DECIMAL, gets cast to DOUBLE). Peek through
+// such casts; downstream `Value::GetValue<T>()` handles the conversion.
 const duckdb::Value* TryGetConstantValue(const duckdb::Expression& expr) {
-  if (expr.expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
+  const auto* e = &expr;
+  while (e->expression_class == duckdb::ExpressionClass::BOUND_CAST) {
+    e = e->Cast<duckdb::BoundCastExpression>().child.get();
+  }
+  if (e->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
     return nullptr;
   }
-  return &expr.Cast<duckdb::BoundConstantExpression>().value;
+  return &e->Cast<duckdb::BoundConstantExpression>().value;
 }
 
 }  // namespace

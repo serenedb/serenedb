@@ -69,19 +69,16 @@ class Sequence final : public SchemaObject {
 
   const SequenceOptions& Options() const noexcept { return _options; }
 
-  // Set when this sequence is implicitly created by a SERIAL column or as
-  // the auto-PK for a table without an explicit PK. Wires the sequence into
-  // TableDependency::owned_sequences for PG OWNED BY cascade.
+  // Set for SERIAL implicit sequences (and the auto-PK Sequence). Wires the
+  // sequence into TableDependency::owned_sequences for PG OWNED BY cascade.
   ObjectId GetOwnerTableId() const noexcept { return _owner_table_id; }
 
-  // Hand out [base, base+count-1]; returns base. Persists via Merge before
-  // returning, so a crash burns the range but never reuses it.
-  // Reader-locked against `Write` (setval) -- multiple Reserves run in
-  // parallel; a concurrent Write blocks them for its duration.
+  // Hand out [base, base+count-1]; returns base. Merge persists before the
+  // atomic increment, so a crash burns the range but never reuses it.
   uint64_t Reserve(uint64_t count);
 
-  // Lock-free variant. Caller must guarantee that `Write` is never called
-  // for this Sequence (auto-PK sequences are the only such case).
+  // Lock-free variant; caller guarantees Write is never called on this
+  // Sequence. Used by the auto-PK path which is invisible to setval.
   uint64_t ReserveWriteUnsafe(uint64_t count);
 
   uint64_t Read() const;
@@ -89,9 +86,7 @@ class Sequence final : public SchemaObject {
 
  private:
   std::atomic<uint64_t> _live{0};
-  // ReaderLock for Reserve, writer Lock for Write. ReserveWriteUnsafe
-  // does not touch this -- the auto-PK path is not exposed to setval.
-  mutable absl::Mutex _setval_mu;
+  mutable absl::Mutex _setval_mu;  // reader-held by Reserve, writer by Write
   SequenceOptions _options;
   ObjectId _owner_table_id;
 

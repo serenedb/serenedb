@@ -102,14 +102,9 @@ struct TableStats {
   uint64_t num_rows = 0;
 };
 
-// Caller-side struct for LocalCatalog::CreateTable. The catalog assigns the
-// table id, picks unique names for any SERIAL sequences, and persists the
-// Table + its TableShard + any owned sequences in one batch.
 struct CreateTableOptions {
-  // SERIAL implicit sequence spec. LocalCatalog under the catalog mutex picks
-  // the unique sequence name (mangling `<table>_<col>_seq` if the bare form
-  // is taken), constructs the Sequence with owner_table_id stamped, and
-  // installs the column's nextval default with the resolved name.
+  // LocalCatalog resolves the sequence name (mangling on collision), stamps
+  // owner_table_id, and installs the column's nextval default.
   struct SerialSequenceOption {
     Column::Id column_id;
     SequenceOptions options;

@@ -1295,8 +1295,6 @@ Result RocksDBEngineCatalog::CreateDefinition(ObjectId parent_id,
 void RocksDBEngineCatalog::CatalogWriteContext::PutDefinition(
   ObjectId parent_id, catalog::ObjectType type, ObjectId id, vpack::Slice def) {
   RocksDBKeyWithBuffer<DefinitionKey> key{parent_id, type, id};
-  // rocksdb::WriteBatch::Put copies key/value bytes into its internal buffer,
-  // so the local key buffer + caller's slice may go out of scope after.
   _batch.Put(RocksDBColumnFamilyManager::get(
                RocksDBColumnFamilyManager::Family::Definitions),
              key.GetBuffer(),

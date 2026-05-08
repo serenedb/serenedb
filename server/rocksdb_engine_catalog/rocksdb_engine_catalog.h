@@ -218,22 +218,17 @@ class RocksDBEngineCatalog {
   Result CreateDefinition(ObjectId parent_id, catalog::ObjectType type,
                           ObjectId id, WriteProperties properties);
 
-  // Transient context passed to Write's callback. Wraps a borrowed WriteBatch
-  // owned by the Write call; lets the callback emit any mix of definition
-  // rows + sequence counter seeds. The whole batch commits atomically.
+  // Transient handle for Write's callback. Caller mixes Put* calls; the
+  // whole batch commits atomically.
   class CatalogWriteContext {
    public:
     CatalogWriteContext(const CatalogWriteContext&) = delete;
     CatalogWriteContext& operator=(const CatalogWriteContext&) = delete;
 
-    // Catalog row in the Definitions CF, keyed by (parent_id, type, id).
-    // `def` is non-owning; the WriteBatch copies on commit so the backing
-    // buffer only needs to live until this call returns.
+    // `def` is non-owning -- WriteBatch copies on Put so the backing buffer
+    // only has to outlive this call.
     void PutDefinition(ObjectId parent_id, catalog::ObjectType type,
                        ObjectId id, vpack::Slice def);
-
-    // Counter seed in the Sequences CF, keyed by `sequence_id`. Base value
-    // for atomic increments via Merge-as-WAL.
     void PutSequence(ObjectId sequence_id, uint64_t value);
 
    private:
@@ -246,8 +241,7 @@ class RocksDBEngineCatalog {
   Result DropDefinition(ObjectId parent_id, catalog::ObjectType type,
                         ObjectId id);
 
-  // Erase a sequence's counter row from the Sequences CF. Pair with
-  // DropDefinition(parent, ObjectType::Sequence, id) to fully drop a sequence.
+  // Pair with DropDefinition(..., ObjectType::Sequence, id) to fully drop.
   Result DropSequence(ObjectId sequence_id);
   Result DropEntry(ObjectId parent_id, catalog::ObjectType type);
   Result DropEntry(ObjectId parent_id);

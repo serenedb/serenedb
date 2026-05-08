@@ -45,8 +45,7 @@ namespace sdb::catalog {
 namespace {
 
 // Wire-compatible with rocksdb::UInt64AddOperator (PutFixed64). Hand-rolled
-// because rocksdb's util/coding.h depends on port::kLittleEndian which is
-// not surfaced to consumers.
+// because rocksdb's util/coding.h isn't surfaced to consumers.
 void EncodeFixed64Le(std::string& dst, uint64_t value) {
   if constexpr (std::endian::native == std::endian::big) {
     value = std::byteswap(value);
@@ -148,9 +147,8 @@ uint64_t Sequence::LoadFromDb() const {
 uint64_t Sequence::ReserveWriteUnsafe(uint64_t count) {
   SDB_ASSERT(count > 0);
 
-  // Merge persists before fetch_add, so the WAL high-water always covers
-  // any base we've handed out. A crash between the two burns IDs but does
-  // not reuse them.
+  // Merge persists before the atomic fetch_add: a crash between burns the
+  // range but never reuses it.
   std::string operand;
   EncodeFixed64Le(operand, count);
   auto* db = GetServerEngine().db();
@@ -178,9 +176,6 @@ void Sequence::Write(uint64_t value) {
   auto* cf = CounterCF();
   auto key = CounterKey(GetId());
 
-  // Writer lock: blocks all in-flight Reserves and serialises Writes.
-  // ReserveWriteUnsafe (auto-PK) bypasses this -- those sequences never
-  // see setval.
   absl::MutexLock lock{&_setval_mu};
   auto s = db->Put(rocksdb::WriteOptions{}, cf, key, encoded);
   if (!s.ok()) {

@@ -156,9 +156,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     return multiple ? std::string{} : result;
   };
 
-  // Track which columns already have NOT NULL to avoid duplicates. Sized
-  // dynamically so it works whether called from the column loop (SERIAL) or
-  // the constraint pass (PK / NOT NULL).
+  // Dedup against duplicate NOT NULL adds; grows on demand because the
+  // SERIAL path calls append_not_null mid column loop.
   std::vector<bool> has_not_null;
 
   auto append_not_null = [&](duckdb::idx_t col_idx) {
@@ -189,15 +188,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
         "column \"%s\" appears twice in primary key constraint",
         options.columns[col_id].name);
     }
-    // PK implies NOT NULL
-    append_not_null(col_id);
+    append_not_null(col_id);  // PK implies NOT NULL
     options.pk_columns.push_back(col_id);
   };
 
-  // SERIAL/BIGSERIAL/SMALLSERIAL expand to base int + DEFAULT nextval(seq) +
-  // NOT NULL, mirroring PG's parse_utilcmd. The sequence name and the
-  // column's nextval default are resolved by LocalCatalog under its mutex
-  // (race-free name mangling).
+  // SERIAL expands to base int + nextval default + NOT NULL. The sequence
+  // name and nextval default are resolved by LocalCatalog under its mutex.
   catalog::Column::Id next_col_id = 0;
   for (auto& col : table_info.columns.Logical()) {
     auto& sdb_col = options.columns.emplace_back();
@@ -572,7 +568,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
 
   auto sequence = std::make_shared<catalog::Sequence>(
-    database_id, ObjectId{}, ObjectId{}, info.name, opts);
+    database_id, ObjectId{}, ObjectId{}, info.name, opts, ObjectId{});
 
   auto& catalog_impl =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

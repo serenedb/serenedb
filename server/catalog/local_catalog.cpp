@@ -990,8 +990,8 @@ class SnapshotImpl : public Snapshot {
           if (table_deps.shard_id.isSet()) {
             RemoveObjectDefinition(id, table_deps.shard_id);
           }
-          // Owned SERIAL sequences live in schema scope -- same parent_id
-          // as the table being dropped.
+          // Owned sequences are parented under the schema (same parent_id
+          // as the table), not the table -- unlike indexes.
           auto owned_sequences = table_deps.owned_sequences;
           for (auto seq_id : owned_sequences) {
             if (root) {
@@ -1582,9 +1582,8 @@ Result LocalCatalog::CreateTable(
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
-  // PG SERIAL: pick a unique name `<table>_<col>_seq`, mangling with a
-  // numeric suffix if the bare form collides with a pre-existing relation.
-  // Done under the mutex so two concurrent CREATE TABLEs can't race on it.
+  // PG mangles `<table>_<col>_seq` with a numeric suffix on collision. Done
+  // under the mutex so concurrent CREATE TABLEs can't race on it.
   auto pick_unique_name = [&](std::string_view base) {
     std::string candidate{base};
     for (size_t i = 1;
@@ -1604,8 +1603,8 @@ Result LocalCatalog::CreateTable(
                                                     std::move(args)));
   };
 
-  // Pre-allocate the table id so SERIAL sequences can stamp it as their
-  // owner before the Table object exists.
+  // Pre-allocate so SERIAL sequences can stamp owner_table_id before the
+  // Table itself is constructed.
   auto table_id = NextId();
 
   std::vector<std::shared_ptr<Sequence>> sequences;
@@ -1621,9 +1620,9 @@ Result LocalCatalog::CreateTable(
       database_id, *schema_id, ObjectId{}, resolved, spec.options, table_id));
   }
 
-  // Tables without an explicit PK get an auto-PK owned sequence. It's a
-  // regular queryable sequence -- name `<table>_pk_seq`, mangled on
-  // collision; Table holds its id for the insert path's fast lookup.
+  // Tables without an explicit PK get an auto-PK owned sequence. Table
+  // holds its id directly so the insert path doesn't have to scan
+  // owned_sequences for it.
   ObjectId generated_pk_seq_id;
   if (options.pk_columns.empty()) {
     auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));

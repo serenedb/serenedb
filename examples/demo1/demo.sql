@@ -5,11 +5,10 @@
 -- Network leaves the bottleneck: queries drop from seconds to milliseconds.
 --
 -- Prereq: stage the parquet files in /tmp once via bootstrap.sql:
---   psql -h <host> -p <port> -U serenedb -d postgres -f bootstrap.sql
+--   psql -h <host> -p <port> -U postgres -d postgres -f bootstrap.sql
 -- Then run this demo:
---   psql -h <host> -p <port> -U serenedb -d postgres -f demo.sql
+--   psql -h <host> -p <port> -U postgres -d postgres -f demo.sql
 
-SET threads = 32;
 \timing on
 
 DROP INDEX IF EXISTS imdb_idx;

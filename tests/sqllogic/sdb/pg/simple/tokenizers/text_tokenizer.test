@@ -1857,6 +1857,301 @@ ump
 x\\377
 
 
+# GEOPOINT TEMPLATE
+
+# --- Error: half-set (longitude without latitude) ---
+# latitude / longitude must be both set or both empty -- empty is the
+# array-mode default; half-set is ambiguous and rejected at CREATE time.
+
+statement error 'latitude' and 'longitude' must be both set or both left empty
+CREATE TEXT SEARCH DICTIONARY t_gp_err1(
+    template = 'geopoint',
+    longitude = 'lng'
+)
+
+
+# --- Error: half-set (latitude without longitude) ---
+
+statement error 'latitude' and 'longitude' must be both set or both left empty
+CREATE TEXT SEARCH DICTIONARY t_gp_err2(
+    template = 'geopoint',
+    latitude = 'lat'
+)
+
+
+# --- Error: invalid integer for maxcells ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gp_err3(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng',
+    maxcells = 'many'
+)
+----
+db error: ERROR: invalid input syntax for type integer: "many"
+
+
+# --- Error: invalid boolean for optimizeforspace ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gp_err4(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng',
+    optimizeforspace = 'yes'
+)
+----
+db error: ERROR: invalid value for CREATE TEXT SEARCH DICTIONARY parameter "optimizeforspace": "yes"
+
+
+# --- Error: option not applicable to geopoint ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gp_err5(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng',
+    locale = 'en_US.UTF-8'
+)
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Error: geo analyzers do not support index features ---
+
+statement error Unsupported index features are specified
+CREATE TEXT SEARCH DICTIONARY t_gp_err6(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng',
+    frequency = true
+)
+
+
+# --- Valid: geopoint with minimal options (default S2 parameters) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_basic(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng'
+)
+
+
+# --- Valid: geopoint with explicit S2 options ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_custom(
+    template = 'geopoint',
+    latitude = 'lat',
+    longitude = 'lng',
+    maxcells = 10,
+    minlevel = 2,
+    maxlevel = 15
+)
+
+
+# --- Valid: geopoint with slash-separated nested path ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geopoint_nested(
+    template = 'geopoint',
+    latitude = 'location/lat',
+    longitude = 'location/lng'
+)
+
+
+# --- ts_lexize: geopoint with defaults produces 20 S2 tokens for a single point ---
+# Point at (lat=0, lng=0): one S2 cell per level from minlevel=4 to maxlevel=23 -> 20 tokens.
+
+query
+SELECT count(*) FROM unnest(ts_lexize('geopoint_basic', '{"lat":0,"lng":0}')) AS t;
+----
+count
+20
+
+
+# --- ts_lexize: geopoint_custom produces 14 tokens (minlevel=2, maxlevel=15) ---
+
+query
+SELECT count(*) FROM unnest(ts_lexize('geopoint_custom', '{"lat":0,"lng":0}')) AS t;
+----
+count
+14
+
+
+# --- ts_lexize: geopoint with nested path ---
+
+query
+SELECT count(*) FROM unnest(ts_lexize('geopoint_nested', '{"location":{"lat":0,"lng":0}}')) AS t;
+----
+count
+20
+
+
+# GEOJSON TEMPLATE
+
+# --- Error: invalid type value ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gj_err1(
+    template = 'geojson',
+    type = 'invalid'
+)
+----
+db error: ERROR: invalid value in "type" parameter
+HINT: GeoJson shape type: shape, centroid, point
+
+
+# --- Error: invalid coding value ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gj_err2(
+    template = 'geojson',
+    coding = 'binary'
+)
+----
+db error: ERROR: invalid value in "coding" parameter
+HINT: Encoding format: s2point, s2latlngf64, s2latlngu32
+
+
+# --- Error: vpack coding is not exposed via SQL ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gj_err_vpack(
+    template = 'geojson',
+    coding = 'vpack'
+)
+----
+db error: ERROR: invalid value in "coding" parameter
+HINT: Encoding format: s2point, s2latlngf64, s2latlngu32
+
+
+# --- Error: option not applicable to geojson ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY t_gj_err3(
+    template = 'geojson',
+    locale = 'en_US.UTF-8'
+)
+----
+db error: ERROR: option "locale" is not applicable in this context
+HINT: Use WITH (HELP) to see available options
+
+
+# --- Error: geo analyzers do not support index features ---
+
+statement error Unsupported index features are specified
+CREATE TEXT SEARCH DICTIONARY t_gj_err4(
+    template = 'geojson',
+    frequency = true
+)
+
+
+# --- Valid: geojson with defaults (type=shape, coding=s2point) ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_basic(
+    template = 'geojson'
+)
+
+
+# --- Valid: geojson with point type and lossless S2 coding ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_point(
+    template = 'geojson',
+    type = 'point',
+    coding = 's2point'
+)
+
+
+# --- Valid: geojson with centroid, s2latlngf64 coding, custom S2 options ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geojson_centroid(
+    template = 'geojson',
+    type = 'centroid',
+    coding = 's2latlngf64',
+    maxcells = 5,
+    minlevel = 2,
+    maxlevel = 10,
+    levelmod = 2,
+    optimizeforspace = true
+)
+
+
+# --- ts_lexize: geojson with defaults produces 20 tokens for a GeoJSON Point ---
+
+query
+SELECT count(*) FROM unnest(ts_lexize('geojson_basic', '{"type":"Point","coordinates":[0,0]}')) AS t;
+----
+count
+20
+
+
+# --- ts_lexize: geojson_centroid with levelmod=2 produces 5 tokens ---
+# Levels: 10, 8, 6, 4, 2 -> 5 cells.
+
+query
+SELECT count(*) FROM unnest(ts_lexize('geojson_centroid', '{"type":"Point","coordinates":[0,0]}')) AS t;
+----
+count
+5
+
+
+# COPY_FROM for geo dictionaries
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_geopoint(
+    template = 'copy_from',
+    from = 'geopoint_custom'
+)
+
+
+# --- copy_geopoint inherits geopoint_custom settings (minlevel=2, maxlevel=15 -> 14 tokens) ---
+
+query
+SELECT count(*) FROM unnest(ts_lexize('copy_geopoint', '{"lat":0,"lng":0}')) AS t;
+----
+count
+14
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_geojson(
+    template = 'copy_from',
+    from = 'geojson_basic'
+)
+
+
+query
+SELECT count(*) FROM unnest(ts_lexize('copy_geojson', '{"type":"Point","coordinates":[0,0]}')) AS t;
+----
+count
+20
+
+
+# --- copy_from with override: change latitude path, keep S2 options from source ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY copy_geopoint_override(
+    template = 'copy_from',
+    from = 'geopoint_basic',
+    latitude = 'x',
+    longitude = 'y'
+)
+
+
+query
+SELECT count(*) FROM unnest(ts_lexize('copy_geopoint_override', '{"x":0,"y":0}')) AS t;
+----
+count
+20
+
+
 # HELP
 
 statement error
@@ -1932,5 +2227,23 @@ Text Search Dictionary:
     (no additional options)
   copy_from:
     from[required] (string) [default: none] - the source tokenizer name
+  geopoint:
+    latitude (string) - Slash-separated path to latitude field (e.g., 'lat' or 'loc/lat'); empty (the default) treats the indexed JSON value as a [lat, lng] array directly. latitude and longitude must both be set or both left empty.
+    longitude (string) - Slash-separated path to longitude field (e.g., 'lng' or 'loc/lng'); see latitude for empty-default semantics.
+    options:
+      maxcells (integer) [default: 20] - Maximum number of S2 cells
+      minlevel (integer) [default: 4] - Minimum S2 cell level (0-30)
+      maxlevel (integer) [default: 23] - Maximum S2 cell level (0-30), ~1m precision at level 23
+      levelmod (integer) [default: 1] - S2 level modifier (1, 2, or 3)
+      optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
+  geojson:
+    type (string) [default: shape] - GeoJson shape type: shape, centroid, point
+    coding (string) [default: s2point] - Encoding format: s2point, s2latlngf64, s2latlngu32
+    options:
+      maxcells (integer) [default: 20] - Maximum number of S2 cells
+      minlevel (integer) [default: 4] - Minimum S2 cell level (0-30)
+      maxlevel (integer) [default: 23] - Maximum S2 cell level (0-30), ~1m precision at level 23
+      levelmod (integer) [default: 1] - S2 level modifier (1, 2, or 3)
+      optimizeforspace (boolean) [default: false] - Optimize S2 index for space rather than speed
   keyword:
     (no additional options)

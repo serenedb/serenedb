@@ -251,6 +251,11 @@ duckdb::idx_t ReadColumnIntoDuckDB(rocksdb::Iterator& it,
       return ReadVarcharColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::BLOB:
       return ReadBlobColumn(it, output, max_rows);
+    case duckdb::LogicalTypeId::GEOMETRY:
+      // Stored as raw WKB bytes; same layout as BLOB on disk but no prefix
+      // byte. Reading as blob is identical (AddStringOrBlob copies raw).
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      return ReadBlobColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::TIMESTAMP:
       return ReadTimestampColumn(it, output, max_rows);
     case duckdb::LogicalTypeId::DATE:
@@ -374,6 +379,13 @@ void DeserializeValueIntoDuckDB(std::string_view value, duckdb::Vector& output,
         duckdb::StringVector::AddStringOrBlob(output, value.data(),
                                               value.size());
     } break;
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      // Stored as raw WKB bytes (see DuckDBColumnSerializer::WriteGeometryRaw).
+      SDB_ASSERT(type.InternalType() == duckdb::PhysicalType::VARCHAR);
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(output)[idx] =
+        duckdb::StringVector::AddStringOrBlob(output, value.data(),
+                                              value.size());
+    } break;
     case duckdb::LogicalTypeId::TIMESTAMP: {
       SDB_ASSERT(value.size() == sizeof(int64_t));
       int64_t v;
@@ -461,7 +473,14 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
       ptr += bool_bytes;
     } break;
     case duckdb::LogicalTypeId::VARCHAR:
-    case duckdb::LogicalTypeId::BLOB: {
+    case duckdb::LogicalTypeId::BLOB:
+    case duckdb::LogicalTypeId::GEOMETRY: {
+      // GEOMETRY rides the same wire format -- raw WKB bytes, no prefix.
+      const bool as_blob_or_geom =
+        child_type.id() == duckdb::LogicalTypeId::BLOB ||
+        child_type.id() == duckdb::LogicalTypeId::GEOMETRY;
+      SDB_ASSERT(child_type.id() != duckdb::LogicalTypeId::GEOMETRY ||
+                 child_type.InternalType() == duckdb::PhysicalType::VARCHAR);
       const uint8_t* lptr = ptr;
       ptr += length_array_size;
       for (uint32_t i = 0; i < elem_count; i++) {
@@ -470,10 +489,12 @@ void DeserializeSubVectorElements(const uint8_t*& ptr, const uint8_t* end,
           child_validity.SetInvalid(child_offset + i);
           ptr += len;
         } else {
+          auto* ch = reinterpret_cast<const char*>(ptr);
           duckdb::FlatVector::GetDataMutable<duckdb::string_t>(
             child)[child_offset + i] =
-            duckdb::StringVector::AddString(
-              child, reinterpret_cast<const char*>(ptr), len);
+            as_blob_or_geom
+              ? duckdb::StringVector::AddStringOrBlob(child, ch, len)
+              : duckdb::StringVector::AddString(child, ch, len);
           ptr += len;
         }
       }

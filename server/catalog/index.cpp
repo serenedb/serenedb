@@ -26,15 +26,19 @@
 #include <array>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/types/geometry_crs.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <string>
 
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
+#include "catalog/geo_validate.h"
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
+#include "catalog/tokenizer.h"
 #include "catalog/types.h"
 
 namespace sdb::catalog {
@@ -238,7 +242,8 @@ Result ValidateInvertedIndexColumns(
                            kind == duckdb::LogicalTypeId::DOUBLE ||
                            kind == duckdb::LogicalTypeId::DATE ||
                            kind == duckdb::LogicalTypeId::TIMESTAMP_TZ ||
-                           kind == duckdb::LogicalTypeId::ARRAY;
+                           kind == duckdb::LogicalTypeId::ARRAY ||
+                           kind == duckdb::LogicalTypeId::GEOMETRY;
     if (!supported) {
       return {ERROR_BAD_PARAMETER,
               "Column ",
@@ -246,6 +251,81 @@ Result ValidateInvertedIndexColumns(
               " has unsupported kind ",
               duckdb::EnumUtil::ToString(kind),
               " and can not be indexed"};
+    }
+  }
+  return {};
+}
+
+// Validate that a geo-family analyzer (GeoJsonAnalyzer / GeoPointAnalyzer) is
+// compatible with the column it's bound to. Runs once per column at CREATE
+// INDEX time.
+//
+// Rules:
+//   - Column must be JSON (GeoJSON text -- validated by the JSON parser at
+//     insert time) or GEOMETRY (strongly typed, CRS declared at the column
+//     level). Plain VARCHAR is rejected so the column type itself documents
+//     that the contents are GeoJSON; BLOB is rejected because we have no way
+//     to confirm its bytes are WKB.
+//   - For GEOMETRY columns, the declared CRS must be CRS84 (EPSG:4326 /
+//     OGC:CRS84 / SRID 4326). The sink-writer path does no per-row SRID
+//     check, so the column declaration is the contract.
+//   - For GEOMETRY + GeoJsonAnalyzer: coding must be S2Point. LatLng codings
+//     would require a shape -> LatLng-bytes encoder that ShapeContainer
+//     doesn't implement yet -- reject to avoid silent data loss at read
+//     time. (VPack coding is rejected at dictionary creation time, so it
+//     can't reach this check via SQL.)
+Result ValidateGeoTokenizerColumn(std::string_view column_name,
+                                  const duckdb::LogicalType& col_type,
+                                  const irs::analysis::Analyzer& analyzer) {
+  const auto type_id = analyzer.type();
+  const bool is_geojson =
+    type_id == irs::Type<irs::analysis::GeoJsonAnalyzer>::id();
+  const bool is_geopoint =
+    type_id == irs::Type<irs::analysis::GeoPointAnalyzer>::id();
+  if (!is_geojson && !is_geopoint) {
+    return {};
+  }
+
+  const auto col_id = col_type.id();
+  const bool is_json = col_type.IsJSONType();
+  if (!is_json && col_id != duckdb::LogicalTypeId::GEOMETRY) {
+    return {ERROR_BAD_PARAMETER, "Column '", column_name,
+            "' uses a geo analyzer; must be JSON (GeoJSON) or GEOMETRY"};
+  }
+
+  if (col_id == duckdb::LogicalTypeId::GEOMETRY) {
+    if (auto r = ValidateGeometryCRS84(col_type); r.fail()) {
+      return {ERROR_BAD_PARAMETER, "Column '", column_name,
+              "': ", r.errorMessage()};
+    }
+    if (is_geopoint) {
+      // GeoPointAnalyzer is path-based: latitude / longitude configure
+      // slash-paths into a JSON document (or `_from_array` mode treats
+      // the input as a [lat, lng] JSON array). Neither has any meaning
+      // over WKB. resetWKB silently ignores both and just accepts
+      // S2Point shapes -- so the configured paths become dead config
+      // and the user has no signal that their setup is wrong. Force
+      // GEOMETRY columns through GeoJsonAnalyzer instead, which has
+      // type-aware shape handling for the non-point cases too.
+      return {ERROR_BAD_PARAMETER, "Column '", column_name,
+              "' is GEOMETRY but the analyzer is geopoint; geopoint's "
+              "latitude/longitude paths are JSON-only -- use a geojson "
+              "analyzer for GEOMETRY columns"};
+    }
+    if (is_geojson) {
+      const auto& geojson =
+        basics::downCast<irs::analysis::GeoJsonAnalyzer>(analyzer);
+      using Coding = irs::analysis::GeoJsonAnalyzer::Coding;
+      if (geojson.coding() != Coding::S2Point) {
+        // VPack is rejected at CREATE TEXT SEARCH DICTIONARY time and can't
+        // reach here via SQL; the remaining non-S2Point options are LatLng
+        // codings, which need a shape -> LatLng-bytes encoder that
+        // ShapeContainer doesn't implement yet.
+        return {ERROR_BAD_PARAMETER, "Column '", column_name,
+                "' is GEOMETRY but the geo analyzer uses a LatLng coding; ",
+                "not yet supported for GEOMETRY columns -- use S2Point "
+                "coding"};
+      }
     }
   }
   return {};
@@ -306,8 +386,9 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
 
   // Resolves a text-dictionary opclass against the current snapshot. The HNSW
   // opclass is handled inline because it does not feed JSON paths.
-  auto resolve_dict = [&](std::string_view col_name, const std::string& opclass)
-    -> ResultOr<std::pair<ObjectId, search::Features>> {
+  auto resolve_dict =
+    [&](std::string_view col_name,
+        const std::string& opclass) -> ResultOr<std::shared_ptr<Tokenizer>> {
     auto object_name = pg::ParseObjectName(opclass, schema_name);
     // Technically nothing prevents us from allowing so.
     // But that will make schema drop more complicated as we will need to
@@ -336,7 +417,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
                                      schema_name,
                                      "'"};
     }
-    return std::make_pair(dict->GetId(), dict->GetFeatures());
+    return dict;
   };
 
   InvertedIndex::ColumnOptions inverted_columns;
@@ -357,8 +438,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
-        path_info.text_dictionary = dict->first;
-        path_info.features = dict->second;
+        path_info.text_dictionary = (*dict)->GetId();
+        path_info.features = (*dict)->GetFeatures();
       }
       index_col.json_paths.emplace_back(std::move(path_info));
       continue;
@@ -415,8 +496,22 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         if (!dict) {
           return std::unexpected<Result>{std::move(dict.error())};
         }
-        index_col.text_dictionary = dict->first;
-        index_col.features = dict->second;
+        auto analyzer = (*dict)->GetTokenizer();
+        if (!analyzer) {
+          return std::unexpected<Result>{std::in_place,
+                                         ERROR_BAD_PARAMETER,
+                                         "Text search dictionary '",
+                                         c.opclass,
+                                         "' failed to instantiate: ",
+                                         analyzer.error().errorMessage()};
+        }
+        if (auto res = ValidateGeoTokenizerColumn(
+              c.name, c.catalog_column->type, **analyzer);
+            res.fail()) {
+          return std::unexpected<Result>(std::move(res));
+        }
+        index_col.text_dictionary = (*dict)->GetId();
+        index_col.features = (*dict)->GetFeatures();
       }
     }
   }

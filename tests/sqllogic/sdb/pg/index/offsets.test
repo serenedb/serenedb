@@ -489,6 +489,252 @@ id	context	bo
 4	fox fox fox	{0,3}
 
 
+# OFFSETS combined with top-K scoring (ORDER BY BM25 + LIMIT). This path was
+# previously rejected by an SDB_ASSERT in the score_top_k branch; it now goes
+# through WriteTopkOffsets, which walks the pagination slice in (segment,
+# doc) order via WalkSegmentsSorted and writes byte ranges at each row's
+# score-rank slot.
+
+# Basic top-K + OFFSETS: ranks docs by BM25 over 'fox' and emits per-doc
+# match offsets. Tie-break by id for determinism.
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+1	{6,9}
+2	{0,3}
+
+
+# Top-K + OFFSETS, has_real=false (no real columns selected -- the output
+# is purely virtual: only OFFSETS and ranking). Exercises the WriteTopkOffsets
+# path without the Materialize step.
+query
+SELECT OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
+----
+bo
+{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+{6,9}
+{0,3}
+
+
+# Top-K + OFFSETS with LIMIT 1 -- smallest pagination slice.
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 1;
+----
+id	bo
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+
+
+# Top-K + multi-field OFFSETS. Both title and body have offset-enabled
+# dicts; each row gets two ListVector entries.
+query
+SELECT id, OFFSETS(title) AS t, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE title @@ ts_phrase('hello') AND body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 5;
+----
+id	t	bo
+1	{0,5}	{6,9}
+2	{0,5}	{0,3}
+
+
+# Top-K + OFFSETS with `OFFSETS(col, N)` cap. The N applies per row's
+# byte-range list, not to the top-K K.
+query
+SELECT id, OFFSETS(body, 3) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo
+4	{0,3,4,7,8,11}
+1	{6,9}
+2	{0,3}
+
+
+# Top-K + OFFSETS over an aggregation -- count(*) of the top-K result set.
+# The wrapper subquery materialises the top-K + OFFSETS rows; count counts
+# them. Verifies the subquery delivers the right number of rows.
+query
+SELECT count(*) FROM (
+  SELECT OFFSETS(body) FROM offsets_test_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 2
+) sub;
+----
+count
+2
+
+
+# Top-K + OFFSETS where K exceeds the number of matches. Engine returns all
+# matches (no padding/truncation).
+query
+SELECT id, OFFSETS(body) AS bo
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 100;
+----
+id	bo
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}
+1	{6,9}
+2	{0,3}
+
+
+# Top-K + OFFSETS with a BM25-in-expression in SELECT (and bare BM25 in
+# ORDER BY). DuckDB inserts an intermediate projection above TopN to
+# materialise the ORDER BY value, which used to misalign OFFSETS()'s
+# column ref against the GET.
+query
+SELECT id, OFFSETS(body) AS bo, BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo	pos
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	t
+1	{6,9}	t
+2	{0,3}	t
+
+
+# Same intermediate-projection shape with BM25 wrapped in a cast.
+query
+SELECT id, OFFSETS(body) AS bo,
+       round(BM25(offsets_test_idx.tableoid)::numeric, 2) AS s
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+id	bo	s
+4	{0,3,4,7,8,11,12,15,16,19,20,23,24,27,28,31,32,35,36,39}	0.76
+1	{6,9}	0.53
+2	{0,3}	0.53
+
+
+# Plan check: secondary ORDER BY (id ASC) keeps the TopN node, producing
+# the PROJECTION -> TOP_N -> PROJECTION -> IRESEARCH_SCAN shape. The
+# inner projection forwards the offsets virtual column up to the outer.
+query
+EXPLAIN SELECT id, OFFSETS(body) AS bo,
+              BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC, id LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│             #1            │
+│             #2            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│                           │
+│         Order By:         │
+│          #3 DESC          │
+│  offsets_test_idx.id ASC  │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             bo            │
+│            pos            │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Plan check: ORDER BY BM25 DESC alone -- top-K pull-up drops the TopN,
+# leaving a single PROJECTION above the scan even with BM25-in-expression.
+query
+EXPLAIN SELECT id, OFFSETS(body) AS bo,
+              BM25(offsets_test_idx.tableoid) > 0 AS pos
+FROM offsets_test_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(offsets_test_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│             bo            │
+│            pos            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│           Index:          │
+│      offsets_test_idx     │
+│                           │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│          TopK: 3          │
+│       Offsets: body       │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│ sdb_inverted_index_offsets│
+│             $2            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
 statement ok
 DROP TABLE offsets_test;
 

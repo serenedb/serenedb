@@ -10,7 +10,7 @@
 -- URL last verified: 2026-05-04.
 --
 -- Run:
---   psql -h <host> -p <port> -U serenedb -d postgres -f demo.sql
+--   psql -h <host> -p <port> -U postgres -d postgres -f demo.sql
 
 \timing on
 

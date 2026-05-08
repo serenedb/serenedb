@@ -67,6 +67,7 @@
 #include "connector/search_field_name.hpp"
 #include "functions/search.h"
 #include "functions/string.h"
+#include "geo_filter_builder.hpp"
 #include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
 #include "rocksdb_filter.hpp"
@@ -381,6 +382,16 @@ template<bool GenericVersion>
 Result FromBinaryEq(irs::BooleanFilter& filter, const FilterContext& ctx,
                     const duckdb::Expression& left_expr,
                     const duckdb::Expression& right_expr, bool not_equal) {
+  // ST_Distance_Centroid(field, centroid) = / != distance  --  rewrite to
+  // range.
+  if constexpr (GenericVersion) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(ctx, left_expr)) {
+      FilterContext geo_ctx = ctx;
+      geo_ctx.negated = (ctx.negated != not_equal);
+      return FromGeoDistanceBinaryEq(filter, geo_ctx, *geo_call, right_expr);
+    }
+  }
+
   // Use the JSON-path-aware resolver so `(content->>'val')::int = 42` is
   // claimed by the index: the cast is peeled and routed to the numeric-
   // mangled field, so rows whose leaf isn't numeric simply aren't in the
@@ -426,6 +437,14 @@ Result FromComparison(irs::BooleanFilter& filter, const FilterContext& ctx,
                       const duckdb::Expression& value_expr, ComparisonOp op) {
   if (ctx.negated) {
     op = InvertComparisonOp(op);
+  }
+
+  // ST_Distance_Centroid(field, centroid) </<=/>/>= distance  --  rewrite to
+  // range.
+  if constexpr (GenericVersion) {
+    if (const auto* geo_call = TryGetGeoDistanceCall(ctx, field_expr)) {
+      return FromGeoDistanceComparison(filter, ctx, *geo_call, value_expr, op);
+    }
   }
 
   const auto* column_info = FindColumnInfoForExpr(ctx, field_expr);
@@ -837,6 +856,9 @@ Result FromFunctionExpression(irs::BooleanFilter& filter,
     SDB_ASSERT(args.size() == 2);
     FromTSQueryMatch(filter, ctx, *args[0], *args[1]);
     return {};
+  }
+  if (auto geo = TryDispatchGeoFunction(filter, ctx, func)) {
+    return std::move(*geo);
   }
 
   char escape_char = '\\';

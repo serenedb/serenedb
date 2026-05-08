@@ -44,6 +44,7 @@
 #include <variant>
 
 #include "basics/assert.h"
+#include "pg/geo_tokenizer_options.h"
 #include "pg/option_help.h"
 
 namespace sdb::pg::tokenizer_options {
@@ -140,6 +141,9 @@ void CheckNgramSize(int);
 inline constexpr OptionInfo kNgramSize{
   "ngramsize", 3, "N-gram size for wildcard prefix indexing (minimum 2)",
   CheckNgramSize};
+
+// Geo options (kGeoMaxCells, kGeoLatitude, kGeoJsonType, ...) live in
+// "pg/geo_tokenizer_options.h", brought in by the include above.
 
 // Segmentation
 
@@ -364,7 +368,8 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kNormGroup,           kSegmentationGroup,
   kPipelineGroup,       kPatternGroup,
   kPathHierarchyGroup,  kUnionGroup,
-  kCopyFromGroup,       kKeywordGroup,
+  kCopyFromGroup,       kGeoPointGroup,
+  kGeoJsonGroup,        kKeywordGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

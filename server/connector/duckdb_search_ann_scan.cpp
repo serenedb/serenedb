@@ -27,7 +27,6 @@
 #include <iresearch/index/index_reader.hpp>
 #include <limits>
 #include <numeric>
-#include <ranges>
 #include <span>
 
 #include "basics/assert.h"
@@ -162,15 +161,6 @@ void MergeResult(duckdb::ClientContext& context,
     g.pk_batch = g.index_source->CreatePkBatch();
   }
 
-  auto segments =
-    top_ids | std::views::transform([](int64_t id) {
-      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
-    });
-  auto doc_ids =
-    top_ids | std::views::transform([](int64_t id) {
-      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
-    });
-
   g.total_results = std::visit(
     [&](auto& pk) -> size_t {
       using T = std::decay_t<decltype(pk)>;
@@ -183,10 +173,15 @@ void MergeResult(duckdb::ClientContext& context,
           pk.EnsureInit(duckdb::Allocator::Get(context));
         }
         PkResize(pk, n);
-        LookupSegmentsValues(segments, doc_ids, *g.reader, n,
-                             [&](size_t orig, std::string_view pk_bytes) {
-                               SetPrimaryKey(pk, orig, pk_bytes);
-                             });
+        LookupSegmentsValues(
+          top_ids,
+          [](int64_t id) {
+            return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
+          },
+          *g.reader, g.lookup_scratch,
+          [&](size_t orig, std::string_view pk_bytes) {
+            SetPrimaryKey(pk, orig, pk_bytes);
+          });
         return PkCompactResolved(pk, n);
       }
     },
@@ -273,25 +268,21 @@ void RangeSearchSegment(duckdb::ClientContext& context,
     }
   }
 
-  auto segments =
-    ids | std::views::transform([](int64_t id) {
-      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).first;
-    });
-  auto doc_ids =
-    ids | std::views::transform([](int64_t id) {
-      return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id)).second;
-    });
-
   std::visit(
     [&](auto& pk) {
       using T = std::decay_t<decltype(pk)>;
       if constexpr (std::is_same_v<T, std::monostate>) {
         SDB_ASSERT(false, "pk_batch must be initialised");
       } else {
-        LookupSegmentsValues(segments, doc_ids, *g.reader, n,
-                             [&](size_t /*orig*/, std::string_view pk_bytes) {
-                               AppendPrimaryKey(pk, pk_bytes);
-                             });
+        LookupSegmentsValues(
+          ids,
+          [](int64_t id) {
+            return irs::UnpackSegmentWithDoc(static_cast<uint64_t>(id));
+          },
+          *g.reader, l.lookup_scratch,
+          [&](size_t /*orig*/, std::string_view pk_bytes) {
+            AppendPrimaryKey(pk, pk_bytes);
+          });
       }
     },
     l.pk_batch);

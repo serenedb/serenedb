@@ -36,9 +36,11 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/functions/vector.h"
 #include "pg/connection_context.h"
 #include "pg/sql_collector.h"
 
@@ -844,6 +846,95 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
   loader.RegisterFunction(std::move(set));
 }
 
+// ST_* geo predicates. All are stubs at runtime -- the filter builder claims
+// them at bind time and rewrites them into iresearch GeoFilter /
+// GeoDistanceFilter calls. Field and centroid each accept VARCHAR
+// (GeoJSON-text literal) or GEOMETRY('OGC:CRS84'); the catalog gates JSON-vs-
+// GEOMETRY column types separately at CREATE INDEX time.
+void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
+  // Pin GEOMETRY signatures to CRS84 so DuckDB's bind-time geo cast rules
+  // apply: matching-CRS values pass through unchanged (CRS metadata
+  // preserved), cross-CRS values throw BinderException, bare-GEOMETRY values
+  // reinterpret to CRS84. Without the pin, the bind cast to bare GEOMETRY
+  // would silently strip CRS metadata before the filter builder can
+  // validate it.
+  const duckdb::LogicalType geo_field_types[] = {
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY("OGC:CRS84")};
+  const duckdb::LogicalType geo_centroid_types[] = {
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY("OGC:CRS84")};
+
+  // ST_Distance_Between(field, centroid, min_distance, max_distance,
+  //                     [include_min, [include_max]]) -> bool
+  //
+  // field   : JSON column (GeoJSON) or GEOMETRY column.
+  // centroid: JSON value (GeoJSON) or GEOMETRY value.
+  //
+  // Register all 4 type combinations for the (field, centroid) pair across
+  // each arity so DuckDB resolves the call without implicit casts.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kGeoInRange}};
+    for (const auto& field_t : geo_field_types) {
+      for (const auto& centroid_t : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BOOLEAN},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BOOLEAN,
+           duckdb::LogicalType::BOOLEAN},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // ST_Distance_Centroid(field, centroid) -> DOUBLE
+  //   and its operator-form synonym `field <-> centroid`.
+  //
+  // Returns the geodesic distance from the indexed value's centroid to the
+  // centroid argument. Pseudo-function: outside an inverted-index scan it
+  // throws via the stub. The filter builder recognizes
+  // `ST_Distance_Centroid(...) OP <const>` (and the `<->` form) and
+  // rewrites them into iresearch GeoDistanceFilter range bounds.
+  //
+  // The `<->` set extends the vector-distance set registered in
+  // RegisterVectorFunctions (vector.cpp); DuckDB merges overloads under
+  // the same name via OnCreateConflict::ALTER_ON_CONFLICT, so vector
+  // (ARRAY(FLOAT/DOUBLE)) and geo (VARCHAR / GEOMETRY) overloads coexist
+  // and bind by argument types. IsVectorDistanceFunction(...) in
+  // iresearch_plan.cpp keeps the geo overloads off the vector-ANN paths.
+  for (auto name : {kGeoDistance, kL2DistanceOp}) {
+    duckdb::ScalarFunctionSet set{std::string{name}};
+    for (const auto& field_t : geo_field_types) {
+      for (const auto& centroid_t : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t}, duckdb::LogicalType::DOUBLE, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // ST_Intersects(field, shape) -> bool    (commutative; either arg may be
+  // the column reference. Builds an iresearch GeoFilter with type=Intersects.)
+  // ST_Contains(field, shape)   -> bool    (indexed ⊇ shape, type=IsContained)
+  // ST_Contains(shape, field)   -> bool    (shape ⊇ indexed, type=Contains)
+  for (auto name : {kGeoIntersects, kGeoContains}) {
+    duckdb::ScalarFunctionSet set{std::string{name}};
+    for (const auto& a : geo_field_types) {
+      for (const auto& b : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {a, b}, duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+}
+
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
 // Runs `token` through the named text search dictionary and returns
 // the resulting lexemes as a VARCHAR array.
@@ -996,6 +1087,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
   RegisterScorerFunctions(loader);
   RegisterPositionFunctions(loader);
+  RegisterGeoFunctions(loader);
   RegisterTextDictionaryHelpers(loader);
   RegisterTSQuerySurface(loader);
 }

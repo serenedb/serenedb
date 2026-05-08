@@ -199,7 +199,7 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
 
   if (1 == term_meta.docs_count) {
     term_meta.e_single_doc = vread<uint32_t>(p);
-  } else if (_block_size < term_meta.docs_count) {
+  } else if (_block_size <= term_meta.docs_count) {
     term_meta.e_skip_start = vread<uint64_t>(p);
   }
 

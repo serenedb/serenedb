@@ -371,7 +371,7 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
 
   if (meta.docs_count == 1) {
     out.WriteV32(meta.e_single_doc);
-  } else if (meta.docs_count > _new_skip.Skip0()) {
+  } else if (meta.docs_count >= _new_skip.Skip0()) {
     out.WriteV64(meta.e_skip_start);
   }
 
@@ -404,7 +404,7 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
     return;  // no documents to write
   }
 
-  const bool has_skip_list = NewSkipWriter::Skip0() < meta.docs_count;
+  const bool has_skip_list = NewSkipWriter::Skip0() <= meta.docs_count;
   auto write_max_score = [&](size_t level) {
     if (HasValidWandWriter()) {
       auto wand_data = _valid_writer->CalculateAndGetWandDataRoot(level);

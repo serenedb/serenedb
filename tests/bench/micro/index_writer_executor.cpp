@@ -47,7 +47,7 @@ constexpr std::string_view kFieldName = "value";
 
 constexpr int64_t kCommittedSegments = 1024;
 constexpr int64_t kPendingSegmentContexts = 256;
-constexpr int64_t kDocsPerSegment = 8092;
+constexpr int64_t kDocsPerSegment = 32768;
 constexpr int64_t kTerms = 16;
 constexpr int64_t kThreads = 8;
 

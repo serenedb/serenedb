@@ -30,26 +30,11 @@ namespace sdb {
 
 using Tick = uint64_t;
 
-enum class TableType : uint8_t {
-  Unknown = 0,
-  RocksDB = 1,
-};
-
-enum class FileFormat : uint8_t {
-  None = 0,
-  Text = 1,
-  Parquet = 2,
-  Dwrf = 3,
-  Orc = 4,
-};
-
 enum class WriteConflictPolicy : uint8_t {
   EmitError,
   DoNothing,
   Replace,
 };
-
-using IndexEstMap = containers::FlatHashMap<std::string, double>;
 
 struct PeerState {
   std::string server_id;
@@ -74,17 +59,6 @@ customize::enum_name<sdb::WriteConflictPolicy>(
       return "replace";
   }
   return default_tag;
-}
-
-template<>
-[[maybe_unused]] constexpr customize::customize_t
-customize::enum_name<sdb::TableType>(sdb::TableType value) noexcept {
-  switch (value) {
-    case sdb::TableType::RocksDB:
-      return "rocksdb";
-    default:
-      return invalid_tag;
-  }
 }
 
 }  // namespace magic_enum

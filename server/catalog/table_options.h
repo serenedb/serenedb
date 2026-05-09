@@ -21,10 +21,7 @@
 #pragma once
 
 #include <absl/strings/match.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
@@ -33,57 +30,17 @@
 #include <span>
 #include <vector>
 
-#include "basics/containers/node_hash_map.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
-#include "basics/reboot_id.h"
-#include "basics/static_strings.h"
-#include "catalog/cluster_types.h"
 #include "catalog/column_expr.h"
 #include "catalog/fwd.h"
-#include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/key_generator.h"
-#include "catalog/types.h"
+#include "catalog/sequence.h"
 #include "pg/sql_collector.h"
-#include "pg/sql_utils.h"
 #include "query/utils.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
 
-struct ObjectInternal {
-  ObjectId database_id;
-};
-
-struct ObjectProperties {};
-
-struct ForeignId : ObjectId {
-  using ObjectId::ObjectId;
-};
-
-void WriteTableName(vpack::Builder& b, ObjectId id);
-
-bool VPackWriteHook(auto ctx, auto&&, ForeignId value) { return value.isSet(); }
-
-static constexpr std::string_view kDefaultSharding = "none";
-
 // NOLINTBEGIN
-struct IndexProperties {
-  std::string_view id;  // TODO(gnusi): must be ObjectId
-  std::string_view type;
-  std::string_view name;
-  std::vector<std::string_view> fields;
-  bool sparse = false;
-  bool unique = true;
-};
-
-struct AgencyIsBuildingFlags {
-  std::string coordinatorId;
-  RebootId coordinatorRebootId = RebootId{0};
-  bool isBuilding = true;
-};
-
 struct Column {
   enum GeneratedType : uint8_t {
     kNone = 0,
@@ -104,46 +61,7 @@ struct Column {
   static constexpr Id kInvertedIndexScoreId = kMaxRealId + 2;
   static constexpr Id kInvertedIndexOffsetsId = kMaxRealId + 3;
 
-  static constexpr std::string_view GetUpdateNamePrefix() {
-    static constexpr std::string_view kUpdatePrefix = "upd$";
-    static_assert(kUpdatePrefix.ends_with(query::kReservedSymbol));
-    return kUpdatePrefix;
-  }
-
-  static std::string GenerateUpdateName(std::string_view original_name) {
-    return absl::StrCat(GetUpdateNamePrefix(), original_name);
-  }
-
-  static constexpr std::string_view GetOldValueNamePrefix() {
-    static constexpr std::string_view kOldValuePrefix = "old$";
-    static_assert(kOldValuePrefix.ends_with(query::kReservedSymbol));
-    return kOldValuePrefix;
-  }
-
-  static std::string GenerateOldValueName(std::string_view original_name) {
-    return absl::StrCat(GetOldValueNamePrefix(), original_name);
-  }
-
-  static bool IsOldValueName(std::string_view name) {
-    return absl::StartsWith(name, GetOldValueNamePrefix());
-  }
-
-  static std::string_view ExtractColumnName(std::string_view row_child_name) {
-    if (absl::StartsWith(row_child_name, GetUpdateNamePrefix())) {
-      return row_child_name.substr(GetUpdateNamePrefix().size());
-    }
-    return row_child_name;
-  }
-
-  bool IsGeneratedPK() const { return id == kGeneratedPKId; }
-
-  static std::string GeneratePKName(std::span<const std::string> column_names);
-
   static constexpr std::string_view kScoreName = "sdb_inverted_index_score";
-
-  static std::string GenerateScoreName(
-    std::span<const std::string> column_names);
-
   // Prefix used in virtual offsets column names. Ends with kReservedSymbol so
   // it can never collide with a user-defined column name.
   static constexpr std::string_view kOffsetsNamePrefix =
@@ -159,17 +77,6 @@ struct Column {
   static duckdb::LogicalType MakeOffsetsType() {
     return duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
   }
-
-  // Request for a single OFFSETS() column: which catalog column to extract
-  // offsets for, and how many offset pairs to return per document at most.
-  // column_name is the mangled output column name produced by NextColumnName;
-  // it is globally unique across all sub-queries and used to match this request
-  // to the correct DataSource during SearchDataSource construction.
-  struct OffsetsFieldRequest {
-    Id column_id;
-    size_t limit = pg::Objects::kDefaultOffsetsLimit;
-    std::string column_name;
-  };
 
   Id id;
   duckdb::LogicalType type;
@@ -191,67 +98,24 @@ struct CheckConstraint {
     std::span<const Column> columns) const noexcept;
 };
 
-struct CreateTableRequest {
-  std::vector<std::string> shardKeys;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pkColumns;
-  std::vector<CheckConstraint> checkConstraints;
-  // TOOD(gnusi): we don't need it to be a part of collection slice
-  std::vector<std::string> avoidServers;
-  std::optional<std::string> distributeShardsLike;
-  std::optional<std::string> shardingStrategy;
-  std::string_view name;
-  std::string_view from;
-  std::string_view to;
-  std::optional<uint32_t> numberOfShards;
-  std::optional<uint32_t> replicationFactor;
-  std::optional<uint32_t> writeConcern;
-  vpack::Slice planId;  // TODO(gnusi): remove?
-  vpack::Slice planDb;  // TODO(gnusi): remove?
-  vpack::Slice shards;  // TODO(gnusi): remove?
-  vpack::Slice schema = vpack::Slice::nullSlice();
-  vpack::Slice keyOptions = vpack::Slice::emptyObjectSlice();
-  vpack::Slice indexes;
-  std::string_view id;  // TODO(gnusi): make ObjectId
-  int type = std::to_underlying(TableType::RocksDB);
-  bool waitForSync = false;
-};
-
 struct TableStats {
   uint64_t num_rows = 0;
 };
 
-struct TableOptions {
-  std::vector<std::string> shardKeys;
-  std::vector<Column> columns;
-  std::vector<Column::Id> pkColumns;
-  std::vector<CheckConstraint> checkConstraints;
-  std::string shardingStrategy = std::string{kDefaultSharding};
-  std::string name;
-  std::shared_ptr<KeyGenerator> keyOptions;
-  std::shared_ptr<ShardMap> shards = std::make_shared<ShardMap>();
-  Identifier id;
-  std::optional<ObjectId> distributeShardsLike;
-  std::optional<Identifier> planId;  // TODO(gnusi): remove
-  std::optional<ObjectId> planDb;    // TODO(gnusi): remove
-  ForeignId from;
-  ForeignId to;
-  vpack::Slice indexes = vpack::Slice::emptyArraySlice();
-  uint32_t numberOfShards = 1;
-  uint32_t replicationFactor = 1;
-  uint32_t writeConcern = 1;
-  int type = std::to_underlying(TableType::RocksDB);
-  bool waitForSync = false;
-};
+struct CreateTableOptions {
+  // LocalCatalog resolves the sequence name (mangling on collision), stamps
+  // owner_table_id, and installs the column's nextval default.
+  struct SerialSequenceOption {
+    Column::Id column_id;
+    SequenceOptions options;
+  };
 
-struct CreateTableOptions : TableOptions {
-  std::vector<std::string> avoidServers;
+  std::string name;
+  std::vector<Column> columns;
+  std::vector<Column::Id> pk_columns;
+  std::vector<CheckConstraint> check_constraints;
+  std::vector<SerialSequenceOption> sequences;
 };
 // NOLINTEND
-
-Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
-                        CreateTableOptions& options,
-                        uint32_t replication_factor, uint32_t write_concern,
-                        bool enforce_replication_factor);
 
 }  // namespace sdb::catalog

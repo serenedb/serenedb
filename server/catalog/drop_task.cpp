@@ -150,6 +150,18 @@ Result TableDrop::Finalize() {
     return r;
   }
 
+  for (auto seq_id : _owned_sequences) {
+    r =
+      server.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
+    if (!r.ok()) {
+      return r;
+    }
+    r = server.DropSequence(seq_id);
+    if (!r.ok()) {
+      return r;
+    }
+  }
+
   if (_is_root) {
     r = server.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
     if (!r.ok()) {
@@ -178,12 +190,9 @@ AsyncResult TableDrop::Execute() {
   if (!async_results.empty()) {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
-  SDB_ASSERT(_type != TableType::Unknown);
-  if (_type == TableType::RocksDB) {
-    auto r = co_await Schedule(_shard_drop);
-    if (!r.ok() || !Finalize().ok()) {
-      co_return Result{ERROR_LOCKED};
-    }
+  auto r = co_await Schedule(_shard_drop);
+  if (!r.ok() || !Finalize().ok()) {
+    co_return Result{ERROR_LOCKED};
   }
   co_return {};
 }

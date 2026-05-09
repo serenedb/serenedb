@@ -24,6 +24,7 @@
 #include <duckdb/execution/execution_context.hpp>
 
 #include "basics/assert.h"
+#include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_constraint_verify.h"
 #include "connector/duckdb_index_utils.h"
@@ -35,8 +36,6 @@
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
@@ -57,11 +56,12 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::vector<InsertColumnMeta> columns;  // non-generated-PK columns
   std::vector<duckdb_primary_key::PKColumn> pk_columns;
   std::vector<std::string> pk_col_names;
-  bool has_generated_pk = false;
 
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+
+  std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -123,7 +123,6 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
 
   // PK column mappings
   state->pk_columns = duckdb_primary_key::BuildPKColumns(*_table);
-  state->has_generated_pk = _table->PKColumns().empty();
   state->table_name = _table->GetName();
   for (auto pk_id : _table->PKColumns()) {
     for (const auto& col : columns) {
@@ -142,6 +141,11 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
                                 state->table_name);
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
     state->table_id, conn_ctx, *_table);
+
+  state->generated_pk_seq =
+    conn_ctx.EnsureCatalogSnapshot()->GetObject<catalog::Sequence>(
+      _table->GetGeneratedPkSeqId());
+  SDB_ASSERT(state->generated_pk_seq || !_table->PKColumns().empty());
 
   return state;
 }
@@ -169,10 +173,16 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   std::vector<duckdb::UnifiedVectorFormat> pk_formats;
   duckdb_primary_key::PreparePKFormats(chunk, gstate.pk_columns, pk_formats);
 
+  uint64_t generated_pk_base =
+    gstate.generated_pk_seq
+      ? gstate.generated_pk_seq->ReserveWriteUnsafe(num_rows)
+      : 0;
+
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
     auto& key_buffer = gstate.row_keys.emplace_back();
     duckdb_primary_key::MakeColumnKey(
-      pk_formats, gstate.pk_columns, row, gstate.table_key,
+      pk_formats, gstate.pk_columns, row, generated_pk_base + row,
+      gstate.table_key,
       [&](std::string_view row_key) {
         auto status = txn->GetKeyLock(gstate.cf, row_key, false, true);
         if (!status.ok()) {
@@ -188,7 +198,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
 
   // 2. Conflict detection for explicit PKs
   size_t rows_skipped = 0;
-  if (!gstate.has_generated_pk) {
+  if (!gstate.generated_pk_seq) {
     rows_skipped = gstate.conflict_resolver.HandleWriteConflicts<false>(
       gstate.row_keys, chunk, gstate.pk_columns, gstate.pk_col_names);
   }

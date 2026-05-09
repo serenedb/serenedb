@@ -52,3 +52,7 @@ tests/drivers/c/harness
 /install/
 /install_all/
 /package_all/
+
+# Matches the stuff that's gonna replace developers
+
+/.claude/

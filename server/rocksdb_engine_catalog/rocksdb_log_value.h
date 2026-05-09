@@ -26,7 +26,6 @@
 
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/identifiers/revision_id.h"
 #include "catalog/identifiers/transaction_id.h"
 #include "catalog/types.h"
 #include "rocksdb_engine_catalog/concat.h"
@@ -93,11 +92,6 @@ struct Transaction {
 struct SingleOp {
   ObjectId database_id;
   ObjectId object_id;
-};
-
-struct TrackedDoc {
-  RevisionId revision_id;
-  vpack::Slice data;
 };
 
 template<typename T>

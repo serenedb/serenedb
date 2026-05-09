@@ -28,6 +28,11 @@
 #include "connector/duckdb_rocksdb_writer.h"
 #include "rocksdb/sst_file_writer.h"
 
+namespace sdb::catalog {
+
+class Sequence;
+
+}  // namespace sdb::catalog
 namespace sdb::connector {
 
 struct SSTInsertColumnMeta {
@@ -50,6 +55,8 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::DB* db = nullptr;
   rocksdb::ColumnFamilyHandle* cf = nullptr;
+
+  std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
   // Index writers -- created once, reused per Sink() call
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;

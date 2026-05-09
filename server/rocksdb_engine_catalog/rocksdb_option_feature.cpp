@@ -31,6 +31,7 @@
 #include <rocksdb/statistics.h>
 #include <rocksdb/table.h>
 #include <rocksdb/utilities/transaction_db.h>
+#include <utilities/merge_operators/uint64add.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -1965,6 +1966,9 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
         rocksdb::NewBlockBasedTableFactory(table_options));
     } break;
     case RocksDBColumnFamilyManager::Family::Definitions:
+      break;
+    case RocksDBColumnFamilyManager::Family::Sequences:
+      result.merge_operator = std::make_shared<rocksdb::UInt64AddOperator>();
       break;
     default:
       SDB_UNREACHABLE();

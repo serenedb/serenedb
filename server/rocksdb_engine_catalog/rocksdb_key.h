@@ -31,7 +31,6 @@
 #include "basics/assert.h"
 #include "basics/debugging.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/identifiers/revision_id.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"

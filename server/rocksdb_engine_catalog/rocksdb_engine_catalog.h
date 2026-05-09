@@ -48,7 +48,6 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/identifiers/revision_id.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
 #include "metrics/fwd.h"
@@ -57,7 +56,6 @@
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/health_data.h"
-#include "storage_engine/wal_access.h"
 
 namespace rocksdb {
 
@@ -83,7 +81,6 @@ class RocksDBReplicationManager;
 class RocksDBSettingsManager;
 class RocksDBSyncThread;
 class RocksDBVPackComparator;
-class RocksDBWalAccess;
 class TransactionTable;
 class TransactionState;
 
@@ -185,10 +182,6 @@ class RocksDBEngineCatalog {
 
   void cleanupReplicationContexts();
 
-  Result createTickRanges(vpack::Builder& builder);
-  Result firstTick(uint64_t& tick);
-  const WalAccess* walAccess() const;
-
   // database, collection and index management
 
   /// flushes the RocksDB WAL.
@@ -224,8 +217,32 @@ class RocksDBEngineCatalog {
 
   Result CreateDefinition(ObjectId parent_id, catalog::ObjectType type,
                           ObjectId id, WriteProperties properties);
+
+  // Transient handle for Write's callback. Caller mixes Put* calls; the
+  // whole batch commits atomically.
+  class CatalogWriteContext {
+   public:
+    CatalogWriteContext(const CatalogWriteContext&) = delete;
+    CatalogWriteContext& operator=(const CatalogWriteContext&) = delete;
+
+    // `def` is non-owning -- WriteBatch copies on Put so the backing buffer
+    // only has to outlive this call.
+    void PutDefinition(ObjectId parent_id, catalog::ObjectType type,
+                       ObjectId id, vpack::Slice def);
+    void PutSequence(ObjectId sequence_id, uint64_t value);
+
+   private:
+    friend class RocksDBEngineCatalog;
+    explicit CatalogWriteContext(rocksdb::WriteBatch& batch) : _batch{batch} {}
+    rocksdb::WriteBatch& _batch;
+  };
+
+  Result Write(absl::FunctionRef<void(CatalogWriteContext&)> fill);
   Result DropDefinition(ObjectId parent_id, catalog::ObjectType type,
                         ObjectId id);
+
+  // Pair with DropDefinition(..., ObjectType::Sequence, id) to fully drop.
+  Result DropSequence(ObjectId sequence_id);
   Result DropEntry(ObjectId parent_id, catalog::ObjectType type);
   Result DropEntry(ObjectId parent_id);
   Result DropRange(std::string_view start, std::string_view end,
@@ -379,8 +396,6 @@ class RocksDBEngineCatalog {
   std::shared_ptr<RocksDBReplicationManager> _replication_manager;
   /// tracks the count of documents in collections
   std::unique_ptr<RocksDBSettingsManager> _settings_manager;
-  /// Local wal access abstraction
-  std::unique_ptr<RocksDBWalAccess> _wal_access;
 
   /// Background thread handling garbage collection etc
   std::unique_ptr<RocksDBBackgroundThread> _background_thread;

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,30 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/database.h"
+#pragma once
 
-namespace sdb::catalog {
+#include <duckdb/main/database.hpp>
 
-Database::Database(ObjectId id, std::string_view name)
-  : Object{{}, id, std::string{name}, ObjectType::Database} {}
+namespace sdb::connector {
 
-std::shared_ptr<Database> Database::ReadInternal(vpack::Slice slice,
-                                                 ReadContext ctx) {
-  auto name_slice = slice.get("name");
-  if (!name_slice.isString()) {
-    return nullptr;
-  }
-  return std::make_shared<Database>(ctx.id, name_slice.stringView());
-}
+// Registers nextval / currval / setval scalar functions backed by
+// catalog::Sequence (Definitions CF) and per-sequence counters in the
+// Sequences CF (RocksDBSequenceManager). These shadow DuckDB's built-in
+// in-memory sequence functions.
+void RegisterSequenceFunctions(duckdb::DatabaseInstance& db);
 
-void Database::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [](vpack::Builder&) {});
-  b.close();
-}
-
-std::shared_ptr<Object> Database::Clone() const {
-  return std::make_shared<Database>(GetId(), GetName());
-}
-
-}  // namespace sdb::catalog
+}  // namespace sdb::connector

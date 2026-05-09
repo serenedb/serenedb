@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
@@ -31,6 +32,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <duckdb/parser/expression/constant_expression.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -44,6 +47,7 @@
 #include <yaclib/async/when_all.hpp>
 
 #include "app/app_server.h"
+#include "app/name_validator.h"
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
 #include "basics/assert.h"
@@ -75,6 +79,7 @@
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -86,6 +91,7 @@
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
 #include "pg/pg_catalog/fwd.h"
+#include "pg/sql_utils.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -183,9 +189,12 @@ class SnapshotImpl : public Snapshot {
                                             index, is_root);
                    }) |
                    std::ranges::to<std::vector>();
+    auto owned_sequences =
+      table_deps->owned_sequences | std::ranges::to<std::vector>();
 
     return std::make_shared<TableDrop>(table, shard, std::move(indexes),
-                                       schema_id, is_root);
+                                       std::move(owned_sequences), schema_id,
+                                       is_root);
   }
 
   std::shared_ptr<IndexDrop> CreateIndexDrop(
@@ -231,6 +240,14 @@ class SnapshotImpl : public Snapshot {
         return r;
       }
       return AddObjectDefinition<ViewDependency>(parent_id, std::move(object));
+    } else if constexpr (std::is_same_v<T, Sequence>) {
+      // Sequences share the relation namespace (PG: pg_class.relkind='S').
+      auto r = AddToResolution<ResolveType::Relation>(
+        parent_id, object->GetId(), object->GetName(), replace);
+      if (!r.ok()) {
+        return r;
+      }
+      return AddObjectDefinition(parent_id, std::move(object));
     } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
       auto r = AddToResolution<ResolveType::Function>(
         parent_id, object->GetId(), object->GetName(), replace);
@@ -288,6 +305,9 @@ class SnapshotImpl : public Snapshot {
       RemoveFromResolution<ResolveType::Schema>(parent_id, object->GetName(),
                                                 maybe_not_found);
     } else if constexpr (std::is_same_v<T, PgSqlView>) {
+      RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
+                                                  maybe_not_found);
+    } else if constexpr (std::is_same_v<T, Sequence>) {
       RemoveFromResolution<ResolveType::Relation>(parent_id, object->GetName(),
                                                   maybe_not_found);
     } else if constexpr (std::is_same_v<T, PgSqlFunction>) {
@@ -366,6 +386,21 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::PgSqlType: {
         auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
         schema_deps->types.insert(object->GetId());
+      } break;
+      case ObjectType::Sequence: {
+        // Owned (SERIAL or auto-PK) sequences live under the table only --
+        // putting them in SchemaDep.sequences too would cause a double
+        // cascade on DROP SCHEMA / DROP DATABASE (schema iterates its
+        // sequences AND its tables, the table cascade already handles its
+        // owned sequences).
+        const auto& seq = basics::downCast<Sequence>(*object);
+        if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
+          auto table_deps = GetDependencyForWrite<TableDependency>(owner);
+          table_deps->owned_sequences.insert(object->GetId());
+        } else {
+          auto schema_deps = GetDependencyForWrite<SchemaDependency>(parent_id);
+          schema_deps->sequences.insert(object->GetId());
+        }
       } break;
       case ObjectType::SecondaryIndex:
       case ObjectType::InvertedIndex: {
@@ -710,6 +745,20 @@ class SnapshotImpl : public Snapshot {
     return basics::downCast<Table>(rel);
   }
 
+  std::shared_ptr<Sequence> GetSequence(ObjectId db_id, ObjectId schema_id,
+                                        std::string_view name) const final {
+    auto id =
+      _resolution_table.ResolveObject<ResolveType::Relation>(schema_id, name);
+    if (!id) {
+      return nullptr;
+    }
+    auto obj = GetObject(*id);
+    if (!obj || obj->GetType() != ObjectType::Sequence) {
+      return nullptr;
+    }
+    return basics::downCast<Sequence>(std::move(obj));
+  }
+
   bool HasIndexes(ObjectId relation_id) const final {
     return !GetDependency<RelationDependency>(relation_id)->indexes.empty();
   }
@@ -907,6 +956,21 @@ class SnapshotImpl : public Snapshot {
           SDB_ASSERT(schema_deps);
           schema_deps->types.erase(id);
         } break;
+        case ObjectType::Sequence: {
+          // owned sequences live under the table;
+          // free-standing CREATE SEQUENCE under the schema.
+          const auto& seq = basics::downCast<Sequence>(*obj);
+          if (auto owner = seq.GetOwnerTableId(); owner.isSet()) {
+            auto table_deps = GetDependencyForWrite<TableDependency>(owner);
+            SDB_ASSERT(table_deps);
+            table_deps->owned_sequences.erase(id);
+          } else {
+            auto schema_deps =
+              GetDependencyForWrite<SchemaDependency>(parent_id);
+            SDB_ASSERT(schema_deps);
+            schema_deps->sequences.erase(id);
+          }
+        } break;
         default:
           SDB_UNREACHABLE();
       }
@@ -925,6 +989,7 @@ class SnapshotImpl : public Snapshot {
         drop_childs(schema_deps->functions);
         drop_childs(schema_deps->views);
         drop_childs(schema_deps->tables);
+        drop_childs(schema_deps->sequences);
       } break;
       case ObjectType::Table:
       case ObjectType::PgSqlView: {
@@ -934,6 +999,17 @@ class SnapshotImpl : public Snapshot {
             basics::downCast<TableDependency>(*relation_deps);
           if (table_deps.shard_id.isSet()) {
             RemoveObjectDefinition(id, table_deps.shard_id);
+          }
+          // Owned sequences are parented under the schema (same parent_id
+          // as the table), not the table -- unlike indexes.
+          auto owned_sequences = table_deps.owned_sequences;
+          for (auto seq_id : owned_sequences) {
+            if (root) {
+              auto seq = GetObject<Sequence>(seq_id);
+              UnregisterObject(seq, parent_id, false);
+            } else {
+              RemoveObjectDefinition(parent_id, seq_id);
+            }
           }
         }
         // TODO(codeworse): Avoid copy, maybe erase_if?
@@ -960,6 +1036,7 @@ class SnapshotImpl : public Snapshot {
       case ObjectType::PgSqlFunction:
       case ObjectType::PgSqlType:
       case ObjectType::Tokenizer:
+      case ObjectType::Sequence:
         break;
       case ObjectType::TableShard:
       case ObjectType::SecondaryIndexShard:
@@ -1022,10 +1099,8 @@ class SnapshotImpl : public Snapshot {
   mutable connector::DuckDBEntryCache _duckdb_cache;
 };
 
-LocalCatalog::LocalCatalog(bool skip_background_errors)
-  : _snapshot(std::make_shared<SnapshotImpl>()),
-    _engine{&GetServerEngine()},
-    _skip_background_errors{skip_background_errors} {}
+LocalCatalog::LocalCatalog()
+  : _snapshot(std::make_shared<SnapshotImpl>()), _engine{&GetServerEngine()} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
   SDB_INFO("xxxxx", Logger::FIXME, "Register role ", role->GetName());
@@ -1055,6 +1130,14 @@ Result LocalCatalog::RegisterView(ObjectId schema_id,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(std::move(view), schema_id, false);
+  });
+}
+
+Result LocalCatalog::RegisterSequence(ObjectId database_id, ObjectId schema_id,
+                                      std::shared_ptr<Sequence> sequence) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(std::move(sequence), schema_id, false);
   });
 }
 
@@ -1425,6 +1508,43 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
     [&](auto clone) { clone->UnregisterObject(view, *schema_id, true); });
 }
 
+Result LocalCatalog::CreateSequence(ObjectId database_id,
+                                    std::string_view schema,
+                                    std::shared_ptr<Sequence> sequence,
+                                    bool if_not_exists) {
+  absl::MutexLock lock{&_mutex};
+  auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+  if (!schema_id) {
+    return Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  if (auto existed = _snapshot->GetObjectId<ResolveType::Relation>(
+        *schema_id, sequence->GetName())) {
+    if (if_not_exists) {
+      return {};
+    }
+    return {ERROR_SERVER_DUPLICATE_NAME};
+  }
+
+  return Apply(
+    _snapshot,
+    [&](auto& clone) -> Result {
+      auto r = clone->RegisterObject(sequence, *schema_id, false);
+      if (!r.ok()) {
+        return r;
+      }
+      SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      return _engine->Write([&](auto& ctx) {
+        vpack::Builder b;
+        sequence->WriteInternal(b);
+        ctx.PutDefinition(*schema_id, ObjectType::Sequence, sequence->GetId(),
+                          b.slice());
+        ctx.PutSequence(sequence->GetId(), sequence->Options().Seed());
+      });
+    },
+    [&](auto clone) { clone->UnregisterObject(sequence, *schema_id, true); });
+}
+
 Result LocalCatalog::CreateFunction(ObjectId database_id,
                                     std::string_view schema,
                                     std::shared_ptr<PgSqlFunction> function,
@@ -1456,29 +1576,15 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
-  for (auto pk_id : options.pkColumns) {
+  if (auto r = TableNameValidator::validateName(options.name); !r.ok()) {
+    return r;
+  }
+  for (auto pk_id : options.pk_columns) {
     auto col = absl::c_find_if(options.columns,
                                [&](const auto& c) { return c.id == pk_id; });
     SDB_ASSERT(col != options.columns.end());
-    // // PK must be default sortable or we can not guarantee table scan order
-    // if (col->type->providesCustomComparison()) {
-    //   return {
-    //     ERROR_BAD_PARAMETER, "Column ", col->name,
-    //     " has type with custom comparison and can not be part of primary
-    //     key"};
-    // }
-    // // this is current limitation of our pirmary key builder. And might be
-    // // lifted some day.
-    // if (!col->type->isPrimitiveType()) {
-    //   return {ERROR_BAD_PARAMETER, "Column ", col->name,
-    //           " has non primitive type and can not be part of primary key"};
-    // }
   }
-  auto table = std::make_shared<Table>(std::move(options), database_id);
-  if (operation_options.create_with_tombstone) {
-    table->SetTombstoned(true);
-  }
-  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
+  auto sequence_specs = std::move(options.sequences);
 
   absl::MutexLock lock{&_mutex};
   auto schema_id =
@@ -1486,6 +1592,67 @@ Result LocalCatalog::CreateTable(
   if (!schema_id) {
     return Result{ERROR_SERVER_ILLEGAL_NAME};
   }
+
+  // PG mangles `<table>_<col>_seq` with a numeric suffix on collision. Done
+  // under the mutex so concurrent CREATE TABLEs can't race on it.
+  auto pick_unique_name = [&](std::string_view base) {
+    std::string candidate{base};
+    for (size_t i = 1;
+         _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, candidate);
+         ++i) {
+      candidate = absl::StrCat(base, i);
+    }
+    return candidate;
+  };
+
+  auto make_nextval_default = [](std::string_view qualified) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> args;
+    args.emplace_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+      duckdb::Value{std::string{qualified}}));
+    return std::make_shared<ColumnExpr>(
+      duckdb::make_uniq<duckdb::FunctionExpression>("nextval",
+                                                    std::move(args)));
+  };
+
+  // Pre-allocate so SERIAL sequences can stamp owner_table_id before the
+  // Table itself is constructed.
+  auto table_id = NextId();
+
+  std::vector<std::shared_ptr<Sequence>> sequences;
+  sequences.reserve(sequence_specs.size() + 1);
+  for (const auto& spec : sequence_specs) {
+    auto col_it = absl::c_find_if(
+      options.columns, [&](const auto& c) { return c.id == spec.column_id; });
+    SDB_ASSERT(col_it != options.columns.end());
+    auto resolved =
+      pick_unique_name(absl::StrCat(options.name, "_", col_it->name, "_seq"));
+    col_it->expr = make_nextval_default(absl::StrCat(schema, ".", resolved));
+    sequences.push_back(std::make_shared<Sequence>(
+      database_id, *schema_id, ObjectId{}, resolved, spec.options, table_id));
+  }
+
+  // Tables without an explicit PK get an auto-PK owned sequence. Table
+  // holds its id directly so the insert path doesn't have to scan
+  // owned_sequences for it.
+  ObjectId generated_pk_seq_id;
+  if (options.pk_columns.empty()) {
+    auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
+    SequenceOptions opts;
+    opts.cache = 65536;
+    auto pk_seq = std::make_shared<Sequence>(
+      database_id, *schema_id, ObjectId{}, resolved, opts, table_id);
+    generated_pk_seq_id = pk_seq->GetId();
+    sequences.push_back(std::move(pk_seq));
+  }
+
+  auto table = std::make_shared<Table>(
+    database_id, table_id, options.name, std::move(options.columns),
+    std::move(options.pk_columns), std::move(options.check_constraints),
+    generated_pk_seq_id);
+  if (operation_options.create_with_tombstone) {
+    table->SetTombstoned(true);
+  }
+  auto shard = std::make_shared<TableShard>(table->GetId(), TableStats{});
 
   return Apply(
     _snapshot,
@@ -1497,6 +1664,12 @@ Result LocalCatalog::CreateTable(
 
       r = clone->RegisterObject(shard, table->GetId(), false);
       SDB_ASSERT(r.ok());
+      for (const auto& seq : sequences) {
+        r = clone->RegisterObject(seq, *schema_id, false);
+        if (!r.ok()) {
+          return r;
+        }
+      }
       if (operation_options.create_with_tombstone) {
         r = _engine->WriteTombstone(*schema_id, table->GetId());
         if (!r.ok()) {
@@ -1504,22 +1677,27 @@ Result LocalCatalog::CreateTable(
         }
       }
       SDB_IF_FAILURE("unable_to_create") { return Result{ERROR_INTERNAL}; }
+      return _engine->Write([&](auto& ctx) {
+        // PutDefinition copies the slice; one Builder is reused across all
+        // writes, cleared between each.
+        vpack::Builder b;
+        table->WriteInternal(b);
+        ctx.PutDefinition(*schema_id, ObjectType::Table, table->GetId(),
+                          b.slice());
 
-      vpack::Builder b;
-      table->WriteInternal(b);
-      r =
-        _engine->CreateDefinition(*schema_id, ObjectType::Table, table->GetId(),
-                                  [&](bool) { return b.slice(); });
-      if (!r.ok()) {
-        return r;
-      }
+        b.clear();
+        shard->WriteInternal(b);
+        ctx.PutDefinition(table->GetId(), ObjectType::TableShard,
+                          shard->GetId(), b.slice());
 
-      vpack::Builder shard_b;
-      shard->WriteInternal(shard_b);
-      r = _engine->CreateDefinition(
-        shard->GetTableId(), ObjectType::TableShard, shard->GetId(),
-        [&](bool) -> vpack::Slice { return shard_b.slice(); });
-      return r;
+        for (const auto& seq : sequences) {
+          b.clear();
+          seq->WriteInternal(b);
+          ctx.PutDefinition(*schema_id, ObjectType::Sequence, seq->GetId(),
+                            b.slice());
+          ctx.PutSequence(seq->GetId(), seq->Options().Seed());
+        }
+      });
     },
     [&](auto clone) { clone->UnregisterObject(table, *schema_id, true); });
 }
@@ -1971,6 +2149,7 @@ Result LocalCatalog::DropTable(std::string_view database,
     if (auto r = _engine->WriteTombstone(*schema_id, *table_id); !r.ok()) {
       return r;
     }
+
     clone->UnregisterObject(std::move(table), *schema_id);
     // Check that SereneDB won't open this table after reboot
     SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
@@ -2099,6 +2278,60 @@ Result LocalCatalog::DropView(std::string_view database,
       return r;
     }
     clone->UnregisterObject(std::move(view), *schema_id);
+    return Result{};
+  });
+}
+
+Result LocalCatalog::DropSequence(std::string_view database,
+                                  std::string_view schema,
+                                  std::string_view name, bool if_exists) {
+  absl::MutexLock lock{&_mutex};
+
+  const auto database_id =
+    _snapshot->GetObjectId<ResolveType::Database>(id::kInstance, database);
+  if (!database_id) {
+    return if_exists ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto schema_id =
+    _snapshot->GetObjectId<ResolveType::Schema>(*database_id, schema);
+  if (!schema_id) {
+    return if_exists ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+  const auto seq_id =
+    _snapshot->GetObjectId<ResolveType::Relation>(*schema_id, name);
+  if (!seq_id) {
+    return if_exists ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
+  }
+
+  if (auto seq = _snapshot->GetObject<Sequence>(*seq_id); seq) {
+    if (auto owner = seq->GetOwnerTableId(); owner.isSet()) {
+      auto table_deps = _snapshot->GetDependency<TableDependency>(owner);
+      if (table_deps && table_deps->owned_sequences.contains(*seq_id)) {
+        auto owner_table = _snapshot->GetObject<Table>(owner);
+        return Result{ERROR_BAD_PARAMETER, "Can not drop sequence ", name,
+                      " owned by table ", owner_table->GetName()};
+      }
+    }
+  }
+
+  return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
+    SDB_ASSERT(clone);
+    auto object = clone->GetObject(*seq_id);
+    SDB_ASSERT(object);
+    if (object->GetType() != ObjectType::Sequence) {
+      return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
+                    pg::ToPgObjectTypeName(object->GetType())};
+    }
+    auto seq = basics::downCast<Sequence>(std::move(object));
+    auto r =
+      _engine->DropDefinition(*schema_id, ObjectType::Sequence, seq->GetId());
+    if (!r.ok()) {
+      return r;
+    }
+    if (auto cr = _engine->DropSequence(seq->GetId()); !cr.ok()) {
+      return cr;
+    }
+    clone->UnregisterObject(std::move(seq), *schema_id);
     return Result{};
   });
 }

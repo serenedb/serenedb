@@ -1859,7 +1859,11 @@ bool TryRewriteScorerExpressions(
 // does NOT request top-K by score, so pulling it would silently change
 // "any k matching rows" into "the k highest-scoring rows" -- different
 // result sets.
-bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+bool TryAttachScoreTopK(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+                        const connector::SearchFilterOptions& options) {
+  if (options.disable_top_k_optimization) {
+    return false;
+  }
   if (plan->type != duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
     return false;
   }
@@ -2007,7 +2011,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       if (TryAnnTopk(plan, options)) {
         return true;
       }
-      bool changed = TryAttachScoreTopK(plan);
+      bool changed = TryAttachScoreTopK(plan, options);
       // Attach may have dropped the TopN (replacing `plan` with its child)
       // when the ORDER BY was provably on the scan's score column.
       if (plan->type != duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
@@ -2079,9 +2083,10 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
   // Pass 2: top-K pullup + rewrite BM25/TFIDF in Filter/TopN order-by.
   static bool TryOptimizePass2(
     duckdb::unique_ptr<duckdb::LogicalOperator>& root,
-    duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+    duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
+    const connector::SearchFilterOptions& options) {
     if (plan->type == duckdb::LogicalOperatorType::LOGICAL_TOP_N) {
-      bool changed = TryAttachScoreTopK(plan);
+      bool changed = TryAttachScoreTopK(plan, options);
       changed |= TryRewriteScorerExpressions(*root, plan);
       return changed;
     }
@@ -2138,7 +2143,7 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       if (pass == 1) {
         changed |= TryOptimizePass1(root, plan, options);
       } else {
-        changed |= TryOptimizePass2(root, plan);
+        changed |= TryOptimizePass2(root, plan, options);
       }
     }
     return changed;
@@ -2178,6 +2183,11 @@ class IresearchPlanOptimizer : public duckdb::OptimizerExtension {
       if (input.context.TryGetCurrentSetting("sdb_scored_terms_limit", v) &&
           !v.IsNull()) {
         options.scored_terms_limit = static_cast<size_t>(v.GetValue<int32_t>());
+      }
+      if (input.context.TryGetCurrentSetting("sdb_disable_top_k_optimization",
+                                             v) &&
+          !v.IsNull()) {
+        options.disable_top_k_optimization = v.GetValue<bool>();
       }
     }
     bool changed = TopDownAnnPass(plan, /*in_mutation=*/false, options);

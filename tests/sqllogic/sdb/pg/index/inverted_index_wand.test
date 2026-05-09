@@ -620,3 +620,56 @@ count
 
 statement ok
 SET sdb_faults = '-irs::WandIterator';
+
+
+# ---------------------------------------------------------------------------
+# `SET sdb_disable_top_k_optimization = true` is a session-level kill switch.
+# When set, the optimizer skips pulling `ORDER BY <scorer> DESC LIMIT k` into
+# the SearchScan, so WAND never engages even on indexes that have wand
+# metadata. Default false (optimization on).
+# ---------------------------------------------------------------------------
+
+# Sanity: with the toggle off (default), the WAND fault trips.
+
+statement ok
+SET sdb_faults = 'irs::WandIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_big_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10;
+
+
+# Toggle on -- the same query no longer trips the fault, and produces the
+# correct results via the un-pulled TOP_N path.
+
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_big_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10
+) x;
+----
+count
+10
+
+
+# Toggle off -- WAND re-engages; fault trips again.
+
+statement ok
+SET sdb_disable_top_k_optimization = false;
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_big_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(wand_big_idx.tableoid) DESC LIMIT 10;
+
+
+statement ok
+SET sdb_faults = '-irs::WandIterator';

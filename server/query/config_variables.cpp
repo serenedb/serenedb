@@ -253,6 +253,17 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "sdb_disable_top_k_optimization",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, the optimizer skips pulling `ORDER BY <scorer>(...) "
+        "DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max "
+        "top-K) pruning never engages. Default: false (optimization on).",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
       "extra_float_digits",
       {
         LogicalTypeId::INTEGER,

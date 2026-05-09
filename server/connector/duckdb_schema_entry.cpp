@@ -202,12 +202,21 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateTable(
     sdb_col.name = col.Name();
     sdb_col.type = col.Type();
 
-    bool is_serial = pg::IsSmallserial(sdb_col.type) ||
-                     pg::IsSerial(sdb_col.type) ||
-                     pg::IsBigserial(sdb_col.type);
-    if (is_serial) {
+    bool is_smallserial = pg::IsSmallserial(sdb_col.type);
+    bool is_serial = pg::IsSerial(sdb_col.type);
+    bool is_bigserial = pg::IsBigserial(sdb_col.type);
+    if (is_smallserial || is_serial || is_bigserial) {
+      catalog::SequenceOptions seq_opts;
+      if (is_smallserial) {
+        seq_opts.max_value = std::numeric_limits<int16_t>::max();
+      } else if (is_serial) {
+        seq_opts.max_value = std::numeric_limits<int32_t>::max();
+      } else {
+        SDB_ASSERT(is_bigserial);
+        seq_opts.max_value = std::numeric_limits<int64_t>::max();
+      }
       sdb_col.type = duckdb::LogicalType{sdb_col.type.id()};
-      options.sequences.emplace_back(sdb_col.id, catalog::SequenceOptions{});
+      options.sequences.emplace_back(sdb_col.id, seq_opts);
       append_not_null(options.columns.size() - 1);
     } else if (col.Generated()) {
       sdb_col.generated_type = catalog::Column::GeneratedType::kStored;

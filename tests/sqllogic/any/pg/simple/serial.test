@@ -524,3 +524,75 @@ DROP SEQUENCE goodbyeclickclack_id_seq;
 
 statement error
 DROP SEQUENCE goodbyeclickclack_ticket_no_seq;
+
+
+# SMALLSERIAL's implicit sequence is capped at INT16 max so nextval errors
+# with "reached maximum value of sequence" rather than letting INSERT fail
+# later on a BIGINT->SMALLINT cast (which would burn IDs forever).
+statement ok
+CREATE TABLE smallserial_overflow (id SMALLSERIAL PRIMARY KEY, v INT);
+
+
+# Jump the sequence to one before the cap. INT16 max = 32767.
+query
+SELECT setval('smallserial_overflow_id_seq', 32766, true);
+----
+setval
+32766
+
+
+# 32767 is still valid.
+statement count 1
+INSERT INTO smallserial_overflow (v) VALUES (1);
+
+
+query
+SELECT id FROM smallserial_overflow;
+----
+id
+32767
+
+
+# 32768 would overflow INT16 -- the sequence errors first.
+statement error reached maximum value of sequence
+INSERT INTO smallserial_overflow (v) VALUES (2);
+
+
+# Still errors on retry.
+statement error reached maximum value of sequence
+INSERT INTO smallserial_overflow (v) VALUES (3);
+
+
+statement ok
+DROP TABLE smallserial_overflow;
+
+
+# Same story for SERIAL: implicit sequence capped at INT32 max.
+statement ok
+CREATE TABLE serial_overflow (id SERIAL PRIMARY KEY, v INT);
+
+
+query
+SELECT setval('serial_overflow_id_seq', 2147483646, true);
+----
+setval
+2147483646
+
+
+statement count 1
+INSERT INTO serial_overflow (v) VALUES (1);
+
+
+query
+SELECT id FROM serial_overflow;
+----
+id
+2147483647
+
+
+statement error reached maximum value of sequence
+INSERT INTO serial_overflow (v) VALUES (2);
+
+
+statement ok
+DROP TABLE serial_overflow;

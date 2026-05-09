@@ -233,9 +233,8 @@ statement ok
 DROP SEQUENCE cycle_a;
 
 
-# CYCLE with INCREMENT BY > 1 -- emit 1, 4, 7, 10, then wrap to 1.
 statement ok
-CREATE SEQUENCE cycle_b MINVALUE 1 MAXVALUE 10 INCREMENT BY 3 CYCLE;
+CREATE SEQUENCE cycle_b INCREMENT BY 3 MINVALUE 1 MAXVALUE 10 CYCLE;
 
 
 query
@@ -576,48 +575,14 @@ statement ok
 DROP SEQUENCE cycle_minval;
 
 
-# Single-value range MINVALUE=MAXVALUE with CYCLE: every nextval returns the
-# same value.
-statement ok
+# Single-value range MINVALUE=MAXVALUE is rejected: MINVALUE must be strictly
+# less than MAXVALUE, both with and without CYCLE.
+statement error MINVALUE \(7\) must be less than MAXVALUE \(7\)
 CREATE SEQUENCE cycle_one MINVALUE 7 MAXVALUE 7 CYCLE;
 
 
-query
-SELECT nextval('cycle_one'), nextval('cycle_one'), nextval('cycle_one');
-----
-nextval	nextval	nextval
-7	7	7
-
-
-statement ok
-DROP SEQUENCE cycle_one;
-
-
-# Same single-value range without CYCLE: first nextval succeeds, second errors.
-statement ok
+statement error MINVALUE \(7\) must be less than MAXVALUE \(7\)
 CREATE SEQUENCE one_nocycle MINVALUE 7 MAXVALUE 7;
-
-
-query
-SELECT nextval('one_nocycle');
-----
-nextval
-7
-
-
-statement error reached maximum value of sequence
-SELECT nextval('one_nocycle');
-
-
-query
-SELECT currval('one_nocycle');
-----
-currval
-7
-
-
-statement ok
-DROP SEQUENCE one_nocycle;
 
 
 # nextval on a missing sequence: error.

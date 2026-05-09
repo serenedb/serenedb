@@ -103,7 +103,14 @@ uint64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
 
 uint64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
   auto seq = ResolveSequence(context, qualified);
-  return GetValue(seq->Options(), seq->Read());
+  uint64_t raw = seq->Read();
+  if (raw == seq->Options().Seed()) [[unlikely]] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("currval of sequence \"", qualified,
+              "\" is not yet defined in this session"));
+  }
+  return GetValue(seq->Options(), raw);
 }
 
 uint64_t Setval(duckdb::ClientContext& context, std::string_view qualified,

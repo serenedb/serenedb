@@ -2303,6 +2303,17 @@ Result LocalCatalog::DropSequence(std::string_view database,
     return if_exists ? Result{} : Result{ERROR_SERVER_ILLEGAL_NAME};
   }
 
+  if (auto seq = _snapshot->GetObject<Sequence>(*seq_id); seq) {
+    if (auto owner = seq->GetOwnerTableId(); owner.isSet()) {
+      auto table_deps = _snapshot->GetDependency<TableDependency>(owner);
+      if (table_deps && table_deps->owned_sequences.contains(*seq_id)) {
+        auto owner_table = _snapshot->GetObject<Table>(owner);
+        return Result{ERROR_BAD_PARAMETER, "Can not drop sequence ", name,
+                      " owned by table ", owner_table->GetName()};
+      }
+    }
+  }
+
   return Apply(_snapshot, [&](std::shared_ptr<SnapshotImpl>& clone) {
     SDB_ASSERT(clone);
     auto object = clone->GetObject(*seq_id);

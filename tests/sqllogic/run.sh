@@ -481,16 +481,23 @@ build_type="release"
 SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-${SCRIPT_DIR}/../../.cache/cargo-target}"
 mkdir -p "$SQLLOGIC_TARGET"
 
-build_start=$(date +%s)
-if [[ "$debug" == "true" ]]; then
-	cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet
-else
-	cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --release --quiet
+# SDB_SKIP_SQLLOGIC_BUILD: a parent harness has already built sqllogictest
+# into SQLLOGIC_TARGET. Multiple parallel run.sh invocations against a shared
+# target dir (recovery harness fans out one per test) race on cargo's internal
+# locks and occasionally exit non-zero even when the cached artifact is fine;
+# that surfaces as a passing test reported as a failure.
+if [[ "${SDB_SKIP_SQLLOGIC_BUILD:-0}" != "1" ]]; then
+	build_start=$(date +%s)
+	if [[ "$debug" == "true" ]]; then
+		cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet
+	else
+		cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --release --quiet
+	fi
+	test_exit_code=$?
+	echo "sqllogictest build: $(($(date +%s) - build_start))s"
+	[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 fi
-test_exit_code=$?
-echo "sqllogictest build: $(($(date +%s) - build_start))s"
 export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
-[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
 if [[ "$cancellation" == "true" ]]; then
 	# TODO: move this cancellation driver into the sqllogictest-rs runner.

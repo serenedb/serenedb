@@ -26,6 +26,7 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 
 #include <algorithm>
@@ -61,9 +62,16 @@
 namespace sdb::pg {
 namespace {
 
-#define RETURN_SERIALIZATION(serialize_text, serialize_binary)         \
-  return format == VarFormat::Text ? SerializeNullable<serialize_text> \
-                                   : SerializeNullable<serialize_binary>
+#define RETURN_SERIALIZATION(serialize_text, serialize_binary) \
+  return format != VarFormat::Text                             \
+           ? SerializeNullable<serialize_binary>               \
+           : (context.in_record ? serialize_text               \
+                                : SerializeNullable<serialize_text>)
+
+#define RETURN_IN_RECORD_SERIALIZATION(text, text_in_record, binary) \
+  return format != VarFormat::Text                                   \
+           ? SerializeNullable<binary>                               \
+           : (context.in_record ? text_in_record : SerializeNullable<text>)
 
 enum class ArrayKind {
   ListSingleDimension,
@@ -71,34 +79,165 @@ enum class ArrayKind {
   MultiDimensions,
 };
 
-#define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid)     \
-  switch (kind) {                                                             \
-    case ArrayKind::ListSingleDimension:                                      \
-      return format == VarFormat::Text                                        \
-               ? SerializeNullable<                                           \
-                   SerializeOneDimArray<serialize_text, oid, VarFormat::Text, \
-                                        ArrayKind::ListSingleDimension>>      \
-               : SerializeNullable<SerializeOneDimArray<                      \
-                   serialize_binary, oid, VarFormat::Binary,                  \
-                   ArrayKind::ListSingleDimension>>;                          \
-    case ArrayKind::ArraySingleDimension:                                     \
-      return format == VarFormat::Text                                        \
-               ? SerializeNullable<                                           \
-                   SerializeOneDimArray<serialize_text, oid, VarFormat::Text, \
-                                        ArrayKind::ArraySingleDimension>>     \
-               : SerializeNullable<SerializeOneDimArray<                      \
-                   serialize_binary, oid, VarFormat::Binary,                  \
-                   ArrayKind::ArraySingleDimension>>;                         \
-    case ArrayKind::MultiDimensions:                                          \
-      return format == VarFormat::Text                                        \
-               ? SerializeNullable<                                           \
-                   SerializeArray<serialize_text, oid, VarFormat::Text>>      \
-               : SerializeNullable<                                           \
-                   SerializeArray<serialize_binary, oid, VarFormat::Binary>>; \
+inline constexpr int32_t kDynamicOid = -2;
+
+enum class WrapContext : uint8_t {
+  None,
+  Array,
+  Record,
+};
+
+bool RecordItemNeedsQuoting(std::string_view s);
+template<WrapContext InContainer>
+bool NeedsQuotingIn(const duckdb::LogicalType& type,
+                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                    duckdb::idx_t row);
+
+struct ArraySlice {
+  duckdb::idx_t size;
+  duckdb::idx_t offset;
+};
+
+ArraySlice GetArraySlice(const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                         duckdb::idx_t row) {
+  if (vdata.logical_type.id() == duckdb::LogicalTypeId::ARRAY) {
+    auto size = duckdb::ArrayType::GetSize(vdata.logical_type);
+    return {size, row * size};
+  }
+  auto list_data =
+    vdata.unified
+      .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
+  return {list_data.length, list_data.offset};
+}
+
+void EmitEscaped(SerializationContext& ctx, std::string_view s) {
+  if (ctx.quote_seq.size() == 1 && ctx.backslash_count == 1) {
+    ctx.buffer->WriteUncommitted(s);
+    return;
+  }
+  size_t out_size = 0;
+  for (char c : s) {
+    if (c == '"') {
+      out_size += ctx.quote_seq.size();
+    } else if (c == '\\') {
+      out_size += ctx.backslash_count;
+    } else {
+      ++out_size;
+    }
+  }
+  ctx.buffer->WriteContiguousData(out_size, [&](uint8_t* data) {
+    char* p = reinterpret_cast<char*>(data);
+    for (char c : s) {
+      if (c == '"') {
+        std::memcpy(p, ctx.quote_seq.data(), ctx.quote_seq.size());
+        p += ctx.quote_seq.size();
+      } else if (c == '\\') {
+        std::memset(p, '\\', ctx.backslash_count);
+        p += ctx.backslash_count;
+      } else {
+        *p++ = c;
+      }
+    }
+    return out_size;
+  });
+}
+
+// Array escape rule:
+//   source '"'  -> previous '\\' encoding + previous '"' encoding
+//   source '\\' -> two previous '\\' encodings (count doubles)
+void EnterArrayWrap(SerializationContext& ctx, std::string& q_buf) {
+  q_buf.clear();
+  q_buf.append(ctx.backslash_count, '\\');
+  q_buf.append(ctx.quote_seq);
+  ctx.quote_seq = q_buf;
+  ctx.backslash_count *= 2;
+}
+
+// Record escape rule:
+//   source '"'  -> two previous '"' encodings
+//   source '\\' -> two previous '\\' encodings (count doubles)
+void EnterRecordWrap(SerializationContext& ctx, std::string& q_buf) {
+  q_buf.clear();
+  absl::StrAppend(&q_buf, ctx.quote_seq, ctx.quote_seq);
+  ctx.quote_seq = q_buf;
+  ctx.backslash_count *= 2;
+}
+
+template<WrapContext Wrap, typename Body>
+void WriteWrapped(SerializationContext& ctx, Body&& body) {
+  static_assert(Wrap != WrapContext::None);
+  ctx.buffer->WriteUncommitted(ctx.quote_seq);
+  const auto saved_q = ctx.quote_seq;
+  const auto saved_b = ctx.backslash_count;
+  std::string q_buf;
+  if constexpr (Wrap == WrapContext::Array) {
+    EnterArrayWrap(ctx, q_buf);
+  } else {
+    EnterRecordWrap(ctx, q_buf);
+  }
+  body();
+  ctx.quote_seq = saved_q;
+  ctx.backslash_count = saved_b;
+  ctx.buffer->WriteUncommitted(ctx.quote_seq);
+}
+
+#define RETURN_ARRAY_SERIALIZATION(serialize_text, serialize_binary, oid) \
+  switch (kind) {                                                         \
+    case ArrayKind::ListSingleDimension: {                                \
+      static constexpr auto kElemText =                                   \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ListSingleDimension,              \
+                             WrapContext::None>;                          \
+      static constexpr auto kElemTextInRecord =                           \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ListSingleDimension,              \
+                             WrapContext::Record>;                        \
+      static constexpr auto kElemBinary =                                 \
+        SerializeOneDimArray<serialize_binary, oid, VarFormat::Binary,    \
+                             ArrayKind::ListSingleDimension,              \
+                             WrapContext::None>;                          \
+      return format != VarFormat::Text                                    \
+               ? SerializeNullable<kElemBinary>                           \
+               : (context.in_record ? kElemTextInRecord                   \
+                                    : SerializeNullable<kElemText>);      \
+    }                                                                     \
+    case ArrayKind::ArraySingleDimension: {                               \
+      static constexpr auto kElemText =                                   \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ArraySingleDimension,             \
+                             WrapContext::None>;                          \
+      static constexpr auto kElemTextInRecord =                           \
+        SerializeOneDimArray<serialize_text, oid, VarFormat::Text,        \
+                             ArrayKind::ArraySingleDimension,             \
+                             WrapContext::Record>;                        \
+      static constexpr auto kElemBinary =                                 \
+        SerializeOneDimArray<serialize_binary, oid, VarFormat::Binary,    \
+                             ArrayKind::ArraySingleDimension,             \
+                             WrapContext::None>;                          \
+      return format != VarFormat::Text                                    \
+               ? SerializeNullable<kElemBinary>                           \
+               : (context.in_record ? kElemTextInRecord                   \
+                                    : SerializeNullable<kElemText>);      \
+    }                                                                     \
+    case ArrayKind::MultiDimensions: {                                    \
+      static constexpr auto kElemText =                                   \
+        SerializeArray<serialize_text, oid, VarFormat::Text,              \
+                       WrapContext::None>;                                \
+      static constexpr auto kElemTextInRecord =                           \
+        SerializeArray<serialize_text, oid, VarFormat::Text,              \
+                       WrapContext::Record>;                              \
+      static constexpr auto kElemBinary =                                 \
+        SerializeArray<serialize_binary, oid, VarFormat::Binary,          \
+                       WrapContext::None>;                                \
+      return format != VarFormat::Text                                    \
+               ? SerializeNullable<kElemBinary>                           \
+               : (context.in_record ? kElemTextInRecord                   \
+                                    : SerializeNullable<kElemText>);      \
+    }                                                                     \
   }
 
 template<SerializationFunction ValueSerialization>
-void SerializeNullable(SerializationContext context,
+void SerializeNullable(SerializationContext& context,
                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
   auto* length_data = context.buffer->GetContiguousData(4);
@@ -112,13 +251,13 @@ void SerializeNullable(SerializationContext context,
   }
 }
 
-void SerializeNull(SerializationContext context,
+void SerializeNull(SerializationContext& context,
                    const duckdb::RecursiveUnifiedVectorFormat&, duckdb::idx_t) {
   absl::big_endian::Store32(context.buffer->GetContiguousData(4), -1);
 }
 
 template<VarFormat Format, typename T, bool Precise = true>
-void SerializeFloat(SerializationContext context,
+void SerializeFloat(SerializationContext& context,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, double>);
@@ -165,7 +304,7 @@ void SerializeFloat(SerializationContext context,
 }
 
 template<VarFormat Format, typename Read, typename Wire = Read>
-void SerializeInt(SerializationContext context,
+void SerializeInt(SerializationContext& context,
                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
                   duckdb::idx_t row) {
   const auto value =
@@ -200,58 +339,80 @@ bool ArrayItemNeedQuotesAndEscape(std::string_view data) {
          });
 }
 
-void WriteArrayItemQuotedAndEscaped(std::string_view item,
-                                    SerializationContext context) {
-  const auto required_size =
-    2                   // quotes in the beginning and in the end
-    + item.size() * 2;  // in worst case each symbol may be escaped
-  context.buffer->WriteContiguousData(required_size, [&](uint8_t* data) {
-    char* buf = reinterpret_cast<char*>(data);
-    *buf++ = '"';
-    for (char c : item) {
-      if (c == '"' || c == '\\') [[unlikely]] {
-        *buf++ = '\\';
-      }
-      *buf++ = c;
-    }
-    *buf++ = '"';
-    return buf - reinterpret_cast<char*>(data);
-  });
-}
-
-template<VarFormat Format, bool InArray>
-void SerializeVarchar(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeVarchar(SerializationContext& context,
                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
   auto raw = vdata.unified
                .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
-  if constexpr (Format == VarFormat::Text && InArray) {
-    if (ArrayItemNeedQuotesAndEscape(value)) {
-      WriteArrayItemQuotedAndEscaped(value, context);
-    } else {
-      context.buffer->WriteUncommitted(value);
+  if constexpr (Format == VarFormat::Text) {
+    if constexpr (InContainer == WrapContext::Array) {
+      if (ArrayItemNeedQuotesAndEscape(value)) {
+        WriteWrapped<WrapContext::Array>(context,
+                                         [&] { EmitEscaped(context, value); });
+        return;
+      }
+    } else if constexpr (InContainer == WrapContext::Record) {
+      if (RecordItemNeedsQuoting(value)) {
+        WriteWrapped<WrapContext::Record>(context,
+                                          [&] { EmitEscaped(context, value); });
+        return;
+      }
     }
+    context.buffer->WriteUncommitted(value);
   } else {
     context.buffer->WriteUncommitted(value);
   }
 }
 
-template<VarFormat Format, bool InArray, typename T>
-void SerializeEnumLabel(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer, typename T>
+void SerializeEnumLabel(SerializationContext& context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
   auto idx = vdata.unified.sel->get_index(row);
   auto ordinal = duckdb::UnifiedVectorFormat::GetData<T>(vdata.unified)[idx];
   auto label = duckdb::EnumType::GetString(vdata.logical_type, ordinal);
   auto value = std::string_view{label.GetData(), label.GetSize()};
-  if constexpr (Format == VarFormat::Text && InArray) {
-    if (ArrayItemNeedQuotesAndEscape(value)) {
-      WriteArrayItemQuotedAndEscaped(value, context);
-      return;
+  if constexpr (Format == VarFormat::Text) {
+    if constexpr (InContainer == WrapContext::Array) {
+      if (ArrayItemNeedQuotesAndEscape(value)) {
+        WriteWrapped<WrapContext::Array>(context,
+                                         [&] { EmitEscaped(context, value); });
+        return;
+      }
+    } else if constexpr (InContainer == WrapContext::Record) {
+      if (RecordItemNeedsQuoting(value)) {
+        WriteWrapped<WrapContext::Record>(context,
+                                          [&] { EmitEscaped(context, value); });
+        return;
+      }
     }
+    context.buffer->WriteUncommitted(value);
+  } else {
+    context.buffer->WriteUncommitted(value);
   }
-  context.buffer->WriteUncommitted(value);
+}
+
+template<VarFormat Format, WrapContext InContainer>
+void SerializeEnum(SerializationContext& context,
+                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                   duckdb::idx_t row) {
+  switch (duckdb::EnumType::GetPhysicalType(vdata.logical_type)) {
+    using enum duckdb::PhysicalType;
+    case UINT8:
+      return SerializeEnumLabel<Format, InContainer, uint8_t>(context, vdata,
+                                                              row);
+    case UINT16:
+      return SerializeEnumLabel<Format, InContainer, uint16_t>(context, vdata,
+                                                               row);
+    case UINT32:
+      return SerializeEnumLabel<Format, InContainer, uint32_t>(context, vdata,
+                                                               row);
+    default:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("Unsupported ENUM physical type"));
+  }
 }
 
 // Encode a value into PG numeric binary format.
@@ -259,7 +420,7 @@ void SerializeEnumLabel(SerializationContext context,
 // Use scale=0 for integer types. Caller must convert duckdb::hugeint_t /
 // uhugeint_t to absl::int128 / absl::uint128 before calling.
 template<typename T>
-void WriteAsNumericBinary(SerializationContext context, T value,
+void WriteAsNumericBinary(SerializationContext& context, T value,
                           int32_t scale) {
   static constexpr int32_t kBase = 10'000;
   static constexpr int16_t kPositive = 0x0000;
@@ -319,7 +480,7 @@ void WriteAsNumericBinary(SerializationContext context, T value,
 }
 
 template<VarFormat Format, typename PhysicalType>
-void SerializeDecimal(SerializationContext context,
+void SerializeDecimal(SerializationContext& context,
                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
   const auto& type = vdata.logical_type;
@@ -341,7 +502,7 @@ void SerializeDecimal(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeUbigint(SerializationContext context,
+void SerializeUbigint(SerializationContext& context,
                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
   const auto value =
@@ -358,7 +519,7 @@ void SerializeUbigint(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeHugeint(SerializationContext context,
+void SerializeHugeint(SerializationContext& context,
                       const duckdb::RecursiveUnifiedVectorFormat& vdata,
                       duckdb::idx_t row) {
   auto value =
@@ -379,7 +540,7 @@ void SerializeHugeint(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeUhugeint(SerializationContext context,
+void SerializeUhugeint(SerializationContext& context,
                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
   const auto value =
@@ -399,39 +560,100 @@ void SerializeUhugeint(SerializationContext context,
   }
 }
 
-template<bool InArray>
-void SerializeByteaTextHex(SerializationContext context,
+// The leading '\\' goes through ctx.backslash_count so nested wraps emit
+// the depth-correct escape sequence; the rest is hex-only and never triggers.
+void ByteaOutHex(SerializationContext& ctx, std::string_view value) {
+  EmitEscaped(ctx, "\\");
+  const auto body_size = 1 + 2 * value.size();
+  auto* data = ctx.buffer->GetContiguousData(body_size);
+  char* p = reinterpret_cast<char*>(data);
+  *p++ = 'x';
+  absl::BytesToHexStringInternal(
+    reinterpret_cast<const unsigned char*>(value.data()), p, value.size());
+}
+
+template<WrapContext InContainer>
+void SerializeByteaTextHex(SerializationContext& context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   auto raw = vdata.unified
                .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
-  const auto required_size = (InArray ? 3 : 0) + 2 + 2 * value.size();
-  auto* buf =
-    reinterpret_cast<char*>(context.buffer->GetContiguousData(required_size));
 
-  ByteaOutHex<InArray>(buf, value);
+  // '\\xnnnn' always starts with '\\' which triggers wrap in both array and
+  // record contexts.
+  if constexpr (InContainer == WrapContext::None) {
+    ByteaOutHex(context, value);
+  } else {
+    WriteWrapped<InContainer>(context, [&] { ByteaOutHex(context, value); });
+  }
 }
 
-template<bool InArray>
-void SerializeByteaTextEscape(SerializationContext context,
+void ByteaOutEscape(SerializationContext& ctx, std::string_view value) {
+  size_t backslash_cnt = 0;
+  size_t non_printable_cnt = 0;
+  for (char c : value) {
+    if (c == '\\') {
+      ++backslash_cnt;
+    } else if (!absl::ascii_isprint(c)) {
+      ++non_printable_cnt;
+    }
+  }
+  const auto bs_n = ctx.backslash_count;
+  const size_t body_size = (value.size() - backslash_cnt - non_printable_cnt) +
+                           backslash_cnt * 2 * bs_n +
+                           non_printable_cnt * (bs_n + 3);
+  auto* data = ctx.buffer->GetContiguousData(body_size);
+  char* p = reinterpret_cast<char*>(data);
+  for (unsigned char c : value) {
+    if (c == '\\') {
+      std::memset(p, '\\', bs_n);
+      p += bs_n;
+      std::memset(p, '\\', bs_n);
+      p += bs_n;
+    } else if (!absl::ascii_isprint(c)) {
+      std::memset(p, '\\', bs_n);
+      p += bs_n;
+      unsigned char ch = c;
+      p[2] = '0' + (ch & 07);
+      ch >>= 3;
+      p[1] = '0' + (ch & 07);
+      ch >>= 3;
+      p[0] = '0' + (ch & 03);
+      p += 3;
+    } else {
+      *p++ = static_cast<char>(c);
+    }
+  }
+}
+
+template<WrapContext InContainer>
+void SerializeByteaTextEscape(SerializationContext& context,
                               const duckdb::RecursiveUnifiedVectorFormat& vdata,
                               duckdb::idx_t row) {
   auto raw = vdata.unified
                .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{raw.GetData(), raw.GetSize()};
 
-  const auto required_size = ByteaOutEscapeLength<InArray>(value);
-  auto* buf =
-    reinterpret_cast<char*>(context.buffer->GetContiguousData(required_size));
-
-  irs::ResolveBool(InArray && required_size != value.size(),
-                   [&]<bool NeedArrayEscaping> {
-                     ByteaOutEscape<NeedArrayEscaping>(buf, value);
-                   });
+  if constexpr (InContainer == WrapContext::None) {
+    ByteaOutEscape(context, value);
+  } else {
+    // Wrap iff the rendered escape form has a wrap-trigger char: empty,
+    // any source '\\' (becomes '\\' in the body), or any non-printable byte
+    // (becomes '\\nnn').
+    const bool has_special = value.empty() || absl::c_any_of(value, [](char c) {
+                               return c == '\\' || !absl::ascii_isprint(c);
+                             });
+    if (has_special) {
+      WriteWrapped<InContainer>(context,
+                                [&] { ByteaOutEscape(context, value); });
+    } else {
+      ByteaOutEscape(context, value);
+    }
+  }
 }
 
-void SerializeByteaBinary(SerializationContext context,
+void SerializeByteaBinary(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   auto raw = vdata.unified
@@ -441,7 +663,7 @@ void SerializeByteaBinary(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeBool(SerializationContext context,
+void SerializeBool(SerializationContext& context,
                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
   auto value = vdata.unified.GetData<bool>()[vdata.unified.sel->get_index(row)];
@@ -454,8 +676,20 @@ void SerializeBool(SerializationContext context,
   }
 }
 
-template<VarFormat Format>
-void SerializeTimestampSec(SerializationContext context,
+// Wrap text output in current-depth quote_seq when emitting inside an
+// array or record. Safe only for types whose textual form never contains
+// '"' or '\\' (timestamps, intervals) -- no internal escaping needed.
+template<WrapContext InContainer, typename Body>
+void WithWrapIfNested(SerializationContext& context, Body&& body) {
+  if constexpr (InContainer == WrapContext::None) {
+    body();
+  } else {
+    WriteWrapped<InContainer>(context, [&] { body(); });
+  }
+}
+
+template<VarFormat Format, WrapContext InContainer>
+void SerializeTimestampSec(SerializationContext& context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   const auto timestamp =
@@ -464,15 +698,16 @@ void SerializeTimestampSec(SerializationContext context,
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochSeconds(timestamp.value));
-    context.buffer->WriteUncommitted(str);
+    WithWrapIfNested<InContainer>(
+      context, [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               (timestamp.value - kGapSec) * 1'000'000);
   }
 }
 
-template<VarFormat Format>
-void SerializeTimestampMs(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeTimestampMs(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   const auto timestamp =
@@ -481,15 +716,16 @@ void SerializeTimestampMs(SerializationContext context,
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochMicroSeconds(timestamp.value));
-    context.buffer->WriteUncommitted(str);
+    WithWrapIfNested<InContainer>(
+      context, [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               (timestamp.value - kGapMs) * 1000);
   }
 }
 
-template<VarFormat Format>
-void SerializeTimestamp(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeTimestamp(SerializationContext& context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
   const auto timestamp =
@@ -497,15 +733,16 @@ void SerializeTimestamp(SerializationContext context,
       .GetData<duckdb::timestamp_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(timestamp);
-    context.buffer->WriteUncommitted(str);
+    WithWrapIfNested<InContainer>(
+      context, [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               timestamp.value - kGapUs);
   }
 }
 
-template<VarFormat Format>
-void SerializeTimestampNs(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeTimestampNs(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   const auto timestamp =
@@ -514,15 +751,16 @@ void SerializeTimestampNs(SerializationContext context,
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(
       duckdb::Timestamp::FromEpochNanoSeconds(timestamp.value));
-    context.buffer->WriteUncommitted(str);
+    WithWrapIfNested<InContainer>(
+      context, [&] { context.buffer->WriteUncommitted(str); });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               (timestamp.value - kGapNs) / 1000);
   }
 }
 
-template<VarFormat Format>
-void SerializeTimestampTz(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeTimestampTz(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   const auto ts =
@@ -530,8 +768,10 @@ void SerializeTimestampTz(SerializationContext context,
       .GetData<duckdb::timestamp_tz_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Timestamp::ToString(ts);
-    context.buffer->WriteUncommitted(str);
-    context.buffer->WriteUncommitted("+00");
+    WithWrapIfNested<InContainer>(context, [&] {
+      context.buffer->WriteUncommitted(str);
+      context.buffer->WriteUncommitted("+00");
+    });
   } else {
     absl::big_endian::Store64(context.buffer->GetContiguousData(8),
                               ts.value - kGapUs);
@@ -539,7 +779,7 @@ void SerializeTimestampTz(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeTime(SerializationContext context,
+void SerializeTime(SerializationContext& context,
                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
   const auto time =
@@ -554,7 +794,7 @@ void SerializeTime(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeTimeNs(SerializationContext context,
+void SerializeTimeNs(SerializationContext& context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
   const auto time =
@@ -570,7 +810,7 @@ void SerializeTimeNs(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeTimeTz(SerializationContext context,
+void SerializeTimeTz(SerializationContext& context,
                      const duckdb::RecursiveUnifiedVectorFormat& vdata,
                      duckdb::idx_t row) {
   const auto tz =
@@ -605,7 +845,7 @@ void SerializeTimeTz(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeBit(SerializationContext context,
+void SerializeBit(SerializationContext& context,
                   const duckdb::RecursiveUnifiedVectorFormat& vdata,
                   duckdb::idx_t row) {
   const auto raw =
@@ -628,48 +868,68 @@ void SerializeBit(SerializationContext context,
 }
 
 template<SerializationFunction ElementSerialization, int32_t ElementOID,
-         VarFormat Format, ArrayKind Kind>
-void SerializeOneDimArray(SerializationContext context,
+         VarFormat Format, ArrayKind Kind, WrapContext InContainer>
+void SerializeOneDimArray(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
-  duckdb::idx_t array_size;
-  duckdb::idx_t array_offset;
-  if constexpr (Kind == ArrayKind::ArraySingleDimension) {
-    array_size = duckdb::ArrayType::GetSize(vdata.logical_type);
-    array_offset = row * array_size;
-  } else {
-    auto list_data =
-      vdata.unified
-        .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
-    array_size = list_data.length;
-    array_offset = list_data.offset;
-  }
+  auto [array_size, array_offset] = GetArraySlice(vdata, row);
   auto& child_vdata = vdata.children[0];
   if constexpr (Format == VarFormat::Text) {
-    context.buffer->WriteUncommitted("{");
-    for (duckdb::idx_t i = 0; i < array_size; ++i) {
-      if (i > 0) {
-        context.buffer->WriteUncommitted(",");
+    auto emit_inside = [&] {
+      context.buffer->WriteUncommitted("{");
+      for (duckdb::idx_t i = 0; i < array_size; ++i) {
+        if (i > 0) {
+          context.buffer->WriteUncommitted(",");
+        }
+        const auto element_row = array_offset + i;
+        if (!child_vdata.unified.validity.RowIsValid(
+              child_vdata.unified.sel->get_index(element_row))) {
+          context.buffer->WriteUncommitted("NULL");
+        } else {
+          ElementSerialization(context, child_vdata, element_row);
+        }
       }
-      const auto element_row = array_offset + i;
-      if (!child_vdata.unified.validity.RowIsValid(
-            child_vdata.unified.sel->get_index(element_row))) {
-        context.buffer->WriteUncommitted("NULL");
+      context.buffer->WriteUncommitted("}");
+    };
+
+    if constexpr (InContainer == WrapContext::Record) {
+      // Wrap the rendered '{...}' as a record field iff its content has
+      // any record trigger char ('(', ')', ',', '"', '\\', whitespace)
+      // or is empty. '{' / '}' are NOT record triggers.
+      const bool needs_wrap = [&] {
+        if (array_size == 0) {
+          return false;  // bare '{}'
+        }
+        if (array_size > 1) {
+          return true;  // ',' between elements
+        }
+        return NeedsQuotingIn<WrapContext::Record>(child_vdata.logical_type,
+                                                   child_vdata, array_offset);
+      }();
+      if (needs_wrap) {
+        WriteWrapped<WrapContext::Record>(context, emit_inside);
       } else {
-        ElementSerialization(context, child_vdata, element_row);
+        emit_inside();
       }
+    } else {
+      emit_inside();
     }
-    context.buffer->WriteUncommitted("}");
   } else {
     // dimensions (4) - amount of array dims
     // flags(4) - 0(no nulls), 1(have nulls)
     // element_oid (4) - oid of an array element
     // dim1 size (4) - size of first(and only) dim
     // lower_bound (4) - begin offset(0 by default)
+    int32_t element_oid;
+    if constexpr (ElementOID == kDynamicOid) {
+      element_oid = Type2Oid(child_vdata.logical_type, false);
+    } else {
+      element_oid = ElementOID;
+    }
     auto* prefix_data = context.buffer->GetContiguousData(20);
     absl::big_endian::Store32(prefix_data, 1);
     absl::big_endian::Store32(prefix_data + 4, 1);
-    absl::big_endian::Store32(prefix_data + 8, ElementOID);
+    absl::big_endian::Store32(prefix_data + 8, element_oid);
     absl::big_endian::Store32(prefix_data + 12, array_size);
     absl::big_endian::Store32(prefix_data + 16, 0);
     for (duckdb::idx_t i = 0; i < array_size; ++i) {
@@ -680,61 +940,49 @@ void SerializeOneDimArray(SerializationContext context,
   }
 }
 
-// Multi-dim array serialization (text only for now, binary uses FlattenArray)
-template<SerializationFunction ElementSerialization, VarFormat Format,
-         bool First = true>
-int32_t FlattenArray(SerializationContext context,
-                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
-                     duckdb::idx_t row) {
+template<SerializationFunction ElementSerialization, VarFormat Format>
+void FlattenArray(SerializationContext& context,
+                  const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                  duckdb::idx_t row, int32_t& leaf_oid, uint8_t* dim_sizes_data,
+                  int32_t depth) {
   const auto lid = vdata.logical_type.id();
   if (lid != duckdb::LogicalTypeId::LIST &&
       lid != duckdb::LogicalTypeId::ARRAY) {
+    leaf_oid = Type2Oid(vdata.logical_type, false);
     SerializeNullable<ElementSerialization>(context, vdata, row);
-    return 0;
+    return;
   }
-  duckdb::idx_t array_size;
-  duckdb::idx_t array_offset;
-  if (lid == duckdb::LogicalTypeId::ARRAY) {
-    array_size = duckdb::ArrayType::GetSize(vdata.logical_type);
-    array_offset = row * array_size;
-  } else {
-    auto list_data =
-      vdata.unified
-        .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
-    array_size = list_data.length;
-    array_offset = list_data.offset;
-  }
+  auto [array_size, array_offset] = GetArraySlice(vdata, row);
+  absl::big_endian::Store32(dim_sizes_data + depth * 8,
+                            static_cast<int32_t>(array_size));
+  absl::big_endian::Store32(dim_sizes_data + depth * 8 + 4, 0);
   auto& child_vdata = vdata.children[0];
-  if constexpr (First) {
-    auto* prefix_data = context.buffer->GetContiguousData(8);
-    absl::big_endian::Store32(prefix_data + 4, 0);
-    absl::big_endian::Store32(prefix_data, array_size);
-  }
   if (array_size == 0) {
-    return 1;
+    const auto* leaf = &child_vdata.logical_type;
+    int32_t deeper = depth + 1;
+    while (leaf->id() == duckdb::LogicalTypeId::LIST ||
+           leaf->id() == duckdb::LogicalTypeId::MAP ||
+           leaf->id() == duckdb::LogicalTypeId::ARRAY) {
+      absl::big_endian::Store32(dim_sizes_data + deeper * 8, 0);
+      absl::big_endian::Store32(dim_sizes_data + deeper * 8 + 4, 0);
+      ++deeper;
+      leaf = leaf->id() == duckdb::LogicalTypeId::ARRAY
+               ? &duckdb::ArrayType::GetChildType(*leaf)
+               : &duckdb::ListType::GetChildType(*leaf);
+    }
+    leaf_oid = Type2Oid(*leaf, false);
+    return;
   }
-  duckdb::idx_t i = 0;
-  int32_t dims = -1;
-  if constexpr (First) {
-    dims = FlattenArray<ElementSerialization, Format>(context, child_vdata,
-                                                      array_offset + i) +
-           1;
-    i++;
+  for (duckdb::idx_t i = 0; i < array_size; ++i) {
+    FlattenArray<ElementSerialization, Format>(context, child_vdata,
+                                               array_offset + i, leaf_oid,
+                                               dim_sizes_data, depth + 1);
   }
-  for (; i < array_size; ++i) {
-    auto element_row = array_offset + i;
-    const auto inner_dim = FlattenArray<ElementSerialization, Format, false>(
-      context, child_vdata, element_row);
-    SDB_ASSERT(dims == -1 || dims == inner_dim + 1);
-    dims = inner_dim + 1;
-  }
-  SDB_ASSERT(dims > 0);
-  return dims;
 }
 
 template<SerializationFunction ElementSerialization, int32_t ElementOID,
-         VarFormat Format>
-void SerializeArray(SerializationContext context,
+         VarFormat Format, WrapContext InContainer>
+void SerializeArray(SerializationContext& context,
                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
                     duckdb::idx_t row) {
   if constexpr (Format == VarFormat::Text) {
@@ -749,41 +997,68 @@ void SerializeArray(SerializationContext context,
       }
       return;
     }
-    duckdb::idx_t array_size;
-    duckdb::idx_t array_offset;
-    if (lid == duckdb::LogicalTypeId::ARRAY) {
-      array_size = duckdb::ArrayType::GetSize(vdata.logical_type);
-      array_offset = row * array_size;
-    } else {
-      auto list_data =
-        vdata.unified
-          .GetData<duckdb::list_entry_t>()[vdata.unified.sel->get_index(row)];
-      array_size = list_data.length;
-      array_offset = list_data.offset;
-    }
+
+    auto [array_size, array_offset] = GetArraySlice(vdata, row);
     auto& child_vdata = vdata.children[0];
-    context.buffer->WriteUncommitted("{");
-    for (duckdb::idx_t i = 0; i < array_size; ++i) {
-      if (i > 0) {
-        context.buffer->WriteUncommitted(",");
+
+    auto emit_inside = [&] {
+      context.buffer->WriteUncommitted("{");
+      for (duckdb::idx_t i = 0; i < array_size; ++i) {
+        if (i > 0) {
+          context.buffer->WriteUncommitted(",");
+        }
+        const auto element_row = array_offset + i;
+        SerializeArray<ElementSerialization, ElementOID, Format,
+                       WrapContext::None>(context, child_vdata, element_row);
       }
-      const auto element_row = array_offset + i;
-      SerializeArray<ElementSerialization, ElementOID, Format>(
-        context, child_vdata, element_row);
+      context.buffer->WriteUncommitted("}");
+    };
+
+    if constexpr (InContainer == WrapContext::Record) {
+      const bool needs_wrap = [&] {
+        if (array_size == 0) {
+          return false;  // bare '{}' (or '{...}' with no triggers).
+        }
+        if (array_size > 1) {
+          return true;  // ',' between elements
+        }
+        return NeedsQuotingIn<WrapContext::Record>(child_vdata.logical_type,
+                                                   child_vdata, array_offset);
+      }();
+      if (needs_wrap) {
+        WriteWrapped<WrapContext::Record>(context, emit_inside);
+      } else {
+        emit_inside();
+      }
+    } else {
+      emit_inside();
     }
-    context.buffer->WriteUncommitted("}");
   } else {
-    auto* prefix_data = context.buffer->GetContiguousData(12);
+    // Walk the type to find the leaf OID and count ndim.
+    const auto* t = &vdata.logical_type;
+    int32_t ndim = 0;
+    while (t->id() == duckdb::LogicalTypeId::LIST ||
+           t->id() == duckdb::LogicalTypeId::ARRAY) {
+      ++ndim;
+      t = t->id() == duckdb::LogicalTypeId::ARRAY
+            ? &duckdb::ArrayType::GetChildType(*t)
+            : &duckdb::ListType::GetChildType(*t);
+    }
+    // PG binary array: 12-byte top header (ndim, flags, elemtype) followed
+    // by ndim*8 bytes of {dim_size, lbound} pairs, then element bytes.
+    // FlattenArray fills each dim's size into its slot as it descends.
+    auto* prefix_data = context.buffer->GetContiguousData(12 + ndim * 8);
+    int32_t leaf_oid = ElementOID;
+    FlattenArray<ElementSerialization, Format>(context, vdata, row, leaf_oid,
+                                               prefix_data + 12, 0);
+    absl::big_endian::Store32(prefix_data, ndim);
     absl::big_endian::Store32(prefix_data + 4, 0);
-    absl::big_endian::Store32(prefix_data + 8, ElementOID);
-    const auto dims =
-      FlattenArray<ElementSerialization, Format>(context, vdata, row);
-    absl::big_endian::Store32(prefix_data, dims);
+    absl::big_endian::Store32(prefix_data + 8, leaf_oid);
   }
 }
 
 template<VarFormat Format>
-void SerializeDate(SerializationContext context,
+void SerializeDate(SerializationContext& context,
                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
   // days from 1970-01-01
@@ -831,7 +1106,7 @@ void SerializeDate(SerializationContext context,
   }
 }
 
-void SerializeRegtypeText(SerializationContext context,
+void SerializeRegtypeText(SerializationContext& context,
                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
                           duckdb::idx_t row) {
   const auto oid =
@@ -839,7 +1114,7 @@ void SerializeRegtypeText(SerializationContext context,
   context.buffer->WriteUncommitted(RegtypeOut(oid));
 }
 
-void SerializeRegclassText(SerializationContext context,
+void SerializeRegclassText(SerializationContext& context,
                            const duckdb::RecursiveUnifiedVectorFormat& vdata,
                            duckdb::idx_t row) {
   const auto oid =
@@ -848,7 +1123,7 @@ void SerializeRegclassText(SerializationContext context,
 }
 
 void SerializeRegnamespaceText(
-  SerializationContext context,
+  SerializationContext& context,
   const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
   const auto oid =
     vdata.unified.GetData<int64_t>()[vdata.unified.sel->get_index(row)];
@@ -857,7 +1132,7 @@ void SerializeRegnamespaceText(
 
 // Binary serialization for oid-like types:
 // truncate 64-bit OID to 32-bit for PG wire protocol compatibility.
-void SerializeOidBinary(SerializationContext context,
+void SerializeOidBinary(SerializationContext& context,
                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
                         duckdb::idx_t row) {
   const auto oid =
@@ -870,8 +1145,8 @@ void SerializeOidBinary(SerializationContext context,
                             static_cast<int32_t>(oid));
 }
 
-template<VarFormat Format>
-void SerializeInterval(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeInterval(SerializationContext& context,
                        const duckdb::RecursiveUnifiedVectorFormat& vdata,
                        duckdb::idx_t row) {
   const auto interval =
@@ -879,7 +1154,21 @@ void SerializeInterval(SerializationContext context,
       .GetData<duckdb::interval_t>()[vdata.unified.sel->get_index(row)];
   if constexpr (Format == VarFormat::Text) {
     auto str = duckdb::Interval::ToString(interval);
-    context.buffer->WriteUncommitted(str);
+    std::string_view value{str};
+    if constexpr (InContainer == WrapContext::Array) {
+      if (ArrayItemNeedQuotesAndEscape(value)) {
+        WriteWrapped<WrapContext::Array>(context,
+                                         [&] { EmitEscaped(context, value); });
+        return;
+      }
+    } else if constexpr (InContainer == WrapContext::Record) {
+      if (RecordItemNeedsQuoting(value)) {
+        WriteWrapped<WrapContext::Record>(context,
+                                          [&] { EmitEscaped(context, value); });
+        return;
+      }
+    }
+    context.buffer->WriteUncommitted(value);
   } else {
     // PG binary: microseconds(8) + days(4) + months(4)
     auto* data = context.buffer->GetContiguousData(16);
@@ -890,7 +1179,7 @@ void SerializeInterval(SerializationContext context,
 }
 
 template<VarFormat Format>
-void SerializeUuid(SerializationContext context,
+void SerializeUuid(SerializationContext& context,
                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
   const auto uuid =
@@ -910,27 +1199,259 @@ void SerializeUuid(SerializationContext context,
   }
 }
 
-template<VarFormat Format, bool InArray>
-void SerializeJson(SerializationContext context,
+template<VarFormat Format, WrapContext InContainer>
+void SerializeJson(SerializationContext& context,
                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
                    duckdb::idx_t row) {
   const auto str =
     vdata.unified
       .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
   auto value = std::string_view{str.GetData(), str.GetSize()};
-  if constexpr (InArray && Format == VarFormat::Text) {
-    if (ArrayItemNeedQuotesAndEscape(value)) {
-      WriteArrayItemQuotedAndEscaped(value, context);
-      return;
+  if constexpr (Format == VarFormat::Text) {
+    if constexpr (InContainer == WrapContext::Array) {
+      if (ArrayItemNeedQuotesAndEscape(value)) {
+        WriteWrapped<WrapContext::Array>(context,
+                                         [&] { EmitEscaped(context, value); });
+        return;
+      }
+    } else if constexpr (InContainer == WrapContext::Record) {
+      if (RecordItemNeedsQuoting(value)) {
+        WriteWrapped<WrapContext::Record>(context,
+                                          [&] { EmitEscaped(context, value); });
+        return;
+      }
+    }
+    context.buffer->WriteUncommitted(value);
+  } else {
+    context.buffer->WriteUncommitted(value);
+  }
+}
+
+bool RecordItemNeedsQuoting(std::string_view s) {
+  if (s.empty()) {
+    return true;
+  }
+  for (char c : s) {
+    if (c == ',' || c == '(' || c == ')' || c == '"' || c == '\\' ||
+        absl::ascii_isspace(static_cast<unsigned char>(c))) {
+      return true;
     }
   }
-  context.buffer->WriteUncommitted(value);
+  return false;
+}
+
+bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
+                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                           duckdb::idx_t row);
+
+template<WrapContext InContainer>
+bool NeedsQuotingIn(const duckdb::LogicalType& type,
+                    const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                    duckdb::idx_t row) {
+  static_assert(InContainer == WrapContext::Array ||
+                InContainer == WrapContext::Record);
+  using enum duckdb::LogicalTypeId;
+  switch (type.id()) {
+    case BOOLEAN:
+    case TINYINT:
+    case SMALLINT:
+    case INTEGER:
+    case BIGINT:
+    case UTINYINT:
+    case USMALLINT:
+    case UINTEGER:
+    case UBIGINT:
+    case HUGEINT:
+    case UHUGEINT:
+    case FLOAT:
+    case DOUBLE:
+    case DECIMAL:
+    case DATE:
+    case TIME:
+    case TIME_NS:
+    case TIME_TZ:
+    case UUID:
+    case BIT:
+      return false;
+    case TIMESTAMP_SEC:
+    case TIMESTAMP_MS:
+    case TIMESTAMP:
+    case TIMESTAMP_NS:
+    case TIMESTAMP_TZ:
+    case BLOB:
+    case STRUCT:
+      return true;
+    case INTERVAL: {
+      const auto interval =
+        vdata.unified
+          .GetData<duckdb::interval_t>()[vdata.unified.sel->get_index(row)];
+      auto str = duckdb::Interval::ToString(interval);
+      std::string_view v{str};
+      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+    }
+    case CHAR:
+    case VARCHAR: {
+      const auto& raw =
+        vdata.unified
+          .GetData<duckdb::string_t>()[vdata.unified.sel->get_index(row)];
+      std::string_view v{raw.GetData(), raw.GetSize()};
+      return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+    }
+    case ENUM: {
+      auto idx = vdata.unified.sel->get_index(row);
+      auto check = [&](auto ord) {
+        const auto& label = duckdb::EnumType::GetString(type, ord);
+        std::string_view v{label.GetData(), label.GetSize()};
+        return RecordItemNeedsQuoting(v) || ArrayItemNeedQuotesAndEscape(v);
+      };
+      switch (duckdb::EnumType::GetPhysicalType(type)) {
+        using enum duckdb::PhysicalType;
+        case UINT8:
+          return check(
+            duckdb::UnifiedVectorFormat::GetData<uint8_t>(vdata.unified)[idx]);
+        case UINT16:
+          return check(
+            duckdb::UnifiedVectorFormat::GetData<uint16_t>(vdata.unified)[idx]);
+        case UINT32:
+          return check(
+            duckdb::UnifiedVectorFormat::GetData<uint32_t>(vdata.unified)[idx]);
+        default:
+          return true;
+      }
+    }
+    case LIST:
+    case ARRAY:
+    case MAP:
+      // Rendered `{...}`. `{`/`}` are array triggers (always wraps inside an
+      // array). For records: walk the singleton path -- any size>1 contributes
+      // `,` (record trigger), size 0 collapses to `{}` (no trigger), else
+      // recurse to the leaf and ask the same question there.
+      if constexpr (InContainer == WrapContext::Array) {
+        return true;
+      } else {
+        static_assert(InContainer == WrapContext::Record);
+        const auto* cur = &vdata;
+        duckdb::idx_t cur_row = row;
+        while (true) {
+          const auto lid = cur->logical_type.id();
+          if (lid != duckdb::LogicalTypeId::LIST &&
+              lid != duckdb::LogicalTypeId::ARRAY) {
+            return NeedsQuotingIn<WrapContext::Record>(cur->logical_type, *cur,
+                                                       cur_row);
+          }
+          auto [array_size, array_offset] = GetArraySlice(*cur, cur_row);
+          if (array_size > 1) {
+            return true;
+          }
+          if (array_size == 0) {
+            return false;
+          }
+          cur = &cur->children[0];
+          cur_row = array_offset;
+        }
+      }
+    default:
+      return true;
+  }
+}
+
+bool RecordHasArrayTrigger(const duckdb::LogicalType& type,
+                           const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                           duckdb::idx_t row) {
+  const auto& children = duckdb::StructType::GetChildTypes(type);
+  if (children.size() != 1) {
+    // 0 fields -> '()' (no trigger). N>1 -> ',' is always present.
+    return children.size() > 1;
+  }
+  const auto& child = vdata.children[0];
+  if (!child.unified.validity.RowIsValid(child.unified.sel->get_index(row))) {
+    return false;  // '()' for the lone NULL field
+  }
+  return NeedsQuotingIn<WrapContext::Array>(children[0].second, child, row);
+}
+
+template<VarFormat Format>
+const RecordSerializers& GetSerializersCache(
+  SerializationContext& context, const duckdb::LogicalType& struct_type) {
+  SDB_ASSERT(context.types_cache != nullptr);
+  auto [it, inserted] = context.types_cache->try_emplace(&struct_type);
+  auto& cached = it->second;
+  if (inserted) {
+    const auto& children = duckdb::StructType::GetChildTypes(struct_type);
+    cached.functions.reserve(children.size());
+    if constexpr (Format == VarFormat::Text) {
+      const bool saved = std::exchange(context.in_record, true);
+      for (const auto& [_, child_type] : children) {
+        cached.functions.push_back(
+          GetSerialization(child_type, VarFormat::Text, context));
+      }
+      context.in_record = saved;
+    } else {
+      cached.oids.reserve(children.size());
+      for (const auto& [_, child_type] : children) {
+        cached.functions.push_back(
+          GetSerialization(child_type, VarFormat::Binary, context));
+        cached.oids.push_back(Type2Oid(child_type, false));
+      }
+    }
+  }
+  return cached;
+}
+
+template<VarFormat Format, WrapContext InContainer>
+void SerializeRecord(SerializationContext& context,
+                     const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                     duckdb::idx_t row) {
+  const auto& cache = GetSerializersCache<Format>(context, vdata.logical_type);
+
+  if constexpr (Format == VarFormat::Text) {
+    auto emit_inside = [&] {
+      context.buffer->WriteUncommitted("(");
+      for (size_t i = 0; i < cache.functions.size(); ++i) {
+        if (i > 0) {
+          context.buffer->WriteUncommitted(",");
+        }
+        const auto& child = vdata.children[i];
+        if (!child.unified.validity.RowIsValid(
+              child.unified.sel->get_index(row))) {
+          continue;  // empty between commas means NULL in record text
+        }
+        cache.functions[i](context, child, row);
+      }
+      context.buffer->WriteUncommitted(")");
+    };
+
+    if constexpr (InContainer == WrapContext::Array) {
+      if (RecordHasArrayTrigger(vdata.logical_type, vdata, row)) {
+        WriteWrapped<WrapContext::Array>(context, emit_inside);
+      } else {
+        emit_inside();
+      }
+    } else if constexpr (InContainer == WrapContext::Record) {
+      // '(' is a record trigger, so a record-in-record always wraps.
+      WriteWrapped<WrapContext::Record>(context, emit_inside);
+    } else {
+      emit_inside();
+    }
+  } else {
+    // PG record binary format: int32 nfields; for each field { int32 OID,
+    // int32 length (-1 for NULL) followed by length bytes }.
+    auto* nfields_data = context.buffer->GetContiguousData(4);
+    absl::big_endian::Store32(nfields_data,
+                              static_cast<int32_t>(cache.functions.size()));
+    for (size_t i = 0; i < cache.functions.size(); ++i) {
+      absl::big_endian::Store32(context.buffer->GetContiguousData(4),
+                                cache.oids[i]);
+      cache.functions[i](context, vdata.children[i], row);
+    }
+  }
 }
 
 SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                             VarFormat format,
                                             SerializationContext& context,
                                             ArrayKind kind) {
+  SDB_ASSERT(!context.in_record || format == VarFormat::Text);
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     using enum PgTypeOID;
@@ -1118,32 +1639,34 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case VARCHAR: {
       if (type.IsJSONType()) {
         static constexpr auto kSerializeText =
-          SerializeJson<VarFormat::Text, true>;
+          SerializeJson<VarFormat::Text, WrapContext::Array>;
         static constexpr auto kSerializeBinary =
-          SerializeJson<VarFormat::Binary, false>;
+          SerializeJson<VarFormat::Binary, WrapContext::None>;
         RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kJson);
       }
       if (IsName(type)) {
         static constexpr auto kSerializeText =
-          SerializeVarchar<VarFormat::Text, true>;
+          SerializeVarchar<VarFormat::Text, WrapContext::Array>;
         static constexpr auto kSerializeBinary =
-          SerializeVarchar<VarFormat::Binary, false>;
+          SerializeVarchar<VarFormat::Binary, WrapContext::None>;
         RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kName);
       }
       static constexpr auto kSerializeText =
-        SerializeVarchar<VarFormat::Text, true>;
+        SerializeVarchar<VarFormat::Text, WrapContext::Array>;
       static constexpr auto kSerializeBinary =
-        SerializeVarchar<VarFormat::Binary, false>;
+        SerializeVarchar<VarFormat::Binary, WrapContext::None>;
       RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, kText);
     }
     case BLOB: {
       if (context.bytea_output == ByteaOutput::Hex) {
-        static constexpr auto kSerializeText = SerializeByteaTextHex<true>;
+        static constexpr auto kSerializeText =
+          SerializeByteaTextHex<WrapContext::Array>;
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary,
                                    kBytea);
       } else {
         SDB_ASSERT(context.bytea_output == ByteaOutput::Escape);
-        static constexpr auto kSerializeText = SerializeByteaTextEscape<true>;
+        static constexpr auto kSerializeText =
+          SerializeByteaTextEscape<WrapContext::Array>;
         RETURN_ARRAY_SERIALIZATION(kSerializeText, SerializeByteaBinary,
                                    kBytea);
       }
@@ -1160,36 +1683,70 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case TIME_TZ:
       RETURN_ARRAY_SERIALIZATION(SerializeTimeTz<VarFormat::Text>,
                                  SerializeTimeTz<VarFormat::Binary>, kTimeTz);
-    case TIMESTAMP_SEC:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampSec<VarFormat::Text>,
-                                 SerializeTimestampSec<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP_MS:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampMs<VarFormat::Text>,
-                                 SerializeTimestampMs<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestamp<VarFormat::Text>,
-                                 SerializeTimestamp<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP_NS:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampNs<VarFormat::Text>,
-                                 SerializeTimestampNs<VarFormat::Binary>,
-                                 kTimestamp);
-    case TIMESTAMP_TZ:
-      RETURN_ARRAY_SERIALIZATION(SerializeTimestampTz<VarFormat::Text>,
-                                 SerializeTimestampTz<VarFormat::Binary>,
-                                 kTimestampTz);
-    case INTERVAL:
-      RETURN_ARRAY_SERIALIZATION(SerializeInterval<VarFormat::Text>,
-                                 SerializeInterval<VarFormat::Binary>,
-                                 kInterval);
+    case TIMESTAMP_SEC: {
+      static constexpr auto kText =
+        SerializeTimestampSec<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeTimestampSec<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP_MS: {
+      static constexpr auto kText =
+        SerializeTimestampMs<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeTimestampMs<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP: {
+      static constexpr auto kText =
+        SerializeTimestamp<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeTimestamp<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP_NS: {
+      static constexpr auto kText =
+        SerializeTimestampNs<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeTimestampNs<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestamp);
+    }
+    case TIMESTAMP_TZ: {
+      static constexpr auto kText =
+        SerializeTimestampTz<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeTimestampTz<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kTimestampTz);
+    }
+    case INTERVAL: {
+      static constexpr auto kText =
+        SerializeInterval<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeInterval<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kInterval);
+    }
     case UUID:
       RETURN_ARRAY_SERIALIZATION(SerializeUuid<VarFormat::Text>,
                                  SerializeUuid<VarFormat::Binary>, kUuid);
     case BIT:
       RETURN_ARRAY_SERIALIZATION(SerializeBit<VarFormat::Text>,
                                  SerializeBit<VarFormat::Binary>, kVarbit);
+    case STRUCT: {
+      // Element OID is resolved per-row by Type2Oid: anonymous ROW(...) yields
+      // kRecord, named record types yield their pg_type OID.
+      static constexpr auto kText =
+        SerializeRecord<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeRecord<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kDynamicOid);
+    }
+    case ENUM: {
+      static constexpr auto kText =
+        SerializeEnum<VarFormat::Text, WrapContext::Array>;
+      static constexpr auto kBinary =
+        SerializeEnum<VarFormat::Binary, WrapContext::Array>;
+      RETURN_ARRAY_SERIALIZATION(kText, kBinary, kDynamicOid);
+    }
     default:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("Array element type not supported"));
@@ -1198,13 +1755,7 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
 
 }  // namespace
 
-template<bool NeedArrayEscaping>
 void ByteaOutHex(char* buf, std::string_view value) {
-  if constexpr (NeedArrayEscaping) {
-    *buf++ = '"';
-    *buf++ = '\\';
-    *(buf + 2 + 2 * value.size()) = '"';
-  }
   *buf++ = '\\';
   *buf++ = 'x';
 
@@ -1212,7 +1763,6 @@ void ByteaOutHex(char* buf, std::string_view value) {
     reinterpret_cast<const unsigned char*>(value.data()), buf, value.size());
 }
 
-template<bool InArray>
 size_t ByteaOutEscapeLength(std::string_view value) {
   size_t backslash_cnt = 0;
   size_t non_printable_cnt = 0;
@@ -1223,40 +1773,19 @@ size_t ByteaOutEscapeLength(std::string_view value) {
       ++non_printable_cnt;
     }
   }
-
-  size_t required_size = value.size() + backslash_cnt + non_printable_cnt * 3;
-  const bool need_escaping =
-    InArray && (value.empty() || backslash_cnt > 0 || non_printable_cnt > 0);
-  if constexpr (InArray) {
-    if (need_escaping) {
-      required_size += 2 + backslash_cnt * 2 +
-                       non_printable_cnt;  // Quotes and additional backslashes
-    }
-  }
-  return required_size;
+  return value.size() + backslash_cnt + non_printable_cnt * 3;
 }
 
-template<bool NeedArrayEscaping>
 void ByteaOutEscape(char* buf, std::string_view value) {
-  if constexpr (NeedArrayEscaping) {
-    *buf++ = '"';
-  }
   for (const char* in = value.data(), *in_end = value.data() + value.size();
        in != in_end; ++in) {
     if (*in == '\\') {
       *buf++ = '\\';
       *buf++ = '\\';
-      if constexpr (NeedArrayEscaping) {
-        *buf++ = '\\';
-        *buf++ = '\\';
-      }
     } else if (!absl::ascii_isprint(*in)) {
       // As octal
       unsigned char c = *in;
       buf[0] = '\\';
-      if constexpr (NeedArrayEscaping) {
-        *++buf = '\\';
-      }
       buf[3] = '0' + (c & 07);
       c >>= 3;
       buf[2] = '0' + (c & 07);
@@ -1267,27 +1796,19 @@ void ByteaOutEscape(char* buf, std::string_view value) {
       *buf++ = *in;
     }
   }
-  if constexpr (NeedArrayEscaping) {
-    *buf++ = '"';
-  }
 }
-
-template size_t ByteaOutEscapeLength<true>(std::string_view value);
-template size_t ByteaOutEscapeLength<false>(std::string_view value);
-template void ByteaOutHex<true>(char* buf, std::string_view value);
-template void ByteaOutHex<false>(char* buf, std::string_view value);
-template void ByteaOutEscape<true>(char* buf, std::string_view value);
-template void ByteaOutEscape<false>(char* buf, std::string_view value);
 
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
   context.snapshot = config.EnsureCatalogSnapshot().get();
+  context.types_cache = std::make_unique<TypesSerializationCache>();
 }
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context) {
+  SDB_ASSERT(!context.in_record || format == VarFormat::Text);
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case SQLNULL:
@@ -1432,26 +1953,37 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case CHAR:
     case VARCHAR: {
       if (type.IsJSONType()) {
-        static constexpr auto kSerializeText =
-          SerializeJson<VarFormat::Text, false>;
-        static constexpr auto kSerializeBinary =
-          SerializeJson<VarFormat::Binary, false>;
-        RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+        static constexpr auto kText =
+          SerializeJson<VarFormat::Text, WrapContext::None>;
+        static constexpr auto kTextInRecord =
+          SerializeJson<VarFormat::Text, WrapContext::Record>;
+        static constexpr auto kBinary =
+          SerializeJson<VarFormat::Binary, WrapContext::None>;
+        RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
       }
-      static constexpr auto kSerializeText =
-        SerializeVarchar<VarFormat::Text, false>;
-      static constexpr auto kSerializeBinary =
-        SerializeVarchar<VarFormat::Binary, false>;
-      RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+      static constexpr auto kText =
+        SerializeVarchar<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeVarchar<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeVarchar<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
     }
     case BLOB: {
       if (context.bytea_output == ByteaOutput::Hex) {
-        static constexpr auto kSerializeText = SerializeByteaTextHex<false>;
-        RETURN_SERIALIZATION(kSerializeText, SerializeByteaBinary);
+        static constexpr auto kText = SerializeByteaTextHex<WrapContext::None>;
+        static constexpr auto kTextInRecord =
+          SerializeByteaTextHex<WrapContext::Record>;
+        RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord,
+                                       SerializeByteaBinary);
       } else {
         SDB_ASSERT(context.bytea_output == ByteaOutput::Escape);
-        static constexpr auto kSerializeText = SerializeByteaTextEscape<false>;
-        RETURN_SERIALIZATION(kSerializeText, SerializeByteaBinary);
+        static constexpr auto kText =
+          SerializeByteaTextEscape<WrapContext::None>;
+        static constexpr auto kTextInRecord =
+          SerializeByteaTextEscape<WrapContext::Record>;
+        RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord,
+                                       SerializeByteaBinary);
       }
     }
     case DATE:
@@ -1466,24 +1998,60 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case TIME_TZ:
       RETURN_SERIALIZATION(SerializeTimeTz<VarFormat::Text>,
                            SerializeTimeTz<VarFormat::Binary>);
-    case TIMESTAMP_SEC:
-      RETURN_SERIALIZATION(SerializeTimestampSec<VarFormat::Text>,
-                           SerializeTimestampSec<VarFormat::Binary>);
-    case TIMESTAMP_MS:
-      RETURN_SERIALIZATION(SerializeTimestampMs<VarFormat::Text>,
-                           SerializeTimestampMs<VarFormat::Binary>);
-    case TIMESTAMP:
-      RETURN_SERIALIZATION(SerializeTimestamp<VarFormat::Text>,
-                           SerializeTimestamp<VarFormat::Binary>);
-    case TIMESTAMP_NS:
-      RETURN_SERIALIZATION(SerializeTimestampNs<VarFormat::Text>,
-                           SerializeTimestampNs<VarFormat::Binary>);
-    case TIMESTAMP_TZ:
-      RETURN_SERIALIZATION(SerializeTimestampTz<VarFormat::Text>,
-                           SerializeTimestampTz<VarFormat::Binary>);
-    case INTERVAL:
-      RETURN_SERIALIZATION(SerializeInterval<VarFormat::Text>,
-                           SerializeInterval<VarFormat::Binary>);
+    case TIMESTAMP_SEC: {
+      static constexpr auto kText =
+        SerializeTimestampSec<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeTimestampSec<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeTimestampSec<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case TIMESTAMP_MS: {
+      static constexpr auto kText =
+        SerializeTimestampMs<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeTimestampMs<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeTimestampMs<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case TIMESTAMP: {
+      static constexpr auto kText =
+        SerializeTimestamp<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeTimestamp<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeTimestamp<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case TIMESTAMP_NS: {
+      static constexpr auto kText =
+        SerializeTimestampNs<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeTimestampNs<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeTimestampNs<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case TIMESTAMP_TZ: {
+      static constexpr auto kText =
+        SerializeTimestampTz<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeTimestampTz<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeTimestampTz<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case INTERVAL: {
+      static constexpr auto kText =
+        SerializeInterval<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeInterval<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeInterval<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
     case UUID:
       RETURN_SERIALIZATION(SerializeUuid<VarFormat::Text>,
                            SerializeUuid<VarFormat::Binary>);
@@ -1491,41 +2059,30 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       RETURN_SERIALIZATION(SerializeBit<VarFormat::Text>,
                            SerializeBit<VarFormat::Binary>);
     case ENUM: {
-      auto phys = duckdb::EnumType::GetPhysicalType(type);
-      switch (phys) {
-        using enum duckdb::PhysicalType;
-        case UINT8: {
-          static constexpr auto kText =
-            SerializeEnumLabel<VarFormat::Text, false, uint8_t>;
-          static constexpr auto kBinary =
-            SerializeEnumLabel<VarFormat::Binary, false, uint8_t>;
-          RETURN_SERIALIZATION(kText, kBinary);
-        }
-        case UINT16: {
-          static constexpr auto kText =
-            SerializeEnumLabel<VarFormat::Text, false, uint16_t>;
-          static constexpr auto kBinary =
-            SerializeEnumLabel<VarFormat::Binary, false, uint16_t>;
-          RETURN_SERIALIZATION(kText, kBinary);
-        }
-        case UINT32: {
-          static constexpr auto kText =
-            SerializeEnumLabel<VarFormat::Text, false, uint32_t>;
-          static constexpr auto kBinary =
-            SerializeEnumLabel<VarFormat::Binary, false, uint32_t>;
-          RETURN_SERIALIZATION(kText, kBinary);
-        }
-        default:
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                          ERR_MSG("Unsupported ENUM physical type"));
-      }
+      static constexpr auto kText =
+        SerializeEnum<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeEnum<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeEnum<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
     }
+    case STRUCT: {
+      static constexpr auto kText =
+        SerializeRecord<VarFormat::Text, WrapContext::None>;
+      static constexpr auto kTextInRecord =
+        SerializeRecord<VarFormat::Text, WrapContext::Record>;
+      static constexpr auto kBinary =
+        SerializeRecord<VarFormat::Binary, WrapContext::None>;
+      RETURN_IN_RECORD_SERIALIZATION(kText, kTextInRecord, kBinary);
+    }
+    case MAP:
     case LIST:
     case ARRAY: {
       const auto* element_type = &type;
       size_t dims = 0;
       while (true) {
-        if (element_type->id() == LIST) {
+        if (element_type->id() == LIST || element_type->id() == MAP) {
           element_type = &duckdb::ListType::GetChildType(*element_type);
         } else if (element_type->id() == ARRAY) {
           element_type = &duckdb::ArrayType::GetChildType(*element_type);

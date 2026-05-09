@@ -1,0 +1,165 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+SET unsafe_enable_version_guessing=true;
+
+
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.scan_t (id INTEGER, val BIGINT);
+
+
+statement count 3
+INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.scan_t VALUES (1, 10), (2, 20), (3, 30);
+
+statement count 3
+INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.scan_t VALUES (4, 40), (5, 50), (6, 60);
+
+statement count 3
+INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.scan_t VALUES (7, 70), (8, 80), (9, 90);
+
+statement count 1
+INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.scan_t VALUES (10, 100);
+
+
+query
+SELECT count(*) FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/scan_t',
+  allow_moved_paths=true);
+----
+count
+10
+
+
+query
+SELECT sum(val) FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/scan_t',
+  allow_moved_paths=true);
+----
+sum
+550
+
+
+query
+SELECT id, val FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/scan_t',
+  allow_moved_paths=true)
+ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+4	40
+5	50
+6	60
+7	70
+8	80
+9	90
+10	100
+
+
+# Filter pushdown: planner pushes id <= 3 through ComplexFilterPushdown,
+# which builds a child IcebergMultiFileList. Verify only the matching rows
+# come back regardless of which manifest holds them.
+query
+SELECT id, val FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/scan_t',
+  allow_moved_paths=true)
+WHERE id <= 3
+ORDER BY id;
+----
+id	val
+1	10
+2	20
+3	30
+
+
+query
+SELECT id, val FROM iceberg_scan(
+  's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/scan_t',
+  allow_moved_paths=true)
+WHERE id BETWEEN 5 AND 8
+ORDER BY id;
+----
+id	val
+5	50
+6	60
+7	70
+8	80
+
+
+query
+SELECT count(*) FROM iceberg_scan(
+  '${ICEBERG_FIXTURES}/equality_deletes/warehouse/mydb/mytable',
+  allow_moved_paths=true);
+----
+count
+2
+
+
+query
+SELECT id, name FROM iceberg_scan(
+  '${ICEBERG_FIXTURES}/equality_deletes/warehouse/mydb/mytable',
+  allow_moved_paths=true)
+ORDER BY id;
+----
+id	name
+4	d
+5	e
+
+
+query
+SELECT count(*) FROM iceberg_scan(
+  '${ICEBERG_FIXTURES}/equality_deletes/warehouse/mydb/mytable',
+  allow_moved_paths=true)
+WHERE id IN (1, 2, 3, 6);
+----
+count
+0
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}.scan_t;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
+
+
+statement ok
+DROP SECRET iceberg_${__DATABASE__};

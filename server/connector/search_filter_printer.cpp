@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
+#include <iresearch/search/geo_filter.h>
 
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -297,6 +298,64 @@ void StringifyWildcardNgram(std::string* out, const ByWildcardNgram& filter,
                   parts_str, "]]");
 }
 
+std::string_view GeoFilterTypeName(GeoFilterType type) {
+  switch (type) {
+    case GeoFilterType::Intersects:
+      return "Intersects";
+    case GeoFilterType::Contains:
+      return "Contains";
+    case GeoFilterType::IsContained:
+      return "IsContained";
+  }
+  return "?";
+}
+
+std::string_view GeoShapeTypeName(sdb::geo::ShapeContainer::Type type) {
+  using T = sdb::geo::ShapeContainer::Type;
+  switch (type) {
+    case T::Empty:
+      return "Empty";
+    case T::S2Point:
+      return "S2Point";
+    case T::S2Polyline:
+      return "S2Polyline";
+    case T::S2Polygon:
+      return "S2Polygon";
+    case T::S2Multipoint:
+      return "S2Multipoint";
+    case T::S2Multipolyline:
+      return "S2Multipolyline";
+  }
+  return "?";
+}
+
+template<typename FT>
+void StringifyGeo(std::string* out, const GeoFilter& filter, FT&& ft) {
+  absl::StrAppend(out, "GEO[", ft(filter.field()),
+                  ", op=", GeoFilterTypeName(filter.options().type),
+                  ", shape=", GeoShapeTypeName(filter.options().shape.type()),
+                  "]");
+}
+
+template<typename FT>
+void StringifyGeoDistance(std::string* out, const GeoDistanceFilter& filter,
+                          FT&& ft) {
+  const auto& range = filter.options().range;
+  absl::StrAppend(out, "GEO_DISTANCE[", ft(filter.field()), ",");
+  if (range.min_type == BoundType::Unbounded) {
+    absl::StrAppend(out, " *");
+  } else {
+    absl::StrAppend(out, range.min_type == BoundType::Inclusive ? " >=" : " >",
+                    range.min);
+  }
+  if (range.max_type != BoundType::Unbounded) {
+    absl::StrAppend(out, ",",
+                    range.max_type == BoundType::Inclusive ? " <=" : " <",
+                    range.max);
+  }
+  absl::StrAppend(out, "]");
+}
+
 template<typename FT>
 std::string StringifyFilter(const Filter& filter, FT&& ft) {
   std::string out;
@@ -338,6 +397,11 @@ std::string StringifyFilter(const Filter& filter, FT&& ft) {
     out = "EMPTY[]";
   } else if (type == Type<ByPhrase>::id()) {
     StringifyPhrase(&out, static_cast<const ByPhrase&>(filter), ft);
+  } else if (type == Type<GeoFilter>::id()) {
+    StringifyGeo(&out, static_cast<const GeoFilter&>(filter), ft);
+  } else if (type == Type<GeoDistanceFilter>::id()) {
+    StringifyGeoDistance(&out, static_cast<const GeoDistanceFilter&>(filter),
+                         ft);
   } else {
     out = absl::StrCat("[Unknown filter ", type().name(), " ]");
   }

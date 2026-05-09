@@ -51,43 +51,48 @@ struct SegmentPkIterator {
 bool OpenSegmentPkIterator(const irs::SubReader& segment,
                            SegmentPkIterator& out);
 
-// Walks segments + doc_ids (parallel ranges) in (segment, doc_id) sorted
-// order, calling `sink(orig_idx, pk_view)` per resolved row. Unresolved rows
-// (segment open or seek failure) are silently dropped -- caller fills its
-// own sentinel if needed.
-template<typename Segments, typename DocIds, typename Sink>
-void LookupSegmentsValues(const Segments& segments, const DocIds& doc_ids,
-                          const irs::IndexReader& reader, size_t n,
-                          Sink&& sink) {
-  std::vector<size_t> idx(n);
-  std::iota(idx.begin(), idx.end(), 0);
-  std::ranges::sort(
-    idx, {}, [&](size_t i) { return std::pair{segments[i], doc_ids[i]}; });
+template<typename Hits, typename Proj, typename OnSegment, typename OnDoc>
+void WalkSegmentsSorted(const Hits& hits, Proj&& proj,
+                        std::vector<uint32_t>& scratch_idx,
+                        OnSegment&& on_segment, OnDoc&& on_doc) {
+  const size_t n = std::ranges::size(hits);
+  scratch_idx.resize(n);
+  std::iota(scratch_idx.begin(), scratch_idx.end(), uint32_t{0});
+  std::ranges::sort(scratch_idx, {}, [&](uint32_t i) { return proj(hits[i]); });
 
   size_t i = 0;
   while (i < n) {
-    const auto seg_id = segments[idx[i]];
-    SegmentPkIterator it;
-    const bool opened = OpenSegmentPkIterator(reader[seg_id], it);
-    if (!opened) {
-      while (i < n && segments[idx[i]] == seg_id) {
+    const auto [seg_id, _] = proj(hits[scratch_idx[i]]);
+    if (!on_segment(seg_id)) {
+      while (i < n && proj(hits[scratch_idx[i]]).first == seg_id) {
         ++i;
       }
       continue;
     }
-    while (i < n && segments[idx[i]] == seg_id) {
-      const auto doc_id = doc_ids[idx[i]];
-      const bool seeked = it.iter->seek(doc_id) == doc_id;
-      if (!seeked) {
-        ++i;
-        continue;
+    while (i < n) {
+      auto [seg, doc] = proj(hits[scratch_idx[i]]);
+      if (seg != seg_id) {
+        break;
       }
-      const auto& val = it.value->value;
-      sink(idx[i], std::string_view{reinterpret_cast<const char*>(val.data()),
-                                    val.size()});
+      on_doc(scratch_idx[i], seg, doc);
       ++i;
     }
   }
+}
+
+template<typename Hits, typename Proj, typename Sink>
+void LookupSegmentsValues(const Hits& hits, Proj&& proj,
+                          const irs::IndexReader& reader,
+                          std::vector<uint32_t>& scratch_idx, Sink&& sink) {
+  SegmentPkIterator it;
+  WalkSegmentsSorted(
+    hits, std::forward<Proj>(proj), scratch_idx,
+    [&](uint32_t seg) { return OpenSegmentPkIterator(reader[seg], it); },
+    [&](uint32_t orig, uint32_t /*seg*/, uint32_t doc) {
+      if (it.iter->seek(doc) == doc) {
+        sink(orig, irs::ViewCast<char>(it.value->value));
+      }
+    });
 }
 
 }  // namespace sdb::connector

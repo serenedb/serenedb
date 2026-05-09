@@ -3,51 +3,65 @@ FROM rust:latest AS rust
 
 FROM ubuntu:24.04
 
-# Copy Docker CLI (for sqllogic tests that start MinIO)
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
-# Copy Rust toolchain (for building sqllogictest-rs)
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 COPY --from=rust /usr/local/cargo /usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH="/usr/local/cargo/bin:${PATH}"
 
-# All dependencies in single layer to minimize image size
-RUN apt-get update && \
-  # Setup LLVM repo (ca-certificates needed for HTTPS)
-  apt-get install -y --no-install-recommends wget ca-certificates && \
-  wget -qO /etc/apt/trusted.gpg.d/llvm.asc https://apt.llvm.org/llvm-snapshot.gpg.key && \
+ENV GO_VERSION=1.22.10
+ENV PATH=/usr/local/go/bin:${PATH}
+
+ADD https://apt.llvm.org/llvm-snapshot.gpg.key /etc/apt/trusted.gpg.d/llvm.asc
+ADD https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key /etc/apt/trusted.gpg.d/nodesource.asc
+ADD https://packages.microsoft.com/keys/microsoft.asc /etc/apt/trusted.gpg.d/microsoft.asc
+
+RUN \
+  chmod 0644 /etc/apt/trusted.gpg.d/llvm.asc \
+             /etc/apt/trusted.gpg.d/nodesource.asc \
+             /etc/apt/trusted.gpg.d/microsoft.asc && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends ca-certificates && \
   echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" > /etc/apt/sources.list.d/llvm-21.list && \
+  echo "deb https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+  echo "deb https://packages.microsoft.com/ubuntu/24.04/prod noble main" > /etc/apt/sources.list.d/microsoft-prod.list && \
   apt-get update && \
   apt-get install -y --no-install-recommends \
-      # Build system
+      curl wget gnupg \
       ninja-build cmake ccache make \
-      # C++ toolchain (LLVM 21)
       llvm-21 clang-21 lld-21 libclang-rt-21-dev \
-      # Parser generators (for grammar files)
       bison flex libfl-dev \
-      # Debian packaging
       dh-make fakeroot \
-      # Scripting (build scripts, code generation)
       python3 python3-dev python3-pip perl \
-      # Core utilities (gcc provides /usr/bin/cc needed by cargo's cc crate)
       git gcc binutils coreutils bash \
-      # Testing: pg_isready/psql for sqllogic tests
       postgresql-client \
-      # Testing: systemd for deb RTA (service lifecycle tests)
-      systemd && \
-  # Compiler symlinks (ccache wraps clang via /usr/local/bin)
+      systemd \
+      nodejs \
+      openjdk-21-jdk-headless maven \
+      php-cli php-pgsql php-mbstring php-xml php-zip composer \
+      dotnet-sdk-8.0 \
+      libpq-dev pkg-config \
+      ruby-full \
+      r-base-core && \
+  ARCH=$(uname -m) && \
+  case "$ARCH" in \
+    x86_64)  GOARCH=amd64 ;; \
+    aarch64) GOARCH=arm64 ;; \
+    *) echo "unsupported arch $ARCH" && exit 1 ;; \
+  esac && \
+  curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${GOARCH}.tar.gz" \
+    | tar -C /usr/local -xz && \
+  python3 -m pip install --break-system-packages --no-cache-dir \
+      pytest pyyaml \
+      "psycopg[binary]" psycopg2-binary asyncpg pytest-asyncio && \
   ln -sf /usr/bin/clang-21 /usr/bin/clang && \
   ln -sf /usr/bin/clang++-21 /usr/bin/clang++ && \
   ln -sf /usr/bin/ccache /usr/local/bin/clang && \
   ln -sf /usr/bin/ccache /usr/local/bin/clang++ && \
-  # Explicitly set UTC timezone (ubuntu:24.04 defaults to UTC, but be safe)
-  echo "UTC" > /etc/timezone && \
-  # Cleanup temporary packages
-  apt-get autopurge -y wget && \
-  apt-get clean && \
-  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+  ln -sf /usr/bin/clang++-21 /usr/local/bin/g++ && \
+  echo "UTC" > /etc/timezone
 
 ENV CCACHE_DIR=/.ccache
 

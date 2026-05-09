@@ -46,6 +46,7 @@
 #include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/index.h"
+#include "catalog/scorer_options.h"
 #include "catalog/secondary_index.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -377,14 +378,23 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateIndex(
     if (it != info.options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
+    std::optional<catalog::ScorerOptions> wand_scorer;
+    it = info.options.find("optimize_top_k");
+    if (it != info.options.end()) {
+      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                     .GetValue<std::string>();
+      wand_scorer =
+        catalog::ParseScorerExpression(transaction.GetContext(), value);
+    }
     create_result = catalog_impl.CreateInvertedIndex(
       database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), shard_options);
+      std::move(idx_columns), shard_options, /*operation_options=*/{},
+      std::move(wand_scorer));
   } else {
     bool unique = (info.constraint_type == duckdb::IndexConstraintType::UNIQUE);
     create_result = catalog_impl.CreateSecondaryIndex(
       database_id, name, sdb_table->GetName(), info.index_name,
-      std::move(idx_columns), unique);
+      std::move(idx_columns), unique, /*operation_options=*/{});
   }
 
   if (create_result.is(ERROR_SERVER_DUPLICATE_NAME)) {

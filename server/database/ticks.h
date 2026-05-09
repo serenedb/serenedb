@@ -35,8 +35,8 @@ Tick NewTickHybridLogicalClock();
 // communications.
 Tick NewTickHybridLogicalClock(Tick received);
 
-// create a new tick
-Tick NewTickServer();
+// atomically reserve `count` consecutive ticks; return the first reserved.
+Tick NewTickServer(uint64_t count = 1);
 
 // updates the tick counter, with lock
 void UpdateTickServer(Tick);

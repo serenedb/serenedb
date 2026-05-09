@@ -1,0 +1,1986 @@
+# Driver-test type matrix. Source of truth for which PG types every driver
+# harness must round-trip and in which formats. Reconciled against
+# server/pg/pg_types.h `enum PgTypeOID` by gen/oids_from_pg_types.py (CI gate).
+#
+# Schema:
+#   oid:            postgres OID (must match pg_types.h)
+#   name:           short identifier used in test ids
+#   pg_typname:     name as in pg_catalog.pg_type.typname; used in cast SQL
+#   cast_sql:       SQL fragment used to cast a $1 placeholder server-side.
+#                   Defaults to "$1::<pg_typname>" if absent.
+#   text:           bool; whether text-format encode/decode is exercised
+#   binary:         bool; whether binary-format encode/decode is exercised
+#   array:          true|false|partial; partial = element type works but the
+#                   array form has known driver gaps (recorded in skip)
+#   samples:        list of representative values, given as text-form strings.
+#                   Each driver harness is responsible for converting these
+#                   to its native type. `null` is allowed and exercises the
+#                   NULL bitmap path.
+#   skip:           per-driver-key list of protocol modes to skip
+#                   (simple | extended-noparam | extended-text | extended-binary).
+#                   Use "all" to skip every mode for that driver.
+#                   Driver keys are <lang>_<driver>, e.g. python_psycopg3,
+#                   php_pdo, csharp_npgsql.
+
+# ---- core scalars ----
+- oid: 16
+  name: bool
+  pg_typname: bool
+  text: true
+  binary: true
+  array: true
+  samples: ["t", "f", null]
+
+- oid: 17
+  name: bytea
+  pg_typname: bytea
+  text: true
+  binary: true
+  array: true
+  samples: ["\\x", "\\xdeadbeef", "\\x00ff", null]
+  skip:
+    # Drivers transparently encode str -> bytes when binding bytea, which
+    # corrupts PG-escape-form samples like "\xdeadbeef". The simple and
+    # extended-noparam modes inline the literal so they still exercise the
+    # server's bytea-in path. Re-enable once each harness binds bytes natively
+    # for every bytea test rather than passing the sample string through.
+    python_psycopg3: ["extended-text", "extended-binary"]
+    python_psycopg2: ["extended-text", "extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-text", "extended-binary"]
+    js_postgres_js: ["extended-text", "extended-binary"]
+    java_pgjdbc: ["extended-text", "extended-binary"]
+    go_pgx: ["extended-text", "extended-binary"]
+    go_libpq: ["extended-text", "extended-binary"]
+    rust_tokio_postgres: ["extended-text", "extended-binary"]
+    rust_sqlx: ["extended-text", "extended-binary"]
+    csharp_npgsql: ["extended-text", "extended-binary"]
+    php_pdo: ["extended-text", "extended-binary"]
+
+- oid: 19
+  name: name
+  pg_typname: name
+  text: true
+  binary: true
+  array: false
+  samples: ["public", "pg_catalog", "", null]
+
+- oid: 20
+  name: int8
+  pg_typname: int8
+  text: true
+  binary: true
+  array: true
+  samples: ["0", "-1", "9223372036854775807", "-9223372036854775808", null]
+
+- oid: 21
+  name: int2
+  pg_typname: int2
+  text: true
+  binary: true
+  array: true
+  samples: ["0", "-1", "32767", "-32768", null]
+
+- oid: 23
+  name: int4
+  pg_typname: int4
+  text: true
+  binary: true
+  array: true
+  samples: ["0", "-1", "2147483647", "-2147483648", null]
+
+- oid: 25
+  name: text
+  pg_typname: text
+  text: true
+  binary: true
+  array: true
+  samples: ["", "hello", "Юникод-тест 🚀", "with\nnewline\tand\ttab", null]
+
+- oid: 26
+  name: oid
+  pg_typname: oid
+  text: true
+  binary: true
+  array: true
+  # 4294967295 (uint32_max) was here but asyncpg sends oid as int32 and
+  # truncates to -1, then server roundtrips -1 back. Use values that
+  # fit signed int32 to avoid the driver/server signedness mismatch.
+  samples: ["0", "16", "1234567", null]
+
+- oid: 114
+  name: json
+  pg_typname: json
+  text: true
+  binary: true
+  array: true
+  samples: ["null", "true", "42", "\"s\"", "[1,2,3]", "{\"k\":\"v\"}", null]
+
+- oid: 700
+  name: float4
+  pg_typname: float4
+  text: true
+  binary: true
+  array: true
+  samples: ["0", "-0.5", "3.14", "Infinity", "-Infinity", "NaN", null]
+
+- oid: 701
+  name: float8
+  pg_typname: float8
+  text: true
+  binary: true
+  array: true
+  samples: ["0", "-0.5", "3.141592653589793", "Infinity", "-Infinity", "NaN", null]
+
+- oid: 1042
+  name: bpchar
+  pg_typname: bpchar
+  text: true
+  binary: true
+  array: true
+  samples: ["", "abc", "пробелы", null]
+
+- oid: 1043
+  name: varchar
+  pg_typname: varchar
+  text: true
+  binary: true
+  array: true
+  samples: ["", "hello", "Юникод 🚀", null]
+
+# ---- date / time ----
+- oid: 1082
+  name: date
+  pg_typname: date
+  text: true
+  binary: true
+  array: true
+  # 9999-12-31 is asyncpg-specific: it maps Python's date.MAXYEAR to PG's
+  # +infinity sentinel (INT32_MAX). Real PG accepts that, but the
+  # "expected" baseline ('9999-12-31'::date::text) returns "9999-12-31"
+  # while the bind path returns "infinity" -- different wire-form values
+  # can't share a sample row. Use literal 'infinity' / '-infinity' instead
+  # which round-trip identically across drivers.
+  samples: ["1970-01-01", "2000-01-01", "2026-05-05", "infinity", "-infinity", null]
+
+- oid: 1083
+  name: time
+  pg_typname: time
+  text: true
+  binary: true
+  array: true
+  samples: ["00:00:00", "12:34:56.789", "23:59:59.999999", null]
+
+- oid: 1114
+  name: timestamp
+  pg_typname: timestamp
+  text: true
+  binary: true
+  array: true
+  samples:
+    - "1970-01-01 00:00:00"
+    - "2000-01-01 00:00:00"
+    - "2026-05-05 12:34:56.789012"
+    - null
+
+- oid: 1184
+  name: timestamptz
+  pg_typname: timestamptz
+  text: true
+  binary: true
+  array: true
+  samples:
+    - "1970-01-01 00:00:00+00"
+    - "2026-05-05 12:34:56.789012+00"
+    - null
+
+- oid: 1186
+  name: interval
+  pg_typname: interval
+  text: true
+  binary: true
+  array: true
+  samples: ["00:00:00", "1 day", "1 year 2 mons 3 days 04:05:06.789", null]
+  skip:
+    # Python datetime.timedelta cannot represent year/mon components,
+    # so asyncpg's strict binder rejects those samples. Simple-mode
+    # literal cast still exercises the server's interval-in path.
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 1266
+  name: timetz
+  pg_typname: timetz
+  text: true
+  binary: true
+  array: true
+  samples: ["00:00:00+00", "12:34:56+02", null]
+
+- oid: 1700
+  name: numeric
+  pg_typname: numeric
+  text: true
+  binary: true
+  array: true
+  # TODO: re-add "NaN" once SereneDB accepts it as a numeric literal.
+  # PG accepts NaN; SereneDB currently raises "Could not convert".
+  samples: ["0", "1", "-1", "3.14", "1234567890.0987654321", null]
+
+# ---- network / mac ----
+- oid: 650
+  name: cidr
+  pg_typname: cidr
+  # TODO: SereneDB - cidr type lives in the DuckDB inet extension; not
+  # registered in the default catalog. Re-enable once the extension is
+  # auto-loaded or the type promoted to core.
+  text: false
+  binary: false
+  array: false
+  samples: ["192.168.0.0/16", "::1/128", null]
+
+- oid: 829
+  name: macaddr
+  pg_typname: macaddr
+  # TODO: SereneDB - macaddr is not yet recognized as a bindable type
+  # ("invalid input syntax for bind parameter").
+  text: false
+  binary: false
+  array: false
+  samples: ["08:00:2b:01:02:03", null]
+
+- oid: 869
+  name: inet
+  pg_typname: inet
+  # TODO: SereneDB - inet lives in the DuckDB inet extension; same gap
+  # as cidr above.
+  text: false
+  binary: false
+  array: false
+  samples: ["127.0.0.1", "::1", "10.0.0.1/24", null]
+
+# ---- bit ----
+- oid: 1560
+  name: bit
+  pg_typname: bit
+  cast_sql: "$1::bit(8)"
+  # TODO: SereneDB - "invalid input syntax for bind parameter 1" on
+  # extended-mode binds. Simple-mode literal cast works server-side.
+  text: false
+  binary: false
+  array: false
+  samples: ["10101010", null]
+
+- oid: 1562
+  name: varbit
+  pg_typname: varbit
+  # TODO: SereneDB - same as bit above.
+  text: false
+  binary: false
+  array: false
+  samples: ["", "1", "1010101010101", null]
+
+# ---- uuid / json* / pg-lsn ----
+- oid: 2950
+  name: uuid
+  pg_typname: uuid
+  text: true
+  binary: true
+  array: true
+  samples:
+    - "00000000-0000-0000-0000-000000000000"
+    - "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    - "550e8400-e29b-41d4-a716-446655440000"
+    - null
+
+- oid: 3220
+  name: pg_lsn
+  pg_typname: pg_lsn
+  # TODO: SereneDB - pg_lsn rejects bind parameters.
+  text: false
+  binary: false
+  array: false
+  samples: ["0/0", "16/B374D848", null]
+
+- oid: 3802
+  name: jsonb
+  pg_typname: jsonb
+  # TODO: enable once SereneDB exposes jsonb as a distinct type. As of
+  # 2026-05-05 the server returns "Type with name jsonb does not exist!"
+  text: false
+  binary: false
+  array: false
+  samples: ["null", "true", "42", "\"s\"", "[1,2,3]", "{\"k\":\"v\"}", null]
+
+# ---- regtypes (custom-exposed in SereneDB) ----
+# TODO: SereneDB - reg* types reject bind parameters in extended modes
+# ("invalid input syntax for bind parameter 1"). Simple mode works because
+# the cast happens server-side from a literal. Re-enable extended once the
+# reg*-In path accepts wire parameters.
+- oid: 2205
+  name: regclass
+  pg_typname: regclass
+  text: true
+  binary: true
+  array: false
+  samples: ["pg_class", null]
+  skip:
+    python_psycopg3: ["extended-text", "extended-binary"]
+    java_pgjdbc: ["extended-text", "extended-binary"]
+    go_pgx: ["extended-text", "extended-binary"]
+    go_libpq: ["extended-text", "extended-binary"]
+    rust_tokio_postgres: ["extended-text", "extended-binary"]
+    rust_sqlx: ["extended-text", "extended-binary"]
+    csharp_npgsql: ["extended-text", "extended-binary"]
+    php_pdo: ["extended-text", "extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-text", "extended-binary"]
+    js_postgres_js: ["extended-text", "extended-binary"]
+
+- oid: 2206
+  name: regtype
+  pg_typname: regtype
+  text: true
+  binary: true
+  array: false
+  samples: ["int4", "text", "boolean", null]
+  skip:
+    python_psycopg3: ["extended-text", "extended-binary"]
+    java_pgjdbc: ["extended-text", "extended-binary"]
+    go_pgx: ["extended-text", "extended-binary"]
+    go_libpq: ["extended-text", "extended-binary"]
+    rust_tokio_postgres: ["extended-text", "extended-binary"]
+    rust_sqlx: ["extended-text", "extended-binary"]
+    csharp_npgsql: ["extended-text", "extended-binary"]
+    php_pdo: ["extended-text", "extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-text", "extended-binary"]
+    js_postgres_js: ["extended-text", "extended-binary"]
+
+- oid: 4089
+  name: regnamespace
+  pg_typname: regnamespace
+  text: true
+  binary: true
+  array: false
+  samples: ["public", "pg_catalog", null]
+  skip:
+    python_psycopg3: ["extended-text", "extended-binary"]
+    java_pgjdbc: ["extended-text", "extended-binary"]
+    go_pgx: ["extended-text", "extended-binary"]
+    go_libpq: ["extended-text", "extended-binary"]
+    rust_tokio_postgres: ["extended-text", "extended-binary"]
+    rust_sqlx: ["extended-text", "extended-binary"]
+    csharp_npgsql: ["extended-text", "extended-binary"]
+    php_pdo: ["extended-text", "extended-binary"]
+    python_asyncpg: ["extended-text", "extended-binary"]
+    js_pg: ["extended-text", "extended-binary"]
+    js_postgres_js: ["extended-text", "extended-binary"]
+
+# ---- ranges ----
+# TODO: SereneDB - range types reject bind parameters; only simple-mode
+# literal casts work. Re-enable once extended-mode bind is supported.
+- oid: 3904
+  name: int4range
+  pg_typname: int4range
+  text: false
+  binary: false
+  array: false
+  samples: ["empty", "[1,10)", "[0,)", null]
+
+- oid: 3926
+  name: int8range
+  pg_typname: int8range
+  text: false
+  binary: false
+  array: false
+  samples: ["empty", "[1,10)", null]
+
+# ---- arrays of common scalars (already covered by `array: true` above,
+#      but a small number of explicit array-OID entries keeps the harness
+#      honest about array-specific binary format) ----
+- oid: 1007
+  name: int4_array
+  # SereneDB doesn't resolve PG's underscore-prefix array type names
+  # (_int4); use int4[] form which serves the same purpose. Keep the
+  # OID 1007 entry so the gate stays satisfied.
+  pg_typname: int4[]
+  cast_sql: "$1::int4[]"
+  text: true
+  binary: true
+  array: false                    # this *is* the array
+  samples: ["{}", "{1,2,3}", "{NULL,1,NULL}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 1009
+  name: text_array
+  pg_typname: text[]
+  cast_sql: "$1::text[]"
+  text: true
+  binary: true
+  array: false
+  samples: ["{}", "{a,b,c}", "{\"with space\",\"with,comma\"}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+- oid: 1016
+  name: int8_array
+  pg_typname: int8[]
+  cast_sql: "$1::int8[]"
+  text: true
+  binary: true
+  array: false
+  samples: ["{}", "{1,2,9223372036854775807}", null]
+  skip:
+    python_asyncpg: ["extended-text", "extended-binary"]
+
+# --- auto-stubbed by oids_from_pg_types.py ---
+
+- oid: 18
+  name: char
+  pg_typname: char
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Char"]
+
+- oid: 22
+  name: int2_vector
+  pg_typname: int2_vector
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int2Vector"]
+
+- oid: 24
+  name: regproc
+  pg_typname: regproc
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regproc"]
+
+- oid: 27
+  name: tid
+  pg_typname: tid
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tid"]
+
+- oid: 28
+  name: xid
+  pg_typname: xid
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Xid"]
+
+- oid: 29
+  name: cid
+  pg_typname: cid
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Cid"]
+
+- oid: 30
+  name: oidvector
+  pg_typname: oidvector
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Oidvector"]
+
+- oid: 32
+  name: pg_ddl_command
+  pg_typname: pg_ddl_command
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgDdlCommand"]
+
+- oid: 71
+  name: pg_type
+  pg_typname: pg_type
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgType"]
+
+- oid: 75
+  name: pg_attribute
+  pg_typname: pg_attribute
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAttribute"]
+
+- oid: 81
+  name: pg_proc
+  pg_typname: pg_proc
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgProc"]
+
+- oid: 83
+  name: pg_class
+  pg_typname: pg_class
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgClass"]
+
+- oid: 142
+  name: xml
+  pg_typname: xml
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Xml"]
+
+- oid: 143
+  name: xml_array
+  pg_typname: xml_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage XmlArray"]
+
+- oid: 194
+  name: pg_node_tree
+  pg_typname: pg_node_tree
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgNodeTree"]
+
+- oid: 199
+  name: json_array
+  pg_typname: json_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage JsonArray"]
+
+- oid: 210
+  name: pg_type_array
+  pg_typname: pg_type_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgTypeArray"]
+
+- oid: 269
+  name: table_am_handler
+  pg_typname: table_am_handler
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TableAmHandler"]
+
+- oid: 270
+  name: pg_attribute_array
+  pg_typname: pg_attribute_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAttributeArray"]
+
+- oid: 271
+  name: xid8_array
+  pg_typname: xid8_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Xid8Array"]
+
+- oid: 272
+  name: pg_proc_array
+  pg_typname: pg_proc_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgProcArray"]
+
+- oid: 273
+  name: pg_class_array
+  pg_typname: pg_class_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgClassArray"]
+
+- oid: 325
+  name: index_am_handler
+  pg_typname: index_am_handler
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage IndexAmHandler"]
+
+- oid: 600
+  name: point
+  pg_typname: point
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Point"]
+
+- oid: 601
+  name: lseg
+  pg_typname: lseg
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Lseg"]
+
+- oid: 602
+  name: path
+  pg_typname: path
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Path"]
+
+- oid: 603
+  name: box
+  pg_typname: box
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Box"]
+
+- oid: 604
+  name: polygon
+  pg_typname: polygon
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Polygon"]
+
+- oid: 651
+  name: cidr_array
+  pg_typname: cidr_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CidrArray"]
+
+- oid: 705
+  name: unknown
+  pg_typname: unknown
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Unknown"]
+
+- oid: 718
+  name: circle
+  pg_typname: circle
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Circle"]
+
+- oid: 719
+  name: circle_array
+  pg_typname: circle_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CircleArray"]
+
+- oid: 774
+  name: macaddr8
+  pg_typname: macaddr8
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Macaddr8"]
+
+- oid: 775
+  name: macaddr8_array
+  pg_typname: macaddr8_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Macaddr8Array"]
+
+- oid: 790
+  name: money
+  pg_typname: money
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Money"]
+
+- oid: 791
+  name: money_array
+  pg_typname: money_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage MoneyArray"]
+
+- oid: 1000
+  name: bool_array
+  pg_typname: bool_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage BoolArray"]
+
+- oid: 1001
+  name: bytea_array
+  pg_typname: bytea_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage ByteaArray"]
+
+- oid: 1002
+  name: char_array
+  pg_typname: char_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CharArray"]
+
+- oid: 1003
+  name: name_array
+  pg_typname: name_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage NameArray"]
+
+- oid: 1005
+  name: int2_array
+  pg_typname: int2_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int2Array"]
+
+- oid: 1006
+  name: int2_vector_array
+  pg_typname: int2_vector_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int2VectorArray"]
+
+- oid: 1008
+  name: regproc_array
+  pg_typname: regproc_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegprocArray"]
+
+- oid: 1010
+  name: tid_array
+  pg_typname: tid_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TidArray"]
+
+- oid: 1011
+  name: xid_array
+  pg_typname: xid_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage XidArray"]
+
+- oid: 1012
+  name: cid_array
+  pg_typname: cid_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CidArray"]
+
+- oid: 1013
+  name: oidvector_array
+  pg_typname: oidvector_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage OidvectorArray"]
+
+- oid: 1014
+  name: bpchar_array
+  pg_typname: bpchar_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage BpcharArray"]
+
+- oid: 1015
+  name: varchar_array
+  pg_typname: varchar_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage VarcharArray"]
+
+- oid: 1017
+  name: point_array
+  pg_typname: point_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PointArray"]
+
+- oid: 1018
+  name: lseg_array
+  pg_typname: lseg_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage LsegArray"]
+
+- oid: 1019
+  name: path_array
+  pg_typname: path_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PathArray"]
+
+- oid: 1020
+  name: box_array
+  pg_typname: box_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage BoxArray"]
+
+- oid: 1021
+  name: float4_array
+  pg_typname: float4_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Float4Array"]
+
+- oid: 1022
+  name: float8_array
+  pg_typname: float8_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Float8Array"]
+
+- oid: 1027
+  name: polygon_array
+  pg_typname: polygon_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PolygonArray"]
+
+- oid: 1028
+  name: oid_array
+  pg_typname: oid_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage OidArray"]
+
+- oid: 1033
+  name: aclitem
+  pg_typname: aclitem
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Aclitem"]
+
+- oid: 1034
+  name: aclitem_array
+  pg_typname: aclitem_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage AclitemArray"]
+
+- oid: 1040
+  name: macaddr_array
+  pg_typname: macaddr_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage MacaddrArray"]
+
+- oid: 1041
+  name: inet_array
+  pg_typname: inet_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage InetArray"]
+
+- oid: 1115
+  name: timestamp_array
+  pg_typname: timestamp_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimestampArray"]
+
+- oid: 1182
+  name: date_array
+  pg_typname: date_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage DateArray"]
+
+- oid: 1183
+  name: time_array
+  pg_typname: time_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimeArray"]
+
+- oid: 1185
+  name: timestamp_tz_array
+  pg_typname: timestamp_tz_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimestampTzArray"]
+
+- oid: 1187
+  name: interval_array
+  pg_typname: interval_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage IntervalArray"]
+
+- oid: 1231
+  name: numeric_array
+  pg_typname: numeric_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage NumericArray"]
+
+- oid: 1263
+  name: cstring_array
+  pg_typname: cstring_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CstringArray"]
+
+- oid: 1270
+  name: time_tz_array
+  pg_typname: time_tz_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimeTzArray"]
+
+- oid: 1561
+  name: bit_array
+  pg_typname: bit_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage BitArray"]
+
+- oid: 1563
+  name: varbit_array
+  pg_typname: varbit_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage VarbitArray"]
+
+- oid: 1790
+  name: refcursor
+  pg_typname: refcursor
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Refcursor"]
+
+- oid: 2201
+  name: refcursor_array
+  pg_typname: refcursor_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RefcursorArray"]
+
+- oid: 2202
+  name: regprocedure
+  pg_typname: regprocedure
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regprocedure"]
+
+- oid: 2203
+  name: regoper
+  pg_typname: regoper
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regoper"]
+
+- oid: 2204
+  name: regoperator
+  pg_typname: regoperator
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regoperator"]
+
+- oid: 2207
+  name: regprocedure_array
+  pg_typname: regprocedure_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegprocedureArray"]
+
+- oid: 2208
+  name: regoper_array
+  pg_typname: regoper_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegoperArray"]
+
+- oid: 2209
+  name: regoperator_array
+  pg_typname: regoperator_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegoperatorArray"]
+
+- oid: 2210
+  name: regclass_array
+  pg_typname: regclass_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegclassArray"]
+
+- oid: 2211
+  name: regtype_array
+  pg_typname: regtype_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegtypeArray"]
+
+- oid: 2249
+  name: record
+  pg_typname: record
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Record"]
+
+- oid: 2275
+  name: cstring
+  pg_typname: cstring
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Cstring"]
+
+- oid: 2276
+  name: any
+  pg_typname: any
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Any"]
+
+- oid: 2277
+  name: anyarray
+  pg_typname: anyarray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anyarray"]
+
+- oid: 2278
+  name: void
+  pg_typname: void
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Void"]
+
+- oid: 2279
+  name: trigger
+  pg_typname: trigger
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Trigger"]
+
+- oid: 2280
+  name: language_handler
+  pg_typname: language_handler
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage LanguageHandler"]
+
+- oid: 2281
+  name: internal
+  pg_typname: internal
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Internal"]
+
+- oid: 2283
+  name: anyelement
+  pg_typname: anyelement
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anyelement"]
+
+- oid: 2287
+  name: record_array
+  pg_typname: record_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RecordArray"]
+
+- oid: 2776
+  name: anynonarray
+  pg_typname: anynonarray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anynonarray"]
+
+- oid: 2949
+  name: txid_snapshot_array
+  pg_typname: txid_snapshot_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TxidSnapshotArray"]
+
+- oid: 2951
+  name: uuid_array
+  pg_typname: uuid_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage UuidArray"]
+
+- oid: 2970
+  name: txid_snapshot
+  pg_typname: txid_snapshot
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TxidSnapshot"]
+
+- oid: 3115
+  name: fdw_handler
+  pg_typname: fdw_handler
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage FdwHandler"]
+
+- oid: 3221
+  name: pg_lsn_array
+  pg_typname: pg_lsn_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgLsnArray"]
+
+- oid: 3310
+  name: tsm_handler
+  pg_typname: tsm_handler
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsmHandler"]
+
+- oid: 3361
+  name: pg_ndistinct
+  pg_typname: pg_ndistinct
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgNdistinct"]
+
+- oid: 3402
+  name: pg_dependencies
+  pg_typname: pg_dependencies
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgDependencies"]
+
+- oid: 3500
+  name: anyenum
+  pg_typname: anyenum
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anyenum"]
+
+- oid: 3614
+  name: tsvector
+  pg_typname: tsvector
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tsvector"]
+
+- oid: 3615
+  name: tsquery
+  pg_typname: tsquery
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tsquery"]
+
+- oid: 3642
+  name: gtsvector
+  pg_typname: gtsvector
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Gtsvector"]
+
+- oid: 3643
+  name: tsvector_array
+  pg_typname: tsvector_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsvectorArray"]
+
+- oid: 3644
+  name: gtsvector_array
+  pg_typname: gtsvector_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage GtsvectorArray"]
+
+- oid: 3645
+  name: tsquery_array
+  pg_typname: tsquery_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsqueryArray"]
+
+- oid: 3734
+  name: regconfig
+  pg_typname: regconfig
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regconfig"]
+
+- oid: 3735
+  name: regconfig_array
+  pg_typname: regconfig_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegconfigArray"]
+
+- oid: 3769
+  name: regdictionary
+  pg_typname: regdictionary
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regdictionary"]
+
+- oid: 3770
+  name: regdictionary_array
+  pg_typname: regdictionary_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegdictionaryArray"]
+
+- oid: 3807
+  name: jsonb_array
+  pg_typname: jsonb_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage JsonbArray"]
+
+- oid: 3831
+  name: anyrange
+  pg_typname: anyrange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anyrange"]
+
+- oid: 3838
+  name: event_trigger
+  pg_typname: event_trigger
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage EventTrigger"]
+
+- oid: 3905
+  name: int4_range_array
+  pg_typname: int4_range_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int4RangeArray"]
+
+- oid: 3906
+  name: numrange
+  pg_typname: numrange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Numrange"]
+
+- oid: 3907
+  name: numrange_array
+  pg_typname: numrange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage NumrangeArray"]
+
+- oid: 3908
+  name: tsrange
+  pg_typname: tsrange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tsrange"]
+
+- oid: 3909
+  name: tsrange_array
+  pg_typname: tsrange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsrangeArray"]
+
+- oid: 3910
+  name: tstzrange
+  pg_typname: tstzrange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tstzrange"]
+
+- oid: 3911
+  name: tstzrange_array
+  pg_typname: tstzrange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TstzrangeArray"]
+
+- oid: 3912
+  name: daterange
+  pg_typname: daterange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Daterange"]
+
+- oid: 3913
+  name: daterange_array
+  pg_typname: daterange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage DaterangeArray"]
+
+- oid: 3927
+  name: int8_range_array
+  pg_typname: int8_range_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int8RangeArray"]
+
+- oid: 4072
+  name: jsonpath
+  pg_typname: jsonpath
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Jsonpath"]
+
+- oid: 4073
+  name: jsonpath_array
+  pg_typname: jsonpath_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage JsonpathArray"]
+
+- oid: 4090
+  name: regnamespace_array
+  pg_typname: regnamespace_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegnamespaceArray"]
+
+- oid: 4096
+  name: regrole
+  pg_typname: regrole
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regrole"]
+
+- oid: 4097
+  name: regrole_array
+  pg_typname: regrole_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegroleArray"]
+
+- oid: 4191
+  name: regcollation
+  pg_typname: regcollation
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Regcollation"]
+
+- oid: 4192
+  name: regcollation_array
+  pg_typname: regcollation_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage RegcollationArray"]
+
+- oid: 4451
+  name: int4_multirange
+  pg_typname: int4_multirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int4Multirange"]
+
+- oid: 4532
+  name: nummultirange
+  pg_typname: nummultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Nummultirange"]
+
+- oid: 4533
+  name: tsmultirange
+  pg_typname: tsmultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tsmultirange"]
+
+- oid: 4534
+  name: tstzmultirange
+  pg_typname: tstzmultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Tstzmultirange"]
+
+- oid: 4535
+  name: datemultirange
+  pg_typname: datemultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Datemultirange"]
+
+- oid: 4536
+  name: int8_multirange
+  pg_typname: int8_multirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int8Multirange"]
+
+- oid: 4537
+  name: anymultirange
+  pg_typname: anymultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anymultirange"]
+
+- oid: 4538
+  name: anycompatiblemultirange
+  pg_typname: anycompatiblemultirange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblemultirange"]
+
+- oid: 4600
+  name: pg_brin_bloom_summary
+  pg_typname: pg_brin_bloom_summary
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgBrinBloomSummary"]
+
+- oid: 4601
+  name: pg_brin_minmax_multi_summary
+  pg_typname: pg_brin_minmax_multi_summary
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgBrinMinmaxMultiSummary"]
+
+- oid: 5017
+  name: pg_mcv_list
+  pg_typname: pg_mcv_list
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgMcvList"]
+
+- oid: 5038
+  name: pg_snapshot
+  pg_typname: pg_snapshot
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgSnapshot"]
+
+- oid: 5039
+  name: pg_snapshot_array
+  pg_typname: pg_snapshot_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgSnapshotArray"]
+
+- oid: 5069
+  name: xid8
+  pg_typname: xid8
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Xid8"]
+
+- oid: 5077
+  name: anycompatible
+  pg_typname: anycompatible
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatible"]
+
+- oid: 5078
+  name: anycompatiblearray
+  pg_typname: anycompatiblearray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblearray"]
+
+- oid: 5079
+  name: anycompatiblenonarray
+  pg_typname: anycompatiblenonarray
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblenonarray"]
+
+- oid: 5080
+  name: anycompatiblerange
+  pg_typname: anycompatiblerange
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Anycompatiblerange"]
+
+- oid: 6150
+  name: int4_multirange_array
+  pg_typname: int4_multirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int4MultirangeArray"]
+
+- oid: 6151
+  name: nummultirange_array
+  pg_typname: nummultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage NummultirangeArray"]
+
+- oid: 6152
+  name: tsmultirange_array
+  pg_typname: tsmultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TsmultirangeArray"]
+
+- oid: 6153
+  name: tstzmultirange_array
+  pg_typname: tstzmultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TstzmultirangeArray"]
+
+- oid: 6155
+  name: datemultirange_array
+  pg_typname: datemultirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage DatemultirangeArray"]
+
+- oid: 6157
+  name: int8_multirange_array
+  pg_typname: int8_multirange_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Int8MultirangeArray"]

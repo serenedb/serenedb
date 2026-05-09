@@ -36,9 +36,12 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/utils/string.hpp>
+#include <iresearch/utils/utf8_utils.hpp>
 
+#include "catalog/scorer_options.h"
 #include "catalog/tokenizer.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/functions/vector.h"
 #include "pg/connection_context.h"
 #include "pg/sql_collector.h"
 
@@ -741,7 +744,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // extracted at compile time by the iresearch_plan rule; defaults
   // follow iresearch's Bm25 (k1 = 1.2, b = 0.75).
   {
-    duckdb::ScalarFunctionSet set{std::string{kBm25}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::Bm25::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -754,7 +758,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // tfidf(tableoid) / tfidf(tableoid, with_norms) -> DOUBLE -- emits
   // TF-IDF. `with_norms` toggles length normalisation (default false).
   {
-    duckdb::ScalarFunctionSet set{std::string{kTfidf}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::Tfidf::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -767,7 +772,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Shape mirrors bm25/tfidf: anchor is tableoid; the iresearch_plan rule
   // claims the call at compile time and threads the scorer into bind_data.
   {
-    duckdb::ScalarFunctionSet set{std::string{kRawTf}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::RawTf::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     loader.RegisterFunction(std::move(set));
@@ -777,7 +783,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Language model with Jelinek-Mercer (linear interpolation) smoothing.
   // lambda in (0, 1]; iresearch default is 0.1.
   {
-    duckdb::ScalarFunctionSet set{std::string{kLmJm}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::LmJm::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -790,7 +797,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Language model with Bayesian (Dirichlet) smoothing. mu >= 0;
   // iresearch default is 2000.
   {
-    duckdb::ScalarFunctionSet set{std::string{kLmDirichlet}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::LmDirichlet::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -803,7 +811,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Indri-style Dirichlet: same smoothing as lm_dirichlet but without the
   // floor-at-zero clamp, so scores can be negative when tf < mu*P(t|C).
   {
-    duckdb::ScalarFunctionSet set{std::string{kIndriDirichlet}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::IndriDirichlet::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -816,7 +825,8 @@ void RegisterScorerFunctions(duckdb::ExtensionLoader& loader) {
   // Divergence-From-Independence. `measure` selects the independence
   // kernel: 'standardized' (default), 'saturated', or 'chi_squared'.
   {
-    duckdb::ScalarFunctionSet set{std::string{kDfi}};
+    duckdb::ScalarFunctionSet set{
+      std::string{catalog::ScorerOptions::Dfi::kName}};
     set.AddFunction(duckdb::ScalarFunction(
       {duckdb::LogicalType::BIGINT}, duckdb::LogicalType::FLOAT, ScorerStubFn));
     set.AddFunction(duckdb::ScalarFunction(
@@ -842,6 +852,95 @@ void RegisterPositionFunctions(duckdb::ExtensionLoader& loader) {
     {duckdb::LogicalType::ANY, duckdb::LogicalType::INTEGER},
     duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT), SearchStubFn));
   loader.RegisterFunction(std::move(set));
+}
+
+// ST_* geo predicates. All are stubs at runtime -- the filter builder claims
+// them at bind time and rewrites them into iresearch GeoFilter /
+// GeoDistanceFilter calls. Field and centroid each accept VARCHAR
+// (GeoJSON-text literal) or GEOMETRY('OGC:CRS84'); the catalog gates JSON-vs-
+// GEOMETRY column types separately at CREATE INDEX time.
+void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
+  // Pin GEOMETRY signatures to CRS84 so DuckDB's bind-time geo cast rules
+  // apply: matching-CRS values pass through unchanged (CRS metadata
+  // preserved), cross-CRS values throw BinderException, bare-GEOMETRY values
+  // reinterpret to CRS84. Without the pin, the bind cast to bare GEOMETRY
+  // would silently strip CRS metadata before the filter builder can
+  // validate it.
+  const duckdb::LogicalType geo_field_types[] = {
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY("OGC:CRS84")};
+  const duckdb::LogicalType geo_centroid_types[] = {
+    duckdb::LogicalType::VARCHAR, duckdb::LogicalType::GEOMETRY("OGC:CRS84")};
+
+  // ST_Distance_Between(field, centroid, min_distance, max_distance,
+  //                     [include_min, [include_max]]) -> bool
+  //
+  // field   : JSON column (GeoJSON) or GEOMETRY column.
+  // centroid: JSON value (GeoJSON) or GEOMETRY value.
+  //
+  // Register all 4 type combinations for the (field, centroid) pair across
+  // each arity so DuckDB resolves the call without implicit casts.
+  {
+    duckdb::ScalarFunctionSet set{std::string{kGeoInRange}};
+    for (const auto& field_t : geo_field_types) {
+      for (const auto& centroid_t : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BOOLEAN},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t, duckdb::LogicalType::DOUBLE,
+           duckdb::LogicalType::DOUBLE, duckdb::LogicalType::BOOLEAN,
+           duckdb::LogicalType::BOOLEAN},
+          duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // ST_Distance_Centroid(field, centroid) -> DOUBLE
+  //   and its operator-form synonym `field <-> centroid`.
+  //
+  // Returns the geodesic distance from the indexed value's centroid to the
+  // centroid argument. Pseudo-function: outside an inverted-index scan it
+  // throws via the stub. The filter builder recognizes
+  // `ST_Distance_Centroid(...) OP <const>` (and the `<->` form) and
+  // rewrites them into iresearch GeoDistanceFilter range bounds.
+  //
+  // The `<->` set extends the vector-distance set registered in
+  // RegisterVectorFunctions (vector.cpp); DuckDB merges overloads under
+  // the same name via OnCreateConflict::ALTER_ON_CONFLICT, so vector
+  // (ARRAY(FLOAT/DOUBLE)) and geo (VARCHAR / GEOMETRY) overloads coexist
+  // and bind by argument types. IsVectorDistanceFunction(...) in
+  // iresearch_plan.cpp keeps the geo overloads off the vector-ANN paths.
+  for (auto name : {kGeoDistance, kL2DistanceOp}) {
+    duckdb::ScalarFunctionSet set{std::string{name}};
+    for (const auto& field_t : geo_field_types) {
+      for (const auto& centroid_t : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {field_t, centroid_t}, duckdb::LogicalType::DOUBLE, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
+
+  // ST_Intersects(field, shape) -> bool    (commutative; either arg may be
+  // the column reference. Builds an iresearch GeoFilter with type=Intersects.)
+  // ST_Contains(field, shape)   -> bool    (indexed ⊇ shape, type=IsContained)
+  // ST_Contains(shape, field)   -> bool    (shape ⊇ indexed, type=Contains)
+  for (auto name : {kGeoIntersects, kGeoContains}) {
+    duckdb::ScalarFunctionSet set{std::string{name}};
+    for (const auto& a : geo_field_types) {
+      for (const auto& b : geo_centroid_types) {
+        set.AddFunction(duckdb::ScalarFunction(
+          {a, b}, duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      }
+    }
+    loader.RegisterFunction(std::move(set));
+  }
 }
 
 // ts_lexize(dict_name VARCHAR, token VARCHAR) -> VARCHAR[]
@@ -996,6 +1095,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
   RegisterScorerFunctions(loader);
   RegisterPositionFunctions(loader);
+  RegisterGeoFunctions(loader);
   RegisterTextDictionaryHelpers(loader);
   RegisterTSQuerySurface(loader);
 }

@@ -685,12 +685,20 @@ if(NOT "${SDB_SANITIZE}" STREQUAL "")
     # add_compile_options(-fPIC -fPIE)
     if("${SDB_SANITIZE}" STREQUAL "Leak")
         add_compile_options(-fsanitize=leak)
-        link_libraries(unwind_static cxxabi_static cxx_static)
+        link_libraries(
+            $<BUILD_LOCAL_INTERFACE:unwind_static>
+            $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+            $<BUILD_LOCAL_INTERFACE:cxx_static>
+        )
     elseif("${SDB_SANITIZE}" STREQUAL "Undefined")
         # TODO(mbkkt) enable nullability checks and local-bounds
         # TODO(mbkkt) apply these settings to libc++?
         add_compile_options(-fsanitize=undefined)
-        link_libraries(unwind_static cxxabi_static cxx_static)
+        link_libraries(
+            $<BUILD_LOCAL_INTERFACE:unwind_static>
+            $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+            $<BUILD_LOCAL_INTERFACE:cxx_static>
+        )
     elseif("${SDB_SANITIZE}" MATCHES ".*Address.*")
         if("${SDB_SANITIZE_WAS}" MATCHES ".*Undefined.*")
             add_compile_options(-fsanitize=undefined)
@@ -710,23 +718,37 @@ if(NOT "${SDB_SANITIZE}" STREQUAL "")
                 -fsanitize-address-use-odr-indicator
             )
         endif()
-        link_libraries(unwind_static cxxabi_static cxx_static)
+        link_libraries(
+            $<BUILD_LOCAL_INTERFACE:unwind_static>
+            $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+            $<BUILD_LOCAL_INTERFACE:cxx_static>
+        )
     elseif("${SDB_SANITIZE}" MATCHES "Memory(WithOrigins)?")
         add_compile_options(-fsanitize=memory -fsanitize-memory-use-after-dtor)
         if("${SDB_SANITIZE}" STREQUAL "MemoryWithOrigins")
             add_compile_options(-fsanitize-memory-track-origins)
         endif()
         # crashes with llvm libunwinder
-        link_libraries(cxxabi_static cxx_static)
+        link_libraries(
+            $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+            $<BUILD_LOCAL_INTERFACE:cxx_static>
+        )
     elseif("${SDB_SANITIZE}" STREQUAL "Thread")
         add_compile_options(-fsanitize=thread)
         # crashes with llvm libunwinder
-        link_libraries(cxxabi_static cxx_static)
+        link_libraries(
+            $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+            $<BUILD_LOCAL_INTERFACE:cxx_static>
+        )
     else()
         message(FATAL_ERROR "SDB_SANITIZE=${SDB_SANITIZE} not supported yet")
     endif()
 else()
-    link_libraries(unwind_static cxxabi_static cxx_static)
+    link_libraries(
+        $<BUILD_LOCAL_INTERFACE:unwind_static>
+        $<BUILD_LOCAL_INTERFACE:cxxabi_static>
+        $<BUILD_LOCAL_INTERFACE:cxx_static>
+    )
 endif()
 
 ################################################################################
@@ -756,7 +778,9 @@ endif()
 ## 3RD PARTY
 ################################################################################
 
+set(CMAKE_SKIP_INSTALL_RULES TRUE)
 add_subdirectory(third_party EXCLUDE_FROM_ALL)
+set(CMAKE_SKIP_INSTALL_RULES FALSE)
 
 if("${SDB_ALLOC}" MATCHES "JE")
     link_libraries(jemalloc)

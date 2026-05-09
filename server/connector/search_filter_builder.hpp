@@ -94,11 +94,11 @@ struct SearchFilterOptions {
   // the `sdb_scored_terms_limit` session setting; the iresearch
   // default is 1024.
   size_t scored_terms_limit = 1024;
-  // HNSW-side search-time neighbourhood-size override (efSearch).
-  // Not consumed by MakeSearchFilter -- bundled here so the same
-  // config blob can flow through optimizer passes that DO use it.
-  // 0 = use Top-K value.
-  int ef_search_override = 0;
+  // When true, the optimizer skips pulling `ORDER BY <scorer> DESC LIMIT k`
+  // into the SearchScan, so WAND never engages even on indexes that have
+  // wand metadata. Driven by the `sdb_disable_top_k_optimization` session
+  // setting; default false (optimization on).
+  bool disable_top_k_optimization = false;
 };
 
 Result MakeSearchFilter(

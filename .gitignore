@@ -21,6 +21,30 @@
 *.pyc
 docker.env
 
+# Driver-test toolchain artifacts (tests/drivers/<lang>/)
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+target/
+vendor/
+bin/
+obj/
+go.sum
+Cargo.lock
+composer.lock
+package-lock.json
+.phpunit.result.cache
+
+# Driver-test outputs
+/out/
+/drivers-tests.log
+/sqllogic-tests.log
+/recovery-tests.log
+
+# C harness compiled binary
+tests/drivers/c/harness
+
 # Match macos files
 .DS_Store
 

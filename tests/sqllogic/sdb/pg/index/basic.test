@@ -20,6 +20,12 @@ CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
 statement error
+CREATE INDEX index_t_parens ON t USING inverted(r test_english ());
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'r' (known: hnsw)
+
+
+statement error
 DROP TEXT SEARCH DICTIONARY test_english;
 ----
 db error: ERROR: Can not drop text dictionary used in the indexes index_t
@@ -234,19 +240,26 @@ DROP INDEX index_ts;
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c unknown_dict);
 ----
-db error: ERROR: Failed to create index: Text search dictionary 'unknown_dict' does not exist. Required by column 'c'
+db error: ERROR: Failed to create index: Unknown opclass 'unknown_dict' on column 'c': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(a test_english);
 ----
-db error: ERROR: Failed to create index: Text search dictionary 'test_english' does not exist. Required by column 'a'
+db error: ERROR: Failed to create index: Unknown opclass 'test_english' on column 'a': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
 
 
 statement error
 CREATE INDEX index_ts on tstest USING inverted(c test_english (foo=bar));
 ----
 db error: ERROR: Opclass option must be a constant value
+
+
+statement error
+CREATE INDEX index_ts on tstest USING inverted(c test_english ());
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'test_english' on column 'c' (known: hnsw)
+
 
 
 statement error

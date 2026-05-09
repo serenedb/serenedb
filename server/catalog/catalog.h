@@ -258,12 +258,13 @@ struct LogicalCatalog {
   virtual Result CreateSecondaryIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns, bool unique,
-    CreateIndexOperationOptions operation_options = {}) = 0;
+    CreateIndexOperationOptions operation_options) = 0;
   virtual Result CreateInvertedIndex(
     ObjectId database_id, std::string_view schema, std::string_view relation,
     std::string name, std::vector<CreateIndexColumn>&& columns,
     IndexShardOptions& shard_options,
-    CreateIndexOperationOptions operation_options = {}) = 0;
+    CreateIndexOperationOptions operation_options,
+    std::optional<ScorerOptions> wand_scorer) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

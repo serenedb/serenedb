@@ -30,4 +30,5 @@ target_sources(
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp
+        geo_tokenizer_options.cpp
 )

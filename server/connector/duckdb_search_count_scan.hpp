@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb.hpp>
+#include <iresearch/search/filter.hpp>
 
 #include "connector/duckdb_scan_base.hpp"
 
@@ -30,6 +31,12 @@ namespace sdb::connector {
 // zero-column DataChunks capped at STANDARD_VECTOR_SIZE until drained.
 // The aggregate above (count_star) sums chunk cardinalities.
 struct SearchCountScanGlobalState : public CommonScanGlobalState {
+  // Prepared filter query. Null when CountScan.stored_filter is null
+  // (match-all short-circuit via IndexReader::live_docs_count()).
+  // Otherwise built once in SearchCountScanInitGlobal -- the only
+  // prepare site for CountScan.
+  irs::Filter::Query::ptr query;
+
   uint64_t total = 0;
   uint64_t emitted = 0;
   bool counted = false;

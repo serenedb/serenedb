@@ -25,6 +25,7 @@
 #include <s2/s2region_term_indexer.h>
 #include <s2/util/coding/coder.h>
 #include <vpack/builder.h>
+#include <vpack/parser.h>
 #include <vpack/slice.h>
 
 #include "basics/resource_manager.hpp"
@@ -44,7 +45,19 @@ namespace irs::analysis {
 class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
  public:
   bool next() noexcept final;
-  using analysis::Analyzer::reset;
+
+  // Parses |value| as JSON text and forwards to reset(vpack::Slice).
+  // Use this for text literals (e.g. ts_lexize input, VARCHAR columns).
+  bool reset(std::string_view value) final;
+
+  // Resets the analyzer state from an already-parsed VPack document slice.
+  // Use this directly when the caller holds a native VPack type (zero-copy).
+  virtual bool reset(vpack::Slice slice) = 0;
+
+  // Resets the analyzer state from raw WKB bytes (GEOMETRY columns). The
+  // analyzer parses internally so future LatLng-coding work can fuse the WKB
+  // read with the encoder write without touching call sites.
+  virtual bool resetWKB(bytes_view wkb) = 0;
 
   virtual void prepare(GeoFilterOptionsBase& options) const = 0;
 
@@ -68,13 +81,14 @@ class GeoAnalyzer : public analysis::Analyzer, private util::Noncopyable {
   S2RegionTermIndexer _indexer;
 
  private:
-  using Attributes = std::tuple<IncAttr, TermAttr>;
+  using Attributes = std::tuple<IncAttr, TermAttr, StoreAttr>;
 
   std::vector<std::string> _terms;
   const std::string* _begin{_terms.data()};
   const std::string* _end{_begin};
   OffsAttr _offset;
   Attributes _attrs;
+  vpack::Parser _json_parser;
 };
 
 /// The analyzer capable of breaking up a valid geo point input
@@ -91,16 +105,15 @@ class GeoPointAnalyzer final : public GeoAnalyzer {
   static bool normalize(std::string_view args, std::string& out);
   static analysis::Analyzer::ptr make(std::string_view args);
 
-  // store point as [lng, lat] array to be GeoJSON compliant
-  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
-
   explicit GeoPointAnalyzer(const Options& options);
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoPointAnalyzer>::id();
   }
 
-  bool reset(std::string_view value) final;
+  using GeoAnalyzer::reset;
+  bool reset(vpack::Slice slice) final;
+  bool resetWKB(bytes_view wkb) final;
 
   void prepare(GeoFilterOptionsBase& options) const final;
 
@@ -151,11 +164,15 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
   static bool normalize(std::string_view args, std::string& out);
   static analysis::Analyzer::ptr make(std::string_view args);
-  static bytes_view store(Tokenizer* ctx, vpack::Slice slice);
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<GeoJsonAnalyzer>::id();
   }
+
+  // Effective coding this analyzer was configured with. Lets callers (e.g.
+  // CREATE INDEX validation) decide whether the coding is compatible with a
+  // given column type without constructing the vpack options.
+  Coding coding() const noexcept { return _coding; }
 
 #ifdef SDB_GTEST
   auto shapeType() const noexcept { return _type; }
@@ -164,15 +181,21 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
  protected:
   explicit GeoJsonAnalyzer(const Options& options);
 
-  bool ResetImpl(std::string_view value, sdb::geo::coding::Options options,
+  bool ResetImpl(vpack::Slice data, sdb::geo::coding::Options options,
                  Encoder* encoder);
 
-  virtual bytes_view StoreImpl(Tokenizer* ctx, vpack::Slice slice) = 0;
+  // Shared epilogue: given _shape already populated, compute geo terms and
+  // publish them via GeoAnalyzer::reset(terms). Used by both the vpack and
+  // ShapeContainer reset paths.
+  void ComputeAndPublishTerms();
+
+  virtual void StoreImpl(vpack::Slice slice) = 0;
 
   sdb::geo::ShapeContainer _shape;
   S2Point _centroid;
   std::vector<S2LatLng> _cache;
   Type _type;
+  Coding _coding;
 };
 
 }  // namespace irs::analysis

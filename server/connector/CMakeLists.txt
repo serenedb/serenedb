@@ -8,6 +8,7 @@ add_library(
     duckdb_storage_extension.cpp
     rocksdb_filter.cpp
     search_filter_builder.cpp
+    geo_filter_builder.cpp
     ts_anyall.cpp
     ts_compound.cpp
     ts_levenshtein.cpp
@@ -41,7 +42,6 @@ add_library(
     duckdb_search_full_scan.cpp
     duckdb_search_count_scan.cpp
     duckdb_search_ann_scan.cpp
-    duckdb_search_range_scan.cpp
     duckdb_rocksdb_reader.cpp
     duckdb_rocksdb_writer.cpp
     index_source_factory.cpp

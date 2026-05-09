@@ -482,6 +482,11 @@ void ShapeContainer::Encode(Encoder& encoder, coding::Options options) const {
   SDB_ASSERT(coding::IsOptionsS2(options));
   SDB_ASSERT(encoder.avail() >= sizeof(uint8_t));
   switch (_type) {
+    case Type::S2Point: {
+      encoder.Ensure(sizeof(uint8_t) + coding::ToSize(options));
+      encoder.put8(coding::ToTag(coding::Type::Point, options));
+      EncodePoint(encoder, basics::downCast<S2PointRegion>(*_data).point());
+    } break;
     case Type::S2Polyline: {
       const auto& data = basics::downCast<S2Polyline>(*_data);
       EncodePolyline(encoder, data, options);
@@ -498,7 +503,6 @@ void ShapeContainer::Encode(Encoder& encoder, coding::Options options) const {
       const auto& data = basics::downCast<S2MultiPolylineRegion>(*_data);
       data.Encode(encoder, options);
     } break;
-    case Type::S2Point:  // encoded in other path
     case Type::Empty:
       SDB_ASSERT(false);
   }

@@ -2506,7 +2506,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       auto reader = [&expected_values](irs::doc_id_t doc,
                                        const irs::bytes_view& value) {
         irs::BytesViewInput in(value);
-        const auto actual_value = in.ReadI32();  // read norm value
+        const auto actual_value = in.ReadByte();  // read norm value
 
         auto it = expected_values.find(actual_value);
         if (it == expected_values.end()) {

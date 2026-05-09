@@ -36,7 +36,7 @@ BufferedColumn::BufferedColumn(const ColumnInfo& info, IResourceManager& rm)
     _info{info},
     _hnsw_index{
       _info.hnsw_info
-        ? std::make_unique<HNSWIndexWriter>(
+        ? MakeHNSWIndexWriter(
             *_info.hnsw_info, [&] { return Iterator(); },
             [&](ResettableDocIterator::ptr& it) {
               sdb::basics::downCast<BufferedColumnIterator>(*it).Reset(

@@ -21,6 +21,7 @@
 #include "iresearch/formats/column/hnsw_index.hpp"
 
 #include <cmath>
+#include <type_traits>
 
 #include "basics/system-compiler.h"
 #include "iresearch/formats/column/common.hpp"
@@ -52,33 +53,96 @@ void ReadVector(IndexInput& in, T& vec) {
                sizeof(*vec.data()) * size);
 }
 
-float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,
-                                  uint16_t d) {
-  return -irs::vector::DotProductImpl<float, float>::Compute(l, r, d);
-}
+struct L2SqrDist {
+  static float Compute(const byte_type* l, const byte_type* r, uint16_t d) {
+    return irs::vector::L2Space<float, float, float>::Dist(l, r, d);
+  }
+};
 
-float ComputeCosine(const byte_type* l, const byte_type* r, uint16_t d) {
-  const auto [ll, lr, rr] =
-    irs::vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
-  const float denom = std::sqrt(ll) * std::sqrt(rr);
-  return denom == 0.f ? 1.f : 1.f - lr / denom;
-}
+struct NegativeIPDist {
+  static float Compute(const byte_type* l, const byte_type* r, uint16_t d) {
+    return -irs::vector::DotProductImpl<float, float>::Compute(l, r, d);
+  }
+};
 
-auto ResolveDistanceFunction(HNSWMetric metric) {
+struct L1Dist {
+  static float Compute(const byte_type* l, const byte_type* r, uint16_t d) {
+    return irs::vector::L1Space<float, float, float>::Dist(l, r, d);
+  }
+};
+
+struct CosineDist {
+  static float Compute(const byte_type* l, const byte_type* r, uint16_t d) {
+    const auto [ll, lr, rr] =
+      irs::vector::CosineDistanceImpl<float, float, float>::Compute(l, r, d);
+    const float denom = std::sqrt(ll) * std::sqrt(rr);
+    return denom == 0.f ? 1.f : 1.f - lr / denom;
+  }
+};
+
+template<class F>
+decltype(auto) DispatchMetric(HNSWMetric metric, F&& f) {
   switch (metric) {
     case HNSWMetric::L2Sqr:
-      return irs::vector::L2Space<float, float, float>::Dist;
+      return f(std::type_identity<L2SqrDist>{});
     case HNSWMetric::NegativeIP:
-      return ComputeNegativeInnerProduct;
+      return f(std::type_identity<NegativeIPDist>{});
     case HNSWMetric::L1:
-      return irs::vector::L1Space<float, float, float>::Dist;
-    case HNSWMetric::Cosine: {
-      return ComputeCosine;
-    }
-    default:
-      SDB_UNREACHABLE();
+      return f(std::type_identity<L1Dist>{});
+    case HNSWMetric::Cosine:
+      return f(std::type_identity<CosineDist>{});
   }
+  SDB_UNREACHABLE();
 }
+
+template<typename Dist>
+class HNSWIndexWriterImpl final : public HNSWIndexWriter {
+ public:
+  HNSWIndexWriterImpl(
+    HNSWInfo info,
+    absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
+    absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator)
+    : _max_doc{info.max_doc},
+      _hnsw{info.m},
+      _vt(info.max_doc + 1),
+      _dis{make_iterator(), make_iterator(), info},
+      _update_iterator{std::move(update_iterator)} {
+    _hnsw.efConstruction = info.ef_construction;
+    _hnsw.prepare_level_tab(_max_doc + 1, false);
+  }
+
+  void Add(const float* data, doc_id_t doc) final {
+    if (doc >= _vt.visited.size()) {
+      size_t prev_size = _vt.visited.size();
+      size_t next_size = doc == 0 ? 1 : _vt.visited.size() * 2;
+      while (next_size <= doc) {
+        next_size *= 2;
+      }
+      _vt.visited.resize(next_size, 0);
+      _hnsw.prepare_level_tab(next_size - prev_size, false);
+    }
+
+    _max_doc = std::max(_max_doc, doc);
+    SDB_ASSERT(_vt.visited.size() >= _max_doc + 1);
+    SDB_ASSERT(_hnsw.levels.size() >= _max_doc + 1);
+
+    faiss::idx_t id = static_cast<faiss::idx_t>(doc);
+    _dis.Update(_update_iterator);
+    _dis.set_query(data);
+    int level = _hnsw.levels[id] - 1;
+    _vt.advance();
+    _hnsw.add_with_locks(_dis, level, id, _vt, false);
+  }
+
+  void Serialize(DataOutput& out) const final { WriteHNSW(out, _hnsw); }
+
+ private:
+  doc_id_t _max_doc;
+  faiss::HNSW _hnsw;
+  faiss::VisitedTable _vt;
+  ColumnIndexDistance<Dist> _dis;
+  absl::AnyInvocable<void(ResettableDocIterator::ptr&)> _update_iterator;
+};
 
 }  // namespace
 
@@ -119,9 +183,6 @@ std::pair<uint32_t, doc_id_t> UnpackSegmentWithDoc(uint64_t id) {
   return {segment, doc};
 }
 
-ColumnDistanceBase::ColumnDistanceBase(HNSWMetric metric, int32_t dim)
-  : _dist{ResolveDistanceFunction(metric)}, _dim{dim} {}
-
 const float* ColumnDistanceBase::LoadData(faiss::idx_t id,
                                           ResettableDocIterator::ptr& it) {
   it->reset();
@@ -137,43 +198,15 @@ const float* ColumnDistanceBase::LoadData(faiss::idx_t id,
   return reinterpret_cast<const float*>(payload->value.data());
 }
 
-ColumnSearchDistance::ColumnSearchDistance(ResettableDocIterator::ptr&& it,
-                                           HNSWInfo info)
-  : ColumnDistanceBase{info.metric, info.d}, _it{std::move(it)} {}
-
-float ColumnSearchDistance::operator()(faiss::idx_t id) {
-  const float* data = LoadData(id, _it);
-  SDB_ASSERT(_dist);
-  const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
-  const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
-  const auto d = static_cast<uint16_t>(_dim);
-  return _dist(lhs, rhs, d);
-}
-
-ColumnIndexDistance::ColumnIndexDistance(ResettableDocIterator::ptr&& lit,
-                                         ResettableDocIterator::ptr&& rit,
-                                         HNSWInfo info)
-  : ColumnDistanceBase{info.metric, info.d},
-    _lit{std::move(lit)},
-    _rit{std::move(rit)} {}
-
-float ColumnIndexDistance::operator()(faiss::idx_t id) {
-  const float* data = LoadData(id, _lit);
-  SDB_ASSERT(_dist);
-  const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
-  const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
-  const auto d = static_cast<uint16_t>(_dim);
-  return _dist(lhs, rhs, d);
-}
-
-float ColumnIndexDistance::symmetric_dis(faiss::idx_t i, faiss::idx_t j) {
-  const float* data_i = LoadData(i, _lit);
-  const float* data_j = LoadData(j, _rit);
-  SDB_ASSERT(_dist);
-  const auto* lhs = reinterpret_cast<const irs::byte_type*>(data_i);
-  const auto* rhs = reinterpret_cast<const irs::byte_type*>(data_j);
-  const auto d = static_cast<uint16_t>(_dim);
-  return _dist(lhs, rhs, d);
+std::unique_ptr<HNSWIndexWriter> MakeHNSWIndexWriter(
+  HNSWInfo info,
+  absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
+  absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator) {
+  return DispatchMetric(info.metric, [&](auto tag) {
+    using Dist = typename decltype(tag)::type;
+    return std::unique_ptr<HNSWIndexWriter>{new HNSWIndexWriterImpl<Dist>{
+      std::move(info), std::move(make_iterator), std::move(update_iterator)}};
+  });
 }
 
 HNSWIndexReader::HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,
@@ -181,50 +214,33 @@ HNSWIndexReader::HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,
   : _hnsw{std::move(hnsw)}, _info{std::move(info)}, _reader{reader} {}
 
 void HNSWIndexReader::Search(HNSWSearchContext& context) const {
-  // TODO(codeworse): support other value types
-  ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
-  dis.set_query(reinterpret_cast<const float*>(context.info.query));
+  DispatchMetric(_info.metric, [&](auto tag) {
+    using Dist = typename decltype(tag)::type;
+    // TODO(codeworse): support other value types
+    ColumnSearchDistance<Dist> dis{_reader.iterator(ColumnHint::Normal), _info};
+    dis.set_query(reinterpret_cast<const float*>(context.info.query));
 
-  HNSWSegmentResultHandler res{context.segment_id, context.handler,
-                               context.info.global_threshold};
-  context.vt.visited.resize(_hnsw.levels.size(), 0);
-  context.vt.advance();
-  res.begin(0, false);
-  _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
+    HNSWSegmentResultHandler res{context.segment_id, context.handler,
+                                 context.info.global_threshold};
+    context.vt.visited.resize(_hnsw.levels.size(), 0);
+    context.vt.advance();
+    res.begin(0, false);
+    _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
+  });
 }
 
 void HNSWIndexReader::RangeSearch(HNSWRangeSearchContext& context) const {
-  ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
-  dis.set_query(reinterpret_cast<const float*>(context.info.query));
+  DispatchMetric(_info.metric, [&](auto tag) {
+    using Dist = typename decltype(tag)::type;
+    ColumnSearchDistance<Dist> dis{_reader.iterator(ColumnHint::Normal), _info};
+    dis.set_query(reinterpret_cast<const float*>(context.info.query));
 
-  HNSWRangeSegmentResultHandler res{context.segment_id, context.handler};
-  context.vt.visited.resize(_hnsw.levels.size(), 0);
-  context.vt.advance();
-  res.begin(0);
-  _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
-}
-
-void HNSWIndexWriter::Add(const float* data, doc_id_t doc) {
-  if (doc >= _vt.visited.size()) {
-    size_t prev_size = _vt.visited.size();
-    size_t next_size = doc == 0 ? 1 : _vt.visited.size() * 2;
-    while (next_size <= doc) {
-      next_size *= 2;
-    }
-    _vt.visited.resize(next_size, 0);
-    _hnsw.prepare_level_tab(next_size - prev_size, false);
-  }
-
-  _max_doc = std::max(_max_doc, doc);
-  SDB_ASSERT(_vt.visited.size() >= _max_doc + 1);
-  SDB_ASSERT(_hnsw.levels.size() >= _max_doc + 1);
-
-  faiss::idx_t id = static_cast<faiss::idx_t>(doc);
-  _dis.Update(_update_iterator);
-  _dis.set_query(data);
-  int level = _hnsw.levels[id] - 1;
-  _vt.advance();
-  _hnsw.add_with_locks(_dis, level, id, _vt, false);
+    HNSWRangeSegmentResultHandler res{context.segment_id, context.handler};
+    context.vt.visited.resize(_hnsw.levels.size(), 0);
+    context.vt.advance();
+    res.begin(0);
+    _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
+  });
 }
 
 }  // namespace irs

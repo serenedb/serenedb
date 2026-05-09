@@ -85,7 +85,7 @@ class HNSWRangeSegmentResultHandler
 
 class ColumnDistanceBase : public faiss::DistanceComputer {
  public:
-  explicit ColumnDistanceBase(HNSWMetric metric, int32_t dim);
+  explicit ColumnDistanceBase(int32_t dim) : _dim{dim} {}
 
   void set_query(const float* x) final {
     SDB_ASSERT(x != nullptr);
@@ -96,15 +96,22 @@ class ColumnDistanceBase : public faiss::DistanceComputer {
   const float* LoadData(faiss::idx_t id, ResettableDocIterator::ptr& it);
 
   const float* _q = nullptr;
-  float (*const _dist)(const byte_type*, const byte_type*, uint16_t) = nullptr;
   int32_t _dim;
 };
 
-class ColumnSearchDistance : public ColumnDistanceBase {
+template<typename Dist>
+class ColumnSearchDistance final : public ColumnDistanceBase {
  public:
-  explicit ColumnSearchDistance(ResettableDocIterator::ptr&& it, HNSWInfo info);
+  explicit ColumnSearchDistance(ResettableDocIterator::ptr&& it, HNSWInfo info)
+    : ColumnDistanceBase{info.d}, _it{std::move(it)} {}
 
-  float operator()(faiss::idx_t id) final;
+  float operator()(faiss::idx_t id) final {
+    const float* data = LoadData(id, _it);
+    const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
+    const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
+    const auto d = static_cast<uint16_t>(_dim);
+    return Dist::Compute(lhs, rhs, d);
+  }
 
   float symmetric_dis(faiss::idx_t i, faiss::idx_t j) final {
     SDB_THROW(sdb::ERROR_INTERNAL,
@@ -115,14 +122,31 @@ class ColumnSearchDistance : public ColumnDistanceBase {
   ResettableDocIterator::ptr _it;
 };
 
+template<typename Dist>
 class ColumnIndexDistance final : public ColumnDistanceBase {
  public:
   explicit ColumnIndexDistance(ResettableDocIterator::ptr&& lit,
-                               ResettableDocIterator::ptr&& rit, HNSWInfo info);
+                               ResettableDocIterator::ptr&& rit, HNSWInfo info)
+    : ColumnDistanceBase{info.d},
+      _lit{std::move(lit)},
+      _rit{std::move(rit)} {}
 
-  float operator()(faiss::idx_t id) final;
+  float operator()(faiss::idx_t id) final {
+    const float* data = LoadData(id, _lit);
+    const auto* lhs = reinterpret_cast<const irs::byte_type*>(_q);
+    const auto* rhs = reinterpret_cast<const irs::byte_type*>(data);
+    const auto d = static_cast<uint16_t>(_dim);
+    return Dist::Compute(lhs, rhs, d);
+  }
 
-  float symmetric_dis(faiss::idx_t i, faiss::idx_t j) final;
+  float symmetric_dis(faiss::idx_t i, faiss::idx_t j) final {
+    const float* data_i = LoadData(i, _lit);
+    const float* data_j = LoadData(j, _rit);
+    const auto* lhs = reinterpret_cast<const irs::byte_type*>(data_i);
+    const auto* rhs = reinterpret_cast<const irs::byte_type*>(data_j);
+    const auto d = static_cast<uint16_t>(_dim);
+    return Dist::Compute(lhs, rhs, d);
+  }
 
   void Update(
     absl::AnyInvocable<void(ResettableDocIterator::ptr&)>& update_iterator) {
@@ -192,30 +216,17 @@ struct HNSWRangeSearchContext {
 
 class HNSWIndexWriter {
  public:
-  explicit HNSWIndexWriter(
-    HNSWInfo info,
-    absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
-    absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator)
-    : _max_doc{info.max_doc},
-      _hnsw{info.m},
-      _vt{info.max_doc + 1},
-      _dis{make_iterator(), make_iterator(), info},
-      _update_iterator{std::move(update_iterator)} {
-    _hnsw.efConstruction = info.ef_construction;
-    _hnsw.prepare_level_tab(_max_doc + 1, false);
-  }
+  virtual ~HNSWIndexWriter() = default;
 
-  void Add(const float* data, doc_id_t doc);
+  virtual void Add(const float* data, doc_id_t doc) = 0;
 
-  void Serialize(DataOutput& out) const { WriteHNSW(out, _hnsw); }
-
- private:
-  doc_id_t _max_doc;
-  faiss::HNSW _hnsw;
-  faiss::VisitedTable _vt;
-  ColumnIndexDistance _dis;
-  absl::AnyInvocable<void(ResettableDocIterator::ptr&)> _update_iterator;
+  virtual void Serialize(DataOutput& out) const = 0;
 };
+
+std::unique_ptr<HNSWIndexWriter> MakeHNSWIndexWriter(
+  HNSWInfo info,
+  absl::AnyInvocable<ResettableDocIterator::ptr()> make_iterator,
+  absl::AnyInvocable<void(ResettableDocIterator::ptr&)> update_iterator);
 
 class HNSWIndexReader {
  public:

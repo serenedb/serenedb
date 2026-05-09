@@ -1243,7 +1243,7 @@ bool WriteColumns(Columnstore& cs, Iterator& columns,
       info.hnsw_info->max_doc = count;
       auto* buffered_column = &buffered_columns.PushColumn();
       buffered_column->Reserve(count, info.hnsw_info->d * sizeof(float));
-      auto hnsw_index = std::make_unique<HNSWIndexWriter>(
+      auto hnsw_index = MakeHNSWIndexWriter(
         *info.hnsw_info,
         [buffered_column] {
           return buffered_column->iterator(ColumnHint::Normal);

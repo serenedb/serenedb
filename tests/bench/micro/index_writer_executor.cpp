@@ -49,10 +49,10 @@ namespace {
 constexpr std::string_view kFormatName = "1_5simd";
 constexpr std::string_view kFieldName = "value";
 
-constexpr int64_t kCommittedSegments = 512;
-constexpr int64_t kPendingSegmentContexts = 64;
-constexpr int64_t kDocsPerSegment = 32768;
-constexpr int64_t kIndexedTerms = 256;
+constexpr int64_t kCommittedSegments = 2048;
+constexpr int64_t kPendingSegmentContexts = 256;
+constexpr int64_t kDocsPerSegment = 16384;
+constexpr int64_t kIndexedTerms = 1024;
 constexpr int64_t kRemovalTerms = kPendingSegmentContexts;  // 25% deleted.
 constexpr int64_t kThreads = 8;
 
@@ -60,6 +60,8 @@ static_assert(kRemovalTerms > 0);
 static_assert(kRemovalTerms <= kIndexedTerms);
 static_assert(kPendingSegmentContexts == kRemovalTerms);
 static_assert(kDocsPerSegment % kIndexedTerms == 0);
+
+using ThreadPoolPtr = yaclib::IntrusivePtr<yaclib::FairThreadPool>;
 
 class StringField {
  public:
@@ -160,8 +162,7 @@ void AddRemovalQueryContexts(irs::IndexWriter& writer, int64_t query_contexts,
   // query_contexts entries in ctx->segments during PrepareFlush().
   for (int64_t i = 0; i != query_contexts; ++i) {
     auto& trx = transactions.emplace_back(writer.GetBatch());
-    trx.Remove(
-      MakeTermFilter(terms[static_cast<size_t>(i % kRemovalTerms)]));
+    trx.Remove(MakeTermFilter(terms[static_cast<size_t>(i % kRemovalTerms)]));
   }
 
   for (auto& trx : transactions) {
@@ -197,29 +198,18 @@ void CleanupWorkload(Workload& workload) {
   workload.dir.reset();
 }
 
-struct SharedExecutor {
-  yaclib::IntrusivePtr<yaclib::FairThreadPool> pool;
-  yaclib::IExecutorPtr executor;
-};
-
-SharedExecutor MakeExecutor(int64_t threads) {
-  SharedExecutor shared;
-
+ThreadPoolPtr MakeExecutor(int64_t threads) {
   if (threads != 0) {
-    shared.pool =
-      yaclib::MakeFairThreadPool(static_cast<std::uint64_t>(threads));
-    shared.executor = shared.pool;
+    return yaclib::MakeFairThreadPool(threads);
   }
-
-  return shared;
+  return nullptr;
 }
 
-void StopExecutor(SharedExecutor& shared) {
-  if (shared.pool) {
-    shared.pool->Stop();
-    shared.pool->Wait();
-    shared.executor = nullptr;
-    shared.pool = nullptr;
+void StopExecutor(ThreadPoolPtr& executor) {
+  if (executor) {
+    executor->Stop();
+    executor->Wait();
+    executor = nullptr;
   }
 }
 
@@ -260,13 +250,12 @@ void BmCommitRemovals(benchmark::State& state, bool use_executor) {
   const auto docs_per_segment = state.range(2);
   const auto threads = use_executor ? state.range(3) : 0;
 
-  auto shared_executor = MakeExecutor(threads);
+  auto executor = MakeExecutor(threads);
 
   for (auto _ : state) {
     state.PauseTiming();
-    auto workload =
-      PrepareWorkload(segment_count, query_contexts, docs_per_segment,
-                      shared_executor.executor);
+    auto workload = PrepareWorkload(segment_count, query_contexts,
+                                    docs_per_segment, executor);
     state.ResumeTiming();
 
     const auto modified = workload.writer->Commit();
@@ -277,7 +266,7 @@ void BmCommitRemovals(benchmark::State& state, bool use_executor) {
     state.ResumeTiming();
   }
 
-  StopExecutor(shared_executor);
+  StopExecutor(executor);
   SetCounters(state, segment_count, query_contexts, docs_per_segment);
 }
 

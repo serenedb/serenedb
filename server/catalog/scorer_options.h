@@ -174,8 +174,8 @@ void VPackRead(Context ctx, ScorerOptions& s) {
 }
 
 }  // namespace sdb::catalog
-
 namespace magic_enum {
+
 template<>
 constexpr customize::customize_t
 customize::enum_name<sdb::catalog::ScorerOptions::DfiMeasure>(
@@ -191,4 +191,5 @@ customize::enum_name<sdb::catalog::ScorerOptions::DfiMeasure>(
   }
   return invalid_tag;
 }
+
 }  // namespace magic_enum

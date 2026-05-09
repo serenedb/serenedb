@@ -22,6 +22,7 @@
 
 #include "skip_list.hpp"
 
+#include <array>
 #include <cstdint>
 #include <iresearch/types.hpp>
 
@@ -148,7 +149,39 @@ void SerializeFor1234(uint32_t code, uint32_t value, Output& out) {
   out.WriteBytes(reinterpret_cast<byte_type*>(&value), code);
 }
 
+constexpr std::array<uint8_t, 64> PrecalculateSkipSkipZoneArray() {
+    std::array<uint8_t, 64> jmp{};
+    for (int encoding = 0; encoding < 64; ++encoding) {
+        uint32_t max_doc_delta_size = (encoding & 3) + 1;
+        uint32_t wand_freq_code = (encoding >> 2) & 3;
+        uint32_t wand_norm_code = (encoding >> 4) & 3;
+        jmp[encoding] = max_doc_delta_size + ByteSize124ForSkipEntryByCode(wand_freq_code) + ByteSize124ForSkipEntryByCode(wand_norm_code);
+    }
+    return jmp;
+}
+
 }  // namespace
+
+constexpr uint32_t ByteSize124ForSkipEntryByCode(uint32_t code) {
+  switch (code) {
+    case 0:
+      return 0;
+    case 1:
+      return 1;
+    case 2:
+      return 2;
+      break;
+    case 3:
+      // 3 in this encoding actually means 4 bytes.
+      return 4;
+  }
+  SDB_UNREACHABLE();
+}
+
+uint32_t SkipSkipZone(uint32_t encoding) {
+  static constexpr auto kJumpEnc = PrecalculateSkipSkipZoneArray();
+  return kJumpEnc[encoding];
+}
 
 void NewSkipWriter::Prepare(size_t) {
   _level1.Reset();

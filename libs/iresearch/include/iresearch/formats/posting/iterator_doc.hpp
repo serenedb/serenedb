@@ -671,6 +671,7 @@ PostingIteratorImpl<IteratorTraits, FieldTraits, HasWand, InputType>::FillBlock(
         if (this->_left_in_leaf > 0) {
           this->_doc = *(std::end(this->_docs) - this->_left_in_leaf);
           --this->_left_in_leaf;
+          _new_skip_reader.SetMax(this->_max_in_leaf);
         } else {
           this->_doc = doc_limits::eof();
         }

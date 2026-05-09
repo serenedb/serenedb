@@ -425,8 +425,7 @@ class FreqNormSource final : public WandSource {
   void ReadFromWandData(const WandWriter::WandData& data) {
     _freq = data.freq;
     if constexpr (kNorm) {
-      SDB_ASSERT(data.norm);
-      _norm.value = *data.norm + _freq;
+      _norm.value = data.norm.value_or(0) + _freq;
     }
   }
 

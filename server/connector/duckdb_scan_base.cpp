@@ -145,24 +145,35 @@ void InitCommonState(CommonScanGlobalState& state,
         // inside an inverted index. They are valid in inverted-index search
         // predicates (which the optimizer claims into the IRESEARCH_* scan
         // path and removes from the projected column list). If the column
-        // still reaches this point, the query needs the value materialised,
-        // and there is no main-storage source to read it from.
+        // still reaches this point one of two things is happening:
         //
-        // CREATE INDEX backfill is exempt: it is allowed to project the
-        // IndexOnly column (the backfill scan simply finds no main-storage
-        // data, which is the intended outcome -- the index is populated
-        // via DML, not from main storage).
-        if (!bind_data.IsViewBacked() && !bind_data.is_create_index) {
+        //   1. A user query needs the value materialised. Reject -- there is
+        //      no main-storage source to read it from.
+        //
+        //   2. CREATE INDEX backfill is reading the table to populate a
+        //      newly created index that includes the IndexOnly column.
+        //      Pre-existing rows have no main-storage value to backfill, so
+        //      the honest answer is to backfill nothing for this index --
+        //      mark the scan as already-finished. Future INSERTs flow
+        //      through the regular insert path and populate the index
+        //      normally.
+        if (!bind_data.IsViewBacked()) {
           const auto& tbd = bind_data.As<TableScanBindData>();
           for (const auto& col : tbd.table->Columns()) {
-            if (col.id == catalog_col_id &&
-                col.store_mode == catalog::ColumnStoreMode::kIndexOnly) {
+            if (col.id != catalog_col_id ||
+                col.store_mode != catalog::ColumnStoreMode::kIndexOnly) {
+              continue;
+            }
+            if (bind_data.is_create_index) {
+              state.finished = true;
+            } else {
               throw duckdb::CatalogException(
                 "column \"%s\" has sdb_indexonly storage and cannot be read "
                 "directly; it is only accessible through an inverted-index "
                 "search predicate",
                 col.name);
             }
+            break;
           }
         }
         state.projected_columns.push_back(col_id);

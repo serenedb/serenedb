@@ -261,3 +261,55 @@ id
 
 statement ok
 DROP TABLE indexonly_late;
+
+
+# Composite inverted index where the IndexOnly column is NOT the leading
+# index column. Pre-fix, the backfill scan had a non-empty leading iterator
+# (id) and an empty IndexOnly iterator (body), hitting an internal assertion
+# (col_count == count). Post-fix, presence of any IndexOnly column in the
+# scan projection during CREATE INDEX backfill marks the scan as already
+# finished -- backfill is a no-op, statement succeeds.
+
+statement ok
+CREATE TABLE indexonly_composite (
+  id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  PRIMARY KEY (id)
+) WITH (sdb_indexonly = [body]);
+
+statement ok
+INSERT INTO indexonly_composite VALUES
+  (1, 'preexisting one'),
+  (2, 'preexisting two');
+
+# Composite inverted index: id (regular, has data) + body (IndexOnly, no
+# main-storage data). Order puts the data-bearing column first; pre-fix this
+# would assert.
+statement ok
+CREATE INDEX indexonly_composite_idx
+  ON indexonly_composite USING inverted(id, body indexonly_english);
+
+statement ok
+VACUUM (UPDATE_INDEXES) indexonly_composite;
+
+# Pre-existing rows are not in the index (backfill was a no-op).
+query
+SELECT id FROM indexonly_composite_idx WHERE body @@ ts_phrase('preexisting') ORDER BY id;
+----
+id
+
+# New inserts populate the index normally and are searchable.
+statement ok
+INSERT INTO indexonly_composite VALUES (3, 'fresh row');
+
+statement ok
+VACUUM (UPDATE_INDEXES) indexonly_composite;
+
+query
+SELECT id FROM indexonly_composite_idx WHERE body @@ ts_phrase('fresh') ORDER BY id;
+----
+id
+3
+
+statement ok
+DROP TABLE indexonly_composite;

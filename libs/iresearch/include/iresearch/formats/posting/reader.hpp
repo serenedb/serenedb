@@ -20,12 +20,12 @@
 
 #pragma once
 
-#include "basics/debugging.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include <iresearch/formats/posting/skip_list.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
+#include "basics/debugging.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"

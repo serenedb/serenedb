@@ -597,6 +597,7 @@ void PostingsWriterImpl<FormatTraits>::EndDocument(size_t processed_docs) {
     skip_entry.max_doc_delta = _doc.last - _doc.block_last;
     if (HasValidWandWriter()) {
       skip_entry.wand_data = _valid_writer->CalculateAndGetWandData(0);
+      skip_entry.has_wand = true;
     }
 
     auto [best_encoding_doc, best_size_doc] =

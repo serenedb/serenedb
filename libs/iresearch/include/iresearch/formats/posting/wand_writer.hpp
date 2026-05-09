@@ -235,9 +235,9 @@ class FreqNormProducer : public AttributeProvider {
     data.freq = entry.freq;
     if constexpr (kNorm) {
       SDB_ASSERT(entry.norm >= entry.freq);
-      if (entry.norm != entry.freq) {
-        data.norm.emplace(entry.norm - entry.freq);
-      }
+      // if entry.norm == entry.freq, then norm will be 0 and won't be written
+      // on a disk
+      data.norm = entry.norm - entry.freq;
     }
     return data;
   }
@@ -425,7 +425,7 @@ class FreqNormSource final : public WandSource {
   void ReadFromWandData(const WandWriter::WandData& data) {
     _freq = data.freq;
     if constexpr (kNorm) {
-      _norm.value = data.norm.value_or(0) + _freq;
+      _norm.value = data.norm + _freq;
     }
   }
 

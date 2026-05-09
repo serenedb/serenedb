@@ -1672,8 +1672,6 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   };
 }
 
-int gCnt = 0;
-
 IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto tick = info.tick;
   SDB_ASSERT(writer_limits::kMinTick < tick);
@@ -1689,6 +1687,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // are properly tracked in 'modification_queries_'
   const auto flushed_tick = ctx->FlushPending(_committed_tick, tick);
 
+  constexpr size_t kBatchSize = 64;
   std::unique_lock cleanup_lock{_consolidating.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
     if (ctx == nullptr) {
@@ -1734,6 +1733,14 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
   };
 
+  auto apply_batch_queries =
+    [&](std::span<std::shared_ptr<SegmentContext>> segments, const auto& func) {
+      for (auto& segment : segments) {
+        SDB_ASSERT(segment != nullptr);
+        apply_queries(*segment, func);
+      }
+    };
+
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
   auto& segment_mask = ctx->segment_mask;
@@ -1748,6 +1755,12 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
 
+  auto docs_mask_duration = std::chrono::nanoseconds(0);
+  auto imported_docs_duration = std::chrono::nanoseconds(0);
+
+  auto deletes_duration = std::chrono::nanoseconds(0);
+  auto import_duration = std::chrono::nanoseconds(0);
+
   for (const auto& existing_segment : committed_reader.GetReaders()) {
     auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];
@@ -1759,9 +1772,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       continue;
     }
 
-    // We don't want to call clear here because even for empty map it costs O(n)
-    // SDB_ASSERT(deleted_docs.empty());
-
     // mask documents matching filters from segment_contexts
     // (i.e. from new operations)
     WaitGroup wg;
@@ -1770,8 +1780,9 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       deleted_docs_vector.reserve(ctx->segments.size());
     }
 
-    for (auto& segment : ctx->segments) {
-      SDB_ASSERT(segment != nullptr);
+    auto start = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < ctx->segments.size(); i += kBatchSize) {
+      // SDB_ASSERT(segment != nullptr);
 
       auto& deleted_docs_local = [&] -> DocumentMask& {
         if (_executor == nullptr && !deleted_docs_vector.empty()) {
@@ -1781,28 +1792,51 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
           DocumentMask{{*dir.ResourceManager().transactions}});
       }();
 
-      auto task = [&] {
-        apply_queries(*segment, [&](QueryContext& query) {
-          // FIXME(gnusi): optimize PK queries
-          RemoveFromExistingSegment(deleted_docs_local, query,
-                                    existing_segment);
-        });
+      auto batch_size = std::min(kBatchSize, ctx->segments.size() - i);
+      auto task = [&, i, batch_size] {
+        apply_batch_queries(std::span(ctx->segments).subspan(i, batch_size),
+                            [&](QueryContext& query) {
+                              // FIXME(gnusi): optimize PK queries
+                              RemoveFromExistingSegment(
+                                deleted_docs_local, query, existing_segment);
+                            });
         wg.Done();
       };
 
       wg.Add();
       if (_executor != nullptr) {
-        yaclib::Submit(*_executor, task);
+        yaclib::Submit(*_executor, std::move(task));
       } else {
         task();
       }
     }
     wg.Wait();
 
+    auto end = std::chrono::steady_clock::now();
+    deletes_duration +=
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+
     // Write docs_mask if masks added
-    const size_t num_removals = std::accumulate(
-      deleted_docs_vector.begin(), deleted_docs_vector.end(), size_t(0),
-      [](size_t acc, const DocumentMask& mask) { return acc + mask.size(); });
+    std::sort(deleted_docs_vector.begin(), deleted_docs_vector.end(),
+              [](const DocumentMask& lhs, const DocumentMask& rhs) {
+                return lhs.size() > rhs.size();
+              });
+
+    start = std::chrono::steady_clock::now();
+
+    auto& deleted_docs = deleted_docs_vector.front();
+    for (auto& docs_mask : std::span(deleted_docs_vector).subspan(1)) {
+      if (docs_mask.empty()) {
+        break;
+      }
+      deleted_docs.merge(docs_mask);
+    }
+    end = std::chrono::steady_clock::now();
+    auto duration =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+    docs_mask_duration += duration;
+
+    const size_t num_removals = deleted_docs.size();
     if (num_removals) {
       // If all docs are masked then mask segment
       if (existing_segment.live_docs_count() == num_removals) {
@@ -1817,10 +1851,14 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // Append removals
       IndexSegment segment{.meta = index_segment.meta};
       segment.meta.docs_mask = [&] {
+        auto start = std::chrono::steady_clock::now();
         auto docs_mask = CopyMask(dir, existing_segment);
-        for (auto& deleted_docs_local : deleted_docs_vector) {
-          docs_mask->merge(deleted_docs_local);
-        }
+        docs_mask->merge(deleted_docs);
+
+        auto end = std::chrono::steady_clock::now();
+        auto duration =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+        docs_mask_duration += duration;
         return docs_mask;
       }();
 
@@ -1927,8 +1965,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       if (_executor != nullptr) {
         import_docs_vector.reserve(ctx->segments.size());
       }
-      for (auto& segment : ctx->segments) {
-        SDB_ASSERT(segment != nullptr);
+
+      auto start = std::chrono::steady_clock::now();
+      for (size_t i = 0; i < ctx->segments.size(); i += kBatchSize) {
+        // SDB_ASSERT(segment != nullptr);
 
         auto& import_docs_local = [&] -> DocumentMask& {
           if (_executor == nullptr && !import_docs_vector.empty()) {
@@ -1936,16 +1976,17 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
           }
           return import_docs_vector.emplace_back(*import_docs_mask);
         }();
-
-        auto task = [&] {
-          apply_queries(*segment, [&](QueryContext& query) {
-            // skip queries which not affect this
-            if (import.tick <= query.tick) {
-              // FIXME(gnusi): optimize PK queries
-              RemoveFromImportedSegment(import_docs_local, query,
-                                        *import_reader);
-            }
-          });
+        auto batch_size = std::min(kBatchSize, ctx->segments.size() - i);
+        auto task = [&, i, batch_size] {
+          apply_batch_queries(std::span(ctx->segments).subspan(i, batch_size),
+                              [&](QueryContext& query) {
+                                // skip queries which not affect this
+                                if (import.tick <= query.tick) {
+                                  // FIXME(gnusi): optimize PK queries
+                                  RemoveFromImportedSegment(
+                                    import_docs_local, query, *import_reader);
+                                }
+                              });
           wg.Done();
         };
 
@@ -1957,12 +1998,20 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
         }
       }
       wg.Wait();
+      auto end = std::chrono::steady_clock::now();
+      import_duration +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+      start = std::chrono::steady_clock::now();
       for (auto& import_docs_local : import_docs_vector) {
         if (import_docs_local.size() > import_docs_mask->size()) {
           import_docs_mask->merge(import_docs_local);
           modified = true;
         }
       }
+      end = std::chrono::steady_clock::now();
+      auto duration =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
+      imported_docs_duration += duration;
     }
 
     // Skip empty segments
@@ -1988,6 +2037,22 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     readers.emplace_back(std::move(import_reader));
     pending_meta.segments.emplace_back(std::move(import.segment));
   }
+
+  SDB_INFO(
+    "xxxxx", sdb::Logger::IRESEARCH, "docs_mask merge ",
+    std::chrono::duration_cast<std::chrono::milliseconds>(docs_mask_duration)
+      .count(),
+    " ms, imported_docs merge ",
+    std::chrono::duration_cast<std::chrono::milliseconds>(
+      imported_docs_duration)
+      .count(),
+    " ms, deletes processing ",
+    std::chrono::duration_cast<std::chrono::milliseconds>(deletes_duration)
+      .count(),
+    " ms, import processing ",
+    std::chrono::duration_cast<std::chrono::milliseconds>(import_duration)
+      .count(),
+    " ms");
 
   // For pending consolidation we need to filter out consolidation
   // candidates after applying them

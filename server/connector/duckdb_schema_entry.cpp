@@ -547,23 +547,29 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBSchemaEntry::CreateSequence(
   duckdb::CatalogTransaction transaction, duckdb::CreateSequenceInfo& info) {
   auto database_id = GetDatabaseId();
 
-  catalog::SequenceOptions opts;
-  opts.start_value = info.start_value;
-  opts.increment = info.increment;
-  opts.min_value = info.min_value;
-  opts.max_value = info.max_value;
-  opts.cycle = info.cycle;
-
-  if (opts.increment <= 0) {
+  if (info.increment <= 0) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("sequence INCREMENT must be positive (negative increments not "
               "yet supported)"));
   }
-  if (opts.start_value < opts.min_value || opts.start_value > opts.max_value) {
+  if (info.min_value < 0 || info.max_value < 0 || info.start_value < 0) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("sequence MIN/MAX/START must be non-negative (negative "
+              "sequences not yet supported)"));
+  }
+  if (info.start_value < info.min_value || info.start_value > info.max_value) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("sequence START is out of range [MIN, MAX]"));
   }
+
+  catalog::SequenceOptions opts;
+  opts.start_value = static_cast<uint64_t>(info.start_value);
+  opts.increment = static_cast<uint64_t>(info.increment);
+  opts.min_value = static_cast<uint64_t>(info.min_value);
+  opts.max_value = static_cast<uint64_t>(info.max_value);
+  opts.cycle = info.cycle;
 
   bool if_not_exists =
     info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;

@@ -1636,9 +1636,10 @@ Result LocalCatalog::CreateTable(
   ObjectId generated_pk_seq_id;
   if (options.pk_columns.empty()) {
     auto resolved = pick_unique_name(absl::StrCat(options.name, "_pk_seq"));
-    auto pk_seq =
-      std::make_shared<Sequence>(database_id, *schema_id, ObjectId{}, resolved,
-                                 SequenceOptions{}, table_id);
+    SequenceOptions opts;
+    opts.cache = 65536;
+    auto pk_seq = std::make_shared<Sequence>(
+      database_id, *schema_id, ObjectId{}, resolved, opts, table_id);
     generated_pk_seq_id = pk_seq->GetId();
     sequences.push_back(std::move(pk_seq));
   }

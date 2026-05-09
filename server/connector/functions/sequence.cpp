@@ -66,55 +66,61 @@ std::shared_ptr<catalog::Sequence> ResolveSequence(
   return seq;
 }
 
-int64_t NextVal(catalog::Sequence& seq, int64_t value,
-                std::string_view qualified) {
+uint64_t GetValue(const catalog::SequenceOptions& opts, uint64_t raw) {
+  if (!opts.cycle) [[likely]] {
+    return raw > opts.max_value ? opts.max_value : raw;
+  }
+  auto range_raw =
+    ((opts.max_value - opts.min_value) / opts.increment + 1) * opts.increment;
+  return opts.min_value + (raw - opts.min_value) % range_raw;
+}
+
+[[noreturn]] void ThrowMaxReached(const catalog::SequenceOptions& opts,
+                                  std::string_view qualified) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                  ERR_MSG("nextval: reached maximum value of sequence \"",
+                          qualified, "\" (", opts.max_value, ")"));
+}
+
+[[noreturn]] void ThrowSetvalOutOfBounds(std::string_view qualified) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("setval: value out of bounds for sequence \"", qualified, "\""));
+}
+
+uint64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
   const auto& opts = seq.Options();
-  if (value <= opts.max_value) [[likely]] {
-    return value;
+  uint64_t raw = seq.Reserve(opts.increment) + opts.increment - 1;
+  if (!opts.cycle && raw > opts.max_value) [[unlikely]] {
+    ThrowMaxReached(opts, qualified);
   }
-  if (!opts.cycle) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    ERR_MSG("nextval: reached maximum value of sequence \"",
-                            qualified, "\" (", opts.max_value, ")"));
-  }
-  auto new_cycle = static_cast<uint64_t>(opts.min_value) -
-                   static_cast<uint64_t>(opts.increment);
-  seq.Write(new_cycle);
-  return opts.min_value;
+  return GetValue(opts, raw);
 }
 
-int64_t Nextval(catalog::Sequence& seq, std::string_view qualified) {
-  auto inc_u = static_cast<uint64_t>(seq.Options().increment);
-  uint64_t base = seq.Reserve(inc_u);
-  return NextVal(seq, static_cast<int64_t>(base + inc_u - 1), qualified);
-}
-
-int64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
+uint64_t Nextval(duckdb::ClientContext& context, std::string_view qualified) {
   return Nextval(*ResolveSequence(context, qualified), qualified);
 }
 
-int64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
+uint64_t Currval(duckdb::ClientContext& context, std::string_view qualified) {
   auto seq = ResolveSequence(context, qualified);
-  const auto& opts = seq->Options();
-  auto persisted = static_cast<int64_t>(seq->Read());
-  if (persisted == opts.start_value - opts.increment) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    ERR_MSG("currval: sequence \"", qualified,
-                            "\" is not yet defined in this session"));
-  }
-  return persisted;
+  return GetValue(seq->Options(), seq->Read());
 }
 
-int64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
-               int64_t value, bool is_called) {
+uint64_t Setval(duckdb::ClientContext& context, std::string_view qualified,
+                uint64_t value, bool is_called) {
   auto seq = ResolveSequence(context, qualified);
   const auto& opts = seq->Options();
   if (value < opts.min_value || value > opts.max_value) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("setval: value out of bounds for sequence \"", qualified, "\""));
+    ThrowSetvalOutOfBounds(qualified);
   }
-  uint64_t to_persist = is_called ? value : value - opts.increment;
+  // Snap to the inc-stepped lattice so _cnt stays on-lattice. GetValue's
+  // cycle wrap assumes (raw - min) is a multiple of inc; an off-lattice
+  // _cnt would let it emit values past max. Returning the un-snapped input
+  // matches PG's setval contract (the return value echoes the argument).
+  uint64_t snapped =
+    opts.min_value +
+    ((value - opts.min_value) / opts.increment) * opts.increment;
+  uint64_t to_persist = is_called ? snapped : snapped - opts.increment;
   seq->Write(to_persist);
   return value;
 }
@@ -133,11 +139,16 @@ void NextvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     std::string_view qualified{name_data->GetData(), name_data->GetSize()};
     auto seq = ResolveSequence(context, qualified);
     const auto& opts = seq->Options();
-    uint64_t inc_u = opts.increment;
-    uint64_t base = seq->Reserve(num_rows * inc_u);
+    uint64_t batch_span = static_cast<uint64_t>(num_rows) * opts.increment;
 
+    uint64_t base = seq->Reserve(batch_span);
+    uint64_t r0 = base + opts.increment - 1;  // raw of row 0
+
+    if (!opts.cycle && base + batch_span - 1 > opts.max_value) [[unlikely]] {
+      ThrowMaxReached(opts, qualified);
+    }
     for (duckdb::idx_t i = 0; i < num_rows; ++i) {
-      out[i] = NextVal(*seq, base + i * inc_u + (inc_u - 1), qualified);
+      out[i] = GetValue(opts, r0 + i * opts.increment);
     }
     return;
   }
@@ -187,7 +198,11 @@ void Setval2Function(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t name, int64_t value) -> int64_t {
       std::string_view seq_name{name.GetData(), name.GetSize()};
-      return Setval(context, seq_name, value, /*is_called=*/true);
+      if (value < 0) {
+        ThrowSetvalOutOfBounds(seq_name);
+      }
+      return Setval(context, seq_name, static_cast<uint64_t>(value),
+                    /*is_called=*/true);
     });
 }
 
@@ -198,7 +213,10 @@ void Setval3Function(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [&](duckdb::string_t name, int64_t value, bool is_called) -> int64_t {
       std::string_view seq_name{name.GetData(), name.GetSize()};
-      return Setval(context, seq_name, value, is_called);
+      if (value < 0) {
+        ThrowSetvalOutOfBounds(seq_name);
+      }
+      return Setval(context, seq_name, static_cast<uint64_t>(value), is_called);
     });
 }
 

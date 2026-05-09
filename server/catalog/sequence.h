@@ -39,11 +39,12 @@ class DB;
 namespace sdb::catalog {
 
 struct SequenceOptions {
-  int64_t start_value = 1;
-  int64_t increment = 1;
-  int64_t min_value = 1;
-  int64_t max_value = std::numeric_limits<int64_t>::max();
+  uint64_t start_value = 1;
+  uint64_t increment = 1;
+  uint64_t min_value = 1;
+  uint64_t max_value = std::numeric_limits<int64_t>::max();
   bool cycle = false;
+  uint64_t cache = 1;
 
   uint64_t Seed() const noexcept { return start_value - increment; }
 };
@@ -85,12 +86,20 @@ class Sequence final : public SchemaObject {
 
  private:
   std::atomic_uint64_t _cnt{0};
-  // Reader-held by Reserve, writer-held by Write (setval).
   mutable absl::Mutex _cnt_mtx;
   SequenceOptions _options;
   ObjectId _owner_table_id;
 
+  std::atomic_uint64_t _cache_begin{0};
+  std::atomic_uint64_t _cache_end{0};
+
+  rocksdb::DB* _db;
+  rocksdb::ColumnFamilyHandle* _cf;
+
   uint64_t LoadFromDb() const;
+  uint64_t ReserveCached(uint64_t count);
+  uint64_t AdvanceCounter(uint64_t count);
+  uint64_t RefillCache(uint64_t count);
 };
 
 }  // namespace sdb::catalog

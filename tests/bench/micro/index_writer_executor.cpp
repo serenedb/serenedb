@@ -20,9 +20,13 @@
 
 // Measures IndexWriter Commit() with and without an executor on a Stage 1-heavy
 // workload: many already committed segments plus many term removal contexts.
+// Removals target a subset of uniformly distributed terms, so the benchmark
+// exercises regular deletion processing without deleting every document in
+// every segment.
 
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,11 +49,17 @@ namespace {
 constexpr std::string_view kFormatName = "1_5simd";
 constexpr std::string_view kFieldName = "value";
 
-constexpr int64_t kCommittedSegments = 1024;
-constexpr int64_t kPendingSegmentContexts = 256;
+constexpr int64_t kCommittedSegments = 512;
+constexpr int64_t kPendingSegmentContexts = 64;
 constexpr int64_t kDocsPerSegment = 32768;
-constexpr int64_t kTerms = 16;
+constexpr int64_t kIndexedTerms = 256;
+constexpr int64_t kRemovalTerms = kPendingSegmentContexts;  // 25% deleted.
 constexpr int64_t kThreads = 8;
+
+static_assert(kRemovalTerms > 0);
+static_assert(kRemovalTerms <= kIndexedTerms);
+static_assert(kPendingSegmentContexts == kRemovalTerms);
+static_assert(kDocsPerSegment % kIndexedTerms == 0);
 
 class StringField {
  public:
@@ -150,7 +160,8 @@ void AddRemovalQueryContexts(irs::IndexWriter& writer, int64_t query_contexts,
   // query_contexts entries in ctx->segments during PrepareFlush().
   for (int64_t i = 0; i != query_contexts; ++i) {
     auto& trx = transactions.emplace_back(writer.GetBatch());
-    trx.Remove(MakeTermFilter(terms[static_cast<size_t>(i % terms.size())]));
+    trx.Remove(
+      MakeTermFilter(terms[static_cast<size_t>(i % kRemovalTerms)]));
   }
 
   for (auto& trx : transactions) {
@@ -164,10 +175,10 @@ struct Workload {
 };
 
 Workload PrepareWorkload(int64_t segment_count, int64_t query_contexts,
-                         int64_t docs_per_segment, int64_t term_count,
+                         int64_t docs_per_segment,
                          const yaclib::IExecutorPtr& executor) {
   Workload workload;
-  auto terms = MakeTerms(term_count);
+  auto terms = MakeTerms(kIndexedTerms);
 
   workload.dir = std::make_unique<irs::MemoryDirectory>();
   workload.writer = irs::IndexWriter::Make(
@@ -212,41 +223,42 @@ void StopExecutor(SharedExecutor& shared) {
   }
 }
 
-int64_t EstimatedMatchedDocs(int64_t segment_count, int64_t query_contexts,
-                             int64_t docs_per_segment, int64_t term_count) {
+int64_t EstimatedRemovedDocsPerSegment(int64_t query_contexts,
+                                       int64_t docs_per_segment) {
+  const auto removal_terms = std::min(query_contexts, kRemovalTerms);
   int64_t docs_per_segment_sum = 0;
-  for (int64_t i = 0; i != query_contexts; ++i) {
-    const auto term = i % term_count;
-    docs_per_segment_sum += docs_per_segment / term_count;
-    if (term < docs_per_segment % term_count) {
+  for (int64_t term = 0; term != removal_terms; ++term) {
+    docs_per_segment_sum += docs_per_segment / kIndexedTerms;
+    if (term < docs_per_segment % kIndexedTerms) {
       ++docs_per_segment_sum;
     }
   }
-  return segment_count * docs_per_segment_sum;
+
+  return docs_per_segment_sum;
+}
+
+int64_t EstimatedRemovedDocs(int64_t segment_count, int64_t query_contexts,
+                             int64_t docs_per_segment) {
+  return segment_count *
+         EstimatedRemovedDocsPerSegment(query_contexts, docs_per_segment);
 }
 
 void SetCounters(benchmark::State& state, int64_t segment_count,
-                 int64_t query_contexts, int64_t docs_per_segment,
-                 int64_t term_count, int64_t threads) {
-  const auto matched_docs = EstimatedMatchedDocs(segment_count, query_contexts,
-                                                 docs_per_segment, term_count);
+                 int64_t query_contexts, int64_t docs_per_segment) {
+  const auto removed_docs =
+    EstimatedRemovedDocs(segment_count, query_contexts, docs_per_segment);
 
-  state.SetItemsProcessed(state.iterations() * matched_docs);
-  state.counters["committed_segments"] = static_cast<double>(segment_count);
-  state.counters["segments"] = static_cast<double>(query_contexts);
-  state.counters["queries"] = static_cast<double>(query_contexts);
-  state.counters["docs_per_segment"] = static_cast<double>(docs_per_segment);
-  state.counters["terms"] = static_cast<double>(term_count);
-  state.counters["matched_docs"] = static_cast<double>(matched_docs);
-  state.counters["threads"] = static_cast<double>(threads);
+  state.SetItemsProcessed(state.iterations() * removed_docs);
+  state.counters["deleted_ratio"] =
+    static_cast<double>(removed_docs) /
+    static_cast<double>(segment_count * docs_per_segment);
 }
 
 void BmCommitRemovals(benchmark::State& state, bool use_executor) {
   const auto segment_count = state.range(0);
   const auto query_contexts = state.range(1);
   const auto docs_per_segment = state.range(2);
-  const auto term_count = state.range(3);
-  const auto threads = use_executor ? state.range(4) : 0;
+  const auto threads = use_executor ? state.range(3) : 0;
 
   auto shared_executor = MakeExecutor(threads);
 
@@ -254,7 +266,7 @@ void BmCommitRemovals(benchmark::State& state, bool use_executor) {
     state.PauseTiming();
     auto workload =
       PrepareWorkload(segment_count, query_contexts, docs_per_segment,
-                      term_count, shared_executor.executor);
+                      shared_executor.executor);
     state.ResumeTiming();
 
     const auto modified = workload.writer->Commit();
@@ -266,8 +278,7 @@ void BmCommitRemovals(benchmark::State& state, bool use_executor) {
   }
 
   StopExecutor(shared_executor);
-  SetCounters(state, segment_count, query_contexts, docs_per_segment,
-              term_count, threads);
+  SetCounters(state, segment_count, query_contexts, docs_per_segment);
 }
 
 void BmNoExecutor(benchmark::State& state) { BmCommitRemovals(state, false); }
@@ -277,17 +288,16 @@ void BmFairThreadPool(benchmark::State& state) {
 }
 
 BENCHMARK(BmNoExecutor)
-  ->Args({kCommittedSegments, kPendingSegmentContexts, kDocsPerSegment, kTerms,
-          0})
-  ->ArgNames({"committed_segments", "segments", "docs_per_segment", "terms",
+  ->Args({kCommittedSegments, kPendingSegmentContexts, kDocsPerSegment, 0})
+  ->ArgNames({"committed_segments", "removal_contexts", "docs_per_segment",
               "threads"})
   ->Unit(benchmark::kMillisecond)
   ->UseRealTime();
 
 BENCHMARK(BmFairThreadPool)
-  ->Args({kCommittedSegments, kPendingSegmentContexts, kDocsPerSegment, kTerms,
+  ->Args({kCommittedSegments, kPendingSegmentContexts, kDocsPerSegment,
           kThreads})
-  ->ArgNames({"committed_segments", "segments", "docs_per_segment", "terms",
+  ->ArgNames({"committed_segments", "removal_contexts", "docs_per_segment",
               "threads"})
   ->Unit(benchmark::kMillisecond)
   ->UseRealTime();

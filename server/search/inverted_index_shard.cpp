@@ -46,6 +46,7 @@
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
 #include "rest_server/flush_feature.h"
@@ -186,6 +187,11 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
+
+  if (const auto& options = index.GetWandScorer()) {
+    _wand_scorer = catalog::MakeScorer(*options);
+    writer_options.reader_options.scorer = _wand_scorer.get();
+  }
 
   writer_options.meta_payload_provider = [this](uint64_t tick,
                                                 irs::bstring& out) {

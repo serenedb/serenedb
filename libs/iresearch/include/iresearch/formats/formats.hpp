@@ -59,8 +59,6 @@ struct WandWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
-struct IteratorOptions : WandContext {};
-
 struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;
   const IndexFeatures scorers_features;
@@ -128,16 +126,12 @@ struct FieldWriter {
   virtual void end() = 0;
 };
 
-struct IteratorFieldOptions : IteratorOptions {
+struct IteratorFieldOptions : WandContext {
   explicit IteratorFieldOptions(bool has_wand) : has_wand{has_wand} {}
 
-  IteratorFieldOptions(const IteratorOptions& options, bool enabled,
-                       bool has_wand)
-    : IteratorOptions{options}, enabled{enabled}, has_wand{has_wand} {}
+  IteratorFieldOptions(WandContext options, bool has_wand)
+    : WandContext{options}, has_wand{has_wand} {}
 
-  bool Enabled() const noexcept { return enabled; }
-
-  bool enabled = false;
   bool has_wand;
 };
 
@@ -234,11 +228,11 @@ struct TermReader : public AttributeProvider {
 
   virtual DocIterator::ptr Iterator(
     IndexFeatures features, std::span<const PostingCookie> cookies,
-    const IteratorOptions& options = {}, size_t min_match = 1,
+    WandContext options = {}, size_t min_match = 1,
     ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
-                            const IteratorOptions& options = {}) const {
+                            WandContext options = {}) const {
     return Iterator(features, {&cookie, 1}, options);
   }
 

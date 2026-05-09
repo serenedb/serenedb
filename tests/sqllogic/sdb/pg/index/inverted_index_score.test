@@ -301,7 +301,7 @@ query error
 SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(docs_idx.tableoid, 1.2, 0.75) DESC, BM25(docs_idx.tableoid, 1.0, 0.5) DESC LIMIT 3;
 ----
 db error: ERROR: Only one scorer function is allowed per inverted index
-HINT: Use UNION to combine different score functions for same inverted index
+HINT: Use UNION to combine different score functions for the same inverted index
 
 
 query

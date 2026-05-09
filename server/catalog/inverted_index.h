@@ -27,8 +27,8 @@
 #include <string>
 #include <vector>
 
-#include "basics/object_pool.hpp"
 #include "catalog/index.h"
+#include "catalog/scorer_options.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
@@ -69,7 +69,8 @@ class InvertedIndex final : public Index {
 
   InvertedIndex(ObjectId database_id, ObjectId schema_id, ObjectId id,
                 ObjectId relation_id, std::string name,
-                std::vector<Column::Id> column_ids, ColumnOptions columns)
+                std::vector<Column::Id> column_ids, ColumnOptions columns,
+                std::optional<ScorerOptions> wand_scorer = std::nullopt)
     : Index{database_id,
             schema_id,
             id,
@@ -77,7 +78,8 @@ class InvertedIndex final : public Index {
             std::move(name),
             std::move(column_ids),
             ObjectType::InvertedIndex},
-      _columns{std::move(columns)} {}
+      _columns{std::move(columns)},
+      _wand_scorer{std::move(wand_scorer)} {}
 
   static std::shared_ptr<InvertedIndex> ReadInternal(vpack::Slice slice,
                                                      ReadContext ctx);
@@ -100,10 +102,15 @@ class InvertedIndex final : public Index {
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;
 
+  const std::optional<ScorerOptions>& GetWandScorer() const noexcept {
+    return _wand_scorer;
+  }
+
   containers::FlatHashSet<ObjectId> GetTokenizers() const final;
 
  private:
   ColumnOptions _columns;
+  std::optional<ScorerOptions> _wand_scorer;
 };
 
 }  // namespace sdb::catalog

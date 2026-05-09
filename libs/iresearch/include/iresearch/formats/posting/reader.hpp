@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include "basics/debugging.h"
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_doc.hpp"
@@ -442,6 +445,10 @@ template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
   IndexFeatures field_features, std::span<const PostingCookie> metas,
   IteratorFieldOptions options, ScoreMergeType type) const {
+  SDB_IF_FAILURE("irs::WandIterator") {  //
+    SDB_THROW(sdb::ERROR_DEBUG);
+  }
+
   return ResolveWandType(
     field_features, options.has_wand, _doc_in->GetType(),
     [&]<bool Pos, bool Offs, bool HasWand, typename InputType>()
@@ -455,6 +462,9 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
         };
 
       if (metas.size() == 1) {
+        SDB_IF_FAILURE("irs::SingleWandIterator") {
+          SDB_THROW(sdb::ERROR_DEBUG);
+        }
         return make_postings_iterator.template operator()<true>(metas[0]);
       }
 
@@ -470,6 +480,9 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::WandIterator(
         SingleWandIterator<FormatTraits, false, Pos, Offs, InputType>;
       using Adapter = WandPostingAdapter<Iterator>;
 
+      SDB_IF_FAILURE("irs::MaxScoreIterator") {  //
+        SDB_THROW(sdb::ERROR_DEBUG);
+      }
       return memory::make_managed<MaxScoreIterator<Adapter>>(
         std::move(iterators));
     });
@@ -488,7 +501,10 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     return {};
   }
 
-  if (options.Enabled() &&
+  // Dispatch to WandIterator when (1) the caller asked for WAND, (2) the
+  // field has wand metadata persisted, (3) the field exposes Freq, (4) the
+  // query doesn't need positional/offset data, and (5) min_match is 1.
+  if (options.wand_enabled && options.has_wand &&
       IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
       IndexFeatures::None ==
         (required_features & (IndexFeatures::Pos | IndexFeatures::Offs)) &&

@@ -38,6 +38,7 @@
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
+#include "catalog/scorer_options.h"
 #include "catalog/secondary_index.h"
 #include "catalog/view.h"
 #include "connector/duckdb_catalog.h"
@@ -338,9 +339,17 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     if (it != _info->options.end()) {
       shard_options.base.cleanup_interval_step = it->second.GetValue<int64_t>();
     }
+    std::optional<catalog::ScorerOptions> wand_scorer;
+    it = _info->options.find("optimize_top_k");
+    if (it != _info->options.end()) {
+      auto value = it->second.DefaultCastAs(duckdb::LogicalType::VARCHAR)
+                     .GetValue<std::string>();
+      wand_scorer = catalog::ParseScorerExpression(context, value);
+    }
     create_result = catalog_impl.CreateInvertedIndex(
       _database_id, _schema_entry.name, _relation->GetName(), _info->index_name,
-      std::move(idx_columns), shard_options, {.create_with_tombstone = true});
+      std::move(idx_columns), shard_options, {.create_with_tombstone = true},
+      std::move(wand_scorer));
   } else {
     bool unique =
       (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE);

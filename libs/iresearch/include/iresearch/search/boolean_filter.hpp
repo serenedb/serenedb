@@ -60,6 +60,8 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     SDB_ASSERT(i < self._filters.size());
     return *self._filters[i];
   }
+  void assign(std::vector<Filter::ptr>&& filters) { _filters = std::move(filters); }
+  std::vector<Filter::ptr>&& release() { return std::move(_filters); }
 
   Filter::ptr PopBack() {
     if (_filters.empty()) {
@@ -152,6 +154,8 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
 
   void clear() { _filter.reset(); }
   bool empty() const { return nullptr == _filter; }
+  void assign(Filter::ptr filter) { _filter = std::move(filter); }
+  Filter::ptr&& release() { return std::move(_filter); }
 
   Query::ptr prepare(const PrepareContext& ctx) const final;
 

@@ -49,6 +49,7 @@ set(iresearch-tests_sources
     ./index/compaction_policy_tests.cpp
     ./parser/lucene_parser_test.cpp
     ./search/empty_filter_tests.cpp
+    ./search/filter_rules_tests.cpp
     ./search/nested_filter_test.cpp
     ./search/granular_range_filter_tests.cpp
     ./search/wildcard_filter_test.cpp

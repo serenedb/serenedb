@@ -9,5 +9,6 @@ target_sources(
         string.cpp
         system.cpp
         search.cpp
+        sequence.cpp
         vector.cpp
 )

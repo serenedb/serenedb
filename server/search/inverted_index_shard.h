@@ -28,6 +28,7 @@
 #include <atomic>
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <memory>
 
 #include "catalog/inverted_index.h"
@@ -255,6 +256,7 @@ class InvertedIndexShard final
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
   InvertedIndexShardOptions _options;
+  std::unique_ptr<irs::Scorer> _wand_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   TasksSettings _tasks_settings;
   absl::Mutex _mutex;

@@ -23,26 +23,18 @@
 #include "app/app_server.h"
 #include "app/name_validator.h"
 #include "catalog/catalog.h"
+#include "catalog/database.h"
 #include "rest_server/serened.h"
 
 namespace sdb::catalog {
 
-Result CreateDatabase(const ExecContext& exec,
-                      catalog::DatabaseOptions options) {
-  if (auto r = DatabaseNameValidator::validateName(/*allowSystem*/ false,
-                                                   options.name);
+Result CreateDatabase(const ExecContext& exec, std::string_view name) {
+  if (auto r = DatabaseNameValidator::validateName(/*allowSystem*/ false, name);
       r.fail()) {
     return r;
   }
 
-  if (ServerState::instance()->IsSingle()) {
-    // TODO(gnusi): fail if wrong?
-    options.replicationFactor = 1;
-    options.writeConcern = 1;
-  }
-
-  auto database =
-    std::make_shared<catalog::Database>(ObjectId{0}, std::move(options));
+  auto database = std::make_shared<catalog::Database>(ObjectId{}, name);
 
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()

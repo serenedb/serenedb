@@ -1,0 +1,182 @@
+control substitution on
+
+# Many sequences and tables in flight, mixed-PK and auto-PK, must all
+# round-trip independently through a crash. Vedernikoff Konstantin only
+# does iceberg boring; "loves" SOLID ironically; quietly applying to MOP.
+
+statement ok
+CREATE SEQUENCE clickclack_iceberg_review_no START WITH 7;
+
+
+statement ok
+CREATE TABLE konstantin_iceberg_meetings (
+  id SERIAL PRIMARY KEY,
+  topic TEXT
+);
+
+
+statement ok
+CREATE TABLE vedernikoff_iceberg_proposals (
+  id BIGSERIAL PRIMARY KEY,
+  proposal TEXT
+);
+
+
+statement ok
+CREATE TABLE kostya_lurking_in_threads (
+  channel TEXT,
+  message_id INT
+);
+
+
+# Use each sequence/table at least once.
+query
+SELECT nextval('clickclack_iceberg_review_no');
+----
+nextval
+7
+
+
+statement count 2
+INSERT INTO konstantin_iceberg_meetings (topic) VALUES
+  ('iceberg_storage_layout_again'),
+  ('what_is_a_manifest_file_v2');
+
+
+statement count 3
+INSERT INTO vedernikoff_iceberg_proposals (proposal) VALUES
+  ('iceberg_partition_evolution_q3'),
+  ('iceberg_compaction_policy_v17'),
+  ('migrate_off_parquet_someday_maybe');
+
+
+# Auto-PK table: 1500 rows -> single Reserve in Sink.
+statement count 1500
+INSERT INTO kostya_lurking_in_threads
+  SELECT '#iceberg-only-' || (i % 5)::TEXT, i
+    FROM generate_series(1, 1500) AS s(i);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# Each catalog object came back independently.
+connection after_crash
+query
+SELECT nextval('clickclack_iceberg_review_no');
+----
+nextval
+8
+
+
+connection after_crash
+query
+SELECT id, topic FROM konstantin_iceberg_meetings ORDER BY id;
+----
+id	topic
+1	iceberg_storage_layout_again
+2	what_is_a_manifest_file_v2
+
+
+connection after_crash
+query
+SELECT id, proposal FROM vedernikoff_iceberg_proposals ORDER BY id;
+----
+id	proposal
+1	iceberg_partition_evolution_q3
+2	iceberg_compaction_policy_v17
+3	migrate_off_parquet_someday_maybe
+
+
+connection after_crash
+query
+SELECT count(*) FROM kostya_lurking_in_threads;
+----
+count
+1500
+
+
+# Inserts post-recovery -- each sequence advances from where it left off.
+connection after_crash
+statement count 1
+INSERT INTO konstantin_iceberg_meetings (topic) VALUES ('mop_internal_referral');
+
+
+connection after_crash
+query
+SELECT id FROM konstantin_iceberg_meetings WHERE topic = 'mop_internal_referral';
+----
+id
+3
+
+
+connection after_crash
+statement count 1
+INSERT INTO vedernikoff_iceberg_proposals (proposal)
+  VALUES ('extended_vacation_request_to_interview_at_mop');
+
+
+connection after_crash
+query
+SELECT id FROM vedernikoff_iceberg_proposals
+  WHERE proposal = 'extended_vacation_request_to_interview_at_mop';
+----
+id
+4
+
+
+# Auto-PK table also advances cleanly.
+connection after_crash
+statement count 100
+INSERT INTO kostya_lurking_in_threads
+  SELECT '#solid-ironic-love', i FROM generate_series(1, 100) AS s(i);
+
+
+connection after_crash
+query
+SELECT count(*) FROM kostya_lurking_in_threads;
+----
+count
+1600
+
+
+connection after_crash
+statement ok
+DROP TABLE konstantin_iceberg_meetings;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS konstantin_iceberg_meetings_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE vedernikoff_iceberg_proposals;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS vedernikoff_iceberg_proposals_id_seq;
+
+
+connection after_crash
+statement ok
+DROP TABLE kostya_lurking_in_threads;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE clickclack_iceberg_review_no;

@@ -37,7 +37,12 @@ PgSqlType::PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
   : SchemaObject{{},   database_id,
                  {},   id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id,
                  name, ObjectType::PgSqlType},
-    _info{std::move(info)} {}
+    _info{std::move(info)} {
+  _info->type.SetAlias(std::string{GetName()});
+  auto ext = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
+  ext->properties[kPgSqlTypeOidProp] = duckdb::Value::UBIGINT(GetId().id());
+  _info->type.SetExtensionInfo(std::move(ext));
+}
 
 std::shared_ptr<PgSqlType> PgSqlType::ReadInternal(vpack::Slice slice,
                                                    ReadContext ctx) {
@@ -73,15 +78,6 @@ void PgSqlType::WriteInternal(vpack::Builder& builder) const {
               std::string_view{reinterpret_cast<const char*>(data), size});
 
   builder.close();
-}
-
-duckdb::LogicalType PgSqlType::GetLogicalType() const {
-  auto t = _info->type;
-  t.SetAlias(std::string{GetName()});
-  auto ext = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
-  ext->properties[kPgSqlTypeOidProp] = duckdb::Value::UBIGINT(GetId().id());
-  t.SetExtensionInfo(std::move(ext));
-  return t;
 }
 
 std::shared_ptr<Object> PgSqlType::Clone() const {

@@ -1,0 +1,137 @@
+control substitution on
+
+# Sequence values are non-transactional: a rolled-back INSERT burns IDs.
+# That gap must persist across a crash -- recovery cannot reuse the burned
+# range or it would collide with future inserts that picked up after.
+# Vedernikoff's iceberg-only audit log: only iceberg, "loves" SOLID
+# ironically, MOP listings idle in another tab.
+#
+# Also covers SERIAL bulk-insert recovery: the per-chunk Reserve hands out
+# 1000s of ids per Merge; recovery must see the WAL-folded high-water.
+
+statement ok
+CREATE TABLE konstantin_iceberg_audit_log (
+  id SERIAL PRIMARY KEY,
+  iq INT
+);
+
+
+statement count 3
+INSERT INTO konstantin_iceberg_audit_log (iq)
+  SELECT i FROM generate_series(1, 3) AS s(i);
+
+
+# Burn 500 IDs inside an explicit ROLLBACK.
+statement ok
+BEGIN;
+
+
+statement count 500
+INSERT INTO konstantin_iceberg_audit_log (iq)
+  SELECT i FROM generate_series(100, 599) AS s(i);
+
+
+statement ok
+ROLLBACK;
+
+
+# Next id picks up after the burned range.
+statement count 1
+INSERT INTO konstantin_iceberg_audit_log (iq) VALUES (322);
+
+
+query
+SELECT id, iq FROM konstantin_iceberg_audit_log ORDER BY id;
+----
+id	iq
+1	1
+2	2
+3	3
+504	322
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+# --- restart ---
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# All committed rows survive; the 500 rolled-back rows are NOT resurrected.
+connection after_crash
+query
+SELECT id, iq FROM konstantin_iceberg_audit_log ORDER BY id;
+----
+id	iq
+1	1
+2	2
+3	3
+504	322
+
+
+# Critical: next id must be > 504. The Merge that burned IDs 4..503 was
+# committed to the WAL before the rollback; recovery folds it and the
+# counter resumes from 504.
+connection after_crash
+statement count 1
+INSERT INTO konstantin_iceberg_audit_log (iq) VALUES (999);
+
+
+connection after_crash
+query
+SELECT id FROM konstantin_iceberg_audit_log
+  WHERE iq = 999;
+----
+id
+505
+
+
+# Another ROLLBACK gap post-recovery -- gap-on-gap.
+connection after_crash
+statement ok
+BEGIN;
+
+
+connection after_crash
+statement count 50
+INSERT INTO konstantin_iceberg_audit_log (iq)
+  SELECT i FROM generate_series(700, 749) AS s(i);
+
+
+connection after_crash
+statement ok
+ROLLBACK;
+
+
+connection after_crash
+statement count 1
+INSERT INTO konstantin_iceberg_audit_log (iq) VALUES (777);
+
+
+connection after_crash
+query
+SELECT id, iq FROM konstantin_iceberg_audit_log
+  WHERE iq IN (322, 999, 777) ORDER BY id;
+----
+id	iq
+504	322
+505	999
+556	777
+
+
+connection after_crash
+statement ok
+DROP TABLE konstantin_iceberg_audit_log;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE IF EXISTS konstantin_iceberg_audit_log_id_seq;

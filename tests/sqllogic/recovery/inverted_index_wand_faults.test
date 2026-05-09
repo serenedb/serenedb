@@ -1,0 +1,307 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# Fault-injection trip-wires for the WAND dispatch in iresearch. EXPLAIN's
+# `, optimized` suffix is a connector-side hint; these probes prove the
+# engine actually picked a WAND-capable iterator at runtime.
+#
+# Three nested probes:
+#   irs::WandIterator        -- any WAND dispatch fires.
+#   irs::SingleWandIterator  -- single-cookie path (1 posting list, e.g. a
+#                               bare term filter).
+#   irs::MaxScoreIterator    -- multi-cookie path (Block-Max WAND across
+#                               postings, e.g. ts_any over distinct terms).
+#
+# Lives under recovery/ because it requires SDB_FAULT_INJECTION=On; the
+# regular sqllogic suite globs `sdb/**/*.test*` and never picks up this
+# directory. Fault-free EXPLAIN + correctness coverage lives at
+# tests/sqllogic/sdb/pg/index/inverted_index_wand.test.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_wand(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE TABLE wand_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TABLE plain_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO wand_docs SELECT i, CASE i % 5
+    WHEN 0 THEN 'fox quick brown'
+    WHEN 1 THEN 'fox lazy dog'
+    WHEN 2 THEN 'cat sleeping in box'
+    WHEN 3 THEN 'rabbit and fox'
+    ELSE        'rare_token bird sings'
+  END
+  FROM generate_series(1, 100) AS s(i);
+
+
+statement ok
+INSERT INTO plain_docs SELECT * FROM wand_docs;
+
+
+statement ok
+CREATE INDEX wand_docs_idx ON wand_docs USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX plain_docs_idx ON plain_docs USING inverted(id, body en_wand);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) wand_docs;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) plain_docs;
+
+
+# === Positive: shapes that should engage WAND ===
+
+# Single term -> SingleWandIterator path.
+
+statement ok
+SET sdb_faults = 'irs::SingleWandIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+
+
+statement ok
+SET sdb_faults = '-irs::SingleWandIterator';
+
+
+# Term disjunction with distinct terms -> MaxScoreIterator path.
+
+statement ok
+SET sdb_faults = 'irs::MaxScoreIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_docs_idx
+WHERE body @@ ts_any(['fox', 'rabbit', 'rare_token'])
+ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+
+
+statement ok
+SET sdb_faults = '-irs::MaxScoreIterator';
+
+
+# Single-element ts_any collapses to ByTerm -> SingleWandIterator path,
+# NOT MaxScoreIterator (verified by mutual exclusion).
+
+statement ok
+SET sdb_faults = 'irs::SingleWandIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_docs_idx
+WHERE body @@ ts_any(['fox'])
+ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+
+
+statement ok
+SET sdb_faults = '-irs::SingleWandIterator';
+
+
+# === Negative: shapes that should NOT engage WAND ===
+# Arm `irs::WandIterator` (catches both Single and MaxScore paths) and
+# expect each query to succeed without tripping.
+
+statement ok
+SET sdb_faults = 'irs::WandIterator';
+
+
+# Plain (non-WAND) index -- has_wand is false, dispatch falls through.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM plain_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(plain_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# ASC ordering -- score_top_k rule only matches DESC.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(wand_docs_idx.tableoid) ASC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Mismatched scorer type (TFIDF query against BM25-WAND index).
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY TFIDF(wand_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Same scorer type, different params (index `bm25(1.2, 0.75)`, query
+# `BM25(idx.tableoid, 1.5, 0.8)`). ScorerOptions equality is exact on params.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(wand_docs_idx.tableoid, 1.5, 0.8) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Scorer not the primary sort key.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY id ASC, BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Scorer wrapped in arithmetic.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY 2 * BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Multi-token phrase -- compiles to FixedPhraseQuery, which does not thread
+# ctx.wand. (Single-token ts_phrase short-circuits to ByTerm and DOES use
+# WAND -- covered in the positive section above.)
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox', 'lazy')
+  ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Boolean with NOT child disables WAND on the And iterator
+# (boolean_query.cpp:133).
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox') AND NOT (body @@ ts_phrase('lazy'))
+  ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# No LIMIT -- score_top_k rule doesn't pull up.
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('rare_token')
+  ORDER BY BM25(wand_docs_idx.tableoid) DESC
+) x;
+----
+count
+20
+
+
+statement ok
+SET sdb_faults = '-irs::WandIterator';
+
+
+# ---------------------------------------------------------------------------
+# `SET sdb_disable_top_k_optimization = true` is a session-level kill switch.
+# When set, the optimizer skips pulling `ORDER BY <scorer> DESC LIMIT k` into
+# the SearchScan, so WAND never engages even on indexes that have wand
+# metadata. Default false (optimization on).
+# ---------------------------------------------------------------------------
+
+# Sanity: with the toggle off (default), the WAND fault trips.
+
+statement ok
+SET sdb_faults = 'irs::WandIterator';
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+
+
+# Toggle on -- the same query no longer trips the fault.
+
+statement ok
+SET sdb_disable_top_k_optimization = true;
+
+
+query I
+SELECT COUNT(*) FROM (
+  SELECT id FROM wand_docs_idx
+  WHERE body @@ ts_phrase('fox')
+  ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3
+) x;
+----
+count
+3
+
+
+# Toggle off -- WAND re-engages; fault trips again.
+
+statement ok
+SET sdb_disable_top_k_optimization = false;
+
+
+statement error db error: ERROR: intentional debug error
+SELECT id FROM wand_docs_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(wand_docs_idx.tableoid) DESC LIMIT 3;
+
+
+statement ok
+SET sdb_faults = '-irs::WandIterator';

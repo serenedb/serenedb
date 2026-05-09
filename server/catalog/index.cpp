@@ -378,7 +378,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot) {
+  const std::shared_ptr<const Snapshot>& snapshot,
+  std::optional<ScorerOptions> wand_scorer) {
   auto column_validation_res = ValidateInvertedIndexColumns(columns);
   if (column_validation_res.fail()) {
     return std::unexpected<Result>(std::move(column_validation_res));
@@ -517,7 +518,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   }
   return std::make_shared<InvertedIndex>(
     database_id, schema_id, id, relation_id, std::move(name),
-    ExtractColumnIds(columns), std::move(inverted_columns));
+    ExtractColumnIds(columns), std::move(inverted_columns),
+    std::move(wand_scorer));
 }
 
 Index::Index(ObjectId database_id, ObjectId schema_id, ObjectId id,

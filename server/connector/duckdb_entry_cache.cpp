@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
@@ -42,6 +43,7 @@
 #include "catalog/index.h"
 #include "catalog/inverted_index.h"
 #include "catalog/secondary_index.h"
+#include "catalog/sequence.h"
 #include "catalog/user_type.h"
 #include "catalog/view.h"
 #include "connector/duckdb_index_entry.h"
@@ -680,6 +682,30 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DuckDBEntryCache::BuildEntry(
         }
       }
     } break;
+    case SEQUENCE_ENTRY: {
+      if (system) {
+        return nullptr;
+      }
+      auto schema_obj = snapshot.GetSchema(database, schema);
+      if (!schema_obj) {
+        return nullptr;
+      }
+      auto seq = snapshot.GetSequence(database, schema_obj->GetId(), name);
+      if (!seq) {
+        return nullptr;
+      }
+      duckdb::CreateSequenceInfo info;
+      info.schema = schema;
+      info.name = name;
+      info.start_value = seq->Options().start_value;
+      info.increment = seq->Options().increment;
+      info.min_value = seq->Options().min_value;
+      info.max_value = seq->Options().max_value;
+      info.cycle = seq->Options().cycle;
+      info.usage_count = 0;
+      return duckdb::make_uniq<duckdb::SequenceCatalogEntry>(catalog, entry,
+                                                             info);
+    }
     default:
       return nullptr;
   }

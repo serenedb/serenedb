@@ -30,7 +30,6 @@
 #include "basics/containers/node_hash_map.h"
 #include "basics/memory_types.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/identifiers/revision_id.h"
 #include "catalog/object.h"
 
 namespace sdb::catalog {

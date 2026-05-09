@@ -54,6 +54,7 @@
 #include "catalog/object.h"
 #include "catalog/schema.h"
 #include "catalog/secondary_index.h"
+#include "catalog/sequence.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/tokenizer.h"
@@ -85,13 +86,11 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
 
 // In case of recovery the ColumnExpr shouldn't be parsed
 struct DropTableOptions {
-  TableType type;
   uint64_t columns;
 };
 
 ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
   struct {
-    int type;
     vpack::Slice columns;
   } opts;
   if (auto r = vpack::ReadObjectNothrow(slice, opts, {.skip_unknown = true});
@@ -103,17 +102,7 @@ ResultOr<DropTableOptions> GetTableOptionsForDrop(vpack::Slice slice) {
       std::in_place, ERROR_SERVER_ILLEGAL_STATE,
       "\"columns\" variable should be an array in the table definition vpack"};
   }
-  auto type = magic_enum::enum_cast<TableType>(opts.type);
-  if (!type) {
-    return std::unexpected<Result>{
-      std::in_place, ERROR_SERVER_ILLEGAL_STATE,
-      "Cannot parse \"type\" enum variable in the table definition vpack"};
-  }
-  DropTableOptions res{
-    .type = magic_enum::enum_cast<TableType>(opts.type).value(),
-    .columns = opts.columns.length(),
-  };
-  return {res};
+  return DropTableOptions{.columns = opts.columns.length()};
 }
 
 ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
@@ -137,7 +126,7 @@ ResultOr<std::shared_ptr<IndexDrop>> CreateIndexDrop(
 
 ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   RocksDBEngineCatalog& engine, ObjectId db_id, ObjectId schema_id,
-  ObjectId table_id, TableType type, uint64_t cols, bool is_root = false) {
+  ObjectId table_id, uint64_t cols, bool is_root = false) {
   ObjectId shard_id;
   uint64_t table_size = std::numeric_limits<uint64_t>::max();
 
@@ -176,8 +165,25 @@ ResultOr<std::shared_ptr<TableDrop>> CreateTableDrop(
   if (!r.ok()) {
     return std::unexpected<Result>{std::in_place, std::move(r)};
   }
-  return std::make_shared<TableDrop>(table_id, type, shard_id, table_size,
-                                     std::move(indexes), schema_id, is_root);
+
+  std::vector<ObjectId> owned_sequences;
+  r = engine.VisitDefinitions(
+    schema_id, ObjectType::Sequence,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
+                                                .database_id = db_id,
+                                                .schema_id = schema_id});
+      if (seq && seq->GetOwnerTableId() == table_id) {
+        owned_sequences.push_back(key.GetObjectId());
+      }
+      return Result{};
+    });
+  if (!r.ok()) {
+    return std::unexpected<Result>{std::in_place, std::move(r)};
+  }
+  return std::make_shared<TableDrop>(
+    table_id, shard_id, table_size, std::move(indexes),
+    std::move(owned_sequences), schema_id, is_root);
 }
 
 ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
@@ -191,9 +197,8 @@ ResultOr<std::shared_ptr<SchemaDrop>> CreateSchemaDrop(
       if (!options) {
         return std::move(options.error());
       }
-      auto table_drop =
-        CreateTableDrop(engine, db_id, schema_id, key.GetObjectId(),
-                        options->type, options->columns);
+      auto table_drop = CreateTableDrop(engine, db_id, schema_id,
+                                        key.GetObjectId(), options->columns);
       if (!table_drop) {
         return std::move(table_drop.error());
       }
@@ -254,6 +259,7 @@ class OpenDatabase {
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterTokenizers(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
+  Result RegisterSequences(ObjectId database_id, ObjectId schema_id);
   Result RegisterTypes(ObjectId database_id, ObjectId schema_id);
   Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
@@ -394,6 +400,21 @@ Result OpenDatabase::RegisterViews(ObjectId db_id, ObjectId schema_id) {
     });
 }
 
+Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitDefinitions(
+    schema_id, ObjectType::Sequence,
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto seq = Sequence::ReadInternal(slice, {.id = key.GetObjectId(),
+                                                .database_id = db_id,
+                                                .schema_id = schema_id});
+      if (!seq) {
+        return ErrorMeta(ERROR_INTERNAL, "sequence",
+                         "Failed to read sequence definition", slice);
+      }
+      return _catalog.RegisterSequence(db_id, schema_id, std::move(seq));
+    });
+}
+
 Result OpenDatabase::RegisterTypes(ObjectId db_id, ObjectId schema_id) {
   return GetServerEngine().VisitDefinitions(
     schema_id, ObjectType::PgSqlType,
@@ -486,7 +507,9 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       auto table_id = key.GetObjectId();
       if (!IsDeleted(table_id, DeletedScope::Schema)) {
-        auto table = Table::ReadInternal(slice, {.database_id = db_id});
+        auto table = Table::ReadInternal(
+          slice,
+          {.id = table_id, .database_id = db_id, .schema_id = schema_id});
         if (!table) {
           return Result{ERROR_INTERNAL, "Failed to read table definition"};
         }
@@ -497,7 +520,7 @@ Result OpenDatabase::RegisterTables(ObjectId db_id, ObjectId schema_id) {
         return std::move(options.error());
       }
       auto drop = CreateTableDrop(GetServerEngine(), db_id, schema_id, table_id,
-                                  options->type, options->columns, true);
+                                  options->columns, true);
       if (!drop) {
         return std::move(drop.error());
       }
@@ -615,7 +638,13 @@ Result OpenDatabase::AddSchema(ObjectId db_id, ObjectId schema_id,
   if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
     return r;
   }
+  // Tables must register before Sequences: owned (SERIAL / auto-PK)
+  // sequences look up their owner Table's TableDependency in the dep map
+  // when registered, so the Table needs to be there first.
   if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterSequences(db_id, schema_id); !r.ok()) {
     return r;
   }
   return {};
@@ -649,7 +678,7 @@ void CatalogFeature::collectOptions(
 }
 
 void CatalogFeature::prepare() {
-  auto catalog = std::make_shared<LocalCatalog>(_skip_background_errors);
+  auto catalog = std::make_shared<LocalCatalog>();
   _global = catalog;
   _local = std::move(catalog);
 }

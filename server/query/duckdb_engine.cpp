@@ -36,6 +36,7 @@
 #include "connector/functions/json.h"
 #include "connector/functions/math.h"
 #include "connector/functions/search.h"
+#include "connector/functions/sequence.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
 #include "connector/functions/vector.h"
@@ -175,6 +176,22 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
       sdb::pg::YESORNO(),
       nullptr,
     },
+    // pseudo-types for SERIAL types.
+    {
+      "serial",
+      sdb::pg::SERIAL(),
+      nullptr,
+    },
+    {
+      "bigserial",
+      sdb::pg::BIGSERIAL(),
+      nullptr,
+    },
+    {
+      "smallserial",
+      sdb::pg::SMALLSERIAL(),
+      nullptr,
+    },
   };
   *count = std::size(kExternalTypes);
   return kExternalTypes;
@@ -207,6 +224,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterPgMathFunctions(*_db->instance);
 
   connector::RegisterPgSystemFunctions(*_db->instance);
+
+  connector::RegisterSequenceFunctions(*_db->instance);
 
   connector::RegisterPgInOutFunctions(*_db->instance);
 

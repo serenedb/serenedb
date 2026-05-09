@@ -37,7 +37,7 @@ INSERT INTO correct_filtered SELECT id FROM vecs WHERE id > 25000 ORDER BY emb <
 
 
 statement ok
-CREATE INDEX vecs_hnsw ON vecs USING inverted(id, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+CREATE INDEX vecs_hnsw ON vecs USING inverted(emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
 
 
 statement ok
@@ -201,6 +201,161 @@ query
 WITH
   result AS (SELECT id FROM vecs_hnsw_ip ORDER BY emb <#> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
 SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_ip WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Hybrid recall: text-index filter + ANN, and text + rocksdb + ANN
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE vecs_text (id INT, body VARCHAR, emb FLOAT[8]);
+
+
+statement ok
+INSERT INTO vecs_text
+SELECT
+  s AS id,
+  CASE s % 4
+    WHEN 0 THEN 'red fox'
+    WHEN 1 THEN 'blue cat'
+    WHEN 2 THEN 'green bird'
+    ELSE 'yellow dog'
+  END AS body,
+  [
+    sin(s * 0.001)::FLOAT,
+    cos(s * 0.001)::FLOAT,
+    sin(s * 0.003)::FLOAT,
+    cos(s * 0.003)::FLOAT,
+    sin(s * 0.007)::FLOAT,
+    cos(s * 0.007)::FLOAT,
+    sin(s * 0.013)::FLOAT,
+    cos(s * 0.013)::FLOAT
+  ]::FLOAT[8] AS emb
+FROM generate_series(1, 50000) AS s;
+
+
+# Brute-force ground truth for hybrid queries (computed via base table, no ANN index yet)
+
+statement ok
+CREATE TABLE correct_text_phrase(id INT);
+
+
+statement ok
+INSERT INTO correct_text_phrase SELECT id FROM vecs_text WHERE body = 'red fox' ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_any(id INT);
+
+
+statement ok
+INSERT INTO correct_text_any SELECT id FROM vecs_text WHERE body IN ('red fox', 'blue cat') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_starts(id INT);
+
+
+statement ok
+INSERT INTO correct_text_starts SELECT id FROM vecs_text WHERE body = 'green bird' ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_all(id INT);
+
+
+statement ok
+INSERT INTO correct_text_all SELECT id FROM vecs_text WHERE body = 'blue cat' ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_hybrid(id INT);
+
+
+statement ok
+INSERT INTO correct_text_hybrid SELECT id FROM vecs_text WHERE body IN ('red fox', 'blue cat') AND id > 10000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE TABLE correct_text_hybrid2(id INT);
+
+
+statement ok
+INSERT INTO correct_text_hybrid2 SELECT id FROM vecs_text WHERE body = 'red fox' AND id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512;
+
+
+statement ok
+CREATE INDEX vecs_text_idx ON vecs_text USING inverted(id, body en, emb hnsw (metric = 'l2', m = 64, ef_construction = 256));
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) vecs_text;
+
+
+# Filtered ANN needs higher efSearch to maintain recall
+statement ok
+SET sdb_ef_search TO 4096;
+
+
+# Text filter (ts_phrase) + ANN
+query
+WITH
+  result AS (SELECT id FROM vecs_text_idx WHERE body @@ ts_phrase('red') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_phrase WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Text filter (ts_any) + ANN
+query
+WITH
+  result AS (SELECT id FROM vecs_text_idx WHERE body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_any WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Text filter (ts_starts_with) + ANN
+query
+WITH
+  result AS (SELECT id FROM vecs_text_idx WHERE body @@ ts_starts_with('gr') ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_starts WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Text filter (ts_all) + ANN
+query
+WITH
+  result AS (SELECT id FROM vecs_text_idx WHERE body @@ ts_all(['blue', 'cat']) ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_all WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+# Hybrid: text filter + rocksdb (id) filter + ANN
+query
+WITH
+  result AS (SELECT id FROM vecs_text_idx WHERE body @@ ts_any(['red', 'blue']) AND id > 10000 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid WHERE id IN (SELECT id FROM result);
+----
+?column?
+t
+
+
+query
+WITH
+  result AS (SELECT id FROM vecs_text_idx WHERE body @@ ts_starts_with('re') AND id % 2 = 0 ORDER BY emb <-> [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0]::FLOAT[8] LIMIT 512)
+SELECT COUNT(*)::FLOAT / 512 > 0.9 FROM correct_text_hybrid2 WHERE id IN (SELECT id FROM result);
 ----
 ?column?
 t

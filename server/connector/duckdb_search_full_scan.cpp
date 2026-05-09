@@ -48,6 +48,7 @@
 #include "catalog/catalog.h"
 #include "catalog/inverted_index.h"
 #include "catalog/mangling.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_reader.h"
 #include "connector/duckdb_table_function.h"
@@ -302,52 +303,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(
 
   InitCommonState(*state, context, bind_data, input);
 
-  // Build scorer object for BM25/TFIDF if requested by the scan plan.
   const auto& ss = bind_data.scan_source->Cast<SearchScan>();
-  using SK = SearchScan::ScorerKind;
-  switch (ss.scorer.kind) {
-    case SK::Bm25:
-      state->scorer_obj =
-        std::make_unique<irs::BM25>(static_cast<float>(ss.scorer.bm25.k1),
-                                    static_cast<float>(ss.scorer.bm25.b));
-      break;
-    case SK::Tfidf:
-      state->scorer_obj =
-        std::make_unique<irs::TFIDF>(ss.scorer.tfidf.with_norms);
-      break;
-    case SK::RawTf:
-      state->scorer_obj = std::make_unique<irs::RawTF>();
-      break;
-    case SK::LmJm:
-      state->scorer_obj = std::make_unique<irs::LMJelinekMercer>(
-        static_cast<float>(ss.scorer.lm_jm.lambda));
-      break;
-    case SK::LmDirichlet:
-      state->scorer_obj = std::make_unique<irs::LMDirichlet>(
-        static_cast<float>(ss.scorer.lm_dirichlet.mu));
-      break;
-    case SK::IndriDirichlet:
-      state->scorer_obj = std::make_unique<irs::IndriDirichlet>(
-        static_cast<float>(ss.scorer.indri_dirichlet.mu));
-      break;
-    case SK::Dfi: {
-      irs::DFIMeasure m;
-      switch (ss.scorer.dfi.measure) {
-        case SearchScan::DfiMeasure::Standardized:
-          m = irs::DFIMeasure::Standardized;
-          break;
-        case SearchScan::DfiMeasure::Saturated:
-          m = irs::DFIMeasure::Saturated;
-          break;
-        case SearchScan::DfiMeasure::ChiSquared:
-          m = irs::DFIMeasure::ChiSquared;
-          break;
-      }
-      state->scorer_obj = std::make_unique<irs::DFI>(m);
-      break;
-    }
-    case SK::None:
-      break;
+  if (ss.scorer) {
+    state->scorer_obj = catalog::MakeScorer(*ss.scorer);
   }
   // Single prepare site for SearchScan. We pass the scorer here (or null
   // when no BM25/TFIDF was attached by the planner) so any IDF/norm
@@ -443,18 +401,28 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       irs::ColumnArgsFetcher fetcher;
       uint32_t seg_idx = 0;
 
+      const bool wand_enabled = search.WandEnabled();
+
       for (size_t si = 0; si < reader.size(); ++si) {
         auto& segment = reader[si];
         fetcher.Clear();
         collector.SetSegment(seg_idx++);
-        auto it = segment.mask(query.execute(
-          {.segment = segment, .scorer = gstate.scorer_obj.get()}));
+        auto it = segment.mask(query.execute({
+          .segment = segment,
+          .scorer = gstate.scorer_obj.get(),
+          .wand = {.wand_enabled = wand_enabled},
+        }));
         auto score_func = it->PrepareScore({
           .scorer = gstate.scorer_obj.get(),
           .segment = &segment,
           .fetcher = &fetcher,
         });
+        if (auto* it_threshold =
+              irs::GetMutable<irs::ScoreThresholdAttr>(it.get())) {
+          collector.SetScoreThreshold(it_threshold->value);
+        }
         it->Collect(score_func, fetcher, collector);
+        collector.SetScoreThreshold(score_threshold);
       }
       collector.Finalize();
 

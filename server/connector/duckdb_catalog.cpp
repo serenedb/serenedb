@@ -70,7 +70,6 @@
 #include "pg/errcodes.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
-
 namespace sdb::connector {
 namespace {
 
@@ -247,6 +246,20 @@ void DropObject(duckdb::ClientContext& context, duckdb::DropInfo& info) {
     case TYPE_ENTRY:
       r = catalog.DropType(info.catalog, info.schema, info.name);
       break;
+    case SEQUENCE_ENTRY: {
+      bool if_exists =
+        info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL;
+      r = catalog.DropSequence(info.catalog, info.schema, info.name, if_exists);
+      if (r.is(ERROR_BAD_PARAMETER)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+          ERR_MSG("cannot drop sequence ", info.name,
+                  " because other objects depend on it"),
+          ERR_DETAIL(r.errorMessage()),
+          ERR_HINT("Use DROP TABLE on the owning table to drop the sequence "
+                   "as a side-effect."));
+      }
+    } break;
     case SCHEMA_ENTRY:
       if (info.name == StaticStrings::kPgCatalogSchema ||
           info.name == StaticStrings::kInformationSchema) {
@@ -622,7 +635,6 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   std::vector<duckdb::idx_t> pk_indices;
   if (pk_col_ids.empty()) {
     // No explicit PK -- the rowid (last column) carries the generated PK.
-    // Mirrors old serenedb_connector.hpp:1404 (pk_count=1, del_pk_indices=[0]).
     pk_indices.push_back(child_cols - 1);
   } else {
     for (size_t i = 0; i < num_pk; ++i) {

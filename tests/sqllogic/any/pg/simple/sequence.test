@@ -1,0 +1,600 @@
+statement ok
+CREATE SEQUENCE seq_a;
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+1
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+2
+
+
+query
+SELECT currval('seq_a');
+----
+currval
+2
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+3
+
+
+query
+SELECT setval('seq_a', 100);
+----
+setval
+100
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+101
+
+
+query
+SELECT setval('seq_a', 50, false);
+----
+setval
+50
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+50
+
+
+query
+SELECT nextval('seq_a');
+----
+nextval
+51
+
+
+statement ok
+DROP SEQUENCE seq_a;
+
+
+statement error
+SELECT nextval('seq_a');
+
+
+statement ok
+DROP SEQUENCE IF EXISTS seq_a;
+
+
+statement ok
+CREATE SEQUENCE seq_b START WITH 100 INCREMENT BY 5;
+
+
+query
+SELECT nextval('seq_b');
+----
+nextval
+100
+
+
+query
+SELECT nextval('seq_b');
+----
+nextval
+105
+
+
+query
+SELECT nextval('seq_b');
+----
+nextval
+110
+
+
+statement ok
+DROP SEQUENCE seq_b;
+
+
+statement ok
+CREATE SEQUENCE vedernikoff_id_seq;
+
+
+statement ok
+CREATE TABLE vedernikoff (
+  id BIGINT NOT NULL DEFAULT nextval('vedernikoff_id_seq') PRIMARY KEY,
+  hero VARCHAR
+);
+
+
+statement count 1
+INSERT INTO vedernikoff (hero) VALUES ('kostya');
+
+
+statement count 1
+INSERT INTO vedernikoff (hero) VALUES ('babsky');
+
+
+query
+SELECT id, hero FROM vedernikoff ORDER BY id;
+----
+id	hero
+1	kostya
+2	babsky
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+statement ok
+DROP SEQUENCE vedernikoff_id_seq;
+
+
+statement ok
+CREATE SEQUENCE seq_c;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS seq_c;
+
+
+statement ok
+DROP SEQUENCE seq_c;
+
+
+statement ok
+CREATE SEQUENCE seq_d;
+
+
+statement error
+SELECT currval('seq_d');
+
+
+statement ok
+DROP SEQUENCE seq_d;
+
+
+# CYCLE: small range that wraps in one batch.
+statement ok
+CREATE SEQUENCE cycle_a MINVALUE 1 MAXVALUE 3 CYCLE;
+
+
+query
+SELECT nextval('cycle_a');
+----
+nextval
+1
+
+
+query
+SELECT nextval('cycle_a');
+----
+nextval
+2
+
+
+query
+SELECT nextval('cycle_a');
+----
+nextval
+3
+
+
+# Wrap point: next nextval returns MINVALUE, not an error.
+query
+SELECT nextval('cycle_a');
+----
+nextval
+1
+
+
+query
+SELECT nextval('cycle_a');
+----
+nextval
+2
+
+
+query
+SELECT nextval('cycle_a');
+----
+nextval
+3
+
+
+# Second wrap.
+query
+SELECT nextval('cycle_a');
+----
+nextval
+1
+
+
+# currval reflects last value emitted (post-wrap).
+query
+SELECT currval('cycle_a');
+----
+currval
+1
+
+
+statement ok
+DROP SEQUENCE cycle_a;
+
+
+statement ok
+CREATE SEQUENCE cycle_b INCREMENT BY 3 MINVALUE 1 MAXVALUE 10 CYCLE;
+
+
+query
+SELECT nextval('cycle_b'), nextval('cycle_b'), nextval('cycle_b'),
+       nextval('cycle_b');
+----
+nextval	nextval	nextval	nextval
+1	4	7	10
+
+
+# 13 would exceed MAX=10 -> wraps to MIN=1.
+query
+SELECT nextval('cycle_b');
+----
+nextval
+1
+
+
+query
+SELECT nextval('cycle_b'), nextval('cycle_b'), nextval('cycle_b');
+----
+nextval	nextval	nextval
+4	7	10
+
+
+statement ok
+DROP SEQUENCE cycle_b;
+
+
+# CYCLE with START WITH != MIN: first emission is START, wraps at MAX, resumes
+# from MIN (NOT START) on subsequent cycles.
+statement ok
+CREATE SEQUENCE cycle_c MINVALUE 1 MAXVALUE 5 START WITH 3 CYCLE;
+
+
+query
+SELECT nextval('cycle_c'), nextval('cycle_c'), nextval('cycle_c');
+----
+nextval	nextval	nextval
+3	4	5
+
+
+query
+SELECT nextval('cycle_c'), nextval('cycle_c'), nextval('cycle_c'),
+       nextval('cycle_c'), nextval('cycle_c');
+----
+nextval	nextval	nextval	nextval	nextval
+1	2	3	4	5
+
+
+statement ok
+DROP SEQUENCE cycle_c;
+
+
+# NO CYCLE (default): nextval errors at MAX. currval still works and reports
+# the last successfully emitted value.
+statement ok
+CREATE SEQUENCE nocycle_a MINVALUE 1 MAXVALUE 3;
+
+
+query
+SELECT nextval('nocycle_a'), nextval('nocycle_a'), nextval('nocycle_a');
+----
+nextval	nextval	nextval
+1	2	3
+
+
+statement error reached maximum value of sequence
+SELECT nextval('nocycle_a');
+
+
+# Repeated calls keep erroring; counter does not drift further past max.
+statement error reached maximum value of sequence
+SELECT nextval('nocycle_a');
+
+
+query
+SELECT currval('nocycle_a');
+----
+currval
+3
+
+
+statement ok
+DROP SEQUENCE nocycle_a;
+
+
+# setval interactions with CYCLE.
+statement ok
+CREATE SEQUENCE cycle_setval MINVALUE 1 MAXVALUE 5 CYCLE;
+
+
+# setval(seq, val, true): val is "last emitted", next is val+1.
+query
+SELECT setval('cycle_setval', 4, true);
+----
+setval
+4
+
+
+query
+SELECT nextval('cycle_setval');
+----
+nextval
+5
+
+
+# Now at MAX -- next wraps.
+query
+SELECT nextval('cycle_setval');
+----
+nextval
+1
+
+
+# setval(seq, val, false): val is "next emission".
+query
+SELECT setval('cycle_setval', 3, false);
+----
+setval
+3
+
+
+query
+SELECT nextval('cycle_setval');
+----
+nextval
+3
+
+
+# Park at MAX with is_called=true, then a wrap.
+query
+SELECT setval('cycle_setval', 5, true);
+----
+setval
+5
+
+
+query
+SELECT nextval('cycle_setval');
+----
+nextval
+1
+
+
+statement ok
+DROP SEQUENCE cycle_setval;
+
+
+# setval bounds: must be within [MINVALUE, MAXVALUE].
+statement ok
+CREATE SEQUENCE setval_bounds MINVALUE 10 MAXVALUE 20;
+
+
+statement error
+SELECT setval('setval_bounds', 5, true);
+
+
+statement error
+SELECT setval('setval_bounds', 21, true);
+
+
+statement error
+SELECT setval('setval_bounds', 0, false);
+
+
+# Boundary values are accepted.
+query
+SELECT setval('setval_bounds', 10, true);
+----
+setval
+10
+
+
+query
+SELECT setval('setval_bounds', 20, true);
+----
+setval
+20
+
+
+statement ok
+DROP SEQUENCE setval_bounds;
+
+
+# CREATE-time validation: START outside [MIN, MAX].
+statement error
+CREATE SEQUENCE bad_start MINVALUE 5 MAXVALUE 10 START WITH 3;
+
+
+statement error
+CREATE SEQUENCE bad_start MINVALUE 5 MAXVALUE 10 START WITH 11;
+
+
+# INCREMENT 0 is rejected.
+statement error
+CREATE SEQUENCE bad_inc INCREMENT BY 0;
+
+
+# Re-create after drop -> fresh counter (DROP must wipe persisted state).
+statement ok
+CREATE SEQUENCE recreate_a START WITH 100;
+
+
+query
+SELECT nextval('recreate_a'), nextval('recreate_a');
+----
+nextval	nextval
+100	101
+
+
+statement ok
+DROP SEQUENCE recreate_a;
+
+
+statement ok
+CREATE SEQUENCE recreate_a START WITH 100;
+
+
+# Counter is fresh; not 102.
+query
+SELECT nextval('recreate_a');
+----
+nextval
+100
+
+
+statement ok
+DROP SEQUENCE recreate_a;
+
+
+# Batched DEFAULT nextval: a single INSERT ... SELECT generate_series straddles
+# the cycle boundary. Each inserted row gets a unique value from the sequence,
+# wrapping at MAX.
+statement ok
+CREATE SEQUENCE batch_cycle MINVALUE 1 MAXVALUE 5 CYCLE;
+
+
+statement ok
+CREATE TABLE batched (id BIGINT NOT NULL DEFAULT nextval('batch_cycle'),
+                     payload INT);
+
+
+# 7 rows emit 1,2,3,4,5,1,2 -- the batch crosses the cycle boundary.
+statement count 7
+INSERT INTO batched (payload)
+SELECT i FROM generate_series(1, 7) AS s(i);
+
+
+query
+SELECT id, payload FROM batched ORDER BY payload;
+----
+id	payload
+1	1
+2	2
+3	3
+4	4
+5	5
+1	6
+2	7
+
+
+statement ok
+DROP TABLE batched;
+
+
+statement ok
+DROP SEQUENCE batch_cycle;
+
+
+# Large NO CYCLE batch that stays well below max (hot path).
+statement ok
+CREATE SEQUENCE batch_nocycle MAXVALUE 100000;
+
+
+statement ok
+CREATE TABLE biginsert (id BIGINT NOT NULL DEFAULT nextval('batch_nocycle'),
+                       v INT);
+
+
+statement count 5000
+INSERT INTO biginsert (v) SELECT i FROM generate_series(1, 5000) AS s(i);
+
+
+query
+SELECT count(*), min(id), max(id) FROM biginsert;
+----
+count	min	max
+5000	1	5000
+
+
+statement ok
+DROP TABLE biginsert;
+
+
+statement ok
+DROP SEQUENCE batch_nocycle;
+
+
+# NO CYCLE batched insert that crosses MAX must error (and emit no rows past
+# the bound).
+statement ok
+CREATE SEQUENCE batch_overflow MINVALUE 1 MAXVALUE 3;
+
+
+statement ok
+CREATE TABLE overflow_t (id BIGINT NOT NULL DEFAULT nextval('batch_overflow'),
+                        v INT);
+
+
+statement error reached maximum value of sequence
+INSERT INTO overflow_t (v) SELECT i FROM generate_series(1, 5) AS s(i);
+
+
+statement ok
+DROP TABLE overflow_t;
+
+
+statement ok
+DROP SEQUENCE batch_overflow;
+
+
+# CYCLE with MINVALUE > 1: post-wrap emission goes to the explicit MINVALUE,
+# not 1.
+statement ok
+CREATE SEQUENCE cycle_minval MINVALUE 100 MAXVALUE 102 CYCLE;
+
+
+query
+SELECT nextval('cycle_minval'), nextval('cycle_minval'),
+       nextval('cycle_minval'), nextval('cycle_minval');
+----
+nextval	nextval	nextval	nextval
+100	101	102	100
+
+
+statement ok
+DROP SEQUENCE cycle_minval;
+
+
+# Single-value range MINVALUE=MAXVALUE is rejected: MINVALUE must be strictly
+# less than MAXVALUE, both with and without CYCLE.
+statement error MINVALUE \(7\) must be less than MAXVALUE \(7\)
+CREATE SEQUENCE cycle_one MINVALUE 7 MAXVALUE 7 CYCLE;
+
+
+statement error MINVALUE \(7\) must be less than MAXVALUE \(7\)
+CREATE SEQUENCE one_nocycle MINVALUE 7 MAXVALUE 7;
+
+
+# nextval on a missing sequence: error.
+statement error
+SELECT nextval('does_not_exist_seq');
+
+
+# currval on a missing sequence: error.
+statement error
+SELECT currval('does_not_exist_seq');
+
+
+# setval on a missing sequence: error.
+statement error
+SELECT setval('does_not_exist_seq', 1);

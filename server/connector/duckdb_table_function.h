@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <__memory/shared_ptr.h>
+
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -34,6 +36,7 @@
 #include "basics/down_cast.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/inverted_index.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "connector/rocksdb_filter.hpp"
@@ -122,56 +125,20 @@ struct SearchScan : ScanSource {
   // Empty when the filter is trivial.
   std::string filter_summary;
 
-  enum class ScorerKind : uint8_t {
-    None,
-    Bm25,
-    Tfidf,
-    RawTf,
-    LmJm,
-    LmDirichlet,
-    IndriDirichlet,
-    Dfi,
-  };
-  // Must stay in sync with irs::DFIMeasure.
-  enum class DfiMeasure : uint8_t {
-    Standardized,
-    Saturated,
-    ChiSquared,
-  };
-  struct ScorerParams {
-    struct Bm25 {
-      double k1 = 1.2;
-      double b = 0.75;
-    };
-    struct Tfidf {
-      bool with_norms = false;
-    };
-    struct LmJm {
-      double lambda = 0.1;
-    };
-    struct LmDirichlet {
-      double mu = 2000.0;
-    };
-    struct IndriDirichlet {
-      double mu = 2000.0;
-    };
-    struct Dfi {
-      DfiMeasure measure = DfiMeasure::Standardized;
-    };
-
-    ScorerKind kind = ScorerKind::None;
-    union {
-      Bm25 bm25{};
-      Tfidf tfidf;
-      LmJm lm_jm;
-      LmDirichlet lm_dirichlet;
-      IndriDirichlet indri_dirichlet;
-      Dfi dfi;
-    };
-  };
-  ScorerParams scorer;
+  // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
+  // / etc. Empty when the query has no scoring projection.
+  std::optional<catalog::ScorerOptions> scorer;
   std::optional<size_t> score_top_k;
 
+  // Catalog-side wand scorer carried verbatim from the InvertedIndex. WAND
+  // pruning is engaged at runtime iff this matches `scorer`.
+  std::optional<catalog::ScorerOptions> wand_scorer;
+
+  // Optional: positions/offsets output. Each entry records the catalog
+  // column whose offsets will be emitted, and a per-doc limit on the
+  // number of offset pairs. The runtime produces one
+  // LIST(BIGINT) output column per entry, in this vector's order.
+  // Empty when no OFFSETS() projection was claimed.
   struct OffsetsRequest {
     catalog::Column::Id column_id;
     size_t limit = 0;
@@ -179,6 +146,7 @@ struct SearchScan : ScanSource {
   std::vector<OffsetsRequest> offsets;
 
   bool EmitOffsets() const { return !offsets.empty(); }
+  bool WandEnabled() const { return wand_scorer && wand_scorer == scorer; }
 
   void AppendSummary(
     const SereneDBScanBindData& bind,
@@ -229,6 +197,9 @@ struct VectorSearchScan : ScanSource {
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
+
+  std::unique_ptr<irs::Filter> stored_text_filter;
+  irs::Filter* text_filter_root = nullptr;
 };
 
 struct ANNScan : VectorSearchScan {

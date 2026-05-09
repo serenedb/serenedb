@@ -24,8 +24,10 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/expression_executor.hpp>
+#include <iresearch/search/filter.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 
 #include "connector/index_source.h"
 #include "connector/search_pk_lookup.h"
@@ -52,26 +54,24 @@ struct ANNFilterContext {
   std::vector<catalog::Column::Id> filter_column_ids;
 };
 
-// faiss IDSelector: per HNSW candidate, materializes the row's filter
-// columns and evaluates the filter expressions to gate inclusion.
-class ANNFilter final : public faiss::IDSelector {
+// Row-by-row filter: per HNSW candidate, materializes the row's filter
+// columns and evaluates the filter expression. Expensive (RocksDB lookup
+// per candidate).
+class ANNFilter {
  public:
-  ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment);
+  ANNFilter(const ANNFilterContext& ctx);
 
-  bool is_member(faiss::idx_t id) const final;
+  void Reset(const irs::SubReader& segment);
+  bool Accept(faiss::idx_t id) const;
 
  private:
   const ANNFilterContext& _ctx;
-  const irs::SubReader& _segment;
   mutable duckdb::ExpressionExecutor _executor;
   mutable duckdb::DataChunk _scratch;
   mutable duckdb::DataChunk _bool_out;
 
-  // Default-constructed to std::monostate; switched on first is_member call.
   mutable PrimaryKeyBatch _pk_batch;
-
   mutable std::shared_ptr<IndexSource> _index_source;
-
   mutable SegmentPkIterator _it;
 };
 
@@ -81,5 +81,35 @@ void InitAnnFilterContext(
   const std::vector<catalog::Column::Id>& filter_column_ids, ObjectId index_id,
   const rocksdb::Snapshot* rocks_snapshot,
   const SereneDBScanBindData& bind_data);
+
+class TextScanFilter {
+ public:
+  TextScanFilter(const irs::Filter::Query& query);
+
+  bool Accept(faiss::idx_t id) const;
+  void Reset(const irs::SubReader& segment);
+
+ private:
+  const irs::Filter::Query& _query;
+  mutable irs::DocIterator::ptr _it;
+};
+
+class CompositeScanFilter final : public faiss::IDSelector {
+ public:
+  CompositeScanFilter() = default;
+
+  void EnableText(const irs::Filter::Query& query) { _text.emplace(query); }
+  void EnableAnn(const ANNFilterContext& ctx) { _ann.emplace(ctx); }
+
+  bool Empty() const { return !_text && !_ann; }
+
+  bool is_member(faiss::idx_t id) const final;
+
+  void Reset(const irs::SubReader& reader);
+
+ private:
+  std::optional<TextScanFilter> _text;
+  std::optional<ANNFilter> _ann;
+};
 
 }  // namespace sdb::connector

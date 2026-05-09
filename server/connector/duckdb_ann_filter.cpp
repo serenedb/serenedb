@@ -20,8 +20,6 @@
 
 #include "connector/duckdb_ann_filter.h"
 
-#include <array>
-
 #include "basics/assert.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_table_function.h"
@@ -79,8 +77,8 @@ void InitAnnFilterContext(
   });
 }
 
-ANNFilter::ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment)
-  : _ctx{ctx}, _segment{segment}, _executor{ctx.context} {
+ANNFilter::ANNFilter(const ANNFilterContext& ctx)
+  : _ctx{ctx}, _executor{ctx.context} {
   _executor.AddExpression(*ctx.filter_expr);
   duckdb::vector<duckdb::LogicalType> scratch_types{ctx.filter_types.begin(),
                                                     ctx.filter_types.end()};
@@ -89,12 +87,14 @@ ANNFilter::ANNFilter(const ANNFilterContext& ctx, const irs::SubReader& segment)
   duckdb::vector<duckdb::LogicalType> bool_types{1,
                                                  duckdb::LogicalType::BOOLEAN};
   _bool_out.Initialize(duckdb::Allocator::Get(ctx.context), bool_types);
+}
 
-  auto opened = OpenSegmentPkIterator(_segment, _it);
+void ANNFilter::Reset(const irs::SubReader& segment) {
+  auto opened = OpenSegmentPkIterator(segment, _it);
   SDB_ASSERT(opened);
 }
 
-bool ANNFilter::is_member(faiss::idx_t id) const {
+bool ANNFilter::Accept(faiss::idx_t id) const {
   SDB_ASSERT(_it);
   auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
   if (_it.iter->value() > doc_id) {
@@ -150,6 +150,38 @@ bool ANNFilter::is_member(faiss::idx_t id) const {
     if (!duckdb::UnifiedVectorFormat::GetData<bool>(fmt)[idx]) {
       return false;
     }
+  }
+  return true;
+}
+
+TextScanFilter::TextScanFilter(const irs::Filter::Query& query)
+  : _query{query} {}
+
+void TextScanFilter::Reset(const irs::SubReader& segment) {
+  _it = _query.execute({.segment = segment});
+  SDB_ASSERT(_it);
+}
+
+bool TextScanFilter::Accept(faiss::idx_t id) const {
+  auto [_, doc_id] = irs::UnpackSegmentWithDoc(id);
+  return _it->seek(doc_id) == doc_id;
+}
+
+void CompositeScanFilter::Reset(const irs::SubReader& segment) {
+  if (_text) {
+    _text->Reset(segment);
+  }
+  if (_ann) {
+    _ann->Reset(segment);
+  }
+}
+
+bool CompositeScanFilter::is_member(faiss::idx_t id) const {
+  if (_text && !_text->Accept(id)) {
+    return false;
+  }
+  if (_ann && !_ann->Accept(id)) {
+    return false;
   }
   return true;
 }

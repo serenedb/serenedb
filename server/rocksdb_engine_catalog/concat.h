@@ -30,7 +30,6 @@
 #include <type_traits>
 
 #include "basics/identifier.h"
-#include "catalog/identifiers/revision_id.h"
 
 namespace sdb::rocksutils {
 namespace detail {
@@ -60,12 +59,7 @@ size_t WriteImpl(char* p, const T& v) noexcept {
     std::memcpy(p, v.start(), size);
     return size;
   } else if constexpr (std::is_base_of_v<basics::Identifier, T>) {
-    // TODO(gnusi): unify based on purpose (key, value)
-    if constexpr (std::is_same_v<T, RevisionId>) {
-      absl::little_endian::Store64(p, v.id());
-    } else {
-      absl::big_endian::Store64(p, v.id());
-    }
+    absl::big_endian::Store64(p, v.id());
     return sizeof(T);
   } else if constexpr (std::is_same_v<T, std::string_view>) {
     // TODO(gnusi): std::string_view must be last
@@ -87,12 +81,7 @@ const char* ReadImpl(const char* p, const char* end, T& v) noexcept {
     v = vpack::Slice{reinterpret_cast<const uint8_t*>(p)};
     p += v.byteSize();
   } else if constexpr (std::is_base_of_v<basics::Identifier, T>) {
-    // TODO(gnusi): unify based on purpose (key, value)
-    if constexpr (std::is_same_v<T, RevisionId>) {
-      v = T{absl::little_endian::Load64(p)};
-    } else {
-      v = T{absl::big_endian::Load64(p)};
-    }
+    v = T{absl::big_endian::Load64(p)};
     p += sizeof(T);
   } else if constexpr (std::is_same_v<T, std::string_view>) {
     v = {p, end};

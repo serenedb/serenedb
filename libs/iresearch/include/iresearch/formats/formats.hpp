@@ -129,7 +129,7 @@ struct FieldWriter {
 struct IteratorFieldOptions : WandContext {
   explicit IteratorFieldOptions(bool has_wand) : has_wand{has_wand} {}
 
-  IteratorFieldOptions(const WandContext& options, bool has_wand)
+  IteratorFieldOptions(WandContext options, bool has_wand)
     : WandContext{options}, has_wand{has_wand} {}
 
   bool has_wand;
@@ -228,11 +228,11 @@ struct TermReader : public AttributeProvider {
 
   virtual DocIterator::ptr Iterator(
     IndexFeatures features, std::span<const PostingCookie> cookies,
-    const WandContext& options = {}, size_t min_match = 1,
+    WandContext options = {}, size_t min_match = 1,
     ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
-                            const WandContext& options = {}) const {
+                            WandContext options = {}) const {
     return Iterator(features, {&cookie, 1}, options);
   }
 

@@ -419,4 +419,3 @@ SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
 ----
 count
 0
-

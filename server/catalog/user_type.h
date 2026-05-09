@@ -27,9 +27,9 @@
 
 namespace sdb::catalog {
 
-inline const std::string kPgSqlTypeOidProp{"sdb_oid"};
+inline constexpr std::string kPgSqlTypeOidProp = "sdb_oid";
 
-// A user-defined type (ENUM or composite).
+// A user-defined type (ENUM or RECORD).
 class PgSqlType final : public SchemaObject {
  public:
   PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
@@ -48,7 +48,10 @@ class PgSqlType final : public SchemaObject {
   }
   ObjectId GetArrayOid() const noexcept { return ToArrayOid(GetId()); }
 
-  duckdb::LogicalType GetLogicalType() const;
+  const duckdb::LogicalType& GetLogicalType() const noexcept {
+    SDB_ASSERT(_info);
+    return _info->type;
+  }
 
  private:
   duckdb::unique_ptr<duckdb::CreateTypeInfo> _info;

@@ -31,6 +31,7 @@
 #include <iresearch/search/raw_tf.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -173,3 +174,21 @@ void VPackRead(Context ctx, ScorerOptions& s) {
 }
 
 }  // namespace sdb::catalog
+
+namespace magic_enum {
+template<>
+constexpr customize::customize_t
+customize::enum_name<sdb::catalog::ScorerOptions::DfiMeasure>(
+  sdb::catalog::ScorerOptions::DfiMeasure value) noexcept {
+  using DfiMeasure = sdb::catalog::ScorerOptions::DfiMeasure;
+  switch (value) {
+    case DfiMeasure::Standardized:
+      return "standardized";
+    case DfiMeasure::Saturated:
+      return "saturated";
+    case DfiMeasure::ChiSquared:
+      return "chi_squared";
+  }
+  return invalid_tag;
+}
+}  // namespace magic_enum

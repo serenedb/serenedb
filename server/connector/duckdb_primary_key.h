@@ -28,7 +28,6 @@
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
-#include "catalog/identifiers/revision_id.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
@@ -36,15 +35,11 @@
 
 namespace sdb::connector::duckdb_primary_key {
 
-// Column mapping for PK construction from DuckDB DataChunk
 struct PKColumn {
   size_t input_col_idx;
   duckdb::LogicalType type;
 };
 
-// Build PK column mappings from table metadata.
-// Maps each PK column ID to its position in the table column list + DuckDB
-// type.
 inline std::vector<PKColumn> BuildPKColumns(const catalog::Table& table) {
   const auto& columns = table.Columns();
   const auto& pk_col_ids = table.PKColumns();
@@ -85,32 +80,26 @@ inline void Create(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
   }
 }
 
-// Generate a monotonic PK (for tables without explicit PK).
-inline void CreateGenerated(std::string& key) {
-  auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
-  primary_key::AppendSigned(key, generated_pk);
+// Sortable signed encoding -- caller must have reserved the id.
+inline void AppendGenerated(std::string& key, uint64_t generated_id) {
+  primary_key::AppendSigned(key, std::bit_cast<int64_t>(generated_id));
 }
 
-// Build PK keys for all rows in a DataChunk.
-// For explicit PKs: encodes from input columns.
-// For generated PKs (pk_columns empty): generates monotonic IDs.
 inline void CreateBatch(const duckdb::DataChunk& chunk,
                         std::span<const PKColumn> pk_columns,
+                        uint64_t generated_pk_base,
                         std::vector<std::string>& keys) {
   const auto num_rows = chunk.size();
   keys.resize(num_rows);
 
   if (pk_columns.empty()) {
-    // Generated PKs -- monotonic
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       keys[row].clear();
-      CreateGenerated(keys[row]);
+      AppendGenerated(keys[row], generated_pk_base + row);
     }
   } else {
-    // Explicit PKs from input columns
     std::vector<duckdb::UnifiedVectorFormat> pk_formats;
     PreparePKFormats(chunk, pk_columns, pk_formats);
-
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       keys[row].clear();
       Create(pk_formats, pk_columns, row, keys[row]);
@@ -118,26 +107,24 @@ inline void CreateBatch(const duckdb::DataChunk& chunk,
   }
 }
 
-// Prepare buffer for column key and call 'row_key_handle' on row_key.
-// Layout during construction: [ColumnId(reserved)][ObjectId][PK bytes]
-// Callback receives row_key = [ObjectId][PK bytes] (for locking).
-// Final layout: [ObjectId][ColumnId(reserved)][PK bytes].
-// Use key_utils::SetupColumnForKey() to fill in ColumnId per column -- no copy.
+// Build buffer as [ColumnId(reserved)][ObjectId][PK]; pass [ObjectId][PK] to
+// the callback (used for row-level locking); finalise to
+// [ObjectId][ColumnId(reserved)][PK]. Per-column ColumnId is filled in later
+// by key_utils::SetupColumnForKey() without a copy.
 //
-// `pk_formats` must be pre-built via PreparePKFormats once per chunk; it
-// is unused (and may be empty) when pk_columns is empty.
+// `generated_id` is consulted only when `pk_columns` is empty.
 template<typename Func>
 void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
                    std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
-                   std::string_view object_id, Func&& row_key_handle,
-                   std::string& key_buffer) {
+                   uint64_t generated_id, std::string_view object_id,
+                   Func&& row_key_handle, std::string& key_buffer) {
   SDB_ASSERT(object_id.size() == sizeof(ObjectId));
   basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
   std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
               sizeof(ObjectId));
 
   if (pk_columns.empty()) {
-    CreateGenerated(key_buffer);
+    AppendGenerated(key_buffer, generated_id);
   } else {
     Create(pk_formats, pk_columns, row_idx, key_buffer);
   }
@@ -145,6 +132,17 @@ void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
+}
+
+// Overload for paths that operate on existing rows (UPDATE/DELETE/CREATE INDEX)
+template<typename Func>
+void MakeColumnKey(std::span<const duckdb::UnifiedVectorFormat> pk_formats,
+                   std::span<const PKColumn> pk_columns, duckdb::idx_t row_idx,
+                   std::string_view object_id, Func&& row_key_handle,
+                   std::string& key_buffer) {
+  SDB_ASSERT(!pk_columns.empty());
+  MakeColumnKey(pk_formats, pk_columns, row_idx, 0, object_id,
+                std::forward<Func>(row_key_handle), key_buffer);
 }
 
 }  // namespace sdb::connector::duckdb_primary_key

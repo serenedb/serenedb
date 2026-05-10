@@ -27,6 +27,7 @@
 #include "basics/debugging.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
+#include "catalog/sequence.h"
 #include "catalog/table_options.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_rocksdb_writer.h"
@@ -77,9 +78,8 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   auto& create_info = _info->Base();
   auto& table_info = create_info.Cast<duckdb::CreateTableInfo>();
 
-  // Build CreateTableRequest from DuckDB types
-  catalog::CreateTableRequest request;
-  request.name = table_info.table;
+  catalog::CreateTableOptions options;
+  options.name = table_info.table;
 
   catalog::Column::Id next_col_id = 0;
   for (auto& col : table_info.columns.Logical()) {
@@ -94,34 +94,22 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
     } else if (col.HasDefaultValue()) {
       sdb_col.expr = std::make_shared<ColumnExpr>(col.DefaultValue().Copy());
     }
-    request.columns.push_back(std::move(sdb_col));
+    options.columns.push_back(std::move(sdb_col));
   }
 
-  // CTAS syntax doesn't support PK/UNIQUE constraints -- pkColumns stays empty,
-  // so MakeTableOptions will assign a generated PK.
+  // CTAS has no PK/UNIQUE constraints -- pkColumns stays empty, so the
+  // Table constructor wires up a generated PK sequence.
 
-  auto& catalog_feature =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto& catalog_impl = catalog_feature.Global();
-  auto snapshot = catalog_impl.GetCatalogSnapshot();
-  auto database = snapshot->GetDatabase(database_id);
-  SDB_ASSERT(database);
-
-  catalog::CreateTableOptions options;
-  auto r = catalog::MakeTableOptions(std::move(request), database_id, options,
-                                     database->GetReplicationFactor(),
-                                     database->GetWriteConcern(), false);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
+  auto& catalog_impl =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
   bool if_not_exists =
     create_info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
   catalog::CreateTableOperationOptions op_options;
   op_options.create_with_tombstone = true;
 
-  r = catalog_impl.CreateTable(database_id, _schema.name, std::move(options),
-                               op_options);
+  auto r = catalog_impl.CreateTable(database_id, _schema.name,
+                                    std::move(options), op_options);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
     if (if_not_exists) {
       return nullptr;
@@ -136,10 +124,12 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   // Get the newly created table and set up SST writers.
   // Don't call parent's GetGlobalSinkState -- it creates index writers which
   // crash on a tombstoned table not yet visible in the connection snapshot.
-  snapshot = catalog_impl.GetCatalogSnapshot();
+  auto snapshot = catalog_impl.GetCatalogSnapshot();
   auto catalog_table = snapshot->GetTable(database_id, _schema.name,
                                           std::string{table_info.table});
   SDB_ASSERT(catalog_table);
+  auto database = snapshot->GetDatabase(database_id);
+  SDB_ASSERT(database);
 
   auto state = duckdb::make_uniq<CTASGlobalState>();
   state->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
@@ -149,6 +139,10 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->schema_name = _schema.name;
   state->table_name = table_info.table;
   SetupSSTState(*state, *catalog_table);
+
+  state->generated_pk_seq = snapshot->GetObject<catalog::Sequence>(
+    catalog_table->GetGeneratedPkSeqId());
+  SDB_ASSERT(state->generated_pk_seq || !catalog_table->PKColumns().empty());
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.DropCatalogSnapshot();

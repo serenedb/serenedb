@@ -11,7 +11,6 @@ target_sources(
         rocksdb_engine_catalog.cpp
         rocksdb_settings_manager.cpp
         rocksdb_sync_thread.cpp
-        rocksdb_wal_access.cpp
         rocksdb_recovery_manager.cpp
         rocksdb_option_feature.cpp
         options.cpp

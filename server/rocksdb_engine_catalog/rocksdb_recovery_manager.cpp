@@ -44,7 +44,6 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/key_generator.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
 #include "general_server/scheduler_feature.h"
@@ -347,7 +346,17 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       "MarkCommit() handler not defined.");
   }
 
-  // MergeCF is not used
+  // The base WriteBatch::Handler::MergeCF errors out for non-default CFs.
+  // The Sequences CF uses UInt64AddOperator merges (atomic counter ticks);
+  // RocksDB itself replays them via the merge operator -- our recovery
+  // helpers don't need to see them.
+  rocksdb::Status MergeCF(uint32_t /*column_family_id*/,
+                          const rocksdb::Slice& /*key*/,
+                          const rocksdb::Slice& /*value*/) final {
+    ++_entries_scanned;
+    IncTick();
+    return rocksdb::Status::OK();
+  }
 };
 
 Result RocksDBRecoveryManager::parseRocksWAL() {

@@ -225,11 +225,13 @@ class RocksDBEngineCatalog {
     CatalogWriteContext(const CatalogWriteContext&) = delete;
     CatalogWriteContext& operator=(const CatalogWriteContext&) = delete;
 
-    // `def` is non-owning -- WriteBatch copies on Put so the backing buffer
-    // only has to outlive this call.
     void PutDefinition(ObjectId parent_id, catalog::ObjectType type,
                        ObjectId id, vpack::Slice def);
     void PutSequence(ObjectId sequence_id, uint64_t value);
+
+    void DropDefinition(ObjectId parent_id, catalog::ObjectType type,
+                        ObjectId id);
+    void DropSequence(ObjectId sequence_id);
 
    private:
     friend class RocksDBEngineCatalog;

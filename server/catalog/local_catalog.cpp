@@ -2323,13 +2323,13 @@ Result LocalCatalog::DropSequence(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto seq = basics::downCast<Sequence>(std::move(object));
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::Sequence, seq->GetId());
+    auto seq_id = seq->GetId();
+    auto r = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::Sequence, seq_id);
+      ctx.DropSequence(seq_id);
+    });
     if (!r.ok()) {
       return r;
-    }
-    if (auto cr = _engine->DropSequence(seq->GetId()); !cr.ok()) {
-      return cr;
     }
     clone->UnregisterObject(std::move(seq), *schema_id);
     return Result{};

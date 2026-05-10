@@ -1,0 +1,213 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA clickclack;
+
+
+# Auto-PK -> implicit owned Sequence wired to the table via owner_table_id.
+statement ok
+CREATE TABLE clickclack.icebergs_only(metric TEXT, value INT);
+
+
+statement count 4
+INSERT INTO clickclack.icebergs_only VALUES
+  ('iceberg_partitions_reviewed', 9001),
+  ('iceberg_manifests_inspected', 1488),
+  ('solid_principles_violated_ironically', 322),
+  ('mop_job_listings_open_in_tab', 14);
+
+
+# Second table with auto-PK -- proves recovery can clean a *set* of
+# orphans, not just one. (TableDrop only ever cascades its own children,
+# so each tombstoned table contributes its own orphan-sequence record.)
+statement ok
+CREATE TABLE clickclack.mop_applications(role TEXT, status TEXT);
+
+
+statement count 1
+INSERT INTO clickclack.mop_applications VALUES ('quietly_applying', 'awaiting_response');
+
+
+# A third table with no auto-PK turn-off -- left alone, must survive the
+# restart fully intact (its owned sequence must NOT get caught up in
+# orphan-cleanup just because it shares a schema with a tombstoned table).
+statement ok
+CREATE TABLE clickclack.kostya_iceberg_review_log(note TEXT);
+
+
+statement count 2
+INSERT INTO clickclack.kostya_iceberg_review_log VALUES
+  ('reviewed iceberg-pr #4242, loves SOLID ironically'),
+  ('reviewed iceberg-pr #4243, eyes on MOP');
+
+
+# Standalone CREATE SEQUENCE -- no owner_table_id, lives directly under
+# SchemaDependency.sequences. Must also survive restart unaffected.
+statement ok
+CREATE SEQUENCE clickclack.kostya_iceberg_review_id START WITH 100 INCREMENT BY 5;
+
+
+query
+SELECT nextval('clickclack.kostya_iceberg_review_id');
+----
+nextval
+100
+
+
+# crash_on_drop returns Result{} BEFORE DropTask::Schedule runs (see
+# LocalCatalog::DropTable, post-WriteTombstone / post-UnregisterObject).
+# Tombstone is durable; on-disk owned-sequence definitions are not cleaned.
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+statement error connection closed
+DROP TABLE clickclack.icebergs_only;
+
+
+# --- restart #1 ---
+
+# Pre-fix: this retry never succeeds.
+#   - SDB_DEV: SDB_ASSERT(it != _object_dependencies.end()) fires while
+#     RegisterSequences is loading the orphan owned-sequence under
+#     clickclack.icebergs_only's now-missing TableDependency entry.
+#   - release: end() deref + Clone() corrupts the dep-map control bytes,
+#     subsequent finds spin forever, RETRY_ATTEMPTS exhausts, harness
+#     reports "connection closed" / timeout.
+connection after_orphan_seq_1
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+# The tombstoned table is gone post-recovery (the rescheduled DropTask
+# finished cleanup that the pre-crash run never got to).
+connection after_orphan_seq_1
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'icebergs_only';
+----
+count
+0
+
+
+# The OTHER auto-PK table is untouched -- its owned sequence is not
+# orphaned, so RegisterSequences must register it normally and inserts
+# must keep advancing the counter from where they left off.
+connection after_orphan_seq_1
+query
+SELECT role, status FROM clickclack.mop_applications;
+----
+role	status
+quietly_applying	awaiting_response
+
+
+connection after_orphan_seq_1
+statement count 1
+INSERT INTO clickclack.mop_applications VALUES ('still_quietly_applying', 'still_awaiting');
+
+
+connection after_orphan_seq_1
+query
+SELECT COUNT(*) FROM clickclack.mop_applications;
+----
+count
+2
+
+
+# The unrelated auto-PK table is fully intact.
+connection after_orphan_seq_1
+query
+SELECT COUNT(*) FROM clickclack.kostya_iceberg_review_log;
+----
+count
+2
+
+
+# Standalone sequence kept its counter (continues at 105, not 100, not 1).
+connection after_orphan_seq_1
+query
+SELECT nextval('clickclack.kostya_iceberg_review_id');
+----
+nextval
+105
+
+
+# Re-create the dropped table under the same name. If the orphan owned
+# sequence had been "skipped + left alive" (the GPT-style band-aid fix)
+# instead of cleaned up, its on-disk definition would still squat in the
+# Sequence CF and the resolution table -- the new auto-PK provisioning
+# would either collide on the implicit-sequence name or, worse, the new
+# table's INSERT would attach to the leftover counter value and skip ids.
+connection after_orphan_seq_1
+statement ok
+CREATE TABLE clickclack.icebergs_only(metric TEXT, value INT);
+
+
+connection after_orphan_seq_1
+statement count 1
+INSERT INTO clickclack.icebergs_only VALUES ('reviewing_iceberg_again', 1);
+
+
+connection after_orphan_seq_1
+query
+SELECT COUNT(*) FROM clickclack.icebergs_only;
+----
+count
+1
+
+
+# Second crash, this time targeting a table that has data in flight too --
+# proves the fix isn't a one-shot "first restart cleans everything" but
+# holds across repeated drop/restart cycles.
+connection after_orphan_seq_1
+statement count 5000
+INSERT INTO clickclack.icebergs_only
+  SELECT 'iceberg_partition_audit_' || i::TEXT, i
+    FROM generate_series(1, 5000) AS s(i);
+
+
+connection after_orphan_seq_1
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+connection after_orphan_seq_1
+statement error connection closed
+DROP TABLE clickclack.icebergs_only;
+
+
+# --- restart #2 ---
+
+connection after_orphan_seq_2
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_orphan_seq_2
+query
+SELECT COUNT(*) FROM pg_class WHERE relname = 'icebergs_only';
+----
+count
+0
+
+
+# Schema is healthy: drop it cleanly (CASCADE through the surviving
+# tables / sequences, no leftover orphan definitions to trip the
+# cascade walk).
+connection after_orphan_seq_2
+statement ok
+DROP TABLE clickclack.mop_applications;
+
+
+connection after_orphan_seq_2
+statement ok
+DROP TABLE clickclack.kostya_iceberg_review_log;
+
+
+connection after_orphan_seq_2
+statement ok
+DROP SEQUENCE clickclack.kostya_iceberg_review_id;
+
+
+connection after_orphan_seq_2
+statement ok
+DROP SCHEMA clickclack;

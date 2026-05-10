@@ -40,12 +40,10 @@ class SereneDBPhysicalTruncate final : public duckdb::PhysicalOperator {
                            std::shared_ptr<catalog::Table> table,
                            duckdb::idx_t estimated_cardinality);
 
-  bool IsSource() const override { return true; }
-  duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
-    duckdb::ClientContext& context) const override;
+  bool IsSource() const final { return true; }
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
-    duckdb::OperatorSourceInput& input) const override;
+    duckdb::OperatorSourceInput& input) const final;
 
  private:
   std::shared_ptr<catalog::Table> _table;

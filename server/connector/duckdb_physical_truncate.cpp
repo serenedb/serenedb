@@ -28,13 +28,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-namespace {
-
-struct TruncateSourceState : public duckdb::GlobalSourceState {
-  bool finished = false;
-};
-
-}  // namespace
 
 SereneDBPhysicalTruncate::SereneDBPhysicalTruncate(
   duckdb::PhysicalPlan& plan, std::shared_ptr<catalog::Table> table,
@@ -44,29 +37,13 @@ SereneDBPhysicalTruncate::SereneDBPhysicalTruncate(
                              estimated_cardinality),
     _table(std::move(table)) {}
 
-duckdb::unique_ptr<duckdb::GlobalSourceState>
-SereneDBPhysicalTruncate::GetGlobalSourceState(
-  duckdb::ClientContext& context) const {
-  return duckdb::make_uniq<TruncateSourceState>();
-}
-
 duckdb::SourceResultType SereneDBPhysicalTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
-  auto& state = input.global_state.Cast<TruncateSourceState>();
-  if (state.finished) {
-    return duckdb::SourceResultType::FINISHED;
-  }
-
   auto& conn_ctx = GetSereneDBContext(context.client);
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   TruncateResolvedTable(conn_ctx, snapshot, _table);
-
-  // The bound LogicalDelete sets return_type=NOTHING for is_truncate, so
-  // PG's CommandComplete is "TRUNCATE TABLE" with no count -- we don't
-  // emit any rows. Cardinality stays 0; one more call returns FINISHED.
-  state.finished = true;
-  return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+  return duckdb::SourceResultType::FINISHED;
 }
 
 }  // namespace sdb::connector

@@ -59,7 +59,8 @@ DROP TABLE makak;
 statement error
 TRUNCATE does_not_exist;
 ----
-db error: ERROR: relation "does_not_exist" does not exist
+db error: ERROR: Table with name does_not_exist does not exist!
+Did you mean "pg_stat_user_indexes"?
 
 
 # TRUNCATE a view (should fail)
@@ -72,7 +73,7 @@ CREATE VIEW vedernikoff_view AS SELECT * FROM vedernikoff_base;
 statement error
 TRUNCATE vedernikoff_view;
 ----
-db error: ERROR: "vedernikoff_view" is not a table
+db error: ERROR: Can only delete from base table
 
 
 # TRUNCATE with schema-qualified name
@@ -274,14 +275,14 @@ count
 
 # inverted index path: every quote mentions vedernikoff
 query
-SELECT count(*) FROM vedernikoff_quote_idx WHERE PHRASE(quote, 'vedernikoff');
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----
 count
 10000
 
 # inverted index path: only one of the 5 sentences mentions babsky+vedernikoff
 query
-SELECT count(*) FROM vedernikoff_quote_idx WHERE PHRASE(quote, 'babsky want to hire vedernikoff');
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
 ----
 count
 2000
@@ -305,13 +306,13 @@ count
 
 # Inverted index must not surface any old rows.
 query
-SELECT count(*) FROM vedernikoff_quote_idx WHERE PHRASE(quote, 'vedernikoff');
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----
 count
 0
 
 query
-SELECT count(*) FROM vedernikoff_quote_idx WHERE PHRASE(quote, 'babsky want to hire vedernikoff');
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
 ----
 count
 0
@@ -338,13 +339,13 @@ count
 125
 
 query
-SELECT count(*) FROM vedernikoff_quote_idx WHERE PHRASE(quote, 'vedernikoff');
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'vedernikoff');
 ----
 count
 500
 
 query
-SELECT count(*) FROM vedernikoff_quote_idx WHERE PHRASE(quote, 'babsky want to hire vedernikoff');
+SELECT count(*) FROM vedernikoff_quote_idx WHERE phrase_matches(quote, 'babsky want to hire vedernikoff');
 ----
 count
 250
@@ -729,3 +730,44 @@ DROP TABLE mironov;
 
 statement ok
 DROP TABLE babsky_tx;
+
+
+statement ok
+CREATE TABLE explain_t (id INT PRIMARY KEY, v TEXT);
+
+statement count 3
+INSERT INTO explain_t VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+query
+EXPLAIN DELETE FROM explain_t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_TABLE_FULLSCAN  │
+│    ────────────────────   │
+│         Table: explain_t  │
+│                           │
+│          ~3 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN TRUNCATE explain_t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└───────────────────────────┘
+
+
+query
+EXPLAIN TRUNCATE TABLE explain_t;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         EXTENSION         │
+└───────────────────────────┘

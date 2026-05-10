@@ -28,7 +28,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-
 namespace {
 
 struct TruncateSourceState : public duckdb::GlobalSourceState {

@@ -39,7 +39,6 @@ class Table;
 
 }  // namespace catalog
 }  // namespace sdb
-
 namespace sdb::connector {
 
 // Register serenedb_truncate() PRAGMA + table function with DuckDB.

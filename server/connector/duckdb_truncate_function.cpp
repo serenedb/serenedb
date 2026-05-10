@@ -68,7 +68,7 @@ void TruncateResolvedTable(
       ERR_MSG("TRUNCATE: row range delete failed: ", s.ToString()));
   }
 
-  auto index_shards = snapshot->GetIndexShardsByTable(table->GetId());
+  auto index_shards = snapshot->GetIndexShardsByRelation(table->GetId());
 
   // Phase 1: queue per-shard range deletes AND, for every inverted-index
   // shard, lock its commit mutex via TruncateBegin -- mirrors the legacy
@@ -154,9 +154,9 @@ void ParseInputs(const duckdb::vector<duckdb::Value>& inputs,
   data.schemas.reserve(schemas_v.size());
   data.tables.reserve(tables_v.size());
   for (size_t i = 0; i < tables_v.size(); ++i) {
-    data.schemas.emplace_back(
-      schemas_v[i].IsNull() ? std::string{}
-                            : schemas_v[i].GetValue<std::string>());
+    data.schemas.emplace_back(schemas_v[i].IsNull()
+                                ? std::string{}
+                                : schemas_v[i].GetValue<std::string>());
     if (tables_v[i].IsNull()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG("TRUNCATE: NULL table name"));
@@ -195,10 +195,6 @@ void TruncateOne(ConnectionContext& conn_ctx,
                     ERR_MSG("\"", table_name, "\" is not a table"));
   }
   auto table = basics::downCast<catalog::Table>(std::move(relation));
-  if (table->GetTableType() == TableType::File) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("cannot truncate file table \"", table_name, "\""));
-  }
 
   TruncateResolvedTable(conn_ctx, snapshot, table);
 }

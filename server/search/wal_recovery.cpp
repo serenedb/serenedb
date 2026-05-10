@@ -183,11 +183,12 @@ void FlushShard(ShardState& s,
   }
 
   auto trx = s.shard->GetTransaction();
-  auto analyzer_provider = connector::MakeAnalyzerProvider(snapshot, *s.index);
+  auto tokenizer_provider =
+    connector::MakeTokenizerProvider(snapshot, *s.index);
   auto json_paths_provider =
     connector::MakeJsonPathsProvider(snapshot, *s.index);
   connector::SearchSinkInsertBaseImpl insert_sink{
-    trx, std::move(analyzer_provider), std::move(json_paths_provider),
+    trx, std::move(tokenizer_provider), std::move(json_paths_provider),
     s.indexed_column_ids};
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 

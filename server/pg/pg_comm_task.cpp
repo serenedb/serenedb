@@ -37,9 +37,11 @@
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <duckdb/parser/query_node/delete_query_node.hpp>
 #include <duckdb/parser/sql_statement.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
@@ -1366,7 +1368,7 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
     case StatementType::UPDATE_STATEMENT:
       return make("UPDATE");
     case StatementType::DELETE_STATEMENT:
-      if (prepared.data && prepared.data->properties.is_truncate) {
+      if (unbound->Cast<duckdb::DeleteStatement>().node->is_truncate) {
         return make("TRUNCATE TABLE");
       }
       return make("DELETE");

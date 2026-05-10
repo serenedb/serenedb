@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "gtest/gtest.h"
+#include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 
@@ -337,4 +338,75 @@ TEST(solr_synonyms_tests, parsing) {
       ASSERT_EQ(expected, synonyms_lines);
     }
   }
+}
+
+TEST(solr_synonyms_tests, from_text_owning_storage) {
+  auto result = SolrSynonymsTokenizer::FromText("ipod, i-pod, i pod\nfoo => bar");
+  ASSERT_TRUE(result);
+  auto& stream = **result;
+
+  auto* term = irs::get<irs::TermAttr>(stream);
+  auto* inc = irs::get<irs::IncAttr>(stream);
+
+  // Bidirectional line: "ipod" expands to all three variants.
+  ASSERT_TRUE(stream.reset("ipod"));
+  ASSERT_TRUE(stream.next());
+  ASSERT_EQ(1, inc->value);
+  std::vector<std::string> emitted;
+  emitted.emplace_back(irs::ViewCast<char>(term->value));
+  while (stream.next()) {
+    ASSERT_EQ(0, inc->value);
+    emitted.emplace_back(irs::ViewCast<char>(term->value));
+  }
+  std::sort(emitted.begin(), emitted.end());
+  ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), emitted);
+
+  // One-way mapping: "foo" -> "bar".
+  ASSERT_TRUE(stream.reset("foo"));
+  ASSERT_TRUE(stream.next());
+  ASSERT_EQ("bar", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream.next());
+
+  // Unknown input passes through unchanged.
+  ASSERT_TRUE(stream.reset("baz"));
+  ASSERT_TRUE(stream.next());
+  ASSERT_EQ("baz", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream.next());
+}
+
+TEST(solr_synonyms_tests, from_text_invalid_input) {
+  auto result = SolrSynonymsTokenizer::FromText("foo,bar=>=>baz");
+  ASSERT_FALSE(result);
+  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+}
+
+TEST(solr_synonyms_tests, factory_make_json) {
+  auto analyzer = irs::analysis::analyzers::Get(
+    SolrSynonymsTokenizer::type_name(), irs::Type<irs::text_format::Json>::get(),
+    R"({"synonyms": "ipod, i-pod, i pod"})");
+  ASSERT_NE(nullptr, analyzer);
+
+  auto* term = irs::get<irs::TermAttr>(*analyzer);
+  ASSERT_TRUE(analyzer->reset("ipod"));
+  std::vector<std::string> emitted;
+  while (analyzer->next()) {
+    emitted.emplace_back(irs::ViewCast<char>(term->value));
+  }
+  std::sort(emitted.begin(), emitted.end());
+  ASSERT_EQ((std::vector<std::string>{"i pod", "i-pod", "ipod"}), emitted);
+}
+
+TEST(solr_synonyms_tests, factory_make_json_missing_field) {
+  auto analyzer = irs::analysis::analyzers::Get(
+    SolrSynonymsTokenizer::type_name(), irs::Type<irs::text_format::Json>::get(),
+    R"({})");
+  ASSERT_EQ(nullptr, analyzer);
+}
+
+TEST(solr_synonyms_tests, factory_normalize_json) {
+  std::string normalized;
+  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
+    normalized, SolrSynonymsTokenizer::type_name(),
+    irs::Type<irs::text_format::Json>::get(), R"({"synonyms": "foo,bar"})"));
+  ASSERT_FALSE(normalized.empty());
 }

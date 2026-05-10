@@ -21,7 +21,11 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <vpack/builder.h>
+#include <vpack/slice.h>
 
+#include <memory>
+#include <string>
 #include <string_view>
 
 #include "analyzers.hpp"
@@ -44,7 +48,22 @@ class WordnetSynonymsTokenizer final
 
   static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
 
+  // Test ctor: caller owns the storage that values' string_views point into.
   explicit WordnetSynonymsTokenizer(SynonymsMap&& mapping);
+
+  // Production: instance owns `text` and the map derived from it.
+  static sdb::ResultOr<std::unique_ptr<WordnetSynonymsTokenizer>> FromText(
+    std::string text);
+
+  // Factory hooks registered with iresearch's analyzer registry.
+  static Analyzer::ptr MakeVPack(vpack::Slice slice);
+  static Analyzer::ptr MakeVPack(std::string_view args);
+  static Analyzer::ptr MakeJson(std::string_view args);
+  static bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* builder);
+  static bool NormalizeVPackConfig(std::string_view args, std::string& config);
+  static bool NormalizeJsonConfig(std::string_view args, std::string& config);
+  static void init();
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -52,7 +71,10 @@ class WordnetSynonymsTokenizer final
   bool reset(std::string_view data) final;
 
  private:
-  const SynonymsMap _mapping;
+  // When constructed via FromText / factory, `_text_storage` keeps the data
+  // alive that `_mapping`'s value views point at.
+  std::string _text_storage;
+  SynonymsMap _mapping;
 
   using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
   attributes _attrs;

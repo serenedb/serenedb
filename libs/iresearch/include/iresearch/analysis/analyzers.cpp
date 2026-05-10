@@ -40,12 +40,14 @@
 #include "iresearch/analysis/pattern_tokenizer.hpp"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/analysis/solr_synonyms_tokenizer.hpp"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
 #include "iresearch/analysis/union_tokenizer.hpp"
 #include "iresearch/analysis/wildcard_analyzer.hpp"
+#include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -278,6 +280,8 @@ void Init() {
   MultiDelimitedTokenizer::init();
   GeoAnalyzer::init();
   WildcardAnalyzer::init();
+  SolrSynonymsTokenizer::init();
+  WordnetSynonymsTokenizer::init();
 }
 
 }  // namespace analyzers

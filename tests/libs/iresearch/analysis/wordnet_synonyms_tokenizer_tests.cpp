@@ -21,6 +21,7 @@
 #include <stdexcept>
 
 #include "gtest/gtest.h"
+#include "iresearch/analysis/analyzers.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/wordnet_synonyms_tokenizer.hpp"
 
@@ -338,4 +339,61 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
   auto result = WordnetSynonymsTokenizer::Parse(data0);
   ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
   ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+}
+
+TEST(wordnet_synonyms_tests, from_text_owning_storage) {
+  auto result = WordnetSynonymsTokenizer::FromText(
+    "s(100000002,1,'come',v,1,0).\ns(100000002,2,'advance',v,1,0).");
+  ASSERT_TRUE(result);
+  auto& stream = **result;
+
+  auto* term = irs::get<irs::TermAttr>(stream);
+
+  ASSERT_TRUE(stream.reset("come"));
+  ASSERT_TRUE(stream.next());
+  ASSERT_EQ("100000002", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream.next());
+
+  ASSERT_TRUE(stream.reset("advance"));
+  ASSERT_TRUE(stream.next());
+  ASSERT_EQ("100000002", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(stream.next());
+
+  ASSERT_FALSE(stream.reset("missing"));
+}
+
+TEST(wordnet_synonyms_tests, from_text_invalid_input) {
+  auto result = WordnetSynonymsTokenizer::FromText("not a wordnet record");
+  ASSERT_FALSE(result);
+  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+}
+
+TEST(wordnet_synonyms_tests, factory_make_json) {
+  auto analyzer = irs::analysis::analyzers::Get(
+    WordnetSynonymsTokenizer::type_name(),
+    irs::Type<irs::text_format::Json>::get(),
+    R"({"synonyms": "s(100000002,1,'come',v,1,0)."})");
+  ASSERT_NE(nullptr, analyzer);
+
+  auto* term = irs::get<irs::TermAttr>(*analyzer);
+  ASSERT_TRUE(analyzer->reset("come"));
+  ASSERT_TRUE(analyzer->next());
+  ASSERT_EQ("100000002", irs::ViewCast<char>(term->value));
+  ASSERT_FALSE(analyzer->next());
+}
+
+TEST(wordnet_synonyms_tests, factory_make_json_missing_field) {
+  auto analyzer = irs::analysis::analyzers::Get(
+    WordnetSynonymsTokenizer::type_name(),
+    irs::Type<irs::text_format::Json>::get(), R"({})");
+  ASSERT_EQ(nullptr, analyzer);
+}
+
+TEST(wordnet_synonyms_tests, factory_normalize_json) {
+  std::string normalized;
+  ASSERT_TRUE(irs::analysis::analyzers::Normalize(
+    normalized, WordnetSynonymsTokenizer::type_name(),
+    irs::Type<irs::text_format::Json>::get(),
+    R"({"synonyms": "s(100000002,1,'come',v,1,0)."})"));
+  ASSERT_FALSE(normalized.empty());
 }

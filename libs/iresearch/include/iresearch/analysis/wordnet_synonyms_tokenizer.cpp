@@ -21,15 +21,20 @@
 #include "wordnet_synonyms_tokenizer.hpp"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 #include <re2/re2.h>
+#include <vpack/builder.h>
+#include <vpack/parser.h>
 
 #include <string_view>
 #include <utility>
 
+#include "basics/logger/logger.h"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -120,6 +125,144 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
 WordnetSynonymsTokenizer::WordnetSynonymsTokenizer(
   WordnetSynonymsTokenizer::SynonymsMap&& mapping)
   : _mapping(std::move(mapping)) {}
+
+sdb::ResultOr<std::unique_ptr<WordnetSynonymsTokenizer>>
+WordnetSynonymsTokenizer::FromText(std::string text) {
+  auto tokenizer = std::make_unique<WordnetSynonymsTokenizer>(SynonymsMap{});
+
+  // Order matters: views in `_mapping`'s values point into `_text_storage`,
+  // so the backing buffer must be moved into place before parsing.
+  tokenizer->_text_storage = std::move(text);
+
+  auto mapping = Parse(tokenizer->_text_storage);
+  if (!mapping) {
+    return std::unexpected{std::move(mapping.error())};
+  }
+  tokenizer->_mapping = std::move(*mapping);
+
+  return tokenizer;
+}
+
+namespace {
+
+constexpr std::string_view kSynonymsField = "synonyms";
+
+bool ParseVPackOptions(const vpack::Slice slice, std::string& synonyms_text) {
+  if (!slice.isObject()) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Slice for wordnet_synonyms is not an object");
+    return false;
+  }
+
+  const auto field = slice.get(kSynonymsField);
+  if (field.isNone() || !field.isString()) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Missing or non-string 'synonyms' while constructing "
+              "wordnet_synonyms from VPack arguments");
+    return false;
+  }
+
+  synonyms_text.assign(field.stringView());
+  return true;
+}
+
+}  // namespace
+
+Analyzer::ptr WordnetSynonymsTokenizer::MakeVPack(vpack::Slice slice) {
+  std::string synonyms_text;
+  if (!ParseVPackOptions(slice, synonyms_text)) {
+    return nullptr;
+  }
+  auto result = FromText(std::move(synonyms_text));
+  if (!result) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Failed to parse synonyms while constructing wordnet_synonyms: ",
+              result.error().errorMessage());
+    return nullptr;
+  }
+  return std::move(*result);
+}
+
+Analyzer::ptr WordnetSynonymsTokenizer::MakeVPack(std::string_view args) {
+  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
+  return MakeVPack(slice);
+}
+
+Analyzer::ptr WordnetSynonymsTokenizer::MakeJson(std::string_view args) {
+  try {
+    if (IsNull(args)) {
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                "Null arguments while constructing wordnet_synonyms");
+      return nullptr;
+    }
+    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
+    return MakeVPack(vpack->slice());
+  } catch (const vpack::Exception& ex) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat("Caught error '", ex.what(),
+                   "' while constructing wordnet_synonyms from JSON"));
+  } catch (...) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Caught error while constructing wordnet_synonyms from JSON");
+  }
+  return nullptr;
+}
+
+bool WordnetSynonymsTokenizer::NormalizeVPackConfig(vpack::Slice slice,
+                                                    vpack::Builder* builder) {
+  std::string synonyms_text;
+  if (!ParseVPackOptions(slice, synonyms_text)) {
+    return false;
+  }
+  vpack::ObjectBuilder object(builder);
+  builder->add(kSynonymsField, synonyms_text);
+  return true;
+}
+
+bool WordnetSynonymsTokenizer::NormalizeVPackConfig(std::string_view args,
+                                                    std::string& config) {
+  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
+  vpack::Builder builder;
+  if (NormalizeVPackConfig(slice, &builder)) {
+    config.assign(builder.slice().startAs<char>(), builder.slice().byteSize());
+    return true;
+  }
+  return false;
+}
+
+bool WordnetSynonymsTokenizer::NormalizeJsonConfig(std::string_view args,
+                                                   std::string& definition) {
+  try {
+    if (IsNull(args)) {
+      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                "Null arguments while normalizing wordnet_synonyms");
+      return false;
+    }
+    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
+    vpack::Builder builder;
+    if (NormalizeVPackConfig(vpack->slice(), &builder)) {
+      definition = builder.toString();
+      return !definition.empty();
+    }
+  } catch (const vpack::Exception& ex) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat("Caught error '", ex.what(),
+                   "' while normalizing wordnet_synonyms from JSON"));
+  } catch (...) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Caught error while normalizing wordnet_synonyms from JSON");
+  }
+  return false;
+}
+
+void WordnetSynonymsTokenizer::init() {
+  REGISTER_ANALYZER_VPACK(WordnetSynonymsTokenizer, MakeVPack,
+                          NormalizeVPackConfig);
+  REGISTER_ANALYZER_JSON(WordnetSynonymsTokenizer, MakeJson,
+                         NormalizeJsonConfig);
+}
 
 bool WordnetSynonymsTokenizer::next() {
   if (!_term_exists) {

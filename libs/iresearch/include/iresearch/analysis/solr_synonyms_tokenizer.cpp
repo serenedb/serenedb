@@ -176,14 +176,12 @@ bool ParseVPackOptions(const vpack::Slice slice, std::string& synonyms_text) {
   return true;
 }
 
-}  // namespace
-
-Analyzer::ptr SolrSynonymsTokenizer::MakeVPack(vpack::Slice slice) {
+Analyzer::ptr MakeVPack(vpack::Slice slice) {
   std::string synonyms_text;
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return nullptr;
   }
-  auto result = FromText(std::move(synonyms_text));
+  auto result = SolrSynonymsTokenizer::FromText(std::move(synonyms_text));
   if (!result) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to parse synonyms while constructing solr_synonyms: ",
@@ -193,12 +191,12 @@ Analyzer::ptr SolrSynonymsTokenizer::MakeVPack(vpack::Slice slice) {
   return std::move(*result);
 }
 
-Analyzer::ptr SolrSynonymsTokenizer::MakeVPack(std::string_view args) {
+Analyzer::ptr MakeVPack(std::string_view args) {
   vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
   return MakeVPack(slice);
 }
 
-Analyzer::ptr SolrSynonymsTokenizer::MakeJson(std::string_view args) {
+Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
@@ -219,8 +217,7 @@ Analyzer::ptr SolrSynonymsTokenizer::MakeJson(std::string_view args) {
   return nullptr;
 }
 
-bool SolrSynonymsTokenizer::NormalizeVPackConfig(vpack::Slice slice,
-                                                 vpack::Builder* builder) {
+bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* builder) {
   std::string synonyms_text;
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return false;
@@ -230,8 +227,7 @@ bool SolrSynonymsTokenizer::NormalizeVPackConfig(vpack::Slice slice,
   return true;
 }
 
-bool SolrSynonymsTokenizer::NormalizeVPackConfig(std::string_view args,
-                                                 std::string& config) {
+bool NormalizeVPackConfig(std::string_view args, std::string& config) {
   vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
   vpack::Builder builder;
   if (NormalizeVPackConfig(slice, &builder)) {
@@ -241,8 +237,7 @@ bool SolrSynonymsTokenizer::NormalizeVPackConfig(std::string_view args,
   return false;
 }
 
-bool SolrSynonymsTokenizer::NormalizeJsonConfig(std::string_view args,
-                                                std::string& definition) {
+bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
@@ -266,6 +261,8 @@ bool SolrSynonymsTokenizer::NormalizeJsonConfig(std::string_view args,
   }
   return false;
 }
+
+}  // namespace
 
 void SolrSynonymsTokenizer::init() {
   REGISTER_ANALYZER_VPACK(SolrSynonymsTokenizer, MakeVPack,

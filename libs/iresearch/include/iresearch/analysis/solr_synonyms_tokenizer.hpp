@@ -21,8 +21,6 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
-#include <vpack/builder.h>
-#include <vpack/slice.h>
 
 #include "analyzers.hpp"
 #include "basics/result.h"
@@ -80,13 +78,7 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
   static sdb::ResultOr<std::unique_ptr<SolrSynonymsTokenizer>> FromText(
     std::string text);
 
-  // Factory hooks registered with iresearch's analyzer registry.
-  static Analyzer::ptr MakeVPack(vpack::Slice slice);
-  static Analyzer::ptr MakeVPack(std::string_view args);
-  static Analyzer::ptr MakeJson(std::string_view args);
-  static bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* builder);
-  static bool NormalizeVPackConfig(std::string_view args, std::string& config);
-  static bool NormalizeJsonConfig(std::string_view args, std::string& config);
+  // Triggers registration with iresearch's analyzer registry.
   static void init();
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {

@@ -166,14 +166,12 @@ bool ParseVPackOptions(const vpack::Slice slice, std::string& synonyms_text) {
   return true;
 }
 
-}  // namespace
-
-Analyzer::ptr WordnetSynonymsTokenizer::MakeVPack(vpack::Slice slice) {
+Analyzer::ptr MakeVPack(vpack::Slice slice) {
   std::string synonyms_text;
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return nullptr;
   }
-  auto result = FromText(std::move(synonyms_text));
+  auto result = WordnetSynonymsTokenizer::FromText(std::move(synonyms_text));
   if (!result) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to parse synonyms while constructing wordnet_synonyms: ",
@@ -183,12 +181,12 @@ Analyzer::ptr WordnetSynonymsTokenizer::MakeVPack(vpack::Slice slice) {
   return std::move(*result);
 }
 
-Analyzer::ptr WordnetSynonymsTokenizer::MakeVPack(std::string_view args) {
+Analyzer::ptr MakeVPack(std::string_view args) {
   vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
   return MakeVPack(slice);
 }
 
-Analyzer::ptr WordnetSynonymsTokenizer::MakeJson(std::string_view args) {
+Analyzer::ptr MakeJson(std::string_view args) {
   try {
     if (IsNull(args)) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
@@ -209,8 +207,7 @@ Analyzer::ptr WordnetSynonymsTokenizer::MakeJson(std::string_view args) {
   return nullptr;
 }
 
-bool WordnetSynonymsTokenizer::NormalizeVPackConfig(vpack::Slice slice,
-                                                    vpack::Builder* builder) {
+bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* builder) {
   std::string synonyms_text;
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return false;
@@ -220,8 +217,7 @@ bool WordnetSynonymsTokenizer::NormalizeVPackConfig(vpack::Slice slice,
   return true;
 }
 
-bool WordnetSynonymsTokenizer::NormalizeVPackConfig(std::string_view args,
-                                                    std::string& config) {
+bool NormalizeVPackConfig(std::string_view args, std::string& config) {
   vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
   vpack::Builder builder;
   if (NormalizeVPackConfig(slice, &builder)) {
@@ -231,8 +227,7 @@ bool WordnetSynonymsTokenizer::NormalizeVPackConfig(std::string_view args,
   return false;
 }
 
-bool WordnetSynonymsTokenizer::NormalizeJsonConfig(std::string_view args,
-                                                   std::string& definition) {
+bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   try {
     if (IsNull(args)) {
       SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
@@ -256,6 +251,8 @@ bool WordnetSynonymsTokenizer::NormalizeJsonConfig(std::string_view args,
   }
   return false;
 }
+
+}  // namespace
 
 void WordnetSynonymsTokenizer::init() {
   REGISTER_ANALYZER_VPACK(WordnetSynonymsTokenizer, MakeVPack,

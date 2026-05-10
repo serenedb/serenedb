@@ -206,10 +206,15 @@ inline constexpr OptionInfo kBufferSize{
 
 // Synonyms (Solr / WordNet)
 
-inline constexpr OptionInfo kSynonyms{
+inline constexpr OptionInfo kSolrSynonyms{
   "synonyms", OptionInfo::RequiredTag<std::string_view>{},
-  "Inline synonyms file content (Solr comma+=> format for solr_synonyms; "
-  "WordNet Prolog s(...) records for wordnet_synonyms)"};
+  "Inline Solr-format synonyms file content: one rule per line, comma-"
+  "separated terms; `=>` separates LHS from RHS for one-way mappings"};
+
+inline constexpr OptionInfo kWordnetSynonyms{
+  "synonyms", OptionInfo::RequiredTag<std::string_view>{},
+  "Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_"
+  "type,sense_number,tag_count).` record per line"};
 
 // Per-tokenizer option arrays
 
@@ -256,9 +261,9 @@ inline constexpr OptionInfo kPatternOptions[] = {kPattern, kGroup};
 inline constexpr OptionInfo kPathHierarchyOptions[] = {
   kPathDelimiter, kPathReplacement, kReverse, kSkip, kBufferSize};
 
-inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSynonyms};
+inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSolrSynonyms};
 
-inline constexpr OptionInfo kWordnetSynonymsOptions[] = {kSynonyms};
+inline constexpr OptionInfo kWordnetSynonymsOptions[] = {kWordnetSynonyms};
 
 // Groups
 

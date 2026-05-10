@@ -444,7 +444,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
       uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
       
-      next.doc = ReadByteSize124((encoding & 3) + 1, in);
+      next.doc += ReadByteSize124((encoding & 3) + 1, in);
       next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
 
       if constexpr (FieldTraits::Position()) {

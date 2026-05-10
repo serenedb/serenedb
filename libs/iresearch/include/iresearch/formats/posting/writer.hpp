@@ -298,7 +298,8 @@ inline void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) 
   const doc_id_t doc = _doc.block_last;
   const uint64_t doc_ptr = _doc_out->Position();
 
-  uint32_t doc_size = ByteSizeFor124(doc);  // - doc_.skip_doc[level];
+  auto doc_delta = doc -  _doc.skip_doc[level];
+  uint32_t doc_size = ByteSizeFor124(doc_delta);
   auto doc_ptr_delta = doc_ptr - _doc.skip_ptr[level];
   uint32_t doc_ptr_code = ByteSize1248ForSkipEntry(doc_ptr_delta);
 
@@ -343,7 +344,7 @@ inline void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) 
   // 2 encoding bytes
   out.WriteU16((doc_size - 1) | (doc_ptr_code << 2) | (pos_ptr_code << 4) | (pay_ptr_code << 6) | (freq_code << 8) | (norm_code << 10));
 
-  Serialize124(doc_size, doc, out);
+  Serialize124(doc_size, doc_delta, out);
   Serialize1248ForSkipEntry(doc_ptr_code, doc_ptr_delta, out);
 
   if (_features.HasPosition()) {
@@ -434,6 +435,7 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
 
 inline void PostingsWriterBase::BeginTerm(TermMetaImpl& meta) {
   meta.doc_start = _doc_out->Position();
+  std::fill_n(_doc.skip_doc, doc_limits::kMaxSkipLevels, doc_limits::invalid());
   std::fill_n(_doc.skip_ptr, doc_limits::kMaxSkipLevels, meta.doc_start);
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);

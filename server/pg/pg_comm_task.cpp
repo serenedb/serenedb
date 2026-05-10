@@ -1800,7 +1800,11 @@ void PgSQLCommTask<T>::Start() {
 template<rest::SocketType T>
 void PgSQLCommTask<T>::SendAsync(message::SequenceView data) noexcept {
   if (_send_should_close.load(std::memory_order_acquire)) {
-    Base::Close(this->_close_error);
+    asio_ns::dispatch(
+      this->_protocol->context.io_context,
+      [self = this->shared_from_this(), ec = this->_close_error] {
+        basics::downCast<PgSQLCommTask<T>>(*self).Base::Close(ec);
+      });
     return;
   }
   if (data.Empty()) {

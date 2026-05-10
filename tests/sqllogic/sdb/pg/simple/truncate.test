@@ -443,42 +443,54 @@ count
 statement ok
 INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
 
-# multi-table
+# multi-table -- pg-wire-extended can't Prepare a MultiStatement, so all
+# multi-table TRUNCATE forms (and the SELECTs that verify their effect)
+# are skipped under that engine.
+skipif pg-wire-extended
 statement ok
 TRUNCATE babsky, gayazov;
 
+skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
 a	b
 0	0
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO babsky VALUES (1, 'a');
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c');
 
 # multi-table with TABLE keyword
+skipif pg-wire-extended
 statement ok
 TRUNCATE TABLE babsky, gayazov;
 
+skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
 a	b
 0	0
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO babsky VALUES (1, 'a');
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c');
 
 # multi-table with per-relation ONLY
+skipif pg-wire-extended
 statement ok
 TRUNCATE ONLY babsky, ONLY gayazov;
 
+skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM babsky) AS a, (SELECT count(*) FROM gayazov) AS b;
 ----
@@ -541,22 +553,28 @@ count
 0
 
 # Reset gayazov/kornaukhov so the kitchen sink starts with all three holding rows.
+skipif pg-wire-extended
 statement ok
 TRUNCATE gayazov, kornaukhov;
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO babsky VALUES (1, 'a'), (2, 'b');
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO gayazov VALUES (1, 'c'), (2, 'd');
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO kornaukhov VALUES (1, 'e'), (2, 'f');
 
 # kitchen sink: TABLE + ONLY + * + multi-table + RESTART IDENTITY + CASCADE
+skipif pg-wire-extended
 statement ok
 TRUNCATE TABLE ONLY babsky, gayazov *, kornaukhov RESTART IDENTITY CASCADE;
 
+skipif pg-wire-extended
 query
 SELECT
   (SELECT count(*) FROM babsky) AS a,
@@ -704,21 +722,26 @@ INSERT INTO mironov VALUES (300, 'tx2'), (400, 'tx2');
 statement ok
 INSERT INTO babsky_tx VALUES (1), (2);
 
+skipif pg-wire-extended
 statement ok
 BEGIN;
 
+skipif pg-wire-extended
 statement ok
 TRUNCATE mironov, babsky_tx;
 
+skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM mironov) AS m, (SELECT count(*) FROM babsky_tx) AS b;
 ----
 m	b
 0	0
 
+skipif pg-wire-extended
 statement ok
 ROLLBACK;
 
+skipif pg-wire-extended
 query
 SELECT (SELECT count(*) FROM mironov) AS m, (SELECT count(*) FROM babsky_tx) AS b;
 ----

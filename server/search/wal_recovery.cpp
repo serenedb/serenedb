@@ -293,11 +293,7 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
 
   rocksdb::Status MergeCF(uint32_t cf_id, const rocksdb::Slice& /*key*/,
                           const rocksdb::Slice& /*value*/) final {
-    if (cf_id != _default_cf_id) {
-      return rocksdb::Status::OK();
-    }
-    return rocksdb::Status::InvalidArgument(
-      "WAL recovery: unexpected Merge on default CF");
+    return rocksdb::Status::OK();
   }
 
   rocksdb::Status DeleteRangeCF(uint32_t cf_id, const rocksdb::Slice& begin,

@@ -588,7 +588,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
   auto& table_entry = RequireBaseTable(op.table);
   auto sdb_table = table_entry.GetSereneDBTable();
 
-  if (op.is_truncate) {
+  if (op.is_truncate && context.transaction.IsAutoCommit()) {
     return planner.Make<SereneDBPhysicalTruncate>(std::move(sdb_table),
                                                   op.estimated_cardinality);
   }

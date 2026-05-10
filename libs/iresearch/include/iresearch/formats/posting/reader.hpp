@@ -309,7 +309,9 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
       doc_in->Seek(term_state.doc_start);
       SDB_ASSERT(!doc_in->IsEOF());
       if (term_state.docs_count < doc_limits::kBlockSize) {
-        CommonSkipWandData(has_wand, *doc_in);
+        if (has_wand) {
+          ReadWandRoot(*doc_in);
+        }
       }
       SDB_ASSERT(!doc_in->IsEOF());
 

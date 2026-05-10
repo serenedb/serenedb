@@ -52,6 +52,143 @@ enum class PostingsFormat : int32_t {
   Max = WandSimd,
 };
 
+inline uint32_t ByteSizeFor124(uint32_t value) {
+  if (value < (uint32_t{1} << 8)) {
+    return 1;
+  }
+  if (value < (uint32_t{1} << 16)) {
+    return 2;
+  }
+  return 4;
+}
+
+template<typename Output>
+void Serialize124(uint32_t code, uint32_t value, Output& out) {
+  switch (code) {
+    case 1:
+      out.WriteByte(static_cast<byte_type>(value));
+      break;
+    case 2:
+      out.WriteU16(static_cast<uint16_t>(value));
+      break;
+    case 4:
+      out.WriteU32(value);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+template<typename InputType>
+uint32_t ReadByteSize124(uint32_t code, InputType& in) {
+  switch (code) {
+    case 1:
+      return in.ReadByte();
+    case 2:
+      return static_cast<uint16_t>(in.ReadI16());
+      break;
+    case 4:
+      return in.ReadI32();
+  }
+}
+
+inline uint32_t ByteSize124ForSkipEntry(uint32_t value) {
+  if (value < (uint32_t{1} << 8)) {
+    return 1;
+  }
+  if (value < (uint32_t{1} << 16)) {
+    return 2;
+  }
+  return 3;  // 3 in this encoding actually means 4 bytes (1/2/4-byte family).
+}
+
+template<typename Output>
+void Serialize124ForSkipEntry(uint32_t code, uint32_t value, Output& out) {
+  switch (code) {
+    case 1:
+      out.WriteByte(static_cast<byte_type>(value));
+      break;
+    case 2:
+      out.WriteU16(static_cast<uint16_t>(value));
+      break;
+    case 3:
+      // 3 in this encoding actually means 4 bytes (1/2/4-byte family).
+      out.WriteU32(value);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+template<typename InputType>
+uint32_t ReadByteSize124ForSkipEntry(uint32_t code, InputType& in) {
+  switch (code) {
+    case 1:
+      return in.ReadByte();
+    case 2:
+      return static_cast<uint16_t>(in.ReadI16());
+      break;
+    case 3:
+      // 3 in this encoding actually means 4 bytes.
+      return in.ReadI32();
+  }
+}
+
+inline uint32_t ByteSize1248ForSkipEntry(uint64_t value) {
+  /*
+    0 - 1 byte
+    1 - 2 bytes
+    2 - 4 bytes
+    3 - 8 bytes
+  */
+  if (value < (uint64_t{1} << 8)) {
+    return 0;
+  }
+  if (value < (uint64_t{1} << 16)) {
+    return 1;
+  }
+  if (value < (uint64_t{1} << 32)) {
+    return 2;
+  }
+  return 3;
+}
+
+template<typename Output>
+void Serialize1248ForSkipEntry(uint32_t code, uint64_t value, Output& out) {
+  switch (code) {
+    case 0:
+      out.WriteByte(value);
+      break;
+    case 1:
+      out.WriteU16(value);
+      break;
+    case 2:
+      out.WriteU32(value);
+      break;
+    case 3:
+      out.WriteU64(value);
+      break;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+template<typename InputType>
+uint64_t ReadByteSize1248ForSkipEntry(uint32_t code, InputType& in) {
+  switch (code) {
+    case 0:
+      return in.ReadByte();
+    case 1:
+      return static_cast<uint16_t>(in.ReadI16());
+    case 2:
+      return static_cast<uint32_t>(in.ReadI32());
+    case 3:
+      return in.ReadI64();
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
 struct SkipState {
   // pointer to the beginning of document block
   uint64_t doc_ptr = 0;
@@ -108,12 +245,25 @@ IRS_FORCE_INLINE void CopyState(SkipState& to,
 // TODO(mbkkt) Make it overloads
 // Remove to many Readers implementations
 
-template<typename Input>
-void CommonSkipWandData(bool has_wand, Input& in) {
-  if (has_wand) {
-    in.Skip(in.ReadByte());
+template<typename InputType>
+WandWriter::WandData ReadWandImpl(uint8_t encoding, InputType& in) {
+  uint32_t wand_freq_code = (encoding & 3);
+  uint32_t wand_norm_code = (encoding >> 2) & 3;
+
+  WandWriter::WandData result;
+  result.freq = ReadByteSize124ForSkipEntry(wand_freq_code, in);
+  if (wand_norm_code > 0) {
+    result.norm = ReadByteSize124ForSkipEntry(wand_norm_code, in);
   }
+  return result;
 }
+
+template<typename InputType>
+WandWriter::WandData ReadWandRoot(InputType& in) {
+  auto encoding = in.ReadByte();
+  return ReadWandImpl(encoding, in);
+}
+
 template<typename It, typename T, typename Cmp = std::less<>>
 It branchless_lower_bound(It begin, It end, const T& value,
                           Cmp&& compare = {}) {

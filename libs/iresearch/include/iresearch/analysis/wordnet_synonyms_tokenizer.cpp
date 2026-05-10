@@ -123,24 +123,26 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
 }
 
 WordnetSynonymsTokenizer::WordnetSynonymsTokenizer(
-  WordnetSynonymsTokenizer::SynonymsMap&& mapping)
-  : _mapping(std::move(mapping)) {}
+  std::shared_ptr<const State> state)
+  : _state(std::move(state)) {
+  SDB_ASSERT(_state);
+}
 
-sdb::ResultOr<std::unique_ptr<WordnetSynonymsTokenizer>>
-WordnetSynonymsTokenizer::FromText(std::string text) {
-  auto tokenizer = std::make_unique<WordnetSynonymsTokenizer>(SynonymsMap{});
+sdb::ResultOr<std::shared_ptr<const WordnetSynonymsTokenizer::State>>
+WordnetSynonymsTokenizer::MakeState(std::string text) {
+  auto state = std::make_shared<State>();
 
-  // Order matters: views in `_mapping`'s values point into `_text_storage`,
-  // so the backing buffer must be moved into place before parsing.
-  tokenizer->_text_storage = std::move(text);
+  // Order matters: views in `mapping`'s values point into `text`, so the
+  // backing buffer is populated before parsing builds the views over it.
+  state->text = std::move(text);
 
-  auto mapping = Parse(tokenizer->_text_storage);
+  auto mapping = Parse(state->text);
   if (!mapping) {
     return std::unexpected{std::move(mapping.error())};
   }
-  tokenizer->_mapping = std::move(*mapping);
+  state->mapping = std::move(*mapping);
 
-  return tokenizer;
+  return state;
 }
 
 namespace {
@@ -171,14 +173,14 @@ Analyzer::ptr MakeVPack(vpack::Slice slice) {
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return nullptr;
   }
-  auto result = WordnetSynonymsTokenizer::FromText(std::move(synonyms_text));
-  if (!result) {
+  auto state = WordnetSynonymsTokenizer::MakeState(std::move(synonyms_text));
+  if (!state) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to parse synonyms while constructing wordnet_synonyms: ",
-              result.error().errorMessage());
+              state.error().errorMessage());
     return nullptr;
   }
-  return std::move(*result);
+  return std::make_unique<WordnetSynonymsTokenizer>(std::move(*state));
 }
 
 Analyzer::ptr MakeVPack(std::string_view args) {
@@ -282,7 +284,8 @@ bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
   offset.start = 0;
   offset.end = data.size();
 
-  if (const auto it = _mapping.find(data); it == _mapping.end()) {
+  const auto& mapping = _state->mapping;
+  if (const auto it = mapping.find(data); it == mapping.end()) {
     _term_exists = false;
   } else {
     _begin = _curr = it->second.data();

@@ -25,6 +25,19 @@
 
 using SolrSynonymsTokenizer = irs::analysis::SolrSynonymsTokenizer;
 
+namespace {
+
+// Wraps an externally-owned synonyms map in an ad-hoc State so tests can
+// drive the tokenizer without re-parsing.
+std::shared_ptr<const SolrSynonymsTokenizer::State> StateFromMap(
+  SolrSynonymsTokenizer::SynonymsMap mask) {
+  auto state = std::make_shared<SolrSynonymsTokenizer::State>();
+  state->synonyms = std::move(mask);
+  return state;
+}
+
+}  // namespace
+
 TEST(solr_synonyms_tests, consts) {
   static_assert("solr_synonyms" == irs::Type<SolrSynonymsTokenizer>::name());
 }
@@ -35,7 +48,7 @@ TEST(solr_synonyms_tests, test_masking) {
     std::string_view data0("abc");
     std::string_view data1("ghi");
     SolrSynonymsTokenizer::SynonymsMap mask;
-    SolrSynonymsTokenizer stream(std::move(mask));
+    SolrSynonymsTokenizer stream(StateFromMap(std::move(mask)));
     ASSERT_EQ(irs::Type<SolrSynonymsTokenizer>::id(), stream.type());
 
     auto* offset = irs::get<irs::OffsAttr>(stream);
@@ -70,7 +83,7 @@ TEST(solr_synonyms_tests, test_masking) {
       {"foo", &synonyms},
       {"bar", &synonyms},
     };
-    SolrSynonymsTokenizer stream(std::move(mask));
+    SolrSynonymsTokenizer stream(StateFromMap(std::move(mask)));
 
     auto* offset = irs::get<irs::OffsAttr>(stream);
     auto* term = irs::get<irs::TermAttr>(stream);
@@ -340,10 +353,11 @@ TEST(solr_synonyms_tests, parsing) {
   }
 }
 
-TEST(solr_synonyms_tests, from_text_owning_storage) {
-  auto result = SolrSynonymsTokenizer::FromText("ipod, i-pod, i pod\nfoo => bar");
-  ASSERT_TRUE(result);
-  auto& stream = **result;
+TEST(solr_synonyms_tests, make_state_owning_storage) {
+  auto state = SolrSynonymsTokenizer::MakeState(
+    "ipod, i-pod, i pod\nfoo => bar");
+  ASSERT_TRUE(state);
+  SolrSynonymsTokenizer stream{std::move(*state)};
 
   auto* term = irs::get<irs::TermAttr>(stream);
   auto* inc = irs::get<irs::IncAttr>(stream);
@@ -374,10 +388,10 @@ TEST(solr_synonyms_tests, from_text_owning_storage) {
   ASSERT_FALSE(stream.next());
 }
 
-TEST(solr_synonyms_tests, from_text_invalid_input) {
-  auto result = SolrSynonymsTokenizer::FromText("foo,bar=>=>baz");
-  ASSERT_FALSE(result);
-  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+TEST(solr_synonyms_tests, make_state_invalid_input) {
+  auto state = SolrSynonymsTokenizer::MakeState("foo,bar=>=>baz");
+  ASSERT_FALSE(state);
+  ASSERT_TRUE(state.error().is(sdb::ERROR_BAD_PARAMETER));
 }
 
 TEST(solr_synonyms_tests, factory_make_json) {

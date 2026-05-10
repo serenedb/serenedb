@@ -125,32 +125,33 @@ sdb::ResultOr<SolrSynonymsTokenizer::SynonymsMap> SolrSynonymsTokenizer::Parse(
 }
 
 SolrSynonymsTokenizer::SolrSynonymsTokenizer(
-  SolrSynonymsTokenizer::SynonymsMap&& synonyms)
-  : _synonyms(std::move(synonyms)) {}
+  std::shared_ptr<const State> state)
+  : _state(std::move(state)) {
+  SDB_ASSERT(_state);
+}
 
-sdb::ResultOr<std::unique_ptr<SolrSynonymsTokenizer>>
-SolrSynonymsTokenizer::FromText(std::string text) {
-  auto tokenizer = std::make_unique<SolrSynonymsTokenizer>(SynonymsMap{});
+sdb::ResultOr<std::shared_ptr<const SolrSynonymsTokenizer::State>>
+SolrSynonymsTokenizer::MakeState(std::string text) {
+  auto state = std::make_shared<State>();
 
-  // Order matters: views in lines/synonyms point into _text_storage, and
-  // synonyms' value pointers reference SynonymsLine elements in
-  // _lines_storage. Populate storage first, then derive views from it so the
-  // backing buffers outlive the views.
-  tokenizer->_text_storage = std::move(text);
+  // Order matters: views in `lines`/`synonyms` point into `text`, and
+  // `synonyms`'s value pointers reference SynonymsLine elements in `lines`.
+  // Populate each buffer before deriving views from it.
+  state->text = std::move(text);
 
-  auto lines = ParseSynonymsLines(tokenizer->_text_storage);
+  auto lines = ParseSynonymsLines(state->text);
   if (!lines) {
     return std::unexpected{std::move(lines.error())};
   }
-  tokenizer->_lines_storage = std::move(*lines);
+  state->lines = std::move(*lines);
 
-  auto synonyms = Parse(tokenizer->_lines_storage);
+  auto synonyms = Parse(state->lines);
   if (!synonyms) {
     return std::unexpected{std::move(synonyms.error())};
   }
-  tokenizer->_synonyms = std::move(*synonyms);
+  state->synonyms = std::move(*synonyms);
 
-  return tokenizer;
+  return state;
 }
 
 namespace {
@@ -181,14 +182,14 @@ Analyzer::ptr MakeVPack(vpack::Slice slice) {
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return nullptr;
   }
-  auto result = SolrSynonymsTokenizer::FromText(std::move(synonyms_text));
-  if (!result) {
+  auto state = SolrSynonymsTokenizer::MakeState(std::move(synonyms_text));
+  if (!state) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to parse synonyms while constructing solr_synonyms: ",
-              result.error().errorMessage());
+              state.error().errorMessage());
     return nullptr;
   }
-  return std::move(*result);
+  return std::make_unique<SolrSynonymsTokenizer>(std::move(*state));
 }
 
 Analyzer::ptr MakeVPack(std::string_view args) {
@@ -288,7 +289,8 @@ bool SolrSynonymsTokenizer::reset(std::string_view data) {
   offset.start = 0;
   offset.end = data.size();
 
-  if (const auto it = _synonyms.find(data); it == _synonyms.end()) {
+  const auto& synonyms = _state->synonyms;
+  if (const auto it = synonyms.find(data); it == synonyms.end()) {
     _holder = data;
     _begin = _curr = &_holder;
     _end = _curr + 1;

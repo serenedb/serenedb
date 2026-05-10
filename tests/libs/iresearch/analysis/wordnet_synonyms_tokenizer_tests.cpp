@@ -27,6 +27,19 @@
 
 using WordnetSynonymsTokenizer = irs::analysis::WordnetSynonymsTokenizer;
 
+namespace {
+
+// Wraps an externally-owned synonyms map in an ad-hoc State so tests can
+// drive the tokenizer without re-parsing.
+std::shared_ptr<const WordnetSynonymsTokenizer::State> StateFromMap(
+  WordnetSynonymsTokenizer::SynonymsMap mapping) {
+  auto state = std::make_shared<WordnetSynonymsTokenizer::State>();
+  state->mapping = std::move(mapping);
+  return state;
+}
+
+}  // namespace
+
 TEST(wordnet_synonyms_tests, consts) {
   static_assert("wordnet_synonyms" ==
                 irs::Type<WordnetSynonymsTokenizer>::name());
@@ -37,7 +50,7 @@ TEST(wordnet_synonyms_tests, test_masking) {
     std::string data0 = "come";
     WordnetSynonymsTokenizer::SynonymsMap mapping;
 
-    WordnetSynonymsTokenizer stream(std::move(mapping));
+    WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
     ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
     ASSERT_FALSE(stream.reset(data0));
@@ -50,7 +63,7 @@ TEST(wordnet_synonyms_tests, test_masking) {
     WordnetSynonymsTokenizer::SynonymsGroups group{"100000002"};
     WordnetSynonymsTokenizer::SynonymsMap mapping{{"come", {"100000002"}}};
 
-    WordnetSynonymsTokenizer stream(std::move(mapping));
+    WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
     ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
     auto* offset = irs::get<irs::OffsAttr>(stream);
@@ -79,7 +92,7 @@ TEST(wordnet_synonyms_tests, test_masking) {
       {"approach", {"100000002"}},
     };
 
-    WordnetSynonymsTokenizer stream(std::move(mapping));
+    WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
     ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
     auto* offset = irs::get<irs::OffsAttr>(stream);
@@ -120,7 +133,7 @@ TEST(wordnet_synonyms_tests, test_homonyms) {
     {data1, {"100000002"}},
   };
 
-  WordnetSynonymsTokenizer stream(std::move(mapping));
+  WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
   ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
   auto* offset = irs::get<irs::OffsAttr>(stream);
@@ -157,7 +170,7 @@ TEST(wordnet_synonyms_tests, test_homonyms_early_reset) {
     {data1, {"100000002"}},
   };
 
-  WordnetSynonymsTokenizer stream(std::move(mapping));
+  WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
   ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
   auto* offset = irs::get<irs::OffsAttr>(stream);
@@ -189,7 +202,7 @@ TEST(wordnet_synonyms_tests, test_homonyms_double_reset) {
     {data1, {"100000002"}},
   };
 
-  WordnetSynonymsTokenizer stream(std::move(mapping));
+  WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
   ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
   auto* offset = irs::get<irs::OffsAttr>(stream);
@@ -341,11 +354,11 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
   ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
 }
 
-TEST(wordnet_synonyms_tests, from_text_owning_storage) {
-  auto result = WordnetSynonymsTokenizer::FromText(
+TEST(wordnet_synonyms_tests, make_state_owning_storage) {
+  auto state = WordnetSynonymsTokenizer::MakeState(
     "s(100000002,1,'come',v,1,0).\ns(100000002,2,'advance',v,1,0).");
-  ASSERT_TRUE(result);
-  auto& stream = **result;
+  ASSERT_TRUE(state);
+  WordnetSynonymsTokenizer stream{std::move(*state)};
 
   auto* term = irs::get<irs::TermAttr>(stream);
 
@@ -362,10 +375,10 @@ TEST(wordnet_synonyms_tests, from_text_owning_storage) {
   ASSERT_FALSE(stream.reset("missing"));
 }
 
-TEST(wordnet_synonyms_tests, from_text_invalid_input) {
-  auto result = WordnetSynonymsTokenizer::FromText("not a wordnet record");
-  ASSERT_FALSE(result);
-  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+TEST(wordnet_synonyms_tests, make_state_invalid_input) {
+  auto state = WordnetSynonymsTokenizer::MakeState("not a wordnet record");
+  ASSERT_FALSE(state);
+  ASSERT_TRUE(state.error().is(sdb::ERROR_BAD_PARAMETER));
 }
 
 TEST(wordnet_synonyms_tests, factory_make_json) {

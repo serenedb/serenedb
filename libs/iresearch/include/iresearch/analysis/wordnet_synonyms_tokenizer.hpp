@@ -40,18 +40,26 @@ class WordnetSynonymsTokenizer final
   using SynonymsGroups = std::vector<std::string_view>;
   using SynonymsMap = absl::flat_hash_map<std::string, SynonymsGroups>;
 
+  // Parsed synonym data — immutable once built, sharable across tokenizers.
+  // `mapping`'s value string_views reference `text`; the keys own their own
+  // storage. Members are listed in lifetime order: text must outlive mapping.
+  struct State {
+    std::string text;
+    SynonymsMap mapping;
+  };
+
   static constexpr std::string_view type_name() noexcept {
     return "wordnet_synonyms";
   }
 
   static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
 
-  // Test ctor: caller owns the storage that values' string_views point into.
-  explicit WordnetSynonymsTokenizer(SynonymsMap&& mapping);
-
-  // Production: instance owns `text` and the map derived from it.
-  static sdb::ResultOr<std::unique_ptr<WordnetSynonymsTokenizer>> FromText(
+  // Parses WordNet Prolog text into a sharable state.
+  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
     std::string text);
+
+  // Tokenizer is a thin handle over `state`.
+  explicit WordnetSynonymsTokenizer(std::shared_ptr<const State> state);
 
   // Triggers registration with iresearch's analyzer registry.
   static void init();
@@ -63,10 +71,7 @@ class WordnetSynonymsTokenizer final
   bool reset(std::string_view data) final;
 
  private:
-  // When constructed via FromText / factory, `_text_storage` keeps the data
-  // alive that `_mapping`'s value views point at.
-  std::string _text_storage;
-  SynonymsMap _mapping;
+  std::shared_ptr<const State> _state;  // non-null
 
   using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
   attributes _attrs;

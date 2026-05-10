@@ -22,6 +22,11 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "analyzers.hpp"
 #include "basics/result.h"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -63,6 +68,17 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     bool operator==(const SynonymsLine& line) const = default;
   };
 
+  // Parsed synonym data — immutable once built, sharable across tokenizers.
+  // `synonyms` keys are string_views into `text`; its values point at
+  // SynonymsLine elements in `lines`, whose own string_views also reference
+  // `text`. Members are listed in lifetime order: text must outlive lines,
+  // and lines must outlive the synonyms map.
+  struct State {
+    std::string text;
+    SynonymsLines lines;
+    SynonymsMap synonyms;
+  };
+
   static constexpr std::string_view type_name() noexcept {
     return "solr_synonyms";
   }
@@ -71,12 +87,11 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     std::string_view input);
   static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
 
-  // Test ctor: caller owns the storage that `synonyms` points into.
-  explicit SolrSynonymsTokenizer(SynonymsMap&& synonyms);
+  // Parses Solr-format text into a sharable state.
+  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(std::string text);
 
-  // Production: instance owns `text` and the lines/map derived from it.
-  static sdb::ResultOr<std::unique_ptr<SolrSynonymsTokenizer>> FromText(
-    std::string text);
+  // Tokenizer is a thin handle over `state`.
+  explicit SolrSynonymsTokenizer(std::shared_ptr<const State> state);
 
   // Triggers registration with iresearch's analyzer registry.
   static void init();
@@ -88,11 +103,7 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
   bool reset(std::string_view data) final;
 
  private:
-  // When constructed via FromText / factory, `_text_storage` and
-  // `_lines_storage` keep the data alive that `_synonyms`'s views point at.
-  std::string _text_storage;
-  SynonymsLines _lines_storage;
-  SynonymsMap _synonyms;
+  std::shared_ptr<const State> _state;  // non-null
 
   using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
   Attributes _attrs;

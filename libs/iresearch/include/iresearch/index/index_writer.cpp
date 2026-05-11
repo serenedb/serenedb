@@ -188,26 +188,27 @@ struct FlushedSegmentContext {
 // readers readers by segment name
 // meta key used to get reader for the segment to evaluate
 // Return if any new records were added (modification_queries_ modified).
-void RemoveFromExistingSegment(DocumentMask& deleted_docs,
+bool RemoveFromExistingSegment(DocumentMask& deleted_docs,
                                IndexWriter::QueryContext& query,
                                const SubReader& reader) {
   if (query.filter == nullptr) {
-    return;
+    return false;
   }
 
   auto prepared = query.filter->prepare({.index = reader});
 
   if (!prepared) [[unlikely]] {
-    return;  // skip invalid prepared filters
+    return false;  // skip invalid prepared filters
   }
 
   auto itr =
-    prepared->execute({.segment = reader});  // todo add all deleted_docs
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
-    return;  // skip invalid iterators
+    return false;  // skip invalid iterators
   }
 
+  bool modified = false;
   const auto* docs_mask = reader.docs_mask();
   while (itr->next()) {
     const auto doc_id = itr->value();
@@ -217,9 +218,11 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
       continue;  // the current modification query does not match any records
     }
     if (deleted_docs.insert(doc_id).second) {
-      query.ForceDone();
+      // query.ForceDone();
+      modified = true;
     }
   }
+  return modified;
 }
 
 bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
@@ -235,7 +238,7 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
   }
 
   auto itr =
-    prepared->execute({.segment = reader});  // todo add all deleted_docs
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -1687,7 +1690,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   // are properly tracked in 'modification_queries_'
   const auto flushed_tick = ctx->FlushPending(_committed_tick, tick);
 
-  constexpr size_t kBatchSize = 64;
   std::unique_lock cleanup_lock{_consolidating.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
     if (ctx == nullptr) {
@@ -1733,14 +1735,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     }
   };
 
-  auto apply_batch_queries =
-    [&](std::span<std::shared_ptr<SegmentContext>> segments, const auto& func) {
-      for (auto& segment : segments) {
-        SDB_ASSERT(segment != nullptr);
-        apply_queries(*segment, func);
-      }
-    };
-
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
   auto& segment_mask = ctx->segment_mask;
@@ -1755,87 +1749,72 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   readers.reserve(committed_reader_size);
   pending_meta.segments.reserve(committed_reader_size);
 
-  auto docs_mask_duration = std::chrono::nanoseconds(0);
-  auto imported_docs_duration = std::chrono::nanoseconds(0);
+  WaitGroup wg;
+  std::vector<DocumentMask> deleted_docs_vector;
+  std::vector<std::vector<QueryContext*>> applied_queries;
+  deleted_docs_vector.reserve(committed_reader_size);
+  applied_queries.reserve(committed_reader_size);
 
-  auto deletes_duration = std::chrono::nanoseconds(0);
-  auto import_duration = std::chrono::nanoseconds(0);
+  auto batch_size = _executor != nullptr
+                      ? std::max(size_t(1), (committed_reader_size + 7) / 8)
+                      : committed_reader_size;
 
+  for (size_t i = 0; i < committed_reader_size; i += batch_size) {
+    auto& deleted_docs = deleted_docs_vector.emplace_back(
+      DocumentMask{{*dir.ResourceManager().transactions}});
+    auto& local_applied_queries = applied_queries.emplace_back();
+    auto task = [&, i, batch_size] {
+      Finally task_ended = [&] noexcept { wg.Done(); };
+      for (size_t j = i; j < std::min(i + batch_size, committed_reader_size);
+           ++j) {
+        // progress("Stage 1: Apply removals to the existing segments",
+        //          current_segment_index++, committed_reader_size);
+        const auto& existing_segment = committed_reader[j];
+        // skip already masked segments
+        if (segment_mask.contains(existing_segment->Meta().name)) {
+          continue;
+        }
+
+        // mask documents matching filters from segment_contexts
+        // (i.e. from new operations)
+
+        apply_all_queries([&](QueryContext& query) {
+          // FIXME(gnusi): optimize PK queries
+          if (RemoveFromExistingSegment(deleted_docs, query,
+                                        existing_segment)) {
+            local_applied_queries.push_back(&query);
+          }
+        });
+      }
+    };
+
+    wg.Add();
+    if (_executor != nullptr) {
+      yaclib::Submit(*_executor, std::move(task));
+    } else {
+      task();
+    }
+  }
+
+  wg.Wait();
+  current_segment_index = 0;
   for (const auto& existing_segment : committed_reader.GetReaders()) {
     auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];
-    progress("Stage 1: Apply removals to the existing segments",
-             current_segment_index++, committed_reader_size);
-
     // skip already masked segments
     if (segment_mask.contains(existing_segment->Meta().name)) {
+      ++current_segment_index;
       continue;
     }
+    auto& local_applied_queries = applied_queries[current_segment_index];
+    auto& deleted_docs = deleted_docs_vector[current_segment_index];
+    ++current_segment_index;
 
-    // mask documents matching filters from segment_contexts
-    // (i.e. from new operations)
-    WaitGroup wg;
-    std::vector<DocumentMask> deleted_docs_vector;
-    if (_executor != nullptr) {
-      deleted_docs_vector.reserve(ctx->segments.size());
+    for (auto* query : local_applied_queries) {
+      query->ForceDone();
     }
-
-    auto start = std::chrono::steady_clock::now();
-    for (size_t i = 0; i < ctx->segments.size(); i += kBatchSize) {
-      // SDB_ASSERT(segment != nullptr);
-
-      auto& deleted_docs_local = [&] -> DocumentMask& {
-        if (_executor == nullptr && !deleted_docs_vector.empty()) {
-          return deleted_docs_vector.back();
-        }
-        return deleted_docs_vector.emplace_back(
-          DocumentMask{{*dir.ResourceManager().transactions}});
-      }();
-
-      auto batch_size = std::min(kBatchSize, ctx->segments.size() - i);
-      auto task = [&, i, batch_size] {
-        apply_batch_queries(std::span(ctx->segments).subspan(i, batch_size),
-                            [&](QueryContext& query) {
-                              // FIXME(gnusi): optimize PK queries
-                              RemoveFromExistingSegment(
-                                deleted_docs_local, query, existing_segment);
-                            });
-        wg.Done();
-      };
-
-      wg.Add();
-      if (_executor != nullptr) {
-        yaclib::Submit(*_executor, std::move(task));
-      } else {
-        task();
-      }
-    }
-    wg.Wait();
-
-    auto end = std::chrono::steady_clock::now();
-    deletes_duration +=
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
 
     // Write docs_mask if masks added
-    std::sort(deleted_docs_vector.begin(), deleted_docs_vector.end(),
-              [](const DocumentMask& lhs, const DocumentMask& rhs) {
-                return lhs.size() > rhs.size();
-              });
-
-    start = std::chrono::steady_clock::now();
-
-    auto& deleted_docs = deleted_docs_vector.front();
-    for (auto& docs_mask : std::span(deleted_docs_vector).subspan(1)) {
-      if (docs_mask.empty()) {
-        break;
-      }
-      deleted_docs.merge(docs_mask);
-    }
-    end = std::chrono::steady_clock::now();
-    auto duration =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-    docs_mask_duration += duration;
-
     const size_t num_removals = deleted_docs.size();
     if (num_removals) {
       // If all docs are masked then mask segment
@@ -1851,14 +1830,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // Append removals
       IndexSegment segment{.meta = index_segment.meta};
       segment.meta.docs_mask = [&] {
-        auto start = std::chrono::steady_clock::now();
         auto docs_mask = CopyMask(dir, existing_segment);
         docs_mask->merge(deleted_docs);
-
-        auto end = std::chrono::steady_clock::now();
-        auto duration =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-        docs_mask_duration += duration;
         return docs_mask;
       }();
 
@@ -1960,58 +1933,14 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       // merged segment. Pending already imported/consolidated segment, apply
       // removals mask documents matching filters from segment_contexts
       // (i.e. from new operations)
-      WaitGroup wg;
-      std::vector<DocumentMask> import_docs_vector;
-      if (_executor != nullptr) {
-        import_docs_vector.reserve(ctx->segments.size());
-      }
-
-      auto start = std::chrono::steady_clock::now();
-      for (size_t i = 0; i < ctx->segments.size(); i += kBatchSize) {
-        // SDB_ASSERT(segment != nullptr);
-
-        auto& import_docs_local = [&] -> DocumentMask& {
-          if (_executor == nullptr && !import_docs_vector.empty()) {
-            return import_docs_vector.back();
-          }
-          return import_docs_vector.emplace_back(*import_docs_mask);
-        }();
-        auto batch_size = std::min(kBatchSize, ctx->segments.size() - i);
-        auto task = [&, i, batch_size] {
-          apply_batch_queries(std::span(ctx->segments).subspan(i, batch_size),
-                              [&](QueryContext& query) {
-                                // skip queries which not affect this
-                                if (import.tick <= query.tick) {
-                                  // FIXME(gnusi): optimize PK queries
-                                  RemoveFromImportedSegment(
-                                    import_docs_local, query, *import_reader);
-                                }
-                              });
-          wg.Done();
-        };
-
-        wg.Add();
-        if (_executor != nullptr) {
-          yaclib::Submit(*_executor, task);
-        } else {
-          task();
+      apply_all_queries([&](QueryContext& query) {
+        // skip queries which not affect this
+        if (import.tick <= query.tick) {
+          // FIXME(gnusi): optimize PK queries
+          docs_mask_modified |=
+            RemoveFromImportedSegment(*import_docs_mask, query, *import_reader);
         }
-      }
-      wg.Wait();
-      auto end = std::chrono::steady_clock::now();
-      import_duration +=
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-      start = std::chrono::steady_clock::now();
-      for (auto& import_docs_local : import_docs_vector) {
-        if (import_docs_local.size() > import_docs_mask->size()) {
-          import_docs_mask->merge(import_docs_local);
-          modified = true;
-        }
-      }
-      end = std::chrono::steady_clock::now();
-      auto duration =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
-      imported_docs_duration += duration;
+      });
     }
 
     // Skip empty segments
@@ -2037,22 +1966,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     readers.emplace_back(std::move(import_reader));
     pending_meta.segments.emplace_back(std::move(import.segment));
   }
-
-  SDB_INFO(
-    "xxxxx", sdb::Logger::IRESEARCH, "docs_mask merge ",
-    std::chrono::duration_cast<std::chrono::milliseconds>(docs_mask_duration)
-      .count(),
-    " ms, imported_docs merge ",
-    std::chrono::duration_cast<std::chrono::milliseconds>(
-      imported_docs_duration)
-      .count(),
-    " ms, deletes processing ",
-    std::chrono::duration_cast<std::chrono::milliseconds>(deletes_duration)
-      .count(),
-    " ms, import processing ",
-    std::chrono::duration_cast<std::chrono::milliseconds>(import_duration)
-      .count(),
-    " ms");
 
   // For pending consolidation we need to filter out consolidation
   // candidates after applying them

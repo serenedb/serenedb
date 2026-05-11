@@ -23,7 +23,7 @@
 #include <cmath>
 
 #include "basics/system-compiler.h"
-#include "iresearch/formats/column/common.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -174,34 +174,6 @@ float ColumnIndexDistance::symmetric_dis(faiss::idx_t i, faiss::idx_t j) {
   const auto* rhs = reinterpret_cast<const irs::byte_type*>(data_j);
   const auto d = static_cast<uint16_t>(_dim);
   return _dist(lhs, rhs, d);
-}
-
-HNSWIndexReader::HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,
-                                 HNSWInfo info)
-  : _hnsw{std::move(hnsw)}, _info{std::move(info)}, _reader{reader} {}
-
-void HNSWIndexReader::Search(HNSWSearchContext& context) const {
-  // TODO(codeworse): support other value types
-  ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
-  dis.set_query(reinterpret_cast<const float*>(context.info.query));
-
-  HNSWSegmentResultHandler res{context.segment_id, context.handler,
-                               context.info.global_threshold};
-  context.vt.visited.resize(_hnsw.levels.size(), 0);
-  context.vt.advance();
-  res.begin(0, false);
-  _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
-}
-
-void HNSWIndexReader::RangeSearch(HNSWRangeSearchContext& context) const {
-  ColumnSearchDistance dis{_reader.iterator(ColumnHint::Normal), _info};
-  dis.set_query(reinterpret_cast<const float*>(context.info.query));
-
-  HNSWRangeSegmentResultHandler res{context.segment_id, context.handler};
-  context.vt.visited.resize(_hnsw.levels.size(), 0);
-  context.vt.advance();
-  res.begin(0);
-  _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 
 void HNSWIndexWriter::Add(const float* data, doc_id_t doc) {

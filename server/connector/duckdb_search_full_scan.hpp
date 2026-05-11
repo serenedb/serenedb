@@ -30,6 +30,7 @@
 #include <memory>
 #include <vector>
 
+#include "catalog/table_options.h"
 #include "connector/duckdb_scan_base.hpp"
 #include "connector/index_source.h"
 #include "connector/offsets_collector.hpp"
@@ -37,14 +38,24 @@
 
 namespace sdb::connector {
 
+class ColumnstoreMaterializer;
+
 struct SearchFullScanGlobalState : public CommonScanGlobalState {
   // IResearch streaming state
   size_t search_segment_idx = 0;
   irs::DocIterator::ptr search_doc;
-  SegmentPkIterator search_segment_pk;
+  SegmentPkSequentialFetcher search_segment_pk;
 
-  // Prepared filter query. Built once in SearchFullScanInitGlobal with
-  // `scorer_obj` (or nullptr) -- the only prepare site for SearchScan.
+  // Doc-id and output-position pairs accumulated per source segment during
+  // the streaming run. Cleared at the start of each SearchFullScanFunction
+  // call. Indexed by segment index in the iresearch reader.
+  std::vector<std::vector<irs::doc_id_t>> cs_segment_doc_ids;
+  std::vector<std::vector<duckdb::idx_t>> cs_segment_out_positions;
+
+  // Prepared query for this scan: `stored_filter->prepare(...)` re-runs
+  // here at scan-init time so any scorer-attached IDF/norm stats are
+  // collected once (an earlier optimizer-time prepare with a null scorer
+  // could break filters that mutate options(), e.g. GeoFilter).
   irs::Filter::Query::ptr query;
 
   // Scorer state. `scorer_obj` is non-null iff the plan attached BM25 /
@@ -78,6 +89,18 @@ struct SearchFullScanGlobalState : public CommonScanGlobalState {
   std::vector<duckdb::idx_t> offsets_output_idx;
   std::vector<PerFieldState> offsets_field_state;
   std::vector<std::vector<int64_t>> offsets_doc_scratch;
+
+  // Match-all + every-real-projection-INCLUDE'd shortcut: skip the per-doc
+  // iterator and stream each segment's columnstore vector-at-a-time via
+  // ColumnSegment::Scan. Tracks the resume point between calls; one
+  // materializer cached per segment to amortise the .cs footer parse.
+  bool bulk_scan_active = false;
+  size_t bulk_scan_segment_idx = 0;
+  uint64_t bulk_scan_doc_in_seg = 0;
+  std::unique_ptr<ColumnstoreMaterializer> bulk_scan_materializer;
+  size_t bulk_scan_materializer_seg = std::numeric_limits<size_t>::max();
+
+  std::unique_ptr<duckdb::Vector> streaming_pk_vec;
 };
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> SearchFullScanInitGlobal(

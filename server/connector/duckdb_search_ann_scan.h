@@ -61,6 +61,11 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
   std::atomic_size_t remained_segments = 0;
   std::atomic_uint32_t next_segment = 0;
 
+  // Merged top-K result rows in score order: (segment_idx, 0-based
+  // doc_pos within the segment). Populated by MergeResult alongside
+  // pk_batch so EmitResult can hand them to the cs materializer.
+  std::vector<SegDoc> merged_seg_docs;
+
   // Reusable scratch for LookupSegmentsValues. ANN's MergeResult runs once,
   // single-threaded, so a single global buffer is safe.
   std::vector<uint32_t> lookup_scratch;
@@ -107,6 +112,9 @@ struct SearchRangeScanGlobalState : public CommonScanGlobalState {
 
 struct SearchRangeScanLocalState : public CommonScanLocalState {
   PrimaryKeyBatch pk_batch;
+  // Parallel to pk_batch: (segment_idx, 0-based doc_pos) for each
+  // row appended to pk_batch. Used by the cs materializer overlay.
+  std::vector<SegDoc> seg_docs;
   size_t current_idx = 0;
   irs::HNSWRangeSearchBuffer range_buffer;
   std::vector<uint32_t> lookup_scratch;

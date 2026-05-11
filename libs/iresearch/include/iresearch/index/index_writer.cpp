@@ -1241,6 +1241,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, Format::ptr codec,
     options.comparator,
     options.column_info ? options.column_info : kDefaultColumnInfo,
     options.meta_payload_provider, std::move(reader));
+  writer->_db = options.db;
   // Remove non-index files from directory
   directory_utils::RemoveAllUnreferenced(dir);
 
@@ -1667,6 +1668,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .comparator = _comparator,
     .resource_manager = consolidation ? *_dir.ResourceManager().consolidations
                                       : *_dir.ResourceManager().transactions,
+    .db = _db,
   };
 }
 

@@ -633,14 +633,19 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
     }
   }
   auto num_idx = non_pk_idx.size();
-  auto num_virtual = num_pk + num_idx + 1;  // +1 for rowid
+  // Child plan's tail layout, mirroring SereneDBTableEntry::BuildRowIdColumns:
+  //   PK tables:   [set_vals..., pk_0, ..., pk_{n-1}, idx_0, ..., idx_{m-1}]
+  //   no-PK:       [set_vals...,                      idx_0, ..., idx_{m-1},
+  //                 generated_pk]
+  // The generated-PK slot is appended only on no-PK tables, so the
+  // trailing block is num_pk + num_idx wide for PK tables and
+  // num_idx + 1 wide for no-PK ones.
+  const auto num_virtual = pk_col_ids.empty() ? num_idx + 1 : num_pk + num_idx;
   auto child_cols = plan.types.size();
 
-  // PK columns at [child_cols - num_virtual .. child_cols - num_virtual +
-  // num_pk - 1]
   std::vector<duckdb::idx_t> pk_indices;
   if (pk_col_ids.empty()) {
-    // No explicit PK -- the rowid (last column) carries the generated PK.
+    // No explicit PK -- the generated-PK slot (last column) carries it.
     pk_indices.push_back(child_cols - 1);
   } else {
     for (size_t i = 0; i < num_pk; ++i) {
@@ -648,7 +653,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanDelete(
     }
   }
 
-  // Indexed columns at [child_cols - num_virtual + num_pk .. child_cols - 2]
+  // Non-PK indexed virtual columns immediately after the PK virtuals.
   std::vector<duckdb::idx_t> indexed_indices;
   for (size_t i = 0; i < num_idx; ++i) {
     indexed_indices.push_back(child_cols - num_virtual + num_pk + i);
@@ -691,7 +696,11 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     }
   }
   auto num_idx = non_pk_idx.size();
-  auto num_virtual = num_pk + num_idx + 1;  // +1 for rowid
+  // Same layout reasoning as PlanDelete: BuildRowIdColumns appends
+  //   PK tables:   pk_0, ..., pk_{n-1}, idx_0, ..., idx_{m-1}
+  //   no-PK:                            idx_0, ..., idx_{m-1}, generated_pk
+  // PK tables: num_pk + num_idx wide.  No-PK: num_idx + 1.
+  const auto num_virtual = pk_col_ids.empty() ? num_idx + 1 : num_pk + num_idx;
   auto child_cols = plan.types.size();
 
   const auto num_updates = op.expressions.size();
@@ -1033,8 +1042,13 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     if (expr->GetExpressionType() == duckdb::ExpressionType::COLUMN_REF) {
       auto& col_ref = expr->Cast<duckdb::ColumnRefExpression>();
       auto col_name = col_ref.GetColumnName();
+      // Match case-insensitively so quoted CamelCase identifiers from the
+      // CREATE INDEX clause resolve against view-exposed columns that have
+      // already been case-folded by the underlying read_parquet/view
+      // pipeline. Mirrors the resolver used by SELECT, which lets users
+      // type SELECT "Title" against a lowercase `title` column.
       for (size_t i = 0; i < rel_columns.size(); ++i) {
-        if (rel_columns[i].first == col_name) {
+        if (absl::EqualsIgnoreCase(rel_columns[i].first, col_name)) {
           create_index_info->column_ids.push_back(i);
           create_index_info->scan_types.push_back(rel_columns[i].second);
           break;
@@ -1073,7 +1087,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
         get.types.push_back(rel_columns[pos].second);
       }
       if (use_generated_pk_rowid_col) {
-        get.AddColumnId(duckdb::COLUMN_IDENTIFIER_ROW_ID);
+        // No-PK table: route the synthetic kGeneratedPKId column through
+        // the explicit kColumnIdentifierGeneratedPk virtual slot so the
+        // EXPLAIN projection list and downstream consumers can tell it
+        // apart from generic DuckDB rowid plumbing.
+        get.AddColumnId(kColumnIdentifierGeneratedPk);
         get.types.push_back(duckdb::LogicalType::BIGINT);
       }
     }

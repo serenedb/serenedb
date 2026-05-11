@@ -20,10 +20,16 @@
 
 #pragma once
 
+#include <absl/container/flat_hash_map.h>
 #include <simdjson.h>
 
+#include <duckdb/common/enums/compression_type.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/columnstore/column_writer.hpp>
+#include <iresearch/columnstore/format.hpp>
+#include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -90,11 +96,96 @@ inline JsonPathsProvider MakeJsonPathsProvider(
   };
 }
 
+// Returns true if values for `column_id` should be written into the new
+// columnstore (catalog store_values=true). Provided by callers so the
+// sink does not depend on catalog::InvertedIndex directly.
+using StoreValuesProvider = std::function<bool(catalog::Column::Id)>;
+
+inline StoreValuesProvider MakeStoreValuesProvider(
+  const catalog::InvertedIndex& index) {
+  return [&index](catalog::Column::Id column_id) {
+    const auto* col = index.FindColumnInfo(column_id);
+    return col != nullptr && col->store_values;
+  };
+}
+
+inline StoreValuesProvider NoStoreValues() {
+  return [](catalog::Column::Id) { return false; };
+}
+
+// Returns true if `column_id` is configured for text-style inverted indexing
+// (i.e. has a text_dictionary in the catalog). INCLUDE-only columns return
+// false -- the sink then skips the per-row tokenize+postings-insert path
+// that BuildColumnTokenizer's keyword-fallback would otherwise execute for
+// every row, which dominates create_index CPU on wide tables.
+using IsTextIndexedProvider = std::function<bool(catalog::Column::Id)>;
+
+inline IsTextIndexedProvider MakeIsTextIndexedProvider(
+  const catalog::InvertedIndex& index) {
+  return [&index](catalog::Column::Id column_id) {
+    const auto* col = index.FindColumnInfo(column_id);
+    return col != nullptr && col->text_dictionary.isSet();
+  };
+}
+
+// Conservative fallback: assume every column is text-indexed. Preserves the
+// pre-INCLUDE behaviour for code paths and tests that don't yet thread a
+// real provider through.
+inline IsTextIndexedProvider AllTextIndexed() {
+  return [](catalog::Column::Id) { return true; };
+}
+
+// Returns the per-column HNSW configuration when the column is an HNSW
+// vector column, otherwise std::nullopt. The sink uses this both to set
+// up the new cs ARRAY ColumnWriter for the vectors AND to attach an
+// HNSWWriter so the faiss graph is built+serialized into the .cs
+// footer side-payload.
+using HNSWInfoProvider =
+  std::function<std::optional<irs::HNSWInfo>(catalog::Column::Id)>;
+
+inline HNSWInfoProvider MakeHNSWInfoProvider(
+  const catalog::InvertedIndex& index) {
+  return [&index](catalog::Column::Id column_id) {
+    return index.GetColumnHNSWInfo(column_id);
+  };
+}
+
+inline HNSWInfoProvider NoHNSW() {
+  return [](catalog::Column::Id) -> std::optional<irs::HNSWInfo> {
+    return std::nullopt;
+  };
+}
+
+// Returns the per-column forced compression. COMPRESSION_AUTO means "let
+// the writer's analyze tournament pick" -- the default for any column
+// where the user did not set the `compression` opclass option.
+using CompressionProvider =
+  std::function<duckdb::CompressionType(catalog::Column::Id)>;
+
+inline CompressionProvider MakeCompressionProvider(
+  const catalog::InvertedIndex& index) {
+  return [&index](catalog::Column::Id column_id) {
+    const auto* col = index.FindColumnInfo(column_id);
+    return col != nullptr ? col->compression
+                          : duckdb::CompressionType::COMPRESSION_AUTO;
+  };
+}
+
+inline CompressionProvider NoCompression() {
+  return [](catalog::Column::Id) {
+    return duckdb::CompressionType::COMPRESSION_AUTO;
+  };
+}
+
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
                            TokenizerProvider&& tokenizer_provider,
                            JsonPathsProvider&& json_paths_provider,
+                           StoreValuesProvider&& store_values_provider,
+                           IsTextIndexedProvider&& is_text_indexed_provider,
+                           HNSWInfoProvider&& hnsw_info_provider,
+                           CompressionProvider&& compression_provider,
                            std::span<const catalog::Column::Id> columns);
 
   void InitImpl(size_t batch_size);
@@ -103,9 +194,19 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                  std::string_view full_key);
 
   bool SwitchColumnImpl(const ColumnDescriptor& col);
+
+  // Routes the entire input column Vector into irs::columnstore::ColumnWriter
+  // for the column switched to by the prior SwitchColumnImpl, when the
+  // column was registered with store_values=true. Per-cell Write still runs
+  // separately for the inverted-index side; this hook only feeds the
+  // typed columnstore.
+  void WriteFullColumnImpl(const duckdb::Vector& vec, duckdb::idx_t count);
+
   void FinishImpl();
 
   void AbortImpl() {
+    _columnstore_writers.clear();
+    _active_columnstore_writer = nullptr;
     // We don't own the transaction so Abort should be called outside.
     _document.reset();
   }
@@ -133,8 +234,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
       }
       return true;
     }
-
-    void PrepareForVectorValue();
 
     void PrepareForVerbatimStringValue();
     void PrepareForStringValue(catalog::ColumnTokenizer&& column_analyzer);
@@ -166,34 +265,10 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   using Writer = std::function<void(
     std::string_view full_key, std::span<const rocksdb::Slice> cell_slices)>;
 
-  // Generic writer. Non-null rows (field.store_attr != nullptr) use
-  // NonNullAction; null rows -- nullable_writer_func substitutes _null_field
-  // which has no store_attr and a null-stream analyzer -- always get
-  // Insert<INDEX> so IS NULL queries still find them, even on paths where
-  // NonNullAction is STORE-only (e.g. HNSW). HasStore=false skips the
-  // per-row check and just Inserts<INDEX> -- for paths that never store.
-  template<bool HasStore, irs::Action NonNullAction, typename WriteFunc>
-  Writer MakeWriterImpl(WriteFunc&& write_func);
-
-  // Thin wrappers over MakeWriterImpl:
-  //   MakeIndexWriter      -- INDEX only (no columnstore), cheapest path.
-  //   MakeIndexStoreWriter -- non-null INDEX|STORE, null INDEX.
-  //   MakeStoreWriter      -- non-null STORE, null INDEX (HNSW vectors).
+  // Builds a row-callback that runs the value processor and forwards the
+  // resulting Field to the document for inverted indexing.
   template<typename WriteFunc>
-  Writer MakeIndexWriter(WriteFunc&& write_func) {
-    return MakeWriterImpl<false, irs::Action::INDEX>(
-      std::forward<WriteFunc>(write_func));
-  }
-  template<typename WriteFunc>
-  Writer MakeIndexStoreWriter(WriteFunc&& write_func) {
-    return MakeWriterImpl<true, irs::Action::INDEX | irs::Action::STORE>(
-      std::forward<WriteFunc>(write_func));
-  }
-  template<typename WriteFunc>
-  Writer MakeStoreWriter(WriteFunc&& write_func) {
-    return MakeWriterImpl<true, irs::Action::STORE>(
-      std::forward<WriteFunc>(write_func));
-  }
+  Writer MakeIndexWriter(WriteFunc&& write_func);
 
   // Actual value processors. It is set to write executor (see MakeIndexWriter)
   // as a template. This methods are responsible for extracting value from
@@ -210,10 +285,6 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                                   std::span<const rocksdb::Slice> cell_slices,
                                   Field& field);
 
-  static Field& WriteVectorValue(std::string_view full_key,
-                                 std::span<const rocksdb::Slice> cell_slices,
-                                 Field& field);
-
   // Setup column writer according to type kind.
   // Builds actual executor to avoid switch/case on each row whenever possible.
   template<duckdb::LogicalTypeId Kind>
@@ -224,6 +295,63 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   // [8 bytes BE column_id] + "." + key1 + "." + key2 + ... + <MangleString>.
   void SetupJsonColumnWriter(catalog::Column::Id column_id,
                              std::vector<JsonPathSinkConfig> paths);
+
+  // Per-column bytes accumulator. Single shape for any per-row STORE
+  // column: PK (with skip_validity=true), geo, wildcard tokenizer
+  // (`LIST<BLOB>` later), HNSW vectors (`ARRAY<FLOAT>` later). Replaces
+  // the legacy SegmentWriter::stream(name, doc).WriteBytes(value) path --
+  // per-row bytes now land in the new cs as compressed BLOB/typed rows
+  // instead of in the .csi/.csd column store.
+  //
+  // Lifecycle:
+  //   1) StoredBytesAccumulatorsEnsure(column_id, name, type,
+  //      skip_validity) -- idempotent; opens the ColumnWriter on first
+  //      call, no-op afterwards.
+  //   2) StoredBytesAccumulatorsInit(first_doc_id, batch_size) -- per
+  //      batch (called from InitImpl). Sizes / resets every accumulator's
+  //      buffer.
+  //   3) StoredBytesAccumulatorsAppend / ...AppendNull -- per row.
+  //   4) StoredBytesAccumulatorsFlush() -- per batch (called from
+  //      FinishImpl). One ColumnWriter::Append per accumulator covers
+  //      the whole batch.
+  struct StoredBytesAccumulator {
+    irs::columnstore::ColumnWriter* writer = nullptr;
+    std::optional<duckdb::Vector> buffer;
+    duckdb::idx_t count = 0;
+    uint64_t first_doc_id = 0;
+    duckdb::idx_t batch_size = 0;
+    duckdb::LogicalType type = duckdb::LogicalType::BLOB;
+    bool skip_validity = false;
+  };
+
+  // Open a ColumnWriter for this column id (idempotent). Safe to call
+  // every batch -- only the first call within a segment opens the
+  // underlying writer. Nullptr return: the segment writer has no DuckDB
+  // backing (rare test fixtures), accumulator stays a no-op.
+  void StoredBytesAccumulatorsEnsure(catalog::Column::Id column_id,
+                                     std::string_view name,
+                                     duckdb::LogicalType type,
+                                     bool skip_validity);
+
+  // Initialise per-batch buffers for any open accumulators. Sized to
+  // batch_size so a single ColumnWriter::Append at FinishImpl writes all
+  // rows in one go (no mid-batch flush).
+  void StoredBytesAccumulatorsInit(uint64_t first_doc_id,
+                                   duckdb::idx_t batch_size);
+
+  // Append one row's bytes / null.
+  void StoredBytesAccumulatorsAppend(catalog::Column::Id column_id,
+                                     irs::bytes_view bytes);
+  void StoredBytesAccumulatorsAppendNull(catalog::Column::Id column_id);
+
+  // Flush every accumulator's buffer through ColumnWriter::Append. Called
+  // from FinishImpl after the per-batch row loop.
+  void StoredBytesAccumulatorsFlush();
+
+  // Thin wrapper kept for the existing PK-emit call sites in
+  // SetupColumnWriter / SetupJsonColumnWriter. Forwards to the unified
+  // accumulator under catalog::Column::kGeneratedPKId.
+  void AppendPkToColumnstore(std::string_view row_key);
 
   struct JsonPathField {
     // Backing storage for each per-type field name; Field::name is a
@@ -245,6 +373,10 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   TokenizerProvider _tokenizer_provider;
   JsonPathsProvider _json_paths_provider;
+  StoreValuesProvider _store_values_provider;
+  IsTextIndexedProvider _is_text_indexed_provider;
+  HNSWInfoProvider _hnsw_info_provider;
+  CompressionProvider _compression_provider;
   Field _field;
   Field _pk_field;
   Field _null_field;
@@ -255,6 +387,43 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
 
   Writer _current_writer;
   bool _emit_pk{true};
+
+  // Per-column irs::columnstore::ColumnWriter handles, opened lazily at
+  // the first SwitchColumnImpl that hits a store_values=true column inside
+  // a segment. Cleared on transaction-level reset (Init / Abort).
+  absl::flat_hash_map<catalog::Column::Id, irs::columnstore::ColumnWriter*>
+    _columnstore_writers;
+  // Set in SwitchColumnImpl: nullptr when the active column is not stored
+  // in the new columnstore.
+  irs::columnstore::ColumnWriter* _active_columnstore_writer = nullptr;
+  catalog::Column::Id _active_column_id{};
+  duckdb::LogicalType _active_column_type;
+
+  // PK migration to the new typed columnstore: alongside the legacy
+  // iresearch INDEX|STORE write of `_pk_field`, every emitted PK is
+  // accumulated into `_pk_buffer` (one VARCHAR slot per doc) and bulk
+  // -appended to a columnstore column under `kGeneratedPKId` at FinishImpl.
+  // The legacy field stays for now -- search-time PK lookup
+  // (search_pk_lookup.cpp) and remove filter still resolve through it. A
+  // followup TODO investigates writing PK as separate typed columns
+  // (i64 / i64+i64 / composite) instead of the rocksdb-encoded byte
+  // string we copy today, since codecs compress typed values much better.
+  // Per-row STORE accumulators. Keyed by catalog Column::Id; entries are
+  // wired by StoredBytesAccumulatorsEnsure (PK in InitImpl, analyzer
+  // columns in SetupColumnWriter). Per-row WriteImpl calls
+  // StoredBytesAccumulatorsAppend; FinishImpl flushes one
+  // ColumnWriter::Append per accumulator. Replaces the legacy
+  // SegmentWriter::stream STORE write AND the dedicated PK accumulator
+  // (PK is just one entry under kGeneratedPKId with skip_validity=true).
+  absl::flat_hash_map<catalog::Column::Id, StoredBytesAccumulator>
+    _stored_bytes_accumulators;
+  // Captured at the start of every batch by InitImpl. Used by
+  // StoredBytesAccumulatorsEnsure when an accumulator is registered
+  // mid-batch (e.g. on the first row that exercises a new column) so its
+  // buffer comes up correctly sized and aligned to the batch's first
+  // doc_id.
+  uint64_t _batch_first_doc_id = 0;
+  duckdb::idx_t _batch_size = 0;
 
   // State for the currently active JSON column (empty when the column is not
   // path-indexed). Rebuilt on every SwitchColumn.

@@ -142,13 +142,6 @@ catalog::Column::Id ColumnIdByName(
   return bind_data.ColumnIdByName(name);
 }
 
-// 8 big-endian bytes, no Mangle suffix.
-std::string MakeHnswFieldName(catalog::Column::Id col_id) {
-  std::string name(sizeof(col_id), '\0');
-  absl::big_endian::Store(name.data(), col_id);
-  return name;
-}
-
 struct ExpectedHNSW {
   irs::HNSWMetric metric;
   duckdb::OrderType order;
@@ -586,7 +579,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto ann = std::make_unique<connector::ANNScan>();
   ann->index_id = resolved->index->GetId();
-  ann->field_name = MakeHnswFieldName(col_id);
+  ann->field_id = col_id;
   ann->query_vector = std::move(query_vector);
   ann->top_k = static_cast<size_t>(top_n.limit);
 
@@ -810,7 +803,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
   auto rss = std::make_unique<connector::RangeSearchScan>();
   rss->index_id = resolved->index->GetId();
-  rss->field_name = MakeHnswFieldName(col_id);
+  rss->field_id = col_id;
   rss->query_vector = std::move(query_vector);
   rss->radius = radius;
   rss->effective_radius = radius_needs_square ? radius * radius : radius;

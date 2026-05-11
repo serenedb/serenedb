@@ -19,7 +19,12 @@ set(iresearch-tests_sources
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/pattern_tokenizer_tests.cpp
-    ./formats/columnstore2_test.cpp
+    ./columnstore/columnstore_test.cpp
+    ./columnstore/legacy_compat.cpp
+    # ./formats/columnstore2_test.cpp  # legacy columnstore2 impl deleted; tests
+    # against it would no longer compile. Existing tests now exercise the new
+    # cs through the test-only legacy_compat adapter (registered in
+    # tests_main.cpp), which gives equivalent coverage.
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_tests.cpp
     ./formats/formats_test_case_base.cpp

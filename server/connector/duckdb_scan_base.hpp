@@ -23,10 +23,13 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
+#include <iresearch/types.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
+#include "catalog/table_options.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/snapshot.h"
@@ -36,6 +39,14 @@ namespace sdb::connector {
 
 struct SereneDBScanBindData;
 class IndexSource;
+
+// Projected column whose value comes from the iresearch columnstore
+// (catalog `store_values=true` INCLUDE column, or the BLOB-shaped
+// synthetic PK).
+struct ColumnstoreProjection {
+  duckdb::idx_t output_slot;
+  catalog::Column::Id column_id;
+};
 
 // Common state inherited by all per-scan global states.
 // Holds the fields shared across every scan strategy: isolation context,
@@ -49,6 +60,25 @@ struct CommonScanGlobalState : public duckdb::GlobalTableFunctionState {
   // INVALID_INDEX marks virtual columns (rowid, tableoid, score).
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
+
+  // Same shape as `projected_columns` but with INCLUDE'd columnstore
+  // slots reset to INVALID_INDEX. Pass this (not `projected_columns`)
+  // to `MakeIndexSource` so RocksDB does not double-materialize columns
+  // the cs overlay will overwrite. Default: copy of projected_columns
+  // (no behavior change until `ClassifyColumnstoreProjections` runs).
+  std::vector<duckdb::idx_t> external_projected_columns;
+
+  // INCLUDE'd projections served by the columnstore overlay.
+  // Populated by `ClassifyColumnstoreProjections`.
+  std::vector<ColumnstoreProjection> cs_projections;
+  // Parallel arrays derived from `cs_projections` once at init time --
+  // bulk + streaming + score-ordered materializer paths all want them
+  // in this shape and would otherwise rebuild per batch.
+  std::vector<irs::field_id> cs_field_ids;
+  std::vector<duckdb::idx_t> cs_output_slots;
+  // True iff at least one projected real column is NOT an INCLUDE
+  // column (i.e. IndexSource still has work to do).
+  bool has_external_projections = false;
 
   // Rowid virtual column
   bool has_generated_pk = false;
@@ -105,6 +135,47 @@ void InitCommonState(CommonScanGlobalState& state,
                      duckdb::ClientContext& context,
                      const SereneDBScanBindData& bind_data,
                      duckdb::TableFunctionInitInput& input);
+
+// Splits `state.projected_columns` into:
+//   - `state.cs_projections` + `cs_field_ids` + `cs_output_slots`:
+//     INCLUDE'd columns (catalog `store_values=true`) and the BLOB-
+//     shaped synthetic PK projection.
+//   - `state.external_projected_columns`: same shape as
+//     `projected_columns` but with cs slots zeroed to INVALID_INDEX,
+//     so `MakeIndexSource` does not redundantly RocksDB-lookup
+//     columns the cs overlay will overwrite.
+//   - `state.has_external_projections`: whether anything is left for
+//     IndexSource to materialize.
+// Must be called after `InitCommonState`. No-op when the scan is not
+// inverted-index-backed.
+void ClassifyColumnstoreProjections(CommonScanGlobalState& state,
+                                    const SereneDBScanBindData& bind_data);
+
+// One result row from a score-ordered scan (top-K, ANN, range).
+// doc_pos is the 0-based row position within the segment (= iresearch
+// doc_id - doc_limits::min()).
+struct SegDoc {
+  uint32_t segment_idx;
+  irs::doc_id_t doc_pos;
+};
+
+}  // namespace sdb::connector
+namespace irs {
+
+class IndexReader;
+
+}
+namespace sdb::connector {
+
+// Materializes `gstate.cs_projections` for a score-ordered slice into
+// `output`. Internally sorts a permutation by (segment, doc) so each
+// segment's row groups are visited once contiguous, then writes the
+// final per-projection slice as a DICTIONARY_VECTOR over the
+// segment-ordered scratch so the on-output values stay score-ordered
+// without a copy.
+void MaterializeIncludeColumnsScoreOrder(
+  const CommonScanGlobalState& gstate, const irs::IndexReader& reader,
+  std::span<const SegDoc> seg_doc_score_order, duckdb::DataChunk& output);
 
 // Read generated PK int64 values from RocksDB iterator keys into output.
 // Key format: [ObjectId(8)][ColumnId(8)][PK int64 big-endian XOR 0x80].

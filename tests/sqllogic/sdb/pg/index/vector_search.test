@@ -97,8 +97,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│             id            │
-│            emb            │
+│           id (l)          │
+│          emb (i)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -173,8 +173,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│            emb            │
-│             id            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -476,8 +476,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│            emb            │
-│             id            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -597,8 +597,8 @@ QUERY PLAN
 │      Lookup: rocksdb      │
 │                           │
 │        Projections:       │
-│            emb            │
-│             id            │
+│          emb (i)          │
+│           id (l)          │
 │                           │
 │          ~4 rows          │
 └───────────────────────────┘
@@ -627,7 +627,7 @@ CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
 statement error
 CREATE INDEX bad_opt ON t_err USING inverted(emb hnsw (metric = 'l2', ef_search = 50));
 ----
-db error: ERROR: Failed to create index: Column 'emb': unknown hnsw option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), m (int >= 2, default 32), ef_construction (int >= 1, default 40, must be >= m)
+db error: ERROR: Failed to create index: Column 'emb': unknown hnsw option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), m (int >= 2, default 32), ef_construction (int >= 1, default 40, must be >= m), compression (string, default 'auto')
 
 
 statement error

@@ -37,8 +37,6 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
   static constexpr int32_t kFormatMin = 0;
   static constexpr int32_t kFormatMax = 0;
 
-  enum { kHasColumnStore = 1, kSorted = 2 };
-
   explicit SegmentMetaWriterImpl(int32_t version) noexcept : _version(version) {
     SDB_ASSERT(_version >= kFormatMin && version <= kFormatMax);
   }
@@ -100,11 +98,6 @@ inline void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
     throw IoError{absl::StrCat("failed to create file, path: ", meta_file)};
   }
 
-  uint8_t flags = meta.column_store ? kHasColumnStore : 0;
-  if (field_limits::valid(meta.sort)) {
-    flags |= kSorted;
-  }
-
   SDB_ASSERT(meta.docs_mask_size <= meta.byte_size);
   const auto size_without_mask = meta.byte_size - meta.docs_mask_size;
 
@@ -114,8 +107,6 @@ inline void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
   out->WriteV32(meta.live_docs_count);
   const auto docs_mask_size = WriteDocumentMask(*out, meta.docs_mask);
   out->WriteV64(size_without_mask);
-  out->WriteByte(flags);
-  out->WriteV64(1 + meta.sort);  // max->0
   WriteStrings(*out, meta.files);
   format_utils::WriteFooter(*out);
 

@@ -64,16 +64,13 @@ struct SegmentMeta : SegmentInfo {
            codec == rhs.codec &&
            (docs_mask == rhs.docs_mask ||
             (docs_mask && rhs.docs_mask && *docs_mask == *rhs.docs_mask)) &&
-           docs_mask_size == rhs.docs_mask_size && sort == rhs.sort &&
-           column_store == rhs.column_store;
+           docs_mask_size == rhs.docs_mask_size;
   }
 
   std::vector<std::string> files;
   std::shared_ptr<const Format> codec;
   std::shared_ptr<const DocumentMask> docs_mask;
   uint64_t docs_mask_size = 0;
-  field_id sort = field_limits::invalid();
-  bool column_store = false;
 };
 
 inline doc_id_t RemovalCount(const SegmentMeta& meta) noexcept {

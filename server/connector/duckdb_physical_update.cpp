@@ -580,7 +580,13 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                   /*have_nulls=*/true};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(desc)) {
+        const bool active = writer->SwitchColumn(desc);
+        // WriteFullColumn fires unconditionally so the columnstore side
+        // (typed Append) absorbs the new doc for INCLUDE columns even
+        // when SwitchColumn returns false (INCLUDE-only column with no
+        // inverted-index tokenizer).
+        writer->WriteFullColumn(chunk.data[i], num_rows);
+        if (active) {
           gstate.active_writers.push_back(writer.get());
         }
       }
@@ -595,6 +601,10 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     // Trigger index writers whose first column is not in the SET clause.
     // Use SstWriter{nullptr} to skip RocksDB puts (values already written
     // above); index Write() calls still fire via WriteRowSlices.
+    // WriteFullColumn fires unconditionally so the columnstore side
+    // (typed Append) sees the new doc for INCLUDE columns the SET clause
+    // didn't touch. Without it those columns end up missing in the new
+    // segment's columnstore.
     {
       DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
       for (const auto& col : gstate.non_update_idx_cols) {
@@ -602,7 +612,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                     /*have_nulls=*/true};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
-          if (writer->SwitchColumn(desc)) {
+          const bool active = writer->SwitchColumn(desc);
+          writer->WriteFullColumn(chunk.data[col.chunk_idx], num_rows);
+          if (active) {
             gstate.active_writers.push_back(writer.get());
           }
         }
@@ -670,7 +682,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                   /*have_nulls=*/true};
       gstate.active_writers.clear();
       for (auto& writer : gstate.index_writers) {
-        if (writer->SwitchColumn(desc)) {
+        const bool active = writer->SwitchColumn(desc);
+        writer->WriteFullColumn(chunk.data[i], num_rows);
+        if (active) {
           gstate.active_writers.push_back(writer.get());
         }
       }
@@ -684,6 +698,10 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     }
 
     // Trigger index writers whose first column is not in the SET clause.
+    // WriteFullColumn fires unconditionally so the columnstore side
+    // (typed Append) sees the new doc for INCLUDE columns the SET clause
+    // didn't touch. Without it those columns end up missing in the new
+    // segment's columnstore.
     {
       DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
       for (const auto& col : gstate.non_update_idx_cols) {
@@ -691,7 +709,9 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
                                     /*have_nulls=*/true};
         gstate.active_writers.clear();
         for (auto& writer : gstate.index_writers) {
-          if (writer->SwitchColumn(desc)) {
+          const bool active = writer->SwitchColumn(desc);
+          writer->WriteFullColumn(chunk.data[col.chunk_idx], num_rows);
+          if (active) {
             gstate.active_writers.push_back(writer.get());
           }
         }

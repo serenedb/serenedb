@@ -699,7 +699,6 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   if (IsCancelled()) {
     return;
   }
-  _connection_ctx->DropCatalogSnapshot();
 
   // Strip trailing null bytes from PG wire protocol
   while (!query_string.empty() && query_string.back() == '\0') {
@@ -758,8 +757,6 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
   if (!_success_packet) {
     return;  // error
   }
-
-  _connection_ctx->DropCatalogSnapshot();
 
   // Advance to next statement if any
   ++stmt.current_stmt_idx;

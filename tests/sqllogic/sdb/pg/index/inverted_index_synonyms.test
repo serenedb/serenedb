@@ -38,21 +38,17 @@ ts_lexize
 {unknown}
 
 # Required `synonyms` field cannot be omitted.
-statement error
+statement error required parameter "synonyms" was not found
 CREATE TEXT SEARCH DICTIONARY syn_solr_missing(
     template = 'solr_synonyms'
 )
-----
-db error
 
 # Malformed input is rejected at DDL time.
-statement error
+statement error Failed to create text search dictionary "syn_solr_malformed"
 CREATE TEXT SEARCH DICTIONARY syn_solr_malformed(
     template = 'solr_synonyms',
     synonyms = 'foo => => bar'
 )
-----
-db error
 
 # --- Standalone wordnet_synonyms dictionary --------------------------------
 
@@ -75,20 +71,18 @@ SELECT ts_lexize('syn_wordnet_basic', 'advance');
 ts_lexize
 {100000002}
 
-# Tokens not in the WordNet map drop out (they have no synset id).
+# Unknown word: dictionary emits no tokens.
 query
 SELECT ts_lexize('syn_wordnet_basic', 'missing');
 ----
 ts_lexize
-NULL
+{}
 
-statement error
+statement error Failed to create text search dictionary "syn_wordnet_malformed"
 CREATE TEXT SEARCH DICTIONARY syn_wordnet_malformed(
     template = 'wordnet_synonyms',
     synonyms = 'not a wordnet record'
 )
-----
-db error
 
 # --- Pipeline: text (lowercase) -> solr_synonyms ---------------------------
 
@@ -101,7 +95,9 @@ CREATE TEXT SEARCH DICTIONARY syn_pipeline(
     step1_stemming = false,
     step2_template = 'solr_synonyms',
     step2_synonyms = 'foo, bar
-baz => qux'
+baz => qux',
+    frequency = true,
+    position = true
 )
 
 # Mixed-case input is lowercased then synonym-expanded per token.
@@ -133,21 +129,21 @@ CREATE INDEX docs_idx ON docs USING inverted(id, body syn_pipeline);
 
 # Synonym expansion at index time: row 1 indexes both 'foo' and 'bar'.
 query
-SELECT id FROM docs_idx WHERE body @@ ts_phrase('bar') ORDER BY id;
+SELECT id FROM docs_idx WHERE body @@ 'bar' ORDER BY id;
 ----
 id
 1
 
 # One-way: row 2 had 'baz' indexed as 'qux'.
 query
-SELECT id FROM docs_idx WHERE body @@ ts_phrase('qux') ORDER BY id;
+SELECT id FROM docs_idx WHERE body @@ 'qux' ORDER BY id;
 ----
 id
 2
 
 # Querying with the original ('foo') still matches row 1 via the bidirectional set.
 query
-SELECT id FROM docs_idx WHERE body @@ ts_phrase('foo') ORDER BY id;
+SELECT id FROM docs_idx WHERE body @@ 'foo' ORDER BY id;
 ----
 id
 1

@@ -220,6 +220,15 @@ bool NormalizeVPackConfig(vpack::Slice slice, vpack::Builder* builder) {
   if (!ParseVPackOptions(slice, synonyms_text)) {
     return false;
   }
+  // Fail at DDL time on a malformed synonyms text rather than letting the
+  // dictionary be created and surfacing the error later at use time.
+  auto state = SolrSynonymsTokenizer::MakeState(synonyms_text);
+  if (!state) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Failed to parse synonyms while normalizing solr_synonyms: ",
+              state.error().errorMessage());
+    return false;
+  }
   vpack::ObjectBuilder object(builder);
   builder->add(kSynonymsField, synonyms_text);
   return true;

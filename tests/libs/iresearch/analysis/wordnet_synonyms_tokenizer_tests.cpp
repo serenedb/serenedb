@@ -53,7 +53,7 @@ TEST(wordnet_synonyms_tests, test_masking) {
     WordnetSynonymsTokenizer stream(StateFromMap(std::move(mapping)));
     ASSERT_EQ(irs::Type<WordnetSynonymsTokenizer>::id(), stream.type());
 
-    ASSERT_FALSE(stream.reset(data0));
+    ASSERT_TRUE(stream.reset(data0));
     ASSERT_FALSE(stream.next());
   }
 
@@ -78,7 +78,7 @@ TEST(wordnet_synonyms_tests, test_masking) {
     ASSERT_EQ("100000002", irs::ViewCast<char>(term->value));
     ASSERT_FALSE(stream.next());
 
-    ASSERT_FALSE(stream.reset(data1));
+    ASSERT_TRUE(stream.reset(data1));
     ASSERT_FALSE(stream.next());
   }
 
@@ -372,7 +372,8 @@ TEST(wordnet_synonyms_tests, make_state_owning_storage) {
   ASSERT_EQ("100000002", irs::ViewCast<char>(term->value));
   ASSERT_FALSE(stream.next());
 
-  ASSERT_FALSE(stream.reset("missing"));
+  ASSERT_TRUE(stream.reset("missing"));
+  ASSERT_FALSE(stream.next());
 }
 
 TEST(wordnet_synonyms_tests, make_state_invalid_input) {

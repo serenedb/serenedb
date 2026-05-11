@@ -1754,19 +1754,24 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   std::vector<std::vector<QueryContext*>> applied_queries;
   deleted_docs_vector.reserve(committed_reader_size);
   applied_queries.reserve(committed_reader_size);
+  for (size_t i = 0; i != committed_reader_size; ++i) {
+    deleted_docs_vector.emplace_back(
+      DocumentMask{{*dir.ResourceManager().transactions}});
+    applied_queries.emplace_back();
+  }
 
   auto batch_size = _executor != nullptr
                       ? std::max(size_t(1), (committed_reader_size + 7) / 8)
                       : committed_reader_size;
 
   for (size_t i = 0; i < committed_reader_size; i += batch_size) {
-    auto& deleted_docs = deleted_docs_vector.emplace_back(
-      DocumentMask{{*dir.ResourceManager().transactions}});
-    auto& local_applied_queries = applied_queries.emplace_back();
     auto task = [&, i, batch_size] {
       Finally task_ended = [&] noexcept { wg.Done(); };
       for (size_t j = i; j < std::min(i + batch_size, committed_reader_size);
            ++j) {
+        auto& deleted_docs = deleted_docs_vector[j];
+        auto& local_applied_queries = applied_queries[j];
+
         // progress("Stage 1: Apply removals to the existing segments",
         //          current_segment_index++, committed_reader_size);
         const auto& existing_segment = committed_reader[j];

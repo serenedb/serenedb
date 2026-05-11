@@ -27,7 +27,11 @@
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/norm_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/utils/index_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -39,7 +43,7 @@ class AllIterator : public DocIterator {
   explicit AllIterator(doc_id_t docs_count) noexcept
     : _max_doc{doc_limits::min() + docs_count - 1} {}
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+  Attribute* GetMutable(TypeInfo::type_id /*type*/) noexcept final {
     return nullptr;
   }
 
@@ -60,7 +64,6 @@ class AllIterator : public DocIterator {
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
-    // TODO(gnusi): optimize
     CollectImpl(*this, scorer, fetcher, collector);
   }
 
@@ -74,7 +77,7 @@ class AllIterator : public DocIterator {
   }
 
  private:
-  const doc_id_t _max_doc;  // largest valid doc_id
+  const doc_id_t _max_doc;
 };
 
 class MaskDocIterator : public DocIterator {
@@ -105,7 +108,6 @@ class MaskDocIterator : public DocIterator {
 
   doc_id_t LazySeek(doc_id_t target) final {
     SDB_ASSERT(target >= value());
-    // TODO(mbkkt): optimize
     return seek(target);
   }
 
@@ -113,12 +115,11 @@ class MaskDocIterator : public DocIterator {
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
-    // TODO(gnusi): optimize
     CollectImpl(*this, scorer, fetcher, collector);
   }
 
  private:
-  const DocumentMask& _mask;  // excluded document ids
+  const DocumentMask& _mask;
   DocIterator::ptr _it;
 };
 
@@ -132,7 +133,7 @@ class MaskedDocIterator : public DocIterator {
     SDB_ASSERT(!doc_limits::eof(end));
   }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+  Attribute* GetMutable(TypeInfo::type_id /*type*/) noexcept final {
     return nullptr;
   }
 
@@ -163,13 +164,12 @@ class MaskedDocIterator : public DocIterator {
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
-    // TODO(gnusi): optimize
     CollectImpl(*this, scorer, fetcher, collector);
   }
 
  private:
   const DocumentMask& _docs_mask;
-  const doc_id_t _end;  // past last valid doc_id
+  const doc_id_t _end;
   doc_id_t _next;
 };
 
@@ -181,7 +181,6 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
   for (auto& file : meta.files) {
     file_refs.emplace_back(refs.add(file));
   }
-
   return file_refs;
 }
 
@@ -193,17 +192,14 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
   SDB_ASSERT(meta.codec);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_refs = GetRefs(dir, meta);
-  // always instantiate to avoid unnecessary checks
   reader->_field_reader =
     meta.codec->get_field_reader(*dir.ResourceManager().readers);
   if (options.index) {
     reader->_field_reader->prepare(
       ReaderState{.dir = &dir, .meta = &meta, .scorer = options.scorer});
   }
-  // open column store
   reader->_data = std::make_shared<ColumnData>();
-  reader->_sort =
-    reader->_data->Open(dir, meta, options, *reader->_field_reader);
+  reader->_data->Open(dir, meta, options);
   return reader;
 }
 
@@ -215,7 +211,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::ReopenColumnStore(
   reader->_refs = _refs;
   reader->_field_reader = _field_reader;
   reader->_data = std::make_shared<ColumnData>();
-  reader->_sort = reader->_data->Open(dir, meta, options, *_field_reader);
+  reader->_data->Open(dir, meta, options);
   return reader;
 }
 
@@ -226,7 +222,6 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::UpdateMeta(
   reader->_refs = _refs;
   reader->_field_reader = _field_reader;
   reader->_data = _data;
-  reader->_sort = _sort;
   return reader;
 }
 
@@ -235,40 +230,30 @@ uint64_t SegmentReaderImpl::CountMappedMemory() const {
   if (_field_reader != nullptr) {
     bytes += _field_reader->CountMappedMemory();
   }
-  if (_data != nullptr && _data->columnstore_reader != nullptr) {
-    bytes += _data->columnstore_reader->CountMappedMemory();
-  }
   return bytes;
 }
 
-const irs::ColumnReader* SegmentReaderImpl::column(
-  std::string_view name) const {
-  const auto& named_columns = _data->named_columns;
-  const auto it = named_columns.find(name);
-  return it == named_columns.end() ? nullptr : it->second;
+NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
+  auto it = _data->norms_by_id.find(field);
+  if (it == _data->norms_by_id.end()) {
+    return {};
+  }
+  return memory::make_managed<PersistedNormReader>(*it->second);
 }
 
-const irs::ColumnReader* SegmentReaderImpl::column(field_id field) const {
-  SDB_ASSERT(_data->columnstore_reader);
-  return _data->columnstore_reader->column(field);
+const columnstore::ColumnReader* SegmentReaderImpl::Column(
+  field_id field) const {
+  if (!_data->cs_reader) {
+    return nullptr;
+  }
+  return _data->cs_reader->Column(field);
 }
 
-ColumnIterator::ptr SegmentReaderImpl::columns() const {
-  struct Less {
-    bool operator()(const irs::ColumnReader& lhs,
-                    std::string_view rhs) const noexcept {
-      return lhs.name() < rhs;
-    }
-  };
-
-  using IteratorT =
-    IteratorAdaptor<std::string_view, irs::ColumnReader,
-                    decltype(_data->sorted_named_columns.begin()),
-                    ColumnIterator, Less>;
-
-  return memory::make_managed<IteratorT>(
-    std::begin(_data->sorted_named_columns),
-    std::end(_data->sorted_named_columns));
+const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
+  if (!_data->cs_reader) {
+    return nullptr;
+  }
+  return _data->cs_reader->HNSW(field);
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
@@ -277,7 +262,6 @@ DocIterator::ptr SegmentReaderImpl::docs_iterator() const {
   }
   SDB_ASSERT(!_docs_mask->empty());
 
-  // the implementation generates doc_ids sequentially
   return memory::make_managed<MaskedDocIterator>(
     doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
 }
@@ -292,75 +276,18 @@ DocIterator::ptr SegmentReaderImpl::mask(DocIterator::ptr&& it) const {
   return memory::make_managed<MaskDocIterator>(std::move(it), *_docs_mask);
 }
 
-const irs::ColumnReader* SegmentReaderImpl::ColumnData::Open(
-  const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options, const FieldReader& field_reader) {
-  SDB_ASSERT(meta.codec != nullptr);
-  auto& codec = *meta.codec;
-  // always instantiate to avoid unnecessary checks
-  columnstore_reader = codec.get_columnstore_reader();
-
-  if (!options.columnstore || !meta.column_store) {
-    return {};
+void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
+                                         const SegmentMeta& meta,
+                                         const IndexReaderOptions& options) {
+  if (options.db == nullptr) {
+    return;
   }
+  cs_reader =
+    std::make_unique<columnstore::Reader>(dir, meta.name, *options.db);
 
-  // initialize optional columnstore
-  ColumnstoreReader::Options columnstore_opts;
-  if (options.warmup_columns) {
-    columnstore_opts.warmup_column = [warmup = options.warmup_columns,
-                                      &field_reader,
-                                      &meta](const ColumnReader& column) {
-      return warmup(meta, field_reader, column);
-    };
+  for (const auto* nc : cs_reader->NormColumns()) {
+    norms_by_id.emplace(nc->Id(), nc);
   }
-
-  if (!columnstore_reader->prepare(dir, meta, columnstore_opts)) {
-    throw IndexError{
-      absl::StrCat("Failed to find existing (according to meta) "
-                   "columnstore in segment '",
-                   meta.name, "'")};
-  }
-
-  const irs::ColumnReader* sort{};
-  if (field_limits::valid(meta.sort)) {
-    sort = columnstore_reader->column(meta.sort);
-
-    if (!sort) {
-      throw IndexError{absl::StrCat(
-        "Failed to find sort column '", meta.sort,
-        "' (according to meta) in columnstore in segment '", meta.name, "'")};
-    }
-  }
-
-  // FIXME(gnusi): too rough, we must exclude unnamed columns
-  const auto num_columns = columnstore_reader->size();
-  named_columns.reserve(num_columns);
-  sorted_named_columns.reserve(num_columns);
-
-  columnstore_reader->visit([this, &meta](const irs::ColumnReader& column) {
-    const auto name = column.name();
-
-    if (!IsNull(name)) {
-      const auto [it, is_new] = named_columns.emplace(name, &column);
-      IRS_IGNORE(it);
-
-      if (!is_new) [[unlikely]] {
-        throw IndexError{absl::StrCat("Duplicate named column '", name,
-                                      "' in segment '", meta.name, "'")};
-      }
-
-      if (!sorted_named_columns.empty() &&
-          sorted_named_columns.back().get().name() >= name) {
-        throw IndexError{absl::StrCat(
-          "Named columns are out of order in segment '", meta.name, "'")};
-      }
-
-      sorted_named_columns.emplace_back(column);
-    }
-
-    return true;
-  });
-  return sort;
 }
 
 }  // namespace irs

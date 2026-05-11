@@ -1,0 +1,108 @@
+# End-to-end: typed columnstore behind iresearch_scan. Columns listed after
+# INCLUDE are stored in the typed columnstore (their values come back via
+# SearchFullScan's columnstore materializer); columns in the main list are
+# indexed for filtering only.
+
+hash-threshold 100
+
+statement ok
+CREATE TABLE foo (
+  pk INTEGER PRIMARY KEY,
+  small_int SMALLINT,
+  big_int BIGINT,
+  flt FLOAT,
+  dbl DOUBLE,
+  flag BOOLEAN,
+  txt VARCHAR
+);
+
+statement ok
+INSERT INTO foo VALUES
+  (1, 11, 100, 1.5, 1.25, TRUE,  'hello'),
+  (2, 22, 200, 2.5, 2.25, FALSE, 'world'),
+  (3, 33, 300, 3.5, 3.25, TRUE,  'serene'),
+  (4, 44, 400, 4.5, 4.25, FALSE, 'duck'),
+  (5, 55, 500, 5.5, 5.25, TRUE,  'index');
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY test_english(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+# pk, small_int, big_int, flt, dbl, flag are stored in the columnstore;
+# txt is tokenized for full-text filtering.
+statement ok
+CREATE INDEX foo_idx ON foo USING inverted(txt test_english)
+  INCLUDE (pk, small_int, big_int, flt, dbl, flag);
+
+# Single-row materialization across multiple types.
+query
+SELECT pk, small_int, big_int, flt, dbl, flag FROM foo_idx WHERE txt @@ ts_phrase('hello');
+----
+pk	small_int	big_int	flt	dbl	flag
+1	11	100	1.5	1.25	t
+
+# Multi-row materialization, ordered by pk so output is stable.
+query
+SELECT pk, small_int, big_int FROM foo_idx WHERE txt @@ ts_phrase('serene') OR txt @@ ts_phrase('duck') ORDER BY pk;
+----
+pk	small_int	big_int
+3	33	300
+4	44	400
+
+# All rows: exercises the full-segment scan path.
+query
+SELECT pk, big_int, dbl FROM foo_idx ORDER BY pk;
+----
+pk	big_int	dbl
+1	100	1.25
+2	200	2.25
+3	300	3.25
+4	400	4.25
+5	500	5.25
+
+# Insert into existing index, flush, query: hits a fresh segment with
+# columnstore data merged with the original on consolidation.
+statement ok
+INSERT INTO foo VALUES (6, 66, 600, 6.5, 6.25, TRUE, 'fresh');
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query
+SELECT pk, small_int, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');
+----
+pk	small_int	big_int	flag
+6	66	600	t
+
+# UPDATE rewrites the row; the columnstore picks up new values.
+statement ok
+UPDATE foo SET big_int = 999, flag = FALSE WHERE pk = 6;
+
+statement ok
+VACUUM (UPDATE_INDEXES) foo;
+
+query
+SELECT pk, big_int, flag FROM foo_idx WHERE txt @@ ts_phrase('fresh');
+----
+pk	big_int	flag
+6	999	f
+
+# After multiple consolidation cycles, columnstore data from older segments
+# survives the merge: original 5 rows still materialize correctly.
+query
+SELECT pk, big_int, dbl FROM foo_idx ORDER BY pk;
+----
+pk	big_int	dbl
+1	100	1.25
+2	200	2.25
+3	300	3.25
+4	400	4.25
+5	500	5.25
+6	999	6.25

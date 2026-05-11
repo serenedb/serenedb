@@ -119,10 +119,18 @@ inline constexpr bool kIsNumericKind =
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   JsonPathsProvider&& json_paths_provider,
+  StoreValuesProvider&& store_values_provider,
+  IsTextIndexedProvider&& is_text_indexed_provider,
+  HNSWInfoProvider&& hnsw_info_provider,
+  CompressionProvider&& compression_provider,
   std::span<const catalog::Column::Id> columns)
   : ColumnSinkWriterImplBase{columns},
     _tokenizer_provider{std::move(tokenizer_provider)},
     _json_paths_provider{std::move(json_paths_provider)},
+    _store_values_provider{std::move(store_values_provider)},
+    _is_text_indexed_provider{std::move(is_text_indexed_provider)},
+    _hnsw_info_provider{std::move(hnsw_info_provider)},
+    _compression_provider{std::move(compression_provider)},
     _trx{trx} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
@@ -131,7 +139,81 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
 bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
+  // Track the active column for WriteFullColumnImpl.
+  _active_column_id = column_id;
+  _active_column_type = type;
+  _active_columnstore_writer = nullptr;
+  // HNSW columns route through the new cs alongside INCLUDE-shaped columns:
+  // vectors land in an ARRAY<FLOAT,N> ColumnWriter, and we ask the .cs
+  // Writer to attach an HNSWWriter so the faiss graph is co-built and
+  // serialized in the footer (slot 102).
+  std::optional<irs::HNSWInfo> hnsw_info;
+  if (_hnsw_info_provider) {
+    hnsw_info = _hnsw_info_provider(column_id);
+  }
+  const bool wants_columnstore =
+    (_store_values_provider && _store_values_provider(column_id)) ||
+    hnsw_info.has_value();
+  if (wants_columnstore) {
+    if (auto* doc_columnstore =
+          _document ? _document->Columnstore() : nullptr) {
+      auto [it, inserted] =
+        _columnstore_writers.try_emplace(column_id, nullptr);
+      if (inserted) {
+        const auto compression = _compression_provider
+                                   ? _compression_provider(column_id)
+                                   : duckdb::CompressionType::COMPRESSION_AUTO;
+        it->second = &doc_columnstore->OpenColumn(
+          static_cast<irs::field_id>(column_id),
+          /*name=*/std::to_string(column_id), type,
+          /*row_group_size=*/0, /*skip_validity=*/false, compression);
+        if (hnsw_info.has_value()) {
+          // Records the request. The faiss graph is built at Commit
+          // time by reading the column data back through a sibling
+          // IndexInput; per-row Append() does not feed the graph
+          // builder.
+          doc_columnstore->AttachHNSW(static_cast<irs::field_id>(column_id),
+                                      *hnsw_info);
+        }
+      }
+      _active_columnstore_writer = it->second;
+      // WriteFullColumnImpl reads _document->DocId() to compute start_row
+      // and Append into the columnstore. A previous indexed column's
+      // per-row WriteImpl loop advances _doc_id to batch_start + N, and
+      // some return paths below (the !IsIndexed branch and the `default`
+      // type case for unsupported tokenizable types like USMALLINT) skip
+      // the NextFieldBatch reset that the normal indexed path performs.
+      // Force the reset here so every WriteFullColumnImpl sees the batch's
+      // first doc_id regardless of which path SwitchColumn ends up taking.
+      if (_document) {
+        _document->NextFieldBatch();
+      }
+    }
+  }
+  // HNSW: vectors are written through the cs above. The per-cell
+  // path below must still run for HNSW columns because it's where
+  // _emit_pk fires AppendPkToColumnstore -- skipping it for an
+  // HNSW-only-indexed table would leave the synthetic PK column empty.
+
   if (!IsIndexed(column_id)) {
+#ifdef SDB_DEV
+    _current_writer = nullptr;
+#endif
+    return false;
+  }
+  // INCLUDE-only column (in the index's column list but with no tokenizer
+  // configured): the columnstore writer has been set up above; skip the
+  // per-row tokenize + posting-list insertion path. Without this every
+  // INCLUDE column runs through SetupColumnWriter -> StringTokenizer (or
+  // NumericTokenizer for ints) which is by far the dominant cost in
+  // create_index for wide tables.
+  // HNSW-only-indexed tables are excluded from the skip: their per-cell
+  // loop is what drives _emit_pk's AppendPkToColumnstore call. Without
+  // it the synthetic PK column never reaches the new cs and PkIterator
+  // returns empty for every doc.
+  if (_active_columnstore_writer && !hnsw_info.has_value() &&
+      _is_text_indexed_provider && !_is_text_indexed_provider(column_id) &&
+      _json_paths_provider && _json_paths_provider(column_id).empty()) {
 #ifdef SDB_DEV
     _current_writer = nullptr;
 #endif
@@ -221,7 +303,138 @@ void SearchSinkInsertBaseImpl::WriteImpl(
   _document->NextDocument();
 }
 
-void SearchSinkInsertBaseImpl::FinishImpl() { _document.reset(); }
+void SearchSinkInsertBaseImpl::WriteFullColumnImpl(const duckdb::Vector& vec,
+                                                   duckdb::idx_t count) {
+  if (!_active_columnstore_writer) {
+    return;
+  }
+  SDB_ASSERT(_document.has_value());
+  // Document::DocId() returns the iresearch doc_id_t for the first row of
+  // the current batch (per-batch NextFieldBatch resets to that id). Convert
+  // to a 0-based row position within the segment for ColumnWriter::Append.
+  const uint64_t start_row = _document->DocId() - irs::doc_limits::min();
+  // Vector parameter on Append must be non-const because UnifiedVectorFormat
+  // extraction is non-const; cast away const since we only read.
+  _active_columnstore_writer->Append(start_row,
+                                     const_cast<duckdb::Vector&>(vec), count);
+}
+
+void SearchSinkInsertBaseImpl::FinishImpl() {
+  // Flush every per-row STORE accumulator (PK, geo, wildcard, ...).
+  // start_row is pinned to the doc_id of the first row of this batch
+  // (captured in InitImpl) so the columnstore row position matches doc_id.
+  StoredBytesAccumulatorsFlush();
+  // Per-segment ColumnWriters are owned by SegmentWriter and finalized when
+  // the segment commits; we just drop our pointer cache.
+  _columnstore_writers.clear();
+  _stored_bytes_accumulators.clear();
+  _active_columnstore_writer = nullptr;
+  _document.reset();
+}
+
+void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsEnsure(
+  catalog::Column::Id column_id, std::string_view name,
+  duckdb::LogicalType type, bool skip_validity) {
+  auto* doc_columnstore = _document ? _document->Columnstore() : nullptr;
+  if (!doc_columnstore) {
+    return;  // SearchSink running without a DuckDB-backed columnstore (rare).
+  }
+  auto [it, inserted] = _stored_bytes_accumulators.try_emplace(column_id);
+  auto& acc = it->second;
+  if (acc.writer) {
+    return;  // Already opened for this segment.
+  }
+  acc.writer = &doc_columnstore->OpenColumn(
+    static_cast<irs::field_id>(column_id), std::string{name}, type,
+    /*row_group_size=*/0, skip_validity);
+  acc.type = std::move(type);
+  acc.skip_validity = skip_validity;
+  // Size the buffer right away based on the current batch shape so an
+  // accumulator registered mid-batch is immediately usable.
+  acc.first_doc_id = _batch_first_doc_id;
+  acc.batch_size = _batch_size;
+  acc.count = 0;
+  if (acc.batch_size > 0) {
+    acc.buffer.emplace(acc.type, acc.batch_size);
+    duckdb::FlatVector::ValidityMutable(*acc.buffer)
+      .SetAllValid(acc.batch_size);
+  }
+}
+
+void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsInit(
+  uint64_t first_doc_id, duckdb::idx_t batch_size) {
+  _batch_first_doc_id = first_doc_id;
+  _batch_size = batch_size;
+  // Re-size every existing accumulator's buffer to the current batch.
+  for (auto& [_, acc] : _stored_bytes_accumulators) {
+    if (!acc.writer) {
+      continue;
+    }
+    acc.first_doc_id = first_doc_id;
+    acc.count = 0;
+    acc.batch_size = batch_size;
+    acc.buffer.emplace(acc.type, batch_size);
+    duckdb::FlatVector::ValidityMutable(*acc.buffer).SetAllValid(batch_size);
+  }
+}
+
+void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsAppend(
+  catalog::Column::Id column_id, irs::bytes_view bytes) {
+  auto it = _stored_bytes_accumulators.find(column_id);
+  if (it == _stored_bytes_accumulators.end() || !it->second.writer) {
+    return;
+  }
+  auto& acc = it->second;
+  SDB_ASSERT(acc.buffer.has_value());
+  SDB_ASSERT(acc.count < acc.batch_size);
+  auto* slots =
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(*acc.buffer);
+  slots[acc.count] = duckdb::StringVector::AddStringOrBlob(
+    *acc.buffer, reinterpret_cast<const char*>(bytes.data()), bytes.size());
+  ++acc.count;
+}
+
+void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsAppendNull(
+  catalog::Column::Id column_id) {
+  auto it = _stored_bytes_accumulators.find(column_id);
+  if (it == _stored_bytes_accumulators.end() || !it->second.writer) {
+    return;
+  }
+  auto& acc = it->second;
+  SDB_ASSERT(acc.buffer.has_value());
+  SDB_ASSERT(acc.count < acc.batch_size);
+  // skip_validity columns shouldn't ever take this path -- assert in dev.
+  SDB_ASSERT(!acc.skip_validity);
+  duckdb::FlatVector::SetNull(*acc.buffer, acc.count, true);
+  ++acc.count;
+}
+
+void SearchSinkInsertBaseImpl::StoredBytesAccumulatorsFlush() {
+  for (auto& [_, acc] : _stored_bytes_accumulators) {
+    if (!acc.writer || !acc.buffer || acc.count == 0) {
+      continue;
+    }
+    const uint64_t start_row = acc.first_doc_id - irs::doc_limits::min();
+    acc.writer->Append(start_row, *acc.buffer, acc.count);
+    acc.count = 0;
+  }
+}
+
+void SearchSinkInsertBaseImpl::AppendPkToColumnstore(std::string_view row_key) {
+  // PK rides on the unified accumulator. Lazily registered the first
+  // time we see a PK in this segment; opted out of validity-side
+  // compression because every doc emits exactly one PK by construction.
+  // SearchSink may run with no DatabaseInstance behind the segment writer
+  // (rare test fixture); Ensure() is a no-op there and Append falls
+  // through silently.
+  StoredBytesAccumulatorsEnsure(catalog::Column::kGeneratedPKId, "pk",
+                                duckdb::LogicalType::BLOB,
+                                /*skip_validity=*/true);
+  StoredBytesAccumulatorsAppend(
+    catalog::Column::kGeneratedPKId,
+    irs::bytes_view{reinterpret_cast<const irs::byte_type*>(row_key.data()),
+                    row_key.size()});
+}
 
 template<duckdb::LogicalTypeId Kind>
 void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
@@ -268,11 +481,48 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
     search::mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue(_tokenizer_provider(column_id));
     const bool has_store = _field.store_attr != nullptr;
+    // VARCHAR/BLOB columns whose analyzer publishes StoreAttr land
+    // their per-row bytes in a per-field STORE column. Today's
+    // analyzers covering this:
+    //   - GeoAnalyzer / GeoPointAnalyzer / GeoJsonAnalyzer: vpack-
+    //     encoded shape bytes, parsed on read by GeoIterator.
+    //   - WildcardAnalyzer: varint-prefixed term list (will move to
+    //     LIST<BLOB> when LIST support lands).
+    // Route geo analyzers to the unified accumulator (BLOB column in
+    // new cs, read via PointReadCursor in geo_filter.cpp). Other
+    // analyzers continue through the legacy SegmentWriter::stream
+    // STORE write until their migration follows.
     if (has_store) {
-      _current_writer =
-        have_nulls
-          ? MakeIndexStoreWriter(make_nullable_writer_func(&WriteStringValue))
-          : MakeIndexStoreWriter(&WriteStringValue);
+      // Both GeoAnalyzer (vpack-encoded shape bytes) and WildcardAnalyzer
+      // (varint-prefixed term list) emit a single byte_view per row via
+      // StoreAttr -- a BLOB slot per row matches that one-for-one. Read
+      // sites (geo_filter / wildcard_ngram_filter) consume the bytes
+      // through PointReadCursor and run their existing parsers unchanged.
+      StoredBytesAccumulatorsEnsure(column_id, std::to_string(column_id),
+                                    duckdb::LogicalType::BLOB,
+                                    /*skip_validity=*/false);
+      _current_writer = [&, column_id, have_nulls](
+                          std::string_view full_key,
+                          std::span<const rocksdb::Slice> cell_slices) {
+        Field* field = nullptr;
+        const bool is_null =
+          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
+        if (is_null) {
+          _null_field.SetNullValue();
+          field = &_null_field;
+        } else {
+          field = &WriteStringValue(full_key, cell_slices, _field);
+        }
+        if (!_document->Insert(field)) {
+          SDB_THROW(ERROR_INTERNAL,
+                    "Failed to insert field into IResearch document");
+        }
+        if (is_null || !field->store_attr) {
+          StoredBytesAccumulatorsAppendNull(column_id);
+        } else {
+          StoredBytesAccumulatorsAppend(column_id, field->store_attr->value);
+        }
+      };
     } else {
       _current_writer =
         have_nulls
@@ -299,18 +549,11 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
     }
   } else if constexpr (Kind == duckdb::LogicalTypeId::ARRAY) {
-    // HNSW vector field: non-null rows STORE raw float32 bytes (no inverted
-    // index); null rows fall through to INDEX-only via the null-stream
-    // analyzer so IS NULL queries still work.
-    // No name mangling: the field name is the raw big-endian column ID,
-    // matching the column_info key registered in InvertedIndexShard.
-    _field.PrepareForVectorValue();
-    if (have_nulls) {
-      _current_writer =
-        MakeStoreWriter(make_nullable_writer_func(&WriteVectorValue));
-    } else {
-      _current_writer = MakeStoreWriter(&WriteVectorValue);
-    }
+    // HNSW vectors are written through the cs in WriteFullColumnImpl;
+    // the per-cell loop is a no-op. _emit_pk's wrap below still drives
+    // AppendPkToColumnstore on the first cell so HNSW-only-indexed
+    // tables get their synthetic PK.
+    _current_writer = [](std::string_view, std::span<const rocksdb::Slice>) {};
   } else if constexpr (Kind == duckdb::LogicalTypeId::GEOMETRY) {
     // GEOMETRY column: WKB bytes arrive in cell_slices and go straight to
     // the geo analyzer via resetWKB. The analyzer parses internally, which
@@ -338,9 +581,37 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
       return field;
     };
     if (has_store) {
-      _current_writer =
-        have_nulls ? MakeIndexStoreWriter(make_nullable_writer_func(geo_writer))
-                   : MakeIndexStoreWriter(geo_writer);
+      // Geo's analyzer-published StoreAttr bytes ride the unified
+      // accumulator -- one BLOB column in new cs per geo field. Read side
+      // (geo_filter.cpp) consumes via PointReadCursor instead of the
+      // legacy column_it / PayAttr iteration. INDEX action runs the
+      // analyzer (which fills StoreAttr); the accumulator captures the
+      // bytes after Insert returns.
+      StoredBytesAccumulatorsEnsure(column_id, std::to_string(column_id),
+                                    duckdb::LogicalType::BLOB,
+                                    /*skip_validity=*/false);
+      _current_writer = [&, geo_writer, column_id, have_nulls](
+                          std::string_view full_key,
+                          std::span<const rocksdb::Slice> cell_slices) {
+        Field* field = nullptr;
+        const bool is_null =
+          have_nulls && cell_slices.size() == 1 && cell_slices.front().empty();
+        if (is_null) {
+          _null_field.SetNullValue();
+          field = &_null_field;
+        } else {
+          field = &geo_writer(full_key, cell_slices, _field);
+        }
+        if (!_document->Insert(field)) {
+          SDB_THROW(ERROR_INTERNAL,
+                    "Failed to insert field into IResearch document");
+        }
+        if (is_null || !field->store_attr) {
+          StoredBytesAccumulatorsAppendNull(column_id);
+        } else {
+          StoredBytesAccumulatorsAppend(column_id, field->store_attr->value);
+        }
+      };
     } else {
       _current_writer =
         have_nulls ? MakeIndexWriter(make_nullable_writer_func(geo_writer))
@@ -363,16 +634,17 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
-      _pk_field.own_store.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
-      // We need indexed PK for removes
-      const bool r =
-        _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
-          _pk_field);
+      // INDEX-only: the inverted-index side of the PK field is what
+      // search_remove_filter walks (term -> doc_id) to mark deletions.
+      // The legacy STORE side (column data) is gone -- per-doc PK reads
+      // resolve through the new typed columnstore via SegmentPkIterator.
+      const bool r = _document->Insert(_pk_field);
       if (!r) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert PK field into IResearch document");
       }
+      AppendPkToColumnstore(row_key);
       data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
@@ -467,7 +739,7 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
     SDB_ASSERT(res == simdjson::SUCCESS);
 
     auto insert_field = [this](Field& field) {
-      const bool ok = _document->template Insert<irs::Action::INDEX>(&field);
+      const bool ok = _document->Insert(&field);
       if (!ok) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert JSON path field into IResearch document");
@@ -539,42 +811,28 @@ void SearchSinkInsertBaseImpl::SetupJsonColumnWriter(
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
-      _pk_field.own_store.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
-      const bool r =
-        _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
-          _pk_field);
+      // INDEX-only: see the SetupColumnWriter twin above for rationale.
+      const bool r = _document->Insert(_pk_field);
       if (!r) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert PK field into IResearch document");
       }
+      AppendPkToColumnstore(row_key);
       data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
   }
 }
 
-template<bool HasStore, irs::Action NonNullAction, typename WriteFunc>
-SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeWriterImpl(
+template<typename WriteFunc>
+SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
   WriteFunc&& write_func) {
   return
     [&, func = std::forward<WriteFunc>(write_func)](
       std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
       auto& field = func(full_key, cell_slices, _field);
-      bool r;
-      if constexpr (HasStore) {
-        // Force INDEX only for NULLs so
-        // IS NULL queries find them via the null-stream tokens.
-        r = field.store_attr
-              ? _document->template Insert<NonNullAction>(&field)
-              : _document->template Insert<irs::Action::INDEX>(&field);
-      } else {
-        // Column never stores -- skip the per-row check.
-        static_assert(NonNullAction == irs::Action::INDEX,
-                      "No-store action should be only INDEX");
-        r = _document->template Insert<NonNullAction>(&field);
-      }
-      if (!r) {
+      if (!_document->Insert(&field)) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to insert field into IResearch document");
       }
@@ -588,6 +846,16 @@ void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   }
   _document.emplace(_trx.Insert(false, batch_size));
   _emit_pk = true;
+  // Capture batch start so the unified accumulator (PK, geo, wildcard,
+  // ...) can pin its bulk Append's start_row to this batch's first
+  // doc_id, and so accumulators registered mid-batch come up correctly
+  // sized. Reallocates the per-column buffers -- different Sink chunks
+  // in the same scan_threads-many parallel sink may pass different
+  // batch_size values. BLOB (not VARCHAR) because PK is rocksdb-encoded
+  // bytes; routing through VARCHAR trips DuckDB's UTF-8 validator inside
+  // StringStats during codec analyze.
+  StoredBytesAccumulatorsInit(_document->DocId(),
+                              static_cast<duckdb::idx_t>(batch_size));
 }
 
 SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
@@ -611,21 +879,6 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteStringValue(
       field.SetStringValue({cell_slices[1].data(), cell_slices[1].size()});
     }
   }
-  return field;
-}
-
-SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteVectorValue(
-  std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkInsertBaseImpl::Field& field) {
-  // _row_slices layout from WriteFlatSubVector<float>:
-  //   [0] header  (varint(count) + ValueFlags)
-  //   [1] null bitmap  (only when have_nulls)
-  //   [last] raw float data  (count * sizeof(float) bytes)
-  // Always use the last slice to get the actual float bytes.
-  SDB_ASSERT(!cell_slices.empty());
-  field.own_store.value = irs::bytes_view{
-    reinterpret_cast<const irs::byte_type*>(cell_slices.back().data()),
-    cell_slices.back().size()};
   return field;
 }
 
@@ -663,16 +916,6 @@ SearchSinkInsertBaseImpl::Field& SearchSinkInsertBaseImpl::WriteBooleanValue(
   SDB_ASSERT(cell_slices[0].size() == 1);
   field.SetBooleanValue(cell_slices.front() == kTrueValue);
   return field;
-}
-
-void SearchSinkInsertBaseImpl::Field::PrepareForVectorValue() {
-  // HNSW vector fields are stored via Action::STORE only (no inverted index).
-  // No tokenizer is needed: Action::STORE does not call GetTokens().
-  string_analyzer.reset();
-  analyzer.reset();
-  index_features = irs::IndexFeatures::None;
-  own_store.value = {};
-  store_attr = &own_store;
 }
 
 void SearchSinkInsertBaseImpl::Field::PrepareForVerbatimStringValue() {

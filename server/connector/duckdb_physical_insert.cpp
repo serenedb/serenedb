@@ -226,6 +226,24 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     writer->Init(affected_rows, chunk);
   }
 
+  // `sdb_write_conflict_policy = do_nothing` (and only this -- the
+  // ON CONFLICT clause is pre-filtered by DuckDB upstream) leaves the
+  // chunk's value vectors intact while only `affected_rows` rows
+  // get doc ids. WriteFullColumn must see only the surviving rows or
+  // the cs row position decouples from the segment's doc id space.
+  // HandleWriteConflicts marks skipped rows by clearing row_keys[row].
+  duckdb::SelectionVector survivor_sel;
+  const bool need_filter = (rows_skipped > 0);
+  if (need_filter) {
+    survivor_sel.Initialize(affected_rows);
+    duckdb::idx_t k = 0;
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      if (!gstate.row_keys[row].empty()) {
+        survivor_sel.set_index(k++, row);
+      }
+    }
+  }
+
   // 4. Write each column via DuckDBColumnSerializer
   DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
 
@@ -235,12 +253,24 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     }
 
     gstate.active_writers.clear();
+    auto& vec = chunk.data[col.input_col_idx];
+    duckdb::Vector cs_vec{vec.GetType(), affected_rows};
+    if (need_filter) {
+      // DICTIONARY view; no data copy.
+      cs_vec.Slice(vec, survivor_sel, affected_rows);
+    }
+    duckdb::Vector& cs_input = need_filter ? cs_vec : vec;
+    const duckdb::idx_t cs_count = need_filter ? affected_rows : num_rows;
     for (auto& writer : gstate.index_writers) {
-      auto& vec = chunk.data[col.input_col_idx];
       bool may_have_nulls =
         vec.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
         !duckdb::FlatVector::Validity(vec).CannotHaveNull();
-      if (writer->SwitchColumn(col.duckdb_type, may_have_nulls, col.id)) {
+      const bool active =
+        writer->SwitchColumn(col.duckdb_type, may_have_nulls, col.id);
+      // Hand the entire input vector to the writer so that columnstore
+      // sinks consume the typed batch directly. Default impl is a no-op.
+      writer->WriteFullColumn(cs_input, cs_count);
+      if (active) {
         gstate.active_writers.push_back(writer.get());
       }
     }

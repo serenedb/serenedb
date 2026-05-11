@@ -26,24 +26,19 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
-#include <ranges>
 #include <vector>
 
 #include "basics/assert.h"
-#include "basics/containers/small_vector.h"
-#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/buffered_column.hpp"
-#include "iresearch/index/buffered_column_iterator.hpp"
-#include "iresearch/index/comparer.hpp"
+#include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/merge.hpp"
+#include "iresearch/columnstore/norm_reader.hpp"
+#include "iresearch/columnstore/norm_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/heap_iterator.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -51,13 +46,8 @@
 namespace irs {
 namespace {
 
-// mapping of old doc_id to new doc_id (reader doc_ids are sequential 0 based)
-// masked doc_ids have value of MASKED_DOC_ID
 using DocIdMapT = ManagedVector<doc_id_t>;
-
-// document mapping function
 using DocMapF = std::function<doc_id_t(doc_id_t)>;
-
 using FieldMetaMapT = absl::flat_hash_map<std::string_view, const FieldMeta*>;
 
 class NoopDirectory : public Directory {
@@ -68,33 +58,23 @@ class NoopDirectory : public Directory {
   }
 
   DirectoryAttributes& attributes() noexcept final { return _attrs; }
-
   IndexOutput::ptr create(std::string_view) noexcept final { return nullptr; }
-
   bool exists(bool&, std::string_view) const noexcept final { return false; }
-
   bool length(uint64_t&, std::string_view) const noexcept final {
     return false;
   }
-
   IndexLock::ptr make_lock(std::string_view) noexcept final { return nullptr; }
-
   bool mtime(std::time_t&, std::string_view) const noexcept final {
     return false;
   }
-
   IndexInput::ptr open(std::string_view, IOAdvice) const noexcept final {
     return nullptr;
   }
-
   bool remove(std::string_view) noexcept final { return false; }
-
   bool rename(std::string_view, std::string_view) noexcept final {
     return false;
   }
-
   bool sync(std::span<const std::string_view>) noexcept final { return false; }
-
   bool visit(const Directory::visitor_f&) const final { return false; }
 
  private:
@@ -116,7 +96,6 @@ class ProgressTracker {
       _hits = 0;
       _valid = (*_progress)();
     }
-
     return _valid;
   }
 
@@ -124,8 +103,8 @@ class ProgressTracker {
 
  private:
   const MergeWriter::FlushProgress* _progress;
-  const size_t _count;  // call progress callback each `count_` hits
-  size_t _hits{0};      // current number of hits
+  const size_t _count;
+  size_t _hits{0};
   bool _valid{true};
 };
 
@@ -140,9 +119,21 @@ class RemappingDocIterator : public DocIterator {
     return _it->GetMutable(type);
   }
 
-  doc_id_t advance() final;
+  doc_id_t advance() final {
+    while (true) {
+      const auto it_value = _it->advance();
+      if (doc_limits::eof(it_value)) {
+        return _doc = doc_limits::eof();
+      }
+      _doc = (*_mapper)(it_value);
+      if (doc_limits::eof(_doc)) {
+        continue;
+      }
+      return _doc;
+    }
+  }
 
-  doc_id_t seek(doc_id_t target) final {
+  doc_id_t seek(doc_id_t /*target*/) final {
     SDB_ASSERT(false);
     return _doc = doc_limits::eof();
   }
@@ -157,22 +148,6 @@ class RemappingDocIterator : public DocIterator {
   const DocMapF* _mapper;
 };
 
-doc_id_t RemappingDocIterator::advance() {
-  while (true) {
-    const auto it_value = _it->advance();
-    if (doc_limits::eof(it_value)) {
-      return _doc = doc_limits::eof();
-    }
-
-    _doc = (*_mapper)(it_value);
-    if (doc_limits::eof(_doc)) {
-      continue;  // masked doc_id
-    }
-    return _doc;
-  }
-}
-
-// Iterator over doc_ids for a term over all readers
 class CompoundDocIterator : public DocIterator {
  public:
   using DocIteratorT =
@@ -190,10 +165,8 @@ class CompoundDocIterator : public DocIterator {
     if (!func(_iterators)) {
       return false;
     }
-
     _doc = doc_limits::invalid();
     _current_itr = 0;
-
     return true;
   }
 
@@ -208,7 +181,7 @@ class CompoundDocIterator : public DocIterator {
 
   doc_id_t advance() final;
 
-  doc_id_t seek(doc_id_t target) final {
+  doc_id_t seek(doc_id_t /*target*/) final {
     SDB_ASSERT(false);
     return _doc = doc_limits::eof();
   }
@@ -220,8 +193,6 @@ class CompoundDocIterator : public DocIterator {
   }
 
  private:
-  friend class SortingCompoundDocIterator;
-
   AttrProviderChangeAttr _attribute_change;
   std::vector<DocIteratorT> _iterators;
   size_t _current_itr{0};
@@ -255,235 +226,18 @@ doc_id_t CompoundDocIterator::advance() {
       if (doc_limits::eof(it_value)) {
         break;
       }
-
       _doc = id_map(it_value);
       if (doc_limits::eof(_doc)) {
-        continue;  // masked doc_id
+        continue;
       }
       return _doc;
     }
-
     it.reset();
   }
 
   return _doc = doc_limits::eof();
 }
 
-// Iterator over sorted doc_ids for a term over all readers
-class SortingCompoundDocIterator : public DocIterator {
- public:
-  explicit SortingCompoundDocIterator(CompoundDocIterator& doc_it) noexcept
-    : _doc_it{&doc_it} {}
-
-  template<typename Func>
-  bool Reset(Func&& func) {
-    if (!_doc_it->Reset(std::forward<Func>(func))) {
-      return false;
-    }
-
-    _merge_it.Reset(_doc_it->_iterators);
-    _lead = nullptr;
-
-    return true;
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return _doc_it->GetMutable(type);
-  }
-
-  doc_id_t advance() final;
-
-  doc_id_t seek(doc_id_t target) final {
-    SDB_ASSERT(false);
-    return doc_limits::eof();
-  }
-
-  uint32_t GetFreq() const final {
-    const auto& new_lead = _merge_it.Lead();
-    SDB_ASSERT(new_lead.first);
-    return new_lead.first->GetFreq();
-  }
-
- private:
-  class Context {
-   public:
-    using Value = CompoundDocIterator::DocIteratorT;
-
-    // advance
-    bool operator()(const Value& value) const {
-      const auto& map = value.second.get();
-      while (value.first->next()) {
-        if (!doc_limits::eof(map(value.first->value()))) {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // compare
-    bool operator()(const Value& lhs, const Value& rhs) const {
-      return lhs.second.get()(lhs.first->value()) <
-             rhs.second.get()(rhs.first->value());
-    }
-  };
-
-  CompoundDocIterator* _doc_it;
-  ExternalMergeIterator<Context> _merge_it;
-  CompoundDocIterator::DocIteratorT* _lead{};
-};
-
-doc_id_t SortingCompoundDocIterator::advance() {
-  _doc_it->_progress();
-
-  if (_doc_it->Aborted()) {
-    _doc_it->_iterators.clear();
-    return _doc = doc_limits::eof();
-  }
-
-  while (_merge_it.Next()) {
-    auto& new_lead = _merge_it.Lead();
-    auto& it = new_lead.first;
-    auto& doc_map = new_lead.second.get();
-
-    if (&new_lead != _lead) {
-      // update attributes
-      _doc_it->_attribute_change(*it);
-      _lead = &new_lead;
-    }
-
-    _doc = doc_map(it->value());
-    if (!doc_limits::eof(_doc)) {
-      return _doc;
-    }
-  }
-
-  return _doc = doc_limits::eof();
-}
-
-class DocIteratorContainer {
- public:
-  explicit DocIteratorContainer(size_t size) { _itrs.reserve(size); }
-
-  auto begin() { return std::begin(_itrs); }
-  auto end() { return std::end(_itrs); }
-
-  template<typename Func>
-  bool Reset(Func&& func) {
-    return func(_itrs);
-  }
-
- private:
-  std::vector<RemappingDocIterator> _itrs;
-};
-
-class CompoundColumnIterator final {
- public:
-  explicit CompoundColumnIterator(size_t size) {
-    _iterators.reserve(size);
-    _iterator_mask.reserve(size);
-  }
-
-  void Add(const SubReader& reader, const DocMapF& doc_map) {
-    auto it = reader.columns();
-    SDB_ASSERT(it);
-
-    if (it) [[likely]] {
-      _iterator_mask.emplace_back(_iterators.size());
-      _iterators.emplace_back(std::move(it), &reader, &doc_map);
-    }
-  }
-
-  // visit matched iterators
-  template<typename Visitor>
-  bool Visit(const Visitor& visitor) const {
-    for (auto id : _iterator_mask) {
-      auto& it = _iterators[id];
-      if (!visitor(*it.reader, *it.doc_map, it.it->value())) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  const ColumnReader& Value() const {
-    if (_current_value) [[likely]] {
-      return *_current_value;
-    }
-
-    return ColumnIterator::empty()->value();
-  }
-
-  bool Next() {
-    // advance all used iterators
-    for (auto id : _iterator_mask) {
-      auto& it = _iterators[id].it;
-
-      if (it) {
-        // Skip annonymous columns
-        bool exhausted;
-        do {
-          exhausted = !it->next();
-        } while (!exhausted && IsNull(it->value().name()));
-
-        if (exhausted) {
-          it = nullptr;
-        }
-      }
-    }
-
-    _iterator_mask.clear();  // reset for next pass
-
-    for (size_t i = 0, size = _iterators.size(); i < size; ++i) {
-      auto& it = _iterators[i].it;
-      if (!it) {
-        continue;  // empty iterator
-      }
-
-      const auto& value = it->value();
-      const std::string_view key = value.name();
-      SDB_ASSERT(!IsNull(key));
-
-      if (!_iterator_mask.empty() && _current_key < key) {
-        continue;  // empty field or value too large
-      }
-
-      // found a smaller field
-      if (_iterator_mask.empty() || key < _current_key) {
-        _iterator_mask.clear();
-        _current_key = key;
-        _current_value = &value;
-      }
-
-      SDB_ASSERT(value.name() ==
-                 _current_value->name());  // validated by caller
-      _iterator_mask.push_back(i);
-    }
-
-    if (!_iterator_mask.empty()) {
-      return true;
-    }
-
-    _current_key = {};
-
-    return false;
-  }
-
- private:
-  struct Iterator {
-    ColumnIterator::ptr it;
-    const SubReader* reader;
-    const DocMapF* doc_map;
-  };
-
-  static_assert(std::is_nothrow_move_constructible_v<Iterator>);
-
-  const ColumnReader* _current_value{};
-  std::string_view _current_key;
-  std::vector<size_t> _iterator_mask;  // valid iterators for current step
-  std::vector<Iterator> _iterators;    // all segment iterators
-};
-
-// Iterator over documents for a term over all readers
 class CompoundTermIterator : public TermIterator {
  public:
   CompoundTermIterator(const CompoundTermIterator&) = delete;
@@ -491,11 +245,8 @@ class CompoundTermIterator : public TermIterator {
 
   static constexpr const size_t kProgressStepTerms = size_t{1} << 7;
 
-  explicit CompoundTermIterator(const MergeWriter::FlushProgress& progress,
-                                const Comparer* comparator)
-    : _doc_itr{progress},
-      _has_comparer{nullptr != comparator},
-      _progress{progress, kProgressStepTerms} {}
+  explicit CompoundTermIterator(const MergeWriter::FlushProgress& progress)
+    : _doc_itr{progress}, _progress{progress, kProgressStepTerms} {}
 
   bool Aborted() const {
     return !static_cast<bool>(_progress) || _doc_itr.Aborted();
@@ -516,8 +267,6 @@ class CompoundTermIterator : public TermIterator {
   void Add(const TermReader& reader, const DocMapF& doc_map);
 
   Attribute* GetMutable(TypeInfo::type_id) noexcept final {
-    // no way to merge attributes for the same term spread over multiple
-    // iterators would require API change for attributes
     SDB_ASSERT(false);
     return nullptr;
   }
@@ -555,13 +304,11 @@ class CompoundTermIterator : public TermIterator {
 
   bytes_view _current_term;
   const FieldMeta* _meta{};
-  std::vector<size_t> _term_iterator_mask;  // valid iterators for current term
-  std::vector<TermIteratorImpl> _term_iterators;  // all term iterators
+  std::vector<size_t> _term_iterator_mask;
+  std::vector<TermIteratorImpl> _term_iterators;
   mutable bstring _min_term;
   mutable bstring _max_term;
   mutable CompoundDocIterator _doc_itr;
-  mutable SortingCompoundDocIterator _sorting_doc_itr{_doc_itr};
-  bool _has_comparer;
   mutable bool _has_min_term{false};
   ProgressTracker _progress;
 };
@@ -570,9 +317,7 @@ void CompoundTermIterator::Add(const TermReader& reader,
                                const DocMapF& doc_id_map) {
   auto it = reader.iterator(SeekMode::NORMAL);
   SDB_ASSERT(it);
-
   if (it) [[likely]] {
-    // mark as used to trigger next()
     _term_iterator_mask.emplace_back(_term_iterators.size());
     _term_iterators.emplace_back(std::move(it), &doc_id_map);
   }
@@ -587,7 +332,6 @@ bool CompoundTermIterator::next() {
     return false;
   }
 
-  // advance all used iterators
   for (const auto itr_id : _term_iterator_mask) {
     auto& it = _term_iterators[itr_id].first;
     SDB_ASSERT(it);
@@ -599,7 +343,6 @@ bool CompoundTermIterator::next() {
   _term_iterator_mask.clear();
   _current_term = {};
 
-  // TODO(mbkkt) use k way merge
   for (size_t i = 0, count = _term_iterators.size(); i != count; ++i) {
     auto& it = _term_iterators[i].first;
     if (!it) {
@@ -629,43 +372,29 @@ DocIterator::ptr CompoundTermIterator::postings(
   auto add_iterators = [this](CompoundDocIterator::IteratorsT& itrs) {
     itrs.clear();
     itrs.reserve(_term_iterator_mask.size());
-
     for (auto& itr_id : _term_iterator_mask) {
       auto& term_itr = _term_iterators[itr_id];
       SDB_ASSERT(term_itr.first);
       auto it = term_itr.first->postings(Meta().index_features);
       SDB_ASSERT(it);
-
       if (it) [[likely]] {
         itrs.emplace_back(std::move(it), *term_itr.second);
       }
     }
-
     return true;
   };
 
-  if (_has_comparer) {
-    _sorting_doc_itr.Reset(add_iterators);
-    // we need to use sorting_doc_itr_ wrapper only
-    if (_doc_itr.Size() > 1) {
-      return memory::to_managed<DocIterator>(_sorting_doc_itr);
-    }
-  } else {
-    _doc_itr.Reset(add_iterators);
-  }
+  _doc_itr.Reset(add_iterators);
   return memory::to_managed<DocIterator>(_doc_itr);
 }
 
-// Iterator over field_ids over all readers
 class CompoundFieldIterator final : public BasicTermReader {
  public:
   static constexpr const size_t kProgressStepFields = size_t{1};
 
   explicit CompoundFieldIterator(size_t size,
-                                 const MergeWriter::FlushProgress& progress,
-                                 const Comparer* comparator = nullptr)
-    : _term_itr(progress, comparator),
-      _progress(progress, kProgressStepFields) {
+                                 const MergeWriter::FlushProgress& progress)
+    : _term_itr(progress), _progress(progress, kProgressStepFields) {
     _field_iterators.reserve(size);
     _field_iterator_mask.reserve(size);
   }
@@ -674,7 +403,6 @@ class CompoundFieldIterator final : public BasicTermReader {
   bool Next();
   size_t Size() const noexcept { return _field_iterators.size(); }
 
-  // visit matched iterators
   template<typename Visitor>
   bool Visit(const Visitor& visitor) const {
     for (auto& entry : _field_iterator_mask) {
@@ -692,15 +420,10 @@ class CompoundFieldIterator final : public BasicTermReader {
   }
 
   std::string_view name() const noexcept final { return Meta().name; }
-
   FieldProperties properties() const noexcept final { return _props; }
-
   bytes_view(min)() const noexcept final { return _term_itr.MinTerm(); }
-
   bytes_view(max)() const noexcept final { return _term_itr.MaxTerm(); }
-
   Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-
   TermIterator::ptr iterator() const final;
 
   bool Aborted() const {
@@ -725,9 +448,8 @@ class CompoundFieldIterator final : public BasicTermReader {
   FieldProperties _props;
   std::string_view _current_field;
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
-  // valid iterators for current field
   std::vector<TermIteratorImpl> _field_iterator_mask;
-  std::vector<FieldIteratorImpl> _field_iterators;  // all segment iterators
+  std::vector<FieldIteratorImpl> _field_iterators;
   mutable CompoundTermIterator _term_itr;
   ProgressTracker _progress;
 };
@@ -736,9 +458,7 @@ void CompoundFieldIterator::Add(const SubReader& reader,
                                 const DocMapF& doc_id_map) {
   auto it = reader.fields();
   SDB_ASSERT(it);
-
   if (it) [[likely]] {
-    // mark as used to trigger next()
     _field_iterator_mask.emplace_back(_field_iterators.size(), nullptr,
                                       nullptr);
     _field_iterators.emplace_back(std::move(it), &reader, &doc_id_map);
@@ -747,7 +467,6 @@ void CompoundFieldIterator::Add(const SubReader& reader,
 
 bool CompoundFieldIterator::Next() {
   _current_field = {};
-
   _progress();
 
   if (Aborted()) {
@@ -756,7 +475,6 @@ bool CompoundFieldIterator::Next() {
     return false;
   }
 
-  // advance all used iterators
   for (auto& entry : _field_iterator_mask) {
     auto& it = _field_iterators[entry.itr_id].itr;
     SDB_ASSERT(it);
@@ -765,24 +483,19 @@ bool CompoundFieldIterator::Next() {
     }
   }
 
-  // reset for next pass
   _field_iterator_mask.clear();
 
-  // TODO(mbkkt) use k way merge
   for (size_t i = 0, count = _field_iterators.size(); i != count; ++i) {
     auto& field_itr = _field_iterators[i];
-
     if (!field_itr.itr) {
-      continue;  // empty iterator
+      continue;
     }
-
     const auto& field_meta = field_itr.itr->value().meta();
     const auto* field_terms = field_itr.reader->field(field_meta.name);
     if (!field_terms) {
       continue;
     }
     const std::string_view field_id = field_meta.name;
-
     SDB_ASSERT(!IsNull(field_id));
     SDB_ASSERT(_field_iterator_mask.empty() == IsNull(_current_field));
     if (!IsNull(_current_field)) {
@@ -796,10 +509,7 @@ bool CompoundFieldIterator::Next() {
     }
     _current_field = field_id;
     _current_meta = &field_meta;
-
-    // validated by caller
     SDB_ASSERT(field_meta.index_features <= Meta().index_features);
-
     _field_iterator_mask.emplace_back(
       TermIteratorImpl{i, &field_meta, field_terms});
   }
@@ -809,597 +519,138 @@ bool CompoundFieldIterator::Next() {
 
 TermIterator::ptr CompoundFieldIterator::iterator() const {
   _term_itr.Reset(Meta());
-
   for (const auto& segment : _field_iterator_mask) {
     _term_itr.Add(*(segment.reader),
                   *(_field_iterators[segment.itr_id].doc_map));
   }
-
   return memory::to_managed<TermIterator>(_term_itr);
 }
 
-// Computes fields_type
 bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader) {
   for (auto it = reader.fields(); it->next();) {
     const auto& field_meta = it->value().meta();
     const auto [field_meta_it, is_new] =
       field_meta_map.emplace(field_meta.name, &field_meta);
-
-    // validate field_meta equivalence
     if (!is_new && (!IsSubsetOf(field_meta.index_features,
                                 field_meta_it->second->index_features))) {
-      return false;  // field_meta is not equal, so cannot merge segments
+      return false;
     }
-
     index_features |= field_meta.index_features;
   }
-
   return true;
 }
 
-// Helper class responsible for writing a data from different sources
-// into single columnstore.
-class Columnstore {
- public:
-  static constexpr size_t kProgressStepColumn = size_t{1} << 13;
-
-  Columnstore(ColumnstoreWriter::ptr&& writer,
-              const MergeWriter::FlushProgress& progress)
-    : _progress{progress, kProgressStepColumn}, _writer{std::move(writer)} {}
-
-  Columnstore(Directory& dir, const SegmentMeta& meta,
-              const MergeWriter::FlushProgress& progress,
-              IResourceManager& resource_manager)
-    : _progress{progress, kProgressStepColumn} {
-    auto writer = meta.codec->get_columnstore_writer(true, resource_manager);
-    writer->prepare(dir, meta);
-
-    _writer = std::move(writer);
+doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
+                       doc_id_t next_id) noexcept {
+  try {
+    doc_id_map.resize(reader.docs_count() + doc_limits::min(),
+                      doc_limits::eof());
+  } catch (...) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat(
+        "Failed to resize merge_writer::doc_id_map to accommodate element: ",
+        reader.docs_count() + doc_limits::min()));
+    return doc_limits::invalid();
   }
-
-  // Inserts live values from the specified iterators into a column.
-  // Returns column id of the inserted column on success,
-  //  field_limits::invalid() in case if no data were inserted,
-  //  empty value is case if operation was interrupted.
-  template<typename Writer>
-  std::optional<field_id> insert(DocIteratorContainer& itrs,
-                                 const ColumnInfo& info,
-                                 ColumnFinalizer&& finalizer, Writer&& writer);
-
-  // Inserts live values from the specified 'iterator' into a column.
-  // Returns column id of the inserted column on success,
-  //  field_limits::invalid() in case if no data were inserted,
-  //  empty value is case if operation was interrupted.
-  template<typename Writer>
-  std::optional<field_id> insert(SortingCompoundDocIterator& it,
-                                 const ColumnInfo& info,
-                                 ColumnFinalizer&& finalizer, Writer&& writer);
-
-  // Returns `true` if anything was actually flushed
-  bool Flush(const FlushState& state) { return _writer->commit(state); }
-
-  bool Valid() const noexcept { return static_cast<bool>(_writer); }
-
- private:
-  ProgressTracker _progress;
-  ColumnstoreWriter::ptr _writer;
-};
-
-template<typename Writer>
-std::optional<field_id> Columnstore::insert(DocIteratorContainer& itrs,
-                                            const ColumnInfo& info,
-                                            ColumnFinalizer&& finalizer,
-                                            Writer&& writer) {
-  auto next_iterator = [end = std::end(itrs)](auto begin) {
-    return std::find_if(begin, end, [](auto& it) { return it.next(); });
-  };
-
-  auto begin = next_iterator(std::begin(itrs));
-
-  if (begin == std::end(itrs)) {
-    // Empty column
-    return std::make_optional(field_limits::invalid());
+  for (auto docs_itr = reader.docs_iterator(); docs_itr->next(); ++next_id) {
+    auto src_doc_id = docs_itr->value();
+    SDB_ASSERT(src_doc_id >= doc_limits::min());
+    SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
+    doc_id_map[src_doc_id] = next_id;
   }
-
-  auto column = _writer->push_column(info, std::move(finalizer));
-
-  auto write_column = [&column, &writer, this](auto& it) {
-    auto* payload = irs::get<PayAttr>(it);
-
-    do {
-      if (!_progress()) {
-        // Stop was requested
-        return false;
-      }
-
-      const auto doc = it.value();
-      if (payload) {
-        writer(column.out, doc, payload->value);
-      } else {
-        column.out.Prepare(doc);
-      }
-    } while (it.next());
-
-    return true;
-  };
-
-  do {
-    if (!write_column(*begin)) {
-      // Stop was requested
-      return std::nullopt;
-    }
-
-    begin = next_iterator(++begin);
-  } while (begin != std::end(itrs));
-
-  return std::make_optional(column.id);
+  return next_id;
 }
 
-template<typename Writer>
-std::optional<field_id> Columnstore::insert(SortingCompoundDocIterator& it,
-                                            const ColumnInfo& info,
-                                            ColumnFinalizer&& finalizer,
-                                            Writer&& writer) {
-  const PayAttr* payload = nullptr;
+const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
-  auto* callback = irs::get<AttrProviderChangeAttr>(it);
-
-  if (callback) {
-    callback->Subscribe([&payload](const AttributeProvider& attrs) {
-      payload = irs::get<PayAttr>(attrs);
-    });
-  } else {
-    payload = irs::get<PayAttr>(it);
-  }
-
-  if (it.next()) {
-    auto column = _writer->push_column(info, std::move(finalizer));
-
-    do {
-      if (!_progress()) {
-        // Stop was requested
-        return std::nullopt;
-      }
-
-      const auto doc = it.value();
-
-      if (payload) {
-        writer(column.out, doc, payload->value);
-      } else {
-        column.out.Prepare(doc);
-      }
-    } while (it.next());
-
-    return std::make_optional(column.id);
-  } else {
-    // Empty column
-    return std::make_optional(field_limits::invalid());
-  }
-}
-
-struct PrimarySortIteratorAdapter {
-  explicit PrimarySortIteratorAdapter(DocIterator::ptr it,
-                                      DocIterator::ptr live_docs) noexcept
-    : it{std::move(it)},
-      payload{irs::get<PayAttr>(*this->it)},
-      live_docs{std::move(live_docs)} {
-    SDB_ASSERT(Valid());
-  }
-
-  [[nodiscard]] bool Valid() const noexcept { return it && payload; }
-
-  DocIterator::ptr it;
-  const PayAttr* payload;
-  DocIterator::ptr live_docs;
-  doc_id_t min{};
+// Per-source norm reader handle: which source segment it came from and the
+// columnstore::Reader that exposes its NormColumns.
+struct SourceContext {
+  const SubReader* reader;
+  std::unique_ptr<columnstore::Reader> cs_reader;
+  const DocMapF* doc_map;
 };
 
-class MergeContext {
- public:
-  using Value = PrimarySortIteratorAdapter;
-
-  MergeContext(const Comparer& compare) noexcept : _compare{&compare} {}
-
-  // advance
-  bool operator()(Value& value) const {
-    value.min = value.it->value() + 1;
-    return value.it->next();
-  }
-
-  // compare
-  bool operator()(const Value& lhs, const Value& rhs) const {
-    SDB_ASSERT(&lhs != &rhs);
-    const bytes_view lhs_value = lhs.payload->value;
-    const bytes_view rhs_value = rhs.payload->value;
-    const auto r = _compare->Compare(lhs_value, rhs_value);
-    return r < 0;
-  }
-
- private:
-  const Comparer* _compare;
-};
-
-class BufferedValues final : public ColumnReader, DataOutput {
- public:
-  BufferedValues(IResourceManager& rm) : _index{{rm}}, _data{{rm}} {}
-
-  void Clear() noexcept {
-    _index.clear();
-    _data.clear();
-    _header.reset();
-    _out = nullptr;
-    _feature_writer = nullptr;
-  }
-
-  void Reserve(size_t count, size_t value_size) {
-    _index.reserve(count);
-    _data.reserve(count * value_size);
-  }
-
-  void PushBack(doc_id_t doc, bytes_view value) {
-    _index.emplace_back(doc, _data.size(), value.size());
-    _data.append(value);
-  }
-
-  void SetID(field_id id) noexcept { _id = id; }
-
-  void UpdateHeader() {
-    if (_feature_writer) {
-      SDB_ASSERT(!_hnsw_index);
-      BytesOutput writer{_header.emplace()};
-      _feature_writer->finish(writer);
-    }
-    if (!_out) {
-      return;
-    }
-    auto* data = _data.data();
-    for (auto v : _index) {
-      _out->Prepare(v.key);
-      _out->WriteBytes(data + v.begin, v.size);
-    }
-  }
-
-  void WithHNSW(HNSWIndexWriter& hnsw_index) {
-    SDB_ASSERT(!_hnsw_index);
-    _hnsw_index = &hnsw_index;
-  }
-
-  void SetFeatureWriter(FeatureWriter& writer) noexcept {
-    SDB_ASSERT(!_feature_writer);
-    _feature_writer = &writer;
-    SDB_ASSERT(_out == nullptr);
-  }
-
-  void operator()(ColumnOutput& out, doc_id_t doc, bytes_view payload) {
-    SDB_ASSERT(_out == nullptr || _out == &out);
-    _out = &out;
-    const auto begin = _data.size();
-    // Feature writer or HNSW index must be set, but not both
-    if (_feature_writer) {
-      SDB_ASSERT(!_hnsw_index);
-      _feature_writer->write(*this, payload);
-      _index.emplace_back(doc, begin, _data.size() - begin);
-    } else if (_hnsw_index) {
-      SDB_ASSERT(!payload.empty());
-      WriteBytes(payload.data(), payload.size());
-      _index.emplace_back(doc, begin, _data.size() - begin);
-      _hnsw_index->Add(reinterpret_cast<const float*>(payload.data()), doc);
-      // Write vector for HNSW index to read later
-    }
-  }
-
-  void WriteByte(byte_type b) final { _data += b; }
-
-  void WriteBytes(const byte_type* b, size_t len) final {
-    _data.append(b, len);
-  }
-
-  field_id id() const noexcept final { return _id; }
-
-  std::string_view name() const noexcept final { return {}; }
-
-  bytes_view payload() const noexcept final {
-    return _header ? bytes_view{_header->data() + sizeof(uint32_t),
-                                _header->size() - sizeof(uint32_t)}
-                   : bytes_view{};
-  }
-
-  doc_id_t size() const noexcept final {
-    return static_cast<doc_id_t>(_index.size());
-  }
-
-  ResettableDocIterator::ptr iterator(ColumnHint hint) const noexcept final {
-    // kPrevDoc isn't supported atm
-    SDB_ASSERT(ColumnHint::Normal == (hint & ColumnHint::PrevDoc));
-
-    // FIXME(gnusi): can avoid allocation with the help of managed_ptr
-    return memory::make_managed<BufferedColumnIterator>(_index, _data);
-  }
-
-  NormReader::ptr norms() const final {
-    return MakeNormReader(payload(), _index, _data);
-  }
-
-  const auto& Index() const { return _index; }
-  const auto& Data() const { return _data; }
-
- private:
-  BufferedColumn::BufferedValues _index;
-  BufferedColumn::Buffer _data;
-  field_id _id{field_limits::invalid()};
-  std::optional<bstring> _header;
-  ColumnOutput* _out{};
-  FeatureWriter* _feature_writer{};
-  HNSWIndexWriter* _hnsw_index = nullptr;
-};
-
-class BufferedColumns final : public ColumnProvider {
- public:
-  explicit BufferedColumns(IResourceManager& rm) : _rm{rm} {}
-
-  const irs::ColumnReader* column(field_id field) const noexcept final {
-    if (!field_limits::valid(field)) [[unlikely]] {
-      return nullptr;
-    }
-
-    return Find(field);
-  }
-
-  BufferedValues& PushColumn() {
-    if (auto* column = Find(field_limits::invalid()); column) {
-      column->Clear();
-      return *column;
-    }
-
-    return _columns.emplace_back(_rm);
-  }
-
-  void Clear() noexcept {
-    for (auto& column : _columns) {
-      column.SetID(field_limits::invalid());
-    }
-  }
-
- private:
-  BufferedValues* Find(field_id id) const noexcept {
-    for (const auto& column : _columns) {
-      if (column.id() == id) {
-        return const_cast<BufferedValues*>(&column);
-      }
-    }
-    return nullptr;
-  }
-
-  // SmallVector seems to be incompatible with
-  // our ManagedTypedAllocator
-  sdb::containers::SmallVector<BufferedValues, 1> _columns;
-  IResourceManager& _rm;
-};
-
-template<typename Iterator>
-bool WriteColumns(Columnstore& cs, Iterator& columns,
-                  const irs::FlushState& state,
-                  const ColumnInfoProvider& column_info,
-                  CompoundColumnIterator& column_itr,
-                  const MergeWriter::FlushProgress& progress) {
-  SDB_ASSERT(cs.Valid());
-  SDB_ASSERT(progress);
-  doc_id_t count{};
-
-  auto add_iterators = [&column_itr, &count](auto& itrs) {
-    auto add_iterators = [&itrs, &count](const SubReader& /*segment*/,
-                                         const DocMapF& doc_map,
-                                         const irs::ColumnReader& column) {
-      auto it = column.iterator(ColumnHint::Consolidation);
-
-      if (it) [[likely]] {
-        count += column.size();
-        itrs.emplace_back(std::move(it), doc_map);
-      } else {
-        SDB_ASSERT(false);
-        SDB_ERROR(
-          "xxxxx", sdb::Logger::IRESEARCH,
-          "Got an invalid iterator during consolidationg of the columnstore, "
-          "skipping it");
-      }
-      return true;
-    };
-
-    count = 0;
-    itrs.clear();
-    return column_itr.Visit(add_iterators);
-  };
-  auto& buffered_columns = const_cast<BufferedColumns&>(
-    sdb::basics::downCast<BufferedColumns>(*state.columns));
-
-  while (column_itr.Next()) {
-    buffered_columns.Clear();
-    // visit matched columns from merging segments and
-    // write all survived values to the new segment
-    if (!progress() || !columns.Reset(add_iterators)) {
-      return false;  // failed to visit all values
-    }
-
-    const std::string_view column_name = column_itr.Value().name();
-    auto info = column_info(column_name);
-    if (!info.hnsw_info) {
-      const auto res =
-        cs.insert(columns, info,
-                  ColumnFinalizer{
-                    [](DataOutput&) {},
-                    [column_name] { return column_name; },
-                  },
-                  [](ColumnOutput& out, doc_id_t doc, bytes_view payload) {
-                    out.Prepare(doc);
-                    if (!payload.empty()) {
-                      out.WriteBytes(payload.data(), payload.size());
-                    }
-                  });
-      if (!res.has_value()) {
-        return false;  // failed to insert all values
-      }
-    } else {
-      info.hnsw_info->max_doc = count;
-      auto* buffered_column = &buffered_columns.PushColumn();
-      buffered_column->Reserve(count, info.hnsw_info->d * sizeof(float));
-      auto hnsw_index = std::make_unique<HNSWIndexWriter>(
-        *info.hnsw_info,
-        [buffered_column] {
-          return buffered_column->iterator(ColumnHint::Normal);
-        },
-        [&](ResettableDocIterator::ptr& it) {
-          sdb::basics::downCast<BufferedColumnIterator>(*it).Reset(
-            buffered_column->Index(), buffered_column->Data());
-        });
-      buffered_column->WithHNSW(*hnsw_index.get());
-      const auto res =
-        cs.insert(columns, info,
-                  ColumnFinalizer{
-                    [hnsw_index = std::move(hnsw_index)](
-                      DataOutput& out) mutable { hnsw_index->Serialize(out); },
-                    [column_name] { return column_name; }},
-                  *buffered_column);
-      if (!res.has_value()) {
-        return false;
-      }
-      buffered_column->SetID(*res);
-      buffered_column->UpdateHeader();
-    }
-  }
-
-  return true;
-}
-
-// Write field term data
-template<typename Iterator>
-bool WriteFields(Columnstore& cs, Iterator& feature_itr,
-                 const irs::FlushState& flush_state, const SegmentMeta& meta,
+// Drives the merged segment's field meta + posting-list write. For fields
+// with the Norm feature, allocates a fresh norm column id on `cs_writer`,
+// opens its NormColumnWriter, and walks each source's NormColumnReader
+// (looked up by the source's per-segment norm id) appending live values.
+bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  CompoundFieldIterator& field_itr,
-                 IndexFeatures scorers_features,
+                 std::span<const SourceContext> sources,
+                 columnstore::Writer* cs_writer,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm) {
-  SDB_ASSERT(cs.Valid());
-
-  std::vector<bytes_view> hdrs;
-  hdrs.reserve(field_itr.Size());
-  doc_id_t count{};  // Total count of documents in consolidating columns
-
-  auto add_iterators = [&](auto& itrs) {
-    auto add_iterators = [&](const SubReader& segment, const DocMapF& doc_map,
-                             const FieldMeta& field) {
-      if (!field_limits::valid(field.norm)) {
-        // Field has no feature
-        return true;
-      }
-
-      auto* reader = segment.column(field.norm);
-
-      // Tail columns can be removed if empty.
-      if (reader) {
-        auto it = reader->iterator(ColumnHint::Consolidation);
-        SDB_ASSERT(it);
-
-        if (it) [[likely]] {
-          hdrs.emplace_back(reader->payload());
-          count += reader->size();
-          itrs.emplace_back(std::move(it), doc_map);
-        }
-      }
-
-      return true;
-    };
-
-    count = 0;
-    hdrs.clear();
-    itrs.clear();
-    field_itr.Visit(add_iterators);
-    return !itrs.empty();
-  };
-
   auto field_writer = meta.codec->get_field_writer(true, rm);
   field_writer->prepare(flush_state);
 
-  // Ensured by the caller
-  SDB_ASSERT(flush_state.columns);
-  auto& buffered_columns = const_cast<BufferedColumns&>(
-    sdb::basics::downCast<BufferedColumns>(*flush_state.columns));
-
-  auto write_feature = [&](FieldProperties& props) {
-    // Currently we might have only norms
-    static constexpr auto kFeature = IndexFeatures::Norm;
-
-    if (!IsSubsetOf(kFeature, props.index_features) ||
-        !feature_itr.Reset(add_iterators)) {
-      // No feature or data
-      return true;
+  // Index sources by SubReader* once so the per-field norm merge below does
+  // O(1) lookups instead of an N(sources) linear scan per field. Empty when
+  // cs_writer is null (db-less test path) -- no entries are inserted.
+  absl::flat_hash_map<const SubReader*, const columnstore::Reader*>
+    cs_by_reader;
+  if (cs_writer != nullptr) {
+    cs_by_reader.reserve(sources.size());
+    for (const auto& src : sources) {
+      cs_by_reader.emplace(src.reader, src.cs_reader.get());
     }
-
-    if (!progress()) {
-      return false;
-    }
-
-    // no compression, no encryption
-    const ColumnInfo info{Type<compression::None>::get(), {}, false};
-    auto feature_writer = Norm::MakeWriter({hdrs.data(), hdrs.size()});
-
-    auto* buffered_column = IsSubsetOf(kFeature, scorers_features)
-                              ? &buffered_columns.PushColumn()
-                              : nullptr;
-
-    if (buffered_column) {
-      // FIXME(gnusi): We can get better estimation from column
-      // headers/stats.
-      static constexpr size_t kValueSize = sizeof(uint32_t);
-      buffered_column->Reserve(count, kValueSize);
-    }
-
-    std::optional<field_id> res;
-    auto write_values = [&]<typename T>(T&& value_writer) {
-      return cs.insert(feature_itr, info,
-                       ColumnFinalizer{
-                         [feature_writer = std::move(feature_writer)](
-                           DataOutput& out) { feature_writer->finish(out); },
-                         [] { return std::string_view{}; },
-                       },
-                       std::forward<T>(value_writer));
-    };
-
-    if (buffered_column) {
-      buffered_column->SetFeatureWriter(*feature_writer);
-      res = write_values(*buffered_column);
-    } else {
-      res =
-        write_values([writer = feature_writer.get()](
-                       ColumnOutput& out, doc_id_t doc, bytes_view payload) {
-          out.Prepare(doc);
-          writer->write(out, payload);
-        });
-    }
-
-    if (!res) {
-      return false;  // Failed to insert all values
-    }
-
-    props.norm = *res;
-    if (buffered_column) {
-      buffered_column->SetID(*res);
-      buffered_column->UpdateHeader();
-    }
-
-    SDB_ASSERT(!field_limits::valid(props.norm) ||
-               IsSubsetOf(IndexFeatures::Norm, props.index_features));
-
-    return true;
-  };
+  }
 
   while (field_itr.Next()) {
-    buffered_columns.Clear();
-
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
-    if (!write_feature(props)) {
-      return false;
+
+    if (cs_writer != nullptr &&
+        IsSubsetOf(IndexFeatures::Norm, props.index_features)) {
+      // Allocate a fresh per-segment norm column id and open the output
+      // norm column. Iteration order: source-by-source, then row-by-row in
+      // each source -- matches FlushUnsorted's doc_id mapping (each source's
+      // live docs occupy a contiguous range in the merged segment), so
+      // sequential Append() lands the norm at the right merged row index.
+      const field_id new_norm_id = cs_writer->AllocateColumnId();
+      auto& nw = cs_writer->OpenNormColumn(new_norm_id,
+                                           std::string{field_itr.Meta().name});
+
+      bool any_data = false;
+      field_itr.Visit([&](const SubReader& seg, const DocMapF& doc_map,
+                          const FieldMeta& field) {
+        if (!field_limits::valid(field.norm)) {
+          return true;
+        }
+        auto it = cs_by_reader.find(&seg);
+        if (it == cs_by_reader.end()) {
+          return true;
+        }
+        const auto* cs_reader = it->second;
+        const auto* nc = cs_reader->NormColumn(field.norm);
+        if (nc == nullptr) {
+          return true;
+        }
+        any_data = true;
+        for (size_t rg = 0, rg_count = nc->RowGroupCount(); rg < rg_count;
+             ++rg) {
+          const auto bytes = nc->RowGroupBytes(rg);
+          const auto byte_size = nc->ByteSize(rg);
+          const auto rg_first_row = nc->RowGroupFirstRow(rg);
+          for (uint64_t i = 0, n = nc->RowGroupRowCount(rg); i < n; ++i) {
+            const auto src_doc =
+              static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
+            if (doc_limits::eof(doc_map(src_doc))) {
+              continue;  // deleted
+            }
+            const auto value = columnstore::ReadNormValue(
+              bytes.data() + i * byte_size, byte_size);
+            nw.Append(value);
+          }
+        }
+        return true;
+      });
+
+      if (any_data) {
+        props.norm = new_norm_id;
+      }
     }
 
     field_itr.SetProperties(props);
@@ -1411,51 +662,6 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
 
   return !field_itr.Aborted();
 }
-
-// Computes doc_id_map and docs_count
-doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
-                       doc_id_t next_id) noexcept {
-  // assume not a lot of space wasted if doc_limits::min() > 0
-  try {
-    doc_id_map.resize(reader.docs_count() + doc_limits::min(),
-                      doc_limits::eof());
-  } catch (...) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat(
-        "Failed to resize merge_writer::doc_id_map to accommodate element: ",
-        reader.docs_count() + doc_limits::min()));
-
-    return doc_limits::invalid();
-  }
-
-  for (auto docs_itr = reader.docs_iterator(); docs_itr->next(); ++next_id) {
-    auto src_doc_id = docs_itr->value();
-
-    SDB_ASSERT(src_doc_id >= doc_limits::min());
-    SDB_ASSERT(src_doc_id < reader.docs_count() + doc_limits::min());
-    doc_id_map[src_doc_id] = next_id;  // set to next valid doc_id
-  }
-
-  return next_id;
-}
-
-#if defined(SDB_DEV) && !defined(__clang__)
-void EnsureSorted(const auto& readers) {
-  for (const auto& reader : readers) {
-    const auto& doc_map = reader.doc_id_map;
-    SDB_ASSERT(doc_map.size() >= doc_limits::min());
-
-    auto view = doc_map | std::views::filter([](doc_id_t doc) noexcept {
-                  return !doc_limits::eof(doc);
-                });
-
-    SDB_ASSERT(std::ranges::is_sorted(view));
-  }
-}
-#endif
-
-const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
 }  // namespace
 
@@ -1474,374 +680,121 @@ MergeWriter::operator bool() const noexcept {
   return &_dir != &NoopDirectory::Instance();
 }
 
-bool MergeWriter::FlushUnsorted(TrackingDirectory& dir, SegmentMeta& segment,
-                                const FlushProgress& progress) {
-  SDB_ASSERT(progress);
-  SDB_ASSERT(!_comparator);
-  SDB_ASSERT(_column_info && *_column_info);
+bool MergeWriter::Flush(SegmentMeta& segment,
+                        const FlushProgress& progress /*= {}*/) {
+  SDB_ASSERT(segment.codec);
+
+  bool result = false;
+
+  Finally segment_invalidator = [&result, &segment]() noexcept {
+    if (!result) [[unlikely]] {
+      segment.files.clear();
+      static_cast<SegmentInfo&>(segment) = SegmentInfo{};
+    }
+  };
+
+  const auto& progress_callback = progress ? progress : kProgressNoop;
+  TrackingDirectory track_dir{_dir};
 
   const size_t size = _readers.size();
-
   FieldMetaMapT field_meta_map;
-  CompoundFieldIterator fields_itr{size, progress};
-  CompoundColumnIterator columns_itr{size};
+  CompoundFieldIterator fields_itr{size, progress_callback};
   IndexFeatures index_features{IndexFeatures::None};
 
-  DocIteratorContainer remapping_itrs{size};
-
-  doc_id_t base_id = doc_limits::min();  // next valid doc_id
-
-  // collect field meta and field term data
+  doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : _readers) {
-    // ensured by merge_writer::add(...)
     SDB_ASSERT(reader_ctx.reader);
-
     auto& reader = *reader_ctx.reader;
     const auto docs_count = reader.docs_count();
 
-    if (reader.live_docs_count() == docs_count) {  // segment has no deletes
+    if (reader.live_docs_count() == docs_count) {
       const auto reader_base = base_id - doc_limits::min();
       SDB_ASSERT(static_cast<uint64_t>(base_id) + docs_count <
                  std::numeric_limits<doc_id_t>::max());
       base_id += static_cast<doc_id_t>(docs_count);
-
       reader_ctx.doc_map = [reader_base](doc_id_t doc) noexcept {
         return reader_base + doc;
       };
-    } else {  // segment has some deleted docs
+    } else {
       auto& doc_id_map = reader_ctx.doc_id_map;
       base_id = ComputeDocIds(doc_id_map, reader, base_id);
-
       reader_ctx.doc_map = [&doc_id_map](doc_id_t doc) noexcept {
         return doc >= doc_id_map.size() ? doc_limits::eof() : doc_id_map[doc];
       };
     }
 
     if (!doc_limits::valid(base_id)) {
-      return false;  // failed to compute next doc_id
+      return false;
     }
-
     if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
       return false;
     }
 
     fields_itr.Add(reader, reader_ctx.doc_map);
-    columns_itr.Add(reader, reader_ctx.doc_map);
   }
 
-  // total number of doc_ids
   segment.docs_count = base_id - doc_limits::min();
-  // all merged documents are live
   segment.live_docs_count = segment.docs_count;
 
-  if (!progress()) {
-    return false;  // progress callback requested termination
-  }
-
-  // write merged segment data
-  Columnstore cs(dir, segment, progress, _readers.get_allocator().Manager());
-
-  if (!cs.Valid()) {
-    return false;  // flush failure
-  }
-
-  BufferedColumns buffered_columns{_readers.get_allocator().Manager()};
-
-  const FlushState state{.dir = &dir,
-                         .columns = &buffered_columns,
-                         .name = segment.name,
-                         .scorer = _scorer,
-                         .doc_count = segment.docs_count,
-                         .index_features = index_features};
-
-  if (!progress()) {
-    return false;  // progress callback requested termination
-  }
-
-  if (!WriteColumns(cs, remapping_itrs, state, *_column_info, columns_itr,
-                    progress)) {
-    return false;  // flush failure
-  }
-
-  if (!progress()) {
-    return false;  // progress callback requested termination
-  }
-  // Write field meta and field term data
-  if (!WriteFields(cs, remapping_itrs, state, segment, fields_itr,
-                   _scorers_features, progress,
-                   _readers.get_allocator().Manager())) {
-    return false;  // Flush failure
-  }
-
-  if (!progress()) {
-    return false;  // Progress callback requested termination
-  }
-
-  segment.column_store = cs.Flush(state);
-
-  return true;
-}
-
-bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
-                              const FlushProgress& progress) {
-  SDB_ASSERT(progress);
-  SDB_ASSERT(_comparator);
-  SDB_ASSERT(_column_info && *_column_info);
-
-  const size_t size = _readers.size();
-
-  FieldMetaMapT field_meta_map;
-  CompoundColumnIterator columns_itr{size};
-  CompoundFieldIterator fields_itr{size, progress, _comparator};
-  IndexFeatures index_features{IndexFeatures::None};
-
-  std::vector<PrimarySortIteratorAdapter> itrs;
-  itrs.reserve(size);
-
-  auto emplace_iterator = [&itrs](const SubReader& segment) {
-    if (!segment.sort()) {
-      // Sort column is not present, give up
-      return false;
-    }
-
-    auto sort =
-      segment.mask(segment.sort()->iterator(irs::ColumnHint::Consolidation));
-
-    if (!sort) [[unlikely]] {
-      return false;
-    }
-
-    DocIterator::ptr live_docs;
-    if (segment.docs_count() != segment.live_docs_count()) {
-      live_docs = segment.docs_iterator();
-    }
-
-    auto& it = itrs.emplace_back(std::move(sort), std::move(live_docs));
-
-    if (!it.Valid()) [[unlikely]] {
-      return false;
-    }
-
-    return true;
-  };
-
-  segment.docs_count = 0;
-
-  // Init doc map for each reader
-  for (auto& reader_ctx : _readers) {
-    // Ensured by merge_writer::add(...)
-    SDB_ASSERT(reader_ctx.reader);
-
-    auto& reader = *reader_ctx.reader;
-
-    if (reader.docs_count() > doc_limits::eof() - doc_limits::min()) {
-      // Can't merge segment holding more than 'doc_limits::eof()-1' docs
-      return false;
-    }
-
-    if (!emplace_iterator(reader)) {
-      // Sort column is not present, give up
-      return false;
-    }
-
-    if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
-      return false;
-    }
-
-    fields_itr.Add(reader, reader_ctx.doc_map);
-    columns_itr.Add(reader, reader_ctx.doc_map);
-
-    // Count total number of documents in consolidated segment
-    if (!math::SumCheckOverflow(segment.docs_count,
-                                static_cast<uint32_t>(reader.live_docs_count()),
-                                segment.docs_count)) {
-      return false;
-    }
-
-    // Prepare doc maps
-    auto& doc_id_map = reader_ctx.doc_id_map;
-
-    try {
-      doc_id_map.resize(reader.docs_count() + doc_limits::min(),
-                        doc_limits::eof());
-    } catch (...) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat(
-          "Failed to resize merge_writer::doc_id_map to accommodate element: ",
-          reader.docs_count() + doc_limits::min()));
-
-      return false;
-    }
-
-    reader_ctx.doc_map = [doc_id_map =
-                            std::span{doc_id_map}](size_t doc) noexcept {
-      SDB_ASSERT(doc_id_map[0] == doc_limits::eof());
-      return doc_id_map[doc * static_cast<size_t>(doc < doc_id_map.size())];
-    };
-  }
-
-  if (segment.docs_count >= doc_limits::eof()) {
-    // Can't merge segments holding more than 'doc_limits::eof()-1' docs
+  if (!progress_callback()) {
     return false;
   }
 
-  if (!progress()) {
-    return false;  // Progress callback requested termination
+  // Open per-source columnstore readers (norms + typed columns) and the
+  // output writer. Skipped when the segment isn't backed by a
+  // DatabaseInstance (no `<seg>.cs` to read or write).
+  std::vector<SourceContext> sources;
+  std::vector<const irs::columnstore::Reader*> source_reader_ptrs;
+  std::vector<const DocumentMask*> source_masks;
+  std::unique_ptr<columnstore::Writer> cs_writer;
+  if (_db != nullptr) {
+    sources.reserve(_readers.size());
+    source_reader_ptrs.reserve(_readers.size());
+    source_masks.reserve(_readers.size());
+    for (auto& ctx : _readers) {
+      auto cs_reader = std::make_unique<columnstore::Reader>(
+        _dir, ctx.reader->Meta().name, *_db);
+      source_reader_ptrs.push_back(cs_reader.get());
+      source_masks.push_back(ctx.reader->docs_mask());
+      sources.push_back(
+        SourceContext{ctx.reader, std::move(cs_reader), &ctx.doc_map});
+    }
+    cs_writer =
+      std::make_unique<columnstore::Writer>(track_dir, segment.name, *_db);
   }
 
-  // Write new sorted column and fill doc maps for each reader
-  auto writer = segment.codec->get_columnstore_writer(
-    true, _readers.get_allocator().Manager());
-  writer->prepare(dir, segment);
-
-  // Get column info for sorted column
-  const auto info = (*_column_info)({});
-  auto [column_id, column_writer] = writer->push_column(info, {});
-
-  doc_id_t next_id = doc_limits::min();
-
-  auto fill_doc_map = [&](DocIdMapT& doc_id_map, PrimarySortIteratorAdapter& it,
-                          doc_id_t max) {
-    if (auto min = it.min; min < max) {
-      if (it.live_docs) {
-        auto& live_docs = *it.live_docs;
-        for (live_docs.seek(min); it.live_docs->value() < max;
-             live_docs.next()) {
-          doc_id_map[it.live_docs->value()] = next_id++;
-          if (!progress()) {
-            return false;
-          }
-        }
-      } else {
-        do {
-          doc_id_map[min] = next_id++;
-          ++min;
-          if (!progress()) {
-            return false;
-          }
-        } while (min < max);
-      }
-    }
-    return true;
-  };
-
-  ExternalMergeIterator<MergeContext> columns_it{*_comparator};
-
-  for (columns_it.Reset(itrs); columns_it.Next();) {
-    auto& it = columns_it.Lead();
-    SDB_ASSERT(it.Valid());
-
-    const auto max = it.it->value();
-    const auto index = &it - itrs.data();
-    auto& doc_id_map = _readers[index].doc_id_map;
-
-    // Fill doc id map
-    if (!fill_doc_map(doc_id_map, it, max)) {
-      return false;  // Progress callback requested termination
-    }
-    doc_id_map[max] = next_id;
-
-    // write value into new column if present
-    column_writer.Prepare(next_id);
-    const auto payload = it.payload->value;
-    column_writer.WriteBytes(payload.data(), payload.size());
-
-    ++next_id;
-
-    if (!progress()) {
-      return false;  // Progress callback requested termination
-    }
-  }
-
-  // Handle empty values greater than the last document in sort column
-  for (auto it = itrs.begin(); auto& reader : _readers) {
-    if (!fill_doc_map(reader.doc_id_map, *it,
-                      doc_limits::min() +
-                        static_cast<doc_id_t>(reader.reader->docs_count()))) {
-      return false;  // progress callback requested termination
-    }
-    ++it;
-  }
-
-#if defined(SDB_DEV) && !defined(__clang__)
-  EnsureSorted(readers_);
-#endif
-
-  Columnstore cs(std::move(writer), progress);
-  CompoundDocIterator doc_it(progress);
-  SortingCompoundDocIterator sorting_doc_it(doc_it);
-
-  if (!cs.Valid()) {
-    return false;  // Flush failure
-  }
-
-  BufferedColumns buffered_columns{_readers.get_allocator().Manager()};
-
-  const FlushState state{.dir = &dir,
-                         .columns = &buffered_columns,
+  const FlushState state{.dir = &track_dir,
                          .name = segment.name,
                          .scorer = _scorer,
                          .doc_count = segment.docs_count,
                          .index_features = index_features};
 
-  if (!progress()) {
-    return false;  // Progress callback requested termination
+  if (!progress_callback()) {
+    return false;
   }
 
-  if (!WriteColumns(cs, sorting_doc_it, state, *_column_info, columns_itr,
-                    progress)) {
-    return false;  // Flush failure
+  if (!WriteFields(state, segment, fields_itr, sources, cs_writer.get(),
+                   progress_callback, _readers.get_allocator().Manager())) {
+    return false;
   }
 
-  if (!progress()) {
-    return false;  // Progress callback requested termination
+  if (!progress_callback()) {
+    return false;
   }
 
-  // Write field meta and field term data
-  if (!WriteFields(cs, sorting_doc_it, state, segment, fields_itr,
-                   _scorers_features, progress,
-                   _readers.get_allocator().Manager())) {
-    return false;  // flush failure
+  // Typed columnstore (PK / geo / wildcard / HNSW / ...): merge column by
+  // column via the columnstore merge driver. Norms are handled inline above.
+  if (cs_writer && !source_reader_ptrs.empty()) {
+    irs::columnstore::MergeInto(source_reader_ptrs, source_masks, *cs_writer);
   }
 
-  if (!progress()) {
-    return false;  // Progress callback requested termination
+  if (cs_writer) {
+    cs_writer->Commit();
   }
-
-  segment.column_store = cs.Flush(state);  // Flush columnstore
-  segment.sort = column_id;                // Set sort column identifier
-  // All merged documents are live
-  segment.live_docs_count = segment.docs_count;
-
-  return true;
-}
-
-bool MergeWriter::Flush(SegmentMeta& segment,
-                        const FlushProgress& progress /*= {}*/) {
-  SDB_ASSERT(segment.codec);  // Must be set outside
-
-  bool result = false;  // Flush result
-
-  Finally segment_invalidator = [&result, &segment]() noexcept {
-    if (!result) [[unlikely]] {
-      // Invalidate segment
-      segment.files.clear();
-      segment.column_store = false;
-      static_cast<SegmentInfo&>(segment) = SegmentInfo{};
-    }
-  };
-
-  const auto& progress_callback = progress ? progress : kProgressNoop;
-
-  TrackingDirectory track_dir{_dir};  // Track writer created files
-
-  result = _comparator ? FlushSorted(track_dir, segment, progress_callback)
-                       : FlushUnsorted(track_dir, segment, progress_callback);
 
   segment.files = track_dir.FlushTracked(segment.byte_size);
-
-  return result;
+  result = true;
+  return true;
 }
 
 }  // namespace irs

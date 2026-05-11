@@ -124,6 +124,10 @@ struct SearchScan : ScanSource {
   search::InvertedIndexSnapshotPtr snapshot;
   // Empty when the filter is trivial.
   std::string filter_summary;
+  // True when stored_filter is the trivial match-all (irs::All). The
+  // bulk-scan shortcut keys on this rather than string-comparing
+  // filter_summary.
+  bool match_all = false;
 
   // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
   // / etc. Empty when the query has no scoring projection.
@@ -193,7 +197,7 @@ struct VectorSearchScan : ScanSource {
   VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
 
   ObjectId index_id;
-  std::string field_name;
+  catalog::Column::Id field_id{};
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;

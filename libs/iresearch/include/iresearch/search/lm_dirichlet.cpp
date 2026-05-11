@@ -263,8 +263,8 @@ ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   }();
 
   if (!norm && ctx.fetcher) {
-    auto* norm_col = ctx.segment.column(ctx.field.norm);
-    norm = ctx.fetcher->AddNorms(norm_col);
+    auto norm_reader = ctx.segment.norms(ctx.field.norm);
+    norm = ctx.fetcher->AddNorms(ctx.field.norm, std::move(norm_reader));
   }
 
   if (!norm) {

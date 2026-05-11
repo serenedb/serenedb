@@ -1,0 +1,87 @@
+hash-threshold 100
+
+# `SET sdb_write_conflict_policy = do_nothing` is the session-level
+# alternative to `ON CONFLICT DO NOTHING`. Unlike the clause form,
+# DuckDB's INSERT pipeline does NOT pre-filter conflict rows out of
+# the chunk that reaches SereneDBPhysicalInsert::Sink. Conflict rows
+# arrive with their value vector intact while only surviving rows
+# get doc ids in the segment. The cs writer's WriteFullColumn(vec,
+# num_rows) call must skip the conflict rows or the cs row position
+# stops aligning with the segment's doc_id space and INCLUDE values
+# decouple from the doc they belong to.
+
+statement ok
+SET sdb_write_conflict_policy = do_nothing;
+
+statement ok
+CREATE TABLE t (id INT PRIMARY KEY, body VARCHAR, val INT);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+statement ok
+CREATE INDEX idx ON t USING inverted(body en) INCLUDE (id, val);
+
+# Pre-populate id=1 so the next chunk has a real conflict on id=1
+# in position 0.
+statement ok
+INSERT INTO t VALUES (1, 'fox', 11);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+# Three-row chunk with conflict in the FIRST position. The cs vector
+# arrives as [chunk[0]=conflict, chunk[1]=survivor, chunk[2]=survivor]
+# but the segment only allocates doc ids for chunk[1] and chunk[2].
+statement count 2
+INSERT INTO t VALUES (1, 'conflict', 99), (2, 'fox bird', 22), (3, 'fox cat', 33);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+# Read INCLUDE values back through cs. Each surviving doc's (id, val)
+# must be self-consistent and match the source row.
+query
+SELECT id, val FROM idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	val
+1	11
+2	22
+3	33
+
+# Same shape with the conflict in the MIDDLE of the chunk. Survivors
+# are rows 0 and 2; cs row 1 must not show up at any doc.
+statement ok
+INSERT INTO t VALUES (4, 'fox eagle', 44);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+statement count 2
+INSERT INTO t VALUES (5, 'fox bee', 55), (1, 'conflict', 999), (6, 'fox jay', 66);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+query
+SELECT id, val FROM idx WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id	val
+1	11
+2	22
+3	33
+4	44
+5	55
+6	66
+
+statement ok
+DROP TABLE t;

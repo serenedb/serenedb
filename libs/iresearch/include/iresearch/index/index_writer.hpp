@@ -38,6 +38,11 @@
 #include "basics/wait_group.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/column_info.hpp"
+
+namespace duckdb {
+
+class DatabaseInstance;
+}
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -161,6 +166,10 @@ struct IndexWriterOptions : public SegmentOptions {
   // Acquire an exclusive lock on the repository to guard against index
   // corruption from multiple index_writers
   bool lock_repository{true};
+
+  // Enables the typed columnstore on segments allocated by this writer.
+  // Lifetime of `*db` must extend until IndexWriter shutdown.
+  duckdb::DatabaseInstance* db = nullptr;
 
   IndexWriterOptions() {}  // compiler requires non-default definition
 };
@@ -315,44 +324,37 @@ class IndexWriter : private util::Noncopyable {
     // will not take any effect
     explicit operator bool() const noexcept { return _writer.valid(); }
 
-    // Inserts the specified field into the document according to the
-    // specified ACTION
-    // Note that 'Field' type type must satisfy the Field concept
-    // field attribute to be inserted
-    // Return true, if field was successfully inserted
-    template<Action A, typename Field>
+    // Inserts a field into the document for inverted indexing.
+    template<typename Field>
     bool Insert(Field&& field) const {
-      return _writer.insert<A>(std::forward<Field>(field), _doc_id);
+      return _writer.insert(std::forward<Field>(field), _doc_id);
     }
 
-    // Inserts the specified field (denoted by the pointer) into the
-    //        document according to the specified ACTION
-    // Note that 'Field' type type must satisfy the Field concept
-    // Note that pointer must not be nullptr
-    // field attribute to be inserted
-    // Return true, if field was successfully inserted
-    template<Action A, typename Field>
+    // Inserts the field denoted by `field` (must not be nullptr).
+    template<typename Field>
     bool Insert(Field* field) const {
-      return _writer.insert<A>(*field, _doc_id);
+      return _writer.insert(*field, _doc_id);
     }
 
-    // Inserts the specified range of fields, denoted by the [begin;end)
-    // into the document according to the specified ACTION
-    // Note that 'Iterator' underline value type must satisfy the Field concept
-    // begin the beginning of the fields range
-    // end the end of the fields range
-    // Return true, if the range was successfully inserted
-    template<Action A, typename Iterator>
+    // Inserts the range of fields [begin; end) for inverted indexing.
+    template<typename Iterator>
     bool Insert(Iterator begin, Iterator end) const {
       for (; _writer.valid() && begin != end; ++begin) {
-        Insert<A>(*begin);
+        Insert(*begin);
       }
-
       return _writer.valid();
     }
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
+
+    // Per-segment columnstore writer; nullptr when the index was opened
+    // without a DatabaseInstance. Callers open a typed column at switch
+    // time and append duckdb::Vectors via ColumnWriter::Append.
+    columnstore::Writer* Columnstore() noexcept {
+      return _writer.Columnstore();
+    }
+    doc_id_t DocId() const noexcept { return _doc_id; }
 
    private:
     void Finish() noexcept;
@@ -950,6 +952,7 @@ class IndexWriter : private util::Noncopyable {
 
   IndexFeatures _wand_features{};  // Set of features required for wand
   ScorerPtr _wand_scorer;
+  duckdb::DatabaseInstance* _db = nullptr;
   ColumnInfoProvider _column_info;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;

@@ -104,18 +104,26 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
   TokenizerProvider&& tokenizer_provider,
   JsonPathsProvider&& json_paths_provider,
+  StoreValuesProvider&& store_values_provider,
+  IsTextIndexedProvider&& is_text_indexed_provider,
+  HNSWInfoProvider&& hnsw_info_provider,
+  CompressionProvider&& compression_provider,
   std::span<const catalog::Column::Id> columns) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_paths_provider));
+        std::move(json_paths_provider), std::move(store_values_provider),
+        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
+        std::move(compression_provider));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_paths_provider));
+        std::move(json_paths_provider), std::move(store_values_provider),
+        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
+        std::move(compression_provider));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;
@@ -174,10 +182,16 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
       auto json_paths_provider =
         MakeJsonPathsProvider(snapshot, inverted_index);
+      auto store_values_provider = MakeStoreValuesProvider(inverted_index);
+      auto is_text_indexed_provider = MakeIsTextIndexedProvider(inverted_index);
+      auto hnsw_info_provider = MakeHNSWInfoProvider(inverted_index);
+      auto compression_provider = MakeCompressionProvider(inverted_index);
 
       writers.push_back(MakeDuckDBSearchWriter(
         Kind, index_txn, std::move(tokenizer_provider),
-        std::move(json_paths_provider), index.GetColumnIds()));
+        std::move(json_paths_provider), std::move(store_values_provider),
+        std::move(is_text_indexed_provider), std::move(hnsw_info_provider),
+        std::move(compression_provider), index.GetColumnIds()));
     }
   };
 

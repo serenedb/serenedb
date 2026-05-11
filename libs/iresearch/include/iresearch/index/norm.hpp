@@ -27,7 +27,6 @@
 #include <cstdint>
 
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/index/buffered_column.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/types.hpp"
 
@@ -111,8 +110,6 @@ class Norm : public Attribute {
 
   static constexpr std::string_view type_name() noexcept { return "norm"; }
 
-  static FeatureWriter::ptr MakeWriter(std::span<const bytes_view> payload);
-
   template<NormEncoding Encoding>
   IRS_FORCE_INLINE static uint32_t ReadUnchecked(
     const byte_type* value) noexcept {
@@ -147,51 +144,5 @@ class Norm : public Attribute {
 
 static_assert(std::is_nothrow_move_constructible_v<Norm>);
 static_assert(std::is_nothrow_move_assignable_v<Norm>);
-
-template<NormEncoding Encoding>
-class NormWriter : public FeatureWriter {
- public:
-  explicit NormWriter() noexcept : _hdr{Encoding} {}
-
-  void write(const FieldStats& stats, doc_id_t doc,
-             ColumnOutput& writer) final {
-    _hdr.Reset(stats.len);
-    writer.Prepare(doc);
-    WriteValue(writer, stats.len);
-  }
-
-  void write(DataOutput& out, bytes_view payload) final {
-    const uint32_t value = Norm::Read(payload);
-    _hdr.Reset(value);
-    WriteValue(out, value);
-  }
-
-  void finish(DataOutput& out) final { NormHeader::Write(_hdr, out); }
-
- private:
-  static void WriteValue(DataOutput& out, uint32_t value) {
-    // TODO(mbkkt) We should use WriteU16, WriteU32
-    // as soon as we will switch to little endian
-    SDB_ASSERT(NormHeader::MaxNumBytes(value) <= std::to_underlying(Encoding));
-    if constexpr (Encoding == NormEncoding::Byte) {
-      const auto v = static_cast<uint8_t>(value);
-      out.WriteByte(v);
-    } else if constexpr (Encoding == NormEncoding::Short) {
-      const auto v = absl::little_endian::FromHost16(value);
-      out.WriteBytes(reinterpret_cast<const byte_type*>(&v), sizeof(uint16_t));
-    } else if constexpr (Encoding == NormEncoding::Int) {
-      const auto v = absl::little_endian::FromHost32(value);
-      out.WriteBytes(reinterpret_cast<const byte_type*>(&v), sizeof(uint32_t));
-    } else {
-      static_assert(false);
-    }
-  }
-
-  NormHeader _hdr;
-};
-
-NormReader::ptr MakeNormReader(bytes_view payload,
-                               std::span<const BufferedValue> values,
-                               bytes_view data);
 
 }  // namespace irs

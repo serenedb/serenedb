@@ -22,6 +22,7 @@
 
 #include <duckdb/function/pragma_function.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/utils/index_utils.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -129,6 +130,45 @@ void VacuumExecute(duckdb::ClientContext& context,
     auto& engine = GetServerEngine();
     auto r = std::move(engine.compactAll(true, true)).Get().Ok();
     std::ignore = r;
+  }
+
+  if (option == "compact_indexes") {
+    // Synchronous "merge all segments" handler used by tests / benchmarks
+    // that need a deterministic post-condition: every previously-committed
+    // doc lives in a fully-merged segment. UPDATE_INDEXES only waits for
+    // Commit; this also drives consolidation to a fixpoint.
+    const auto policy = irs::index_utils::MakePolicy(
+      irs::index_utils::ConsolidateCount{std::numeric_limits<size_t>::max()});
+    irs::MergeWriter::FlushProgress progress = [] { return true; };
+    for (const auto& table : tables) {
+      for (auto shard : snapshot->GetIndexShardsByRelation(table->GetId())) {
+        if (!shard ||
+            shard->GetType() != catalog::ObjectType::InvertedIndexShard) {
+          continue;
+        }
+        auto& inverted = basics::downCast<search::InvertedIndexShard>(*shard);
+        // Make sure pending inserts are visible to consolidation.
+        std::ignore = std::move(inverted.CommitWait()).Get().Ok();
+        // Repeat until consolidation reports nothing left to merge.
+        // Bounded to avoid pathological loops in the face of concurrent
+        // background activity.
+        for (size_t pass = 0; pass < 8; ++pass) {
+          bool empty_consolidation = false;
+          const auto [res, _] =
+            inverted.ConsolidateUnsafe(policy, progress, empty_consolidation);
+          if (!res.ok()) {
+            throw duckdb::InternalException(
+              "compact_indexes: consolidation failed: %s", res.errorMessage());
+          }
+          // CommitWait makes the new merged segment visible and reclaims the
+          // sources; without it the next pass would re-see the same shape.
+          std::ignore = std::move(inverted.CommitWait()).Get().Ok();
+          if (empty_consolidation) {
+            break;
+          }
+        }
+      }
+    }
   }
 
   // Return empty result

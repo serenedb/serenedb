@@ -27,6 +27,8 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/geometry_crs.hpp>
+#include <duckdb/function/compression_function.hpp>
+#include <duckdb/main/config.hpp>
 #include <iresearch/analysis/geo_analyzer.hpp>
 #include <string>
 
@@ -97,6 +99,93 @@ ResultOr<std::string> GetIndexStringOption(std::string_view index_kind,
 
 constexpr std::string_view kHnswKind = "hnsw";
 constexpr std::array<std::string_view, 1> kKnownOpclassTypes{kHnswKind};
+constexpr std::string_view kCompressionField = "compression";
+
+// Parse a user-supplied compression name into a duckdb::CompressionType.
+// "auto" is the writer default (analyze tournament). Other names map
+// 1:1 to duckdb codecs; the writer throws at flush time if the named
+// codec doesn't accept the column's physical type.
+ResultOr<duckdb::CompressionType> ParseCompressionName(
+  std::string_view column_name, std::string_view name) {
+  std::string n{name};
+  absl::AsciiStrToLower(&n);
+  static constexpr std::pair<std::string_view, duckdb::CompressionType> kMap[] =
+    {
+      {"auto", duckdb::CompressionType::COMPRESSION_AUTO},
+      {"uncompressed", duckdb::CompressionType::COMPRESSION_UNCOMPRESSED},
+      {"constant", duckdb::CompressionType::COMPRESSION_CONSTANT},
+      {"rle", duckdb::CompressionType::COMPRESSION_RLE},
+      {"dictionary", duckdb::CompressionType::COMPRESSION_DICTIONARY},
+      {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING},
+      {"fsst", duckdb::CompressionType::COMPRESSION_FSST},
+      {"chimp", duckdb::CompressionType::COMPRESSION_CHIMP},
+      {"patas", duckdb::CompressionType::COMPRESSION_PATAS},
+      {"zstd", duckdb::CompressionType::COMPRESSION_ZSTD},
+      {"alp", duckdb::CompressionType::COMPRESSION_ALP},
+      {"alprd", duckdb::CompressionType::COMPRESSION_ALPRD},
+      {"roaring", duckdb::CompressionType::COMPRESSION_ROARING},
+      {"dict_fsst", duckdb::CompressionType::COMPRESSION_DICT_FSST},
+    };
+  for (const auto& [k, v] : kMap) {
+    if (n == k) {
+      return v;
+    }
+  }
+  return std::unexpected<Result>{std::in_place,
+                                 ERROR_BAD_PARAMETER,
+                                 "Column '",
+                                 column_name,
+                                 "': unknown compression '",
+                                 name,
+                                 "'. Accepted: auto, uncompressed, constant, "
+                                 "rle, dictionary, bitpacking, fsst, chimp, "
+                                 "patas, zstd, alp, alprd, roaring, "
+                                 "dict_fsst"};
+}
+
+// The "data" physical type that a forced codec must support. Composite
+// types (ARRAY/LIST) recurse to their child; the codec is only applied
+// to the leaf data column, while validity/length sub-columns inside
+// FlushNode keep COMPRESSION_AUTO regardless of `forced`.
+duckdb::PhysicalType LeafDataPhysicalType(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::ARRAY:
+      return LeafDataPhysicalType(duckdb::ArrayType::GetChildType(type));
+    case duckdb::LogicalTypeId::LIST:
+      return LeafDataPhysicalType(duckdb::ListType::GetChildType(type));
+    default:
+      return type.InternalType();
+  }
+}
+
+// Reject the `compression` option if the named codec doesn't support
+// the column's leaf physical type. Without this check, the failure
+// surfaces only during the asynchronous segment commit (logged, not
+// returned), so CREATE INDEX would falsely report success.
+Result ValidateColumnCompression(std::string_view column_name,
+                                 duckdb::CompressionType compression,
+                                 const duckdb::LogicalType& column_type) {
+  if (compression == duckdb::CompressionType::COMPRESSION_AUTO) {
+    return {};
+  }
+  // Static DBConfig: its compression registry is identical across all
+  // duckdb instances (built-in codecs, no extension registration). Built
+  // once on first use; thread-safe via the C++ static-initialization
+  // guarantee.
+  static const duckdb::DBConfig kProbeConfig;
+  const auto leaf = LeafDataPhysicalType(column_type);
+  auto fn = kProbeConfig.TryGetCompressionFunction(compression, leaf);
+  if (fn && fn->init_analyze) {
+    return {};
+  }
+  return {ERROR_BAD_PARAMETER,
+          "Column '",
+          column_name,
+          "': compression '",
+          duckdb::CompressionTypeToString(compression),
+          "' is not supported for type ",
+          column_type.ToString()};
+}
 
 std::string DescribeKnownOpclassTypes() {
   std::string out;
@@ -112,13 +201,14 @@ std::string DescribeKnownOpclassTypes() {
 std::string DescribeHNSWOptions() {
   return "metric (string: l2|l1|cosine|ip, REQUIRED), "
          "m (int >= 2, default 32), "
-         "ef_construction (int >= 1, default 40, must be >= m)";
+         "ef_construction (int >= 1, default 40, must be >= m), "
+         "compression (string, default 'auto')";
 }
 
 Result ApplyHNSWOptions(
   std::string_view column_name,
   const duckdb::case_insensitive_map_t<duckdb::Value>& opts,
-  HNSWColumnConfig& cfg) {
+  HNSWColumnConfig& cfg, duckdb::CompressionType& compression) {
   bool metric_set = false;
   for (const auto& [key, raw_val] : opts) {
     if (key == kMetricField) {
@@ -182,6 +272,16 @@ Result ApplyHNSWOptions(
                 *n};
       }
       cfg.ef_construction = static_cast<int>(*n);
+    } else if (key == kCompressionField) {
+      auto str = GetIndexStringOption(kHnswKind, column_name, key, raw_val);
+      if (!str) {
+        return std::move(str).error();
+      }
+      auto parsed = ParseCompressionName(column_name, *str);
+      if (!parsed) {
+        return std::move(parsed).error();
+      }
+      compression = *parsed;
     } else {
       return {ERROR_BAD_PARAMETER,        "Column '", column_name,
               "': unknown hnsw option '", key,        "'. Accepted options: ",
@@ -217,6 +317,12 @@ Result ValidateInvertedIndexColumns(
   // there, otherwise inserts/updates would silently drop the column at write
   // time. TIMESTAMP is supported by the writer but not by the search filter
   // path yet, so it stays rejected explicitly.
+  //
+  // INCLUDE-shaped columns (opclass == "included") bypass this whitelist --
+  // their values flow through Document::Columnstore() instead of the
+  // tokenizer/filter path, so any flat DuckDB type with codec support is
+  // fine. We still reject nested types (LIST/STRUCT/MAP/UNION) until the
+  // shredding work in Phase 2 lands.
   for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
@@ -227,6 +333,46 @@ Result ValidateInvertedIndexColumns(
       if (kind != duckdb::LogicalTypeId::VARCHAR) {
         return {ERROR_BAD_PARAMETER, "Column ", c.name,
                 " must be a JSON/VARCHAR column to be indexed by path"};
+      }
+      continue;
+    }
+    if (c.opclass == "included") {
+      // INCLUDE accepts whatever the new-cs columnstore can write+read.
+      // Supported: every flat scalar type, LIST<T> and ARRAY<T,N>
+      // (recursive PersistentColumnData with element child).
+      // Not yet supported: STRUCT / MAP / UNION / VARIANT (no shredded
+      // writer/materializer) and GEOMETRY (DuckDB may shred it into
+      // nested children -- see types.cpp SupportsRegularUpdate). All
+      // other "weird" ids (TABLE / AGGREGATE_STATE / LAMBDA / TYPE /
+      // template/literal placeholders) aren't real storage types and
+      // shouldn't reach this path, but reject defensively.
+      const bool unsupported =
+        kind == duckdb::LogicalTypeId::STRUCT ||
+        kind == duckdb::LogicalTypeId::MAP ||
+        kind == duckdb::LogicalTypeId::UNION ||
+        kind == duckdb::LogicalTypeId::VARIANT ||
+        kind == duckdb::LogicalTypeId::GEOMETRY ||
+        kind == duckdb::LogicalTypeId::TABLE ||
+        kind == duckdb::LogicalTypeId::AGGREGATE_STATE ||
+        kind == duckdb::LogicalTypeId::LEGACY_AGGREGATE_STATE ||
+        kind == duckdb::LogicalTypeId::LAMBDA ||
+        kind == duckdb::LogicalTypeId::TYPE ||
+        kind == duckdb::LogicalTypeId::TEMPLATE ||
+        kind == duckdb::LogicalTypeId::INVALID ||
+        kind == duckdb::LogicalTypeId::UNKNOWN ||
+        kind == duckdb::LogicalTypeId::ANY ||
+        kind == duckdb::LogicalTypeId::UNBOUND ||
+        kind == duckdb::LogicalTypeId::STRING_LITERAL ||
+        kind == duckdb::LogicalTypeId::INTEGER_LITERAL ||
+        kind == duckdb::LogicalTypeId::VALIDITY ||
+        kind == duckdb::LogicalTypeId::POINTER;
+      if (unsupported) {
+        return {ERROR_BAD_PARAMETER,
+                "Column ",
+                c.name,
+                " has kind ",
+                duckdb::EnumUtil::ToString(kind),
+                " which is not supported in INCLUDE"};
       }
       continue;
     }
@@ -476,11 +622,58 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
         HNSWColumnConfig cfg{
           .d = static_cast<int>(duckdb::ArrayType::GetSize(col_type)),
         };
-        if (auto r = ApplyHNSWOptions(c.name, *c.opclass_options, cfg);
+        auto compression = duckdb::CompressionType::COMPRESSION_AUTO;
+        if (auto r =
+              ApplyHNSWOptions(c.name, *c.opclass_options, cfg, compression);
+            r.fail()) {
+          return std::unexpected<Result>(std::move(r));
+        }
+        if (auto r = ValidateColumnCompression(c.name, compression,
+                                               c.catalog_column->type);
             r.fail()) {
           return std::unexpected<Result>(std::move(r));
         }
         index_col.hnsw_config = cfg;
+        index_col.compression = compression;
+        // HNSW vector data lives in the typed columnstore alongside
+        // INCLUDEd columns -- mark it as stored so the materializer
+        // path can serve it without a RocksDB fallback.
+        index_col.store_values = true;
+      } else if (c.opclass == "included") {
+        // "included" marks an INCLUDE-shaped column: not tokenized, not
+        // text-searchable, but its typed values are stored in the
+        // columnstore so iresearch_scan materializes them directly.
+        // Accepts the `compression` option to force a codec.
+        if (c.opclass_options.has_value()) {
+          for (const auto& [key, raw_val] : *c.opclass_options) {
+            if (key == kCompressionField) {
+              auto str = GetIndexStringOption("included", c.name, key, raw_val);
+              if (!str) {
+                return std::unexpected<Result>(std::move(str).error());
+              }
+              auto parsed = ParseCompressionName(c.name, *str);
+              if (!parsed) {
+                return std::unexpected<Result>(std::move(parsed).error());
+              }
+              if (auto r = ValidateColumnCompression(c.name, *parsed,
+                                                     c.catalog_column->type);
+                  r.fail()) {
+                return std::unexpected<Result>(std::move(r));
+              }
+              index_col.compression = *parsed;
+            } else {
+              return std::unexpected<Result>{
+                std::in_place,
+                ERROR_BAD_PARAMETER,
+                "Column '",
+                c.name,
+                "': unknown included option '",
+                key,
+                "'. Accepted options: compression (string, default 'auto')"};
+            }
+          }
+        }
+        index_col.store_values = true;
       } else {
         if (c.opclass_options.has_value()) {
           return std::unexpected<Result>{std::in_place,

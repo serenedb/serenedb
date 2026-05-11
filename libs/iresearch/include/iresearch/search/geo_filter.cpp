@@ -21,9 +21,13 @@
 
 #include "iresearch/search/geo_filter.h"
 
+#include <absl/base/internal/endian.h>
 #include <s2/s2cap.h>
 #include <s2/s2earth.h>
 #include <s2/s2point_region.h>
+
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
@@ -31,6 +35,7 @@
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_filter.hpp"
@@ -82,15 +87,21 @@ class GeoIterator : public DocIterator {
   static constexpr CostAttr::Type kExtraCost = 2;
 
  public:
-  GeoIterator(DocIterator::ptr&& approx, DocIterator::ptr&& column_it,
-              Parser& parser, Acceptor& acceptor, FieldProperties field,
+  // Stored geo bytes now live in the columnstore as a typed BLOB column. The
+  // iterator owns a PointReadCursor (per-doc fetch with row-group caching)
+  // plus a one-row Vector<BLOB> that FetchRow lands the value into. The
+  // existing parser API still expects bytes_view, so Accept() reads the
+  // resulting string_t and forwards its bytes unchanged.
+  GeoIterator(DocIterator::ptr&& approx,
+              const columnstore::ColumnReader& stored_field, Parser& parser,
+              Acceptor& acceptor, FieldProperties field,
               const byte_type* query_stats, score_t boost)
     : _stats{query_stats},
       _boost{boost},
       _field{field},
       _approx{std::move(approx)},
-      _column_it{std::move(column_it)},
-      _stored_value{get<PayAttr>(*_column_it)},
+      _cursor{stored_field.NewPointCursor()},
+      _bytes_vec{duckdb::LogicalType::BLOB, /*capacity=*/1},
       _acceptor{acceptor},
       _parser{parser} {
     std::get<CostAttr>(_attrs).reset(
@@ -168,13 +179,25 @@ class GeoIterator : public DocIterator {
 
  private:
   bool Accept(doc_id_t doc) {
-    SDB_ASSERT(_column_it->value() < doc);
-    if (doc != _column_it->LazySeek(doc) || _stored_value->value.empty()) {
+    // Per-doc point fetch via cached cursor: same row group as the
+    // previous doc reuses its pinned ColumnSegment + ColumnFetchState,
+    // crossing a row-group boundary opens the new segment lazily. Empty
+    // string_t = either a row that was written as null (analyzer didn't
+    // populate StoreAttr) or absent value -- do
+    // skipping such docs.
+    const uint64_t row_pos =
+      static_cast<uint64_t>(doc) - irs::doc_limits::min();
+    _cursor.FetchRow(row_pos, _bytes_vec, 0);
+    auto* slots = duckdb::FlatVector::GetData<duckdb::string_t>(_bytes_vec);
+    const auto& value = slots[0];
+    if (value.GetSize() == 0) {
       SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
                 "Missing stored geo value, doc='", doc, "'");
       return false;
     }
-    return _parser(_stored_value->value, _shape) && _acceptor(_shape);
+    const bytes_view bytes{reinterpret_cast<const byte_type*>(value.GetData()),
+                           value.GetSize()};
+    return _parser(bytes, _shape) && _acceptor(_shape);
   }
 
   using Attributes = std::tuple<CostAttr>;
@@ -185,8 +208,8 @@ class GeoIterator : public DocIterator {
 
   ShapeContainer _shape;
   DocIterator::ptr _approx;
-  DocIterator::ptr _column_it;
-  const PayAttr* _stored_value;
+  columnstore::ColumnReader::PointReadCursor _cursor;
+  duckdb::Vector _bytes_vec;
   Attributes _attrs;
   Acceptor& _acceptor;
   [[no_unique_address]] Parser _parser;
@@ -194,11 +217,11 @@ class GeoIterator : public DocIterator {
 
 template<typename Parser, typename Acceptor>
 DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
-                              DocIterator::ptr&& column_it,
+                              const columnstore::ColumnReader& stored_field,
                               const SubReader& reader, const TermReader& field,
                               const byte_type* query_stats, score_t boost,
                               Parser& parser, Acceptor& acceptor) {
-  if (itrs.empty() || !column_it) [[unlikely]] {
+  if (itrs.empty()) [[unlikely]] {
     return DocIterator::empty();
   }
 
@@ -206,15 +229,17 @@ DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
     MakeDisjunction<Disjunction>(
       {}, static_cast<irs::doc_id_t>(reader.docs_count()), std::move(itrs)),
-    std::move(column_it), parser, acceptor, field.meta(), query_stats, boost);
+    stored_field, parser, acceptor, field.meta(), query_stats, boost);
 }
 
 // Cached per reader query state
 struct GeoState {
   explicit GeoState(IResourceManager& memory) noexcept : states{{memory}} {}
 
-  // Corresponding stored field
-  const ColumnReader* stored_field{};
+  // Columnstore reader for the BLOB column carrying the analyzer's per-doc
+  // StoreAttr bytes. Resolved per-segment in PrepareStates via
+  // SubReader::Column.
+  const columnstore::ColumnReader* stored_field{};
 
   // Reader using for iterate over the terms
   const TermReader* reader{};
@@ -260,9 +285,7 @@ class GeoQuery : public Filter::Query {
       itrs.emplace_back(std::move(it));
     }
 
-    auto column_it = state->stored_field->iterator(ColumnHint::Normal);
-
-    return MakeIterator(std::move(itrs), std::move(column_it), segment,
+    return MakeIterator(std::move(itrs), *state->stored_field, segment,
                         *state->reader, _stats.c_str(), Boost(), _parser,
                         _acceptor);
   }
@@ -389,12 +412,18 @@ std::pair<GeoStates, bstring> PrepareStates(
   FieldCollectors field_stats{ctx.scorer};
   ManagedVector<SeekCookie::ptr> term_states{{ctx.memory}};
 
+  // Field names are 8-byte BE-encoded catalog::Column::Id (+ optional
+  // mangling suffix); decode the prefix to look up the columnstore reader.
+  if (field.size() < sizeof(uint64_t)) {
+    return res;
+  }
+  const auto stored_field_id = absl::big_endian::Load64(field.data());
   for (const auto& segment : ctx.index) {
     const auto* reader = segment.field(field);
     if (!reader) {
       continue;
     }
-    const auto* stored_field = segment.column(field);
+    const auto* stored_field = segment.Column(stored_field_id);
     if (!stored_field) {
       continue;
     }

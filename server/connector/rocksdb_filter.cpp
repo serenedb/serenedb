@@ -1565,16 +1565,16 @@ ExtractAndRewriteResult ExtractAndRewriteFilterExpr(
     }
     // A nullptr means the constraint doesn't restrict key_ids[0] -- treat it
     // as fully unbounded (sorts first).
-    std::ranges::sort(first_column_ranges,
-                      [](const ColumnRange* a, const ColumnRange* b) {
-                        if (a == b) {
-                          return false;
-                        }
-                        if (!a || !b) {
-                          return !a;
-                        }
-                        return *a < *b;
-                      });
+    absl::c_sort(first_column_ranges,
+                 [](const ColumnRange* a, const ColumnRange* b) {
+                   if (a == b) {
+                     return false;
+                   }
+                   if (!a || !b) {
+                     return !a;
+                   }
+                   return *a < *b;
+                 });
 
     const bool first_unbounded =
       !first_column_ranges.front() || !first_column_ranges.front()->HasLeft();

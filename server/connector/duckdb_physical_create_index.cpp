@@ -252,9 +252,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->index_name = _info->index_name;
 
   // Surface progress in pg_stat_progress_create_index. We don't yet know the
-  // catalog index_relid (it's assigned by CreateInvertedIndex/CreateSecondaryIndex
-  // below), so start with an empty one and patch it in after the catalog row
-  // exists.
+  // catalog index_relid (it's assigned by
+  // CreateInvertedIndex/CreateSecondaryIndex below), so start with an empty one
+  // and patch it in after the catalog row exists.
   state->progress = std::make_unique<pg::IndexProgressReporter>(
     _database_id, _relation->GetId(),
     pg::create_index_progress::Command::CreateIndex,

@@ -146,7 +146,6 @@ SereneDBPhysicalCTAS::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   auto& conn_ctx = GetSereneDBContext(context);
   conn_ctx.DropCatalogSnapshot();
-  conn_ctx.AddRocksDBWrite();
 
   return state;
 }

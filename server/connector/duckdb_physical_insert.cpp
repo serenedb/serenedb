@@ -149,9 +149,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
     }
   }
 
-  // Set up transaction and index writers once
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
   state->conflict_resolver.Init(*state->txn, *state->cf, _on_conflict,
                                 state->table_name);
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(

@@ -23,6 +23,7 @@
 #include <vpack/vpack_helper.h>
 
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/common/extra_type_info.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -38,10 +39,15 @@ PgSqlType::PgSqlType(ObjectId database_id, ObjectId id, std::string_view name,
                  {},   id == id::kInvalid ? ObjectId{NewTickServer(2) + 1} : id,
                  name, ObjectType::PgSqlType},
     _info{std::move(info)} {
-  _info->type.SetAlias(std::string{GetName()});
+  auto type_info = _info->type.AuxInfo()
+                     ? _info->type.AuxInfo()->DeepCopy()
+                     : duckdb::make_shared_ptr<duckdb::ExtraTypeInfo>(
+                         duckdb::ExtraTypeInfoType::GENERIC_TYPE_INFO);
+  type_info->alias = GetName();
   auto ext = duckdb::make_uniq<duckdb::ExtensionTypeInfo>();
   ext->properties[kPgSqlTypeOidProp] = duckdb::Value::UBIGINT(GetId().id());
-  _info->type.SetExtensionInfo(std::move(ext));
+  type_info->extension_info = std::move(ext);
+  _info->type = {_info->type.id(), std::move(type_info)};
 }
 
 std::shared_ptr<PgSqlType> PgSqlType::ReadInternal(vpack::Slice slice,

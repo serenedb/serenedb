@@ -148,6 +148,10 @@ class PgSQLCommTaskBase : public rest::CommTask {
                              const std::vector<std::string>& names,
                              const std::vector<VarFormat>& formats,
                              bool extended = true);
+  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
+    duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
+    bool allow_stream_result);
+
   DuckDBPortal BindStatement(DuckDBStatement& stmt, DuckDBBindInfo bind_info);
   void BuildColumnSerializers(DuckDBPortal& portal);
   void DeallocateNamedStatement(std::string_view name);

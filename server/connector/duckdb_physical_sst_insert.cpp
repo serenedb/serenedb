@@ -140,7 +140,6 @@ SereneDBPhysicalSSTInsert::GetGlobalSinkState(
 
   // Create index writers
   auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
   state->table_shard =
     conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
   SDB_ASSERT(state->table_shard);

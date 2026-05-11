@@ -121,21 +121,7 @@ TEST(ngram_similarity_base_test, equal) {
   }
 }
 
-class NGramSimilarityFilterTestCase : public tests::FilterTestCaseBase {
- protected:
-  static irs::FeatureInfoProvider FeaturesWithNorms() {
-    return [](irs::IndexFeatures id) {
-      const irs::ColumnInfo info{
-        irs::Type<irs::compression::Lz4>::get(), {}, false};
-
-      if (irs::IndexFeatures::Norm == id) {
-        return std::make_pair(info, &irs::Norm::MakeWriter);
-      }
-
-      return std::make_pair(info, irs::FeatureWriterFactory{});
-    };
-  }
-};
+class NGramSimilarityFilterTestCase : public tests::FilterTestCaseBase {};
 
 TEST_P(NGramSimilarityFilterTestCase, boost) {
   // no boost
@@ -1278,7 +1264,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
 TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
   {
     irs::IndexWriterOptions opts;
-    opts.features = FeaturesWithNorms();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1301,7 +1286,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
 TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
   {
     irs::IndexWriterOptions opts;
-    opts.features = FeaturesWithNorms();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1337,7 +1321,6 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
 TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
   {
     irs::IndexWriterOptions opts;
-    opts.features = FeaturesWithNorms();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1360,7 +1343,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
 TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
   {
     irs::IndexWriterOptions opts;
-    opts.features = FeaturesWithNorms();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
@@ -1383,7 +1365,6 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
 TEST_P(NGramSimilarityFilterTestCase, missed_first_bm15_test) {
   {
     irs::IndexWriterOptions opts;
-    opts.features = FeaturesWithNorms();
 
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);

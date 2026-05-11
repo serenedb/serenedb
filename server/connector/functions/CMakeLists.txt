@@ -1,0 +1,14 @@
+target_sources(
+    serene_connector
+    PRIVATE
+        array.cpp
+        cast.cpp
+        inout.cpp
+        json.cpp
+        math.cpp
+        string.cpp
+        system.cpp
+        search.cpp
+        sequence.cpp
+        vector.cpp
+)

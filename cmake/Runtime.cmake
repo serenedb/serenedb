@@ -113,16 +113,3 @@ include(UpdateModule)
 sdb_update_module(${GIT_EXECUTABLE} "llvm-project" ${CMAKE_SOURCE_DIR}/third_party "LICENSE.TXT")
 
 add_subdirectory(third_party/llvm-project/runtimes EXCLUDE_FROM_ALL)
-
-if(${SDB_GTEST})
-    # Need this for building velox fuzzer that is used for tests.
-    # TODO(Dronplane) propose a fix without deprecated stuff
-    target_compile_definitions(
-        cxx_static
-        PUBLIC _LIBCPP_ENABLE_CXX26_REMOVED_WSTRING_CONVERT
-    )
-    target_compile_definitions(
-        cxx_static
-        PUBLIC _LIBCPP_ENABLE_CXX26_REMOVED_CODECVT
-    )
-endif()

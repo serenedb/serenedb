@@ -57,7 +57,7 @@ struct GeoField final {
 
   irs::Tokenizer& GetTokens() const {
     if (!shape_slice.isNone()) {
-      stream->reset(irs::slice_to_view<char>(shape_slice));
+      static_cast<irs::analysis::GeoAnalyzer&>(*stream).reset(shape_slice);
     }
     return *stream.get();
   }

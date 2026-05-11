@@ -65,7 +65,7 @@ iq	name	grade	title	weight	job_title
 54	babsky	154	boss	44	cleaner
 
 
-query
+query ???????? rowsort
 SELECT *
 FROM
 (

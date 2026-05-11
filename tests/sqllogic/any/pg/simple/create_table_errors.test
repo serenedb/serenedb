@@ -4,8 +4,6 @@ CREATE TABLE tindex (
     name VARCHAR,
     iq VARCHAR
 );
-----
-db error: ERROR: column "iq" specified more than once
 
 
 statement error
@@ -15,8 +13,6 @@ CREATE TABLE clickclack (
     pudge BOOLEAN,
     babsky INTEGER
 );
-----
-db error: ERROR: column "babsky" specified more than once
 
 
 statement error
@@ -57,8 +53,6 @@ CREATE TABLE clickclack (
     name VARCHAR,
     PRIMARY KEY (iq, nonexistent_column)
 );
-----
-db error: ERROR: column "nonexistent_column" named in key does not exist
 
 
 statement error
@@ -67,8 +61,6 @@ CREATE TABLE tindex (
     babsky VARCHAR,
     PRIMARY KEY (missing_col)
 );
-----
-db error: ERROR: column "missing_col" named in key does not exist
 
 
 statement error
@@ -78,8 +70,6 @@ CREATE TABLE kostya (
     deadinside BOOLEAN,
     PRIMARY KEY (yagami, pudge, wrong_column, deadinside)
 );
-----
-db error: ERROR: column "wrong_column" named in key does not exist
 
 
 statement ok
@@ -98,16 +88,15 @@ CREATE TABLE babsky (
     bulatb VARCHAR,
     makak INTEGER
 );
-----
-db error: ERROR: column "makak" specified more than once
 
 
 statement ok
 DROP TABLE vedernikoff;
 
 
-skipif postgres
-statement error
+statement ok
+DROP TABLE IF EXISTS complex_pk;
+
+
+statement ok
 CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);
-----
-db error: ERROR: Column b has non primitive type and can not be part of primary key

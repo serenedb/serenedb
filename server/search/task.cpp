@@ -112,7 +112,12 @@ void CommitTask::operator()() {
     _cleanup_interval_step = settings.cleanup_interval_step;
   }
 
-  if (absl::ZeroDuration() == _commit_interval_msec) {
+  // TODO(phase5-follow-up): Currently `commit_interval_ms` defaults to 0
+  // (not set on CREATE INDEX by our DuckDB path), which disables background
+  // sync entirely -- inserts never become searchable. A synchronous
+  // CommitWait() caller still expects a commit to happen, so always commit
+  // when `_wait` is set even if background scheduling is off.
+  if (absl::ZeroDuration() == _commit_interval_msec && !_wait) {
     std::move(reschedule).Cancel();
     SDB_DEBUG("xxxxx", Logger::SEARCH, "sync is disabled for the index '",
               id.id(), "', runId '", size_t(&run_id), "'");

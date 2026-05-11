@@ -1,0 +1,183 @@
+control substitution on
+
+# S3-backed views over parquet/csv files. Mirrors file_s3.test_slow's setup
+# (same secret, same seed data via COPY TO) but the READ side exercises
+#
+#   CREATE VIEW v AS SELECT * FROM read_parquet('s3://bucket/key.parquet');
+#   CREATE VIEW v AS SELECT * FROM read_csv('s3://bucket/key.csv');
+#
+# rather than COPY ... FROM 's3://...'. DuckDB's httpfs resolves the secret
+# at scan time.
+
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+
+# --- seed data: a regular RocksDB-backed table + COPY TO S3 ---
+
+
+statement ok
+CREATE TABLE clickclack
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 5
+INSERT INTO clickclack VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky'), (4, 'pudge'), (5, 'mom');
+
+
+statement count 5
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.parquet'
+WITH (FORMAT parquet);
+
+
+statement count 5
+COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.csv'
+WITH (FORMAT csv, HEADER true);
+
+
+# --- view over S3 parquet ---
+
+
+statement ok
+CREATE VIEW ext_s3_parquet AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.parquet');
+
+
+query
+SELECT * FROM ext_s3_parquet ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+query
+SELECT COUNT(*) FROM ext_s3_parquet WHERE name LIKE '%v%';
+----
+count
+2
+
+
+statement ok
+CREATE VIEW ext_s3_csv AS
+  SELECT * FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_clickclack.csv');
+
+
+query
+SELECT * FROM ext_s3_csv ORDER BY 1;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+4	pudge
+5	mom
+
+
+query
+SELECT p.id, p.name AS parquet_name, c.name AS csv_name, r.name AS rocksdb_name
+FROM ext_s3_parquet p
+  JOIN ext_s3_csv c ON p.id = c.id
+  JOIN clickclack r ON p.id = r.id
+ORDER BY p.id;
+----
+id	parquet_name	csv_name	rocksdb_name
+1	vedernikoff	vedernikoff	vedernikoff
+2	pavelvi	pavelvi	pavelvi
+3	babsky	babsky	babsky
+4	pudge	pudge	pudge
+5	mom	mom	mom
+
+
+statement count 100000
+COPY
+(
+  SELECT
+    iq,
+    pencil_size
+  FROM
+    generate_series(1, 100) as iq,
+    generate_series(1, 1000) as pencil_size
+  ORDER BY iq, pencil_size
+) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_babsky_company.parquet'
+WITH (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW ext_s3_babsky AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_ft_s3_babsky_company.parquet');
+
+
+query
+SELECT COUNT(*) FROM ext_s3_babsky;
+----
+count
+100000
+
+
+query
+SELECT COUNT(*) FROM ext_s3_babsky WHERE iq > 90;
+----
+count
+10000
+
+
+query
+SELECT iq, COUNT(*) FROM ext_s3_babsky WHERE iq IN (1, 50, 100) GROUP BY iq ORDER BY iq;
+----
+iq	count
+1	1000
+50	1000
+100	1000
+
+
+# Secret lifecycle: DROP + re-CREATE SECRET must not break a re-scan.
+# We also pin the global s3_use_ssl to false because without a secret
+# httpfs would fall back to DuckDB's global config (ssl=true by default)
+# and attempt a TLS handshake against a plain-HTTP MinIO -- that trips an
+# OpenSSL buffer-overflow on the malformed response.
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+DROP SECRET minio_${__DATABASE__};
+
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+
+query
+SELECT COUNT(*) FROM ext_s3_parquet;
+----
+count
+5
+
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

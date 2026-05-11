@@ -1,0 +1,598 @@
+statement ok
+CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff (hero) VALUES ('iceberg_partition_review_v17');
+
+
+statement count 1
+INSERT INTO vedernikoff (hero) VALUES ('iceberg_manifest_audit');
+
+
+statement count 1
+INSERT INTO vedernikoff (hero) VALUES ('loves_solid_ironically');
+
+
+query
+SELECT id, hero FROM vedernikoff ORDER BY id;
+----
+id	hero
+1	iceberg_partition_review_v17
+2	iceberg_manifest_audit
+3	loves_solid_ironically
+
+
+statement count 2
+INSERT INTO vedernikoff (hero) VALUES
+  ('updated_resume_for_mop'), ('mop_recruiter_replied');
+
+
+query
+SELECT id, hero FROM vedernikoff ORDER BY id;
+----
+id	hero
+1	iceberg_partition_review_v17
+2	iceberg_manifest_audit
+3	loves_solid_ironically
+4	updated_resume_for_mop
+5	mop_recruiter_replied
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+# PG OWNED BY: DROP TABLE drops the implicit sequence too, so the next
+# CREATE TABLE starts fresh from id=1 instead of resuming at id=6.
+statement ok
+CREATE TABLE vedernikoff (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO vedernikoff (hero) VALUES ('mop_offer_letter_arrived');
+
+
+query
+SELECT id, hero FROM vedernikoff;
+----
+id	hero
+1	mop_offer_letter_arrived
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+# DROP TABLE already cascade-dropped vedernikoff_id_seq; the explicit
+# follow-up errors without IF EXISTS.
+statement error
+DROP SEQUENCE vedernikoff_id_seq;
+
+
+statement ok
+CREATE TABLE dedsky (id BIGSERIAL PRIMARY KEY, iq INT);
+
+
+statement count 2
+INSERT INTO dedsky (iq) VALUES (10), (20);
+
+
+query
+SELECT id, iq FROM dedsky ORDER BY id;
+----
+id	iq
+1	10
+2	20
+
+
+statement count 3
+INSERT INTO dedsky (iq) VALUES (30), (40), (50);
+
+
+query
+SELECT id, iq FROM dedsky ORDER BY id;
+----
+id	iq
+1	10
+2	20
+3	30
+4	40
+5	50
+
+
+statement ok
+DROP TABLE dedsky;
+
+
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE dedsky_id_seq;
+
+
+statement ok
+CREATE TABLE pudge (id SMALLSERIAL PRIMARY KEY, hp INT);
+
+
+statement count 2
+INSERT INTO pudge (hp) VALUES (100), (200);
+
+
+query
+SELECT id, hp FROM pudge ORDER BY id;
+----
+id	hp
+1	100
+2	200
+
+
+statement count 50
+INSERT INTO pudge (hp) SELECT i FROM generate_series(1000, 1049) AS s(i);
+
+
+query
+SELECT count(*) FROM pudge;
+----
+count
+52
+
+
+query
+SELECT max(id) FROM pudge;
+----
+max
+52
+
+
+statement ok
+DROP TABLE pudge;
+
+
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE pudge_id_seq;
+
+
+statement ok
+CREATE TABLE babsky (id SERIAL PRIMARY KEY, name TEXT);
+
+
+statement ok
+CREATE TABLE deadinside (id BIGSERIAL PRIMARY KEY, name TEXT);
+
+
+statement count 2
+INSERT INTO babsky (name) VALUES
+  ('iceberg_only_iceberg_more_iceberg'), ('only_iceberg_no_other_work');
+
+
+statement count 3
+INSERT INTO deadinside (name) VALUES
+  ('reread_solid_principles'),
+  ('signals_dont_replace_thinking'),
+  ('eight_classes_for_one_check');
+
+
+query
+SELECT id, name FROM babsky ORDER BY id;
+----
+id	name
+1	iceberg_only_iceberg_more_iceberg
+2	only_iceberg_no_other_work
+
+
+query
+SELECT id, name FROM deadinside ORDER BY id;
+----
+id	name
+1	reread_solid_principles
+2	signals_dont_replace_thinking
+3	eight_classes_for_one_check
+
+
+statement ok
+DROP TABLE babsky;
+
+
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE babsky_id_seq;
+
+
+statement ok
+DROP TABLE deadinside;
+
+
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE deadinside_id_seq;
+
+
+statement ok
+CREATE TABLE enchonchinchan (id SERIAL PRIMARY KEY, iq INT);
+
+
+statement count 3
+INSERT INTO enchonchinchan (iq) SELECT i FROM generate_series(1, 3) AS s(i);
+
+
+query
+SELECT id, iq FROM enchonchinchan ORDER BY id;
+----
+id	iq
+1	1
+2	2
+3	3
+
+
+statement ok
+BEGIN;
+
+
+statement count 100
+INSERT INTO enchonchinchan (iq) SELECT i FROM generate_series(100, 199) AS s(i);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO enchonchinchan (iq) VALUES (322);
+
+
+query
+SELECT id, iq FROM enchonchinchan ORDER BY id;
+----
+id	iq
+1	1
+2	2
+3	3
+104	322
+
+
+statement ok
+DROP TABLE enchonchinchan;
+
+
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE enchonchinchan_id_seq;
+
+
+statement ok
+CREATE TABLE shlepach (id SERIAL PRIMARY KEY, iq INT);
+
+
+statement count 5000
+INSERT INTO shlepach (iq) SELECT i FROM generate_series(1, 5000) AS s(i);
+
+
+query
+SELECT count(*), min(id), max(id) FROM shlepach;
+----
+count	min	max
+5000	1	5000
+
+
+statement ok
+DROP TABLE shlepach;
+
+
+# Cascade-dropped with the table now (kept commented for history).
+# statement ok
+# DROP SEQUENCE shlepach_id_seq;
+
+
+statement ok
+CREATE TABLE myasnig (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO myasnig (hero) VALUES ('mop_take_home_assignment');
+
+
+statement error cannot drop sequence myasnig_id_seq because other objects depend on it
+DROP SEQUENCE myasnig_id_seq;
+
+
+query
+SELECT id, hero FROM myasnig ORDER BY id;
+----
+id	hero
+1	mop_take_home_assignment
+
+
+statement ok
+INSERT INTO myasnig (hero) VALUES ('mop_round2_scheduled');
+
+
+statement error (?i)(relation|sequence).*myasnig_id_seq.*already exists
+CREATE SEQUENCE myasnig_id_seq START WITH 100;
+
+
+statement count 1
+INSERT INTO myasnig (hero) VALUES ('mop_round2_scheduled');
+
+
+query
+SELECT id, hero FROM myasnig ORDER BY id;
+----
+id	hero
+1	mop_take_home_assignment
+2	mop_round2_scheduled
+3	mop_round2_scheduled
+
+
+# myasnig_id_seq was created explicitly (no OWNED BY), so DROP TABLE leaves
+# it alone -- still has to be cleaned up by hand.
+statement ok
+DROP TABLE myasnig;
+
+
+statement error myasnig_id_seq.*does not exist
+DROP SEQUENCE myasnig_id_seq;
+
+
+# OWNED BY cascade (the SERIAL way): DROP TABLE wipes the implicit sequence
+# so the second CREATE TABLE starts at id=1, not where the previous one left
+# off. Vedernikoff stops touching iceberg pipelines and starts MOP onboarding.
+statement ok
+CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 2
+INSERT INTO bbbsky (hero) VALUES
+  ('iceberg_pager_keeps_firing'), ('declines_iceberg_oncall_rotation');
+
+
+statement ok
+DROP TABLE bbbsky;
+
+
+statement ok
+CREATE TABLE bbbsky (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO bbbsky (hero) VALUES ('mop_first_day_swag');
+
+
+query
+SELECT id, hero FROM bbbsky;
+----
+id	hero
+1	mop_first_day_swag
+
+
+# DROP TABLE alone is enough now -- the SERIAL sequence dies with it.
+statement ok
+DROP TABLE bbbsky;
+
+
+statement error
+DROP SEQUENCE bbbsky_id_seq;
+
+
+# Name mangling: a pre-existing sequence with the SERIAL's natural name
+# pushes the implicit one to a `_seq1` suffix instead of failing.
+statement ok
+CREATE SEQUENCE clickclack_id_seq START WITH 1000;
+
+
+statement ok
+CREATE TABLE clickclack (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO clickclack (hero) VALUES ('two_weeks_notice_drafted');
+
+
+# Mangled sequence (clickclack_id_seq1) starts at 1, not 1000.
+query
+SELECT id, hero FROM clickclack;
+----
+id	hero
+1	two_weeks_notice_drafted
+
+
+# Pre-existing sequence is still around with its own counter.
+query
+SELECT nextval('clickclack_id_seq');
+----
+nextval
+1000
+
+
+# DROP TABLE drops only the OWNED BY sequence (clickclack_id_seq1), the
+# pre-existing clickclack_id_seq survives.
+statement ok
+DROP TABLE clickclack;
+
+
+statement error
+DROP SEQUENCE clickclack_id_seq1;
+
+
+statement ok
+DROP SEQUENCE clickclack_id_seq;
+
+
+# Counter cleanup: a sequence dropped via DROP SEQUENCE doesn't leave its
+# counter behind. Re-creating with the same name starts from start_value.
+statement ok
+CREATE SEQUENCE mop_offer_seq START WITH 50;
+
+
+query
+SELECT nextval('mop_offer_seq'), nextval('mop_offer_seq');
+----
+nextval	nextval
+50	51
+
+
+statement ok
+DROP SEQUENCE mop_offer_seq;
+
+
+statement ok
+CREATE SEQUENCE mop_offer_seq START WITH 50;
+
+
+# Fresh counter -- not 52.
+query
+SELECT nextval('mop_offer_seq');
+----
+nextval
+50
+
+
+statement ok
+DROP SEQUENCE mop_offer_seq;
+
+
+# Same cleanup must hold for owned (SERIAL) sequences: drop the table, the
+# counter goes too, and the next CREATE TABLE doesn't inherit it.
+statement ok
+CREATE TABLE quitclickclack (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 3
+INSERT INTO quitclickclack (hero) VALUES
+  ('iceberg_partition_review_postponed'),
+  ('mop_relocation_package_signed'),
+  ('clickclack_exit_interview_scheduled');
+
+
+query
+SELECT max(id) FROM quitclickclack;
+----
+max
+3
+
+
+statement ok
+DROP TABLE quitclickclack;
+
+
+statement ok
+CREATE TABLE quitclickclack (id SERIAL PRIMARY KEY, hero TEXT);
+
+
+statement count 1
+INSERT INTO quitclickclack (hero) VALUES ('mop_first_paycheck');
+
+
+query
+SELECT id, hero FROM quitclickclack;
+----
+id	hero
+1	mop_first_paycheck
+
+
+statement ok
+DROP TABLE quitclickclack;
+
+
+# Multiple SERIAL columns: each gets its own owned sequence and both die
+# with the table.
+statement ok
+CREATE TABLE goodbyeclickclack (
+  id SERIAL PRIMARY KEY, ticket_no SERIAL, summary TEXT);
+
+
+statement count 2
+INSERT INTO goodbyeclickclack (summary) VALUES
+  ('cancelled_iceberg_oncall_subscription'), ('mop_badge_arrived');
+
+
+query
+SELECT id, ticket_no, summary FROM goodbyeclickclack ORDER BY id;
+----
+id	ticket_no	summary
+1	1	cancelled_iceberg_oncall_subscription
+2	2	mop_badge_arrived
+
+
+statement ok
+DROP TABLE goodbyeclickclack;
+
+
+statement error
+DROP SEQUENCE goodbyeclickclack_id_seq;
+
+
+statement error
+DROP SEQUENCE goodbyeclickclack_ticket_no_seq;
+
+
+# SMALLSERIAL's implicit sequence is capped at INT16 max so nextval errors
+# with "reached maximum value of sequence" rather than letting INSERT fail
+# later on a BIGINT->SMALLINT cast (which would burn IDs forever).
+statement ok
+CREATE TABLE smallserial_overflow (id SMALLSERIAL PRIMARY KEY, v INT);
+
+
+# Jump the sequence to one before the cap. INT16 max = 32767.
+query
+SELECT setval('smallserial_overflow_id_seq', 32766, true);
+----
+setval
+32766
+
+
+# 32767 is still valid.
+statement count 1
+INSERT INTO smallserial_overflow (v) VALUES (1);
+
+
+query
+SELECT id FROM smallserial_overflow;
+----
+id
+32767
+
+
+# 32768 would overflow INT16 -- the sequence errors first.
+statement error reached maximum value of sequence
+INSERT INTO smallserial_overflow (v) VALUES (2);
+
+
+# Still errors on retry.
+statement error reached maximum value of sequence
+INSERT INTO smallserial_overflow (v) VALUES (3);
+
+
+statement ok
+DROP TABLE smallserial_overflow;
+
+
+# Same story for SERIAL: implicit sequence capped at INT32 max.
+statement ok
+CREATE TABLE serial_overflow (id SERIAL PRIMARY KEY, v INT);
+
+
+query
+SELECT setval('serial_overflow_id_seq', 2147483646, true);
+----
+setval
+2147483646
+
+
+statement count 1
+INSERT INTO serial_overflow (v) VALUES (1);
+
+
+query
+SELECT id FROM serial_overflow;
+----
+id
+2147483647
+
+
+statement error reached maximum value of sequence
+INSERT INTO serial_overflow (v) VALUES (2);
+
+
+statement ok
+DROP TABLE serial_overflow;

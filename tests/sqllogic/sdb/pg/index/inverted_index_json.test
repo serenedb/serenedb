@@ -1,0 +1,434 @@
+# JSON-path inverted index -- mirrors the scenario in json_indexing.md.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY verbatim_dict(
+    template = 'keyword'
+);
+
+statement ok
+CREATE TABLE logs (id INTEGER PRIMARY KEY, content JSON);
+
+# One JSON path indexed on the column.
+statement ok
+CREATE INDEX logs_idx ON logs USING inverted(id, (content->>'host') verbatim_dict);
+
+statement ok
+INSERT INTO logs VALUES
+    (1, '{"host":"server-01","status":"ok"}'::json),
+    (2, '{"host":"server-02","status":"error"}'::json),
+    (3, '{"host":"server-03","status":"ok"}'::json),
+    (4, '{"host":"server-14","status":"warning"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) logs;
+
+# The wildcard 'server-0_' should match ids 1..3 only.
+query
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-0_') ORDER BY id;
+----
+id
+1
+2
+3
+
+# Exact-match path also works via the indexed path.
+query
+SELECT id FROM logs_idx WHERE content->>'host' @@ ts_like('server-02') ORDER BY id;
+----
+id
+2
+
+# Multiple paths on the same column.
+statement ok
+CREATE TABLE evts (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX evts_idx ON evts USING inverted(
+    id,
+    (content->>'host') verbatim_dict,
+    (content->>'status') verbatim_dict
+);
+
+statement ok
+INSERT INTO evts VALUES
+    (1, '{"host":"a","status":"ok"}'::json),
+    (2, '{"host":"b","status":"error"}'::json),
+    (3, '{"host":"a","status":"error"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) evts;
+
+query
+SELECT id FROM evts_idx WHERE content->>'host' @@ ts_like('a') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM evts_idx WHERE content->>'status' @@ ts_like('error') ORDER BY id;
+----
+id
+2
+3
+
+# All other index predicates (TERM_EQ, PHRASE, TERM_IN, BOOST, IS NULL,
+# range, IN) accept the same JSON-path expression as TERM_LIKE.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY text_dict(
+    template = 'text', locale = 'en_US.UTF-8', case = 'none',
+    stemming = false, accent = false, frequency = true, position = true);
+
+statement ok
+CREATE TABLE preds (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX preds_idx ON preds USING inverted(
+    id,
+    (content->>'host') verbatim_dict,
+    (content->>'msg') text_dict
+);
+
+statement ok
+INSERT INTO preds VALUES
+    (1, '{"host":"server-01","msg":"quick brown fox"}'::json),
+    (2, '{"host":"server-02","msg":"lazy dog runs"}'::json),
+    (3, '{"host":"server-03","msg":"the quick fox jumps"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) preds;
+
+# TERM_EQ on a JSON path
+query
+SELECT id FROM preds_idx WHERE content->>'host' = 'server-02';
+----
+id
+2
+
+# PHRASE on a JSON path
+query
+SELECT id FROM preds_idx WHERE content->>'msg' @@ ts_phrase('quick fox') ORDER BY id;
+----
+id
+3
+
+# TERM_IN on a JSON path
+query
+SELECT id FROM preds_idx WHERE content->>'host' @@ ts_any(['server-01', 'server-03']) ORDER BY id;
+----
+id
+1
+3
+
+# BOOST wraps any predicate; the JSON-path expression flows through.
+query
+SELECT id FROM preds_idx WHERE content->>'host' @@ (ts_like('server-0_') ^ 2.0) ORDER BY id;
+----
+id
+1
+2
+3
+
+# LEVENSHTEIN_MATCH on a JSON path: fuzzy match against the leaf string.
+# 'urgent' (dist 0) and 'urgnet' (one transposition) match within distance 1
+# when the default with_transpositions flag is on; 'unrelated' is far.
+
+statement ok
+CREATE TABLE lev (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX lev_idx ON lev USING inverted(id, (content->>'tag') verbatim_dict);
+
+statement ok
+INSERT INTO lev VALUES
+    (1, '{"tag":"urgent"}'::json),
+    (2, '{"tag":"urgnet"}'::json),
+    (3, '{"tag":"unrelated"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) lev;
+
+query
+SELECT id FROM lev_idx WHERE content->>'tag' @@ ts_levenshtein('urgent', 1) ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+CREATE TABLE arr_logs (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX arr_idx ON arr_logs USING inverted(
+    id,
+    (content->'tags'->>0) verbatim_dict
+);
+
+statement ok
+INSERT INTO arr_logs VALUES
+    (1, '{"tags":["alpha","beta"]}'::json),
+    (2, '{"tags":["gamma","delta"]}'::json),
+    (3, '{"tags":["alpha","epsilon"]}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) arr_logs;
+
+query
+SELECT id FROM arr_idx WHERE content->'tags'->>0 = 'alpha' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM arr_idx WHERE content->'tags'->>0 = 'gamma' ORDER BY id;
+----
+id
+2
+
+
+statement ok
+CREATE TABLE jonly (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX jonly_idx ON jonly USING inverted(id, (content->>'host') verbatim_dict);
+
+statement ok
+INSERT INTO jonly VALUES
+    (1, '{"host":"server-01"}'::json),
+    (2, '{"host":"server-02"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) jonly;
+
+# Sanity check: the ->> form claims the predicate and returns rows.
+query
+SELECT id FROM jonly_idx WHERE content->>'host' @@ ts_like('server-0_') ORDER BY id;
+----
+id
+1
+2
+
+# The -> form returns JSON; the binder rejects it because @@ requires the
+# column-side argument to be a TEXT (or TSQUERY-coercible) expression. The
+# user must use ->> (which returns VARCHAR) instead.
+query error
+SELECT id FROM jonly_idx WHERE content->'host' @@ ts_like('server-0_') ORDER BY id;
+----
+db error: ERROR: No function matches the given name and argument types 'json_extract(JSON, BOOLEAN)'. You might need to add explicit type casts.
+	Candidate functions:
+	json_extract(VARCHAR, BIGINT) -> JSON
+	json_extract(VARCHAR, VARCHAR) -> JSON
+	json_extract(VARCHAR, VARCHAR[]) -> JSON[]
+	json_extract(JSON, BIGINT) -> JSON
+	json_extract(JSON, VARCHAR) -> JSON
+	json_extract(JSON, VARCHAR[]) -> JSON[]
+
+
+# CREATE INDEX itself rejects a JSON-typed (`->`) leaf: the indexed leaf must
+# be TEXT, otherwise we'd index JSON tokens (`{`, `[`) that nobody can
+# meaningfully query. The user has to write `->>` (or json_extract_field_text).
+
+statement ok
+CREATE TABLE bad_index (id INTEGER PRIMARY KEY, content JSON);
+
+statement error
+CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'host') verbatim_dict);
+----
+db error: ERROR: Expression-based index columns are not supported
+
+
+# Same rejection in a chain whose OUTERMOST step is `->`: even though deeper
+# steps could be `->>`, the leaf type at the top is what matters.
+statement error
+CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->'b') verbatim_dict);
+----
+db error: ERROR: Expression-based index columns are not supported
+
+
+# Mixed chain ending in ->> is accepted: the OUTERMOST step yields TEXT.
+statement ok
+CREATE INDEX bad_index_idx ON bad_index USING inverted(id, (content->'a'->>'b') verbatim_dict);
+
+
+# All JSON primitive leaf types are accepted at indexed paths. Internally
+# each leaf type goes to a different iresearch field via the type-mangle
+# byte (string=\3, numeric=\2, bool=\1, null=\0), so different-typed values
+# at the same path don't collide. Compound types (object, array) are still
+# rejected -- they would index as the useless `{` / `[` JSON token.
+
+statement ok
+CREATE TABLE prim_types (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX prim_types_idx ON prim_types USING inverted(id, (content->>'val') verbatim_dict);
+
+# Every primitive leaf type is accepted at insert time:
+statement ok
+INSERT INTO prim_types VALUES (1, '{"val":"hello"}'::json);
+
+statement ok
+INSERT INTO prim_types VALUES (2, '{"val":42}'::json);
+
+statement ok
+INSERT INTO prim_types VALUES (3, '{"val":3.14}'::json);
+
+statement ok
+INSERT INTO prim_types VALUES (4, '{"val":true}'::json);
+
+statement ok
+INSERT INTO prim_types VALUES (5, '{"val":false}'::json);
+
+# Null leaf -- accepted, indexed under a null-mangled marker.
+statement ok
+INSERT INTO prim_types VALUES (6, '{"val":null}'::json);
+
+# Missing path -- accepted, no posting at all for this row.
+statement ok
+INSERT INTO prim_types VALUES (7, '{"other":"x"}'::json);
+
+# Object leaf -- rejected.
+statement error
+INSERT INTO prim_types VALUES (8, '{"val":{"x":1}}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+# Array leaf -- rejected.
+statement error
+INSERT INTO prim_types VALUES (9, '{"val":["a","b"]}'::json);
+----
+db error: ERROR: JSON path indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+# Malformed JSON must fail loudly so we never end up with a row that's in
+# row storage but missing from the index.
+statement error
+INSERT INTO prim_types VALUES (10, 'this is not json at all'::json);
+----
+db error: ERROR: Malformed JSON at byte 0 of input: invalid literal.  Input: "this is not json at all"
+
+
+# All seven primitive/null/missing rows were committed; the two compound
+# rows were rolled back at insert time.
+query
+SELECT id FROM prim_types ORDER BY id;
+----
+id
+1
+2
+3
+4
+5
+6
+7
+
+statement ok
+VACUUM (UPDATE_INDEXES) prim_types;
+
+# String leaf is searchable through TERM_EQ on the ->> form (string mangle).
+query
+SELECT id FROM prim_types_idx WHERE content->>'val' = 'hello';
+----
+id
+1
+
+# Each leaf type is queryable via the predicate's natural type. The filter
+# builder peels the user's CAST around the JSON path, picks the matching
+# mangle byte, and looks up the correct pre-emitted field on the index.
+# Numeric casts are normalised to DOUBLE because all JSON numbers are
+# written through NumericTokenizer.reset(double) in the sink.
+
+# Integer-valued leaf via ::int cast.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::int = 42;
+----
+id
+2
+
+# Float-valued leaf via ::double cast.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::double = 3.14;
+----
+id
+3
+
+# Numeric range -- granular range filter on the numeric mangle.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::double > 2 ORDER BY id;
+----
+id
+2
+3
+
+# Boolean true / false leaves via ::bool cast.
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::bool = true;
+----
+id
+4
+
+query
+SELECT id FROM prim_types_idx WHERE (content->>'val')::bool = false;
+----
+id
+5
+
+# Null leaf via SQL IS NULL. FromIsNull always uses MangleNull regardless
+# of the column's logical type, so this hits the null-mangled field
+# directly without needing a cast.
+# TODO(mkornaukhov): also surface SQL-NULL JSON cells and missing keys via
+# the index (requires the matching write-side change in
+# SearchSinkInsertBaseImpl::SetupJsonColumnWriter).
+query
+SELECT id FROM prim_types_idx WHERE content->>'val' IS NULL;
+----
+id
+6
+
+# Same JSON path indexed once, but two tokenizers are in flight at the
+# same time: the user-configured keyword tokenizer for string
+# leaves, and the built-in NumericTokenizer for integer/float leaves.
+# Both work without re-declaring the path -- the sink dispatches per leaf
+# type to the matching pre-emitted iresearch field.
+
+statement ok
+CREATE TABLE mixed_tok (id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX mixed_tok_idx ON mixed_tok USING inverted(
+    id, (content->>'val') verbatim_dict);
+
+statement ok
+INSERT INTO mixed_tok VALUES
+    (1, '{"val":"hello"}'::json),
+    (2, '{"val":42}'::json),
+    (3, '{"val":"world"}'::json),
+    (4, '{"val":7}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) mixed_tok;
+
+# Keyword tokenizer side: exact-match string lookup hits the string-mangled
+# field.
+query
+SELECT id FROM mixed_tok_idx WHERE content->>'val' = 'hello';
+----
+id
+1
+
+# Numeric tokenizer side: integer cast routes to the numeric-mangled field
+# without ever evaluating the cast on string-leaf rows.
+query
+SELECT id FROM mixed_tok_idx WHERE (content->>'val')::int = 42;
+----
+id
+2
+
+# Range filter on the numeric side.
+query
+SELECT id FROM mixed_tok_idx WHERE (content->>'val')::double > 10 ORDER BY id;
+----
+id
+2

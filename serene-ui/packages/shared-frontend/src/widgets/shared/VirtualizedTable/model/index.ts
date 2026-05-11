@@ -1,6 +1,7 @@
 export {
     SORT_BUTTON_SIZE,
     TABLE_HEADER_HEIGHT,
+    TABLE_MAX_COLUMN_WIDTH,
     TABLE_ROW_HEIGHT,
 } from "./consts";
 export { useVirtualizedTableCellRenderer } from "./useVirtualizedTableCellRenderer";

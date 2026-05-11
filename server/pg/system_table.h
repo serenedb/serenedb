@@ -20,58 +20,53 @@
 
 #pragma once
 
-#include <velox/buffer/Buffer.h>
-#include <velox/common/memory/MemoryPool.h>
-#include <velox/type/Type.h>
-#include <velox/vector/BaseVector.h>
-#include <velox/vector/FlatVector.h>
-
 #include <array>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <optional>
 #include <span>
 #include <type_traits>
 
 #include "basics/down_cast.h"
 #include "catalog/object.h"
 #include "catalog/virtual_table.h"
+#include "connector/pg_logical_types.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
-#include "query/types.h"
 
 namespace sdb::pg {
 
 template<typename T>
-velox::TypePtr GetFieldType();
+duckdb::LogicalType GetFieldType();
 
+// Write a single field value into a DuckDB Vector at the given row.
 template<typename Field>
-auto GetField(const Field& field) {
+void WriteField(duckdb::Vector& vec, duckdb::idx_t row, const Field& field) {
   if constexpr (std::is_enum_v<Field>) {
-    return GetField(std::to_underlying(field));
+    WriteField(vec, row, std::to_underlying(field));
   } else if constexpr (std::is_same_v<Field, Name>) {
-    return velox::StringView{field.v};
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddString(vec, field.v.data(), field.v.size());
   } else if constexpr (std::is_same_v<Field, std::string_view>) {
-    return velox::StringView{field};
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddString(vec, field.data(), field.size());
   } else if constexpr (std::is_same_v<Field, std::string>) {
-    return velox::StringView{field};
-  } else if constexpr (std::is_same_v<Field, irs::bytes_view>) {
-    return velox::StringView{irs::ViewCast<char>(field)};
-  } else if constexpr (IsArray<Field>::value) {
-    using OutputType =
-      decltype(GetField(std::declval<typename Field::value_type>()));
-    if constexpr (std::is_same_v<OutputType, velox::UnknownValue>) {
-      return velox::UnknownValue{};
-    } else {
-      return field;
-    }
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddString(vec, field);
   } else if constexpr (std::is_same_v<Field, char>) {
-    return velox::StringView{&field, 1};
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddString(vec, &field, 1);
   } else if constexpr (std::is_same_v<Field, bool>) {
-    return field;
+    duckdb::FlatVector::GetDataMutable<bool>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int8_t>) {
-    return static_cast<int8_t>(field);
+    duckdb::FlatVector::GetDataMutable<int8_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int16_t>) {
-    return static_cast<int16_t>(field);
+    duckdb::FlatVector::GetDataMutable<int16_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, int32_t>) {
-    return static_cast<int32_t>(field);
+    duckdb::FlatVector::GetDataMutable<int32_t>(vec)[row] = field;
   } else if constexpr (std::is_same_v<Field, Oid> ||
                        std::is_same_v<Field, Xid> ||
                        std::is_same_v<Field, Regproc> ||
@@ -80,22 +75,46 @@ auto GetField(const Field& field) {
                        std::is_same_v<Field, Cid> ||
                        std::is_same_v<Field, Xid8> ||
                        std::is_same_v<Field, Tid>) {
-    return static_cast<int64_t>(static_cast<uint64_t>(field));
-  } else if constexpr (std::is_same_v<Field, int64_t> ||
-                       std::is_same_v<Field, uint64_t>) {
-    return static_cast<int64_t>(field);
+    // PG catalog OID-like types stored as int32
+    duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
+      static_cast<int64_t>(field);
+  } else if constexpr (std::is_same_v<Field, int64_t>) {
+    duckdb::FlatVector::GetDataMutable<int64_t>(vec)[row] =
+      static_cast<int64_t>(field);
+  } else if constexpr (std::is_same_v<Field, uint64_t>) {
+    duckdb::FlatVector::GetDataMutable<uint64_t>(vec)[row] =
+      static_cast<uint64_t>(field);
   } else if constexpr (std::is_same_v<Field, float>) {
-    return field;
+    duckdb::FlatVector::GetDataMutable<float>(vec)[row] = field;
+  } else if constexpr (std::is_same_v<Field, double>) {
+    duckdb::FlatVector::GetDataMutable<double>(vec)[row] = field;
+  } else if constexpr (std::is_same_v<Field, Bytea>) {
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec)[row] =
+      duckdb::StringVector::AddStringOrBlob(vec, field.data.data(),
+                                            field.data.size());
+  } else if constexpr (IsArray<Field>::value) {
+    auto list_size = field.size();
+    auto current_size = duckdb::ListVector::GetListSize(vec);
+    duckdb::ListVector::Reserve(vec, current_size + list_size);
+    auto& entry = duckdb::ListVector::GetData(vec)[row];
+    entry.offset = current_size;
+    entry.length = list_size;
+    auto& child = duckdb::ListVector::GetEntry(vec);
+    for (duckdb::idx_t i = 0; i < list_size; i++) {
+      WriteField(child, current_size + i, field[i]);
+    }
+    duckdb::ListVector::SetListSize(vec, current_size + list_size);
+  } else if constexpr (std::is_same_v<Field, Empty>) {
+    duckdb::FlatVector::ValidityMutable(vec).SetInvalid(row);
   } else {
-    return velox::UnknownValue{};
+    static_assert(false);
   }
 }
 
 template<typename Field>
-velox::TypePtr GetFieldType() {
-  using OutputType = decltype(GetField(std::declval<Field>()));
+duckdb::LogicalType GetFieldType() {
   if constexpr (std::is_same_v<Field, Oid>) {
-    return PGOID();
+    return OID();
   } else if constexpr (std::is_same_v<Field, Regproc>) {
     return REGPROC();
   } else if constexpr (std::is_same_v<Field, Regtype>) {
@@ -103,114 +122,64 @@ velox::TypePtr GetFieldType() {
   } else if constexpr (std::is_same_v<Field, Regclass>) {
     return REGCLASS();
   } else if constexpr (std::is_same_v<Field, Xid>) {
-    return PGXID();
+    return XID();
   } else if constexpr (std::is_same_v<Field, Name>) {
-    return PGNAME();
+    return NAME();
   } else if constexpr (std::is_same_v<Field, Bytea>) {
-    // Since Bytea is mapped to velox::StringView, we need to explicitly
-    // return VARBINARY type here to avoid confusion with VARCHAR.
-    return velox::VARBINARY();
+    return duckdb::LogicalType::BLOB;
+  } else if constexpr (std::is_same_v<Field, char>) {
+    return CHAR();
+  } else if constexpr (std::is_same_v<Field, bool>) {
+    return duckdb::LogicalType::BOOLEAN;
+  } else if constexpr (std::is_same_v<Field, int16_t>) {
+    return duckdb::LogicalType::SMALLINT;
+  } else if constexpr (std::is_same_v<Field, int32_t>) {
+    return duckdb::LogicalType::INTEGER;
+  } else if constexpr (std::is_same_v<Field, int64_t>) {
+    return duckdb::LogicalType::BIGINT;
+  } else if constexpr (std::is_same_v<Field, uint64_t>) {
+    return duckdb::LogicalType::UBIGINT;
+  } else if constexpr (std::is_same_v<Field, float>) {
+    return duckdb::LogicalType::FLOAT;
+  } else if constexpr (std::is_same_v<Field, double>) {
+    return duckdb::LogicalType::DOUBLE;
+  } else if constexpr (std::is_same_v<Field, std::string_view> ||
+                       std::is_same_v<Field, std::string>) {
+    return duckdb::LogicalType::VARCHAR;
+  } else if constexpr (std::is_same_v<Field, Empty>) {
+    return duckdb::LogicalType::SQLNULL;
+  } else if constexpr (std::is_enum_v<Field>) {
+    return GetFieldType<std::underlying_type_t<Field>>();
   } else if constexpr (IsArray<Field>::value) {
-    return velox::ARRAY(GetFieldType<typename Field::value_type>());
+    return duckdb::LogicalType::LIST(
+      GetFieldType<typename Field::value_type>());
   } else {
-    return velox::CppToType<OutputType>::create();
+    static_assert(false);
   }
 }
 
-template<typename Field>
-velox::VectorPtr CreateColumn(velox::vector_size_t size,
-                              velox::memory::MemoryPool* pool) {
-  using OutputType = decltype(GetField(std::declval<Field>()));
-  static_assert(!IsArray<OutputType>::value,
-                "Use CreateColumn with elements_size for array fields");
-  static_assert(!std::is_reference_v<OutputType>);
-  static_assert(!std::is_const_v<OutputType>);
-  auto type = GetFieldType<Field>();
-  return velox::BaseVector::create<velox::FlatVector<OutputType>>(type, size,
-                                                                  pool);
-}
-
-template<typename Field>
-velox::VectorPtr CreateColumn(velox::vector_size_t size,
-                              velox::memory::MemoryPool* pool,
-                              velox::vector_size_t elements_size) {
-  using OutputType = decltype(GetField(std::declval<Field>()));
-  static_assert(IsArray<OutputType>::value,
-                "Use CreateColumn without elements_size for non-array fields");
-  static_assert(!std::is_reference_v<OutputType>);
-  static_assert(!std::is_const_v<OutputType>);
-  auto type = GetFieldType<Field>();
-  return std::make_shared<velox::ArrayVector>(
-    pool, type, nullptr, size,
-    velox::AlignedBuffer::allocate<velox::vector_size_t>(size, pool),
-    velox::AlignedBuffer::allocate<velox::vector_size_t>(size, pool),
-    velox::BaseVector::create<
-      velox::FlatVector<typename OutputType::value_type>>(type->childAt(0),
-                                                          elements_size, pool));
-}
-
+// Create DuckDB Vectors with the right types for struct T.
 template<typename T>
-std::vector<velox::VectorPtr> CreateColumns(std::span<const T> values,
-                                            velox::memory::MemoryPool* pool) {
-  std::array<velox::vector_size_t, boost::pfr::tuple_size_v<T>>
-    element_counts{};
-  for (const auto& value : values) {
-    uint32_t column = 0;
-    boost::pfr::for_each_field(value, [&]<typename Field>(const Field& field) {
-      using OutputType = decltype(GetField(field));
-      if constexpr (IsArray<OutputType>::value) {
-        element_counts[column] += field.size();
-      }
-      ++column;
-    });
-  }
-  std::vector<velox::VectorPtr> result;
+std::vector<duckdb::Vector> CreateColumns(duckdb::idx_t capacity) {
+  std::vector<duckdb::Vector> result;
   result.reserve(boost::pfr::tuple_size_v<T>);
-  uint32_t column = 0;
-  boost::pfr::for_each_field(T{}, [&]<typename Field>(const Field& field) {
-    using OutputType = decltype(GetField(field));
-    if constexpr (IsArray<OutputType>::value) {
-      result.push_back(
-        CreateColumn<Field>(values.size(), pool, element_counts[column]));
-    } else {
-      result.push_back(CreateColumn<Field>(values.size(), pool));
-    }
-    ++column;
+  boost::pfr::for_each_field(T{}, [&]<typename Field>(const Field&) {
+    result.emplace_back(GetFieldType<Field>(), capacity);
   });
   return result;
 }
 
+// Write a row into DuckDB Vectors.
+// null_mask: bitmask where bit N=1 means column N is NULL for this row.
 template<typename T>
-void WriteData(std::vector<velox::VectorPtr>& out, const T& value,
-               uint64_t nulls, velox::vector_size_t row,
-               velox::memory::MemoryPool* pool) {
+void WriteData(std::vector<duckdb::Vector>& columns, const T& value,
+               uint64_t null_mask, duckdb::idx_t row) {
   uint32_t column = 0;
   boost::pfr::for_each_field(value, [&]<typename Field>(const Field& field) {
-    using OutputType = decltype(GetField(field));
-    static_assert(!std::is_reference_v<OutputType>);
-    static_assert(!std::is_const_v<OutputType>);
-    auto vector = out[column];
-    SDB_ASSERT(vector);
-    if (nulls & (uint64_t{1} << column)) {
-      vector->setNull(row, true);
-    } else if constexpr (IsArray<OutputType>::value) {
-      using ElementType =
-        decltype(GetField(std::declval<typename OutputType::value_type>()));
-      auto& array_vector = basics::downCast<velox::ArrayVector>(*vector);
-      size_t offset = row == 0 ? 0
-                               : array_vector.sizeAt(row - 1) +
-                                   array_vector.offsetAt(row - 1);
-      size_t size = field.size();
-      array_vector.setOffsetAndSize(row, offset, size);
-      auto elements =
-        array_vector.elements()->as<velox::FlatVector<ElementType>>();
-      for (size_t i = 0; i < size; ++i) {
-        elements->set(offset + i, GetField(field[i]));
-      }
+    if (null_mask & (uint64_t{1} << column)) {
+      duckdb::FlatVector::ValidityMutable(columns[column]).SetInvalid(row);
     } else {
-      auto& flat_vector =
-        basics::downCast<velox::FlatVector<OutputType>>(*vector);
-      flat_vector.set(row, GetField(field));
+      WriteField(columns[column], row, field);
     }
     ++column;
   });
@@ -228,47 +197,29 @@ class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
                            database,
                            {},
                            table.Id(),
-                           std::string{table.Name()},
+                           std::string{table.GetName()},
                            catalog::ObjectType::Virtual},
       _config{config} {
     _table = &table;
   }
 
-  velox::RowTypePtr RowType() const noexcept final {
-    return basics::downCast<SystemTable<T>>(*_table).RowType();
+  duckdb::LogicalType RowType() const noexcept final {
+    return _table->RowType();
   }
 
-  velox::RowVectorPtr GetData(std::vector<std::string> names,
-                              velox::memory::MemoryPool& pool) final {
-    if (auto data = _data.lock()) {
-      SDB_ASSERT(data->pool() == &pool);
-      SDB_ASSERT(names != data->rowType()->names());
-      return MakeData(std::move(names), data->children(), pool);
+  const catalog::MaterializedData& GetData(
+    std::vector<std::string> names) final {
+    if (!_data) {
+      _data = GetTableData();
     }
-    auto children = GetTableData(pool);
-    auto data = MakeData(std::move(names), std::move(children), pool);
-    _data = data;
-    return data;
+    return *_data;
   }
 
-  std::vector<velox::VectorPtr> GetTableData(velox::memory::MemoryPool& pool) {
-    return std::vector<velox::VectorPtr>(boost::pfr::tuple_size_v<T>);
-  }
+  catalog::MaterializedData GetTableData() { return {}; }
 
  private:
-  velox::RowVectorPtr MakeData(std::vector<std::string> names,
-                               std::vector<velox::VectorPtr> children,
-                               velox::memory::MemoryPool& pool) {
-    const auto rows =
-      !children.empty() && children[0] ? children[0]->size() : 0;
-    auto row_type = velox::ROW(std::move(names), RowType()->children());
-
-    return std::make_shared<velox::RowVector>(
-      &pool, row_type, velox::BufferPtr{}, rows, std::move(children));
-  }
-
   const Config& _config;
-  std::weak_ptr<velox::RowVector> _data;
+  std::optional<catalog::MaterializedData> _data;
 
   void WriteInternal(vpack::Builder& build) const final {}
 };
@@ -286,18 +237,15 @@ class SystemTable : public catalog::VirtualTable {
     return std::make_shared<SystemTableSnapshot<T>>(*this, database, config);
   }
 
-  velox::RowTypePtr RowType() const noexcept final {
-    static const velox::RowTypePtr kRowType = [] {
-      std::vector<std::string> names;
-      std::vector<velox::TypePtr> types;
-      names.reserve(boost::pfr::tuple_size_v<T>);
-      types.reserve(boost::pfr::tuple_size_v<T>);
+  duckdb::LogicalType RowType() const noexcept final {
+    static const duckdb::LogicalType kRowType = [] {
+      duckdb::child_list_t<duckdb::LogicalType> children;
+      children.reserve(boost::pfr::tuple_size_v<T>);
       boost::pfr::for_each_field_with_name(
         T{}, [&]<typename Field>(std::string_view name, const Field& field) {
-          names.emplace_back(name);
-          types.emplace_back(GetFieldType<Field>());
+          children.emplace_back(name, GetFieldType<Field>());
         });
-      return velox::ROW(std::move(names), std::move(types));
+      return duckdb::LogicalType::STRUCT(std::move(children));
     }();
     return kRowType;
   }

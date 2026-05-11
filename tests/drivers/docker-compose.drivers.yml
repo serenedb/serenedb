@@ -1,0 +1,51 @@
+services:
+  serenedb-single:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/logs:/var/log/serenedb"
+    env_file:
+      - "${WORKSPACE}/docker.env"
+    environment:
+      - BUILD_DIR
+      - HOME=/serenedb
+    networks:
+      - test-network
+    command: >
+      sh -c '
+        exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
+          --server.endpoint pgsql+tcp://0.0.0.0:5432 \
+          --server.authentication 0
+      '
+
+  tests:
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    group_add:
+      - "${DOCKER_SOCK_GID:-999}"
+    volumes:
+      - "${WORKSPACE}:/serenedb"
+      - "${WORKSPACE}/out/drivers-tests:/out"
+      - "${WORKSPACE}/logs:/logs"
+    depends_on:
+      - serenedb-single
+    environment:
+      - HOME=/tmp/home
+      - LOG_DIR=/logs
+    networks:
+      - test-network
+    command: >
+      sh -c '
+        exec /serenedb/tests/drivers/run.sh \
+          --host serenedb-single \
+          --port 5432 \
+          --junit /out
+      '
+
+networks:
+  test-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_test-network

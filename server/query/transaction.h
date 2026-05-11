@@ -26,7 +26,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <yaclib/async/future.hpp>
 
-#include "basics/bit_utils.hpp"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/result.h"
@@ -39,12 +38,7 @@ namespace sdb::query {
 
 class Transaction : public Config {
  public:
-  enum class State : uint8_t {
-    None = 0,
-    HasRocksDBRead = 1 << 0,
-    HasRocksDBWrite = 1 << 1,
-    HasTransactionBegin = 1 << 2,
-  };
+  using Config::Config;
 
 #ifdef SDB_DEV
   virtual ~Transaction() {
@@ -60,6 +54,12 @@ class Transaction : public Config {
 
   void OnNewStatement();
 
+  // Pre-commit work that needs an active transaction (revert SET LOCAL for
+  // custom-impl settings). Runs before the rocksdb commit.
+  void PreCommit() noexcept;
+  // Pre-rollback counterpart -- restores all SET values.
+  void PreRollback() noexcept;
+
   Result Commit();
 
   Result Rollback();
@@ -68,17 +68,11 @@ class Transaction : public Config {
     _table_rows_deltas[table_id] += delta;
   }
 
-  void AddRocksDBRead() noexcept;
-  bool HasRocksDBRead() const noexcept;
-
-  void AddRocksDBWrite() noexcept;
-  bool HasRocksDBWrite() const noexcept;
-
-  void AddTransactionBegin() noexcept;
-  bool HasTransactionBegin() const noexcept;
-
-  IsolationLevel GetIsolationLevel() const noexcept {
-    return Get<VariableType::SdbTransactionIsolation>("transaction_isolation");
+  bool HasRocksDBSnapshot() const noexcept {
+    return _rocksdb_snapshot != nullptr;
+  }
+  bool HasRocksDBTransaction() const noexcept {
+    return _rocksdb_transaction != nullptr;
   }
 
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
@@ -86,15 +80,40 @@ class Transaction : public Config {
     return *_rocksdb_transaction;
   }
 
-  rocksdb::Transaction& EnsureRocksDBTransaction();
+  const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
+    SDB_ASSERT(_rocksdb_snapshot);
+    return *_rocksdb_snapshot;
+  }
+
+  void EnsureRocksDBTransaction();
+  void EnsureRocksDBSnapshot();
 
   const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
 
-  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
+  const search::InvertedIndexSnapshot& GetSearchSnapshot(
+    ObjectId index_id) const noexcept {
+    auto it = _search_snapshots.find(index_id);
+    SDB_ASSERT(it != _search_snapshots.end());
+    return *it->second;
+  }
+
+  void EraseSearchTransaction(ObjectId shard_id) noexcept {
+    _search_transactions.erase(shard_id);
+  }
 
   void Destroy() noexcept;
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
+
+  // Must be called BEFORE the SST ingest so the IResearch background commit
+  // thread knows to wait for us before advancing _committed_tick.
+  void RegisterSearchFlushes() noexcept;
+
+  // Commit all IResearch transactions after an SST ingest.
+  // Uses Commit(post_ingest_seq + queries) so first_tick = post_ingest_seq,
+  // which is guaranteed > _committed_tick when RegisterSearchFlushes() was
+  // called before the ingest.
+  void CommitSearchTransactions(uint64_t post_ingest_seq) noexcept;
 
   template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
@@ -103,7 +122,7 @@ class Transaction : public Config {
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
 
-    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
+    for (auto index_shard : snapshot->GetIndexShardsByRelation(table_id)) {
       auto index =
         snapshot->GetObject<catalog::Index>(index_shard->GetIndexId());
       SDB_ASSERT(index);
@@ -125,7 +144,7 @@ class Transaction : public Config {
         }
         visit(*transaction, *index);
       } else {
-        visit(EnsureRocksDBTransaction(), *index);
+        visit(GetRocksDBTransaction(), *index);
       }
     }
   }
@@ -133,7 +152,6 @@ class Transaction : public Config {
  private:
   void ApplyTableStatsDiffs() noexcept;
 
-  State _state = State::None;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
@@ -144,7 +162,5 @@ class Transaction : public Config {
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
-
-ENABLE_BITMASK_ENUM(Transaction::State);
 
 }  // namespace sdb::query

@@ -1,0 +1,306 @@
+hash-threshold 100
+control substitution on
+
+# Large-scale top-k validation test.
+# Generates a substantial dataset, creates an inverted index, and runs many
+# search queries comparing topk results against the full-scan + sort + limit
+# path to ensure correctness.
+#
+# For testing with real-world data (e.g. Wikipedia 5GB corpus), upload a
+# TSV/CSV to S3 and COPY FROM it. The search-benchmark-game queries below
+# are designed for wiki-like English text.
+
+statement ok
+CREATE TABLE wiki_docs (id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR);
+
+
+# Generate ~5000 documents with varying text content to exercise multi-block
+# scoring paths (kScoreBlock=32, kPostingBlock=128).
+statement ok
+INSERT INTO wiki_docs
+SELECT
+  s AS id,
+  'doc_' || s::TEXT AS title,
+  CASE s % 20
+    WHEN 0 THEN 'the quick brown fox jumps over the lazy dog in the park'
+    WHEN 1 THEN 'university of washington campus overlooks the summit'
+    WHEN 2 THEN 'griffith observatory sits atop mount hollywood in los angeles'
+    WHEN 3 THEN 'french culinary institute offers professional training in new york'
+    WHEN 4 THEN 'bowel obstruction requires immediate medical attention at hospital'
+    WHEN 5 THEN 'wisconsin attorney general filed a case in the supreme court'
+    WHEN 6 THEN 'the english restoration brought back the monarchy after civil war'
+    WHEN 7 THEN 'plus size clothing brands offer fashion for all body types'
+    WHEN 8 THEN 'the university campus has a beautiful garden and a fountain'
+    WHEN 9 THEN 'washington summit conference addressed global climate policy'
+    WHEN 10 THEN 'the fox ran quickly across the field chasing a rabbit'
+    WHEN 11 THEN 'observatory telescope reveals distant galaxies and nebulae'
+    WHEN 12 THEN 'culinary arts school teaches french and italian cuisine'
+    WHEN 13 THEN 'the medical center treats patients with bowel obstruction'
+    WHEN 14 THEN 'attorney general of wisconsin announced new legislation'
+    WHEN 15 THEN 'english literature restoration period produced great works'
+    WHEN 16 THEN 'clothing store offers plus size fashion at affordable prices'
+    WHEN 17 THEN 'the summit meeting discussed trade and economic policy'
+    WHEN 18 THEN 'brown university is located in providence rhode island'
+    WHEN 19 THEN 'the lazy dog sleeps under the oak tree all day long'
+  END AS body
+FROM generate_series(1, 5000) AS s;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_topk_slow(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+statement ok
+CREATE INDEX wiki_topk_idx ON wiki_docs USING inverted(id, title, body en_topk_slow);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) wiki_docs;
+
+
+# Insert more to create a second segment
+statement ok
+INSERT INTO wiki_docs
+SELECT
+  s + 5000 AS id,
+  'doc_' || (s + 5000)::TEXT AS title,
+  CASE s % 10
+    WHEN 0 THEN 'the university library has extensive research archives'
+    WHEN 1 THEN 'washington state produces the most apples in the country'
+    WHEN 2 THEN 'the fox and the hound is a classic animated film'
+    WHEN 3 THEN 'summit peak climbing requires careful preparation and gear'
+    WHEN 4 THEN 'griffith park is the largest urban park in los angeles'
+    WHEN 5 THEN 'french cuisine is renowned for its sauces and techniques'
+    WHEN 6 THEN 'bowel health depends on proper diet and exercise routine'
+    WHEN 7 THEN 'the attorney general represents the state in legal matters'
+    WHEN 8 THEN 'restoration of historic buildings preserves architectural heritage'
+    WHEN 9 THEN 'plus size clothing market has grown significantly in recent years'
+  END AS body
+FROM generate_series(1, 3000) AS s;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) wiki_docs;
+
+
+# ---- Search benchmark game-style queries ----
+# For each query: run without topk, then with topk, compare results.
+
+# -- Term query: "the" (very common term, many matches) --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%the%';
+----
+count
+3750
+
+
+query
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('the');
+----
+count
+3750
+
+
+# topk=100, verify count matches expected top-100
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('the') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 100
+) t;
+----
+count
+100
+
+
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%university%';
+----
+count
+1050
+
+
+# -- Term query: "university" --
+query
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('university');
+----
+count
+1050
+
+
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('university') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 10
+) t;
+----
+count
+10
+
+
+# -- Term query: "washington" --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%washington%';
+----
+count
+800
+
+
+query
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('washington');
+----
+count
+800
+
+
+# -- Term query: "summit" --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%summit%';
+----
+count
+1050
+
+
+query
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('summit');
+----
+count
+1050
+
+
+# -- Phrase query: "griffith observatory" --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%griffith observatory%';
+----
+count
+250
+
+
+query
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('griffith observatory');
+----
+count
+250
+
+
+# Compare topk result IDs with full scan + limit
+# Full scan path
+query
+SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 10;
+----
+id
+2
+22
+42
+62
+82
+102
+122
+142
+162
+182
+
+
+# -- Phrase query: "french culinary institute" --
+query
+SELECT COUNT(*) AS count FROM wiki_docs WHERE body LIKE '%french culinary institute%';
+----
+count
+250
+
+
+query
+SELECT COUNT(*) FROM wiki_topk_idx WHERE body @@ ts_phrase('french culinary institute');
+----
+count
+250
+
+
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 20
+) t;
+----
+count
+20
+
+
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 1
+) t;
+----
+count
+1
+
+
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wiki_topk_idx.tableoid) DESC LIMIT 500
+) t;
+----
+count
+500
+
+
+query
+SELECT COUNT(*) FROM (
+  SELECT id, BM25(wiki_topk_idx.tableoid) AS score, ROW_NUMBER() OVER (ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id) AS rn
+  FROM wiki_topk_idx
+  WHERE body @@ ts_phrase('university')
+  ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id
+  LIMIT 100
+) t;
+----
+count
+100
+
+
+# -- Verify exact match between topk and full scan for a specific query --
+# Full scan reference
+query
+SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
+----
+id
+4
+13
+24
+33
+44
+
+
+query
+SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('bowel obstruction') ORDER BY BM25(wiki_topk_idx.tableoid) DESC, id LIMIT 5;
+----
+id
+4
+13
+24
+33
+44
+
+
+query
+SELECT COUNT(*) FROM (
+  SELECT id FROM wiki_topk_idx WHERE body @@ ts_phrase('griffith observatory') ORDER BY BM25(wiki_topk_idx.tableoid) DESC
+) t;
+----
+count
+250
+
+
+# Clean up
+statement ok
+DROP INDEX wiki_topk_idx;
+
+statement ok
+DROP TABLE wiki_docs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY en_topk_slow;

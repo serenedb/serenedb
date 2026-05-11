@@ -58,8 +58,7 @@ class MergeWriter : public util::Noncopyable {
     : _dir{dir},
       _readers{{options.resource_manager}},
       _column_info{&options.column_info},
-      _feature_info{&options.feature_info},
-      _scorers{options.scorers},
+      _scorer{options.scorer},
       _comparator{options.comparator},
       _scorers_features{options.scorers_features} {
     SDB_ASSERT(_column_info);
@@ -98,8 +97,7 @@ class MergeWriter : public util::Noncopyable {
   Directory& _dir;
   ManagedVector<ReaderCtx> _readers;
   const ColumnInfoProvider* _column_info{};
-  const FeatureInfoProvider* _feature_info{};
-  ScorersView _scorers;
+  ScorerPtr _scorer;
   const Comparer* const _comparator{};
   IndexFeatures _scorers_features{};
 };

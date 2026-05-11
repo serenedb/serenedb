@@ -28,6 +28,7 @@
 #include <atomic>
 #include <filesystem>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <memory>
 
 #include "catalog/inverted_index.h"
@@ -37,15 +38,24 @@
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
+namespace sdb::query {
+
+class Transaction;
+
+}  // namespace sdb::query
 namespace sdb::search {
 
 class InvertedIndexShard;
 
 struct InvertedIndexShardOptions : public IndexShardOptions {
   struct Base {
-    size_t commit_interval_ms;
-    size_t consolidation_interval_ms;
-    size_t cleanup_interval_step;
+    // Default 1000 ms for both intervals so newly created indexes are
+    // searchable promptly without requiring explicit WITH (commit_interval)
+    // / WITH (consolidation_interval) on CREATE INDEX. Setting to 0
+    // disables the background task (see CommitTask).
+    size_t commit_interval_ms = 1000;
+    size_t consolidation_interval_ms = 1000;
+    size_t cleanup_interval_step = 1;
   };
 
   Base base;
@@ -162,6 +172,26 @@ class InvertedIndexShard final
 
   void WriteInternal(vpack::Builder& builder) const final;
 
+  struct TruncateGuard {
+    struct UnlockDeleter {
+      void operator()(absl::Mutex* m) const ABSL_NO_THREAD_SAFETY_ANALYSIS {
+        m->Unlock();
+      }
+    };
+    using Ptr = std::unique_ptr<absl::Mutex, UnlockDeleter>;
+    Ptr mutex;
+  };
+  TruncateGuard TruncateBegin() ABSL_NO_THREAD_SAFETY_ANALYSIS {
+    _commit_mutex.Lock();
+    return {TruncateGuard::Ptr{&_commit_mutex}};
+  }
+  // `user_txn` (nullable) is the connection's transaction whose pending
+  // per-conn iresearch staging we need to drop before Clear -- the new-arch
+  // analog of the old SearchTrxState cookie cleanup. Pass nullptr from
+  // contexts that don't have a user transaction (WAL recovery).
+  void TruncateCommit(TruncateGuard&& guard, Tick tick,
+                      query::Transaction* user_txn);
+
   auto GetTransaction() {
     SDB_ASSERT(_writer);
     return _writer->GetBatch();
@@ -185,6 +215,10 @@ class InvertedIndexShard final
 
   ObjectId GetId() const noexcept { return _id; }
   auto GetState() const noexcept { return _state; }
+
+  bool HasActiveSegments() const noexcept {
+    return _writer && _writer->HasActiveSegments();
+  }
 
   void StatsToVPack(vpack::Builder& builder) const;
   Stats GetStats() const;
@@ -216,6 +250,22 @@ class InvertedIndexShard final
 
   Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
 
+  enum class Phase : uint8_t {
+    Creating,
+    Recovering,
+    Active,
+  };
+
+  void StartRecovery() noexcept {
+    SDB_ASSERT(_phase == Phase::Creating);
+    _phase = Phase::Recovering;
+  }
+
+  // Persisted in the commit payload to survive iceberg compactions. 0 = not
+  // pinned.
+  void SetIcebergSnapshotId(int64_t id) noexcept { _iceberg_snapshot_id = id; }
+  int64_t GetIcebergSnapshotId() const noexcept { return _iceberg_snapshot_id; }
+
  private:
   Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
@@ -224,7 +274,6 @@ class InvertedIndexShard final
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
   Result CleanupUnsafeImpl();
-  void InitPostRecovery(bool is_new);
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
@@ -232,6 +281,7 @@ class InvertedIndexShard final
   InvertedIndexSnapshotPtr _snapshot;
   std::unique_ptr<irs::Directory> _dir;
   InvertedIndexShardOptions _options;
+  std::unique_ptr<irs::Scorer> _wand_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
   TasksSettings _tasks_settings;
   absl::Mutex _mutex;
@@ -241,7 +291,8 @@ class InvertedIndexShard final
 
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
-  bool _is_creation{true};
+  int64_t _iceberg_snapshot_id{0};
+  Phase _phase{Phase::Creating};
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

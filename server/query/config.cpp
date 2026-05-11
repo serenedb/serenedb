@@ -20,87 +20,96 @@
 
 #include "query/config.h"
 
+#include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/execution/operator/helper/physical_set.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
+#include <duckdb/main/config.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <optional>
 
 #include "basics/assert.h"
-#include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "catalog/catalog.h"
-#include "pg/isolation_level.h"
 
 namespace sdb {
+namespace {
 
-template<std::integral T>
-bool CheckIntegral(std::string_view value) {
-  T var;
-  return absl::SimpleAtoi<T>(value, &var);
+template<typename T>
+T GetEnumValue(std::string_view value) noexcept {
+  const auto r = magic_enum::enum_cast<T>(value, magic_enum::case_insensitive);
+  SDB_ASSERT(r, "enum value is not validated");
+  return *r;
 }
 
-bool ValidateValue(VariableType type, std::string_view value) {
-  switch (type) {
-    case VariableType::Bool: {
-      bool var;
-      return absl::SimpleAtob(value, &var);
-    }
-    case VariableType::I32:
-      return CheckIntegral<int32_t>(value);
-    case VariableType::I64:
-      return CheckIntegral<int64_t>(value);
-    case VariableType::U8:
-      return CheckIntegral<uint8_t>(value);
-    case VariableType::U32:
-      return CheckIntegral<uint32_t>(value);
-    case VariableType::U64:
-      return CheckIntegral<uint64_t>(value);
-    case VariableType::F64: {
-      double var;
-      return absl::SimpleAtod(value, &var);
-    }
-    case VariableType::String:
-    case VariableType::PgSearchPath:
-      return true;
-    case VariableType::PgExtraFloatDigits: {
-      int8_t v{};
-      if (!absl::SimpleAtoi<int8_t>(value, &v)) {
-        return false;
-      }
-      return -15 <= v && v <= 3;
-    }
-    case VariableType::PgByteaOutput: {
-      return absl::EqualsIgnoreCase("hex", value) ||
-             absl::EqualsIgnoreCase("escape", value);
-    }
-    case VariableType::JoinOrderAlgorithm: {
-      return absl::EqualsIgnoreCase("cost", value) ||
-             absl::EqualsIgnoreCase("greedy", value) ||
-             absl::EqualsIgnoreCase("syntactic", value);
-    }
-    case VariableType::SdbWriteConflictPolicy: {
-      return absl::EqualsIgnoreCase("emit_error", value) ||
-             absl::EqualsIgnoreCase("do_nothing", value) ||
-             absl::EqualsIgnoreCase("replace", value);
-    }
-    case VariableType::SdbTransactionIsolation: {
-      return pg::IsSupportedIsolationLevel(value);
-    }
-    default:
-      SDB_UNREACHABLE();
+}  // namespace
+
+void Config::SetInternal(std::string_view key, std::string value) {
+  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  auto setting_index = db_config.TryGetSettingIndex(
+    duckdb::String::Reference(key.data(), key.size()), option);
+  if (setting_index.IsValid()) {
+    _client_ctx.config.user_settings.SetUserSetting(
+      setting_index.GetIndex(), duckdb::Value{std::move(value)});
   }
 }
 
-std::optional<std::string> Config::access(const std::string& key) const {
-  return Get(key);
+std::vector<std::string> Config::GetSearchPath() const {
+  // DuckDB stores search_path as (catalog, schema) entries and serializes
+  // them as "catalog.schema" when read as a string setting. Use the
+  // structured API so we return just the schema names.
+  const auto& entries =
+    duckdb::ClientData::Get(_client_ctx).catalog_search_path->Get();
+  std::vector<std::string> result;
+  result.reserve(entries.size());
+  for (const auto& entry : entries) {
+    result.emplace_back(entry.schema);
+  }
+  return result;
+}
+
+int8_t Config::GetExtraFloatDigits() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("extra_float_digits", value);
+  SDB_ASSERT(ok);
+  return static_cast<int8_t>(value.GetValue<int32_t>());
+}
+
+ByteaOutput Config::GetByteaOutput() const {
+  auto value = Get("bytea_output");
+  SDB_ASSERT(value);
+  return GetEnumValue<ByteaOutput>(*value);
+}
+
+IsolationLevel Config::GetIsolationLevel() const {
+  return _client_ctx.transaction.GetIsolationLevel();
+}
+
+WriteConflictPolicy Config::GetWriteConflictPolicy() const {
+  auto value = Get("sdb_write_conflict_policy");
+  SDB_ASSERT(value);
+  return GetEnumValue<WriteConflictPolicy>(*value);
+}
+
+bool Config::GetReadYourOwnWrites() const {
+  duckdb::Value value;
+  auto ok = _client_ctx.TryGetCurrentSetting("sdb_read_your_own_writes", value);
+  SDB_ASSERT(ok && !value.IsNull());
+  return duckdb::BooleanValue::Get(value);
 }
 
 std::optional<std::string> Config::Get(std::string_view key) const {
-  std::string_view value = GetNonDefault(key);
-  if (value.data() != nullptr) {
-    return std::string{value};
+  duckdb::Value value;
+  if (_client_ctx.TryGetCurrentSetting(std::string{key}, value)) {
+    return duckdb::Settings::FormatDisplayValue(_client_ctx, value).ToString();
   }
-  auto var = GetDefaultVariable(key);
-  return var.data() != nullptr ? std::optional<std::string>{var} : std::nullopt;
+  return std::nullopt;
 }
 
 std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
@@ -115,71 +124,147 @@ std::shared_ptr<const catalog::Snapshot> Config::EnsureCatalogSnapshot() const {
   return _snapshot;
 }
 
-std::string_view Config::GetNonDefault(std::string_view key) const {
-  {  // get from txn variables
-    auto it = _transaction.find(key);
-    if (it != _transaction.end()) {
-      return it->second.value;
+void Config::OnSet(std::string_view name, bool is_local,
+                   duckdb::Value old_value, const duckdb::Value* new_value) {
+  // Prefer the canonical PG-cased name (e.g. "DateStyle") when known so the
+  // rollback key matches what SHOW returns; otherwise use the name as given
+  // (covers native DuckDB settings like default_transaction_isolation).
+  auto canonical = GetOriginalName(name);
+  std::string_view key_view = canonical.data() ? canonical : name;
+  std::string key_str{key_view};
+
+  auto [it, inserted] = _transaction.try_emplace(std::move(key_str));
+  if (inserted) {
+    // First event for this key. Skip tracking iff SET with the same value
+    // (RESET events reaching here are guaranteed real -- DuckDB's gate
+    // already short-circuits no-op RESETs).
+    if (new_value && duckdb::Value::NotDistinctFrom(old_value, *new_value)) {
+      _transaction.erase(it);
+      return;
     }
+    it->second.rollback_restore = old_value;
+    if (is_local) {
+      it->second.commit_restore = std::move(old_value);
+    }
+    return;
   }
 
-  {  // get from session variables
-    auto it = _session.find(key);
-    if (it != _session.end()) {
-      return it->second;
+  // Already tracking -- update scope bookkeeping regardless of value.
+  if (is_local) {
+    // Preserve the earliest LOCAL-overlay snapshot so consecutive SET
+    // LOCALs revert to the same pre-first-LOCAL point.
+    if (!it->second.commit_restore) {
+      it->second.commit_restore = std::move(old_value);
     }
+  } else {
+    // Plain SET becomes the COMMIT keeper; drop any pending LOCAL revert.
+    it->second.commit_restore.reset();
   }
-  return {};
 }
 
-void Config::Set(VariableContext context, std::string_view key,
-                 std::string value) {
-  switch (context) {
-    case VariableContext::Session: {
-      _session[key] = std::move(value);
-    } break;
-    case VariableContext::Transaction: {
-      _transaction[key] = {
-        TxnAction::Apply,
-        std::move(value),
-      };
-    } break;
-    case VariableContext::Local: {
-      _transaction[key] = {
-        TxnAction::Revert,
-        std::move(value),
-      };
-    } break;
-  }
+void Config::SetSetting(std::string_view key, std::string value,
+                        bool /*is_local*/) {
+  SetInternal(key, std::move(value));
+}
+
+void Config::SetSettingChecked(std::string_view key, std::string value,
+                               bool is_local) {
+  duckdb::PhysicalSet::SetVariable(
+    _client_ctx, duckdb::String::Reference(key.data(), key.size()),
+    is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::SESSION,
+    duckdb::Value{std::move(value)});
 }
 
 void Config::ResetAll() {
-  _session.clear();
+  _transaction.clear();
+
+  _client_ctx.config.user_settings = {};
+}
+
+bool Config::IsExplicitTransaction() const {
+  return !_client_ctx.transaction.IsAutoCommit();
+}
+
+void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
+  // Called from pre-commit / pre-rollback hooks while the DuckDB transaction
+  // is still active, so catalog lookups performed by custom-impl set_local
+  // callbacks work normally.
+  auto& db_config = duckdb::DBConfig::GetConfig(*_client_ctx.db);
+  auto name_ref = duckdb::String::Reference(key.data(), key.size());
+
+  // A NULL old_value means the setting was at its default (never explicitly
+  // SET), so the restore is a RESET rather than a SET. Calling set_local(NULL)
+  // on settings like enable_profiling unconditionally enables profiling.
+  const bool is_reset = value.IsNull();
+
+  // Best-effort restore; swallow to keep noexcept contract.
+  std::ignore = basics::SafeCall([&] {
+    // Built-in options first.
+    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+    auto setting_index = db_config.TryGetSettingIndex(name_ref, option);
+    if (option) {
+      if (is_reset) {
+        if (option->reset_local) {
+          option->reset_local(_client_ctx);
+        } else if (setting_index.IsValid()) {
+          _client_ctx.config.user_settings.ClearSetting(
+            setting_index.GetIndex());
+        }
+      } else if (option->set_local) {
+        auto parameter_type =
+          duckdb::DBConfig::ParseLogicalType(option->parameter_type);
+        auto typed = value.CastAs(_client_ctx, parameter_type);
+        option->set_local(_client_ctx, typed);
+      } else if (setting_index.IsValid()) {
+        _client_ctx.config.user_settings.SetUserSetting(
+          setting_index.GetIndex(), std::move(value));
+      }
+      return;
+    }
+    // Extension options: use the registered set_function so side effects
+    // (e.g. sdb_faults toggling global fault-point state) are re-applied.
+    duckdb::ExtensionOption ext;
+    if (!db_config.TryGetExtensionOption(name_ref, ext)) {
+      return;
+    }
+    // Only session/local SETs are tracked (setting_change_handler skips
+    // GLOBAL), so the restore scope is always SESSION.
+    if (is_reset) {
+      if (ext.reset_function) {
+        ext.reset_function(_client_ctx, duckdb::SetScope::SESSION);
+      }
+      if (ext.setting_index.IsValid()) {
+        _client_ctx.config.user_settings.ClearSetting(
+          ext.setting_index.GetIndex());
+      }
+      return;
+    }
+    auto typed = value.CastAs(_client_ctx, ext.type);
+    if (ext.set_function) {
+      ext.set_function(_client_ctx, duckdb::SetScope::SESSION, typed);
+    }
+    if (ext.setting_index.IsValid()) {
+      _client_ctx.config.user_settings.SetUserSetting(
+        ext.setting_index.GetIndex(), std::move(typed));
+    }
+  });
+}
+
+void Config::RollbackVariables() noexcept {
+  for (auto&& [key, var] : _transaction) {
+    RestoreValue(key, std::move(var.rollback_restore));
+  }
   _transaction.clear();
 }
 
-void Config::Reset(std::string_view key) {
-  _transaction.erase(key);
-  _session.erase(key);
-}
-
 void Config::CommitVariables() noexcept {
-  if (auto it = _transaction.find(pg::kDefaultTransactionIsolation);
-      it != _transaction.end()) {
-    // Such strange logics is required, look at litmus pseudo-queries:
-    // SET default_transaction_isolation = A
-    // BEGIN
-    //  SET default_transaction_isolation = B;
-    //  SHOW transaction_isolation == A;
-    //  COMMIT
-    // SHOW transaction_isolation == B;
-    SDB_ASSERT(it->second.action == TxnAction::Apply);
-    _session.insert_or_assign(pg::kTransactionIsolation, it->second.value);
-  }
-
-  for (auto&& [key, value] : _transaction) {
-    if (value.action == TxnAction::Apply) {
-      _session.insert_or_assign(key, std::move(value.value));
+  // Called from the pre-commit hook while the transaction is still active.
+  // Any entry with a commit_restore was overlaid by a SET LOCAL whose
+  // effects should not survive past the transaction; restore it. Plain SET
+  // entries (no commit_restore) stay as-is.
+  for (auto&& [key, var] : _transaction) {
+    if (var.commit_restore) {
+      RestoreValue(key, std::move(*var.commit_restore));
     }
   }
   _transaction.clear();

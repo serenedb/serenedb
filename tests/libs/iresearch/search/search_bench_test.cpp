@@ -467,9 +467,9 @@ std::vector<QueryResult> ExecuteAllQueries(
   auto collect_ids = [&](std::string_view label, std::span<irs::ScoreDoc> hits,
                          std::vector<std::string>& out) {
     absl::c_sort(hits, [](const irs::ScoreDoc& a, const irs::ScoreDoc& b) {
-      return std::tie(b.first, a.second) < std::tie(a.first, b.second);
+      return std::tie(b.score, a.doc) < std::tie(a.score, b.doc);
     });
-    for (const auto& [score, doc_id] : hits) {
+    for (const auto& [score, doc_id, segment_idx] : hits) {
       auto idx = doc_id - irs::doc_limits::min();
       if (idx >= id_map.size()) {
         ADD_FAILURE() << label << " doc_id=" << doc_id << " score=" << score
@@ -827,7 +827,7 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
     }
 
     auto cmp = [](const auto& a, const auto& b) {
-      return std::tie(b.first, a.second) <=> std::tie(a.first, b.second) < 0;
+      return std::tie(b.score, a.doc) < std::tie(a.score, b.doc);
     };
 
     std::vector<irs::ScoreDoc> ref_top;
@@ -851,11 +851,11 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
       const size_t result_count = std::min<size_t>(kCount, count);
 
       for (size_t i = 0; i < result_count; ++i) {
-        EXPECT_EQ(hits[i].second, ref_top[i].second)
+        EXPECT_EQ(hits[i].doc, ref_top[i].doc)
           << "Collect: rank " << i << " doc mismatch";
-        EXPECT_TRUE(irs::math::ApproxEquals(hits[i].first, ref_top[i].first))
-          << "Collect: rank " << i << " score mismatch doc " << hits[i].second
-          << ": collect=" << hits[i].first << " ref=" << ref_top[i].first;
+        EXPECT_TRUE(irs::math::ApproxEquals(hits[i].score, ref_top[i].score))
+          << "Collect: rank " << i << " score mismatch doc " << hits[i].doc
+          << ": collect=" << hits[i].score << " ref=" << ref_top[i].score;
       }
     }
 
@@ -864,7 +864,7 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
     {
       static constexpr size_t kCount = 100;
       std::vector<irs::ScoreDoc> hits(irs::BlockSize(kCount));
-      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.index = 0},
+      irs::ExecuteTopK(reader, *filter, scorer, kCount, {.wand_enabled = true},
                        std::span{hits});
 
       absl::c_sort(hits, cmp);
@@ -876,9 +876,9 @@ TEST_F(SearchBenchTest, DisjunctionScoreAccuracy) {
       static constexpr float kEps = 1e-5f;
       for (size_t i = 0; i < result_count; ++i) {
         EXPECT_TRUE(
-          irs::math::ApproxEquals(hits[i].first, ref_top[i].first, kEps))
-          << "WAND: rank " << i << " score mismatch doc " << hits[i].second
-          << ": wand=" << hits[i].first << " ref=" << ref_top[i].first;
+          irs::math::ApproxEquals(hits[i].score, ref_top[i].score, kEps))
+          << "WAND: rank " << i << " score mismatch doc " << hits[i].doc
+          << ": wand=" << hits[i].score << " ref=" << ref_top[i].score;
       }
     }
   }

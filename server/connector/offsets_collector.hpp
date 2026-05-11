@@ -48,7 +48,7 @@ struct FilterEntry {
                const irs::NGramSimilarityQuery*>
     filter;
   // Lazy: null until first use in a segment, then reused for all docs.
-  irs::DocIterator::ptr docs;
+  irs::DocIterator::ptr docs{};
   irs::PosAttr* pos = nullptr;
   const irs::OffsAttr* offs = nullptr;
 };

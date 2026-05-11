@@ -29,6 +29,10 @@
 
 namespace sdb::pg {
 
+// Parse and cache all system views and functions. Call once at startup.
+void InitSystemViews();
+void InitSystemFunctions();
+
 const catalog::VirtualTable* GetSystemTable(std::string_view schema,
                                             std::string_view name);
 const catalog::VirtualTable* GetTable(std::string_view name);
@@ -38,14 +42,28 @@ void VisitSystemTables(
 void VisitSystemViews(
   absl::FunctionRef<void(const catalog::PgSqlView&, Oid)> visitor);
 
-std::shared_ptr<catalog::PgSqlFunction> GetFunction(std::string_view name);
+// Schema-specific visitors for ScanEntries
+void VisitPgCatalogTables(
+  absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
+void VisitPgCatalogViews(
+  absl::FunctionRef<void(const catalog::PgSqlView&)> visitor);
+void VisitPgCatalogFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
+void VisitInfoSchemaTables(
+  absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
+void VisitInfoSchemaViews(
+  absl::FunctionRef<void(const catalog::PgSqlView&)> visitor);
+void VisitInfoSchemaFunctions(
+  absl::FunctionRef<void(const catalog::PgSqlFunction&)> visitor);
+
+// Returns the unified PgSqlFunction for `name` (with all scalar and table
+// overloads in its macros vector), or nullptr if absent.
+std::shared_ptr<catalog::PgSqlFunction> GetPgCatalogFunction(
+  std::string_view name);
 std::shared_ptr<catalog::PgSqlFunction> GetInfoSchemaFunction(
   std::string_view name);
 
 std::shared_ptr<catalog::PgSqlView> GetView(std::string_view name);
 std::shared_ptr<catalog::PgSqlView> GetInfoSchemaView(std::string_view name);
-
-void RegisterSystemViews();
-void RegisterSystemFunctions();
 
 }  // namespace sdb::pg

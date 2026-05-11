@@ -129,8 +129,6 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   // add an iterator for each of the scored states
   const bool has_unscored_terms = !state->unscored_states.empty();
 
-  IteratorOptions options{ctx.wand};
-
   if (!has_unscored_terms) {
     std::vector<PostingCookie> cookies;
     cookies.reserve(state->scored_states.size());
@@ -141,7 +139,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     }
 
     auto docs =
-      reader->Iterator(features, cookies, options, _min_match,
+      reader->Iterator(features, cookies, ctx.wand, _min_match,
                        ctx.scorer ? _merge_type : ScoreMergeType::Noop);
     return docs ? std::move(docs) : DocIterator::empty();
   }
@@ -158,7 +156,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
                                    .boost = entry.boost,
                                    .field = reader->meta(),
                                  },
-                                 options);
+                                 ctx.wand);
     if (!docs) [[unlikely]] {
       continue;
     }

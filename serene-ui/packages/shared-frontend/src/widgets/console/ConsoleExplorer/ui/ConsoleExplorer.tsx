@@ -8,6 +8,9 @@ interface ConsoleExplorerProps {
     explorerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
+const CONSOLE_ENTITIES_EXPLORER_STATE_STORAGE_KEY =
+    "console:sidebar:entities-explorer-state:v1";
+
 export const ConsoleExplorer = ({ explorerRef }: ConsoleExplorerProps) => {
     const [searchTerm] = useState<string>();
     const [initialData, setInitialData] = useState<ExplorerNodeData[]>();
@@ -40,6 +43,8 @@ export const ConsoleExplorer = ({ explorerRef }: ConsoleExplorerProps) => {
                 searchTerm={searchTerm}
                 initialData={initialData || []}
                 isDataFetched={isDataFetched && !isDataLoading}
+                sidebarSectionId="entities"
+                stateStorageKey={CONSOLE_ENTITIES_EXPLORER_STATE_STORAGE_KEY}
                 enablePinning
                 isNodePinned={isNodePinned}
                 onTogglePinned={togglePinnedNode}

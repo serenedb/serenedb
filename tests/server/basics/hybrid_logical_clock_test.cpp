@@ -47,7 +47,7 @@ class HybridLogicalClockWithFixedTime final
   }
 
  protected:
-  uint64_t getPhysicalTime() override {
+  uint64_t getPhysicalTime() final {
     // arbitrary timestamp from Sep 30, 2022.
     return _fixed;
   }

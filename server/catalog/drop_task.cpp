@@ -150,15 +150,16 @@ Result TableDrop::Finalize() {
     return r;
   }
 
-  if (_is_root) {
-    r = server.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
-    if (!r.ok()) {
-      return r;
+  return server.Write([&](auto& ctx) {
+    for (auto seq_id : _owned_sequences) {
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
+      ctx.DropSequence(seq_id);
     }
-    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
-                                 _id);
-  }
-  return {};
+    if (_is_root) {
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
+    }
+  });
 }
 
 AsyncResult TableDrop::Execute() {
@@ -178,12 +179,9 @@ AsyncResult TableDrop::Execute() {
   if (!async_results.empty()) {
     co_await yaclib::Await(async_results.begin(), async_results.end());
   }
-  SDB_ASSERT(_type != TableType::Unknown);
-  if (_type == TableType::RocksDB) {
-    auto r = co_await Schedule(_shard_drop);
-    if (!r.ok() || !Finalize().ok()) {
-      co_return Result{ERROR_LOCKED};
-    }
+  auto r = co_await Schedule(_shard_drop);
+  if (!r.ok() || !Finalize().ok()) {
+    co_return Result{ERROR_LOCKED};
   }
   co_return {};
 }

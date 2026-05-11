@@ -6,10 +6,6 @@
 	path = third_party/boost
 	url = https://github.com/serenedb/boost.git
 	shallow = true
-[submodule "third_party/velox"]
-	path = third_party/velox
-	url = https://github.com/serenedb/velox.git
-	shallow = true
 [submodule "third_party/openssl"]
 	path = third_party/openssl
 	url = https://github.com/serenedb/openssl.git
@@ -21,10 +17,6 @@
 [submodule "third_party/rocksdb"]
 	path = third_party/rocksdb
 	url = https://github.com/serenedb/rocksdb.git
-	shallow = true
-[submodule "third_party/libpg_query"]
-	path = third_party/libpg_query
-	url = https://github.com/serenedb/libpg_query.git
 	shallow = true
 [submodule "third_party/folly"]
 	path = third_party/folly
@@ -66,10 +58,6 @@
 	path = third_party/googletest
 	url = https://github.com/serenedb/googletest.git
 	shallow = true
-[submodule "third_party/axiom"]
-	path = third_party/axiom
-	url = https://github.com/serenedb/axiom.git
-	shallow = true
 [submodule "third_party/fmt"]
 	path = third_party/fmt
 	url = https://github.com/serenedb/fmt.git
@@ -81,10 +69,6 @@
 [submodule "third_party/tests/rapidjson"]
 	path = third_party/tests/rapidjson
 	url = https://github.com/serenedb/rapidjson.git
-	shallow = true
-[submodule "third_party/xsimd"]
-	path = third_party/xsimd
-	url = https://github.com/serenedb/xsimd.git
 	shallow = true
 [submodule "third_party/minizip-ng"]
 	path = third_party/minizip-ng
@@ -102,10 +86,6 @@
 	path = third_party/re2
 	url = https://github.com/serenedb/re2.git
 	shallow = true
-[submodule "third_party/nuraft"]
-	path = third_party/nuraft
-	url = https://github.com/serenedb/nuraft.git
-	shallow = true
 [submodule "third_party/benchmark"]
 	path = third_party/benchmark
 	url = https://github.com/serenedb/benchmark.git
@@ -122,26 +102,37 @@
 	path = third_party/zstd
 	url = https://github.com/serenedb/zstd.git
 	shallow = true
-[submodule "third_party/protobuf"]
-	path = third_party/protobuf
-	url = https://github.com/serenedb/protobuf.git
-	shallow = true
-[submodule "third_party/arrow"]
-	path = third_party/arrow
-	url = https://github.com/serenedb/arrow.git
-	shallow = true
-[submodule "third_party/thrift"]
-	path = third_party/thrift
-	url = https://github.com/serenedb/thrift.git
-	shallow = true
-[submodule "third_party/flatbuffers"]
-	path = third_party/flatbuffers
-	url = https://github.com/serenedb/flatbuffers.git
-	shallow = true
 [submodule "third_party/streamvbyte"]
 	path = third_party/streamvbyte
 	url = https://github.com/serenedb/streamvbyte.git
 	shallow = true
+[submodule "third_party/faiss"]
+	path = third_party/faiss
+	url = https://github.com/serenedb/faiss.git
+	shallow = true
+[submodule "third_party/yaclib"]
+	path = third_party/yaclib
+	url = https://github.com/YACLib/YACLib.git
+	shallow = true
+[submodule "third_party/snappy"]
+	path = third_party/snappy
+	url = https://github.com/serenedb/snappy.git
+	shallow = true
+[submodule "third_party/curl"]
+	path = third_party/curl
+	url = https://github.com/serenedb/curl.git
+	shallow = true
+[submodule "third_party/jansson"]
+	path = third_party/jansson
+	url = https://github.com/serenedb/jansson.git
+	shallow = true
+[submodule "third_party/avro"]
+	path = third_party/avro
+	url = https://github.com/serenedb/avro.git
+	shallow = true
+[submodule "third_party/croaring"]
+	path = third_party/croaring
+	url = https://github.com/RoaringBitmap/CRoaring.git
 [submodule "third_party/aws-c-auth"]
 	path = third_party/aws-c-auth
 	url = https://github.com/serenedb/aws-c-auth.git
@@ -194,15 +185,19 @@
 	path = third_party/aws-sdk-cpp
 	url = https://github.com/serenedb/aws-sdk-cpp.git
 	shallow = true
-[submodule "third_party/faiss"]
-	path = third_party/faiss
-	url = https://github.com/serenedb/faiss.git
+[submodule "third_party/duckdb"]
+	path = third_party/duckdb
+	url = https://github.com/serenedb/duckdb.git
 	shallow = true
-[submodule "third_party/yaclib"]
-	path = third_party/yaclib
-	url = https://github.com/YACLib/YACLib.git
+[submodule "third_party/duckdb_httpfs"]
+	path = third_party/duckdb_httpfs
+	url = https://github.com/serenedb/duckdb-httpfs.git
 	shallow = true
-[submodule "third_party/snappy"]
-	path = third_party/snappy
-	url = https://github.com/serenedb/snappy.git
+[submodule "third_party/duckdb_avro"]
+	path = third_party/duckdb_avro
+	url = https://github.com/serenedb/duckdb-avro.git
+	shallow = true
+[submodule "third_party/duckdb_iceberg"]
+	path = third_party/duckdb_iceberg
+	url = https://github.com/serenedb/duckdb-iceberg.git
 	shallow = true

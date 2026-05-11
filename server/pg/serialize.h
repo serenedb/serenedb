@@ -21,8 +21,13 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <velox/vector/DecodedVector.h>
 
+#include <duckdb/common/typedefs.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/vector/unified_vector_format.hpp>
+#include <memory>
+
+#include "basics/containers/node_hash_map.h"
 #include "basics/message_buffer.h"
 #include "query/config.h"
 
@@ -33,30 +38,42 @@ enum class VarFormat : int16_t {
   Binary = 1,
 };
 
+// TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
+// instead of RecursiveUnifiedVectorFormat (avoids recursive child traversal
+// for scalar types, and can lazily create child format for arrays).
+using SerializationFunction = void (*)(
+  struct SerializationContext& context,
+  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row);
+
+struct RecordSerializers {
+  std::vector<SerializationFunction> functions;
+  std::vector<int32_t> oids;  // populated for binary, empty for text
+};
+
+using TypesSerializationCache =
+  containers::NodeHashMap<const duckdb::LogicalType*, RecordSerializers>;
+
 struct SerializationContext {
   message::Buffer* buffer;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
-  std::shared_ptr<const catalog::Snapshot> snapshot;
+  const catalog::Snapshot* snapshot = nullptr;
+  std::string_view quote_seq = "\"";  // can be mixed with backslashes
+  uint32_t backslash_count = 1;
+  bool in_record = false;
+  std::unique_ptr<TypesSerializationCache> types_cache;
 };
-
-using SerializationFunction = void (*)(
-  SerializationContext context, const velox::DecodedVector& decoded_vector,
-  velox::vector_size_t row);
 
 void FillContext(const Config& config, SerializationContext& context);
 
-SerializationFunction GetSerialization(const velox::TypePtr& type,
+SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
 
-template<bool NeedArrayEscaping>
 void ByteaOutHex(char* buf, std::string_view value);
 
-template<bool NeedArrayEscaping>
 void ByteaOutEscape(char* buf, std::string_view value);
 
-template<bool InArray>
 size_t ByteaOutEscapeLength(std::string_view value);
 
 }  // namespace sdb::pg

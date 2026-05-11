@@ -56,26 +56,26 @@ t
 query
 SELECT 'Serene' LIKE 'Serene#' ESCAPE '#';
 ----
-?column?
+<slt:ignore>
 f
 
 
 query
 SELECT 'SereneD_DB' LIKE 'Serene_#_DB' ESCAPE '#';
 ----
-?column?
+<slt:ignore>
 t
 
 
 query
 SELECT 'Serene%DB' LIKE 'Serene\%DB' ESCAPE '\';
 ----
-?column?
+<slt:ignore>
 t
 
 
 query
 SELECT 'Serene%DB' LIKE 'Serene#%DB' ESCAPE '#';
 ----
-?column?
+<slt:ignore>
 t

@@ -89,4 +89,9 @@ void IndexProgressReporter::ReportBatch(uint64_t delta_rows) {
     delta_rows, std::memory_order_relaxed);
 }
 
+void IndexProgressReporter::SetIndexRelid(ObjectId index_relid) {
+  _params[create_index_progress::kIndexRelid].store(index_relid.id(),
+                                                    std::memory_order_relaxed);
+}
+
 }  // namespace sdb::pg

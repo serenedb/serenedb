@@ -20,6 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/index/index_reader_options.hpp>
 #include <limits>
 #include <random>
 
@@ -267,7 +268,7 @@ class Format15TestCase : public tests::FormatTestCase {
   Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
 
   std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr> WriteReadMeta(
-    irs::Directory& dir, DocsView docs, irs::ScorersView scorers,
+    irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
     irs::IndexFeatures features);
 
   void AssertWanderator(irs::DocIterator::ptr& actual,
@@ -308,12 +309,12 @@ class Format15TestCase : public tests::FormatTestCase {
 
 std::pair<irs::TermMetaImpl, irs::PostingsReader::ptr>
 Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
-                                irs::ScorersView scorers,
+                                irs::ScorerPtr scorer,
                                 irs::IndexFeatures features) {
   // If this assertion breaks and you really need to test wanderators
   // with different number of buckets you should adjust GetWanderator
   // and set it proper count of scorers as it currently expect only one.
-  EXPECT_EQ(scorers.size(), 1);
+  EXPECT_TRUE(scorer);
   auto codec = get_codec();
   EXPECT_NE(nullptr, codec);
   auto writer = codec->get_postings_writer(false, irs::IResourceManager::gNoop);
@@ -326,7 +327,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
       .dir = &dir,
       .columns = &provider,
       .name = "segment_name",
-      .scorers = scorers,
+      .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,
     };
@@ -342,9 +343,9 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     writer->Write(it, term_meta);
     const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
-    const uint64_t expected_wand_mask{irs::IndexFeatures::None !=
-                                      (features & irs::IndexFeatures::Freq)};
-    EXPECT_EQ(expected_wand_mask, stats.wand_mask);
+    const uint64_t expected_has_wand =
+      irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
+    EXPECT_EQ(expected_has_wand, stats.has_wand);
     writer->Encode(*out, term_meta);
     writer->End();
   }
@@ -352,7 +353,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
   irs::SegmentMeta meta;
   meta.name = "segment_name";
 
-  const irs::ReaderState state{.dir = &dir, .meta = &meta, .scorers = scorers};
+  const irs::ReaderState state{.dir = &dir, .meta = &meta, .scorer = scorer};
 
   auto in = dir.open("attributes", irs::IOAdvice::NORMAL);
   EXPECT_FALSE(!in);
@@ -410,11 +411,10 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   const bool field_has_freq =
     irs::IndexFeatures::None != (field_features & irs::IndexFeatures::Freq);
   EXPECT_EQ((field_features & features), features);
-  irs::IteratorFieldOptions options(field_has_freq ? 1 : 0);
+  irs::IteratorFieldOptions options(field_has_freq);
   if (iterator_has_freq) {
-    options.index = 0;
+    options.wand_enabled = true;
     options.strict = strict;
-    options.mapped_index = 0;
   }
 
   irs::CookieImpl cookie{static_cast<const irs::TermMetaImpl&>(meta)};
@@ -764,8 +764,7 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader] =
-    WriteReadMeta(*dir, docs, std::span{&scorer_ptr, 1}, field_features);
+  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, field_features);
   ASSERT_NE(nullptr, reader);
 
   {
@@ -809,8 +808,7 @@ void Format15TestCase::AssertWandPostings(DocsView docs, uint32_t threshold,
 
   auto dir = get_directory(*this);
   ASSERT_NE(nullptr, dir);
-  auto [meta, reader] =
-    WriteReadMeta(*dir, docs, std::span{&scorer_ptr, 1}, kFreq);
+  auto [meta, reader] = WriteReadMeta(*dir, docs, scorer_ptr, kFreq);
   ASSERT_NE(nullptr, reader);
 
   {

@@ -1,0 +1,309 @@
+control substitution on
+
+# Inverted index on S3-backed views over parquet + csv files. Mirrors the
+# file_tables_s3.test_slow setup (MinIO secret, seed a rocksdb table, COPY
+# to s3://..., expose as `CREATE VIEW v AS SELECT * FROM read_*('s3://...')`)
+# and layers CREATE INDEX + PHRASE + BM25 on top. DuckDB's httpfs resolves
+# the secret at scan time.
+
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY s3_en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+# --- seed data: a rocksdb source + COPY TO s3 (parquet + csv) ---
+
+
+statement ok
+CREATE TABLE company_src (id INTEGER PRIMARY KEY, who TEXT, what TEXT);
+
+
+statement ok
+INSERT INTO company_src VALUES
+  (1, 'vedernikoff', 'want a lot of money but not want to work deadinside'),
+  (2, 'babsky', 'parses csv files in sleep and dreams of parquet deadinside'),
+  (3, 'pudge', 'goes mid every game and blames the jungler deadinside'),
+  (4, 'anchin-chan', 'reads manga all day instead of writing sql deadinside'),
+  (5, 'kostya', 'types on a clickclack keyboard all night long deadinside'),
+  (6, 'gayazov', 'plays mass effect and skips every stand up deadinside'),
+  (7, 'krivda', 'writes sql at night and closes tickets at dawn deadinside'),
+  (8, 'pavelvi', 'pushes to main at 3am and calls it a feature deadinside');
+
+
+statement count 8
+COPY company_src
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.parquet'
+WITH (FORMAT parquet);
+
+
+statement count 8
+COPY company_src
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.csv'
+WITH (FORMAT csv, HEADER true);
+
+
+# --- inverted index over S3 parquet ---
+
+
+statement ok
+CREATE VIEW company_parquet_ext AS
+  SELECT * FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.parquet');
+
+
+statement ok
+CREATE INDEX company_parquet_idx ON company_parquet_ext
+USING inverted(id, who s3_en, what s3_en);
+
+
+# bare SELECT on the index entry streams the underlying parquet
+query
+SELECT id, who FROM company_parquet_idx ORDER BY id;
+----
+id	who
+1	vedernikoff
+2	babsky
+3	pudge
+4	anchin-chan
+5	kostya
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+# single-phrase match
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('want a lot of money')
+ORDER BY id;
+----
+id	who
+1	vedernikoff
+
+
+# single-phrase match inside a longer sentence
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('mass effect')
+ORDER BY id;
+----
+id	who
+6	gayazov
+
+
+# phrase that appears in almost every row (e.t.c. sprinkled everywhere)
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('deadinside')
+ORDER BY id;
+----
+id	who
+1	vedernikoff
+2	babsky
+3	pudge
+4	anchin-chan
+5	kostya
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+# OR across two phrases
+query
+SELECT id, who FROM company_parquet_idx
+WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
+ORDER BY id;
+----
+id	who
+7	krivda
+8	pavelvi
+
+
+# AND across two phrases (one matches `who`, other matches `what`)
+query
+SELECT id, who FROM company_parquet_idx
+WHERE who @@ ts_phrase('babsky') AND what @@ ts_phrase('parquet')
+ORDER BY id;
+----
+id	who
+2	babsky
+
+
+# BM25 is wired: every matching row gets a positive score.
+query
+SELECT id,
+       BM25(company_parquet_idx.tableoid) > 0 AS has_score
+FROM company_parquet_idx
+WHERE what @@ ts_phrase('deadinside')
+ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+6	t
+7	t
+8	t
+
+
+# --- inverted index over S3 csv ---
+
+
+statement ok
+CREATE VIEW company_csv_ext AS
+  SELECT * FROM read_csv('s3://${MINIO_BUCKET}/${__DATABASE__}_inv_idx_s3_company.csv');
+
+
+statement ok
+CREATE INDEX company_csv_idx ON company_csv_ext
+USING inverted(id, who s3_en, what s3_en);
+
+
+query
+SELECT id, who FROM company_csv_idx ORDER BY id;
+----
+id	who
+1	vedernikoff
+2	babsky
+3	pudge
+4	anchin-chan
+5	kostya
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('want a lot of money')
+ORDER BY id;
+----
+id	who
+1	vedernikoff
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('mass effect')
+ORDER BY id;
+----
+id	who
+6	gayazov
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE what @@ ts_phrase('at night') OR what @@ ts_phrase('at 3am')
+ORDER BY id;
+----
+id	who
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE who @@ ts_phrase('kostya') OR who @@ ts_phrase('pudge')
+ORDER BY id;
+----
+id	who
+3	pudge
+5	kostya
+
+
+# BM25 also works on CSV external index (via counter + re-scan path).
+query
+SELECT id,
+       BM25(company_csv_idx.tableoid) > 0 AS has_score
+FROM company_csv_idx
+WHERE what @@ ts_phrase('deadinside')
+ORDER BY id;
+----
+id	has_score
+1	t
+2	t
+3	t
+4	t
+5	t
+6	t
+7	t
+8	t
+
+
+# --- cross-file sanity check: both s3 indexes return the same row order
+# as the rocksdb source for a one-shot phrase query ---
+
+
+query
+SELECT id, who FROM company_parquet_idx
+WHERE who @@ ts_phrase('gayazov') OR who @@ ts_phrase('krivda') OR who @@ ts_phrase('pavelvi')
+ORDER BY id;
+----
+id	who
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_csv_idx
+WHERE who @@ ts_phrase('gayazov') OR who @@ ts_phrase('krivda') OR who @@ ts_phrase('pavelvi')
+ORDER BY id;
+----
+id	who
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+query
+SELECT id, who FROM company_src
+WHERE who IN ('gayazov', 'krivda', 'pavelvi')
+ORDER BY id;
+----
+id	who
+6	gayazov
+7	krivda
+8	pavelvi
+
+
+statement ok
+DROP VIEW company_parquet_ext;
+
+
+statement ok
+DROP VIEW company_csv_ext;
+
+
+statement ok
+DROP TABLE company_src;
+
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

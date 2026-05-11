@@ -70,7 +70,7 @@ DELETE FROM t_rr WHERE key = 4;
 
 # ==== TRIGGER CRASH (uncommitted txn is in flight) ====
 statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_faults = 'crash_on_packet';
 
 query error connection closed
 SELECT 1;
@@ -115,7 +115,7 @@ INSERT INTO t_pre_commit VALUES (1, 10);
 # Arm: crash right before rocksdb commit
 connection rr_after
 statement ok
-SET sdb_fault_crash_before_rocksdb_commit TO DEFAULT;
+SET sdb_faults = 'crash_before_rocksdb_commit';
 
 connection rr_after
 statement ok
@@ -164,7 +164,7 @@ INSERT INTO t_post_commit VALUES (1, 10);
 # Arm: crash right after rocksdb commit
 connection rr_pre
 statement ok
-SET sdb_fault_crash_after_rocksdb_commit TO DEFAULT;
+SET sdb_faults = 'crash_after_rocksdb_commit';
 
 connection rr_pre
 statement ok

@@ -143,10 +143,6 @@ struct IndexWriterOptions : public SegmentOptions {
   // Options for snapshot management
   IndexReaderOptions reader_options;
 
-  // Returns column info for a feature the writer should use for
-  // columnstore
-  FeatureInfoProvider features;
-
   // Returns column info the writer should use for columnstore
   ColumnInfoProvider column_info;
 
@@ -511,6 +507,14 @@ class IndexWriter : private util::Noncopyable {
   // Returns overall number of buffered documents in a writer
   uint64_t BufferedDocs() const;
 
+  // Returns true if there are segments currently in use by the writer
+  // (i.e., alive ActiveSegmentContext instances from live Transactions).
+  // Used to detect outstanding search transactions that would trip the
+  // ~IndexWriter assertion on destruction.
+  bool HasActiveSegments() const noexcept {
+    return _segments_active.load(std::memory_order_acquire) != 0;
+  }
+
   // Clears the existing index repository by staring an empty index.
   // Previously opened readers still remain valid.
   // truncate transaction tick
@@ -591,11 +595,6 @@ class IndexWriter : private util::Noncopyable {
     return modified;
   }
 
-  // Returns field features.
-  const FeatureInfoProvider& FeatureInfo() const noexcept {
-    return _feature_info;
-  }
-
   bool FlushRequired(const SegmentWriter& writer) const noexcept;
 
   // public because we want to use std::make_shared
@@ -604,7 +603,6 @@ class IndexWriter : private util::Noncopyable {
               Format::ptr codec, size_t segment_pool_size,
               const SegmentOptions& segment_limits, const Comparer* comparator,
               const ColumnInfoProvider& column_info,
-              const FeatureInfoProvider& feature_info,
               const PayloadProvider& meta_payload_provider,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
@@ -951,8 +949,7 @@ class IndexWriter : private util::Noncopyable {
   void Abort() noexcept;
 
   IndexFeatures _wand_features{};  // Set of features required for wand
-  ScorersView _wand_scorers;
-  FeatureInfoProvider _feature_info;
+  ScorerPtr _wand_scorer;
   ColumnInfoProvider _column_info;
   PayloadProvider _meta_payload_provider;  // provides payload for new segments
   const Comparer* _comparator;

@@ -17,15 +17,16 @@ statement ok
 INSERT INTO vedernikoff_unique VALUES (3, 'crookface', 30);
 
 
-onlyif serenedb
+#TODO(mkornaukhov) add detail for errors eventually
+
+onlyif serenedb # DuckdDB error
 statement error
 INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
-DETAIL: Key (rank)=(10) already exists.
 
 
-skipif serenedb
+skipif serenedb # Postgres error
 statement error
 INSERT INTO vedernikoff_unique VALUES (4, 'bossmann', 10);
 ----
@@ -297,20 +298,106 @@ query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
-  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index, points=[(code=100)]] -> "pid":INTEGER, "district":VARCHAR
+┌───────────────────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│           Table:          │
+│   vedernikoff_safehouse   │
+│                           │
+│     Filter: (code=100)    │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│          district         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
 
 onlyif serenedb
 query
 EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NULL;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (district:VARCHAR, "district")] -> "pid":INTEGER, "district":VARCHAR
-  -- TableScan[0][vedernikoff_safehouse, scan=secondary_index, points=[(code=null)]] -> "pid":INTEGER, "district":VARCHAR
+┌───────────────────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│   vedernikoff_safehouse   │
+│                           │
+│    Filter: {code=null}    │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│          district         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│   vedernikoff_safehouse   │
+│                           │
+│          Filter:          │
+│     {code=(100, +inf)}    │
+│                           │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│          district         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code > 100 ORDER BY pid;
+----
+pid	district
+2	south
+4	west
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│   vedernikoff_safehouse   │
+│                           │
+│          Filter:          │
+│    {code=(-inf, +inf)}    │
+│                           │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│          district         │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT pid, district FROM vedernikoff_safehouse WHERE code IS NOT NULL ORDER BY pid;
+----
+pid	district
+1	north
+2	south
+4	west
 
 query
 SELECT pid, district FROM vedernikoff_safehouse WHERE code = 100;
@@ -483,6 +570,29 @@ INSERT INTO vedernikoff_ledger VALUES (5, 1, 10, 'epsilon');
 
 statement ok
 INSERT INTO vedernikoff_ledger VALUES (5, 1, 30, 'epsilon');
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│           Table:          │
+│     vedernikoff_ledger    │
+│                           │
+│          Filter:          │
+│    (region=1, tier=10)    │
+│                           │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│            note           │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 query
 SELECT pid, note FROM vedernikoff_ledger WHERE region = 1 AND tier = 10;
@@ -731,7 +841,7 @@ INSERT INTO vedernikoff_csv_unique VALUES
   (2, 'cutelooked', 20),
   (3, 'crookface', 30);
 
-statement count 3
+statement ok
 COPY vedernikoff_csv_unique TO '/tmp/${__DATABASE__}_vedernikoff_csv_unique.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
@@ -764,15 +874,14 @@ SELECT pid, nickname FROM vedernikoff_csv_unique WHERE rank = 99;
 pid	nickname
 
 
-onlyif serenedb
+onlyif serenedb # DuckDB error
 statement error
 INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
-DETAIL: Key (rank)=(10) already exists.
 
 
-skipif serenedb
+skipif serenedb # Postgres error
 statement error
 INSERT INTO vedernikoff_csv_unique VALUES (4, 'bossmann', 10);
 ----
@@ -808,7 +917,7 @@ INSERT INTO babsky_csv_nulluniq VALUES
   (3, NULL, 'gamma'),
   (4, 200, 'delta');
 
-statement count 4
+statement ok
 COPY babsky_csv_nulluniq TO '/tmp/${__DATABASE__}_babsky_csv_nulluniq.csv' WITH (FORMAT CSV, HEADER TRUE);
 
 statement ok
@@ -852,7 +961,7 @@ INSERT INTO vedernikoff_pq_unique VALUES
   (2, 'cutelooked', 20),
   (3, 'crookface', 30);
 
-statement count 3
+statement ok
 COPY vedernikoff_pq_unique TO '/tmp/${__DATABASE__}_vedernikoff_pq_unique.tsv' WITH (FORMAT TEXT);
 
 statement ok
@@ -885,15 +994,14 @@ SELECT pid, nickname FROM vedernikoff_pq_unique WHERE rank = 99;
 pid	nickname
 
 
-onlyif serenedb
+onlyif serenedb # DuckDB error
 statement error
 INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
 ----
 db error: ERROR: duplicate key value violates unique constraint on secondary index
-DETAIL: Key (rank)=(10) already exists.
 
 
-skipif serenedb
+skipif serenedb # Postgres error
 statement error
 INSERT INTO vedernikoff_pq_unique VALUES (4, 'bossmann', 10);
 ----
@@ -929,7 +1037,7 @@ INSERT INTO babsky_pq_nulluniq VALUES
   (3, NULL, 'gamma'),
   (4, 200, 'delta');
 
-statement count 4
+statement ok
 COPY babsky_pq_nulluniq TO '/tmp/${__DATABASE__}_babsky_pq_nulluniq.tsv' WITH (FORMAT TEXT);
 
 statement ok
@@ -984,6 +1092,29 @@ INSERT INTO vedernikoff_tri_uniq VALUES (3, 1, 2, 1, 'diff_b');
 
 statement ok
 INSERT INTO vedernikoff_tri_uniq VALUES (4, 2, 1, 1, 'diff_a');
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│           Table:          │
+│    vedernikoff_tri_uniq   │
+│                           │
+│          Filter:          │
+│      (a=1, b=1, c=1)      │
+│                           │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│            note           │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 query
 SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 AND b = 1 AND c = 1;
@@ -1121,10 +1252,37 @@ query
 EXPLAIN SELECT pid, note FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL;
 ----
 QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- Project[1][expressions: (pid:INTEGER, "pid"), (note:VARCHAR, "note")] -> "pid":INTEGER, "note":VARCHAR
-  -- TableScan[0][vedernikoff_tri_uniq, scan=secondary_index, points=[(a=1, b=null, c=null)]] -> "pid":INTEGER, "note":VARCHAR
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            note           │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (c IS NULL)        │
+│                           │
+│          ~3 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│   ROCKSDB_SK_RANGES_SCAN  │
+│    ────────────────────   │
+│           Table:          │
+│    vedernikoff_tri_uniq   │
+│                           │
+│   Filter: {a=1, b=null}   │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│             c             │
+│            pid            │
+│            note           │
+│                           │
+│          ~18 rows         │
+└───────────────────────────┘
 
 query
 SELECT * FROM vedernikoff_tri_uniq WHERE a = 1 and b IS NULL and c IS NULL ORDER BY pid;
@@ -1233,6 +1391,29 @@ INSERT INTO babsky_uniq_in VALUES (5, NULL, 'epsilon');
 statement ok
 INSERT INTO babsky_uniq_in VALUES (6, NULL, 'zeta');
 
+onlyif serenedb
+query
+EXPLAIN SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300);
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│   Table: babsky_uniq_in   │
+│                           │
+│          Filter:          │
+│         (code=100)        │
+│         (code=300)        │
+│                           │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            pid            │
+│            tag            │
+│                           │
+│          ~6 rows          │
+└───────────────────────────┘
+
 query
 SELECT pid, tag FROM babsky_uniq_in WHERE code IN (100, 300) ORDER BY pid;
 ----
@@ -1314,6 +1495,43 @@ INSERT INTO vedernikoff_uniq_rem VALUES
   (2, 200, 20, 'beta'),
   (3, 300, 10, 'gamma'),
   (4, 400, 20, 'delta');
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            tag            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│        (level = 10)       │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│           Table:          │
+│    vedernikoff_uniq_rem   │
+│                           │
+│     Filter: (key=100)     │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│           level           │
+│            pid            │
+│            tag            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
 
 query
 SELECT pid, tag FROM vedernikoff_uniq_rem WHERE key = 100 AND level = 10;
@@ -1849,6 +2067,39 @@ pid	code	name
 2	10	a
 3	20	b
 1	30	c
+
+onlyif serenedb
+query
+EXPLAIN SELECT pid, code, name FROM vedernikoff_uniq_idx_scan_code_idx WHERE code = 20;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│            pid            │
+│            code           │
+│            name           │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  ROCKSDB_SK_POINTS_LOOKUP │
+│    ────────────────────   │
+│           Index:          │
+│vedernikoff_uniq_idx_scan_c│
+│          ode_idx          │
+│                           │
+│      Lookup: rocksdb      │
+│     Filter: (code=20)     │
+│        Unique: true       │
+│                           │
+│        Projections:       │
+│            code           │
+│            pid            │
+│            name           │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
 
 onlyif serenedb
 query

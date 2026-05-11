@@ -8,6 +8,8 @@ import {
     Button,
     DeleteSavedQueryIconButton,
     EditIcon,
+    focusSidebarElement,
+    handleSidebarListItemKeyDown,
     PinIcon,
     TreeQueryIcon,
 } from "@serene-ui/shared-frontend";
@@ -60,9 +62,19 @@ export const ConsoleSidebarSavedQueries: React.FC = () => {
                         return (
                             <div
                                 key={savedQuery.id}
-                                className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent"
+                                className="group/explorer-node flex h-7 items-center gap-1 pl-4 pr-1 hover:bg-accent focus:bg-accent outline-none"
                                 title={savedQuery.name}
+                                tabIndex={0}
+                                data-sidebar-primary-action="true"
+                                data-sidebar-focus-id={`console-sidebar-saved-query-${savedQuery.id}`}
+                                data-sidebar-section-id="savedQueries"
                                 draggable
+                                onKeyDown={(event) =>
+                                    handleSidebarListItemKeyDown(event, () => {})
+                                }
+                                onClick={(event) => {
+                                    focusSidebarElement(event.currentTarget);
+                                }}
                                 onDragStart={(event) => {
                                     event.stopPropagation();
                                     clearDragPreview();

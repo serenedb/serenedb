@@ -87,3 +87,4 @@ repos:
         language: python
         entry: python3 scripts/check_cpp_extensions.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp|c\+\+|h\+\+)$
+        exclude: ^tests/drivers/c/

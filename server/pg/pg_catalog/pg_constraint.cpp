@@ -41,8 +41,7 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+catalog::MaterializedData SystemTableSnapshot<PgConstraint>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgConstraint> values;
@@ -81,7 +80,8 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
           .convalidated = true,
           .conrelid = table->GetId().id(),
           .contypid = 0,
-          .conindid = 0,
+          // Synthetic PK index OID (see PkIndexOid in fwd.h and pg_index.cpp).
+          .conindid = PkIndexOid(table->GetId().id()),
           .conparentid = 0,
           .confrelid = 0,
           .confupdtype = PgConstraint::Confchgtype::NoAction,
@@ -126,13 +126,13 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgConstraint>::GetTableData(
     }
   }
 
-  auto result = CreateColumns<PgConstraint>(values, &pool);
+  auto result = CreateColumns<PgConstraint>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
 
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

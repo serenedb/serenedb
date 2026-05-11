@@ -30,46 +30,11 @@ namespace sdb {
 
 using Tick = uint64_t;
 
-enum class EdgeDirection : uint8_t {
-  Any = 0,  // can only be used for searching
-  In = 1,
-  Out = 2,
-};
-
-enum class TableType : uint8_t {
-  Unknown = 0,
-  RocksDB = 1,
-  File = 2,
-};
-
-enum class FileFormat : uint8_t {
-  None = 0,
-  Text = 1,
-  Parquet = 2,
-  Dwrf = 3,
-  Orc = 4,
-};
-
-enum class IndexSerialization : uint8_t {
-  /// serialize index
-  Basics = 0,
-  /// serialize figures
-  Figures = 2,
-  /// serialize selectivity estimates
-  Estimates = 4,
-  /// serialize for persistence
-  Internals = 8,
-  /// serialize for inventory
-  Inventory = 16,
-};
-
 enum class WriteConflictPolicy : uint8_t {
   EmitError,
   DoNothing,
   Replace,
 };
-
-using IndexEstMap = containers::FlatHashMap<std::string, double>;
 
 struct PeerState {
   std::string server_id;
@@ -83,29 +48,17 @@ namespace magic_enum {
 
 template<>
 [[maybe_unused]] constexpr customize::customize_t
-customize::enum_name<sdb::EdgeDirection>(sdb::EdgeDirection value) noexcept {
+customize::enum_name<sdb::WriteConflictPolicy>(
+  sdb::WriteConflictPolicy value) noexcept {
   switch (value) {
-    case sdb::EdgeDirection::Any:
-      return "any";
-    case sdb::EdgeDirection::Out:
-      return "out";
-    case sdb::EdgeDirection::In:
-      return "in";
+    case sdb::WriteConflictPolicy::EmitError:
+      return "emit_error";
+    case sdb::WriteConflictPolicy::DoNothing:
+      return "do_nothing";
+    case sdb::WriteConflictPolicy::Replace:
+      return "replace";
   }
   return default_tag;
-}
-
-template<>
-[[maybe_unused]] constexpr customize::customize_t
-customize::enum_name<sdb::TableType>(sdb::TableType value) noexcept {
-  switch (value) {
-    case sdb::TableType::RocksDB:
-      return "rocksdb";
-    case sdb::TableType::File:
-      return "file";
-    default:
-      return invalid_tag;
-  }
 }
 
 }  // namespace magic_enum

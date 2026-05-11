@@ -20,12 +20,9 @@
 
 #pragma once
 
-#include <velox/type/Type.h>
-#include <velox/vector/BaseVector.h>
-#include <velox/vector/ComplexVector.h>
-#include <velox/vector/FlatVector.h>
+#include <duckdb/common/types.hpp>
+#include <duckdb/common/types/vector.hpp>
 
-#include "basics/fwd.h"
 #include "basics/system-compiler.h"
 #include "catalog/object.h"
 #include "query/config.h"
@@ -34,14 +31,20 @@ namespace sdb::catalog {
 
 class VirtualTable;
 
+struct MaterializedData {
+  std::vector<duckdb::Vector> columns;
+  duckdb::idx_t row_count = 0;
+};
+
 class VirtualTableSnapshot : public SchemaObject {
  public:
   std::shared_ptr<Object> Clone() const final { return nullptr; }
   void WriteInternal(vpack::Builder&) const override {}
-  virtual velox::RowTypePtr RowType() const noexcept = 0;
+  virtual duckdb::LogicalType RowType() const noexcept = 0;
 
-  virtual velox::RowVectorPtr GetData(std::vector<std::string> names,
-                                      velox::memory::MemoryPool& pool) = 0;
+  // Returns a reference to lazily materialized data.
+  // The data is owned by the snapshot and lives as long as the snapshot does.
+  virtual const MaterializedData& GetData(std::vector<std::string> names) = 0;
 
   const VirtualTable& GetTable() const noexcept {
     SDB_ASSERT(_table);
@@ -64,9 +67,9 @@ class VirtualTable {
   virtual ~VirtualTable() = default;
 
   ObjectId Id() const noexcept { return _id; }
-  std::string_view Name() const noexcept { return _name; }
+  std::string_view GetName() const noexcept { return _name; }
 
-  virtual velox::RowTypePtr RowType() const noexcept = 0;
+  virtual duckdb::LogicalType RowType() const noexcept = 0;
 
  protected:
   ObjectId _id;

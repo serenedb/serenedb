@@ -3897,8 +3897,9 @@ TEST(block_disjunction_test, next_scored) {
     detail::CompoundSort sort{{1}};
 
     std::vector<irs::ScoreDoc> expected{
-      {1, 1.f},  {2, 1.f},  {5, 1.f},  {7, 1.f},  {9, 1.f},
-      {11, 1.f}, {45, 1.f}, {65, 1.f}, {78, 1.f}, {127, 1.f}};
+      {1.f, 1, 0},  {1.f, 2, 0},  {1.f, 5, 0},  {1.f, 7, 0},  {1.f, 9, 0},
+      {1.f, 11, 0}, {1.f, 45, 0}, {1.f, 65, 0}, {1.f, 78, 0}, {1.f, 127, 0},
+    };
     std::vector<irs::ScoreDoc> result;
 
     std::vector<std::vector<irs::doc_id_t>> docs;
@@ -3938,7 +3939,7 @@ TEST(block_disjunction_test, next_scored) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
-        result.emplace_back(it.value(), score_value);
+        result.emplace_back(score_value, it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());
@@ -3956,8 +3957,10 @@ TEST(block_disjunction_test, next_scored) {
     detail::CompoundSort sort{{2}};
 
     std::vector<irs::ScoreDoc> expected{
-      {1, 2.f},  {2.f, 2.f},  {5, 2.f},      {7, 2.f},       {9, 2.f},
-      {11, 2.f}, {1145, 2.f}, {111165, 2.f}, {1111178, 2.f}, {111111127, 2.f}};
+      {2.f, 1, 0},       {2.f, 2, 0},         {2.f, 5, 0},    {2.f, 7, 0},
+      {2.f, 9, 0},       {2.f, 11, 0},        {2.f, 1145, 0}, {2.f, 111165, 0},
+      {2.f, 1111178, 0}, {2.f, 111111127, 0},
+    };
     std::vector<irs::ScoreDoc> result;
 
     std::vector<std::vector<irs::doc_id_t>> docs;
@@ -3998,7 +4001,7 @@ TEST(block_disjunction_test, next_scored) {
         it.FetchScoreArgs(0);
         irs::score_t score_value{};
         score_value = score.Score();
-        result.emplace_back(it.value(), score_value);
+        result.emplace_back(score_value, it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
       }
       ASSERT_EQ(0, it.MatchCount());

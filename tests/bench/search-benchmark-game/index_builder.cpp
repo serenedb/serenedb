@@ -25,21 +25,13 @@
 
 namespace bench {
 
-static irs::IndexWriterOptions MakeWriterOptions(irs::Scorer** scorer_ptr,
+static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_pool_size,
                                                  size_t segment_mem_max) {
   irs::IndexWriterOptions writer_opts;
-  writer_opts.reader_options.scorers = {scorer_ptr, 1};
+  writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
-  writer_opts.features = [](irs::IndexFeatures id) {
-    const irs::ColumnInfo info{
-      irs::Type<irs::compression::None>::get(), {}, false};
-    if (irs::IndexFeatures::Norm == id) {
-      return std::make_pair(info, &irs::Norm::MakeWriter);
-    }
-    return std::make_pair(info, irs::FeatureWriterFactory{});
-  };
   return writer_opts;
 }
 
@@ -54,7 +46,7 @@ IndexBuilder::IndexBuilder(std::string_view path,
     _format{irs::formats::Get(config.format_name)},
     _writer{irs::IndexWriter::Make(
       _dir, _format, irs::kOmCreate,
-      MakeWriterOptions(&_scorer_ptr, opts.indexer_threads,
+      MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
                         config.segment_mem_max))} {}
 
 void IndexBuilder::IndexFromStream(std::istream& input,

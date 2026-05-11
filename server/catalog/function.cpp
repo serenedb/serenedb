@@ -20,150 +20,65 @@
 
 #include "catalog/function.h"
 
-#include <velox/type/Type.h>
-#include <vpack/serializer.h>
 #include <vpack/vpack_helper.h>
 
-#include <string_view>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 
-#include "basics/exceptions.h"
-#include "basics/fwd.h"
 #include "basics/static_strings.h"
-#include "catalog/catalog.h"
-#include "catalog/identifiers/identifier.h"
-#include "catalog/object.h"
-#include "pg/sql_parser.h"
-#include "pg/sql_resolver.h"
-#include "query/types.h"
-#include "utils/query_string.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 
-bool FunctionParameter::IsCollection() const { return aql::IsCollection(type); }
-void FunctionParameter::MarkAsCollection() { type = aql::COLLECTION(); }
-
-bool FunctionSignature::Matches(
-  const std::vector<velox::TypePtr>& arg_types) const {
-  return std::ranges::equal(
-    arg_types, parameters,
-    [](const velox::TypePtr& arg, const FunctionParameter& param) {
-      SDB_ASSERT(param.type);
-      SDB_ASSERT(arg);
-      return *arg == *param.type ||
-             (arg == pg::PGUNKNOWN() && param.type == velox::VARCHAR());
-    });
-}
-
-bool FunctionSignature::ReturnsTable() const {
-  return return_type && return_type->kind() == velox::TypeKind::ROW;
-}
-
-bool FunctionSignature::ReturnsVoid() const { return pg::IsVoid(return_type); }
-
-bool FunctionSignature::IsProcedure() const {
-  return pg::IsProcedure(return_type);
-}
-void FunctionSignature::MarkAsProcedure() { return_type = pg::PROCEDURE(); }
-
-Result FunctionProperties::Read(FunctionProperties& properties,
-                                vpack::Slice slice) {
-  if (!slice.isObject()) {
-    return {ERROR_BAD_PARAMETER, "Function definition must be an object"};
-  }
-
-  properties.name = basics::VPackHelper::getString(
-    slice, sdb::StaticStrings::kDataSourceName, {});
-
-  if (properties.name.empty()) {
-    return {ERROR_BAD_PARAMETER, "Function name must be a non-empty string"};
-  }
-
-  properties.id = Identifier{basics::VPackHelper::extractIdValue(slice)};
-  properties.implementation = slice.get("implementation");
-
-  if (auto r =
-        vpack::ReadTupleNothrow(slice.get("signature"), properties.signature);
-      !r.ok()) {
-    return r;
-  }
-
-  if (auto r =
-        vpack::ReadTupleNothrow(slice.get("options"), properties.options);
-      !r.ok()) {
-    return r;
-  }
-
-  return {};
-}
+PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
+                             std::string_view name,
+                             duckdb::unique_ptr<duckdb::CreateMacroInfo> info)
+  : SchemaObject{{}, database_id,       {},
+                 id, std::string{name}, ObjectType::PgSqlFunction},
+    _info{std::move(info)} {}
 
 std::shared_ptr<PgSqlFunction> PgSqlFunction::ReadInternal(vpack::Slice slice,
                                                            ReadContext ctx) {
-  FunctionProperties properties;
-  if (auto r = FunctionProperties::Read(properties, slice); !r.ok()) {
-    return nullptr;
-  }
+  auto name =
+    basics::VPackHelper::getString(slice, StaticStrings::kDataSourceName, {});
 
-  auto impl_slice = properties.implementation;
-  auto query = basics::VPackHelper::getString(impl_slice, "query", {});
-  if (query.empty()) {
-    return nullptr;
-  }
-
-  return std::make_shared<PgSqlFunction>(
-    ctx.database_id, properties.id, properties.name, std::string{query},
-    std::move(properties.signature), std::move(properties.options));
+  auto info_slice = slice.get("info");
+  SDB_ASSERT(info_slice.isString());
+  auto str = info_slice.stringViewUnchecked();
+  duckdb::MemoryStream stream(
+    const_cast<duckdb::data_t*>(
+      reinterpret_cast<const duckdb::data_t*>(str.data())),
+    str.size());
+  duckdb::BinaryDeserializer deserializer(stream);
+  auto create_info = duckdb::CreateInfo::Deserialize(deserializer);
+  auto macro_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      std::move(create_info));
+  return std::make_shared<PgSqlFunction>(ctx.database_id, ctx.id, name,
+                                         std::move(macro_info));
 }
 
-PgSqlFunction::PgSqlFunction(ObjectId database_id, ObjectId id,
-                             std::string_view name, std::string query,
-                             FunctionSignature signature,
-                             FunctionOptions options)
-  : SchemaObject{{}, database_id, {}, id, name, ObjectType::PgSqlFunction},
-    _signature{std::move(signature)},
-    _options{std::move(options)},
-    _query{std::move(query)} {
-  SDB_ASSERT(!this->GetName().empty());
+void PgSqlFunction::WriteInternal(vpack::Builder& builder) const {
+  builder.openObject();
+  builder.add(StaticStrings::kDataSourceName, GetName());
 
-  if (!_query.empty()) {
-    const QueryString query_string{_query};
-    _memory_context = pg::CreateMemoryContext();
-    auto* tree = pg::Parse(*_memory_context, query_string);
-    SDB_ASSERT(list_length(tree) == 1);
-    _stmt = list_nth_node(RawStmt, tree, 0);
-    SDB_ASSERT(_stmt);
+  // Serialize CreateMacroInfo via DuckDB BinarySerializer
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(*_info, stream);
+  auto data = stream.GetData();
+  auto size = stream.GetPosition();
+  builder.add("info",
+              std::string_view{reinterpret_cast<const char*>(data), size});
 
-    auto database = catalog::GetDatabase(database_id);
-    SDB_ASSERT(database);
-    pg::Collect((*database)->GetName(), *_stmt, _objects);
-  }
-}
-
-void PgSqlFunction::WriteInternal(vpack::Builder& b) const {
-  b.openObject();
-  WriteObject(b, [&](vpack::Builder& b) {
-    b.add("id", GetId().id());
-    b.add("signature");
-    vpack::WriteTuple(b, _signature);
-    b.add("options");
-    vpack::WriteTuple(b, _options);
-    b.add("implementation");
-    b.openObject();
-    b.add("query", _query);
-    b.close();
-  });
-  b.close();
+  builder.close();
 }
 
 std::shared_ptr<Object> PgSqlFunction::Clone() const {
-  vpack::Builder b;
-  WriteInternal(b);
-  return ReadInternal(b.slice(), {.database_id = GetDatabaseId()});
+  auto cloned_info =
+    duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateMacroInfo>(
+      _info->Copy());
+  return std::make_shared<PgSqlFunction>(GetDatabaseId(), GetId(), GetName(),
+                                         std::move(cloned_info));
 }
 
 }  // namespace sdb::catalog

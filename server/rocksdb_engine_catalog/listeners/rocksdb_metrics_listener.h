@@ -48,15 +48,13 @@ class RocksDBMetricsListener : public rocksdb::EventListener {
  public:
   explicit RocksDBMetricsListener(SerenedServer&);
 
-  void OnFlushBegin(rocksdb::DB*, const rocksdb::FlushJobInfo& info) override;
-  void OnFlushCompleted(rocksdb::DB*,
-                        const rocksdb::FlushJobInfo& info) override;
+  void OnFlushBegin(rocksdb::DB*, const rocksdb::FlushJobInfo& info) final;
+  void OnFlushCompleted(rocksdb::DB*, const rocksdb::FlushJobInfo& info) final;
 
-  void OnCompactionBegin(rocksdb::DB*,
-                         const rocksdb::CompactionJobInfo&) override;
+  void OnCompactionBegin(rocksdb::DB*, const rocksdb::CompactionJobInfo&) final;
   void OnCompactionCompleted(rocksdb::DB*,
-                             const rocksdb::CompactionJobInfo&) override;
-  void OnStallConditionsChanged(const rocksdb::WriteStallInfo& info) override;
+                             const rocksdb::CompactionJobInfo&) final;
+  void OnStallConditionsChanged(const rocksdb::WriteStallInfo& info) final;
 
  private:
   void handleFlush(std::string_view phase,

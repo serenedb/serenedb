@@ -20,66 +20,39 @@
 
 #pragma once
 
-#include <folly/json.h>
-#include <velox/serializers/UnsafeRowSerializer.h>
-#include <velox/type/Type.h>
 #include <vpack/vpack.h>
+
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/types.hpp>
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 
-namespace facebook::velox {
+namespace duckdb {
 
-void VPackWrite(auto ctx, const velox::RowTypePtr& row_type) {
-  // TODO(mbkkt): Make it faster.
-  if (row_type) {
-    const auto object = row_type->serialize();
-    const auto json = folly::toJson(object);
-    ctx.vpack().add(json);
-  } else {
-    ctx.vpack().add(vpack::Slice::nullSlice());
-  }
+void VPackWrite(auto ctx, const duckdb::LogicalType& type) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer::Serialize(type, stream);
+  auto data = stream.GetData();
+  auto size = stream.GetPosition();
+  ctx.vpack().add(std::string_view{reinterpret_cast<const char*>(data), size});
 }
 
-void VPackRead(auto ctx, velox::RowTypePtr& row_type) {
-  // TODO(mbkkt): Make it faster.
+void VPackRead(auto ctx, duckdb::LogicalType& type) {
   auto vpack = ctx.vpack();
   if (vpack.isString()) {
-    const auto json = vpack.stringViewUnchecked();
-    const auto object = folly::parseJson(json);
-    row_type = velox::ISerializable::deserialize<velox::RowType>(object);
-  } else if (vpack.isNull()) {
-    row_type = nullptr;
+    auto str = vpack.stringViewUnchecked();
+    duckdb::MemoryStream stream(
+      const_cast<duckdb::data_t*>(
+        reinterpret_cast<const duckdb::data_t*>(str.data())),
+      str.size());
+    duckdb::BinaryDeserializer deserializer(stream);
+    type = duckdb::LogicalType::Deserialize(deserializer);
   } else {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Invalid value for row type, expecting a string or null");
+    type = duckdb::LogicalType::VARCHAR;
   }
 }
 
-void VPackWrite(auto ctx, const velox::TypePtr& type) {
-  // TODO(mbkkt): Make it faster.
-  if (type) {
-    const auto object = type->serialize();
-    const auto json = folly::toJson(object);
-    ctx.vpack().add(json);
-  } else {
-    ctx.vpack().add(vpack::Slice::nullSlice());
-  }
-}
-
-void VPackRead(auto ctx, velox::TypePtr& type) {
-  // TODO(mbkkt): Make it faster.
-  auto vpack = ctx.vpack();
-  if (vpack.isString()) {
-    const auto json = vpack.stringViewUnchecked();
-    const auto object = folly::parseJson(json);
-    type = velox::ISerializable::deserialize<velox::Type>(object);
-  } else if (vpack.isNull()) {
-    type = nullptr;
-  } else {
-    SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-              "Invalid value for row type, expecting a string or null");
-  }
-}
-
-}  // namespace facebook::velox
+}  // namespace duckdb

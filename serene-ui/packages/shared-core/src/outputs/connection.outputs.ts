@@ -1,7 +1,15 @@
 import { ConnectionSchema } from "../schemas/connection";
 import z from "zod";
 
-export const ListMyConnectionOutput = z.array(ConnectionSchema);
+export const ConnectionListItemSchema = z.intersection(
+    ConnectionSchema,
+    z.object({
+        isDefault: z.boolean().optional(),
+    }),
+);
+export type ConnectionListItemSchema = z.infer<typeof ConnectionListItemSchema>;
+
+export const ListMyConnectionOutput = z.array(ConnectionListItemSchema);
 export type ListMyConnectionOutput = z.infer<typeof ListMyConnectionOutput>;
 
 export const AddConnectionOutput = ConnectionSchema;

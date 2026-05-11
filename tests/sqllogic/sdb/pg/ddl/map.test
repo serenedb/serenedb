@@ -1,0 +1,142 @@
+statement ok
+CREATE TABLE vedernikoff_pillbox (
+  id INTEGER PRIMARY KEY,
+  patient VARCHAR,
+  doses MAP(VARCHAR, INTEGER)
+);
+
+
+statement count 1
+INSERT INTO vedernikoff_pillbox VALUES (1, 'vedernikoff', MAP{'pill_clickclack': 2, 'pill_waidb': 1});
+
+
+statement count 1
+INSERT INTO vedernikoff_pillbox VALUES (2, 'kostya', MAP{'pill_serendb': 3});
+
+
+statement count 1
+INSERT INTO vedernikoff_pillbox VALUES (3, 'bigfgun', MAP{});
+
+
+statement count 1
+INSERT INTO vedernikoff_pillbox VALUES (4, 'nullguy', NULL);
+
+
+query
+SELECT id, patient, cardinality(doses) FROM vedernikoff_pillbox ORDER BY id;
+----
+id	patient	cardinality
+1	vedernikoff	2
+2	kostya	1
+3	bigfgun	0
+4	nullguy	NULL
+
+
+query
+SELECT id, doses['pill_clickclack'], doses['pill_waidb'], doses['pill_serendb'] FROM vedernikoff_pillbox WHERE id <= 2 ORDER BY id;
+----
+id	doses	doses	doses
+1	2	1	NULL
+2	NULL	NULL	3
+
+
+query
+SELECT id, doses['missing'] FROM vedernikoff_pillbox ORDER BY id;
+----
+id	doses
+1	NULL
+2	NULL
+3	NULL
+4	NULL
+
+
+query
+SELECT id, map_keys(doses), map_values(doses) FROM vedernikoff_pillbox WHERE id <= 3 ORDER BY id;
+----
+id	map_keys	map_values
+1	{pill_clickclack,pill_waidb}	{2,1}
+2	{pill_serendb}	{3}
+3	{}	{}
+
+
+query
+SELECT id, doses::VARCHAR FROM vedernikoff_pillbox ORDER BY id;
+----
+id	doses
+1	{pill_clickclack=2, pill_waidb=1}
+2	{pill_serendb=3}
+3	{}
+4	NULL
+
+
+query
+SELECT id, doses FROM vedernikoff_pillbox ORDER BY id;
+----
+id	doses
+1	{"(pill_clickclack,2)","(pill_waidb,1)"}
+2	{"(pill_serendb,3)"}
+3	{}
+4	NULL
+
+
+query
+SELECT id FROM vedernikoff_pillbox WHERE doses IS NULL;
+----
+id
+4
+
+
+query
+SELECT id FROM vedernikoff_pillbox WHERE doses IS NOT NULL ORDER BY id;
+----
+id
+1
+2
+3
+
+
+statement ok
+DROP TABLE vedernikoff_pillbox;
+
+
+statement ok
+CREATE TABLE pudge_drug_doses (
+  drug_id INTEGER PRIMARY KEY,
+  schedule MAP(INTEGER, VARCHAR)
+);
+
+
+statement count 1
+INSERT INTO pudge_drug_doses VALUES (1, MAP{8: 'morning', 14: 'lunch', 20: 'evening'});
+
+
+statement count 1
+INSERT INTO pudge_drug_doses VALUES (2, MAP{0: 'midnight'});
+
+
+query
+SELECT drug_id, schedule[14], schedule[8] FROM pudge_drug_doses ORDER BY drug_id;
+----
+drug_id	schedule	schedule
+1	lunch	morning
+2	NULL	NULL
+
+
+query
+SELECT drug_id, schedule::VARCHAR FROM pudge_drug_doses ORDER BY drug_id;
+----
+drug_id	schedule
+1	{8=morning, 14=lunch, 20=evening}
+2	{0=midnight}
+
+
+query
+SELECT drug_id, schedule FROM pudge_drug_doses ORDER BY drug_id;
+----
+drug_id	schedule
+1	{"(8,morning)","(14,lunch)","(20,evening)"}
+2	{"(0,midnight)"}
+
+
+statement ok
+DROP TABLE pudge_drug_doses;

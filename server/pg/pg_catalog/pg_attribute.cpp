@@ -29,6 +29,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "catalog/user_type.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -106,12 +107,11 @@ void EmitColumnsForTable(const catalog::Table& table,
   auto& columns = table.Columns();
   auto& pk_columns = table.PKColumns();
 
-  // Collect NOT NULL column names from check constraints
-  containers::FlatHashSet<std::string_view> notnull_cols;
+  // Collect NOT NULL column indices from check constraints.
+  containers::FlatHashSet<size_t> notnull_cols;
   for (const auto& check : table.CheckConstraints()) {
-    auto [is_notnull, col_name] = check.IsNotNull();
-    if (is_notnull) {
-      notnull_cols.insert(col_name);
+    if (auto idx = check.IsNotNull(columns)) {
+      notnull_cols.insert(*idx);
     }
   }
 
@@ -147,7 +147,7 @@ void EmitColumnsForTable(const catalog::Table& table,
       .attalign = phys.attalign,
       .attstorage = phys.attstorage,
       .attcompression = PgAttribute::Attcompression::None,
-      .attnotnull = is_pk || notnull_cols.contains(col.name),
+      .attnotnull = is_pk || notnull_cols.contains(i),
       .atthasdef = col.expr != nullptr,
       .atthasmissing = false,
       .attidentity = PgAttribute::Attidentity::None,
@@ -164,18 +164,19 @@ void EmitColumnsForTable(const catalog::Table& table,
 void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
                                std::vector<PgAttribute>& values) {
   auto row_type = table.RowType();
-  if (!row_type) {
+  if (row_type.id() != duckdb::LogicalTypeId::STRUCT) {
     return;
   }
+  auto& children = duckdb::StructType::GetChildTypes(row_type);
 
-  for (size_t i = 0; i < row_type->size(); ++i) {
-    auto child_type = row_type->childAt(i);
+  for (size_t i = 0; i < children.size(); ++i) {
+    auto& child_type = children[i].second;
     auto type_oid = Type2Oid(child_type);
     auto phys = GetPhysicalInfo(type_oid);
 
     PgAttribute row{
       .attrelid = table.Id().id(),
-      .attname = row_type->nameOf(i),
+      .attname = children[i].first,
       .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -199,11 +200,52 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
   }
 }
 
+// Emit pg_attribute rows for composite (record) types so that drivers can
+// introspect the field list via the standard `attrelid = $oid` lookup. The
+// synthetic relid we use is the type's own OID (matching what pg_type.typrelid
+// reports).
+void EmitColumnsForCompositeType(const catalog::PgSqlType& type,
+                                 std::vector<PgAttribute>& values) {
+  const auto& info = type.GetInfo();
+  if (info.type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return;
+  }
+  const auto& children = duckdb::StructType::GetChildTypes(info.type);
+  const auto type_oid = type.GetId().id();
+  for (size_t i = 0; i < children.size(); ++i) {
+    auto& child_type = children[i].second;
+    auto type_id = Type2Oid(child_type);
+    auto phys = GetPhysicalInfo(type_id);
+    PgAttribute row{
+      .attrelid = type_oid,
+      .attname = children[i].first,
+      .atttypid = type_id,
+      .attlen = phys.attlen,
+      .attnum = static_cast<int16_t>(i + 1),
+      .atttypmod = -1,
+      .attndims = 0,
+      .attbyval = phys.attbyval,
+      .attalign = phys.attalign,
+      .attstorage = phys.attstorage,
+      .attcompression = PgAttribute::Attcompression::None,
+      .attnotnull = false,
+      .atthasdef = false,
+      .atthasmissing = false,
+      .attidentity = PgAttribute::Attidentity::None,
+      .attgenerated = PgAttribute::Attgenerated::None,
+      .attisdropped = false,
+      .attislocal = true,
+      .attinhcount = 0,
+      .attcollation = GetCollationForType(type_id),
+    };
+    values.push_back(std::move(row));
+  }
+}
+
 }  // namespace
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgAttribute>::GetTableData(
-  velox::memory::MemoryPool& pool) {
+catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   auto catalog = _config.EnsureCatalogSnapshot();
 
   std::vector<PgAttribute> values;
@@ -213,6 +255,10 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgAttribute>::GetTableData(
          catalog->GetTables(GetDatabaseId(), schema->GetName())) {
       EmitColumnsForTable(*table, values);
     }
+    for (const auto& type :
+         catalog->GetTypes(GetDatabaseId(), schema->GetName())) {
+      EmitColumnsForCompositeType(*type, values);
+    }
   }
 
   VisitSystemTables(
@@ -220,13 +266,13 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgAttribute>::GetTableData(
       EmitColumnsForSystemTable(table, values);
     });
 
-  auto result = CreateColumns<PgAttribute>(values, &pool);
+  auto result = CreateColumns<PgAttribute>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, &pool);
+    WriteData(result, values[row], kNullMask, row);
   }
 
-  return result;
+  return {std::move(result), values.size()};
 }
 
 }  // namespace sdb::pg

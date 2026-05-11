@@ -20,6 +20,8 @@
 
 #include "utils/write_helpers.hpp"
 
+#include <bit>
+
 #include "iresearch/utils/numeric_utils.hpp"
 
 namespace tests {
@@ -32,7 +34,7 @@ void WriteZvfloat(irs::DataOutput& out, float_t v) {
     out.WriteByte(static_cast<irs::byte_type>(0x80 | (1 + iv)));
   } else if (!std::signbit(v)) {
     // positive value
-    out.WriteU32(iv);
+    out.WriteU32(std::byteswap(iv));
   } else {
     // negative value
     out.WriteByte(0xFF);
@@ -52,9 +54,10 @@ float_t ReadZvfloat(irs::DataInput& in) {
   }
 
   // positive float (ensure read order)
-  const auto part = uint32_t(uint16_t(in.ReadI16())) << 8;
+  const auto part = uint16_t(in.ReadI16());
 
-  return irs::numeric_utils::I32tof((b << 24) | part | uint32_t(in.ReadByte()));
+  return irs::numeric_utils::I32tof((b << 24) | (std::byteswap(part) << 8) |
+                                    uint32_t(in.ReadByte()));
 }
 
 void WriteZvdouble(irs::DataOutput& out, double_t v) {
@@ -71,7 +74,7 @@ void WriteZvdouble(irs::DataOutput& out, double_t v) {
       out.WriteU32(irs::numeric_utils::Ftoi32(fv));
     } else if (!std::signbit(v)) {
       // positive value
-      out.WriteU64(lv);
+      out.WriteU64(std::byteswap(lv));
     } else {
       // negative value
       out.WriteByte(0xFF);
@@ -95,10 +98,10 @@ double_t ReadZvdouble(irs::DataInput& in) {
   }
 
   // positive double (ensure read order)
-  const auto part1 = uint64_t(uint32_t(in.ReadI32())) << 24;
-  const auto part2 = uint64_t(uint16_t(in.ReadI16())) << 8;
+  const auto part1 = uint64_t(std::byteswap(uint32_t(in.ReadI32())));
+  const auto part2 = uint64_t(std::byteswap(uint16_t(in.ReadI16())));
 
-  return irs::numeric_utils::I64tod((b << 56) | part1 | part2 |
+  return irs::numeric_utils::I64tod((b << 56) | (part1 << 24) | (part2 << 8) |
                                     uint64_t(in.ReadByte()));
 }
 

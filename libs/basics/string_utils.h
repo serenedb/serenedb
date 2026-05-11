@@ -23,6 +23,7 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/charconv.h>
+#include <absl/strings/internal/resize_uninitialized.h>
 
 #include <charconv>
 #include <cstddef>

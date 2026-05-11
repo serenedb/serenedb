@@ -1,6 +1,21 @@
 control substitution on
 
-# Requires MinIO running
+# Requires MinIO running.
+# Credentials are handled by DuckDB's httpfs extension via CREATE SECRET
+# (the old PG-style S3_ACCESS_KEY / S3_SECRET_KEY / S3_ENDPOINT WITH-options
+# on COPY have been removed; DuckDB's native secret manager replaces them).
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
 
 statement ok
 CREATE TABLE clickclack
@@ -16,13 +31,7 @@ INSERT INTO clickclack VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky'),
 
 statement count 5
 COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.csv'
-WITH (
-  FORMAT csv,
-  HEADER true,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT csv, HEADER true);
 
 
 statement ok
@@ -35,13 +44,7 @@ CREATE TABLE s3_csv_vedernikoff
 
 statement count 5
 COPY s3_csv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.csv'
-WITH (
-  FORMAT csv,
-  HEADER true,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT csv, HEADER true);
 
 
 query
@@ -63,13 +66,7 @@ DELETE FROM s3_csv_vedernikoff;
 
 statement count 3
 COPY s3_csv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.csv'
-WITH (
-  FORMAT csv,
-  HEADER true,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-)
+WITH (FORMAT csv, HEADER true)
 WHERE id != 2 AND id != 4;
 
 
@@ -86,11 +83,7 @@ id	name
 
 statement count 5
 COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.tsv'
-WITH (
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT csv, DELIMITER '	');
 
 
 statement ok
@@ -103,11 +96,7 @@ CREATE TABLE s3_tsv_vedernikoff
 
 statement count 5
 COPY s3_tsv_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.tsv'
-WITH (
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT csv, DELIMITER '	');
 
 
 query
@@ -125,12 +114,7 @@ id	name
 
 statement count 5
 COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.parquet'
-WITH (
-  FORMAT parquet,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT parquet);
 
 
 statement ok
@@ -143,12 +127,7 @@ CREATE TABLE s3_parquet_vedernikoff
 
 statement count 5
 COPY s3_parquet_vedernikoff FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.parquet'
-WITH (
-  FORMAT parquet,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT parquet);
 
 
 query
@@ -273,13 +252,7 @@ COPY
     generate_series(1, 100) as iq,
     generate_series(1, 1000) as pencil_size
 ) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_babsky_company.csv'
-WITH (
-  FORMAT csv,
-  HEADER true,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT csv, HEADER true);
 
 
 statement ok
@@ -292,13 +265,7 @@ CREATE TABLE babsky_company
 
 statement count 100000
 COPY babsky_company FROM 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_babsky_company.csv'
-WITH (
-  FORMAT csv,
-  HEADER true,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
+WITH (FORMAT csv, HEADER true);
 
 
 query
@@ -318,36 +285,5 @@ count
 10000
 
 
-statement error
-COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
-WITH (
-  FORMAT csv,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_IAM_ROLE 'arn:aws:iam::123456789012:role/test',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
-----
-db error: ERROR: s3_access_key/s3_secret_key and s3_iam_role cannot be specified together
-
-
-statement error
-COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
-WITH (
-  FORMAT csv,
-  S3_ACCESS_KEY '${MINIO_ACCESS_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
-----
-db error: ERROR: s3_access_key and s3_secret_key must be specified together
-
-
-statement error
-COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_auth_test.csv'
-WITH (
-  FORMAT csv,
-  S3_SECRET_KEY '${MINIO_SECRET_KEY}',
-  S3_ENDPOINT '${MINIO_HOST}:${MINIO_PORT}'
-);
-----
-db error: ERROR: s3_access_key and s3_secret_key must be specified together
+statement ok
+DROP SECRET minio_${__DATABASE__};

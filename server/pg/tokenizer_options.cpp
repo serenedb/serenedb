@@ -24,11 +24,8 @@
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "magic_enum/magic_enum.hpp"
+#include "pg/errcodes.h"
 #include "pg/sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg::tokenizer_options {
 
@@ -70,6 +67,14 @@ void CheckNumHashes(int value) {
   if (value <= 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("The number of hashes should be positive number"));
+  }
+}
+
+void CheckNgramSize(int value) {
+  if (value < 2) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("ngramsize must be at least 2"),
+                    ERR_HINT(kNgramSize.description));
   }
 }
 

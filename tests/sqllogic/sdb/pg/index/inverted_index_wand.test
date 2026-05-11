@@ -1,0 +1,421 @@
+hash-threshold 100
+
+# ---------------------------------------------------------------------------
+# WAND optimization correctness on inverted indexes.
+#
+# WAND fires only when:
+#   * the index has WITH (optimize_top_k = '<scorer-expr>')
+#   * the query is `WHERE <filter> ORDER BY <scorer>(idx.tableoid) DESC LIMIT k`
+#   * the index's `optimize_top_k` scorer matches the ORDER BY scorer
+#   * the filter compiles to an iterator that exposes per-block max-impact:
+#       - single Term  (`body @@ ts_phrase('x')` with one token)
+#       - ByTerms      (`body @@ ts_any(['a','b'])` -- disjunction over terms)
+#
+# Two passes:
+#   * Small dataset -> EXPLAIN matches a deterministic plan with /
+#     without `, optimized`.
+#   * 50k-row dataset -> WAND vs non-WAND indexes return identical top-K
+#     results, proving the pruning preserves ranking.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_wand(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true,
+    norm = true
+);
+
+
+# ---------------------------------------------------------------------------
+# Small dataset -- deterministic EXPLAIN coverage.
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE wand_small (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement count 1
+INSERT INTO wand_small VALUES (1, 'fox quick');
+
+
+statement count 1
+INSERT INTO wand_small VALUES (2, 'fox lazy dog');
+
+
+statement count 1
+INSERT INTO wand_small VALUES (3, 'lazy dog');
+
+
+statement count 1
+INSERT INTO wand_small VALUES (4, 'fox runs');
+
+
+statement count 1
+INSERT INTO wand_small VALUES (5, 'rabbit fox');
+
+
+statement ok
+CREATE INDEX wand_small_idx ON wand_small USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) wand_small;
+
+
+# Term-only filter + matching scorer + LIMIT -> WAND engages.
+
+query
+EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wand_small_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: wand_small_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│     TopK: 3, optimized    │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# Term disjunction (ByTerms iterator) -> WAND engages.
+
+query
+EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) ORDER BY BM25(wand_small_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: wand_small_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│  AND[OR[Term(body(string) │
+│ =fox) || Term(body(string)│
+│         =rabbit)]]        │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│     TopK: 3, optimized    │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# No LIMIT -> no TopK pull-up at all -> WAND can't engage.
+
+query
+EXPLAIN SELECT id, BM25(wand_small_idx.tableoid) AS s FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY s DESC;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│  sdb_inverted_index_score │
+│            DESC           │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: wand_small_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# ASC ordering -> score_top_k rule only matches DESC; WAND does NOT engage.
+
+query
+EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(wand_small_idx.tableoid) ASC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 3          │
+│      Order By: #1 ASC     │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: wand_small_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│    bm25(k1=1.2, b=0.75)   │
+│                           │
+│        Projections:       │
+│             id            │
+│  sdb_inverted_index_score │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# Mismatched scorer: index is BM25-WAND, ORDER BY uses TFIDF. Top-K still
+# pulls up but `WandEnabled()` is false (wand_scorer != scorer), so no
+# `, optimized` suffix.
+
+query
+EXPLAIN SELECT id FROM wand_small_idx WHERE body @@ ts_phrase('fox') ORDER BY TFIDF(wand_small_idx.tableoid) DESC LIMIT 3;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│   Index: wand_small_idx   │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[body(string) = │
+│    <Term:fox(0, 0); >]]   │
+│                           │
+│           Score:          │
+│  tfidf(with_norms=false)  │
+│                           │
+│          TopK: 3          │
+│      Projections: id      │
+│                           │
+│          ~5 rows          │
+└───────────────────────────┘
+
+
+# ---------------------------------------------------------------------------
+# 50k-row dataset -- prove WAND-on and WAND-off return identical top-K.
+#
+# Vocabulary cycles 10 sentences so term frequencies vary:
+#   'fox'        appears in 7 of 10 buckets (~35k docs)  -- WAND-friendly
+#   'lazy'       appears in 2 of 10 buckets (~10k docs)
+#   'rare_token' appears in 1 of 10 buckets (~5k docs)
+# ---------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE wand_big (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+CREATE TABLE plain_big (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO wand_big SELECT i, CASE i % 10
+    WHEN 0 THEN 'fox quick brown jumps'
+    WHEN 1 THEN 'fox lazy dog under tree'
+    WHEN 2 THEN 'cat sleeping in box'
+    WHEN 3 THEN 'fox runs fast across field'
+    WHEN 4 THEN 'rabbit and fox dance'
+    WHEN 5 THEN 'fox jumps over wall'
+    WHEN 6 THEN 'lazy fox does nothing'
+    WHEN 7 THEN 'rare_token bird sings'
+    WHEN 8 THEN 'fox climbs the tree'
+    ELSE 'cat watches eagle eat'
+  END
+  FROM generate_series(1, 50000) AS s(i);
+
+
+statement ok
+INSERT INTO plain_big SELECT * FROM wand_big;
+
+
+statement ok
+CREATE INDEX wand_big_idx ON wand_big USING inverted(id, body en_wand)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_wand);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) wand_big;
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) plain_big;
+
+
+# Sanity: both indexes match the same population.
+
+query
+SELECT COUNT(*) FROM wand_big_idx WHERE body @@ ts_phrase('fox');
+----
+count
+35000
+
+
+query
+SELECT COUNT(*) FROM plain_big_idx WHERE body @@ ts_phrase('fox');
+----
+count
+35000
+
+
+# === Term-only WAND -- top-K equivalence ===
+#
+# The key correctness signal: WAND must never drop a document that belongs
+# in the top-K. EXCEPT in both directions catches both false positives and
+# false negatives. Tie-break on id keeps results deterministic when scores
+# tie (every doc in the same vocabulary bucket has the same body, hence
+# the same score).
+
+query I
+WITH w AS (SELECT id FROM wand_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
+----
+count
+0
+
+
+# Reverse direction (anything in plain top-100 must be in wand top-100 too).
+
+query I
+WITH w AS (SELECT id FROM wand_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) d;
+----
+count
+0
+
+
+# === Term disjunction (ByTerms) WAND -- top-K equivalence ===
+#
+# `ts_any(['fox','lazy','rare_token'])` resolves to ByTerms over three
+# postings lists with very different lengths (35k / 10k / 5k). WAND has to
+# carry the heap minimum across term iterators correctly.
+
+query I
+WITH w AS (SELECT id FROM wand_big_idx
+           WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
+           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
+----
+count
+0
+
+
+query I
+WITH w AS (SELECT id FROM wand_big_idx
+           WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
+           ORDER BY BM25(wand_big_idx.tableoid) DESC, id
+           LIMIT 100),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_any(['fox', 'lazy', 'rare_token'])
+           ORDER BY BM25(plain_big_idx.tableoid) DESC, id
+           LIMIT 100)
+SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT SELECT * FROM w) d;
+----
+count
+0
+
+
+# === Non-engaging shapes still correct on the WAND-enabled index ===
+
+# No LIMIT -- whole result set, ordered. WAND pruning is impossible (no k);
+# the scan must produce the full ordered sequence.
+
+query I
+SELECT COUNT(*) FROM wand_big_idx
+WHERE body @@ ts_phrase('fox')
+  AND BM25(wand_big_idx.tableoid) > 0;
+----
+count
+35000
+
+
+# ASC ordering -- WAND skipped; bottom-K must still be returned correctly.
+
+query I
+WITH w AS (SELECT id FROM wand_big_idx
+           WHERE body @@ ts_phrase('rare_token')
+           ORDER BY BM25(wand_big_idx.tableoid) ASC, id
+           LIMIT 5),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_phrase('rare_token')
+           ORDER BY BM25(plain_big_idx.tableoid) ASC, id
+           LIMIT 5)
+SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
+----
+count
+0
+
+
+# Mismatched scorer (TFIDF on the BM25-WAND index) -- WAND off, but
+# ranking under TFIDF must agree with the plain index.
+
+query I
+WITH w AS (SELECT id FROM wand_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY TFIDF(wand_big_idx.tableoid) DESC, id
+           LIMIT 50),
+     p AS (SELECT id FROM plain_big_idx
+           WHERE body @@ ts_phrase('fox')
+           ORDER BY TFIDF(plain_big_idx.tableoid) DESC, id
+           LIMIT 50)
+SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT SELECT * FROM p) d;
+----
+count
+0

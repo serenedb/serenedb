@@ -42,9 +42,8 @@ target_link_libraries(
         vpack
         rocksdb
         fuerte
-        NuRaft::static_lib
-        pg_query
-        velox
+        duckdb_static
+        Folly::folly
 )
 
 target_include_directories(sereneserver PUBLIC ${CMAKE_SOURCE_DIR}/server)
@@ -66,4 +65,3 @@ add_subdirectory(storage_engine)
 add_subdirectory(rocksdb_engine_catalog)
 add_subdirectory(utils)
 add_subdirectory(search)
-add_subdirectory(functions)

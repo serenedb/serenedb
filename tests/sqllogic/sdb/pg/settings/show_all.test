@@ -1,150 +1,226 @@
 query
 SHOW ALL;
 ----
-name	value	description
-sdb_log_level	authentication=<slt:ignore>,authorization=<slt:ignore>,communication=<slt:ignore>,config=<slt:ignore>,crash=<slt:ignore>,engines=<slt:ignore>,flush=<slt:ignore>,general=<slt:ignore>,httpclient=<slt:ignore>,memory=<slt:ignore>,replication=<slt:ignore>,requests=<slt:ignore>,rocksdb=<slt:ignore>,ssl=<slt:ignore>,startup=<slt:ignore>,statistics=<slt:ignore>,syscall=<slt:ignore>,threads=<slt:ignore>	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
-sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
-sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
-execution_threads	0	Sets the number of threads used for query execution. If set to 0, serial execution (execution in connection thread) is used. Otherwise the execution is separated from connection thread and desired number of threads will be tried to be used.
-join_order_algorithm	cost	Sets the join algorithm to be used for query execution. Valid values are 'cost' (the default), 'greedy', and 'syntactic'.
-search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
-extra_float_digits	1	Sets the number of digits displayed for floating-point values.
-bytea_output	hex	Sets the output format for bytea.
-client_encoding	UTF8	Sets the client's character set encoding.
-application_name	(empty)	Sets the application name to be reported in statistics and logs.
-default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
-transaction_isolation	repeatable read	Sets the current transaction's isolation level.
-default_transaction_read_only	off	Sets the default read-only status of new transactions.
-in_hot_standby	off	Shows whether hot standby is currently active.
-integer_datetimes	on	Shows whether datetimes are integer based.
-scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.3	Shows the server version.
-standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
-client_min_messages	notice	Sets the message levels that are sent to the client.
-session_authorization	postgres	Sets the current session's user name.
-is_superuser	off	Shows whether the current session's user is a superuser.
+name	setting	description
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 IntervalStyle	postgres	Sets the display format for interval values.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
-query_max_memory_per_node	0B	Maximum memory that a query can use on a single host.
-session_timezone	(empty)	User provided session timezone. Stores a string with the actual timezone name, e.g: "America/Los_Angeles".
-adjust_timestamp_to_session_timezone	false	If true, timezone-less timestamp conversions (e.g. string to timestamp, when the string does not specify a timezone) will be adjusted to the user provided session timezone (if any). False by default.
-expression.eval_simplified	false	Whether to use the simplified expression evaluation path. False by default.
-expression.track_cpu_usage	false	Whether to track CPU usage for individual expressions (supported by call and cast expressions). False by default. Can be expensive when processing small batches, e.g. < 10K rows.
-track_operator_cpu_usage	true	Whether to track CPU usage for stages of individual operators. True by default. Can be expensive when processing small batches, e.g. < 10K rows.
-legacy_cast	false	Flags used to configure the CAST operator
-cast_match_struct_by_name	false	This flag makes the Row conversion to by applied in a way that the casting row field are matched by name instead of position.
-expression.max_array_size_in_reduce	100000	Reduce() function will throw an error if encountered an array of size greater than this.
-expression.max_compiled_regexes	100	Controls maximum number of compiled regular expression patterns per function instance per thread of execution.
-max_local_exchange_buffer_size	33554432	Used for backpressure to block local exchange producers when the local exchange buffer reaches or exceeds this size.
-max_local_exchange_partition_count	4294967295	Limits the number of partitions created by a local exchange. Partitioning data too granularly can lead to poor performance. This setting allows increasing the task concurrency for all pipelines except the ones that require a local partitioning. Affects the number of drivers for pipelines containing LocalPartitionNode and cannot exceed the maximum number of pipeline drivers configured for the task.
-min_local_exchange_partition_count_to_use_partition_buffer	33	Minimum number of local exchange output partitions to use buffered partitioning.
-max_local_exchange_partition_buffer_size	65536	Maximum size in bytes to accumulate for a single partition of a local exchange before flushing.
-local_exchange_partition_buffer_preserve_encoding	false	Try to preserve the encoding of the input vector when copying it to the buffer.
-local_merge_source_queue_size	2	Maximum number of vectors buffered in each local merge source before blocking to wait for consumers.
-exchange.max_buffer_size	33554432	Maximum size in bytes to accumulate in ExchangeQueue. Enforced approximately, not strictly.
-merge_exchange.max_buffer_size	134217728	Maximum size in bytes to accumulate among all sources of the merge exchange. Enforced approximately, not strictly.
-min_exchange_output_batch_bytes	2097152	The minimum number of bytes to accumulate in the ExchangeQueue before unblocking a consumer. This is used to avoid creating tiny batches which may have a negative impact on performance when the cost of creating vectors is high (for example, when there are many columns). To avoid latency degradation, the exchange client unblocks a consumer when 1% of the data size observed so far is accumulated.
-max_partial_aggregation_memory	16777216	(empty)
-max_extended_partial_aggregation_memory	67108864	(empty)
-abandon_partial_aggregation_min_rows	100000	(empty)
-abandon_partial_aggregation_min_pct	80	(empty)
-abandon_partial_topn_row_number_min_rows	100000	(empty)
-abandon_partial_topn_row_number_min_pct	80	(empty)
-max_elements_size_in_repeat_and_sequence	10000	(empty)
-max_page_partitioning_buffer_size	33554432	The maximum number of bytes to buffer in PartitionedOutput operator to avoid creating tiny SerializedPages.
-max_output_buffer_size	33554432	The maximum size in bytes for the task's buffered output. The producer Drivers are blocked when the buffered size exceeds this. The Drivers are resumed when the buffered size goes below OutputBufferManager::kContinuePct % of this.
-preferred_output_batch_bytes	10485760	Preferred size of batches in bytes to be returned by operators from Operator::getOutput. It is used when an estimate of average row size is known. Otherwise kPreferredOutputBatchRows is used.
-preferred_output_batch_rows	1024	Preferred number of rows to be returned by operators from Operator::getOutput. It is used when an estimate of average row size is not known. When the estimate of average row size is known, kPreferredOutputBatchBytes is used.
-max_output_batch_rows	10000	Max number of rows that could be return by operators from Operator::getOutput. It is used when an estimate of average row size is known and kPreferredOutputBatchBytes is used to compute the number of output rows.
-table_scan_getoutput_time_limit_ms	5000	TableScan operator will exit getOutput() method after this many milliseconds even if it has no data to return yet. Zero means 'no time limit'.
-hash_adaptivity_enabled	true	If false, the 'group by' code is forced to use generic hash mode hashtable.
-adaptive_filter_reordering_enabled	true	If true, the conjunction expression can reorder inputs based on the time taken to calculate them.
-spill_enabled	false	Global enable spilling flag.
-aggregation_spill_enabled	true	Aggregation spilling flag, only applies if "spill_enabled" flag is set.
-join_spill_enabled	true	Join spilling flag, only applies if "spill_enabled" flag is set.
-mixed_grouped_mode_hash_join_spill_enabled	false	Config to enable hash join spill for mixed grouped execution mode.
-order_by_spill_enabled	true	OrderBy spilling flag, only applies if "spill_enabled" flag is set.
-window_spill_enabled	true	Window spilling flag, only applies if "spill_enabled" flag is set.
-writer_spill_enabled	true	If true, the memory arbitrator will reclaim memory from table writer by flushing its buffered data to disk. only applies if "spill_enabled" flag is set.
-row_number_spill_enabled	true	RowNumber spilling flag, only applies if "spill_enabled" flag is set.
-topn_row_number_spill_enabled	true	TopNRowNumber spilling flag, only applies if "spill_enabled" flag is set.
-local_merge_spill_enabled	false	LocalMerge spilling flag, only applies if "spill_enabled" flag is set.
-local_merge_max_num_merge_sources	4294967295	Specify the max number of local sources to merge at a time.
-max_spill_run_rows	12582912	The max row numbers to fill and spill for each spill run. This is used to cap the memory used for spilling. If it is zero, then there is no limit and spilling might run out of memory. Based on offline test results, the default value is set to 12 million rows which uses ~128MB memory when to fill a spill run.
-max_spill_bytes	107374182400	The max spill bytes limit set for each query. This is used to cap the storage used for spilling. If it is zero, then there is no limit and spilling might exhaust the storage or takes too long to run. The default value is set to 100 GB.
-max_spill_level	1	The max allowed spilling level with zero being the initial spilling level. This only applies for hash build spilling which might trigger recursive spilling when the build table is too big. If it is set to -1, then there is no limit and then some extreme large query might run out of spilling partition bits (see kSpillPartitionBits) at the end. The max spill level is used in production to prevent some bad user queries from using too much io and cpu resources.
-max_spill_file_size	0	The max allowed spill file size. If it is zero, then there is no limit.
-spill_compression_codec	none	(empty)
-spill_prefixsort_enabled	false	Enable the prefix sort or fallback to timsort in spill. The prefix sort is faster than std::sort but requires the memory to build normalized prefix keys, which might have potential risk of running out of server memory.
-spill_write_buffer_size	1048576	Specifies spill write buffer size in bytes. The spiller tries to buffer serialized spill data up to the specified size before write to storage underneath for io efficiency. If it is set to zero, then spill write buffering is disabled.
-spill_read_buffer_size	1048576	Specifies the buffer size in bytes to read from one spilled file. If the underlying filesystem supports async read, we do read-ahead with double buffering, which doubles the buffer used to read from each spill file.
-spill_file_create_config	(empty)	Config used to create spill files. This config is provided to underlying file system and the config is free form. The form should be defined by the underlying file system.
-spiller_start_partition_bit	48	Default offset spill start partition bit. It is used with 'kSpillNumPartitionBits' together to calculate the spilling partition number for join spill or aggregation spill.
-spiller_num_partition_bits	3	Default number of spill partition bits. It is the number of bits used to calculate the spill partition number for hash join and RowNumber. The number of spill partitions will be power of two. NOTE: as for now, we only support up to 8-way spill partitioning.
-min_spillable_reservation_pct	5	The minimal available spillable memory reservation in percentage of the current memory usage. Suppose the current memory usage size of M, available memory reservation size of N and min reservation percentage of P, if M * P / 100 > N, then spiller operator needs to grow the memory reservation with percentage of spillableReservationGrowthPct(). This ensures we have sufficient amount of memory reservation to process the large input outlier.
-spillable_reservation_growth_pct	10	The spillable memory reservation growth percentage of the previous memory reservation size. 10 means exponential growth along a series of integer powers of 11/10. The reservation grows by this much until it no longer can, after which it starts spilling.
-writer_flush_threshold_bytes	100663296	Minimum memory footprint size required to reclaim memory from a file writer by flushing its buffered data to disk.
-presto.array_agg.ignore_nulls	false	If true, array_agg() aggregation function will ignore nulls in the input.
-spark.ansi_enabled	false	If true, Spark function's behavior is ANSI-compliant, e.g. throws runtime exception instead of returning null on invalid inputs. Note: This feature is still under development to achieve full ANSI compliance. Users can refer to the Spark function documentation to verify the current support status of a specific function.
-spark.bloom_filter.expected_num_items	1000000	The default number of expected items for the bloomfilter.
-spark.bloom_filter.num_bits	8388608	The default number of bits to use for the bloom filter.
-spark.bloom_filter.max_num_bits	4194304	The max number of bits to use for the bloom filter.
-spark.partition_id	(empty)	The current spark partition id.
-spark.legacy_date_formatter	false	If true, simple date formatter is used for time formatting and parsing. Joda date formatter is used by default.
-spark.legacy_statistical_aggregate	false	If true, Spark statistical aggregation functions including skewness, kurtosis, stddev, stddev_samp, variance, var_samp, covar_samp and corr will return NaN instead of NULL when dividing by zero during expression evaluation.
-spark.json_ignore_null_fields	true	If true, ignore null fields when generating JSON string. If false, null fields are included with a null value.
-task_writer_count	4	The number of local parallel table writer operators per task.
-task_partitioned_writer_count	4	The number of local parallel table writer operators per task for partitioned writes. If not set, use "task_writer_count".
-hash_probe_finish_early_on_empty_build	false	If true, finish the hash probe on an empty build table for a specific set of hash joins.
-min_table_rows_for_parallel_join_build	1000	The minimum number of table rows that can trigger the parallel hash join table build.
-debug.validate_output_from_operators	false	If set to true, then during execution of tasks, the output vectors of every operator are validated for consistency. This is an expensive check so should only be used for debugging. It can help debug issues where malformed vector cause failures or crashes by helping identify which operator is generating them.
-enable_expression_evaluation_cache	true	If true, enable caches in expression evaluation for performance, including ExecCtx::vectorPool_, ExecCtx::decodedVectorPool_, ExecCtx::selectivityVectorPool_, Expr::baseDictionary_, Expr::dictionaryCache_, and Expr::cachedDictionaryIndices_. Otherwise, disable the caches.
-max_shared_subexpr_results_cached	10	For a given shared subexpression, the maximum distinct sets of inputs we cache results for. Lambdas can call the same expression with different inputs many times, causing the results we cache to explode in size. Putting a limit contains the memory usage.
-max_split_preload_per_driver	2	Maximum number of splits to preload. Set to 0 to disable preloading.
-driver_cpu_time_slice_limit_ms	0	If not zero, specifies the cpu time slice limit in ms that a driver thread can continuously run without yielding. If it is zero, then there is no limit.
-prefixsort_normalized_key_max_bytes	128	Maximum number of bytes to use for the normalized key in prefix-sort. Use 0 to disable prefix-sort.
-prefixsort_min_rows	128	Minimum number of rows to use prefix-sort. The default value has been derived using micro-benchmarking.
-prefixsort_max_string_prefix_length	16	Maximum number of bytes to be stored in prefix-sort buffer for a string key.
-query_trace_enabled	false	Enable query tracing flag.
-query_trace_dir	(empty)	Base dir of a query to store tracing data.
-query_trace_node_id	(empty)	The plan node id whose input data will be traced. Empty string if only want to trace the query metadata.
-query_trace_max_bytes	0	The max trace bytes limit. Tracing is disabled if zero.
-query_trace_task_reg_exp	(empty)	The regexp of traced task id. We only enable trace on a task if its id matches.
-query_trace_dry_run	false	If true, we only collect the input trace for a given operator but without the actual execution.
-op_trace_directory_create_config	(empty)	Config used to create operator trace directory. This config is provided to underlying file system and the config is free form. The form should be defined by the underlying file system.
-debug_disable_expression_with_peeling	false	Disable optimization in expression evaluation to peel common dictionary layer from inputs.
-debug_disable_common_sub_expressions	false	Disable optimization in expression evaluation to re-use cached results for common sub-expressions.
-debug_disable_expression_with_memoization	false	Disable optimization in expression evaluation to re-use cached results between subsequent input batches that are dictionary encoded and have the same alphabet(underlying flat vector).
-debug_disable_expression_with_lazy_inputs	false	Disable optimization in expression evaluation to delay loading of lazy inputs unless required.
-debug_aggregation_approx_percentile_fixed_random_seed	(empty)	Fix the random seed used to create data structure used in approx_percentile. This makes the query result deterministic on single node; multi-node partial aggregation is still subject to non-determinism due to non-deterministic merge order.
-debug_memory_pool_name_regex	(empty)	When debug is enabled for memory manager, this is used to match the memory pools that need allocation callsites tracking. Default to track nothing.
-debug_memory_pool_warn_threshold_bytes	0	Warning threshold in bytes for debug memory pools. When set to a non-zero value, a warning will be logged once per memory pool when allocations cause the pool to exceed this threshold. This is useful for identifying memory usage patterns during debugging. Requires allocation tracking to be enabled via `debug_memory_pool_name_regex` for the pool. A value of 0 means no warning threshold is enforced.
-debug_lambda_function_evaluation_batch_size	10000	Some lambda functions over arrays and maps are evaluated in batches of the underlying elements that comprise the arrays/maps. This is done to make the batch size manageable as array vectors can have thousands of elements each and hit scaling limits as implementations typically expect BaseVectors to a couple of thousand entries. This lets up tune those batch sizes.
-debug_bing_tile_children_max_zoom_shift	5	The UDF `bing_tile_children` generates the children of a Bing tile based on a specified target zoom level. The number of children produced is determined by the difference between the target zoom level and the zoom level of the input tile. This configuration limits the number of children by capping the maximum zoom level difference, with a default value set to 5. This cap is necessary to prevent excessively large array outputs, which can exceed the size limits of the elements vector in the Velox array vector.
-selective_nimble_reader_enabled	false	Temporary flag to control whether selective Nimble reader should be used in this query or not. Will be removed after the selective Nimble reader is fully rolled out.
-scaled_writer_rebalance_max_memory_usage_ratio	0.7	The max ratio of a query used memory to its max capacity, and the scale writer exchange stops scaling writer processing if the query's current memory usage exceeds this ratio. The value is in the range of (0, 1].
-scaled_writer_max_partitions_per_writer	128	The max number of logical table partitions that can be assigned to a single table writer thread. The logical table partition is used by local exchange writer for writer scaling, and multiple physical table partitions can be mapped to the same logical table partition based on the hash value of calculated partitioned ids.
-scaled_writer_min_partition_processed_bytes_rebalance_threshold	134217728	Minimum amount of data processed by a logical table partition to trigger writer scaling if it is detected as overloaded by scale wrirer exchange.
-scaled_writer_min_processed_bytes_rebalance_threshold	268435456	Minimum amount of data processed by all the logical table partitions to trigger skewed partition rebalancing by scale writer exchange.
-table_scan_scaled_processing_enabled	false	If true, enables the scaled table scan processing. For each table scan plan node, a scan controller is used to control the number of running scan threads based on the query memory usage. It keeps increasing the number of running threads until the query memory usage exceeds the threshold defined by 'table_scan_scale_up_memory_usage_ratio'.
-table_scan_scale_up_memory_usage_ratio	0.7	The query memory usage ratio used by scan controller to decide if it can increase the number of running scan threads. When the query memory usage is below this ratio, the scan controller keeps increasing the running scan thread for scale up, and stop once exceeds this ratio. The value is in the range of [0, 1]. NOTE: this only applies if 'table_scan_scaled_processing_enabled' is true.
-shuffle_compression_codec	none	Specifies the shuffle compression kind which is defined by CompressionKind. If it is CompressionKind_NONE, then no compression.
-throw_exception_on_duplicate_map_keys	false	If a key is found in multiple given maps, by default that key's value in the resulting map comes from the last one of those maps. When true, throw exception on duplicate map key.
-index_lookup_join_max_prefetch_batches	0	Specifies the max number of input batches to prefetch to do index lookup ahead. If it is zero, then process one input batch at a time.
-index_lookup_join_split_output	true	If this is true, then the index join operator might split output for each input batch based on the output batch size control. Otherwise, it tries to produce a single output for each input batch.
-request_data_sizes_max_wait_sec	10	Max wait time for exchange request in seconds.
-streaming_aggregation_min_output_batch_rows	0	In streaming aggregation, wait until we have enough number of output rows to produce a batch of size specified by this. If set to 0, then Operator::outputBatchRows will be used as the min output batch rows.
-streaming_aggregation_eager_flush	false	TODO: Remove after dependencies are cleaned up.
-field_names_in_json_cast_enabled	false	If this is true, then it allows you to get the struct field names as json element names when casting a row to json.
-operator_track_expression_stats	false	If this is true, then operators that evaluate expressions will track stats for expressions that are not special forms and return them as part of their operator stats. Tracking these stats can be expensive (especially if operator stats are retrieved frequently) and this allows the user to explicitly enable it.
-enable_operator_batch_size_stats	true	If this is true, enable the operator input/output batch size stats collection in driver execution. This can be expensive for data types with a large number of columns (e.g., ROW types) as it calls estimateFlatSize() which recursively calculates sizes for all child vectors.
-unnest_split_output	true	If this is true, then the unnest operator might split output for each input batch based on the output batch size control. Otherwise, it produces a single output for each input batch.
-query_memory_reclaimer_priority	2147483647	Priority of the query in the memory pool reclaimer. Lower value means higher priority. This is used in global arbitration victim selection.
-max_num_splits_listened_to	0	The max number of input splits to listen to by SplitListener per table scan node per worker. It's up to the SplitListener implementation to respect this config.
-source	(empty)	Source of the query. Used by Presto to identify the file system username.
-client_tags	(empty)	Client tags of the query. Used by Presto to identify the file system username.
+__delta_only_variant_encoding_enabled	off	Enables the Parquet reader to identify a Variant structurally.
+access_mode	automatic	Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
+allocator_background_threads	off	Whether to enable the allocator background thread.
+allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
+allocator_flush_threshold	128.0 MiB	Peak allocation threshold at which to flush the allocator after completing a task.
+allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
+allow_community_extensions	on	Allow to load community built extensions
+allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
+allow_parser_override_extension	DEFAULT	Allow extensions to override the current parser
+allow_persistent_secrets	on	Allow the creation of persistent secrets, that are stored and loaded on restarts
+allow_unredacted_secrets	off	Allow printing unredacted secrets
+allow_unsigned_extensions	off	Allow to load extensions with invalid or missing signatures
+allowed_configs	[]	List of configuration options that are ALWAYS allowed to be changed - even when lock_configuration is true
+allowed_directories	[]	List of directories/prefixes that are ALWAYS allowed to be queried - even when enable_external_access is false
+allowed_paths	[]	List of files that are ALWAYS allowed to be queried - even when enable_external_access is false
+application_name	(empty)	Sets the application name to be reported in statistics and logs.
+arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, uuids and bits should be exported using large buffers
+arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
+arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
+arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
+asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
+auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
+auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
+autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
+autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them
+autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them
+binary_as_string	off	In Parquet files, interpret binary data as a string.
+block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
+bytea_output	hex	Sets the output format for bytea.
+ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
+catalog_error_max_schemas	100	The maximum number of schemas the system will scan for "did you mean..." style errors in the catalog
+checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
+checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
+client_encoding	UTF8	Sets the client's character set encoding.
+client_min_messages	notice	Sets the message levels that are sent to the client.
+configure_metrics	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+configure_profiling	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
+custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
+custom_profiling_settings	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+custom_user_agent	(empty)	Metadata from DuckDB callers
+debug_asof_iejoin	off	DEBUG SETTING: force use of IEJoin to implement AsOf joins
+debug_checkpoint_abort	NONE	DEBUG SETTING: trigger an abort while checkpointing for testing purposes
+debug_checkpoint_sleep_ms	0	DEBUG SETTING: time to sleep before a checkpoint
+debug_eviction_queue_sleep_micro_seconds	0	DEBUG SETTING: time for the eviction queue to sleep before acquiring shared ownership of block memory
+debug_force_external	off	DEBUG SETTING: force out-of-core computation for operators that support it, used for testing
+debug_force_no_cross_product	off	DEBUG SETTING: Force disable cross product generation when hyper graph isn't connected, used for testing
+debug_physical_table_scan_execution_strategy	DEFAULT	DEBUG SETTING: force use of given strategy for executing physical table scans
+debug_skip_checkpoint_on_commit	off	DEBUG SETTING: skip checkpointing on commit
+debug_verify_blocks	off	DEBUG SETTING: verify block metadata during checkpointing
+debug_verify_vector	NONE	DEBUG SETTING: enable vector verification
+debug_window_mode	WINDOW	DEBUG SETTING: switch window mode to use
+default_block_size	262144	The default block size for new duckdb database files (new as-in, they do not yet exist).
+default_collation	(empty)	The collation setting used when none is specified
+default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
+default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
+default_secret_storage	local_file	Allows switching the default storage for secrets
+default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
+default_transaction_read_only	off	Sets the default read-only status of new transactions.
+deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
+disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
+disable_parquet_prefetching	off	Disable the prefetching mechanism in Parquet
+disable_timestamptz_casts	off	Disable casting from timestamp to timestamptz 
+disabled_compression_methods	(empty)	Disable a specific set of compression methods (comma separated)
+disabled_filesystems	(empty)	Disable specific file systems preventing access (e.g. LocalFileSystem)
+disabled_log_types	(empty)	Sets the list of disabled loggers
+disabled_optimizers	(empty)	DEBUG SETTING: disable a specific set of optimizers (comma separated)
+duckdb_api	cpp	DuckDB API surface
+dynamic_or_filter_threshold	50	The maximum amount of OR filters we generate dynamically from a hash join
+enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
+enable_external_access	on	Allow the database to access external state (through e.g. loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc)
+enable_external_file_cache	on	Allow the database to cache external files (e.g., Parquet) in memory.
+enable_fsst_vectors	off	Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression
+enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as GeoParquet files if the spatial extension is present.
+enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
+enable_http_logging	on	(deprecated) Enables HTTP logging
+enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
+enable_logging	<slt:ignore>	Enables the logger
+enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
+enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
+enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
+enable_progress_bar	off	Enables the progress bar, printing progress to the terminal for long queries
+enable_progress_bar_print	on	Controls the printing of the progress bar, when 'enable_progress_bar' is true
+enable_server_cert_verification	off	Enable server side certificate verification.
+enable_view_dependencies	off	Enable created VIEWs to create dependencies on the referenced objects (such as tables)
+enabled_log_types	<slt:ignore>	Sets the list of enabled loggers
+errors_as_json	off	Output error messages as structured JSON instead of as a raw string
+experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
+explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
+extension_directories	[]	Set the directories to store extensions in
+extension_directory	(empty)	Set the directory to store extensions in
+external_threads	1	The number of external threads that work on DuckDB tasks.
+extra_float_digits	1	Sets the number of digits displayed for floating-point values.
+file_search_path	(empty)	A comma separated list of directories to search for input files
+force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
+force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
+force_download	off	Forces upfront download of file
+force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
+force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
+force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
+geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+hf_max_per_page	0	Debug option to limit number of items returned in list requests
+home_directory	(empty)	Sets the home directory used by the system
+http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
+http_logging_output	(empty)	(deprecated) The file to which HTTP logging output should be saved, or empty to print to the terminal
+http_proxy	(empty)	HTTP proxy host
+http_proxy_password	(empty)	Password for HTTP proxy
+http_proxy_username	(empty)	Username for HTTP proxy
+http_retries	3	HTTP retries on I/O error
+http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
+http_retry_wait_ms	100	Time between retries
+http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
+httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
+httpfs_connection_caching	off	Enable connection caching for HTTP requests
+iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
+iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
+iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
+ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
+ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
+immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
+in_hot_standby	off	Shows whether hot standby is currently active.
+index_scan_max_count	2048	The maximum index scan count sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
+index_scan_percentage	0.001	The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
+integer_datetimes	on	Shows whether datetimes are integer based.
+integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
+is_superuser	off	Shows whether the current session's user is a superuser.
+lambda_syntax	DEFAULT	Configures the use of the deprecated single arrow operator (->) for lambda functions.
+late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
+lock_configuration	off	Whether or not configurations can be altered
+log_query_path	(empty)	Specifies the path to which queries should be logged (default: NULL, queries are not logged)
+logging_level	<slt:ignore>	The log level which will be recorded in the log
+logging_mode	LEVEL_ONLY	Determines which types of log messages are logged
+logging_storage	<slt:ignore>	Set the logging storage (memory/stdout/file/<custom>)
+max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit)
+max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
+max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB)
+max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB)
+max_vacuum_tasks	100	The maximum vacuum tasks to schedule during a checkpoint.
+memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB)
+merge_http_secret_into_s3_request	on	Merges http secret params into S3 requests
+merge_join_threshold	1000	The maximum number of rows on either table to choose a merge join
+nested_loop_join_threshold	5	The maximum number of rows on either table to choose a nested loop join
+null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
+old_implicit_casting	off	Allow implicit casting to/from VARCHAR
+operator_memory_limit	NULL	The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB)
+order_by_non_integer_literal	off	Allow ordering by non-integer literals - ordering by such literals has no effect.
+ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
+parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
+partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
+partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY
+password	(empty)	The password to use. Ignored for legacy compatibility.
+perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table
+pin_threads	auto	Whether to pin threads to cores (Linux only, default AUTO: on when there are more than 64 cores)
+pivot_filter_threshold	20	The threshold to switch from using filtered aggregates to LIST with a dedicated pivot operator
+pivot_limit	100000	The maximum number of pivot columns in a pivot statement
+prefer_range_joins	off	Force use of range joins with mixed predicates
+prefetch_all_parquet_files	off	Use the prefetching mechanism for all types of parquet files
+preserve_identifier_case	off	Whether or not to preserve the identifier case, instead of always lowercasing all non-quoted identifiers
+preserve_insertion_order	on	Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses.
+produce_arrow_string_view	off	Whether Arrow strings should be produced by DuckDB in Utf8View format instead of Utf8
+profile_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
+profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
+profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
+profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
+progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+s3_access_key_id	NULL	S3 Access Key ID
+s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
+s3_endpoint	NULL	S3 Endpoint
+s3_kms_key_id	NULL	S3 KMS Key ID
+s3_region	NULL	S3 Region
+s3_requester_pays	off	S3 use requester pays mode
+s3_secret_access_key	NULL	S3 Access Key
+s3_session_token	NULL	S3 Session Token
+s3_uploader_max_filesize	800GB	S3 Uploader max filesize (between 50GB and 5TB)
+s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 and 10000)
+s3_uploader_thread_limit	50	S3 Uploader global thread limit
+s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
+s3_url_style	vhost	S3 URL style
+s3_use_ssl	on	S3 use SSL
+s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
+scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
+scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
+schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
+scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
+sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
+sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
+sdb_read_your_own_writes	on	Controls whether queries can see uncommitted writes from the current transaction.
+sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
+sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
+search_path	<slt:ignore>	Sets <slt:ignore>
+secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
+server_encoding	UTF8	Shows the server (database) character set encoding.
+server_version	18.3	Shows the server version.
+session_authorization	postgres	Sets the current session's user name.
+standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
+storage_compatibility_version	v0.10.2	Serialize on checkpoint with compatibility for a given duckdb version
+streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
+temp_directory	.tmp	Set the directory to which to write temp files
+temp_file_encryption	off	Encrypt all temporary files if database is encrypted
+threads	<slt:ignore>	The number of total threads used by the system.
+transaction_isolation	repeatable read	Sets the current transaction's isolation level.
+unsafe_disable_etag_checks	off	Disable checks on ETag consistency
+unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
+user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
+validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
+variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
+wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled)
+warnings_as_errors	off	Escalate all warnings to errors.
+worker_threads	<slt:ignore>	The number of total threads used by the system.
+write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
+zstd_min_string_length	4096	The (average) length at which to enable ZSTD compression, defaults to 4096
 
 
 # Check that SHOW ALL see updated settings
@@ -156,147 +232,223 @@ set default_transaction_isolation = 'read committed';
 query
 SHOW ALL;
 ----
-name	value	description
-sdb_log_level	authentication=<slt:ignore>,authorization=<slt:ignore>,communication=<slt:ignore>,config=<slt:ignore>,crash=<slt:ignore>,engines=<slt:ignore>,flush=<slt:ignore>,general=<slt:ignore>,httpclient=<slt:ignore>,memory=<slt:ignore>,replication=<slt:ignore>,requests=<slt:ignore>,rocksdb=<slt:ignore>,ssl=<slt:ignore>,startup=<slt:ignore>,statistics=<slt:ignore>,syscall=<slt:ignore>,threads=<slt:ignore>	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
-sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
-sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
-execution_threads	0	Sets the number of threads used for query execution. If set to 0, serial execution (execution in connection thread) is used. Otherwise the execution is separated from connection thread and desired number of threads will be tried to be used.
-join_order_algorithm	cost	Sets the join algorithm to be used for query execution. Valid values are 'cost' (the default), 'greedy', and 'syntactic'.
-search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
-extra_float_digits	1	Sets the number of digits displayed for floating-point values.
-bytea_output	hex	Sets the output format for bytea.
-client_encoding	UTF8	Sets the client's character set encoding.
-application_name	(empty)	Sets the application name to be reported in statistics and logs.
-default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
-transaction_isolation	read committed	Sets the current transaction's isolation level.
-default_transaction_read_only	off	Sets the default read-only status of new transactions.
-in_hot_standby	off	Shows whether hot standby is currently active.
-integer_datetimes	on	Shows whether datetimes are integer based.
-scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
-server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.3	Shows the server version.
-standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
-client_min_messages	notice	Sets the message levels that are sent to the client.
-session_authorization	postgres	Sets the current session's user name.
-is_superuser	off	Shows whether the current session's user is a superuser.
+name	setting	description
 DateStyle	ISO, MDY	Sets the display format for date and time values.
 IntervalStyle	postgres	Sets the display format for interval values.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
-query_max_memory_per_node	0B	Maximum memory that a query can use on a single host.
-session_timezone	(empty)	User provided session timezone. Stores a string with the actual timezone name, e.g: "America/Los_Angeles".
-adjust_timestamp_to_session_timezone	false	If true, timezone-less timestamp conversions (e.g. string to timestamp, when the string does not specify a timezone) will be adjusted to the user provided session timezone (if any). False by default.
-expression.eval_simplified	false	Whether to use the simplified expression evaluation path. False by default.
-expression.track_cpu_usage	false	Whether to track CPU usage for individual expressions (supported by call and cast expressions). False by default. Can be expensive when processing small batches, e.g. < 10K rows.
-track_operator_cpu_usage	true	Whether to track CPU usage for stages of individual operators. True by default. Can be expensive when processing small batches, e.g. < 10K rows.
-legacy_cast	false	Flags used to configure the CAST operator
-cast_match_struct_by_name	false	This flag makes the Row conversion to by applied in a way that the casting row field are matched by name instead of position.
-expression.max_array_size_in_reduce	100000	Reduce() function will throw an error if encountered an array of size greater than this.
-expression.max_compiled_regexes	100	Controls maximum number of compiled regular expression patterns per function instance per thread of execution.
-max_local_exchange_buffer_size	33554432	Used for backpressure to block local exchange producers when the local exchange buffer reaches or exceeds this size.
-max_local_exchange_partition_count	4294967295	Limits the number of partitions created by a local exchange. Partitioning data too granularly can lead to poor performance. This setting allows increasing the task concurrency for all pipelines except the ones that require a local partitioning. Affects the number of drivers for pipelines containing LocalPartitionNode and cannot exceed the maximum number of pipeline drivers configured for the task.
-min_local_exchange_partition_count_to_use_partition_buffer	33	Minimum number of local exchange output partitions to use buffered partitioning.
-max_local_exchange_partition_buffer_size	65536	Maximum size in bytes to accumulate for a single partition of a local exchange before flushing.
-local_exchange_partition_buffer_preserve_encoding	false	Try to preserve the encoding of the input vector when copying it to the buffer.
-local_merge_source_queue_size	2	Maximum number of vectors buffered in each local merge source before blocking to wait for consumers.
-exchange.max_buffer_size	33554432	Maximum size in bytes to accumulate in ExchangeQueue. Enforced approximately, not strictly.
-merge_exchange.max_buffer_size	134217728	Maximum size in bytes to accumulate among all sources of the merge exchange. Enforced approximately, not strictly.
-min_exchange_output_batch_bytes	2097152	The minimum number of bytes to accumulate in the ExchangeQueue before unblocking a consumer. This is used to avoid creating tiny batches which may have a negative impact on performance when the cost of creating vectors is high (for example, when there are many columns). To avoid latency degradation, the exchange client unblocks a consumer when 1% of the data size observed so far is accumulated.
-max_partial_aggregation_memory	16777216	(empty)
-max_extended_partial_aggregation_memory	67108864	(empty)
-abandon_partial_aggregation_min_rows	100000	(empty)
-abandon_partial_aggregation_min_pct	80	(empty)
-abandon_partial_topn_row_number_min_rows	100000	(empty)
-abandon_partial_topn_row_number_min_pct	80	(empty)
-max_elements_size_in_repeat_and_sequence	10000	(empty)
-max_page_partitioning_buffer_size	33554432	The maximum number of bytes to buffer in PartitionedOutput operator to avoid creating tiny SerializedPages.
-max_output_buffer_size	33554432	The maximum size in bytes for the task's buffered output. The producer Drivers are blocked when the buffered size exceeds this. The Drivers are resumed when the buffered size goes below OutputBufferManager::kContinuePct % of this.
-preferred_output_batch_bytes	10485760	Preferred size of batches in bytes to be returned by operators from Operator::getOutput. It is used when an estimate of average row size is known. Otherwise kPreferredOutputBatchRows is used.
-preferred_output_batch_rows	1024	Preferred number of rows to be returned by operators from Operator::getOutput. It is used when an estimate of average row size is not known. When the estimate of average row size is known, kPreferredOutputBatchBytes is used.
-max_output_batch_rows	10000	Max number of rows that could be return by operators from Operator::getOutput. It is used when an estimate of average row size is known and kPreferredOutputBatchBytes is used to compute the number of output rows.
-table_scan_getoutput_time_limit_ms	5000	TableScan operator will exit getOutput() method after this many milliseconds even if it has no data to return yet. Zero means 'no time limit'.
-hash_adaptivity_enabled	true	If false, the 'group by' code is forced to use generic hash mode hashtable.
-adaptive_filter_reordering_enabled	true	If true, the conjunction expression can reorder inputs based on the time taken to calculate them.
-spill_enabled	false	Global enable spilling flag.
-aggregation_spill_enabled	true	Aggregation spilling flag, only applies if "spill_enabled" flag is set.
-join_spill_enabled	true	Join spilling flag, only applies if "spill_enabled" flag is set.
-mixed_grouped_mode_hash_join_spill_enabled	false	Config to enable hash join spill for mixed grouped execution mode.
-order_by_spill_enabled	true	OrderBy spilling flag, only applies if "spill_enabled" flag is set.
-window_spill_enabled	true	Window spilling flag, only applies if "spill_enabled" flag is set.
-writer_spill_enabled	true	If true, the memory arbitrator will reclaim memory from table writer by flushing its buffered data to disk. only applies if "spill_enabled" flag is set.
-row_number_spill_enabled	true	RowNumber spilling flag, only applies if "spill_enabled" flag is set.
-topn_row_number_spill_enabled	true	TopNRowNumber spilling flag, only applies if "spill_enabled" flag is set.
-local_merge_spill_enabled	false	LocalMerge spilling flag, only applies if "spill_enabled" flag is set.
-local_merge_max_num_merge_sources	4294967295	Specify the max number of local sources to merge at a time.
-max_spill_run_rows	12582912	The max row numbers to fill and spill for each spill run. This is used to cap the memory used for spilling. If it is zero, then there is no limit and spilling might run out of memory. Based on offline test results, the default value is set to 12 million rows which uses ~128MB memory when to fill a spill run.
-max_spill_bytes	107374182400	The max spill bytes limit set for each query. This is used to cap the storage used for spilling. If it is zero, then there is no limit and spilling might exhaust the storage or takes too long to run. The default value is set to 100 GB.
-max_spill_level	1	The max allowed spilling level with zero being the initial spilling level. This only applies for hash build spilling which might trigger recursive spilling when the build table is too big. If it is set to -1, then there is no limit and then some extreme large query might run out of spilling partition bits (see kSpillPartitionBits) at the end. The max spill level is used in production to prevent some bad user queries from using too much io and cpu resources.
-max_spill_file_size	0	The max allowed spill file size. If it is zero, then there is no limit.
-spill_compression_codec	none	(empty)
-spill_prefixsort_enabled	false	Enable the prefix sort or fallback to timsort in spill. The prefix sort is faster than std::sort but requires the memory to build normalized prefix keys, which might have potential risk of running out of server memory.
-spill_write_buffer_size	1048576	Specifies spill write buffer size in bytes. The spiller tries to buffer serialized spill data up to the specified size before write to storage underneath for io efficiency. If it is set to zero, then spill write buffering is disabled.
-spill_read_buffer_size	1048576	Specifies the buffer size in bytes to read from one spilled file. If the underlying filesystem supports async read, we do read-ahead with double buffering, which doubles the buffer used to read from each spill file.
-spill_file_create_config	(empty)	Config used to create spill files. This config is provided to underlying file system and the config is free form. The form should be defined by the underlying file system.
-spiller_start_partition_bit	48	Default offset spill start partition bit. It is used with 'kSpillNumPartitionBits' together to calculate the spilling partition number for join spill or aggregation spill.
-spiller_num_partition_bits	3	Default number of spill partition bits. It is the number of bits used to calculate the spill partition number for hash join and RowNumber. The number of spill partitions will be power of two. NOTE: as for now, we only support up to 8-way spill partitioning.
-min_spillable_reservation_pct	5	The minimal available spillable memory reservation in percentage of the current memory usage. Suppose the current memory usage size of M, available memory reservation size of N and min reservation percentage of P, if M * P / 100 > N, then spiller operator needs to grow the memory reservation with percentage of spillableReservationGrowthPct(). This ensures we have sufficient amount of memory reservation to process the large input outlier.
-spillable_reservation_growth_pct	10	The spillable memory reservation growth percentage of the previous memory reservation size. 10 means exponential growth along a series of integer powers of 11/10. The reservation grows by this much until it no longer can, after which it starts spilling.
-writer_flush_threshold_bytes	100663296	Minimum memory footprint size required to reclaim memory from a file writer by flushing its buffered data to disk.
-presto.array_agg.ignore_nulls	false	If true, array_agg() aggregation function will ignore nulls in the input.
-spark.ansi_enabled	false	If true, Spark function's behavior is ANSI-compliant, e.g. throws runtime exception instead of returning null on invalid inputs. Note: This feature is still under development to achieve full ANSI compliance. Users can refer to the Spark function documentation to verify the current support status of a specific function.
-spark.bloom_filter.expected_num_items	1000000	The default number of expected items for the bloomfilter.
-spark.bloom_filter.num_bits	8388608	The default number of bits to use for the bloom filter.
-spark.bloom_filter.max_num_bits	4194304	The max number of bits to use for the bloom filter.
-spark.partition_id	(empty)	The current spark partition id.
-spark.legacy_date_formatter	false	If true, simple date formatter is used for time formatting and parsing. Joda date formatter is used by default.
-spark.legacy_statistical_aggregate	false	If true, Spark statistical aggregation functions including skewness, kurtosis, stddev, stddev_samp, variance, var_samp, covar_samp and corr will return NaN instead of NULL when dividing by zero during expression evaluation.
-spark.json_ignore_null_fields	true	If true, ignore null fields when generating JSON string. If false, null fields are included with a null value.
-task_writer_count	4	The number of local parallel table writer operators per task.
-task_partitioned_writer_count	4	The number of local parallel table writer operators per task for partitioned writes. If not set, use "task_writer_count".
-hash_probe_finish_early_on_empty_build	false	If true, finish the hash probe on an empty build table for a specific set of hash joins.
-min_table_rows_for_parallel_join_build	1000	The minimum number of table rows that can trigger the parallel hash join table build.
-debug.validate_output_from_operators	false	If set to true, then during execution of tasks, the output vectors of every operator are validated for consistency. This is an expensive check so should only be used for debugging. It can help debug issues where malformed vector cause failures or crashes by helping identify which operator is generating them.
-enable_expression_evaluation_cache	true	If true, enable caches in expression evaluation for performance, including ExecCtx::vectorPool_, ExecCtx::decodedVectorPool_, ExecCtx::selectivityVectorPool_, Expr::baseDictionary_, Expr::dictionaryCache_, and Expr::cachedDictionaryIndices_. Otherwise, disable the caches.
-max_shared_subexpr_results_cached	10	For a given shared subexpression, the maximum distinct sets of inputs we cache results for. Lambdas can call the same expression with different inputs many times, causing the results we cache to explode in size. Putting a limit contains the memory usage.
-max_split_preload_per_driver	2	Maximum number of splits to preload. Set to 0 to disable preloading.
-driver_cpu_time_slice_limit_ms	0	If not zero, specifies the cpu time slice limit in ms that a driver thread can continuously run without yielding. If it is zero, then there is no limit.
-prefixsort_normalized_key_max_bytes	128	Maximum number of bytes to use for the normalized key in prefix-sort. Use 0 to disable prefix-sort.
-prefixsort_min_rows	128	Minimum number of rows to use prefix-sort. The default value has been derived using micro-benchmarking.
-prefixsort_max_string_prefix_length	16	Maximum number of bytes to be stored in prefix-sort buffer for a string key.
-query_trace_enabled	false	Enable query tracing flag.
-query_trace_dir	(empty)	Base dir of a query to store tracing data.
-query_trace_node_id	(empty)	The plan node id whose input data will be traced. Empty string if only want to trace the query metadata.
-query_trace_max_bytes	0	The max trace bytes limit. Tracing is disabled if zero.
-query_trace_task_reg_exp	(empty)	The regexp of traced task id. We only enable trace on a task if its id matches.
-query_trace_dry_run	false	If true, we only collect the input trace for a given operator but without the actual execution.
-op_trace_directory_create_config	(empty)	Config used to create operator trace directory. This config is provided to underlying file system and the config is free form. The form should be defined by the underlying file system.
-debug_disable_expression_with_peeling	false	Disable optimization in expression evaluation to peel common dictionary layer from inputs.
-debug_disable_common_sub_expressions	false	Disable optimization in expression evaluation to re-use cached results for common sub-expressions.
-debug_disable_expression_with_memoization	false	Disable optimization in expression evaluation to re-use cached results between subsequent input batches that are dictionary encoded and have the same alphabet(underlying flat vector).
-debug_disable_expression_with_lazy_inputs	false	Disable optimization in expression evaluation to delay loading of lazy inputs unless required.
-debug_aggregation_approx_percentile_fixed_random_seed	(empty)	Fix the random seed used to create data structure used in approx_percentile. This makes the query result deterministic on single node; multi-node partial aggregation is still subject to non-determinism due to non-deterministic merge order.
-debug_memory_pool_name_regex	(empty)	When debug is enabled for memory manager, this is used to match the memory pools that need allocation callsites tracking. Default to track nothing.
-debug_memory_pool_warn_threshold_bytes	0	Warning threshold in bytes for debug memory pools. When set to a non-zero value, a warning will be logged once per memory pool when allocations cause the pool to exceed this threshold. This is useful for identifying memory usage patterns during debugging. Requires allocation tracking to be enabled via `debug_memory_pool_name_regex` for the pool. A value of 0 means no warning threshold is enforced.
-debug_lambda_function_evaluation_batch_size	10000	Some lambda functions over arrays and maps are evaluated in batches of the underlying elements that comprise the arrays/maps. This is done to make the batch size manageable as array vectors can have thousands of elements each and hit scaling limits as implementations typically expect BaseVectors to a couple of thousand entries. This lets up tune those batch sizes.
-debug_bing_tile_children_max_zoom_shift	5	The UDF `bing_tile_children` generates the children of a Bing tile based on a specified target zoom level. The number of children produced is determined by the difference between the target zoom level and the zoom level of the input tile. This configuration limits the number of children by capping the maximum zoom level difference, with a default value set to 5. This cap is necessary to prevent excessively large array outputs, which can exceed the size limits of the elements vector in the Velox array vector.
-selective_nimble_reader_enabled	false	Temporary flag to control whether selective Nimble reader should be used in this query or not. Will be removed after the selective Nimble reader is fully rolled out.
-scaled_writer_rebalance_max_memory_usage_ratio	0.7	The max ratio of a query used memory to its max capacity, and the scale writer exchange stops scaling writer processing if the query's current memory usage exceeds this ratio. The value is in the range of (0, 1].
-scaled_writer_max_partitions_per_writer	128	The max number of logical table partitions that can be assigned to a single table writer thread. The logical table partition is used by local exchange writer for writer scaling, and multiple physical table partitions can be mapped to the same logical table partition based on the hash value of calculated partitioned ids.
-scaled_writer_min_partition_processed_bytes_rebalance_threshold	134217728	Minimum amount of data processed by a logical table partition to trigger writer scaling if it is detected as overloaded by scale wrirer exchange.
-scaled_writer_min_processed_bytes_rebalance_threshold	268435456	Minimum amount of data processed by all the logical table partitions to trigger skewed partition rebalancing by scale writer exchange.
-table_scan_scaled_processing_enabled	false	If true, enables the scaled table scan processing. For each table scan plan node, a scan controller is used to control the number of running scan threads based on the query memory usage. It keeps increasing the number of running threads until the query memory usage exceeds the threshold defined by 'table_scan_scale_up_memory_usage_ratio'.
-table_scan_scale_up_memory_usage_ratio	0.7	The query memory usage ratio used by scan controller to decide if it can increase the number of running scan threads. When the query memory usage is below this ratio, the scan controller keeps increasing the running scan thread for scale up, and stop once exceeds this ratio. The value is in the range of [0, 1]. NOTE: this only applies if 'table_scan_scaled_processing_enabled' is true.
-shuffle_compression_codec	none	Specifies the shuffle compression kind which is defined by CompressionKind. If it is CompressionKind_NONE, then no compression.
-throw_exception_on_duplicate_map_keys	false	If a key is found in multiple given maps, by default that key's value in the resulting map comes from the last one of those maps. When true, throw exception on duplicate map key.
-index_lookup_join_max_prefetch_batches	0	Specifies the max number of input batches to prefetch to do index lookup ahead. If it is zero, then process one input batch at a time.
-index_lookup_join_split_output	true	If this is true, then the index join operator might split output for each input batch based on the output batch size control. Otherwise, it tries to produce a single output for each input batch.
-request_data_sizes_max_wait_sec	10	Max wait time for exchange request in seconds.
-streaming_aggregation_min_output_batch_rows	0	In streaming aggregation, wait until we have enough number of output rows to produce a batch of size specified by this. If set to 0, then Operator::outputBatchRows will be used as the min output batch rows.
-streaming_aggregation_eager_flush	false	TODO: Remove after dependencies are cleaned up.
-field_names_in_json_cast_enabled	false	If this is true, then it allows you to get the struct field names as json element names when casting a row to json.
-operator_track_expression_stats	false	If this is true, then operators that evaluate expressions will track stats for expressions that are not special forms and return them as part of their operator stats. Tracking these stats can be expensive (especially if operator stats are retrieved frequently) and this allows the user to explicitly enable it.
-enable_operator_batch_size_stats	true	If this is true, enable the operator input/output batch size stats collection in driver execution. This can be expensive for data types with a large number of columns (e.g., ROW types) as it calls estimateFlatSize() which recursively calculates sizes for all child vectors.
-unnest_split_output	true	If this is true, then the unnest operator might split output for each input batch based on the output batch size control. Otherwise, it produces a single output for each input batch.
-query_memory_reclaimer_priority	2147483647	Priority of the query in the memory pool reclaimer. Lower value means higher priority. This is used in global arbitration victim selection.
-max_num_splits_listened_to	0	The max number of input splits to listen to by SplitListener per table scan node per worker. It's up to the SplitListener implementation to respect this config.
-source	(empty)	Source of the query. Used by Presto to identify the file system username.
-client_tags	(empty)	Client tags of the query. Used by Presto to identify the file system username.
+__delta_only_variant_encoding_enabled	off	Enables the Parquet reader to identify a Variant structurally.
+access_mode	automatic	Access mode of the database (AUTOMATIC, READ_ONLY or READ_WRITE)
+allocator_background_threads	off	Whether to enable the allocator background thread.
+allocator_bulk_deallocation_flush_threshold	512.0 MiB	If a bulk deallocation larger than this occurs, flush outstanding allocations.
+allocator_flush_threshold	128.0 MiB	Peak allocation threshold at which to flush the allocator after completing a task.
+allow_asterisks_in_http_paths	off	Allow '*' character in URLs users can query
+allow_community_extensions	on	Allow to load community built extensions
+allow_extensions_metadata_mismatch	off	Allow to load extensions with not compatible metadata
+allow_parser_override_extension	DEFAULT	Allow extensions to override the current parser
+allow_persistent_secrets	on	Allow the creation of persistent secrets, that are stored and loaded on restarts
+allow_unredacted_secrets	off	Allow printing unredacted secrets
+allow_unsigned_extensions	off	Allow to load extensions with invalid or missing signatures
+allowed_configs	[]	List of configuration options that are ALWAYS allowed to be changed - even when lock_configuration is true
+allowed_directories	[]	List of directories/prefixes that are ALWAYS allowed to be queried - even when enable_external_access is false
+allowed_paths	[]	List of files that are ALWAYS allowed to be queried - even when enable_external_access is false
+application_name	(empty)	Sets the application name to be reported in statistics and logs.
+arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, uuids and bits should be exported using large buffers
+arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
+arrow_output_list_view	off	Whether export to Arrow format should use ListView as the physical layout for LIST columns
+arrow_output_version	1.0	Whether strings should be produced by DuckDB in Utf8View format instead of Utf8
+asof_loop_join_threshold	64	The maximum number of rows we need on the left side of an ASOF join to use a nested loop join
+auto_checkpoint_skip_wal_threshold	100000	The estimated WAL write size at which point we will skip writing to the WAL and only checkpoint. Skipping writing to the WAL means concurrent commits are blocked while the checkpoint is happening.
+auto_fallback_to_full_download	on	Allows automatically falling back to full file downloads when possible.
+autoinstall_extension_repository	(empty)	Overrides the custom endpoint for extension installation on autoloading
+autoinstall_known_extensions	off	Whether known extensions are allowed to be automatically installed when a query depends on them
+autoload_known_extensions	off	Whether known extensions are allowed to be automatically loaded when a query depends on them
+binary_as_string	off	In Parquet files, interpret binary data as a string.
+block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).
+bytea_output	hex	Sets the output format for bytea.
+ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
+catalog_error_max_schemas	100	The maximum number of schemas the system will scan for "did you mean..." style errors in the catalog
+checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED always checkpoints, DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
+checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
+client_encoding	UTF8	Sets the client's character set encoding.
+client_min_messages	notice	Sets the message levels that are sent to the client.
+configure_metrics	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+configure_profiling	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+current_transaction_invalidation_policy	STANDARD_POLICY	Which types of exceptions invalidate the database for the current transaction
+custom_extension_repository	(empty)	Overrides the custom endpoint for remote extension installation
+custom_profiling_settings	{"ATTACH_LOAD_STORAGE_LATENCY": "true", "ATTACH_REPLAY_WAL_LATENCY": "true", "BLOCKED_THREAD_TIME": "true", "CHECKPOINT_LATENCY": "true", "COMMIT_LOCAL_STORAGE_LATENCY": "true", "CPU_TIME": "true", "CUMULATIVE_CARDINALITY": "true", "CUMULATIVE_ROWS_SCANNED": "true", "EXTRA_INFO": "true", "LATENCY": "true", "OPERATOR_CARDINALITY": "true", "OPERATOR_NAME": "true", "OPERATOR_ROWS_SCANNED": "true", "OPERATOR_TIMING": "true", "OPERATOR_TYPE": "true", "QUERY_NAME": "true", "RESULT_SET_SIZE": "true", "ROWS_RETURNED": "true", "SYSTEM_PEAK_BUFFER_MEMORY": "true", "SYSTEM_PEAK_TEMP_DIR_SIZE": "true", "TOTAL_BYTES_READ": "true", "TOTAL_BYTES_WRITTEN": "true", "TOTAL_MEMORY_ALLOCATED": "true", "WAITING_TO_ATTACH_LATENCY": "true", "WAL_REPLAY_ENTRY_COUNT": "true", "WRITE_TO_WAL_LATENCY": "true"}	Accepts a JSON enabling custom metrics
+custom_user_agent	(empty)	Metadata from DuckDB callers
+debug_asof_iejoin	off	DEBUG SETTING: force use of IEJoin to implement AsOf joins
+debug_checkpoint_abort	NONE	DEBUG SETTING: trigger an abort while checkpointing for testing purposes
+debug_checkpoint_sleep_ms	0	DEBUG SETTING: time to sleep before a checkpoint
+debug_eviction_queue_sleep_micro_seconds	0	DEBUG SETTING: time for the eviction queue to sleep before acquiring shared ownership of block memory
+debug_force_external	off	DEBUG SETTING: force out-of-core computation for operators that support it, used for testing
+debug_force_no_cross_product	off	DEBUG SETTING: Force disable cross product generation when hyper graph isn't connected, used for testing
+debug_physical_table_scan_execution_strategy	DEFAULT	DEBUG SETTING: force use of given strategy for executing physical table scans
+debug_skip_checkpoint_on_commit	off	DEBUG SETTING: skip checkpointing on commit
+debug_verify_blocks	off	DEBUG SETTING: verify block metadata during checkpointing
+debug_verify_vector	NONE	DEBUG SETTING: enable vector verification
+debug_window_mode	WINDOW	DEBUG SETTING: switch window mode to use
+default_block_size	262144	The default block size for new duckdb database files (new as-in, they do not yet exist).
+default_collation	(empty)	The collation setting used when none is specified
+default_null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
+default_order	ASCENDING	The order type used when none is specified (ASC or DESC)
+default_secret_storage	local_file	Allows switching the default storage for secrets
+default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
+default_transaction_read_only	off	Sets the default read-only status of new transactions.
+deprecated_using_key_syntax	DEFAULT	Configures the use of the deprecated union syntax for USING KEY CTEs.
+disable_database_invalidation	on	Disables invalidating the database instance when encountering a fatal error. Should be used with great care, as DuckDB cannot guarantee correct behavior after a fatal error.
+disable_parquet_prefetching	off	Disable the prefetching mechanism in Parquet
+disable_timestamptz_casts	off	Disable casting from timestamp to timestamptz 
+disabled_compression_methods	(empty)	Disable a specific set of compression methods (comma separated)
+disabled_filesystems	(empty)	Disable specific file systems preventing access (e.g. LocalFileSystem)
+disabled_log_types	(empty)	Sets the list of disabled loggers
+disabled_optimizers	(empty)	DEBUG SETTING: disable a specific set of optimizers (comma separated)
+duckdb_api	cpp	DuckDB API surface
+dynamic_or_filter_threshold	50	The maximum amount of OR filters we generate dynamically from a hash join
+enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
+enable_external_access	on	Allow the database to access external state (through e.g. loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc)
+enable_external_file_cache	on	Allow the database to cache external files (e.g., Parquet) in memory.
+enable_fsst_vectors	off	Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression
+enable_geoparquet_conversion	on	Attempt to decode/encode geometry data in/as GeoParquet files if the spatial extension is present.
+enable_global_s3_configuration	on	Automatically fetch AWS credentials from environment variables.
+enable_http_logging	on	(deprecated) Enables HTTP logging
+enable_http_metadata_cache	off	Whether or not the global http metadata is used to cache HTTP metadata
+enable_logging	<slt:ignore>	Enables the logger
+enable_macro_dependencies	off	Enable created MACROs to create dependencies on the referenced objects (such as tables)
+enable_object_cache	off	[PLACEHOLDER] Legacy setting - does nothing
+enable_profiling	NULL	Enables profiling, and sets the output format (JSON, QUERY_TREE, QUERY_TREE_OPTIMIZER)
+enable_progress_bar	off	Enables the progress bar, printing progress to the terminal for long queries
+enable_progress_bar_print	on	Controls the printing of the progress bar, when 'enable_progress_bar' is true
+enable_server_cert_verification	off	Enable server side certificate verification.
+enable_view_dependencies	off	Enable created VIEWs to create dependencies on the referenced objects (such as tables)
+enabled_log_types	<slt:ignore>	Sets the list of enabled loggers
+errors_as_json	off	Output error messages as structured JSON instead of as a raw string
+experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
+explain_output	PHYSICAL_ONLY	Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)
+extension_directories	[]	Set the directories to store extensions in
+extension_directory	(empty)	Set the directory to store extensions in
+external_threads	1	The number of external threads that work on DuckDB tasks.
+extra_float_digits	1	Sets the number of digits displayed for floating-point values.
+file_search_path	(empty)	A comma separated list of directories to search for input files
+force_bitpacking_mode	AUTO	DEBUG SETTING: forces a specific bitpacking mode
+force_compression	auto	DEBUG SETTING: forces a specific compression method to be used
+force_download	off	Forces upfront download of file
+force_download_threshold	0	Forces upfront download of files smaller than the given size in bytes
+force_mbedtls_unsafe	off	Enable mbedtls for encryption (WARNING: unsafe to use)
+force_variant_shredding	INVALID	Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding.
+geometry_minimum_shredding_size	30000	Minimum size of a rowgroup to enable GEOMETRY shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+hf_max_per_page	0	Debug option to limit number of items returned in list requests
+home_directory	(empty)	Sets the home directory used by the system
+http_keep_alive	on	Keep alive connections. Setting this to false can help when running into connection failures
+http_logging_output	(empty)	(deprecated) The file to which HTTP logging output should be saved, or empty to print to the terminal
+http_proxy	(empty)	HTTP proxy host
+http_proxy_password	(empty)	Password for HTTP proxy
+http_proxy_username	(empty)	Username for HTTP proxy
+http_retries	3	HTTP retries on I/O error
+http_retry_backoff	4	Backoff factor for exponentially increasing retry wait time
+http_retry_wait_ms	100	Time between retries
+http_timeout	30	HTTP timeout read/write/connection/retry (in seconds)
+httpfs_client_implementation	default	Select which is the HTTPUtil implementation to be used
+httpfs_connection_caching	off	Enable connection caching for HTTP requests
+iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for testing automatic refresh
+iceberg_use_metadata_log	on	Whether or not to make use of the (optional) 'metadata-log' of a table to ensure atomicity guarantees hold, at the cost of making another GET for json metadata in rare circumstances
+iceberg_via_aws_sdk_for_catalog_interactions	off	Use legacy code to interact with AWS-based catalogs, via AWS's SDK
+ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
+ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
+immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called
+in_hot_standby	off	Shows whether hot standby is currently active.
+index_scan_max_count	2048	The maximum index scan count sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
+index_scan_percentage	0.001	The index scan percentage sets a threshold for index scans. If fewer than MAX(index_scan_max_count, index_scan_percentage * total_row_count) rows match, we perform an index scan instead of a table scan.
+integer_datetimes	on	Shows whether datetimes are integer based.
+integer_division	off	Whether or not the / operator defaults to integer division, or to floating point division
+is_superuser	off	Shows whether the current session's user is a superuser.
+lambda_syntax	DEFAULT	Configures the use of the deprecated single arrow operator (->) for lambda functions.
+late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization
+lock_configuration	off	Whether or not configurations can be altered
+log_query_path	(empty)	Specifies the path to which queries should be logged (default: NULL, queries are not logged)
+logging_level	<slt:ignore>	The log level which will be recorded in the log
+logging_mode	LEVEL_ONLY	Determines which types of log messages are logged
+logging_storage	<slt:ignore>	Set the logging storage (memory/stdout/file/<custom>)
+max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit)
+max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
+max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB)
+max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB)
+max_vacuum_tasks	100	The maximum vacuum tasks to schedule during a checkpoint.
+memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB)
+merge_http_secret_into_s3_request	on	Merges http secret params into S3 requests
+merge_join_threshold	1000	The maximum number of rows on either table to choose a merge join
+nested_loop_join_threshold	5	The maximum number of rows on either table to choose a nested loop join
+null_order	NULLS_LAST	NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST)
+old_implicit_casting	off	Allow implicit casting to/from VARCHAR
+operator_memory_limit	NULL	The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB)
+order_by_non_integer_literal	off	Allow ordering by non-integer literals - ordering by such literals has no effect.
+ordered_aggregate_threshold	262144	The number of rows to accumulate before sorting, used for tuning
+parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same files multiple times
+partitioned_write_flush_threshold	524288	The threshold in number of rows after which we flush a thread state when writing using PARTITION_BY
+partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY
+password	(empty)	The password to use. Ignored for legacy compatibility.
+perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table
+pin_threads	auto	Whether to pin threads to cores (Linux only, default AUTO: on when there are more than 64 cores)
+pivot_filter_threshold	20	The threshold to switch from using filtered aggregates to LIST with a dedicated pivot operator
+pivot_limit	100000	The maximum number of pivot columns in a pivot statement
+prefer_range_joins	off	Force use of range joins with mixed predicates
+prefetch_all_parquet_files	off	Use the prefetching mechanism for all types of parquet files
+preserve_identifier_case	off	Whether or not to preserve the identifier case, instead of always lowercasing all non-quoted identifiers
+preserve_insertion_order	on	Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses.
+produce_arrow_string_view	off	Whether Arrow strings should be produced by DuckDB in Utf8View format instead of Utf8
+profile_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
+profiling_coverage	SELECT	The profiling coverage (SELECT or ALL)
+profiling_mode	NULL	The profiling mode (STANDARD or DETAILED)
+profiling_output	(empty)	The file to which profile output should be saved, or empty to print to the terminal
+progress_bar_time	2000	Sets the time (in milliseconds) how long a query needs to take before we start printing a progress bar
+s3_access_key_id	NULL	S3 Access Key ID
+s3_allow_recursive_globbing	on	Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing)
+s3_endpoint	NULL	S3 Endpoint
+s3_kms_key_id	NULL	S3 KMS Key ID
+s3_region	NULL	S3 Region
+s3_requester_pays	off	S3 use requester pays mode
+s3_secret_access_key	NULL	S3 Access Key
+s3_session_token	NULL	S3 Session Token
+s3_uploader_max_filesize	800GB	S3 Uploader max filesize (between 50GB and 5TB)
+s3_uploader_max_parts_per_file	10000	S3 Uploader max parts per file (between 1 and 10000)
+s3_uploader_thread_limit	50	S3 Uploader global thread limit
+s3_url_compatibility_mode	off	Disable Globs and Query Parameters on S3 URLs
+s3_url_style	vhost	S3 URL style
+s3_use_ssl	on	S3 use SSL
+s3_version_id_pinning	off	Pin S3 reads to a specific object version for consistency
+scalar_subquery_error_on_multiple_rows	on	When a scalar subquery returns multiple rows - return a random row instead of returning an error.
+scheduler_process_partial	off	Partially process tasks before rescheduling - allows for more scheduler fairness between separate queries
+schema	public	Sets the default search schema. Equivalent to setting search_path to a single value.
+scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+sdb_disable_top_k_optimization	off	When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so WAND (Block-Max top-K) pruning never engages. Default: false (optimization on).
+sdb_ef_search	0	Per-session override for the HNSW search-time neighbourhood size (efSearch). 0 (default) uses Top-K value instead.
+sdb_log_level	authentication=warning,authorization=info,communication=info,config=info,crash=info,engines=info,flush=info,general=info,httpclient=warning,memory=info,replication=info,requests=fatal,rocksdb=warning,ssl=warning,startup=info,statistics=info,syscall=info,threads=warning	Sets the server log level. Use 'topic=level' format, e.g. 'all=trace', 'requests=debug'. Valid levels: fatal, error, warning, info, debug, trace. Valid topics: all, authentication, authorization, communication, config, crash, engines, flush, fuerte, general, httpclient, iresearch, memory, replication, requests, rocksdb, search, ssl, startup, statistics, syscall, threads.
+sdb_read_your_own_writes	on	Controls whether queries can see uncommitted writes from the current transaction.
+sdb_scored_terms_limit	1024	The maximum number of terms to consider for scoring in multi-term filters. Higher values give more accurate IDF-style scoring at the cost of memory and per-query work. 0 disables scored-term collection entirely.
+sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
+search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values
+secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
+server_encoding	UTF8	Shows the server (database) character set encoding.
+server_version	18.3	Shows the server version.
+session_authorization	postgres	Sets the current session's user name.
+standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
+storage_compatibility_version	v0.10.2	Serialize on checkpoint with compatibility for a given duckdb version
+streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
+temp_directory	.tmp	Set the directory to which to write temp files
+temp_file_encryption	off	Encrypt all temporary files if database is encrypted
+threads	<slt:ignore>	The number of total threads used by the system.
+transaction_isolation	read committed	Sets the current transaction's isolation level.
+unsafe_disable_etag_checks	off	Disable checks on ETag consistency
+unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
+user	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+username	<slt:ignore>	The username to use. Ignored for legacy compatibility.
+vacuum_rebuild_indexes	0	(Experimental) Allow vacuum to compact row groups on tables with bound ART indexes, rebuilding the indexes afterward. Tables with a row count exceeding this threshold are skipped. 0 = disabled.
+validate_external_file_cache	VALIDATE_ALL	Cache validation mode: VALIDATE_ALL (default, validate all cache entries), VALIDATE_REMOTE (validate only remote cache entries), or NO_VALIDATION (disable cache validation).
+variant_minimum_shredding_size	30000	Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup
+wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB)
+wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled)
+warnings_as_errors	off	Escalate all warnings to errors.
+worker_threads	<slt:ignore>	The number of total threads used by the system.
+write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
+zstd_min_string_length	4096	The (average) length at which to enable ZSTD compression, defaults to 4096

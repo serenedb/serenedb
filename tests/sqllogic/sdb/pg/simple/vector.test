@@ -1,118 +1,303 @@
 query
-SELECT ARRAY[0.0, 1.0, 2.0] <-> ARRAY[2.0, 1.0, 0.0];
+SELECT [0.0, 1.0, 2.0]::FLOAT[3] <-> [2.0, 1.0, 0.0]::FLOAT[3];
 ----
 ?column?
-8
+2.8<slt:ignore>
 
 
 query
-SELECT ARRAY[0, 1, 2] <-> ARRAY[2, 1, 0];
-----
-?column?
-8
-
-
-query
-SELECT l2_distance(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+SELECT l2_distance([0.0, 1.0, 2.0]::FLOAT[3], ARRAY[2.0, 1.0, 0.0]::FLOAT[3]);
 ----
 l2_distance
+2.8<slt:ignore>
+
+
+query
+SELECT l2_sqr_distance([0.0, 1.0, 2.0]::FLOAT[3], ARRAY[2.0, 1.0, 0.0]::FLOAT[3]);
+----
+l2_sqr_distance
 8
 
 
 query
-SELECT ARRAY[0.0, 1.0, 2.0] <=> ARRAY[2.0, 1.0, 0.0];
+SELECT [0.0, 1.0, 2.0]::FLOAT[3] <=> [2.0, 1.0, 0.0]::FLOAT[3];
 ----
 ?column?
-0.2<slt:ignore>
+0.8<slt:ignore>
 
 
 query
-SELECT cosine_distance(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+SELECT cosine_distance([0.0, 1.0, 2.0]::FLOAT[3], [0.0, -1.0, -2.0]::FLOAT[3]);
 ----
 cosine_distance
-0.2<slt:ignore>
+2
 
 
 query
-SELECT ARRAY[0.0, 1.0, 2.0] <+> ARRAY[2.0, 1.0, 0.0];
+SELECT cosine_similarity([0.0, 1.0, 2.0]::FLOAT[3], [0.0, -1.0, -2.0]::FLOAT[3]);
+----
+cosine_similarity
+-1
+
+
+query
+SELECT [0.0, 1.0, 2.0]::FLOAT[3] <+> [2.0, 1.0, 0.0]::FLOAT[3];
 ----
 ?column?
 4
 
 
 query
-SELECT l1_distance(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
+SELECT l1_distance([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
 ----
 l1_distance
 4
 
 
 query
-SELECT l1_distance(ARRAY[0, 1, 2], ARRAY[2, 1, 0]);
+SELECT [0.0, 1.0, 2.0]::FLOAT[3] <#> [2.0, 1.0, 0.0]::FLOAT[3];
+----
+?column?
+-1
+
+
+query
+SELECT inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+----
+inner_product
+1
+
+
+query
+SELECT negative_inner_product([0.0, 1.0, 2.0]::FLOAT[3], [2.0, 1.0, 0.0]::FLOAT[3]);
+----
+negative_inner_product
+-1
+
+
+query
+SELECT l2_norm([0.0, 3.0, 4.0]::FLOAT[3]);
+----
+l2_norm
+5
+
+
+query
+SELECT l2_norm([0.0, 3.0, 4.0]::DOUBLE[3]);
+----
+l2_norm
+5
+
+
+query
+SELECT l1_norm([0.0, -3.0, 4.0]::FLOAT[3]);
+----
+l1_norm
+7
+
+
+query
+SELECT l1_norm([0.0, -3.0, 4.0]::DOUBLE[3]);
+----
+l1_norm
+7
+
+
+query
+SELECT l2_norm([0.0, 0.0, 0.0]::FLOAT[3]);
+----
+l2_norm
+0
+
+
+query
+SELECT l2_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l2_norm
+NULL
+
+
+query
+SELECT l1_norm([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l1_norm
+NULL
+
+
+query error
+SELECT l2_norm(ARRAY[]);
+
+
+query error
+SELECT l1_norm(ARRAY[]);
+
+
+query
+SELECT l2_norm(l2_normalize([0.0, 3.0, 4.0]::FLOAT[3]));
+----
+l2_norm
+1
+
+
+query
+SELECT l2_norm(l2_normalize([0.0, 3.0, 4.0]::DOUBLE[3]));
+----
+l2_norm
+1
+
+
+query
+SELECT (l2_normalize([0.0, 3.0, 4.0]::FLOAT[3])) AS x;
+----
+x
+{0,0.6,0.8}
+
+
+query
+SELECT (l2_normalize([0.0, 3.0, 4.0]::DOUBLE[3])) AS x;
+----
+x
+{0,0.6<slt:ignore>,0.8<slt:ignore>}
+
+
+query
+SELECT l1_norm(l1_normalize([0.0, -3.0, 4.0]::FLOAT[3]));
+----
+l1_norm
+1
+
+
+query
+SELECT l1_norm(l1_normalize([0.0, -3.0, 4.0]::DOUBLE[3]));
+----
+l1_norm
+1
+
+
+query
+SELECT (l1_normalize([0.0, -3.0, 4.0]::DOUBLE[3])) AS x;
+----
+x
+{0,-0.42<slt:ignore>,0.57<slt:ignore>}
+
+
+query
+SELECT (l1_normalize([0.0, -3.0, 4.0]::FLOAT[3])) AS x;
+----
+x
+{0,-0.42<slt:ignore>,0.57<slt:ignore>}
+
+
+query
+SELECT l2_normalize([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l2_normalize
+NULL
+
+
+query
+SELECT l1_normalize([1.0, 2.0, NULL]::FLOAT[3]);
+----
+l1_normalize
+NULL
+
+
+query error
+SELECT l2_normalize(ARRAY[]);
+
+
+query error
+SELECT l1_normalize(ARRAY[]);
+
+
+query
+SELECT l2_distance(l2_normalize([3.0, 4.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+l2_distance
+0.28<slt:ignore>
+
+
+query
+SELECT cosine_distance(l2_normalize([3.0, 5.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+cosine_distance
+0.07<slt:ignore>
+
+
+query
+SELECT cosine_distance([3.0, 4.0]::FLOAT[2], [4.0, 3.0]::FLOAT[2]);
+----
+cosine_distance
+0.04<slt:ignore>
+
+
+query
+SELECT inner_product(l2_normalize([3.0, 4.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+inner_product
+0.96<slt:ignore>
+
+
+query
+SELECT 1 - cosine_distance(l2_normalize([3.0, 4.0]::FLOAT[2]), l2_normalize([4.0, 3.0]::FLOAT[2]));
+----
+?column?
+0.96<slt:ignore>
+
+
+query
+SELECT l1_distance(l1_normalize([3.0, 4.0]::DOUBLE[2]), l1_normalize([4.0, 3.0]::DOUBLE[2]));
 ----
 l1_distance
-4
+0.28<slt:ignore>
 
 
 query
-SELECT ARRAY[0.0, 1.0, 2.0] <#> ARRAY[2.0, 1.0, 0.0];
+SELECT l2_norm(l2_normalize([1.0, 2.0, 3.0]::DOUBLE[3]));
 ----
-?column?
--1
-
-
-query
-SELECT inner_product(ARRAY[0.0, 1.0, 2.0], ARRAY[2.0, 1.0, 0.0]);
-----
-inner_product
--1
-
-
-query
-SELECT inner_product(ARRAY[0, 1, 2], ARRAY[2, 1, 0]);
-----
-inner_product
--1
+l2_norm
+1
 
 
 query error
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <=> [2.0, 1.0, 0.0]::FLOAT[3];
 
 
 query error
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <-> [2.0, 1.0, 0.0]::FLOAT[3];
 
 
 query error
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <+> [2.0, 1.0, 0.0]::FLOAT[3];
 
 
 query error
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <#> ARRAY[2.0, 1.0, 0.0];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <#> [2.0, 1.0, 0.0]::FLOAT[3];
 
 
 query
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <=> ARRAY[2.0, 1.0, 0.0, NULL];
-----
-?column?
-NULL
-
-query
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <-> ARRAY[2.0, 1.0, 0.0, NULL];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <=> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
 ----
 ?column?
 NULL
 
 
 query
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <+> ARRAY[2.0, 1.0, 0.0, NULL];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <-> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
+----
+?column?
+NULL
+
+
+query
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <+> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
 ----
 ?column?
 NULL
 
 
 query ?
-SELECT ARRAY[0.0, 1.0, 2.0, 4.0] <#> ARRAY[2.0, 1.0, 0.0, NULL];
+SELECT [0.0, 1.0, 2.0, 4.0]::FLOAT[4] <#> [2.0, 1.0, 0.0, NULL]::FLOAT[4];
 ----
 ?column?
 NULL
@@ -138,16 +323,16 @@ statement ok
 CREATE TABLE t(name TEXT, emb REAL[2]);
 
 
-statement error db error: ERROR: column "pablo" does not exist
-INSERT INTO t VALUES ("pablo", ARRAY[6.5, 1.101]), ("vedernikoff", ARRAY[1.002, 8.098]);
+statement error
+INSERT INTO t VALUES ("pablo", [6.5, 1.101]::REAL[2]), ("vedernikoff", ARRAY[1.002, 8.098]);
 
 
 statement ok
-INSERT INTO t VALUES ('pablo', ARRAY[6.5, 1.101]), ('vedernikoff', ARRAY[1.002, 8.098]);
+INSERT INTO t VALUES ('pablo', [6.5, 1.101]::REAL[2]), ('vedernikoff', ARRAY[1.002, 8.098]);
 
 
 query error
-SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0];
+SELECT * FROM t ORDER BY t.emb <-> [1.0, 1.0, 1.0]::REAL[3];
 
 
 statement ok
@@ -155,7 +340,7 @@ CREATE TABLE c(name TEXT, emb REAL ARRAY[2]);
 
 
 statement ok
-INSERT INTO c VALUES ('sdb', ARRAY[4.23, 3.007]), ('clickclack', ARRAY[4.078, 6.054]);
+INSERT INTO c VALUES ('sdb', [4.23, 3.007]::REAL[2]), ('clickclack', ARRAY[4.078, 6.054]);
 
 
 query
@@ -172,10 +357,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	clickclack
-vedernikoff	clickclack
 pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
 
 
 query
@@ -208,19 +393,19 @@ DROP TABLE c;
 
 
 statement ok
-CREATE TABLE t(name TEXT, emb DOUBLE PRECISION ARRAY);
+CREATE TABLE t(name TEXT, emb DOUBLE ARRAY[2]);
 
 
 statement ok
-INSERT INTO t VALUES ('pablo', ARRAY[6.5, 1.101]), ('vedernikoff', ARRAY[1.002, 8.098]);
+INSERT INTO t VALUES ('pablo', [6.5, 1.101]::DOUBLE[2]), ('vedernikoff', [1.002, 8.098]::DOUBLE[2]);
 
 
 statement ok
-CREATE TABLE c(name TEXT, emb DOUBLE PRECISION ARRAY);
+CREATE TABLE c(name TEXT, emb DOUBLE ARRAY[2]);
 
 
 statement ok
-INSERT INTO c VALUES ('sdb', ARRAY[4.23, 3.007]), ('clickclack', ARRAY[4.078, 6.054]);
+INSERT INTO c VALUES ('sdb', [4.23, 3.007]::DOUBLE[2]), ('clickclack', [4.078, 6.054]::DOUBLE[2]);
 
 
 query
@@ -237,10 +422,10 @@ query
 SELECT t.name, c.name FROM t CROSS JOIN c ORDER BY t.emb <=> c.emb;
 ----
 name	name
-vedernikoff	sdb
-pablo	clickclack
-vedernikoff	clickclack
 pablo	sdb
+vedernikoff	clickclack
+pablo	clickclack
+vedernikoff	sdb
 
 
 query

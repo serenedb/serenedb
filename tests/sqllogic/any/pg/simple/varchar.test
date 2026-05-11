@@ -1,116 +1,116 @@
 # Basic varchar literal
 query
-SELECT 'hello'::varchar;
+SELECT 'hello'::text;
 ----
-varchar
+text
 hello
 
 
 # Empty varchar
 query
-SELECT ''::varchar;
+SELECT ''::text;
 ----
-varchar
+text
 (empty)
 
 
 # Varchar with spaces
 query
-SELECT '  spaces  '::varchar;
+SELECT '  spaces  '::text;
 ----
-varchar
+text
   spaces  
 
 
 # Varchar with special characters
 query
-SELECT 'hello@world#2024'::varchar;
+SELECT 'hello@world#2024'::text;
 ----
-varchar
+text
 hello@world#2024
 
 
 # Varchar with newline character (escape syntax)
 query
-SELECT E'line1\nline2\nline3'::varchar;
+SELECT E'line1\nline2\nline3'::text;
 ----
-varchar
+text
 line1\nline2\nline3
 
 
 query
-SELECT E'line1\nline2'::varchar;
+SELECT E'line1\nline2'::text;
 ----
-varchar
+text
 line1\nline2
 
 
 query
-SELECT E'line1'::varchar;
+SELECT E'line1'::text;
 ----
-varchar
+text
 line1
 
 
 # Varchar without newline character
 query
-SELECT 'line1\nline2'::varchar;
+SELECT 'line1\nline2'::text;
 ----
-varchar
+text
 line1\\nline2
 
 
 
 # Varchar with tab (escape syntax)
 query
-SELECT E'tab\there'::varchar;
+SELECT E'tab\there'::text;
 ----
-varchar
+text
 tab\there
 
 
 # Varchar with quotes
 query
-SELECT 'it''s working'::varchar;
+SELECT 'it''s working'::text;
 ----
-varchar
+text
 it's working
 
 # Varchar with backslash
 query
-SELECT '\it works'::varchar;
+SELECT '\it works'::text;
 ----
-varchar
+text
 \\it works
 
 
 # Varchar with unicode — Chinese
 query
-SELECT '你好世界'::varchar;
+SELECT '你好世界'::text;
 ----
-varchar
+text
 你好世界
 
 
 # Varchar with unicode — emoji
 query
-SELECT '🌍🌎🌏'::varchar;
+SELECT '🌍🌎🌏'::text;
 ----
-varchar
+text
 🌍🌎🌏
 
 
 # Varchar with unicode — accented
 query
-SELECT 'café résumé naïve'::varchar;
+SELECT 'café résumé naïve'::text;
 ----
-varchar
+text
 café résumé naïve
 
 
 # Varchar array — single element
 query
-SELECT ARRAY['hello'::varchar];
+SELECT ARRAY['hello'::text];
 ----
 array
 {hello}
@@ -118,7 +118,7 @@ array
 
 # Varchar array — multiple elements
 query
-SELECT ARRAY['admin'::varchar, 'editor'::varchar, 'auditor'::varchar];
+SELECT ARRAY['admin'::text, 'editor'::text, 'auditor'::text];
 ----
 array
 {admin,editor,auditor}
@@ -126,7 +126,7 @@ array
 
 # Varchar array — spaces
 query
-SELECT ARRAY['hello world'::varchar, 'foo bar'::varchar];
+SELECT ARRAY['hello world'::text, 'foo bar'::text];
 ----
 array
 {"hello world","foo bar"}
@@ -134,7 +134,7 @@ array
 
 # Varchar array — with empty strings
 query
-SELECT ARRAY[''::varchar, ''::varchar, ''::varchar];
+SELECT ARRAY[''::text, ''::text, ''::text];
 ----
 array
 {"","",""}
@@ -142,7 +142,7 @@ array
 
 # Varchar array — unicode strings
 query
-SELECT ARRAY['世界'::varchar, '🌍'::varchar, 'café'::varchar];
+SELECT ARRAY['世界'::text, '🌍'::text, 'café'::text];
 ----
 array
 {世界,🌍,café}
@@ -150,15 +150,15 @@ array
 
 # NULL varchar
 query
-SELECT NULL::varchar;
+SELECT NULL::text;
 ----
-varchar
+text
 NULL
 
 
 # Varchar array with NULL
 query
-SELECT ARRAY[NULL::varchar];
+SELECT ARRAY[NULL::text];
 ----
 array
 {NULL}
@@ -166,7 +166,7 @@ array
 
 # Varchar array with NULL and values
 query
-SELECT ARRAY['value'::varchar, NULL::varchar, 'another'::varchar];
+SELECT ARRAY['value'::text, NULL::text, 'another'::text];
 ----
 array
 {value,NULL,another}
@@ -174,7 +174,7 @@ array
 
 # Array with quotes
 query
-SELECT ARRAY['value'::varchar, NULL::varchar, '"quotes"'::varchar];
+SELECT ARRAY['value'::text, NULL::text, '"quotes"'::text];
 ----
 array
 {value,NULL,"\\"quotes\\""}
@@ -182,7 +182,7 @@ array
 
 # Array with item containing spaces
 query
-SELECT ARRAY['value'::varchar, NULL::varchar, '"quo tes"'::varchar];
+SELECT ARRAY['value'::text, NULL::text, '"quo tes"'::text];
 ----
 array
 {value,NULL,"\\"quo tes\\""}
@@ -190,16 +190,16 @@ array
 
 # Array with item containing both unicode and spaces
 query
-SELECT ARRAY['世界'::varchar, '🌍'::varchar, 'ca   fé'::varchar];
+SELECT ARRAY['世界'::text, '🌍'::text, 'ca   fé'::text];
 ----
 array
 {世界,🌍,"ca   fé"}
 
 # From bytea
 query
-SELECT ('\x01 02 03 4d'::bytea)::varchar;
+SELECT ('\x01 02 03 4d'::bytea)::text;
 ----
-varchar
+text
 \\x0102034d
 
 statement ok
@@ -208,14 +208,14 @@ SET BYTEA_OUTPUT = 'EsCaPe';
 # From bytea
 skipif pg-wire-extended
 query
-SELECT ('\x01 02 03 4d'::bytea)::varchar;
+SELECT ('\x01 02 03 4d'::bytea)::text;
 ----
-varchar
+text
 \\001\\002\\003M
 
 
 query
-SELECT 'str' = 'str'::varchar;
+SELECT 'str' = 'str'::text;
 ----
 ?column?
 t

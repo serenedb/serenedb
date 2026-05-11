@@ -20,9 +20,13 @@
 
 #pragma once
 
+#include <duckdb/common/types/value.hpp>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "catalog/object.h"
+#include "catalog/scorer_options.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 
@@ -43,10 +47,10 @@ struct CreateIndexColumn {
   const catalog::Column* catalog_column{nullptr};
   std::string_view name;
   std::string opclass;
-  // TODO(Dronplane): parse opclass options. Passing List* down to concrete
-  // index might be an option but that will leak SQL parsing too deep. On the
-  // other hand if we just parse to some generic map of strings it is unclear
-  // how to implement "help".
+  std::vector<std::string> json_path;
+  // nullopt = no parentheses in source SQL; an (empty or non-empty) map means
+  // parens were present, distinguishing `col opclass` from `col opclass ()`.
+  std::optional<duckdb::case_insensitive_map_t<duckdb::Value>> opclass_options;
 };
 
 class Index : public SchemaObject {
@@ -82,7 +86,8 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
   ObjectId database_id, std::string_view schema_name, ObjectId schema_id,
   ObjectId id, ObjectId relation_id, std::string name,
   std::vector<catalog::CreateIndexColumn> columns,
-  const std::shared_ptr<const Snapshot>& snapshot);
+  const std::shared_ptr<const Snapshot>& snapshot,
+  std::optional<ScorerOptions> wand_scorer);
 
 }  // namespace catalog
 }  // namespace sdb

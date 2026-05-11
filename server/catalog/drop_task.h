@@ -23,10 +23,12 @@
 #include <absl/strings/substitute.h>
 
 #include <chrono>
+#include <duckdb/main/database_manager.hpp>
 #include <exception>
 #include <limits>
 #include <memory>
 #include <yaclib/async/future.hpp>
+#include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
@@ -37,13 +39,11 @@
 #include "catalog/object_dependency.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
-#include "catalog/types.h"
 #include "general_server/scheduler.h"
 #include "rest_server/serened_single.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/table_shard.h"
-#include "yaclib/async/make.hpp"
-
 namespace sdb::catalog {
 
 using AsyncResult = yaclib::Future<Result>;
@@ -78,7 +78,7 @@ class DropTask {
     return task->Execute();
   }
 
-  bool AllowToDrop() const noexcept {
+  virtual bool AllowToDrop() const noexcept {
     return _object.expired() && AllowToDropDependencies();
   }
 
@@ -138,6 +138,18 @@ struct IndexShardDrop final : public DropTask,
   AsyncResult Execute() final { SDB_UNREACHABLE(); }
 
   bool AllowToDropDependencies() const noexcept final { return true; }
+
+  bool AllowToDrop() const noexcept final {
+    auto obj = _object.lock();
+    if (obj && obj->GetType() == ObjectType::InvertedIndexShard) {
+      const auto& shard =
+        basics::downCast<search::InvertedIndexShard>(*obj.get());
+      if (shard.HasActiveSegments()) {
+        return false;
+      }
+    }
+    return DropTask::AllowToDrop();
+  }
 };
 
 struct IndexDrop final : public DropTask,
@@ -187,21 +199,23 @@ struct TableDrop final : public DropTask,
  public:
   static constexpr std::string_view kName = "table drop";
 
-  TableDrop(ObjectId id, TableType type, ObjectId shard_id, uint64_t table_size,
-            std::vector<std::shared_ptr<IndexDrop>> indexes, ObjectId schema_id,
+  TableDrop(ObjectId id, ObjectId shard_id, uint64_t table_size,
+            std::vector<std::shared_ptr<IndexDrop>> indexes,
+            std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
     : DropTask{id, schema_id, is_root},
-      _type{type},
       _indexes{std::move(indexes)},
+      _owned_sequences{std::move(owned_sequences)},
       _shard_drop{std::make_shared<TableShardDrop>(shard_id, id, table_size)} {}
 
   TableDrop(const std::shared_ptr<Table>& table,
             const std::shared_ptr<TableShard>& shard,
-            std::vector<std::shared_ptr<IndexDrop>> indexes, ObjectId schema_id,
+            std::vector<std::shared_ptr<IndexDrop>> indexes,
+            std::vector<ObjectId> owned_sequences, ObjectId schema_id,
             bool is_root = false)
     : DropTask{table, schema_id, is_root},
-      _type{table->GetTableType()},
       _indexes{std::move(indexes)},
+      _owned_sequences{std::move(owned_sequences)},
       _shard_drop{std::make_shared<TableShardDrop>(
         shard, table->GetId(),
         table->Columns().size() * shard->GetTableStats().num_rows)} {}
@@ -226,8 +240,8 @@ struct TableDrop final : public DropTask,
   }
 
  private:
-  TableType _type;
   std::vector<std::shared_ptr<IndexDrop>> _indexes;
+  std::vector<ObjectId> _owned_sequences;
   std::shared_ptr<TableShardDrop> _shard_drop;
 };
 

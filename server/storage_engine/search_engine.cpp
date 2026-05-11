@@ -38,7 +38,6 @@
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
-#include "catalog/analyzer.h"
 #include "catalog/catalog.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/index.h"
@@ -51,6 +50,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 #include "search/resource_manager.hpp"
+#include "search/wal_recovery.h"
 #include "storage_engine/search_engine.h"
 
 using namespace std::chrono_literals;
@@ -62,8 +62,6 @@ REGISTER_ANALYZER_VPACK(IdentityAnalyzer, IdentityAnalyzer::make,
                         IdentityAnalyzer::normalize);
 REGISTER_ANALYZER_JSON(IdentityAnalyzer, IdentityAnalyzer::make_json,
                        IdentityAnalyzer::normalize_json);
-REGISTER_ANALYZER_VPACK(wildcard::Analyzer, wildcard::Analyzer::make,
-                        wildcard::Analyzer::normalize);
 
 DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
               "Number of inverted indexes currently out of sync");
@@ -74,6 +72,7 @@ const std::string kCommitThreadsParam("--search.commit-threads");
 const std::string kConsolidationThreadsParam("--search.consolidation-threads");
 const std::string kFailOnOutOfSync("--search.fail-queries-on-out-of-sync");
 const std::string kSkipRecovery("--search.skip-recovery");
+const std::string kSkipWalRecovery("--search.skip-wal-recovery");
 const std::string kCacheLimit("--search.columns-cache-limit");
 const std::string kCacheOnlyLeader("--search.columns-cache-only-leader");
 const std::string kSearchThreadsLimit("--search.execution-threads-limit");
@@ -168,6 +167,15 @@ number based on the number of cores in the system.)");
     "recreated.",
     new options::VectorParameter<options::StringParameter>(
       &_skip_recovery_items));
+
+  options->addOption(
+    kSkipWalRecovery,
+    "Skip the entire WAL replay phase for inverted indexes on startup. "
+    "Lagging shards will start serving queries with stale content; the "
+    "missing WAL delta will not be applied. Intended for diagnostics -- "
+    "data loss is permanent for the skipped delta unless you crash again "
+    "with a longer recovery window.",
+    new options::BooleanParameter(&_skip_wal_recovery));
 
   options
     ->addOption(kFailOnOutOfSync,
@@ -272,6 +280,8 @@ void SearchEngine::start() {
       .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
     _thread_pools->Get(ThreadGroup::Consolidation)
       .start(_consolidation_threads, IR_NATIVE_STRING("search:compact"));
+
+    InitInvertedIndexes(_skip_wal_recovery);
 
     SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
              "..", _commit_threads, "] commit thread(s), [",

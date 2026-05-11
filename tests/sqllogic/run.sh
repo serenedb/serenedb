@@ -54,24 +54,86 @@ validate_boolean() {
 	}
 }
 
+# Trap is armed before launch_external so a MinIO startup failure still cleans
+# up the container. Helpers clear their state var before doing work, so repeat
+# invocations (e.g. INT then EXIT) are no-ops on the second pass.
+MINIO_CONTAINER_NAME=""
+MINIO_LOG_FILE=""
+ICEBERG_REST_CONTAINER_NAME=""
+ICEBERG_REST_LOG_FILE=""
+TEST_NETWORK=""
+cancel_pid=""
+
+cleanup_test_network() {
+	if [[ -n "$TEST_NETWORK" ]]; then
+		local net="$TEST_NETWORK"
+		TEST_NETWORK=""
+		# Removed only after the containers that joined it are gone, otherwise
+		# docker errors with "network has active endpoints". cleanup_all calls
+		# this last for that reason.
+		docker network rm "$net" >/dev/null 2>&1 || true
+	fi
+}
+
+cleanup_minio() {
+	if [[ -n "$MINIO_CONTAINER_NAME" ]]; then
+		local name="$MINIO_CONTAINER_NAME"
+		MINIO_CONTAINER_NAME=""
+		if [[ -n "$MINIO_LOG_FILE" ]]; then
+			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
+			docker logs "$name" >"${MINIO_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping MinIO container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
+cleanup_iceberg_rest() {
+	if [[ -n "$ICEBERG_REST_CONTAINER_NAME" ]]; then
+		local name="$ICEBERG_REST_CONTAINER_NAME"
+		ICEBERG_REST_CONTAINER_NAME=""
+		if [[ -n "$ICEBERG_REST_LOG_FILE" ]]; then
+			echo "Saving iceberg-rest logs to ${ICEBERG_REST_LOG_FILE}..."
+			docker logs "$name" >"${ICEBERG_REST_LOG_FILE}" 2>&1 || true
+		fi
+		echo "Stopping iceberg-rest container..."
+		docker rm -fv "$name" >/dev/null 2>&1 || true
+	fi
+}
+
+cleanup_cancel_pid() {
+	if [[ -n "$cancel_pid" ]]; then
+		local pid="$cancel_pid"
+		cancel_pid=""
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+}
+
+cleanup_all() {
+	cleanup_cancel_pid
+	cleanup_iceberg_rest
+	cleanup_minio
+	cleanup_test_network
+}
+
+trap cleanup_all EXIT
+# Signal handlers just exit; EXIT trap then runs cleanup_all. Without these,
+# a default `trap ... INT` would run cleanup but NOT exit -- bash would resume
+# the test loop after Ctrl-C, which is not what we want.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
 launch_s3() {
 	PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	MINIO_CONTAINER_NAME="${PREFIX}-serenedb-test-minio-$$"
-	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/minio.log"
+	MINIO_LOG_FILE="${LOG_DIR:-/tmp}/${MINIO_CONTAINER_NAME}.log"
 	export MINIO_ACCESS_KEY="minioadmin"
 	export MINIO_SECRET_KEY="minioadmin"
 	export MINIO_BUCKET="testbucket"
 	export MINIO_PORT
 	MINIO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
-
-	cleanup_minio() {
-		if [[ -n "${MINIO_CONTAINER_NAME:-}" ]]; then
-			echo "Saving MinIO logs to ${MINIO_LOG_FILE}..."
-			docker logs "$MINIO_CONTAINER_NAME" >"${MINIO_LOG_FILE}" 2>&1 || true
-			echo "Stopping MinIO container..."
-			docker rm -fv "$MINIO_CONTAINER_NAME" 2>/dev/null || true
-		fi
-	}
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -79,7 +141,9 @@ launch_s3() {
 		export MINIO_HOST="$MINIO_CONTAINER_NAME"
 		export MINIO_PORT=9000
 	else
-		network_args=(-p "$MINIO_PORT:9000")
+		TEST_NETWORK="${PREFIX}-serenedb-test-net-$$"
+		docker network create "$TEST_NETWORK" >/dev/null
+		network_args=(--network "$TEST_NETWORK" -p "$MINIO_PORT:9000")
 		export MINIO_HOST="localhost"
 	fi
 
@@ -93,7 +157,9 @@ launch_s3() {
 
 	echo "Waiting for MinIO to be ready..."
 	for i in $(seq 1 30); do
-		if bash -c "echo > /dev/tcp/${MINIO_HOST}/${MINIO_PORT}" 2>/dev/null; then
+		if docker exec "$MINIO_CONTAINER_NAME" \
+			mc alias set local http://127.0.0.1:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" \
+			>/dev/null 2>&1; then
 			echo "MinIO is ready."
 			break
 		fi
@@ -106,21 +172,112 @@ launch_s3() {
 
 	echo "Creating bucket '$MINIO_BUCKET'..."
 	docker exec "$MINIO_CONTAINER_NAME" \
-		mc alias set local http://localhost:9000 "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1
-	docker exec "$MINIO_CONTAINER_NAME" \
-		mc mb "local/$MINIO_BUCKET" >/dev/null 2>&1 || true
+		mc mb "local/$MINIO_BUCKET"
 
 	echo "MinIO running (host=$MINIO_HOST, port=$MINIO_PORT), bucket '$MINIO_BUCKET' created."
 	echo
 }
 
+# Launches an Apache Iceberg REST catalog (iceberg-rest-fixture) backed by
+# MinIO as the warehouse. iceberg-rest itself doesn't serve table data --
+# parquet/avro files have to live on storage both the catalog (writes) and
+# serened (reads) can reach -- so MinIO is required.
+launch_iceberg_rest() {
+	local prefix
+	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
+	ICEBERG_REST_CONTAINER_NAME="${prefix}-serenedb-test-iceberg-rest-$$"
+	ICEBERG_REST_LOG_FILE="${LOG_DIR:-/tmp}/${ICEBERG_REST_CONTAINER_NAME}.log"
+	export ICEBERG_WAREHOUSE="demo"
+
+	local docker_args=(
+		-d
+		--name "$ICEBERG_REST_CONTAINER_NAME"
+	)
+	# Join the same docker network as MinIO so the catalog reaches it by
+	# container name. In compose mode that's COMPOSE_NETWORK (the consumer is
+	# the tests container on that network, so use the iceberg-rest container's
+	# name + internal port and skip -p); in local mode it's TEST_NETWORK and
+	# the consumer is serened on host, so publish a host port.
+	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+		docker_args+=(--network "$COMPOSE_NETWORK")
+		export ICEBERG_REST_HOST="$ICEBERG_REST_CONTAINER_NAME"
+		export ICEBERG_REST_PORT=8181
+	else
+		ICEBERG_REST_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')
+		export ICEBERG_REST_HOST="localhost"
+		export ICEBERG_REST_PORT
+		docker_args+=(--network "$TEST_NETWORK" -p "${ICEBERG_REST_PORT}:8181")
+	fi
+	export ICEBERG_REST_URL="http://${ICEBERG_REST_HOST}:${ICEBERG_REST_PORT}"
+
+	# S3 warehouse on MinIO. Both containers share the network above, so the
+	# catalog reaches MinIO via container name on its internal port.
+	local catalog_env=(
+		-e "AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY}"
+		-e "AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY}"
+		-e "AWS_REGION=us-east-1"
+		-e "CATALOG_WAREHOUSE=s3://${MINIO_BUCKET}/warehouse/"
+		-e "CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO"
+		-e "CATALOG_S3_ENDPOINT=http://${MINIO_CONTAINER_NAME}:9000"
+		-e "CATALOG_S3_PATH__STYLE__ACCESS=true"
+	)
+
+	echo "Starting iceberg-rest (port=$ICEBERG_REST_PORT)..."
+	docker run "${docker_args[@]}" "${catalog_env[@]}" \
+		apache/iceberg-rest-fixture:1.10.1
+
+	echo "Waiting for iceberg-rest to be ready..."
+	for i in $(seq 1 60); do
+		if bash -c "echo > /dev/tcp/${ICEBERG_REST_HOST}/${ICEBERG_REST_PORT}" 2>/dev/null; then
+			echo "iceberg-rest is ready."
+			break
+		fi
+		if [[ $i -eq 60 ]]; then
+			echo "ERROR: iceberg-rest failed to start within 60 seconds"
+			exit 1
+		fi
+		sleep 1
+	done
+
+	echo "iceberg-rest running (url=$ICEBERG_REST_URL)."
+	echo
+}
+
 launch_external() {
 	shopt -s globstar
-	local test_files
-	test_files=$(compgen -G "$test" 2>/dev/null || true)
+	local pattern test_files needs_s3=false needs_iceberg=false
+	for pattern in "${tests[@]}"; do
+		test_files=$(compgen -G "$pattern" 2>/dev/null || true)
+		if echo "$test_files" | grep -q '_s3\.'; then
+			needs_s3=true
+		fi
+		if echo "$test_files" | grep -q 'iceberg'; then
+			needs_iceberg=true
+		fi
+	done
 	shopt -u globstar
-	if echo "$test_files" | grep -q '_s3\.'; then
+
+	# iceberg-rest's warehouse runs on MinIO (see launch_iceberg_rest), so any
+	# iceberg test transitively requires MinIO too.
+	if [[ "$needs_iceberg" == "true" ]]; then
+		needs_s3=true
+		# Path-based iceberg_scan() tests (e.g. equality_deletes regression)
+		# read static fixtures shipped with the duckdb_iceberg submodule.
+		# Inside the sqllogic compose the workspace is mounted at /serenedb;
+		# in local-runner mode the same path is the repo root.
+		local repo_root
+		repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+		if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
+			export ICEBERG_FIXTURES="/serenedb/third_party/duckdb_iceberg/data/persistent"
+		else
+			export ICEBERG_FIXTURES="${repo_root}/third_party/duckdb_iceberg/data/persistent"
+		fi
+	fi
+	if [[ "$needs_s3" == "true" ]]; then
 		launch_s3
+	fi
+	if [[ "$needs_iceberg" == "true" ]]; then
+		launch_iceberg_rest
 	fi
 }
 
@@ -174,7 +331,13 @@ parse_options() {
 				;;
 			esac
 
-			declare -g "$var_name"="$value"
+			# --test is repeatable: accumulate into the `tests` array. Every
+			# other option is scalar.
+			if [[ "$key" == "test" ]]; then
+				tests+=("$value")
+			else
+				declare -g "$var_name"="$value"
+			fi
 			;;
 		*)
 			echo "Unknown option: --$key" >&2
@@ -185,15 +348,25 @@ parse_options() {
 	done
 }
 
+# --test is repeatable; collect into array and fall back to the single default
+# glob when none are provided.
+tests=()
+
 # Example usage:
 parse_options "$@" || exit 1
 
 # Apply defaults for any options not provided
 for var_name in "${!defaults[@]}"; do
+	# `test` is handled as an array (`tests`); skip the scalar default here.
+	[[ "$var_name" == "test" ]] && continue
 	if [[ -z "${!var_name}" ]]; then
 		declare -g "$var_name"="${defaults[$var_name]}"
 	fi
 done
+
+if [[ ${#tests[@]} -eq 0 ]]; then
+	tests=("${defaults[test]}")
+fi
 
 # Display the values (for demonstration)
 IFS=',' read -ra engines_list <<<"$engines"
@@ -210,7 +383,7 @@ echo "Single Port: $single_port"
 echo "Single Port SSL: $single_port_ssl"
 echo "Cluster Port: $cluster_port"
 echo "Engines: $engines"
-echo "Test Path: $test"
+echo "Test Paths: ${tests[*]}"
 echo "JUnit Path: $junit"
 echo "Runner: $runner"
 echo "Jobs: $jobs"
@@ -227,7 +400,9 @@ echo "Cancellation: $cancellation"
 
 if [[ "$fast" == "true" ]]; then
 	# Strip trailing * to exclude .test_slow files (*.test* -> *.test)
-	test="${test%\*}"
+	for i in "${!tests[@]}"; do
+		tests[i]="${tests[i]%\*}"
+	done
 fi
 
 launch_external
@@ -279,8 +454,7 @@ run_tests() {
 		skip_opt="--skip $skip"
 	fi
 
-	# Execute the command and capture the exit code
-	sqllogictest "$test" \
+	sqllogictest "${tests[@]}" \
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
 		--label "$database" \
@@ -307,22 +481,35 @@ build_type="release"
 SQLLOGIC_TARGET="${CARGO_TARGET_DIR:-${SCRIPT_DIR}/../../.cache/cargo-target}"
 mkdir -p "$SQLLOGIC_TARGET"
 
-build_start=$(date +%s)
-if [[ "$debug" == "true" ]]; then
-	cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet
-else
-	cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --release --quiet
+# SDB_SKIP_SQLLOGIC_BUILD: a parent harness has already built sqllogictest
+# into SQLLOGIC_TARGET. Multiple parallel run.sh invocations against a shared
+# target dir (recovery harness fans out one per test) race on cargo's internal
+# locks and occasionally exit non-zero even when the cached artifact is fine;
+# that surfaces as a passing test reported as a failure.
+if [[ "${SDB_SKIP_SQLLOGIC_BUILD:-0}" != "1" ]]; then
+	build_start=$(date +%s)
+	if [[ "$debug" == "true" ]]; then
+		cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --quiet
+	else
+		cargo build --manifest-path "$runner/sqllogictest-bin/Cargo.toml" --target-dir "$SQLLOGIC_TARGET" --release --quiet
+	fi
+	test_exit_code=$?
+	echo "sqllogictest build: $(($(date +%s) - build_start))s"
+	[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 fi
-test_exit_code=$?
-echo "sqllogictest build: $(($(date +%s) - build_start))s"
 export PATH="${SQLLOGIC_TARGET}/${build_type}:${PATH}"
-[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 
-cancel_pid=""
-trap 'declare -f cleanup_minio >/dev/null 2>&1 && cleanup_minio; kill "$cancel_pid" 2>/dev/null || true' EXIT TERM
 if [[ "$cancellation" == "true" ]]; then
+	# TODO: move this cancellation driver into the sqllogictest-rs runner.
+	# Doing it there is more native -- we can cancel queries at the protocol
+	# level instead of spraying SIGINTs across our own process group and
+	# relying on `trap '' INT` to shield the parent shell. Known issues here:
+	#   * `trap '' INT` is never restored, so INT stays ignored for the rest
+	#     of the script (including the health check below).
+	#   * `kill -INT 0` hits every process in our pgid; children inherit
+	#     SIG_IGN from the parent's `trap '' INT`, so the runner only sees
+	#     SIGINT because tokio reinstalls its own handler on startup.
 	trap '' INT
-	# One background process that keeps sending SIGINT at random intervals
 	(
 		while true; do
 			sleep "$(awk "BEGIN{srand(); printf \"%.3f\", 0.05 + rand() * 2.0}")"
@@ -342,9 +529,7 @@ done
 
 if [[ "$cancellation" == "true" ]]; then
 	# Stop the SIGINT sender before the health check so pg_isready isn't killed
-	kill "$cancel_pid" 2>/dev/null || true
-	wait "$cancel_pid" 2>/dev/null || true
-	cancel_pid=""
+	cleanup_cancel_pid
 
 	local_port="${single_port:-$cluster_port}"
 	# TODO: pg_isready -h "$host" -p "$local_port" returns "no attempt" (exit 3)

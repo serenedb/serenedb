@@ -41,6 +41,7 @@ enum class ResolveType {
   Function,
   Relation,
   Tokenizer,
+  Type,
 };
 
 class ResolutionTable {
@@ -52,6 +53,7 @@ class ResolutionTable {
     _relations = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _functions = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
     _tokenizers = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
+    _types = std::make_shared<MapById<MapByNamePtr<ObjectId>>>();
   }
   template<ResolveType Type>
   std::optional<ObjectId> ResolveObject(ObjectId parent_id,
@@ -84,6 +86,8 @@ class ResolutionTable {
         return resolve(_relations, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return resolve(_tokenizers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::Type) {
+        return resolve(_types, parent_id, object_name);
       } else {
         SDB_UNREACHABLE();
       }
@@ -156,9 +160,12 @@ class ResolutionTable {
           auto [_, insert_tokenizer] =
             CloneData(_tokenizers)
               .try_emplace(object_id, std::make_shared<MapByName<ObjectId>>());
+          auto [_, insert_type] = CloneData(_types).try_emplace(
+            object_id, std::make_shared<MapByName<ObjectId>>());
           SDB_ASSERT(insert_relation);
           SDB_ASSERT(insert_function);
           SDB_ASSERT(insert_tokenizer);
+          SDB_ASSERT(insert_type);
           return {};
         }
         return {ERROR_SERVER_DUPLICATE_NAME};
@@ -168,6 +175,10 @@ class ResolutionTable {
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return insert(_tokenizers, parent_id, object_name, object_id)
+                 ? Result{}
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
+      } else if constexpr (Type == ResolveType::Type) {
+        return insert(_types, parent_id, object_name, object_id)
                  ? Result{}
                  : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else {
@@ -192,6 +203,7 @@ class ResolutionTable {
         CloneData(_relations).erase(id);
         CloneData(_functions).erase(id);
         CloneData(_tokenizers).erase(id);
+        CloneData(_types).erase(id);
       }
       return {id};
     } else if constexpr (Type == ResolveType::Role) {
@@ -225,12 +237,15 @@ class ResolutionTable {
           CloneData(_relations).erase(*result);
           CloneData(_functions).erase(*result);
           CloneData(_tokenizers).erase(*result);
+          CloneData(_types).erase(*result);
         }
         return result;
       } else if constexpr (Type == ResolveType::Relation) {
         return remove(_relations, parent_id, object_name);
       } else if constexpr (Type == ResolveType::Tokenizer) {
         return remove(_tokenizers, parent_id, object_name);
+      } else if constexpr (Type == ResolveType::Type) {
+        return remove(_types, parent_id, object_name);
       } else {
         SDB_UNREACHABLE();
       }
@@ -265,6 +280,12 @@ class ResolutionTable {
     return *it->second | std::views::values;
   }
 
+  auto GetTypeIds(ObjectId schema_id) const {
+    auto it = _types->find(schema_id);
+    SDB_ASSERT(it != _types->end());
+    return *it->second | std::views::values;
+  }
+
  private:
   template<typename T>
   using MapByName = containers::FlatHashMap<std::string_view, T>;
@@ -294,6 +315,8 @@ class ResolutionTable {
   MapByIdPtr<MapByNamePtr<ObjectId>> _functions;
   // schema_id -> (tokenizer_name -> object_id)
   MapByIdPtr<MapByNamePtr<ObjectId>> _tokenizers;
+  // schema_id -> (type_name -> object_id)
+  MapByIdPtr<MapByNamePtr<ObjectId>> _types;
 };
 
 }  // namespace sdb::catalog

@@ -1,0 +1,112 @@
+control substitution on
+
+# WAL index recovery with two inverted indexes on different tables.
+# Each shard drives its own RunWalRecovery independently — verify both
+# recover correctly in the same crash.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY mi_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE wal_mi_a(id INTEGER PRIMARY KEY, txt TEXT);
+
+statement ok
+CREATE TABLE wal_mi_b(id INTEGER PRIMARY KEY, txt TEXT);
+
+statement ok
+INSERT INTO wal_mi_a VALUES (1, 'ayylmao one');
+
+statement ok
+INSERT INTO wal_mi_b VALUES (1, 'beebop one');
+
+statement ok
+CREATE INDEX wal_mi_a_idx ON wal_mi_a USING inverted(id, txt mi_dict);
+
+statement ok
+CREATE INDEX wal_mi_b_idx ON wal_mi_b USING inverted(id, txt mi_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_mi_a;
+
+statement ok
+VACUUM (UPDATE_INDEXES) wal_mi_b;
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+statement ok
+INSERT INTO wal_mi_a VALUES (2, 'ayylmao two'), (3, 'ayylmao three');
+
+statement ok
+INSERT INTO wal_mi_b VALUES (2, 'beebop two'), (3, 'beebop three');
+
+statement ok
+DELETE FROM wal_mi_a WHERE id = 1;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection mi_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) wal_mi_a;
+
+connection mi_after
+statement ok
+VACUUM (UPDATE_INDEXES) wal_mi_b;
+
+# Table A: id=1 deleted, id=2 and id=3 added by recovery
+connection mi_after
+query
+SELECT COUNT(*) FROM wal_mi_a_idx WHERE txt @@ ts_phrase('ayylmao one');
+----
+count
+0
+
+connection mi_after
+query
+SELECT id FROM wal_mi_a_idx WHERE txt @@ ts_phrase('ayylmao two');
+----
+id
+2
+
+connection mi_after
+query
+SELECT id FROM wal_mi_a_idx WHERE txt @@ ts_phrase('ayylmao three');
+----
+id
+3
+
+# Table B: id=1 kept, id=2 and id=3 added by recovery
+connection mi_after
+query
+SELECT id FROM wal_mi_b_idx WHERE txt @@ ts_phrase('beebop one');
+----
+id
+1
+
+connection mi_after
+query
+SELECT id FROM wal_mi_b_idx WHERE txt @@ ts_phrase('beebop two');
+----
+id
+2
+
+connection mi_after
+query
+SELECT id FROM wal_mi_b_idx WHERE txt @@ ts_phrase('beebop three');
+----
+id
+3

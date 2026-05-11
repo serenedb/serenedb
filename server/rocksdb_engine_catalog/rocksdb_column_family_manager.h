@@ -39,11 +39,12 @@ struct RocksDBColumnFamilyManager {
   enum class Family : size_t {
     Default = 0,      // serenedb connector data
     Definitions = 1,  // serenedb catalog data
+    Sequences = 2,    // monotonic per-table counters (UInt64Add merge op)
     Invalid = std::numeric_limits<size_t>::max(),
   };
 
-  static constexpr size_t kMinNumberOfColumnFamilies = 2;
-  static constexpr size_t kNumberOfColumnFamilies = 2;
+  static constexpr size_t kMinNumberOfColumnFamilies = 3;
+  static constexpr size_t kNumberOfColumnFamilies = 3;
 
   static rocksdb::ColumnFamilyHandle* get(Family family);
   static void set(Family family, rocksdb::ColumnFamilyHandle* handle);

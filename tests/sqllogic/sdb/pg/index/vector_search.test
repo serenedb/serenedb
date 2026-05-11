@@ -1,0 +1,1213 @@
+statement ok
+CREATE TABLE t (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX l2_index ON t USING inverted(id, emb hnsw (metric = 'l2'));
+
+
+statement count 4
+INSERT INTO t VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY emb <-> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY l2_norm(emb) LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│          TopK: 5          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY l2_distance([0, 0, 0]::FLOAT[3], emb) LIMIT 10;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│          TopK: 10         │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# Shouldn't be optimized for ANN
+query
+EXPLAIN SELECT id FROM l2_index ORDER BY emb <=> [0.0, 0.0, 0.0]::FLOAT[3] LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #0            │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│           Top: 5          │
+│      Order By: #1 ASC     │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             id            │
+│    (emb <=> [0, 0, 0])    │
+│                           │
+│          ~4 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│             id            │
+│            emb            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query ?
+SELECT id FROM l2_index ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 1;
+----
+id
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+query
+SELECT id FROM l2_index ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+2
+
+
+query
+SELECT id FROM l2_index ORDER BY l2_norm(emb) LIMIT 2;
+----
+id
+3
+2
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <-> emb < 0.7;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│      Radius: 0.700000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE [0, 0, 0]::FLOAT[3] <#> emb < 0.7;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│(([0, 0, 0] <#> emb) < 0.7)│
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│            emb            │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE 1 > l2_distance(emb, [1, 1, 1]::FLOAT[3]) ORDER BY id;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│          ORDER_BY         │
+│    ────────────────────   │
+│      l2_index.id ASC      │
+│                           │
+│          ~0 rows          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│      Radius: 1.000000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100;
+----
+id
+2
+3
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│     Radius: 100.000000    │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│       ((#0 % 2) = 0)      │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id % 2 = 0;
+----
+id
+2
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id = 3;
+----
+id
+3
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id > 2;
+----
+id
+3
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND id = 999;
+----
+id
+
+
+query
+SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 100 AND (id = 2 OR id = 3);
+----
+id
+2
+3
+
+
+statement ok
+CREATE TABLE t_l2 (id INT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX l2_tuned ON t_l2 USING inverted(emb hnsw (metric = 'l2', m = 16, ef_construction = 64));
+
+statement count 4
+INSERT INTO t_l2 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_l2;
+
+query
+SELECT id FROM l2_tuned ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+2
+
+
+statement ok
+CREATE TABLE t_l1 (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX l1_index ON t_l1 USING inverted(emb hnsw (metric = 'l1'));
+
+
+statement count 4
+INSERT INTO t_l1 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_l1;
+
+
+query
+EXPLAIN SELECT id FROM l1_index ORDER BY l1_norm(emb) LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l1_index      │
+│      Lookup: rocksdb      │
+│          TopK: 5          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+EXPLAIN SELECT id FROM l1_index ORDER BY emb <+> [0, 1, 0]::FLOAT[3] LIMIT 5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l1_index      │
+│      Lookup: rocksdb      │
+│          TopK: 5          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+
+query
+SELECT id FROM l1_index ORDER BY emb <+> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM l1_index ORDER BY l1_norm(emb) LIMIT 2;
+----
+id
+1
+3
+
+
+statement ok
+DROP INDEX l1_index;
+
+
+statement ok
+CREATE TABLE t_cos (id INT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX cos_index ON t_cos USING inverted(emb hnsw (metric = 'cosine'));
+
+statement count 4
+INSERT INTO t_cos VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_cos;
+
+query
+EXPLAIN SELECT id FROM cos_index ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: cos_index     │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM cos_index ORDER BY emb <=> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+query
+EXPLAIN SELECT id FROM cos_index ORDER BY cosine_similarity(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: cos_index     │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM cos_index ORDER BY cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: cos_index     │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: cos_index     │
+│      Lookup: rocksdb      │
+│      Radius: 0.500000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM cos_index WHERE cosine_distance(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 0.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (cosine_distance(emb, [1, │
+│        0, 0]) > 0.5)      │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: cos_index     │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│            emb            │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+statement ok
+CREATE TABLE t_ip (id INT, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX ip_index ON t_ip USING inverted(emb hnsw (metric = 'ip', m = 8, ef_construction = 40));
+
+statement count 4
+INSERT INTO t_ip VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_ip;
+
+query
+EXPLAIN SELECT id FROM ip_index ORDER BY emb <#> [1.0, 0.0, 0.0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: ip_index      │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM ip_index ORDER BY emb <#> [0.0, 1.0, 0.5]::FLOAT[3] LIMIT 2;
+----
+id
+4
+2
+
+
+query
+EXPLAIN SELECT id FROM ip_index ORDER BY negative_inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: ip_index      │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM ip_index ORDER BY inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) DESC LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: ip_index      │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM ip_index WHERE negative_inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) < 0.0;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: ip_index      │
+│      Lookup: rocksdb      │
+│      Radius: 0.000000     │
+│          Dims: 3          │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM ip_index WHERE inner_product(emb, [1.0, 0.0, 0.0]::FLOAT[3]) > 50;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│             #1            │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           FILTER          │
+│    ────────────────────   │
+│ (inner_product(emb, [1, 0,│
+│          0]) > 50)        │
+│                           │
+│           ~1 row          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│      Index: ip_index      │
+│      Lookup: rocksdb      │
+│                           │
+│        Projections:       │
+│            emb            │
+│             id            │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+statement ok
+CREATE INDEX l1_index ON t_l1 USING inverted(emb hnsw (Metric = 'L1', M = 24, EF_CONSTRUCTION = 48));
+
+statement count 4
+INSERT INTO t_l1 VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]), (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_l1;
+
+query
+SELECT id FROM l1_index ORDER BY l1_distance(emb, [0, 0, 0]::FLOAT[3]) LIMIT 2;
+----
+id
+1
+1
+
+
+statement ok
+CREATE TABLE t_err (id INT, emb FLOAT[3], emb_int INT[3]);
+
+statement error
+CREATE INDEX bad_opt ON t_err USING inverted(emb hnsw (metric = 'l2', ef_search = 50));
+----
+db error: ERROR: Failed to create index: Column 'emb': unknown hnsw option 'ef_search'. Accepted options: metric (string: l2|l1|cosine|ip, REQUIRED), m (int >= 2, default 32), ef_construction (int >= 1, default 40, must be >= m)
+
+
+statement error
+CREATE INDEX bad_metric ON t_err USING inverted(emb hnsw (metric = 'manhattan'));
+----
+db error: ERROR: Failed to create index: Column 'emb': unknown hnsw metric 'manhattan'. Expected one of: l2 l1 cosine ip
+
+
+statement error
+CREATE INDEX bad_m_low ON t_err USING inverted(emb hnsw (metric = 'l2', m = 1));
+----
+db error: ERROR: Failed to create index: Column 'emb': hnsw option 'm' must be at least 2, got 1
+
+
+statement error
+CREATE INDEX bad_m_high ON t_err USING inverted(emb hnsw (metric = 'l2', m = 200));
+
+statement error
+CREATE INDEX bad_ef ON t_err USING inverted(emb hnsw (metric = 'l2', m = 32, ef_construction = 8));
+
+statement error
+CREATE INDEX bad_m_type ON t_err USING inverted(emb hnsw (metric = 'l2', m = 'sixteen'));
+----
+db error: ERROR: Failed to create index: Column 'emb': hnsw option 'm' must be an integer, got 'sixteen'
+
+
+statement error
+CREATE INDEX bad_metric_type ON t_err USING inverted(emb hnsw (metric = 7));
+----
+db error: ERROR: Failed to create index: Column 'emb': unknown hnsw metric '7'. Expected one of: l2 l1 cosine ip
+
+
+statement error
+CREATE INDEX bad_ef_zero ON t_err USING inverted(emb hnsw (metric = 'l2', ef_construction = 0));
+----
+db error: ERROR: Failed to create index: Column 'emb': hnsw option 'ef_construction' must be positive, got 0
+
+
+statement error
+CREATE INDEX bad_scalar ON t_err USING inverted(id hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'id' must be an ARRAY type to use the 'hnsw' opclass
+
+
+statement error
+CREATE INDEX bad_int_arr ON t_err USING inverted(emb_int hnsw (metric = 'l2'));
+----
+db error: ERROR: Failed to create index: Column 'emb_int' must be ARRAY(FLOAT, N) to use the 'hnsw' opclass
+
+
+statement error
+CREATE INDEX m_real_empty ON t_err USING inverted(emb hnsw ());
+----
+db error: ERROR: Failed to create index: Column 'emb': hnsw opclass requires the 'metric' option (one of: l2, l1, cosine, ip). Example: hnsw (metric = 'l2')
+
+
+statement ok
+CREATE INDEX m_real_real ON t_err USING inverted(emb hnsw (metric = 'l2', m = 16));
+
+statement ok
+DROP INDEX m_real_real;
+
+
+statement error
+CREATE INDEX m_real_bare ON t_err USING inverted(emb hnsw);
+----
+db error: ERROR: Failed to create index: Built-in opclass 'hnsw' on column 'emb' requires options; use 'hnsw (...)'
+
+
+statement error
+CREATE INDEX m_fake_empty ON t_err USING inverted(emb fake_idx ());
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
+
+
+statement error
+CREATE INDEX m_fake_real ON t_err USING inverted(emb fake_idx (m = 16));
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
+
+
+statement error
+CREATE INDEX m_fake_fake ON t_err USING inverted(emb fake_idx (foo = 1));
+----
+db error: ERROR: Failed to create index: Unknown built-in opclass 'fake_idx' on column 'emb' (known: hnsw)
+
+
+statement error
+CREATE INDEX m_fake_name ON t_err USING inverted(emb fake_dict);
+----
+db error: ERROR: Failed to create index: Unknown opclass 'fake_dict' on column 'emb': not a built-in type (known: hnsw) and no text dictionary by that name in schema 'public'
+
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE id % 2 = 0 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│       ((#0 % 2) = 0)      │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM l2_index WHERE id = 2 OR id = 4 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+2
+4
+
+
+
+query
+SELECT id FROM l2_index WHERE id = 999 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+
+
+query
+SELECT id FROM l2_index WHERE id > 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+2
+
+
+statement ok
+CREATE TABLE t_proj (id INT, category INT, payload VARCHAR, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX proj_idx ON t_proj USING inverted(emb hnsw (metric = 'l2'));
+
+
+statement count 4
+INSERT INTO t_proj VALUES (1, 1, 'a', [100, 0, 0]::FLOAT[3]), (2, 2, 'b', [50, 50, 50]::FLOAT[3]), (3, 1, 'c', [50, 25, 50]::FLOAT[3]), (4, 2, 'd', [50, 50, 100]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_proj;
+
+
+query
+SELECT id FROM proj_idx WHERE category = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+1
+
+
+query
+SELECT id FROM proj_idx WHERE category = 2 AND id < 4 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+2
+
+
+query
+SELECT id FROM proj_idx WHERE category = 1 AND emb <-> [0, 0, 0]::FLOAT[3] < 200 ORDER BY id;
+----
+id
+1
+3
+
+
+query
+EXPLAIN SELECT id FROM proj_idx WHERE category = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: proj_idx      │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│      Filter: (#0 = 1)     │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE emb <-> [0, 0, 0]::FLOAT[3] < 200 AND cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│     Radius: 200.000000    │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│ (cosine_distance(#0, [0, 0│
+│        , 0]) < 0.5)       │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM l2_index WHERE cosine_distance(emb, [0, 0, 0]::FLOAT[3]) < 0.5 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: l2_index      │
+│      Lookup: rocksdb      │
+│     Radius: 200.000000    │
+│          Dims: 3          │
+│                           │
+│          Filter:          │
+│ (cosine_distance(#0, [0, 0│
+│        , 0]) < 0.5)       │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+EXPLAIN SELECT id FROM proj_idx WHERE category = 1 AND emb <-> [0, 0, 0]::FLOAT[3] < 200;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│  IRESEARCH_ANN_RANGE_SCAN │
+│    ────────────────────   │
+│      Index: proj_idx      │
+│      Lookup: rocksdb      │
+│     Radius: 200.000000    │
+│          Dims: 3          │
+│      Filter: (#0 = 1)     │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(template = 'text', locale = 'en_US.UTF-8', case = 'none', stemming = false, accent = false, frequency = true, position = true);
+
+
+statement ok
+CREATE TABLE t_mixed (id INT, body VARCHAR, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX mixed_idx ON t_mixed USING inverted(body en, emb hnsw (metric = 'l2'));
+
+
+statement count 4
+INSERT INTO t_mixed VALUES (1, 'red fox', [100, 0, 0]::FLOAT[3]), (2, 'blue cat', [50, 50, 50]::FLOAT[3]), (3, 'red bird', [50, 25, 50]::FLOAT[3]), (4, 'blue dog', [50, 50, 100]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_mixed;
+
+
+query
+SELECT id FROM mixed_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+2
+
+
+query
+SELECT id FROM mixed_idx WHERE body = 'blue cat' ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+2
+
+
+query
+SELECT id FROM mixed_idx WHERE id % 2 = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+1
+
+
+query
+EXPLAIN SELECT id FROM mixed_idx WHERE body @@ ts_phrase('red') ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: mixed_idx     │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│                           │
+│        TextFilter:        │
+│ AND[PHRASE[body(string) = │
+│    <Term:red(0, 0); >]]   │
+│                           │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_phrase('red') ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_phrase('red') ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 1;
+----
+id
+1
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_phrase('blue cat') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+2
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_any(['fox', 'bird']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 4;
+----
+id
+1
+3
+2
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_all(['red', 'fox']) ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_all(['blue', 'dog']) ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_starts_with('re') ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_starts_with('bl') ORDER BY emb <-> [50, 50, 50]::FLOAT[3] LIMIT 2;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_like('re_') ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_like('b%') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 4;
+----
+id
+3
+2
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_regexp('bl.*') ORDER BY emb <-> [50, 50, 50]::FLOAT[3] LIMIT 2;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_ngram('blue') ORDER BY emb <-> [50, 50, 50]::FLOAT[3] LIMIT 2;
+----
+id
+2
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE body @@ ts_levenshtein('rid', 1) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+3
+
+
+# Hybrid: rocksdb id filter + text index filter
+query
+EXPLAIN SELECT id FROM mixed_idx WHERE id > 2 AND body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+QUERY PLAN
+┌───────────────────────────┐
+│     IRESEARCH_ANN_SCAN    │
+│    ────────────────────   │
+│      Index: mixed_idx     │
+│      Lookup: rocksdb      │
+│          TopK: 2          │
+│          Dims: 3          │
+│                           │
+│        TextFilter:        │
+│  AND[OR[Term(body(string) │
+│ =red) || Term(body(string)│
+│          =blue)]]         │
+│                           │
+│      Filter: (#0 > 2)     │
+│      Projections: id      │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+query
+SELECT id FROM mixed_idx WHERE id > 2 AND body @@ ts_any(['red', 'blue']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+4
+
+
+query
+SELECT id FROM mixed_idx WHERE id IN (2, 3) AND body @@ ts_starts_with('re') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+3
+
+
+query
+SELECT id FROM mixed_idx WHERE id % 2 = 1 AND body @@ ts_starts_with('bl') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+
+
+query
+SELECT id FROM mixed_idx WHERE id < 4 AND body @@ ts_phrase('blue cat') ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+2
+
+
+query
+SELECT id FROM mixed_idx WHERE id >= 1 AND body @@ ts_all(['red', 'fox']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+
+
+query
+SELECT id FROM mixed_idx WHERE (id = 1 OR id = 4) AND body @@ ts_any(['fox', 'dog']) ORDER BY emb <-> [50, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+1
+4
+
+
+statement ok
+CREATE TABLE t_big (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX big_idx ON t_big USING inverted(emb hnsw (metric = 'l2', m = 16, ef_construction = 64));
+
+
+statement count 1100
+INSERT INTO t_big SELECT i, [CAST(i AS FLOAT), CAST(i AS FLOAT), CAST(i AS FLOAT)]::FLOAT[3] FROM generate_series(1, 1100) AS s(i);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_big;
+
+
+query
+SELECT COUNT(*) FROM big_idx;
+----
+count
+1100
+
+
+query
+SELECT id FROM big_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5;
+----
+id
+1
+2
+3
+4
+5
+
+
+query
+SELECT COUNT(*) FROM (SELECT id FROM big_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 50) sub;
+----
+count
+50
+
+
+query
+SELECT COUNT(*) FROM (SELECT id FROM big_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 5000) sub;
+----
+count
+1100
+
+
+query
+SELECT id FROM (SELECT id FROM l2_index ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 100) AS sub ORDER BY id;
+----
+id
+1
+2
+3
+4
+
+
+query
+SELECT id FROM proj_idx WHERE category = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 50;
+----
+id
+3
+1
+
+
+statement ok
+SET sdb_ef_search = 256;
+
+
+query
+SELECT id FROM big_idx ORDER BY emb <-> [500.5, 500, 500]::FLOAT[3] LIMIT 3;
+----
+id
+500
+501
+499
+
+
+statement ok
+RESET sdb_ef_search;

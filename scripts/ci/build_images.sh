@@ -66,7 +66,6 @@ for os in ubuntu; do
 
 	# 3. Multi-Arch Build & Push
 	if [ "$PUSH_ENABLED" = "true" ]; then
-		# Build each arch separately and export (anonymous pulls, no login needed)
 		for arch in amd64 arm64; do
 			echo "    > Building linux/${arch}..."
 			docker buildx build \
@@ -76,14 +75,12 @@ for os in ubuntu; do
 				--file "${DOCKERFILE}" .
 		done
 
-		# Load into docker daemon
 		echo "    > Loading images..."
 		for arch in amd64 arm64; do
 			docker load </tmp/${os}-${arch}.tar
 			rm -f "/tmp/${os}-${arch}.tar"
 		done
 
-		# Login and push (same pattern as serenedb/sereneui)
 		echo "[*] Logging in to Docker Hub as $DOCKER_USERNAME..."
 		echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
 		trap 'docker logout' EXIT INT TERM
@@ -93,23 +90,20 @@ for os in ubuntu; do
 			docker push "${REPO}:${IMAGE_TAG}-${arch}"
 		done
 
-		# Create and push multi-arch manifests
-		echo "    > Creating multi-arch manifests..."
-		for tag in "${IMAGE_TAG}" "latest"; do
-			docker manifest create --amend "${REPO}:${tag}" \
-				"${REPO}:${IMAGE_TAG}-amd64" \
-				"${REPO}:${IMAGE_TAG}-arm64"
-			docker manifest push "${REPO}:${tag}"
-		done
+		echo "    > Creating manifests ${REPO}:{${IMAGE_TAG},latest}..."
+		docker buildx imagetools create \
+			--tag "${REPO}:${IMAGE_TAG}" \
+			--tag "${REPO}:latest" \
+			"${REPO}:${IMAGE_TAG}-amd64" \
+			"${REPO}:${IMAGE_TAG}-arm64"
 
 		echo "[+] SUCCESS: Pushed ${REPO}:${IMAGE_TAG}"
 
-		# Cleanup arch-specific images
 		for arch in amd64 arm64; do
 			docker rmi "${REPO}:${IMAGE_TAG}-${arch}" >/dev/null 2>&1 || true
 		done
 	else
-		echo "[!] SKIP: Pushing disabled. Image will be removed locally."
+		echo "[!] SKIP: Pushing disabled."
 	fi
 
 	# Cleanup local probe tag

@@ -1,0 +1,135 @@
+control substitution on
+
+# Iceberg REST catalog with the warehouse on MinIO (S3). The catalog stores
+# parquet/avro under s3://${MINIO_BUCKET}/warehouse/<schema>/<table>/...;
+# serened reads those via duckdb's httpfs S3 client.
+#
+# Isolation is per-${__DATABASE__}: the secret, the ATTACH alias, and the
+# iceberg-rest namespace are all scoped that way. The first two live in
+# serened's process-global state; the namespace lives in iceberg-rest which
+# is shared across parallel tests within one run.sh.
+#
+# Exercises:
+#  - ATTACH against the REST catalog
+#  - CREATE SCHEMA / CREATE TABLE / INSERT through the iceberg backend
+#  - SELECT, JOIN with a native serenedb table, UNION ALL across both
+
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+# Per-${__DATABASE__} ATTACH alias: each run.sh invocation starts a new
+# iceberg-rest on a fresh random port, so a process-global alias like
+# `iceberg` would survive in serened's catalog with a stale ENDPOINT and the
+# next run's `ATTACH IF NOT EXISTS` would silently keep the dead port. The
+# DETACH-then-ATTACH below makes the test idempotent on the same instance,
+# and the unique alias keeps parallel iceberg tests from stepping on each
+# other's attachment.
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  ENDPOINT '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE TABLE local_emp (id INTEGER PRIMARY KEY, name TEXT);
+
+
+statement count 3
+INSERT INTO local_emp VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol');
+
+
+# Per-${__DATABASE__} schema -- iceberg-rest's namespace is shared across all
+# parallel tests in one run.sh, and the warehouse S3 path is keyed on the
+# schema name, so the schema must be unique per test invocation. The session
+# search_path puts `public` first (so bare CREATE/INSERT for native tables
+# land in serened's catalog) and the iceberg schema second (so bare DML
+# references against iceberg tables fall through to find them). Iceberg
+# tables themselves are still created with explicit qualification.
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+statement ok
+SET search_path TO public, iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.salary (id INTEGER, salary BIGINT);
+
+
+statement count 3
+INSERT INTO salary VALUES (1, 100000), (2, 90000), (3, 80000);
+
+
+query
+SELECT id, salary FROM salary ORDER BY id;
+----
+id	salary
+1	100000
+2	90000
+3	80000
+
+
+query
+SELECT e.name, s.salary
+FROM local_emp AS e
+JOIN salary AS s ON e.id = s.id
+ORDER BY e.id;
+----
+name	salary
+Alice	100000
+Bob	90000
+Carol	80000
+
+
+query
+SELECT id, name AS label FROM local_emp
+UNION ALL
+SELECT id, 'salary='::text || salary::text FROM salary
+ORDER BY id, label;
+----
+id	label
+1	Alice
+1	salary=100000
+2	Bob
+2	salary=90000
+3	Carol
+3	salary=80000
+
+
+statement ok
+DROP TABLE salary;
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};
+
+
+statement ok
+DROP SECRET iceberg_${__DATABASE__};

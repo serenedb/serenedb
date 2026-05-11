@@ -69,7 +69,7 @@ a	b	c
 20	20	20
 
 query
-SELECT COUNT(*) from series_table;
+SELECT COUNT(1) from series_table;
 ----
 count
 8000

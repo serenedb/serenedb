@@ -59,13 +59,10 @@ struct WandWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
-struct IteratorOptions : WandContext {};
-
 struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;
-  const FeatureInfoProvider& feature_info;
   const IndexFeatures scorers_features;
-  ScorersView scorers;
+  ScorerPtr scorer = nullptr;
   const Comparer* const comparator{};
   // TODO(mbkkt) Remove it from here? We could use directory
   IResourceManager& resource_manager{IResourceManager::gNoop};
@@ -91,7 +88,7 @@ struct PostingsWriter {
   using ptr = std::unique_ptr<PostingsWriter>;
 
   struct FieldStats {
-    uint64_t wand_mask;
+    bool has_wand;
     doc_id_t docs_count;
   };
 
@@ -129,17 +126,13 @@ struct FieldWriter {
   virtual void end() = 0;
 };
 
-struct IteratorFieldOptions : IteratorOptions {
-  IteratorFieldOptions(uint8_t count) : count{count} {}
+struct IteratorFieldOptions : WandContext {
+  explicit IteratorFieldOptions(bool has_wand) : has_wand{has_wand} {}
 
-  IteratorFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
-                       uint8_t count)
-    : IteratorOptions{options}, mapped_index{mapped_index}, count{count} {}
+  IteratorFieldOptions(WandContext options, bool has_wand)
+    : WandContext{options}, has_wand{has_wand} {}
 
-  bool Enabled() const noexcept { return mapped_index != kDisable; }
-
-  uint8_t mapped_index = kDisable;
-  uint8_t count = 0;
+  bool has_wand;
 };
 
 struct PostingCookie {
@@ -176,7 +169,7 @@ struct PostingsReader {
   // This API is experimental.
   virtual size_t BitUnion(IndexFeatures field_features,
                           const term_provider_f& provider, size_t* set,
-                          uint8_t wand_count) = 0;
+                          bool has_wand) = 0;
 
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
@@ -235,11 +228,11 @@ struct TermReader : public AttributeProvider {
 
   virtual DocIterator::ptr Iterator(
     IndexFeatures features, std::span<const PostingCookie> cookies,
-    const IteratorOptions& options = {}, size_t min_match = 1,
+    WandContext options = {}, size_t min_match = 1,
     ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
-                            const IteratorOptions& options = {}) const {
+                            WandContext options = {}) const {
     return Iterator(features, {&cookie, 1}, options);
   }
 
@@ -455,7 +448,7 @@ struct FlushState {
   const DocMap* docmap{};
   const ColumnProvider* columns{};
   const std::string_view name;  // segment name
-  ScorersView scorers;
+  ScorerPtr scorer = nullptr;
   const size_t doc_count;
   // Accumulated segment index features
   IndexFeatures index_features{IndexFeatures::None};
@@ -464,7 +457,7 @@ struct FlushState {
 struct ReaderState {
   const Directory* dir;
   const SegmentMeta* meta;
-  ScorersView scorers;
+  ScorerPtr scorer = nullptr;
 };
 
 void FormatBlock128Init();

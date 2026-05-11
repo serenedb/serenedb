@@ -1,0 +1,285 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "connector/duckdb_index_scan_entry.h"
+
+#include <duckdb/storage/table_storage_info.hpp>
+
+#include "basics/assert.h"
+#include "connector/duckdb_table_entry.h"
+#include "connector/duckdb_table_function.h"
+#include "connector/view_fast_path.h"
+
+namespace sdb::connector {
+
+SereneDBIndexScanEntry::SereneDBIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info, std::vector<size_t> indexed_col_indices)
+  : duckdb::TableCatalogEntry(catalog, schema, info),
+    _indexed_col_indices(std::move(indexed_col_indices)) {}
+
+duckdb::unique_ptr<duckdb::BaseStatistics>
+SereneDBIndexScanEntry::GetStatistics(duckdb::ClientContext& /*context*/,
+                                      duckdb::column_t /*column_id*/) {
+  return nullptr;
+}
+
+InvertedIndexScanEntry::InvertedIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info, std::vector<size_t> indexed_col_indices,
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index)
+  : SereneDBIndexScanEntry(catalog, schema, info,
+                           std::move(indexed_col_indices)),
+    _inverted_index(std::move(inverted_index)) {
+  SDB_ASSERT(_inverted_index);
+}
+
+TableInvertedIndexScanEntry::TableInvertedIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
+  std::vector<size_t> indexed_col_indices,
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index)
+  : InvertedIndexScanEntry(catalog, schema, info,
+                           std::move(indexed_col_indices),
+                           std::move(inverted_index)),
+    _sdb_table(std::move(sdb_table)) {
+  SDB_ASSERT(_sdb_table);
+}
+
+duckdb::TableFunction TableInvertedIndexScanEntry::GetScanFunction(
+  duckdb::ClientContext& /*context*/,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  auto data = duckdb::make_uniq<TableScanBindData>();
+  data->table = _sdb_table;
+  for (const auto& col : _sdb_table->Columns()) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    data->column_ids.push_back(col.id);
+    data->column_types.push_back(col.type);
+  }
+  data->has_rowid = true;
+  data->table_entry = this;
+  data->entry_kind = ScanEntryKind::InvertedIndex;
+  data->inverted_index = _inverted_index;
+  data->lookup_label = "rocksdb";
+  bind_data = std::move(data);
+  return CreateIResearchScanFunction();
+}
+
+duckdb::TableStorageInfo TableInvertedIndexScanEntry::GetStorageInfo(
+  duckdb::ClientContext& /*context*/) {
+  return SereneDBTableEntry::BuildStorageInfo(*_sdb_table);
+}
+
+duckdb::vector<duckdb::column_t> TableInvertedIndexScanEntry::GetRowIdColumns()
+  const {
+  return SereneDBTableEntry::BuildRowIdColumns(*_sdb_table,
+                                               _indexed_col_indices);
+}
+
+duckdb::virtual_column_map_t TableInvertedIndexScanEntry::GetVirtualColumns()
+  const {
+  return SereneDBTableEntry::BuildVirtualColumns(*_sdb_table,
+                                                 _indexed_col_indices);
+}
+
+ViewInvertedIndexScanEntry::ViewInvertedIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info,
+  std::shared_ptr<const catalog::PgSqlView> sdb_view,
+  std::vector<size_t> indexed_col_indices,
+  std::shared_ptr<const catalog::InvertedIndex> inverted_index)
+  : InvertedIndexScanEntry(catalog, schema, info,
+                           std::move(indexed_col_indices),
+                           std::move(inverted_index)),
+    _sdb_view(std::move(sdb_view)) {
+  SDB_ASSERT(_sdb_view);
+}
+
+duckdb::TableFunction ViewInvertedIndexScanEntry::GetScanFunction(
+  duckdb::ClientContext& context,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  // The index only captures post-WHERE/ORDER/LIMIT rows; we must not
+  // stream the reader directly.
+  auto data = duckdb::make_uniq<ViewScanBindData>();
+  data->view = _sdb_view;
+  const auto& vinfo = _sdb_view->GetInfo();
+  for (size_t i = 0; i < vinfo.names.size(); ++i) {
+    data->column_ids.push_back(static_cast<catalog::Column::Id>(i));
+    data->column_types.push_back(vinfo.types[i]);
+  }
+  data->has_rowid = true;
+  data->table_entry = this;
+  data->entry_kind = ScanEntryKind::InvertedIndex;
+  data->inverted_index = _inverted_index;
+  if (auto fp = ResolveViewFastPath(context, *_sdb_view)) {
+    data->lookup_label = FormatLookupLabel(*fp);
+  } else {
+    data->lookup_label = "view";
+  }
+  bind_data = std::move(data);
+  return CreateIResearchScanFunction();
+}
+
+duckdb::TableStorageInfo ViewInvertedIndexScanEntry::GetStorageInfo(
+  duckdb::ClientContext& /*context*/) {
+  return duckdb::TableStorageInfo{};
+}
+
+duckdb::vector<duckdb::column_t> ViewInvertedIndexScanEntry::GetRowIdColumns()
+  const {
+  return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+}
+
+duckdb::virtual_column_map_t ViewInvertedIndexScanEntry::GetVirtualColumns()
+  const {
+  duckdb::virtual_column_map_t result;
+  result.reserve(2);
+  result.insert({kColumnIdentifierTableOid,
+                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
+                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  return result;
+}
+
+SecondaryIndexScanEntry::SecondaryIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info, std::vector<size_t> indexed_col_indices,
+  ObjectId sk_shard_id, bool sk_unique)
+  : SereneDBIndexScanEntry(catalog, schema, info,
+                           std::move(indexed_col_indices)),
+    _sk_shard_id(sk_shard_id),
+    _sk_unique(sk_unique) {
+  SDB_ASSERT(_sk_shard_id != ObjectId{});
+}
+
+TableSecondaryIndexScanEntry::TableSecondaryIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info, std::shared_ptr<catalog::Table> sdb_table,
+  std::vector<size_t> indexed_col_indices, ObjectId sk_shard_id, bool sk_unique)
+  : SecondaryIndexScanEntry(catalog, schema, info,
+                            std::move(indexed_col_indices), sk_shard_id,
+                            sk_unique),
+    _sdb_table(std::move(sdb_table)) {
+  SDB_ASSERT(_sdb_table);
+}
+
+duckdb::TableFunction TableSecondaryIndexScanEntry::GetScanFunction(
+  duckdb::ClientContext& /*context*/,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  auto data = duckdb::make_uniq<TableScanBindData>();
+  data->table = _sdb_table;
+  for (const auto& col : _sdb_table->Columns()) {
+    if (col.id == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+    data->column_ids.push_back(col.id);
+    data->column_types.push_back(col.type);
+  }
+  data->has_rowid = true;
+  data->table_entry = this;
+  data->entry_kind = ScanEntryKind::SecondaryIndex;
+  data->lookup_label = "rocksdb";
+  auto sk = std::make_unique<SecondaryIndexScan>();
+  sk->shard_id = _sk_shard_id;
+  sk->is_unique = _sk_unique;
+  data->scan_source = std::move(sk);
+  bind_data = std::move(data);
+  return CreateSKFullscanFunction();
+}
+
+duckdb::TableStorageInfo TableSecondaryIndexScanEntry::GetStorageInfo(
+  duckdb::ClientContext& /*context*/) {
+  return SereneDBTableEntry::BuildStorageInfo(*_sdb_table);
+}
+
+duckdb::vector<duckdb::column_t> TableSecondaryIndexScanEntry::GetRowIdColumns()
+  const {
+  return SereneDBTableEntry::BuildRowIdColumns(*_sdb_table,
+                                               _indexed_col_indices);
+}
+
+duckdb::virtual_column_map_t TableSecondaryIndexScanEntry::GetVirtualColumns()
+  const {
+  return SereneDBTableEntry::BuildVirtualColumns(*_sdb_table,
+                                                 _indexed_col_indices);
+}
+
+ViewSecondaryIndexScanEntry::ViewSecondaryIndexScanEntry(
+  duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+  duckdb::CreateTableInfo& info,
+  std::shared_ptr<const catalog::PgSqlView> sdb_view,
+  std::vector<size_t> indexed_col_indices, ObjectId sk_shard_id, bool sk_unique)
+  : SecondaryIndexScanEntry(catalog, schema, info,
+                            std::move(indexed_col_indices), sk_shard_id,
+                            sk_unique),
+    _sdb_view(std::move(sdb_view)) {
+  SDB_ASSERT(_sdb_view);
+}
+
+duckdb::TableFunction ViewSecondaryIndexScanEntry::GetScanFunction(
+  duckdb::ClientContext& context,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  auto data = duckdb::make_uniq<ViewScanBindData>();
+  data->view = _sdb_view;
+  const auto& vinfo = _sdb_view->GetInfo();
+  for (size_t i = 0; i < vinfo.names.size(); ++i) {
+    data->column_ids.push_back(static_cast<catalog::Column::Id>(i));
+    data->column_types.push_back(vinfo.types[i]);
+  }
+  data->has_rowid = true;
+  data->table_entry = this;
+  data->entry_kind = ScanEntryKind::SecondaryIndex;
+  if (auto fp = ResolveViewFastPath(context, *_sdb_view)) {
+    data->lookup_label = FormatLookupLabel(*fp);
+  } else {
+    data->lookup_label = "view";
+  }
+  auto sk = std::make_unique<SecondaryIndexScan>();
+  sk->shard_id = _sk_shard_id;
+  sk->is_unique = _sk_unique;
+  data->scan_source = std::move(sk);
+  bind_data = std::move(data);
+  return CreateSKFullscanFunction();
+}
+
+duckdb::TableStorageInfo ViewSecondaryIndexScanEntry::GetStorageInfo(
+  duckdb::ClientContext& /*context*/) {
+  return duckdb::TableStorageInfo{};
+}
+
+duckdb::vector<duckdb::column_t> ViewSecondaryIndexScanEntry::GetRowIdColumns()
+  const {
+  return {duckdb::COLUMN_IDENTIFIER_ROW_ID};
+}
+
+duckdb::virtual_column_map_t ViewSecondaryIndexScanEntry::GetVirtualColumns()
+  const {
+  duckdb::virtual_column_map_t result;
+  result.reserve(2);
+  result.insert({kColumnIdentifierTableOid,
+                 duckdb::TableColumn("tableoid", duckdb::LogicalType::BIGINT)});
+  result.insert({duckdb::COLUMN_IDENTIFIER_ROW_ID,
+                 duckdb::TableColumn("rowid", duckdb::LogicalType::ROW_TYPE)});
+  return result;
+}
+
+}  // namespace sdb::connector

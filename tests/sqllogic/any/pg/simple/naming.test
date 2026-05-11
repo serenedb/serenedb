@@ -297,7 +297,7 @@ pudge	993
 deadinside	228
 
 
-query
+query ?? rowsort
 SELECT kostya.iq, vedernikoff.iq  FROM
   generate_series(1, 2) as kostya(iq),
   generate_series(1, 2) as vedernikoff(iq);
@@ -339,7 +339,7 @@ column1	column2	column3
 322	1337	322
 
 
-query
+query ?????? rowsort
 SELECT *
 FROM
 (
@@ -359,14 +359,14 @@ FROM
 ----
 kostya	vedernikoff	clickclack	pavel	ivanoff	memes
 1337	42	0	0	42	1337
-1337	42	0	777	666	228
 1337	42	0	322	1337	322
+1337	42	0	777	666	228
 228	666	777	0	42	1337
-228	666	777	777	666	228
 228	666	777	322	1337	322
+228	666	777	777	666	228
 322	1337	322	0	42	1337
-322	1337	322	777	666	228
 322	1337	322	322	1337	322
+322	1337	322	777	666	228
 
 
 query
@@ -457,7 +457,7 @@ clickclack	666	clickclack	666	clickclack	666
 deadinside	993	deadinside	993	deadinside	993
 
 
-query
+query ???????? rowsort
 SELECT kek.*, lol.*, *
 FROM
 (
@@ -469,8 +469,8 @@ FROM
 ----
 kostya	vedernikoff	kostya	vedernikoff	kostya	vedernikoff	kostya	vedernikoff
 abugubugu	777	clickclack	666	clickclack	666	abugubugu	777
-ivansolo2003	1337	clickclack	666	clickclack	666	ivansolo2003	1337
 abugubugu	777	deadinside	993	deadinside	993	abugubugu	777
+ivansolo2003	1337	clickclack	666	clickclack	666	ivansolo2003	1337
 ivansolo2003	1337	deadinside	993	deadinside	993	ivansolo2003	1337
 
 
@@ -559,7 +559,7 @@ new_kek	new_kek	new_lmao	new_lmao	dontforgetthis	dontforgetthis
 47	47	ak	ak	printmeplz	printmeplz
 
 
-query
+query ??? rowsort
 SELECT lmao.vedernikoff, kekes.vedernikoff, bibibo
 FROM
 (
@@ -578,13 +578,13 @@ FROM
 ) as kekes;
 ----
 vedernikoff	vedernikoff	bibibo
-clickclack	negaimorit	666
 clickclack	gul	666
-deadinside	negaimorit	993
+clickclack	negaimorit	666
 deadinside	gul	993
+deadinside	negaimorit	993
 
 
-query
+query ?? rowsort
 SELECT
   kostya, vedernikoff
 FROM
@@ -604,10 +604,10 @@ FROM
 );
 ----
 kostya	vedernikoff
-negaimorit	clickclack
 gul	clickclack
-negaimorit	deadinside
 gul	deadinside
+negaimorit	clickclack
+negaimorit	deadinside
 
 
 query
@@ -857,7 +857,7 @@ notgrade	notname	weight
 29	babsky	213311
 
 
-query
+query ???????? rowsort
 WITH
 sample_data1 (notgrade, notname) AS (
   SELECT * FROM (VALUES

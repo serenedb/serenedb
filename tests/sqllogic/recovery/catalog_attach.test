@@ -1,0 +1,40 @@
+control substitution on
+
+# ATTACHed databases are ephemeral and must NOT survive a serened restart --
+# their config lives only in the running duckdb instance. Other recovery
+# tests (catalog_database.test etc.) cover the opposite: catalog state that
+# DOES survive restart.
+
+statement ok
+ATTACH '/tmp/${__DATABASE__}_attach_recovery.duckdb' AS attach_probe;
+
+
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'attach_probe';
+----
+count
+1
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT count(*) FROM duckdb_databases() WHERE database_name = 'attach_probe';
+----
+count
+0

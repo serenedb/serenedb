@@ -1,0 +1,145 @@
+control substitution on
+
+# PK UPDATE goes through a different code path than non-PK UPDATE in
+# duckdb_physical_update.cpp:
+#   - Old pk: every column key DeleteCF'd in rocksdb, iresearch DeleteRow.
+#   - New pk: every column (including non-updated ones, read from rocksdb
+#     via txn->Get pre-delete) Put'd in rocksdb at new keys.
+# Recovery sees:
+#   - For old pk: only DeleteCFs → state.deleted=true → Remove.
+#   - For new pk: PutCFs for ALL columns → cells fully populated → Remove
+#     (no-op, no doc) + Insert(full doc). No Get-fallback needed.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pku_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE pku_t(id INTEGER PRIMARY KEY, name TEXT, data TEXT);
+
+statement ok
+INSERT INTO pku_t VALUES
+  (1, 'alpha', 'one_one'),
+  (2, 'bravo', 'two_two'),
+  (3, 'charlie', 'three_three');
+
+statement ok
+CREATE INDEX pku_idx ON pku_t USING inverted(id, name pku_dict, data pku_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) pku_t;
+
+# Sanity: pre-PK-update everything findable
+query
+SELECT id FROM pku_t WHERE name @@ ts_phrase('alpha');
+----
+id
+1
+
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# PK update: change pk=1 → 10. name and data not changed in SET clause but
+# online code path reads them via txn->Get and writes at new pk.
+statement ok
+UPDATE pku_t SET id = 10 WHERE id = 1;
+
+# PK update + simultaneously change another col: pk=2 → 20, data changed.
+statement ok
+UPDATE pku_t SET id = 20, data = 'new_two' WHERE id = 2;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart, recovery runs ---
+
+connection pku_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) pku_t;
+
+# Old pks (1, 2) — gone from index.
+connection pku_after
+query
+SELECT COUNT(*) FROM pku_t WHERE id = 1;
+----
+count
+0
+
+connection pku_after
+query
+SELECT COUNT(*) FROM pku_t WHERE id = 2;
+----
+count
+0
+
+# Untouched row.
+connection pku_after
+query
+SELECT id, name, data FROM pku_t WHERE id = 3;
+----
+id	name	data
+3	charlie	three_three
+
+# New pks (10, 20) — present, with all fields properly indexed.
+connection pku_after
+query
+SELECT id, name, data FROM pku_t WHERE id = 10;
+----
+id	name	data
+10	alpha	one_one
+
+connection pku_after
+query
+SELECT id, name, data FROM pku_t WHERE id = 20;
+----
+id	name	data
+20	bravo	new_two
+
+# PHRASE on the non-updated-but-PK-changed names — name='alpha' moved from
+# pk=1 to pk=10 and is still searchable.
+connection pku_after
+query
+SELECT id FROM pku_t WHERE name @@ ts_phrase('alpha');
+----
+id
+10
+
+connection pku_after
+query
+SELECT id FROM pku_t WHERE name @@ ts_phrase('bravo');
+----
+id
+20
+
+# data field also preserved/updated correctly.
+connection pku_after
+query
+SELECT id FROM pku_t WHERE data @@ ts_phrase('one_one');
+----
+id
+10
+
+connection pku_after
+query
+SELECT id FROM pku_t WHERE data @@ ts_phrase('new_two');
+----
+id
+20
+
+# Old data 'two_two' was overwritten on pk=2 → 20; should be gone.
+connection pku_after
+query
+SELECT COUNT(*) FROM pku_t WHERE data @@ ts_phrase('two_two');
+----
+count
+0

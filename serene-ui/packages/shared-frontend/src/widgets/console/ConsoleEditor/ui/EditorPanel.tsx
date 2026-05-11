@@ -2,10 +2,12 @@ import {
     useCallback,
     useEffect,
     useMemo,
+    useRef,
     type DragEvent,
     type FC,
 } from "react";
 import { type IDockviewPanelProps } from "dockview";
+import type * as Monaco from "monaco-editor";
 import { ExecuteQueryButton } from "../../../../features/executeQuery";
 import { OpenSavedQueriesModalButton } from "../../../../features/openSavedQueriesModal";
 import { useConsole } from "../../Console/model";
@@ -60,6 +62,10 @@ const getStatementHighlightPriority = (variant: StatementHighlightVariant) => {
     }
 
     return 1;
+};
+
+type EditorHostElement = HTMLElement & {
+    __monacoEditor?: Monaco.editor.IStandaloneCodeEditor;
 };
 
 export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
@@ -195,6 +201,24 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
             : undefined;
     const highlightVariant =
         getStatementHighlightVariant(activeResult?.status || "") || "default";
+    const editorHostRef = useRef<EditorHostElement | null>(null);
+
+    const focusEditor = useCallback(() => {
+        const monacoEditor = editorHostRef.current?.__monacoEditor;
+
+        if (!monacoEditor) {
+            return;
+        }
+
+        if (typeof window === "undefined") {
+            monacoEditor.focus();
+            return;
+        }
+
+        window.requestAnimationFrame(() => {
+            editorHostRef.current?.__monacoEditor?.focus();
+        });
+    }, []);
 
     const dismissResolvedExecutionStatus = useCallback(() => {
         updatePanelParams((current) => {
@@ -219,6 +243,18 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
 
         return () => subscription.dispose();
     }, [dismissResolvedExecutionStatus, props.api]);
+
+    useEffect(() => {
+        const subscription = props.api.onDidActiveChange((event) => {
+            if (!event.isActive) {
+                return;
+            }
+
+            focusEditor();
+        });
+
+        return () => subscription.dispose();
+    }, [focusEditor, props.api]);
 
     const handleSavedQueryDrop = useCallback(
         (event: DragEvent<HTMLDivElement>) => {
@@ -311,6 +347,7 @@ export const EditorPanel: FC<IDockviewPanelProps<EditorPanelParams>> = (
                 className="relative h-full w-full"
                 onPointerDownCapture={dismissResolvedExecutionStatus}>
                 <PGSQLEditor
+                    ref={editorHostRef}
                     value={panelState.query}
                     autocomplete={editorAutocomplete}
                     autocompleteEnabled={showAutocomplete}

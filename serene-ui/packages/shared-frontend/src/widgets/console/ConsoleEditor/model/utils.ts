@@ -1,4 +1,4 @@
-import type { DockviewApi } from "dockview";
+import type { AddPanelOptions, DockviewApi } from "dockview";
 import {
     CONSOLE_EDITOR_PANEL_COMPONENT,
     createEditorPanelParams,
@@ -11,6 +11,11 @@ import type {
     NormalizedEditorPanelParams,
     SuccessfulQueryResult,
 } from "./types";
+
+type AddEditorPanelOptions = Pick<
+    AddPanelOptions<EditorPanelParams>,
+    "inactive" | "position"
+>;
 
 export const isPendingResult = (result: ConsoleResult) =>
     result.status === "pending" || result.status === "running";
@@ -107,6 +112,7 @@ export const toConsoleResults = (
 export const addEditorPanel = (
     api: DockviewApi,
     params: Partial<EditorPanelParams> = {},
+    options: AddEditorPanelOptions = {},
 ) =>
     api.addPanel({
         id: createPanelId(),
@@ -114,4 +120,5 @@ export const addEditorPanel = (
         tabComponent: CONSOLE_EDITOR_PANEL_COMPONENT,
         title: getNextEditorPanelTitle(api),
         params: createEditorPanelParams(params),
+        ...options,
     });

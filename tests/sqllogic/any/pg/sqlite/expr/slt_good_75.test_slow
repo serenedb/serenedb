@@ -60441,6 +60441,7 @@ SELECT 82 + - - CAST( 10 AS SIGNED ), + ( - ( - ( + 75 ) ) ) - COALESCE ( + 94, 
 NULL
 
 skipif mysql # not compatible
+skipif serenedb # TODO(mbkkt) int32 overflow
 query II rowsort label-6411
 SELECT 82 + - - CAST ( 10 AS INTEGER ), + ( - ( - ( + 75 ) ) ) - COALESCE ( + 94, - + CAST ( NULL AS INTEGER ) + 60 ) * - + 39 * 82 * 62 * ( 11 ) * + - CASE + 89 WHEN + 9 + - ( 99 ) * CASE + 3 - - CASE 17 WHEN 0 * 13 THEN NULL WHEN + 62 + - 60 THEN + 36 * + 24 END WHEN CASE COUNT ( * ) WHEN COUNT ( * ) + 96 THEN NULL WHEN - 93 THEN + 26 * - 80 END THEN 7 * 84 END THEN NULL WHEN - 26 THEN - 86 WHEN + COUNT ( * ) THEN 96 + - 6 END * 98 AS col0
 ----

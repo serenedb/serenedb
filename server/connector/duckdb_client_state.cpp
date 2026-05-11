@@ -108,8 +108,7 @@ void SereneDBClientState::Register(
           ERR_HINT("Available values: repeatable read, read committed."));
       }
       auto& conn_ctx = GetSereneDBContext(ctx);
-      if (conn_ctx.IsExplicitTransaction() &&
-          (conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
+      if (conn_ctx.IsExplicitTransaction() && conn_ctx.HasRocksDBSnapshot() &&
           level != conn_ctx.GetIsolationLevel()) {
         throw duckdb::InvalidInputException(
           "SET TRANSACTION ISOLATION LEVEL must be called before any query");

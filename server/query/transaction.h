@@ -26,7 +26,6 @@
 #include <iresearch/index/index_writer.hpp>
 #include <yaclib/async/future.hpp>
 
-#include "basics/bit_utils.hpp"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/result.h"
@@ -40,12 +39,6 @@ namespace sdb::query {
 class Transaction : public Config {
  public:
   using Config::Config;
-
-  enum class State : uint8_t {
-    None = 0,
-    HasRocksDBRead = 1 << 0,
-    HasRocksDBWrite = 1 << 1,
-  };
 
 #ifdef SDB_DEV
   virtual ~Transaction() {
@@ -75,26 +68,38 @@ class Transaction : public Config {
     _table_rows_deltas[table_id] += delta;
   }
 
-  void AddRocksDBRead() noexcept;
-  bool HasRocksDBRead() const noexcept;
-
-  void AddRocksDBWrite() noexcept;
-  bool HasRocksDBWrite() const noexcept;
+  bool HasRocksDBSnapshot() const noexcept {
+    return _rocksdb_snapshot != nullptr;
+  }
+  bool HasRocksDBTransaction() const noexcept {
+    return _rocksdb_transaction != nullptr;
+  }
 
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);
     return *_rocksdb_transaction;
   }
 
-  rocksdb::Transaction& EnsureRocksDBTransaction();
+  const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
+    SDB_ASSERT(_rocksdb_snapshot);
+    return *_rocksdb_snapshot;
+  }
+
+  void EnsureRocksDBTransaction();
+  void EnsureRocksDBSnapshot();
+
+  const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
+
+  const search::InvertedIndexSnapshot& GetSearchSnapshot(
+    ObjectId index_id) const noexcept {
+    auto it = _search_snapshots.find(index_id);
+    SDB_ASSERT(it != _search_snapshots.end());
+    return *it->second;
+  }
 
   void EraseSearchTransaction(ObjectId shard_id) noexcept {
     _search_transactions.erase(shard_id);
   }
-
-  const search::InvertedIndexSnapshot& EnsureSearchSnapshot(ObjectId index_id);
-
-  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
 
   void Destroy() noexcept;
 
@@ -139,7 +144,7 @@ class Transaction : public Config {
         }
         visit(*transaction, *index);
       } else {
-        visit(EnsureRocksDBTransaction(), *index);
+        visit(GetRocksDBTransaction(), *index);
       }
     }
   }
@@ -147,7 +152,6 @@ class Transaction : public Config {
  private:
   void ApplyTableStatsDiffs() noexcept;
 
-  State _state = State::None;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
@@ -158,7 +162,5 @@ class Transaction : public Config {
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
-
-ENABLE_BITMASK_ENUM(Transaction::State);
 
 }  // namespace sdb::query

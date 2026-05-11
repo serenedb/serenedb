@@ -133,8 +133,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     });
   }
 
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
 
   // Build column-ID-to-chunk-position mapping for index writers.
   // The scan output has: [..., pk_cols, indexed_cols, rowid].

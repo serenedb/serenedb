@@ -608,7 +608,7 @@ void PgSQLCommTaskBase::DescribeStatement(DuckDBStatement& statement) {
       }
       dummy.emplace_back(std::move(v));
     }
-    pending = prepared.PendingQuery(dummy, true);
+    pending = PendingQueryEnsured(prepared, dummy, true);
     if (!pending->HasError()) {
       types = &pending->types;
       names = &pending->names;
@@ -1086,6 +1086,25 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   _success_packet = true;
 }
 
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
+                                       duckdb::vector<duckdb::Value>& values,
+                                       bool allow_stream_result) {
+  const auto& props = prepared.GetStatementProperties();
+  const auto db_name = DatabaseName();
+  _connection_ctx->EnsureCatalogSnapshot();
+  if (props.modified_databases.contains(db_name)) {
+    _connection_ctx->EnsureRocksDBTransaction();
+    _connection_ctx->EnsureRocksDBSnapshot();
+  } else if (props.read_databases.contains(db_name)) {
+    if (_connection_ctx->IsExplicitTransaction()) {
+      _connection_ctx->EnsureRocksDBTransaction();
+    }
+    _connection_ctx->EnsureRocksDBSnapshot();
+  }
+  return prepared.PendingQuery(values, allow_stream_result);
+}
+
 void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   SDB_ASSERT(_pop_packet);
   SDB_ASSERT(portal.stmt);
@@ -1118,7 +1137,8 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
   portal.bind_info = std::move(bind_info);
 
   auto& prepared = *stmt.prepared;
-  portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
+  portal.pending =
+    PendingQueryEnsured(prepared, portal.bind_info.param_values, true);
   if (portal.pending->HasError()) {
     SendError(portal.pending->GetErrorObject());
     portal.pending.reset();

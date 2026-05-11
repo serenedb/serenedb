@@ -460,14 +460,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
 
   auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
   auto index = snapshot->GetObject<catalog::Index>(catalog_index->GetId());
   SDB_ASSERT(index);
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
     auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
     auto sk_columns = BuildSKColumnsForBackfill(*index, columns);
-    auto& trx = conn_ctx.EnsureRocksDBTransaction();
+    auto& trx = conn_ctx.GetRocksDBTransaction();
 
     if (sec_index.IsUnique()) {
       state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(

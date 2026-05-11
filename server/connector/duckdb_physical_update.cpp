@@ -272,8 +272,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     }
   }
 
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
   state->conflict_resolver.Init(*state->txn, *state->cf,
                                 duckdb::OnConflictAction::THROW,
                                 state->table_name);

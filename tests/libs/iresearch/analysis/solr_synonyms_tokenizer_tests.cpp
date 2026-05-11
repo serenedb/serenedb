@@ -27,8 +27,6 @@ using SolrSynonymsTokenizer = irs::analysis::SolrSynonymsTokenizer;
 
 namespace {
 
-// Wraps an externally-owned synonyms map in an ad-hoc State so tests can
-// drive the tokenizer without re-parsing.
 std::shared_ptr<const SolrSynonymsTokenizer::State> StateFromMap(
   SolrSynonymsTokenizer::SynonymsMap mask) {
   auto state = std::make_shared<SolrSynonymsTokenizer::State>();
@@ -354,8 +352,8 @@ TEST(solr_synonyms_tests, parsing) {
 }
 
 TEST(solr_synonyms_tests, make_state_owning_storage) {
-  auto state = SolrSynonymsTokenizer::MakeState(
-    "ipod, i-pod, i pod\nfoo => bar");
+  auto state =
+    SolrSynonymsTokenizer::MakeState("ipod, i-pod, i pod\nfoo => bar");
   ASSERT_TRUE(state);
   SolrSynonymsTokenizer stream{std::move(*state)};
 
@@ -395,9 +393,10 @@ TEST(solr_synonyms_tests, make_state_invalid_input) {
 }
 
 TEST(solr_synonyms_tests, factory_make_json) {
-  auto analyzer = irs::analysis::analyzers::Get(
-    SolrSynonymsTokenizer::type_name(), irs::Type<irs::text_format::Json>::get(),
-    R"({"synonyms": "ipod, i-pod, i pod"})");
+  auto analyzer =
+    irs::analysis::analyzers::Get(SolrSynonymsTokenizer::type_name(),
+                                  irs::Type<irs::text_format::Json>::get(),
+                                  R"({"synonyms": "ipod, i-pod, i pod"})");
   ASSERT_NE(nullptr, analyzer);
 
   auto* term = irs::get<irs::TermAttr>(*analyzer);
@@ -412,8 +411,8 @@ TEST(solr_synonyms_tests, factory_make_json) {
 
 TEST(solr_synonyms_tests, factory_make_json_missing_field) {
   auto analyzer = irs::analysis::analyzers::Get(
-    SolrSynonymsTokenizer::type_name(), irs::Type<irs::text_format::Json>::get(),
-    R"({})");
+    SolrSynonymsTokenizer::type_name(),
+    irs::Type<irs::text_format::Json>::get(), R"({})");
   ASSERT_EQ(nullptr, analyzer);
 }
 

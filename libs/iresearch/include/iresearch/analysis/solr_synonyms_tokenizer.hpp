@@ -37,16 +37,14 @@ namespace irs::analysis {
 class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
                                     private util::Noncopyable {
  public:
-  /* synonyms_list represents either a full synonym line from Solr format,
-   * or split halves (left/right side of '=>' for one-way mappings)
-   * Examples:
-   *   Full line:  ["i-pod", "i pod", "ipod"]
-   *
-   *   Split form: "i-pod, i pod => ipod"
-   *               |------------|  |----|
-   *                  left side     right side
-   *               ["i-pod", "i pod"] ["ipod"]
-   */
+  // synonyms_list represents either a full synonym line from Solr format,
+  // or split halves (left/right side of '=>' for one-way mappings)
+  // Examples:
+  //   Full line:  ["i-pod", "i pod", "ipod"]
+  //   Split form: "i-pod, i pod => ipod"
+  //               |------------|  |----|
+  //                  left side     right side
+  //               ["i-pod", "i pod"] ["ipod"]
   using SynonymsList = std::vector<std::string_view>;
 
   struct SynonymsLine;
@@ -54,13 +52,11 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
   using SynonymsMap =
     absl::flat_hash_map<std::string_view, const SynonymsList*>;
 
-  /* Represents a parsed synonym line from Solr format.
-   * - If 'in' is empty: this is a bidirectional synonym (full line)
-   *   Example: "i-pod, i pod, ipod" -> in=[], out=["i-pod", "i pod", "ipod"]
-   *
-   * - If 'in' is non-empty: this is a one-way mapping ('=>' was present)
-   *   Example: "i-pod, i pod => ipod" -> in=["i-pod", "i pod"], out=["ipod"]
-   */
+  // Represents a parsed synonym line from Solr format.
+  // - If 'in' is empty: this is a bidirectional synonym (full line)
+  //   Example: "i-pod, i pod, ipod" -> in=[], out=["i-pod", "i pod", "ipod"]
+  // - If 'in' is non-empty: this is a one-way mapping ('=>' was present)
+  //   Example: "i-pod, i pod => ipod" -> in=["i-pod", "i pod"], out=["ipod"]
   struct SynonymsLine final {
     SynonymsList in;
     SynonymsList out;
@@ -68,11 +64,11 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     bool operator==(const SynonymsLine& line) const = default;
   };
 
-  // Parsed synonym data — immutable once built, sharable across tokenizers.
   // `synonyms` keys are string_views into `text`; its values point at
   // SynonymsLine elements in `lines`, whose own string_views also reference
-  // `text`. Members are listed in lifetime order: text must outlive lines,
-  // and lines must outlive the synonyms map.
+  // `text`.
+  // Members are listed in lifetime order: text must outlive lines,
+  // lines must outlive the synonyms map.
   struct State {
     std::string text;
     SynonymsLines lines;
@@ -86,15 +82,12 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
   static sdb::ResultOr<SynonymsLines> ParseSynonymsLines(
     std::string_view input);
   static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
+  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(
+    std::string text);
 
-  // Parses Solr-format text into a sharable state.
-  static sdb::ResultOr<std::shared_ptr<const State>> MakeState(std::string text);
-
-  // Tokenizer is a thin handle over `state`.
-  explicit SolrSynonymsTokenizer(std::shared_ptr<const State> state);
-
-  // Triggers registration with iresearch's analyzer registry.
   static void init();
+
+  explicit SolrSynonymsTokenizer(std::shared_ptr<const State> state) noexcept;
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -103,15 +96,13 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
   bool reset(std::string_view data) final;
 
  private:
-  std::shared_ptr<const State> _state;  // non-null
-
   using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  Attributes _attrs;
 
+  std::shared_ptr<const State> _state;
+  Attributes _attrs;
   const std::string_view* _begin{};
   const std::string_view* _curr{};
   const std::string_view* _end{};
-
   std::string_view _holder{};
 };
 

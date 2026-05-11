@@ -123,7 +123,7 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
 }
 
 WordnetSynonymsTokenizer::WordnetSynonymsTokenizer(
-  std::shared_ptr<const State> state)
+  std::shared_ptr<const State> state) noexcept
   : _state(std::move(state)) {
   SDB_ASSERT(_state);
 }
@@ -198,10 +198,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing wordnet_synonyms from JSON"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+              "' while constructing wordnet_synonyms from JSON");
   } catch (...) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Caught error while constructing wordnet_synonyms from JSON");
@@ -243,10 +241,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing wordnet_synonyms from JSON"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+              "' while normalizing wordnet_synonyms from JSON");
   } catch (...) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Caught error while normalizing wordnet_synonyms from JSON");

@@ -26,16 +26,15 @@
 #include <vpack/builder.h>
 #include <vpack/parser.h>
 
+#include <expected>
 #include <string_view>
 #include <utility>
 
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/result.h"
-#include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -125,7 +124,7 @@ sdb::ResultOr<SolrSynonymsTokenizer::SynonymsMap> SolrSynonymsTokenizer::Parse(
 }
 
 SolrSynonymsTokenizer::SolrSynonymsTokenizer(
-  std::shared_ptr<const State> state)
+  std::shared_ptr<const State> state) noexcept
   : _state(std::move(state)) {
   SDB_ASSERT(_state);
 }
@@ -141,13 +140,13 @@ SolrSynonymsTokenizer::MakeState(std::string text) {
 
   auto lines = ParseSynonymsLines(state->text);
   if (!lines) {
-    return std::unexpected{std::move(lines.error())};
+    return std::unexpected{std::move(lines).error()};
   }
   state->lines = std::move(*lines);
 
   auto synonyms = Parse(state->lines);
   if (!synonyms) {
-    return std::unexpected{std::move(synonyms.error())};
+    return std::unexpected{std::move(synonyms).error()};
   }
   state->synonyms = std::move(*synonyms);
 
@@ -207,10 +206,8 @@ Analyzer::ptr MakeJson(std::string_view args) {
     auto vpack = vpack::Parser::fromJson(args.data(), args.size());
     return MakeVPack(vpack->slice());
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while constructing solr_synonyms from JSON"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+              "' while constructing solr_synonyms from JSON");
   } catch (...) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Caught error while constructing solr_synonyms from JSON");
@@ -252,10 +249,8 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
       return !definition.empty();
     }
   } catch (const vpack::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Caught error '", ex.what(),
-                   "' while normalizing solr_synonyms from JSON"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Caught error '", ex.what(),
+              "' while normalizing solr_synonyms from JSON");
   } catch (...) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Caught error while normalizing solr_synonyms from JSON");

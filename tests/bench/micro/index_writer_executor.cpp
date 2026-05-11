@@ -49,11 +49,11 @@ namespace {
 constexpr std::string_view kFormatName = "1_5simd";
 constexpr std::string_view kFieldName = "value";
 
-constexpr int64_t kCommittedSegments = 2048;
-constexpr int64_t kPendingSegmentContexts = 256;
-constexpr int64_t kDocsPerSegment = 16384;
-constexpr int64_t kIndexedTerms = 1024;
-constexpr int64_t kRemovalTerms = kPendingSegmentContexts;  // 25% deleted.
+constexpr int64_t kCommittedSegments = 512;
+constexpr int64_t kPendingSegmentContexts = 128;
+constexpr int64_t kIndexedTerms = 512;
+constexpr int64_t kDocsPerSegment = 65536;                  // 512 * 128
+constexpr int64_t kRemovalTerms = kPendingSegmentContexts;  // 25% deleted
 constexpr int64_t kThreads = 8;
 
 static_assert(kRemovalTerms > 0);

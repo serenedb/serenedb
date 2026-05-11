@@ -1,0 +1,81 @@
+control substitution on
+
+
+# ERROR CASES
+
+# --- Invalid template value ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY eng_err_bad_template(
+    template = 'edge_ngram_typo',
+    mingram = 2,
+    maxgram = 3
+)
+----
+db error: ERROR: text search template "edge_ngram_typo" does not exist
+
+
+# --- Option not applicable (locale belongs to text/stem/...) ---
+
+statement error
+CREATE TEXT SEARCH DICTIONARY eng_err_locale(
+    template = 'edge_ngram',
+    locale = 'en_US.UTF-8',
+    mingram = 2,
+    maxgram = 3
+)
+----
+db error: ERROR: text search template "edge_ngram" does not exist`
+
+# EDGE_NGRAM TEMPLATE (standalone; UTF-8 prefix n-grams on whole input)
+
+# --- Basic mingram / maxgram ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_basic(
+    template = 'edge_ngram',
+    mingram = 2,
+    maxgram = 4
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_basic', 'hello');
+----
+ts_lexize
+{he,hel,hell}
+
+
+# --- Case preserved ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_case_preserved(
+    template = 'edge_ngram',
+    mingram = 2,
+    maxgram = 3
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_case_preserved', 'HeLLo');
+----
+ts_lexize
+{He,HeL,eLL}
+
+
+# --- preserveoriginal: emit full input after max-length prefixes ---
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY edge_ngram_preserve_original(
+    template = 'edge_ngram',
+    mingram = 1,
+    maxgram = 2,
+    preserveoriginal = true
+)
+
+
+query
+SELECT ts_lexize('edge_ngram_preserve_original', 'abcd');
+----
+ts_lexize
+{a,ab,abcd}

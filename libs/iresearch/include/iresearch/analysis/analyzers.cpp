@@ -30,6 +30,7 @@
 #include "iresearch/analysis/classification_tokenizer.hpp"
 #include "iresearch/analysis/collation_tokenizer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
+#include "iresearch/analysis/edge_ngram_tokenizer.hpp"
 #include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/minhash_tokenizer.hpp"
 #include "iresearch/analysis/multi_delimited_tokenizer.hpp"
@@ -267,6 +268,7 @@ void Init() {
   PathHierarchyTokenizer::init();
   StopwordsTokenizer::init();
   NGramTokenizerBase::init();
+  EdgeNGramTokenizer::init();
   PatternTokenizer::init();
   PipelineTokenizer::init();
   UnionTokenizer::init();

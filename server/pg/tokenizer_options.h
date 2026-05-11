@@ -23,6 +23,7 @@
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/edge_ngram_tokenizer.hpp>
 #include <iresearch/analysis/minhash_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -248,6 +249,11 @@ inline constexpr OptionGroup kNGramGroup{
   kNGramOptions,
   {},
 };
+inline constexpr OptionGroup kEdgeNGramTokenizerGroup{
+  irs::analysis::EdgeNGramTokenizer::type_name(),
+  kEdgeNGramOptions,
+  {},
+};
 inline constexpr OptionGroup kNearestNeighborsGroup{
   irs::analysis::NearestNeighborsTokenizer::type_name(),
   kNearestNeighborsOptions,
@@ -320,12 +326,24 @@ inline constexpr OptionGroup kUnionGroup{
   {},
 };
 
-inline constexpr OptionGroup kTokenizerSubgroups[] = {
-  kFeaturesGroup,         kTextGroup,      kNGramGroup,
-  kNearestNeighborsGroup, kStemmingGroup,  kStopwordsGroup,
-  kClassificationGroup,   kCollationGroup, kDelimiterGroup,
-  kMultiDelimiterGroup,   kMinHashGroup,   kNormGroup,
-  kSegmentationGroup,     kPipelineGroup,  kPatternGroup,
-  kPathHierarchyGroup,    kUnionGroup,     kCopyFromGroup};
+inline constexpr OptionGroup kTokenizerSubgroups[] = {kFeaturesGroup,
+                                                      kTextGroup,
+                                                      kNGramGroup,
+                                                      kEdgeNGramTokenizerGroup,
+                                                      kNearestNeighborsGroup,
+                                                      kStemmingGroup,
+                                                      kStopwordsGroup,
+                                                      kClassificationGroup,
+                                                      kCollationGroup,
+                                                      kDelimiterGroup,
+                                                      kMultiDelimiterGroup,
+                                                      kMinHashGroup,
+                                                      kNormGroup,
+                                                      kSegmentationGroup,
+                                                      kPipelineGroup,
+                                                      kPatternGroup,
+                                                      kPathHierarchyGroup,
+                                                      kUnionGroup,
+                                                      kCopyFromGroup};
 
 }  // namespace sdb::pg::tokenizer_options

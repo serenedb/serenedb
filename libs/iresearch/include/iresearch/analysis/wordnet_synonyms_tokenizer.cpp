@@ -291,9 +291,6 @@ bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
 
   const auto& mapping = _state->mapping;
   if (const auto it = mapping.find(data); it == mapping.end()) {
-    // Unknown word: emit no synset ids (next() returns false immediately).
-    // `reset()` itself still succeeds; returning false here would be
-    // interpreted by the surrounding framework as a tokenizer failure.
     _term_exists = false;
   } else {
     _begin = _curr = it->second.data();

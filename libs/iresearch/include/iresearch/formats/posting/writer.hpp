@@ -428,59 +428,81 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
                                        const TermMeta& state) {
   const auto& meta = static_cast<const TermMetaImpl&>(state);
 
-  uint32_t doc_size = ByteSizeFor124(meta.docs_count);
-  uint32_t freq_size = 1;
+  out.WriteV32(meta.docs_count);
   if (_features.HasFrequency()) {
     SDB_ASSERT(meta.freq >= meta.docs_count);
-    freq_size = ByteSizeFor124(meta.freq - meta.docs_count);
+    out.WriteV32(meta.freq - meta.docs_count);
   }
 
-  uint64_t doc_start_delta = meta.doc_start - _last_state.doc_start;
-  uint32_t doc_start_size = ByteSize1248ForSkipEntry(doc_start_delta);
-
-  uint32_t pos_start_delta_size = 0;
-  uint32_t pay_start_delta_size = 0;
+  out.WriteV64(meta.doc_start - _last_state.doc_start);
   if (_features.HasPosition()) {
-    pos_start_delta_size = ByteSize1248ForSkipEntry(meta.pos_start - _last_state.pos_start);
+    out.WriteV64(meta.pos_start - _last_state.pos_start);
     if (_features.HasOffset()) {
-      pay_start_delta_size = ByteSize1248ForSkipEntry(meta.pay_start - _last_state.pay_start);
-    }
-  }
-
-  uint32_t encoding = (doc_size - 1) | ((freq_size - 1) << 2) | (doc_start_size << 4) | (pos_start_delta_size << 6) | (pay_start_delta_size << 8);
-
-  uint32_t opt_size = 0;
-  if (meta.docs_count == 1) {
-    opt_size = ByteSizeFor124(meta.e_single_doc);
-    encoding |= ((opt_size - 1) << 10);
-  } else if (meta.docs_count > _skip.Skip0()) {
-    opt_size = ByteSize1248ForSkipEntry(meta.e_skip_start);
-    encoding |= (opt_size << 10);
-  }
-
-  out.WriteU16(encoding);
-
-  Serialize124(doc_size, meta.docs_count, out);
-  if (_features.HasFrequency()) {
-    Serialize124(freq_size, meta.freq - meta.docs_count, out);
-  }
-
-  Serialize1248ForSkipEntry(doc_start_size, doc_start_delta, out);
-
-  if (_features.HasPosition()) {
-    Serialize1248ForSkipEntry(pos_start_delta_size, meta.pos_start - _last_state.pos_start, out);
-    if (_features.HasOffset()) {
-      Serialize1248ForSkipEntry(pay_start_delta_size, meta.pay_start - _last_state.pay_start, out);
+      out.WriteV64(meta.pay_start - _last_state.pay_start);
     }
     SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
     out.WriteByte(meta.pos_offset);
   }
 
   if (meta.docs_count == 1) {
-    Serialize124(opt_size, meta.e_single_doc, out);
+    out.WriteV32(meta.e_single_doc);
   } else if (meta.docs_count > _skip.Skip0()) {
-    Serialize1248ForSkipEntry(opt_size, meta.e_skip_start, out);
+    out.WriteV64(meta.e_skip_start);
   }
+
+  // uint32_t doc_size = ByteSizeFor124(meta.docs_count);
+  // uint32_t freq_size = 1;
+  // if (_features.HasFrequency()) {
+  //   SDB_ASSERT(meta.freq >= meta.docs_count);
+  //   freq_size = ByteSizeFor124(meta.freq - meta.docs_count);
+  // }
+
+  // uint64_t doc_start_delta = meta.doc_start - _last_state.doc_start;
+  // uint32_t doc_start_size = ByteSize1248ForSkipEntry(doc_start_delta);
+
+  // uint32_t pos_start_delta_size = 0;
+  // uint32_t pay_start_delta_size = 0;
+  // if (_features.HasPosition()) {
+  //   pos_start_delta_size = ByteSize1248ForSkipEntry(meta.pos_start - _last_state.pos_start);
+  //   if (_features.HasOffset()) {
+  //     pay_start_delta_size = ByteSize1248ForSkipEntry(meta.pay_start - _last_state.pay_start);
+  //   }
+  // }
+
+  // uint32_t encoding = (doc_size - 1) | ((freq_size - 1) << 2) | (doc_start_size << 4) | (pos_start_delta_size << 6) | (pay_start_delta_size << 8);
+
+  // uint32_t opt_size = 0;
+  // if (meta.docs_count == 1) {
+  //   opt_size = ByteSizeFor124(meta.e_single_doc);
+  //   encoding |= ((opt_size - 1) << 10);
+  // } else if (meta.docs_count > _skip.Skip0()) {
+  //   opt_size = ByteSize1248ForSkipEntry(meta.e_skip_start);
+  //   encoding |= (opt_size << 10);
+  // }
+
+  // out.WriteU16(encoding);
+
+  // Serialize124(doc_size, meta.docs_count, out);
+  // if (_features.HasFrequency()) {
+  //   Serialize124(freq_size, meta.freq - meta.docs_count, out);
+  // }
+
+  // Serialize1248ForSkipEntry(doc_start_size, doc_start_delta, out);
+
+  // if (_features.HasPosition()) {
+  //   Serialize1248ForSkipEntry(pos_start_delta_size, meta.pos_start - _last_state.pos_start, out);
+  //   if (_features.HasOffset()) {
+  //     Serialize1248ForSkipEntry(pay_start_delta_size, meta.pay_start - _last_state.pay_start, out);
+  //   }
+  //   SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
+  //   out.WriteByte(meta.pos_offset);
+  // }
+
+  // if (meta.docs_count == 1) {
+  //   Serialize124(opt_size, meta.e_single_doc, out);
+  // } else if (meta.docs_count > _skip.Skip0()) {
+  //   Serialize1248ForSkipEntry(opt_size, meta.e_skip_start, out);
+  // }
 
   _last_state = meta;
 }

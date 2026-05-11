@@ -373,13 +373,17 @@ void HNSWWriter::Build(const ColumnReader& vector_column) {
 
 void HNSWWriter::Serialize(DataOutput& out) { irs::WriteHNSW(out, _hnsw); }
 
-HNSWReader::HNSWReader(field_id id, std::string name, faiss::HNSW&& hnsw,
-                       HNSWInfo info, const ColumnReader& vector_column)
+HNSWReader::HNSWReader(field_id id, std::string name, HNSWInfo info,
+                       const ColumnReader& vector_column,
+                       const IndexInput& in_source, uint64_t graph_offset,
+                       uint64_t graph_byte_size)
   : _id{id},
     _name{std::move(name)},
-    _hnsw{std::move(hnsw)},
     _info{std::move(info)},
-    _vector_column{vector_column} {
+    _vector_column{vector_column},
+    _in_source{&in_source},
+    _graph_offset{graph_offset},
+    _graph_byte_size{graph_byte_size} {
   SDB_ENSURE(vector_column.ArraySize() == static_cast<uint64_t>(_info.d),
              sdb::ERROR_INTERNAL, "columnstore::HNSWReader: ARRAY size ",
              vector_column.ArraySize(), " does not match HNSWInfo.d ", _info.d);
@@ -387,7 +391,20 @@ HNSWReader::HNSWReader(field_id id, std::string name, faiss::HNSW&& hnsw,
 
 HNSWReader::~HNSWReader() = default;
 
+const faiss::HNSW& HNSWReader::ResolveGraph() const {
+  absl::call_once(_hnsw_once, [&] {
+    auto in = _in_source->Reopen();
+    in->Seek(_graph_offset);
+    faiss::HNSW hnsw;
+    irs::ReadHNSW(*in, hnsw);
+    _hnsw.emplace(std::move(hnsw));
+    SDB_ASSERT(in->Position() - _graph_offset == _graph_byte_size);
+  });
+  return *_hnsw;
+}
+
 void HNSWReader::Search(HNSWSearchContext& ctx) const {
+  const auto& hnsw = ResolveGraph();
   const auto* child = _vector_column.Child();
   SDB_ASSERT(child);
   ChunkedVectorCache cache{*child, _vector_column.ArraySize(),
@@ -397,13 +414,14 @@ void HNSWReader::Search(HNSWSearchContext& ctx) const {
 
   HNSWSegmentResultHandler res{ctx.segment_id, ctx.handler,
                                ctx.info.global_threshold};
-  ctx.vt.visited.resize(_hnsw.levels.size(), 0);
+  ctx.vt.visited.resize(hnsw.levels.size(), 0);
   ctx.vt.advance();
   res.begin(0, false);
-  _hnsw.search(dis, nullptr, res, ctx.vt, &ctx.info.params);
+  hnsw.search(dis, nullptr, res, ctx.vt, &ctx.info.params);
 }
 
 void HNSWReader::RangeSearch(HNSWRangeSearchContext& ctx) const {
+  const auto& hnsw = ResolveGraph();
   const auto* child = _vector_column.Child();
   SDB_ASSERT(child);
   ChunkedVectorCache cache{*child, _vector_column.ArraySize(),
@@ -412,10 +430,10 @@ void HNSWReader::RangeSearch(HNSWRangeSearchContext& ctx) const {
   dis.set_query(reinterpret_cast<const float*>(ctx.info.query));
 
   HNSWRangeSegmentResultHandler res{ctx.segment_id, ctx.handler};
-  ctx.vt.visited.resize(_hnsw.levels.size(), 0);
+  ctx.vt.visited.resize(hnsw.levels.size(), 0);
   ctx.vt.advance();
   res.begin(0);
-  _hnsw.search(dis, nullptr, res, ctx.vt, &ctx.info.params);
+  hnsw.search(dis, nullptr, res, ctx.vt, &ctx.info.params);
 }
 
 }  // namespace irs::columnstore

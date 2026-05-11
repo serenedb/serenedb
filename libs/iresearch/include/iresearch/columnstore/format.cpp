@@ -556,13 +556,6 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
         info.metric =
           static_cast<HNSWMetric>(obj.ReadProperty<uint8_t>(6, "metric"));
         info.ef_construction = obj.ReadProperty<int32_t>(7, "ef_construction");
-        // Footer is read from a MemoryReadStream, so seeking the IndexInput
-        // here doesn't disturb the in-flight footer walk.
-        _impl->in->Seek(graph_offset);
-        faiss::HNSW hnsw;
-        irs::ReadHNSW(*_impl->in, hnsw);
-        SDB_ASSERT(_impl->in->Position() - graph_offset == graph_byte_size,
-                   "ReadHNSW must consume exactly graph_byte_size bytes");
 
         const ColumnReader* col_reader = nullptr;
         auto col_it = _impl->by_id.find(id);
@@ -573,9 +566,9 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
           // Corrupted footer; HNSW(field_id) returns nullptr.
           return;
         }
-        auto hr =
-          std::make_unique<HNSWReader>(id, std::string{col_reader->Name()},
-                                       std::move(hnsw), info, *col_reader);
+        auto hr = std::make_unique<HNSWReader>(
+          id, std::string{col_reader->Name()}, info, *col_reader, *_impl->in,
+          graph_offset, graph_byte_size);
         _impl->hnsw_by_id.emplace(id, _impl->hnsw_readers.size());
         _impl->hnsw_readers.push_back(std::move(hr));
       });

@@ -18,10 +18,11 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <faiss/impl/HNSW.h>
 
 #include <cstdint>
-#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,8 +72,9 @@ class HNSWWriter final {
 // MRU chunk cache used during Build. No per-Reader full-segment cache.
 class HNSWReader final {
  public:
-  HNSWReader(field_id id, std::string name, faiss::HNSW&& hnsw, HNSWInfo info,
-             const ColumnReader& vector_column);
+  HNSWReader(field_id id, std::string name, HNSWInfo info,
+             const ColumnReader& vector_column, const IndexInput& in_source,
+             uint64_t graph_offset, uint64_t graph_byte_size);
   ~HNSWReader();
 
   HNSWReader(const HNSWReader&) = delete;
@@ -86,11 +88,17 @@ class HNSWReader final {
   void RangeSearch(HNSWRangeSearchContext& ctx) const;
 
  private:
+  const faiss::HNSW& ResolveGraph() const;
+
   field_id _id;
   std::string _name;
-  mutable faiss::HNSW _hnsw;  // mutable because faiss::HNSW::search isn't const
   HNSWInfo _info;
   const ColumnReader& _vector_column;
+  const IndexInput* _in_source;
+  uint64_t _graph_offset;
+  uint64_t _graph_byte_size;
+  mutable absl::once_flag _hnsw_once;
+  mutable std::optional<const faiss::HNSW> _hnsw;
 };
 
 }  // namespace columnstore

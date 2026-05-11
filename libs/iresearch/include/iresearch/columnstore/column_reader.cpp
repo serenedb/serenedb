@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/buffer/block_handle.hpp>
@@ -180,12 +181,28 @@ RgWindow ColumnReader::LocateValidity(uint64_t row_pos,
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
                                    duckdb::Vector& out,
                                    duckdb::idx_t out_offset) {
+  if (!_validity && _reader->Type().id() == duckdb::LogicalTypeId::ARRAY) {
+    const auto* child = _reader->Child();
+    SDB_ASSERT(child != nullptr);
+    const auto array_size = _reader->ArraySize();
+    auto& child_out = duckdb::ArrayVector::GetChildMutable(out);
+    ScanImpl(*child, row_pos * array_size, count * array_size, child_out,
+             out_offset * array_size);
+    return;
+  }
+  ScanImpl(*_reader, row_pos, count, out, out_offset);
+}
+
+void ColumnReader::RangeScan::ScanImpl(const ColumnReader& reader,
+                                       uint64_t row_pos, duckdb::idx_t count,
+                                       duckdb::Vector& out,
+                                       duckdb::idx_t out_offset) {
   while (count > 0) {
     if (row_pos < _window.begin || _window.end <= row_pos) {
-      _window = _validity ? _reader->LocateValidity(row_pos, _window)
-                          : _reader->Locate(row_pos, _window);
-      _cursor = ScanCursor{_validity ? _reader->OpenValiditySegment(_window.rg)
-                                     : _reader->OpenSegment(_window.rg)};
+      _window = _validity ? reader.LocateValidity(row_pos, _window)
+                          : reader.Locate(row_pos, _window);
+      _cursor = ScanCursor{_validity ? reader.OpenValiditySegment(_window.rg)
+                                     : reader.OpenSegment(_window.rg)};
     }
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);

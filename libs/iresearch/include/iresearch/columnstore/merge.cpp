@@ -30,6 +30,7 @@
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/columnstore/norm_reader.hpp"
 #include "iresearch/columnstore/norm_writer.hpp"
 
@@ -52,6 +53,15 @@ void MergeInto(std::span<const Reader* const> sources,
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Name(), first_col->Type());
 
+    auto it = absl::c_find_if(sources, [&](const auto& src) {
+      return src != nullptr && src->HasHNSW(field_id_v);
+    });
+    if (it != sources.end()) {
+      const auto* src = *it;
+      SDB_ASSERT(src);
+      output.AttachHNSW(field_id_v, src->HNSW(field_id_v)->Info());
+    }
+
     uint64_t out_doc = 0;
     for (size_t s = 0; s < sources.size(); ++s) {
       const auto* src = sources[s];
@@ -66,55 +76,50 @@ void MergeInto(std::span<const Reader* const> sources,
                  "schema evolution between merge sources not supported");
       const auto* mask = source_masks[s];
 
-      // skip_validity columns (e.g. PK) have no validity payload on disk;
-      // validity_range stays unused in that case.
       ColumnReader::RangeScan data_range{*col};
       ColumnReader::RangeScan validity_range{*col, /*validity_side=*/true};
-      for (size_t rg = 0; rg < col->RowGroupCount(); ++rg) {
-        const auto rg_count = col->RowGroupRowCount(rg);
-        const auto rg_first_doc = col->RowGroupOffset(rg);
+      const auto n_rows = col->RowCount();
 
-        duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
-                             duckdb::VectorDataInitialization::ZERO_INITIALIZE};
+      duckdb::Vector batch{col->Type(), STANDARD_VECTOR_SIZE,
+                           duckdb::VectorDataInitialization::ZERO_INITIALIZE};
 
-        duckdb::idx_t scanned = 0;
-        while (scanned < rg_count) {
-          const auto take =
-            std::min<duckdb::idx_t>(rg_count - scanned, STANDARD_VECTOR_SIZE);
-          data_range.Scan(rg_first_doc + scanned, take, batch, 0);
-          if (col->HasValidity()) {
-            validity_range.Scan(rg_first_doc + scanned, take, batch, 0);
-          } else {
-            batch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-            duckdb::FlatVector::ValidityMutable(batch).SetAllValid(take);
-          }
-
-          if (!mask || mask->empty()) {
-            cw.Append(out_doc, batch, take);
-            out_doc += take;
-          } else {
-            duckdb::SelectionVector sel{take};
-            duckdb::idx_t kept = 0;
-            for (duckdb::idx_t i = 0; i < take; ++i) {
-              // docs_mask uses 1-indexed iresearch doc_ids; row positions
-              // are 0-indexed.
-              const auto src_doc = static_cast<doc_id_t>(
-                rg_first_doc + scanned + i + doc_limits::min());
-              if (mask->contains(src_doc)) {
-                continue;
-              }
-              sel.set_index(kept++, i);
-            }
-            if (kept > 0) {
-              duckdb::Vector kept_vec{col->Type(), kept};
-              kept_vec.Slice(batch, sel, kept);
-              kept_vec.Flatten(kept);
-              cw.Append(out_doc, kept_vec, kept);
-              out_doc += kept;
-            }
-          }
-          scanned += take;
+      uint64_t scanned = 0;
+      while (scanned < n_rows) {
+        const auto take =
+          std::min<duckdb::idx_t>(n_rows - scanned, STANDARD_VECTOR_SIZE);
+        data_range.Scan(scanned, take, batch, 0);
+        if (col->HasValidity()) {
+          validity_range.Scan(scanned, take, batch, 0);
+        } else {
+          batch.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+          duckdb::FlatVector::ValidityMutable(batch).SetAllValid(take);
         }
+
+        if (!mask || mask->empty()) {
+          cw.Append(out_doc, batch, take);
+          out_doc += take;
+        } else {
+          duckdb::SelectionVector sel{take};
+          duckdb::idx_t kept = 0;
+          for (duckdb::idx_t i = 0; i < take; ++i) {
+            // docs_mask uses 1-indexed iresearch doc_ids; row positions
+            // are 0-indexed.
+            const auto src_doc =
+              static_cast<doc_id_t>(scanned + i + doc_limits::min());
+            if (mask->contains(src_doc)) {
+              continue;
+            }
+            sel.set_index(kept++, i);
+          }
+          if (kept > 0) {
+            duckdb::Vector kept_vec{col->Type(), kept};
+            kept_vec.Slice(batch, sel, kept);
+            kept_vec.Flatten(kept);
+            cw.Append(out_doc, kept_vec, kept);
+            out_doc += kept;
+          }
+        }
+        scanned += take;
       }
     }
   }

@@ -23,6 +23,7 @@
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -152,6 +153,10 @@ class ColumnReader final {
               duckdb::idx_t out_offset);
 
    private:
+    void ScanImpl(const ColumnReader& reader, uint64_t row_pos,
+                  duckdb::idx_t count, duckdb::Vector& out,
+                  duckdb::idx_t out_offset);
+
     const ColumnReader* _reader;
     bool _validity;
     ScanCursor _cursor;

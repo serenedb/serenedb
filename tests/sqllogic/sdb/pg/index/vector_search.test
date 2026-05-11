@@ -1211,3 +1211,55 @@ id
 
 statement ok
 RESET sdb_ef_search;
+
+
+statement ok
+CREATE TABLE t_merge (id INT, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX merge_idx ON t_merge USING inverted(id, emb hnsw (metric = 'l2'));
+
+
+statement count 2
+INSERT INTO t_merge VALUES (1, [100, 0, 0]::FLOAT[3]), (2, [50, 50, 50]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement count 2
+INSERT INTO t_merge VALUES (3, [50, 25, 50]::FLOAT[3]), (4, [50, 50, 100]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement count 2
+INSERT INTO t_merge VALUES (5, [10, 10, 10]::FLOAT[3]), (6, [20, 20, 20]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement count 2
+INSERT INTO t_merge VALUES (7, [5, 5, 5]::FLOAT[3]), (8, [30, 30, 30]::FLOAT[3]);
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) t_merge;
+
+
+statement ok
+CALL serenedb_vacuum('compact_indexes', 't_merge');
+
+
+query
+SELECT id FROM merge_idx ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;
+----
+id
+7
+5

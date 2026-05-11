@@ -55,6 +55,15 @@ class DuckDBSinkIndexWriter {
     SDB_ASSERT(false, "Write call not implemented");
   }
 
+  // Writes the entire input column at once for the column switched to by
+  // the previous SwitchColumn call. Called by callers that have the source
+  // duckdb::Vector available (e.g. duckdb_physical_insert) and want to give
+  // implementations the option to consume the typed batch directly instead
+  // of going through per-cell Write. Default is a no-op; the per-cell Write
+  // path remains active unless the implementation acts on this hook.
+  virtual void WriteFullColumn(const duckdb::Vector& /*vec*/,
+                               duckdb::idx_t /*count*/) {}
+
   // deletes row denoted by row_key. It is up to concrete writer to perform all
   // necessary deletes.
   virtual void DeleteRow(std::string_view row_key) {

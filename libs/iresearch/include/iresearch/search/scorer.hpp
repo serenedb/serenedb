@@ -35,7 +35,7 @@ struct IndexReader;
 class MemoryIndexOutput;
 class IndexOutput;
 struct SubReader;
-struct ColumnProvider;
+struct NormProvider;
 struct TermReader;
 class ColumnArgsFetcher;
 
@@ -122,8 +122,7 @@ struct WandWriter {
 
   virtual ~WandWriter() = default;
 
-  virtual bool Prepare(const ColumnProvider& reader,
-                       const FieldProperties& field,
+  virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
                        const AttributeProvider& attrs) = 0;
 
   virtual void Reset() = 0;
@@ -138,7 +137,7 @@ struct WandWriter {
 };
 
 struct ScoreContext {
-  const ColumnProvider& segment;
+  const NormProvider& segment;
   const FieldProperties& field;
   const AttributeProvider& doc_attrs;
   ColumnArgsFetcher* fetcher = nullptr;

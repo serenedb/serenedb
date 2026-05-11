@@ -14,32 +14,28 @@
 /// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
-///
-/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/column_collector.hpp"
+#pragma once
 
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/search/score_function.hpp"
+#include <span>
 
-namespace irs {
+#include "iresearch/index/index_meta.hpp"
 
-const uint32_t* ColumnArgsFetcher::AddNorms(const ColumnReader* field) {
-  if (!field) {
-    return nullptr;
-  }
-  auto it = _columns.try_emplace(field->id()).first;
-  auto& entry = it->second;
-  if (!entry.reader) {
-    entry.reader = field->norms();
-    if (!entry.reader) [[unlikely]] {
-      _columns.erase(it);
-      return nullptr;
-    }
-    entry.norms.resize(kPostingBlock);  // TODO(gnusi): fix
-  }
-  return entry.norms.data();
-}
+namespace irs::columnstore {
 
-}  // namespace irs
+class Reader;
+class Writer;
+
+// Merges columns from `sources` into `output`. Processes sources in order;
+// for each column id present in any source, the output writer opens a
+// column with the source's LogicalType. Per source row group, values are
+// pulled via ColumnSegment::Scan, filtered against the source's docs_mask,
+// and forwarded to ColumnWriter::Append.
+//
+// `source_masks` is parallel to `sources`; nullptr means no deletes.
+void MergeInto(std::span<const Reader* const> sources,
+               std::span<const DocumentMask* const> source_masks,
+               Writer& output);
+
+}  // namespace irs::columnstore

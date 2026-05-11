@@ -35,12 +35,14 @@
 #include "iresearch/analysis/analyzer.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/norm_writer.hpp"
 #include "iresearch/formats/formats.hpp"
-#include "iresearch/index/buffered_column_iterator.hpp"
 #include "iresearch/index/comparer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/index/norm_column_reader.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -610,57 +612,40 @@ class TermReaderImpl final : public irs::BasicTermReader,
 
 }  // namespace
 
-ResettableDocIterator::ptr CachedColumn::iterator(ColumnHint hint) const {
-  // kPrevDoc isn't supported atm
-  SDB_ASSERT(ColumnHint::Normal == (hint & ColumnHint::PrevDoc));
-
-  // FIXME(gnusi): can avoid allocation with the help of managed_ptr
-  return memory::make_managed<BufferedColumnIterator>(_stream.Index(),
-                                                      _stream.Data());
-}
-
-NormReader::ptr CachedColumn::norms() const {
-  return MakeNormReader(payload(), _stream.Index(), _stream.Data());
-}
-
-FieldData::FieldData(std::string_view name, CachedColumns& cached_columns,
-                     IndexFeatures cached_features, ColumnstoreWriter& columns,
+FieldData::FieldData(std::string_view name,
                      byte_block_pool::inserter& byte_writer,
                      int_block_pool::inserter& int_writer,
-                     IndexFeatures index_features, bool random_access)
+                     IndexFeatures index_features,
+                     columnstore::Writer* columnstore, field_id norm_id)
   // Unset optional features
   : _meta{name, index_features & (~IndexFeatures::Offs)},
     _terms{*byte_writer},
     _byte_writer{&byte_writer},
     _int_writer{&int_writer},
-    _proc_table{kTermProcessingTables[size_t(random_access)]},
+    _proc_table{kTermProcessingTables[0]},
     _requested_features{index_features},
     _last_doc{doc_limits::invalid()} {
   if (IsSubsetOf(IndexFeatures::Norm, index_features)) {
-    // no compression, no encryption
-    const ColumnInfo info{Type<compression::None>::get(), {}, false};
-    auto feature_writer = Norm::MakeWriter({});
-    SDB_ASSERT(feature_writer);
-    ColumnFinalizer finalizer{
-      [writer = feature_writer.get()](DataOutput& out) { writer->finish(out); },
-      [] { return std::string_view{}; },
-    };
-
-    // sorted index case or the feature is required for wand
-    if (random_access || IsSubsetOf(IndexFeatures::Norm, cached_features)) {
-      auto& rm = cached_columns.get_allocator().Manager();
-      auto& column = cached_columns.emplace_back(&_meta.norm, info,
-                                                 std::move(finalizer), rm);
-      _features.emplace_back(std::move(feature_writer), column.Stream());
-    } else {
-      auto [column, out] = columns.push_column(info, std::move(finalizer));
-      _features.emplace_back(std::move(feature_writer), out);
-      _meta.norm = column;
+    // Per-doc norm values (FieldStats::len) are appended in
+    // compute_features below. The id is the per-segment sequential id
+    // allocated by FieldsData and recorded in the .cs footer so segment
+    // readers can look this norm column up by id directly.
+    if (columnstore != nullptr && field_limits::valid(norm_id)) {
+      _norm_writer = &columnstore->OpenNormColumn(norm_id, std::string{name});
+      _meta.norm = norm_id;
     }
   }
 
   SDB_ASSERT(!field_limits::valid(_meta.norm) ||
              IsSubsetOf(IndexFeatures::Norm, _meta.index_features));
+}
+
+void FieldData::compute_features() const {
+  // Reads during the same flush use NormColumnWriter::Get; reads after
+  // commit use columnstore::Reader::NormColumn over the .cs file.
+  if (_norm_writer != nullptr) {
+    _norm_writer->Append(_stats.len);
+  }
 }
 
 void FieldData::reset(doc_id_t doc_id) {
@@ -1004,31 +989,33 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   return true;
 }
 
-FieldsData::FieldsData(FieldData::CachedColumns& cached_columns,
-                       IndexFeatures cached_features,
-                       const Comparer* comparator)
-  : _comparator{comparator},
-    _fields{cached_columns.get_allocator()},
-    _cached_columns{&cached_columns},
-    _byte_pool{cached_columns.get_allocator()},
+FieldsData::FieldsData(IResourceManager& rm, IndexFeatures scorers_features)
+  : _fields{ManagedTypedAllocator<FieldData>{rm}},
+    _byte_pool{ManagedTypedAllocator<byte_block_pool::value_type>{rm}},
     _byte_writer{_byte_pool.begin()},
-    _int_pool{cached_columns.get_allocator()},
+    _int_pool{ManagedTypedAllocator<int_block_pool::value_type>{rm}},
     _int_writer{_int_pool.begin()},
-    _cached_features{cached_features} {}
+    _scorers_features{scorers_features} {}
 
 FieldData* FieldsData::emplace(const hashed_string_view& name,
-                               IndexFeatures index_features,
-                               ColumnstoreWriter& columns) {
+                               IndexFeatures index_features) {
   SDB_ASSERT(_fields_map.size() == _fields.size());
 
   auto it = _fields_map.lazy_emplace(
     name, [&name](const auto& ctor) { ctor(nullptr, name.Hash()); });
 
   if (!it->ref) {
+    // Allocate a per-segment norm column id from the columnstore Writer's
+    // shared allocator so it doesn't collide with column ids handed out
+    // for typed columns. The id is recorded in the .cs footer so the
+    // reader can look this norm column up directly.
+    const field_id norm_id = (_columnstore != nullptr &&
+                              IsSubsetOf(IndexFeatures::Norm, index_features))
+                               ? _columnstore->AllocateColumnId()
+                               : field_limits::invalid();
     try {
       const_cast<FieldData*&>(it->ref) = &_fields.emplace_back(
-        name, *_cached_columns, _cached_features, columns, _byte_writer,
-        _int_writer, index_features, (nullptr != _comparator));
+        name, _byte_writer, _int_writer, index_features, _columnstore, norm_id);
     } catch (...) {
       _fields_map.erase(it);
       throw;
@@ -1059,7 +1046,7 @@ void FieldsData::flush(FieldWriter& fw, FlushState& state) {
                  return lhs->meta().name < rhs->meta().name;
                });
 
-  TermReaderImpl terms(_sorted_postings, state.docmap);
+  TermReaderImpl terms(_sorted_postings, nullptr);
 
   fw.prepare(state);
   for (auto* field : _sorted_fields) {

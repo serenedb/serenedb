@@ -1478,14 +1478,14 @@ VACUUM (UPDATE_INDEXES) sql_boost_docs;
 # Baseline (no SQL-surface boost): 3-way OR over the body terms; all
 # three rows score identically so they sort by id.
 query
-SELECT id FROM sql_boost_idx
+SELECT id, BM25(sql_boost_idx.tableoid) as d FROM sql_boost_idx
 WHERE body @@ 'alpha' OR body @@ 'beta' OR body @@ 'gamma'
-ORDER BY BM25(sql_boost_idx.tableoid) DESC, id;
+ORDER BY d DESC, id;
 ----
-id
-1
-2
-3
+id  d
+1 0.9808291
+2 0.9808291
+3 0.9808291
 
 
 # End-to-end BM25 ordering via SQL-surface boost wrapping a TSQUERY

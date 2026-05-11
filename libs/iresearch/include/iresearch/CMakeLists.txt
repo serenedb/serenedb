@@ -76,15 +76,20 @@ set(IResearch_core_sources
     ./analysis/pattern_tokenizer.cpp
     ./analysis/wildcard_analyzer.cpp
     ./error/error.cpp
-    ./formats/column/common.cpp
+    ./columnstore/format.cpp
+    ./columnstore/column_writer.cpp
+    ./columnstore/column_reader.cpp
+    ./columnstore/norm_writer.cpp
+    ./columnstore/norm_reader.cpp
+    ./columnstore/merge.cpp
+    ./columnstore/hnsw.cpp
+    ./columnstore/internal/cs_block_manager.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
     ./formats/posting/skip_list.cpp
-    ./formats/column/sparse_bitmap.cpp
     ./formats/format_block_128.cpp
     ./formats/index/burst_trie.cpp
     ./formats/column/hnsw_index.cpp
-    ./index/buffered_column.cpp
     ./index/directory_reader.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_data.cpp
@@ -115,7 +120,6 @@ set(IResearch_core_sources
     ./search/nested_filter.cpp
     ./search/terms_filter.cpp
     ./search/prefix_filter.cpp
-    ./search/column_collector.cpp
     ./search/range_filter.cpp
     ./search/phrase_filter.cpp
     ./search/phrase_query.cpp
@@ -255,6 +259,7 @@ target_link_libraries(
     PUBLIC re2
     PUBLIC serene_geo
     PUBLIC streamvbyte
+    PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

@@ -86,13 +86,13 @@ struct ScanSource {
            _kind == ScanSourceKind::SkPoint || _kind == ScanSourceKind::SkRange;
   }
 
-  template<class T>
+  template<typename T>
   const T& Cast() const {
     auto* p = basics::downCast<T>(this);
     SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
     return *p;
   }
-  template<class T>
+  template<typename T>
   T& Cast() {
     auto* p = basics::downCast<T>(this);
     SDB_ASSERT(p != nullptr, "ScanSource::Cast: null result");
@@ -124,6 +124,10 @@ struct SearchScan : ScanSource {
   search::InvertedIndexSnapshotPtr snapshot;
   // Empty when the filter is trivial.
   std::string filter_summary;
+  // True when stored_filter is the trivial match-all (irs::All). The
+  // bulk-scan shortcut keys on this rather than string-comparing
+  // filter_summary.
+  bool match_all = false;
 
   // Scorer parsed from `ORDER BY BM25(idx.tableoid, ...)` / `TFIDF(...)`
   // / etc. Empty when the query has no scoring projection.
@@ -193,7 +197,7 @@ struct VectorSearchScan : ScanSource {
   VectorSearchScan(ScanSourceKind kind) : ScanSource{kind} {}
 
   ObjectId index_id;
-  std::string field_name;
+  catalog::Column::Id field_id{};
   std::vector<float> query_vector;
   duckdb::unique_ptr<duckdb::Expression> filter_expression;
   std::vector<catalog::Column::Id> filter_column_ids;
@@ -323,11 +327,11 @@ struct SereneDBScanBindData : public duckdb::FunctionData {
     return entry_kind == ScanEntryKind::SecondaryIndex;
   }
 
-  template<class T>
+  template<typename T>
   T& As() & {
     return basics::downCast<T>(*this);
   }
-  template<class T>
+  template<typename T>
   const T& As() const& {
     return basics::downCast<const T>(*this);
   }

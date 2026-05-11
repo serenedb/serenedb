@@ -28,11 +28,24 @@
 
 namespace irs {
 
-struct ColumnReader;
-
 class ColumnArgsFetcher {
  public:
-  const uint32_t* AddNorms(const ColumnReader* field);
+  // Caches the norm reader for `field`. The first call materialises the
+  // per-doc norm scratch buffer; subsequent calls hit the cache. Returns
+  // a pointer to the scratch buffer the Fetch* methods fill, or nullptr
+  // when `reader` is empty.
+  const uint32_t* AddNorms(field_id field, NormReader::ptr reader) {
+    if (!reader) {
+      return nullptr;
+    }
+    auto [it, inserted] = _columns.try_emplace(field);
+    auto& entry = it->second;
+    if (inserted) {
+      entry.reader = std::move(reader);
+      entry.norms.resize(kPostingBlock);
+    }
+    return entry.norms.data();
+  }
 
   void Clear() noexcept { _columns.clear(); }
 

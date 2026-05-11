@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_join.h>
 
+#include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
@@ -45,6 +46,7 @@
 #include "connector/duckdb_sk_full_scan.hpp"
 #include "connector/duckdb_sk_point_lookup.hpp"
 #include "connector/duckdb_sk_range_scan.hpp"
+#include "connector/duckdb_table_entry.h"
 #include "connector/rocksdb_filter.hpp"
 #include "connector/search_filter_printer.hpp"
 #include "functions/search.h"
@@ -87,8 +89,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   if (bind.scan_source && bind.scan_source->Kind() == ScanSourceKind::Search) {
     const auto& ss = bind.scan_source->Cast<SearchScan>();
     if (ss.snapshot) {
-      return duckdb::make_uniq<duckdb::NodeStatistics>(
-        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count()));
+      const auto rows =
+        static_cast<duckdb::idx_t>(ss.snapshot->reader.live_docs_count());
+      return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
     }
   }
   auto shard = ResolveInvertedIndexShard(context, bind);
@@ -99,8 +102,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> InvertedIndexCardinality(
   if (!idx_snapshot || !idx_snapshot->reader) {
     return nullptr;
   }
-  return duckdb::make_uniq<duckdb::NodeStatistics>(
-    static_cast<duckdb::idx_t>(idx_snapshot->reader->live_docs_count()));
+  const auto rows =
+    static_cast<duckdb::idx_t>(idx_snapshot->reader->live_docs_count());
+  return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
 }
 
 }  // namespace
@@ -130,8 +134,8 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TableScanBindData::Cardinality(
     return nullptr;
   }
   auto stats = shard->GetTableStats();
-  return duckdb::make_uniq<duckdb::NodeStatistics>(
-    static_cast<duckdb::idx_t>(stats.num_rows));
+  const auto rows = static_cast<duckdb::idx_t>(stats.num_rows);
+  return duckdb::make_uniq<duckdb::NodeStatistics>(rows, rows);
 }
 
 ObjectId TableScanBindData::RelationId() const { return table->GetId(); }
@@ -435,14 +439,12 @@ void AppendVectorSearchSummary(
   duckdb::InsertionOrderPreservingMap<std::string>& out) {
   out.insert("Dims", std::to_string(scan.query_vector.size()));
   if (scan.text_filter_root) {
-    auto col_name = [&bind](catalog::Column::Id col_id) -> std::string_view {
-      static thread_local std::string fallback;
+    auto col_name = [&](catalog::Column::Id col_id) {
       auto name = bind.ColumnNameById(col_id);
       if (!name.empty()) {
-        return name;
+        return std::string{name};
       }
-      fallback = absl::StrCat("col", col_id);
-      return fallback;
+      return absl::StrCat("col", col_id);
     };
     SDB_ASSERT(scan.text_filter_root);
     out.insert("TextFilter",
@@ -507,6 +509,148 @@ void SearchScan::AppendSummary(
   }
 }
 
+// One projected column resolved against the catalog: bare display name
+// + whether its values come from the iresearch typed columnstore
+// (INCLUDE'd / HNSW vector data, store_values=true) or from the
+// IndexSource lookup fallback (rocksdb / non-INCLUDE'd index columns
+// + base tables).
+struct ProjectionEntry {
+  std::string name;
+  bool from_index = false;
+};
+
+// Owning display name for a projected column.
+//
+// Resolution order (first match wins):
+//   * regular table column           -> names[col_id]
+//   * virtual PK column              -> the underlying catalog column's
+//     name (resolved via the bind's table when table-backed)
+//   * known DuckDB / serenedb id     -> a canonical readable string
+//     ("row_id" / "row_number" / "empty" / "file_index" /
+//      "file_row_number" / "tableoid" / "generated_pk")
+//   * everything else                -> "col<N>" fallback
+std::string ProjectionDisplayName(const SereneDBScanBindData& bind,
+                                  const duckdb::ColumnIndex& column_index,
+                                  const duckdb::vector<std::string>& names) {
+  const auto col_id = column_index.GetPrimaryIndex();
+  if (col_id < names.size()) {
+    return names[col_id];
+  }
+  if (const auto pk_idx = SereneDBTableEntry::VirtualToPKColumnIndex(col_id);
+      pk_idx != duckdb::DConstants::INVALID_INDEX) {
+    if (const auto* tbd = dynamic_cast<const TableScanBindData*>(&bind)) {
+      const auto& cols = tbd->table->Columns();
+      if (pk_idx < cols.size()) {
+        return cols[pk_idx].name;
+      }
+    }
+  }
+  if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID) {
+    return "row_id";
+  }
+  if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_NUMBER) {
+    return "row_number";
+  }
+  if (col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX) {
+    return "file_index";
+  }
+  if (col_id == duckdb::MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+    return "file_row_number";
+  }
+  if (col_id == kColumnIdentifierTableOid) {
+    return "tableoid";
+  }
+  if (col_id == kColumnIdentifierGeneratedPk) {
+    return "generated_pk";
+  }
+  return absl::StrCat("column_", col_id);
+}
+
+// True iff the column is served by the iresearch typed columnstore in
+// this scan: only inverted-index scans have an INCLUDE concept, and
+// within those, a column is "from index" when its catalog entry is
+// store_values=true. Synthetic PK (kGeneratedPKId) lives in the
+// columnstore as a BLOB column and isn't represented in
+// InvertedIndex::columns, so we treat it as from-index here.
+bool ProjectionIsFromIndex(const SereneDBScanBindData& bind,
+                           const duckdb::ColumnIndex& column_index) {
+  if (!bind.IsInvertedIndexEntry() || !bind.inverted_index) {
+    return false;
+  }
+  const auto col_id = column_index.GetPrimaryIndex();
+  if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID ||
+      col_id >= duckdb::VIRTUAL_COLUMN_START ||
+      col_id >= bind.column_ids.size()) {
+    return false;
+  }
+  const auto catalog_col_id = bind.column_ids[col_id];
+  if (catalog_col_id == catalog::Column::kGeneratedPKId) {
+    return true;
+  }
+  const auto* info = bind.inverted_index->FindColumnInfo(catalog_col_id);
+  return info != nullptr && info->store_values;
+}
+
+// Walk projections in DuckDB's PhysicalTableScan order. Returns an
+// empty vector when projection info isn't available (callers other
+// than PhysicalTableScan that build TableFunctionToStringInput
+// directly), letting the to_string code path fall back to no
+// "Projections" key at all. Known virtual ids (row_id, generated_pk,
+// tableoid, row_number, empty, file_index, file_row_number) are
+// rendered with their canonical names instead of "col<N>" by
+// ProjectionDisplayName.
+std::vector<ProjectionEntry> BuildProjectionEntries(
+  const SereneDBScanBindData& bind,
+  const duckdb::TableFunctionToStringInput& input) {
+  std::vector<ProjectionEntry> entries;
+  if (!input.projected_column_ids || !input.projected_names) {
+    return entries;
+  }
+  const auto& column_ids = *input.projected_column_ids;
+  const auto& names = *input.projected_names;
+  const auto count =
+    input.projected_filter_prune
+      ? (input.projection_ids ? input.projection_ids->size() : 0)
+      : column_ids.size();
+  entries.reserve(count);
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    const auto base_index =
+      input.projected_filter_prune ? (*input.projection_ids)[i] : i;
+    if (base_index >= column_ids.size()) {
+      continue;
+    }
+    const auto& column_index = column_ids[base_index];
+    const auto col_id = column_index.GetPrimaryIndex();
+    if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      continue;
+    }
+    entries.push_back(
+      {.name = ProjectionDisplayName(bind, column_index, names),
+       .from_index = ProjectionIsFromIndex(bind, column_index)});
+  }
+  return entries;
+}
+
+// Format the "Projections" value. When `annotate` is true the names
+// carry "(i)" / "(l)" suffixes; otherwise plain names (one per line)
+// matching DuckDB's auto-emit shape so non-mixed scans look identical
+// to today's output.
+std::string FormatProjections(const std::vector<ProjectionEntry>& entries,
+                              bool annotate) {
+  std::string out;
+  for (const auto& e : entries) {
+    if (!out.empty()) {
+      absl::StrAppend(&out, "\n");
+    }
+    if (annotate) {
+      absl::StrAppend(&out, e.name, " (", e.from_index ? "i" : "l", ")");
+    } else {
+      absl::StrAppend(&out, e.name);
+    }
+  }
+  return out;
+}
+
 static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
   duckdb::TableFunctionToStringInput& input) {
   duckdb::InsertionOrderPreservingMap<std::string> result;
@@ -522,10 +666,37 @@ static duckdb::InsertionOrderPreservingMap<std::string> SereneDBScanToString(
     const char* kind = bind.IsViewBacked() ? "View" : "Table";
     result.insert(kind, std::string{bind.RelationName()});
   }
-  if (!bind.lookup_label.empty()) {
+  // Classify projections up front so we can decide whether to suppress
+  // the "Lookup" line (no lookup-served columns) and whether to
+  // annotate the projections list (mixed sources).
+  const auto entries = BuildProjectionEntries(bind, input);
+  bool has_index = false;
+  bool has_lookup = false;
+  for (const auto& e : entries) {
+    if (e.from_index) {
+      has_index = true;
+    } else {
+      has_lookup = true;
+    }
+  }
+  // Drop "Lookup" only when this is an inverted-index scan we
+  // confidently classified all projections for and none of them go
+  // through the lookup path. Other scan kinds (base table, secondary
+  // index) keep the legacy unconditional emit.
+  const bool suppress_lookup =
+    bind.IsInvertedIndexEntry() && !entries.empty() && !has_lookup;
+  if (!bind.lookup_label.empty() && !suppress_lookup) {
     result.insert("Lookup", bind.lookup_label);
   }
   bind.scan_source->AppendSummary(bind, result);
+  // Pre-emit "Projections" so the patched PhysicalTableScan::ParamsToString
+  // skips its auto-emit. Annotate only when projections mix sources --
+  // bare (i) or bare (l) noise when one source dominates is explicitly
+  // unwanted.
+  if (!entries.empty()) {
+    const bool annotate = has_index && has_lookup;
+    result.insert("Projections", FormatProjections(entries, annotate));
+  }
   return result;
 }
 

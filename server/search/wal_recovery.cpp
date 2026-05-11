@@ -189,9 +189,21 @@ void FlushShard(ShardState& s,
     connector::MakeTokenizerProvider(snapshot, *s.index);
   auto json_paths_provider =
     connector::MakeJsonPathsProvider(snapshot, *s.index);
+  auto store_values_provider = connector::MakeStoreValuesProvider(*s.index);
+  auto is_text_indexed_provider =
+    connector::MakeIsTextIndexedProvider(*s.index);
+  auto hnsw_info_provider = connector::MakeHNSWInfoProvider(*s.index);
+  auto compression_provider = connector::MakeCompressionProvider(*s.index);
   connector::SearchSinkInsertBaseImpl insert_sink{
-    trx, std::move(tokenizer_provider), std::move(json_paths_provider),
-    s.indexed_column_ids};
+    trx,
+    std::move(tokenizer_provider),
+    std::move(json_paths_provider),
+    std::move(store_values_provider),
+    std::move(is_text_indexed_provider),
+    std::move(hnsw_info_provider),
+    std::move(compression_provider),
+    s.indexed_column_ids,
+  };
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());
@@ -468,7 +480,7 @@ void RunWalRecovery(std::vector<ShardState>& shards,
     table2shards[s.table_object_id].shards.emplace_back(&s);
   }
   for (auto& [_, shards] : table2shards) {
-    std::ranges::sort(shards.shards, ShardState::ByStartTick());
+    absl::c_sort(shards.shards, ShardState::ByStartTick());
   }
 
   auto* default_cf = RocksDBColumnFamilyManager::get(

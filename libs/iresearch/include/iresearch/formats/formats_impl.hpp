@@ -22,7 +22,6 @@
 
 #pragma once
 
-#include "iresearch/formats/column/common.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index_meta_reader.hpp"
@@ -67,15 +66,6 @@ class FormatBase : public Format {
   FieldReader::ptr get_field_reader(
     IResourceManager& resource_manager) const final {
     return burst_trie::MakeReader(get_postings_reader(), resource_manager);
-  }
-
-  ColumnstoreWriter::ptr get_columnstore_writer(
-    bool consolidation, IResourceManager& resource_manager) const final {
-    return columnstore2::MakeWriter(columnstore2::Version::Min, consolidation,
-                                    resource_manager);
-  }
-  ColumnstoreReader::ptr get_columnstore_reader() const final {
-    return columnstore2::MakeReader();
   }
 };
 

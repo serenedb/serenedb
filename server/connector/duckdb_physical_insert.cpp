@@ -231,6 +231,24 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     writer->Init(affected_rows, chunk);
   }
 
+  // `sdb_write_conflict_policy = do_nothing` (and only this -- the
+  // ON CONFLICT clause is pre-filtered by DuckDB upstream) leaves the
+  // chunk's value vectors intact while only `affected_rows` rows
+  // get doc ids. WriteFullColumn must see only the surviving rows or
+  // the cs row position decouples from the segment's doc id space.
+  // HandleWriteConflicts marks skipped rows by clearing row_keys[row].
+  duckdb::SelectionVector survivor_sel;
+  const bool need_filter = (rows_skipped > 0);
+  if (need_filter) {
+    survivor_sel.Initialize(affected_rows);
+    duckdb::idx_t k = 0;
+    for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+      if (!gstate.row_keys[row].empty()) {
+        survivor_sel.set_index(k++, row);
+      }
+    }
+  }
+
   // 4. Write each column via DuckDBColumnSerializer
   DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
@@ -246,9 +264,23 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
     const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
                                 may_have_nulls};
 
+    duckdb::Vector cs_vec{vec.GetType(), affected_rows};
+    if (need_filter) {
+      // DICTIONARY view; no data copy.
+      cs_vec.Slice(vec, survivor_sel, affected_rows);
+    }
+    duckdb::Vector& cs_input = need_filter ? cs_vec : vec;
+    const duckdb::idx_t cs_count = need_filter ? affected_rows : num_rows;
+
     gstate.active_writers.clear();
     for (auto& writer : gstate.index_writers) {
-      if (writer->SwitchColumn(desc)) {
+      const bool active = writer->SwitchColumn(desc);
+      // WriteFullColumn fires unconditionally so the columnstore side
+      // absorbs the batch even for INCLUDE-only columns; pass the
+      // filtered view so cs doc positions stay in lockstep with the
+      // surviving rows (skipped ON-CONFLICT rows are filtered out).
+      writer->WriteFullColumn(cs_input, cs_count);
+      if (active) {
         gstate.active_writers.push_back(writer.get());
       }
     }

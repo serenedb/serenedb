@@ -49,6 +49,7 @@
 #include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
+#include "query/duckdb_engine.h"
 #include "query/transaction.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/serened_single.h"
@@ -188,6 +189,11 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
   writer_options.lock_repository = false;  // RocksDB has its own lock
+  writer_options.db = query::DuckDBEngine::Instance().GetDB().instance.get();
+  // Same DB threads through to the snapshot reader path so SegmentReaderImpl
+  // can open the per-segment irs::columnstore::Reader and route norms()
+  // through the new format on every refresh.
+  writer_options.reader_options.db = writer_options.db;
 
   if (const auto& options = index.GetWandScorer()) {
     _wand_scorer = catalog::MakeScorer(*options);
@@ -214,26 +220,29 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
     writer_options.segment_docs_max = 1000;
   }
 
-  // Configure column_info for HNSW vector columns.
-  // The field name is the big-endian encoded catalog Column::Id.
+  // HNSW columns now route through the new cs columnstore (vectors as
+  // ARRAY<FLOAT,N>, graph as .cs footer side-payload). The iresearch
+  // column_info callback intentionally does NOT advertise hnsw_info here
+  // -- otherwise BufferedColumn would build a *second* legacy faiss
+  // graph in parallel, which is wasted work since SubReader::Search
+  // prefers the new cs HNSWReader. We still mark the value type so any
+  // remaining legacy code paths handle the bytes correctly.
   {
-    containers::FlatHashMap<std::string, irs::HNSWInfo> hnsw_columns;
+    containers::FlatHashSet<std::string> hnsw_column_names;
     for (auto col_id : index.GetColumnIds()) {
-      if (auto hnsw = index.GetColumnHNSWInfo(col_id)) {
+      if (index.GetColumnHNSWInfo(col_id)) {
         std::string name(sizeof(col_id), '\0');
         absl::big_endian::Store64(name.data(), col_id);
-        hnsw_columns.emplace(std::move(name), *hnsw);
+        hnsw_column_names.emplace(std::move(name));
       }
     }
-    if (!hnsw_columns.empty()) {
+    if (!hnsw_column_names.empty()) {
       writer_options.column_info =
-        [hnsw_map = std::move(hnsw_columns)](std::string_view name) {
-          auto it = hnsw_map.find(std::string(name));
-          if (it != hnsw_map.end()) {
+        [names = std::move(hnsw_column_names)](std::string_view name) {
+          if (names.contains(std::string(name))) {
             return irs::ColumnInfo{
               .compression = irs::Type<irs::compression::None>::get(),
               .value_type = irs::ValueType::VectorF32,
-              .hnsw_info = it->second,
             };
           }
           return irs::ColumnInfo{.compression =

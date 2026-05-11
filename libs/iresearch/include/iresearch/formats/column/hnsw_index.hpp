@@ -34,7 +34,6 @@
 
 namespace irs {
 
-struct ColumnReader;
 class IndexReader;
 
 void WriteHNSW(DataOutput& out, const faiss::HNSW& hnsw);
@@ -215,21 +214,6 @@ class HNSWIndexWriter {
   faiss::VisitedTable _vt;
   ColumnIndexDistance _dis;
   absl::AnyInvocable<void(ResettableDocIterator::ptr&)> _update_iterator;
-};
-
-class HNSWIndexReader {
- public:
-  explicit HNSWIndexReader(faiss::HNSW&& hnsw, const ColumnReader& reader,
-                           HNSWInfo info);
-
-  void Search(HNSWSearchContext& context) const;
-  void RangeSearch(HNSWRangeSearchContext& context) const;
-
- private:
-  friend class HNSWIterator;
-  mutable faiss::HNSW _hnsw;  // can change search parameters
-  const HNSWInfo _info;
-  const ColumnReader& _reader;
 };
 
 }  // namespace irs

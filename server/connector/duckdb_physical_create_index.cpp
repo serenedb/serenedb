@@ -55,6 +55,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
+#include "pg/progress_tracker.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/secondary_index_shard.h"
 
@@ -179,6 +180,12 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   duckdb::idx_t backfill_count = 0;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
 
+  // Surfaces ingest progress through pg_stat_progress_create_index. Lives
+  // for the duration of the build pipeline; phases advance Initializing ->
+  // BuildingIndex (after catalog row exists) -> Committing (Finalize before
+  // CommitWait) -> Finalizing (Finalize after CommitWait, before tombstone).
+  std::unique_ptr<pg::IndexProgressReporter> progress;
+
   ~CreateIndexGlobalState() {
     search_trx.reset();
     if (created && !finalized) {
@@ -243,6 +250,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->schema_name = _schema_entry.name;
   state->table_name = std::string{_relation->GetName()};
   state->index_name = _info->index_name;
+
+  // Surface progress in pg_stat_progress_create_index. We don't yet know the
+  // catalog index_relid (it's assigned by CreateInvertedIndex/CreateSecondaryIndex
+  // below), so start with an empty one and patch it in after the catalog row
+  // exists.
+  state->progress = std::make_unique<pg::IndexProgressReporter>(
+    _database_id, _relation->GetId(),
+    pg::create_index_progress::Command::CreateIndex,
+    pg::create_index_progress::Phase::Initializing, ObjectId{});
+  if (estimated_cardinality > 0) {
+    state->progress->SetTuplesTotal(estimated_cardinality);
+  }
 
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
@@ -374,6 +393,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto catalog_index =
     snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
   SDB_ASSERT(catalog_index);
+  state->progress->SetIndexRelid(catalog_index->GetId());
+  state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);
   state->index_shard = shard;
@@ -602,6 +623,9 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
   gstate.writer->Finish();
   gstate.backfill_count += num_rows;
+  if (gstate.progress) {
+    gstate.progress->ReportBatch(num_rows);
+  }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -618,6 +642,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
 
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
       gstate.index_shard) {
+    if (gstate.progress) {
+      gstate.progress->SetPhase(pg::create_index_progress::Phase::Committing);
+    }
     gstate.writer.reset();
     gstate.search_trx.reset();
 
@@ -629,6 +656,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     inverted_shard.FinishCreation();
   }
 
+  if (gstate.progress) {
+    gstate.progress->SetPhase(pg::create_index_progress::Phase::Finalizing);
+  }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

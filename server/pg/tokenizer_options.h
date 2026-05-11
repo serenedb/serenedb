@@ -32,6 +32,7 @@
 #include <iresearch/analysis/pattern_tokenizer.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/segmentation_tokenizer.hpp>
+#include <iresearch/analysis/solr_synonyms_tokenizer.hpp>
 #include <iresearch/analysis/stemming_tokenizer.hpp>
 #include <iresearch/analysis/stopwords_tokenizer.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
@@ -39,6 +40,7 @@
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/analysis/union_tokenizer.hpp>
 #include <iresearch/analysis/wildcard_analyzer.hpp>
+#include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/utils/type_id.hpp>
 #include <variant>
@@ -202,6 +204,18 @@ inline constexpr OptionInfo kSkip{"skip", 0,
 inline constexpr OptionInfo kBufferSize{
   "buffersize", 1024, "Term buffer size hint (characters per pass)"};
 
+// Synonyms (Solr / WordNet)
+
+inline constexpr OptionInfo kSolrSynonyms{
+  "synonyms", OptionInfo::RequiredTag<std::string_view>{},
+  "Inline Solr-format synonyms file content: one rule per line, comma-"
+  "separated terms; `=>` separates LHS from RHS for one-way mappings"};
+
+inline constexpr OptionInfo kWordnetSynonyms{
+  "synonyms", OptionInfo::RequiredTag<std::string_view>{},
+  "Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_"
+  "type,sense_number,tag_count).` record per line"};
+
 // Per-tokenizer option arrays
 
 inline constexpr OptionInfo kFeaturesOptions[] = {kNormFeature, kOffsetFeature,
@@ -246,6 +260,10 @@ inline constexpr OptionInfo kPatternOptions[] = {kPattern, kGroup};
 
 inline constexpr OptionInfo kPathHierarchyOptions[] = {
   kPathDelimiter, kPathReplacement, kReverse, kSkip, kBufferSize};
+
+inline constexpr OptionInfo kSolrSynonymsOptions[] = {kSolrSynonyms};
+
+inline constexpr OptionInfo kWordnetSynonymsOptions[] = {kWordnetSynonyms};
 
 // Groups
 
@@ -357,6 +375,16 @@ inline constexpr OptionGroup kKeywordGroup{
   {},
   {},
 };
+inline constexpr OptionGroup kSolrSynonymsGroup{
+  irs::analysis::SolrSynonymsTokenizer::type_name(),
+  kSolrSynonymsOptions,
+  {},
+};
+inline constexpr OptionGroup kWordnetSynonymsGroup{
+  irs::analysis::WordnetSynonymsTokenizer::type_name(),
+  kWordnetSynonymsOptions,
+  {},
+};
 
 inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kFeaturesGroup,       kTextGroup,
@@ -370,6 +398,7 @@ inline constexpr OptionGroup kTokenizerSubgroups[] = {
   kPathHierarchyGroup,  kUnionGroup,
   kCopyFromGroup,       kGeoPointGroup,
   kGeoJsonGroup,        kKeywordGroup,
+  kSolrSynonymsGroup,   kWordnetSynonymsGroup,
 };
 
 }  // namespace sdb::pg::tokenizer_options

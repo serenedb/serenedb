@@ -32,6 +32,7 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "pg/errcodes.h"
@@ -75,6 +76,16 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+
+  // True iff at least one inverted index on the table covers ONLY
+  // sdb_indexonly columns. In that case the PK-update path's main-
+  // storage row deletes are insufficient -- the existing DeleteCF
+  // wal_recovery replay misses any inverted index whose entire column
+  // set is IndexOnly. We emit a row-level [RD] WAL marker per deleted
+  // old row to close the gap. When at least one indexed column of every
+  // inverted index has main storage, DeleteCF replay covers the
+  // deletion and no marker is needed.
+  bool needs_rd_markers = false;
 
   // Single set of Update writers that handle both DeleteRow and Write.
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -270,6 +281,15 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
                                 duckdb::OnConflictAction::THROW,
                                 state->table_name);
 
+  // Snapshot + indexes are reused by both the [RD]-marker check and the
+  // index-column chunk-position mapping below.
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto indexes = snapshot->GetIndexesByRelation(state->table_id);
+
+  // Decide whether the PK-update delete loop needs to emit [RD] WAL
+  // markers; see NeedsRowDeleteMarkers for the precise rule.
+  state->needs_rd_markers = NeedsRowDeleteMarkers(indexes, columns);
+
   // Build column-ID-to-chunk-position mapping.
   // Chunk layout: [SET_vals..., pk_virtuals..., non_pk_virtuals..., rowid]
   // _indexed_col_indices maps 1:1 to non-PK non-gen columns in table order.
@@ -285,8 +305,6 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   // idx_col_indices minus PK positions). Other non-PK columns are NOT in the
   // chunk and must not be added here.
   {
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByRelation(state->table_id);
     containers::FlatHashSet<catalog::Column::Id> pk_id_set(pk_col_ids.begin(),
                                                            pk_col_ids.end());
     containers::FlatHashSet<catalog::Column::Id> indexed_col_ids;
@@ -536,6 +554,14 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
         if (!s.ok()) {
           SDB_THROW(ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
         }
+      }
+      // Row-level [RD] WAL marker so wal_recovery can propagate the
+      // delete to the inverted index for IndexOnly cells (whose main-
+      // storage DeleteCF doesn't exist and so doesn't drive the existing
+      // replay path). row_keys[row] is a valid row key; only its
+      // table_id + PK portion are read on replay.
+      if (gstate.needs_rd_markers) {
+        indexonly_marker::EmitRD(*txn, gstate.row_keys[row]);
       }
     }
 

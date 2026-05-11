@@ -49,21 +49,60 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
 
 class DuckDBColumnSerializer {
  public:
-  struct TxnWriter {
-    rocksdb::Transaction* txn;
-    rocksdb::ColumnFamilyHandle* cf;
+  // Writes column cells into a rocksdb transaction. For IndexOnly columns,
+  // emits a [CP] WAL marker via PutLogData instead of a regular Put -- the
+  // marker rides in the same WriteBatch so it is durable, and wal_recovery
+  // replays it into the inverted index on restart. Single source of truth
+  // for IndexOnly write policy: the serializer is unaware.
+  class TxnWriter {
+   public:
+    TxnWriter(rocksdb::Transaction* txn,
+              rocksdb::ColumnFamilyHandle* cf) noexcept
+      : _txn{txn}, _cf{cf} {}
 
-    void Write(const std::vector<rocksdb::Slice>& slices,
-               std::string_view key) const;
-    void WriteNull(std::string_view key) const;
+    // Set per-column context. Subsequent Write/WriteNull calls apply to
+    // this column.
+    void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
+
+    void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
+    void WriteNull(std::string_view key);
+
+    // Per-row delete marker. Caller emits one per row when the table has at
+    // least one IndexOnly column (otherwise the existing DeleteCF for any
+    // non-IndexOnly column already drives wal_recovery's row-delete path).
+    void EmitRowDelete(std::string_view key);
+
+   private:
+    bool IsIndexOnly() const noexcept {
+      return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
+    }
+
+    rocksdb::Transaction* _txn;
+    rocksdb::ColumnFamilyHandle* _cf;
+    ColumnDescriptor _cur_col{};
   };
 
-  struct SstWriter {
-    rocksdb::SstFileWriter* writer;
+  // Writes column cells into an SST file. For IndexOnly columns: silently
+  // skips (Option C -- bulk-insert durability for IndexOnly is best-effort
+  // matching the existing regular-column SST behaviour, where iresearch's
+  // own commit cadence is the only guarantee).
+  class SstWriter {
+   public:
+    explicit SstWriter(rocksdb::SstFileWriter* writer) noexcept
+      : _writer{writer} {}
 
-    void Write(const std::vector<rocksdb::Slice>& slices,
-               std::string_view key) const;
-    void WriteNull(std::string_view key) const;
+    void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
+
+    void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
+    void WriteNull(std::string_view key);
+
+   private:
+    bool IsIndexOnly() const noexcept {
+      return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
+    }
+
+    rocksdb::SstFileWriter* _writer;
+    ColumnDescriptor _cur_col{};
   };
 
   explicit DuckDBColumnSerializer(duckdb::Allocator& allocator);
@@ -142,13 +181,6 @@ class DuckDBColumnSerializer {
  private:
   char* Allocate(size_t size);
 
-  // True when the current column should not be written through the main
-  // RocksDB writer (Txn/Sst); its values live only in the search/inverted
-  // index. Index writers are still driven so they can pick the value up.
-  bool IsIndexOnly() const noexcept {
-    return _current_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
-  }
-
   // Returns the bitmap size in bytes, or 0 if the validity mask is all-valid
   // (in which case nothing is emitted).
   size_t WriteNullBitmap(const duckdb::UnifiedVectorFormat& fmt,
@@ -187,9 +219,6 @@ class DuckDBColumnSerializer {
                       std::span<DuckDBSinkIndexWriter*> index_writers);
   duckdb::ArenaAllocator _arena;
   std::vector<rocksdb::Slice> _row_slices;
-  // Set by WriteColumn before any per-row helper runs; describes the column
-  // currently being serialized.
-  ColumnDescriptor _current_col{};
 };
 
 }  // namespace sdb::connector

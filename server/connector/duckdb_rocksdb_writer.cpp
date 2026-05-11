@@ -30,6 +30,8 @@
 #include "basics/endian.h"
 #include "basics/string_utils.h"
 #include "connector/common.h"
+#include "connector/indexonly_marker.h"
+#include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
 namespace sdb::connector {
 namespace {
@@ -262,42 +264,78 @@ std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
 }  // namespace
 
 void DuckDBColumnSerializer::TxnWriter::Write(
-  const std::vector<rocksdb::Slice>& slices, std::string_view key) const {
-  auto merged = MergeSlices(slices);
-  auto status = txn->Put(cf, rocksdb::Slice(key.data(), key.size()),
-                         rocksdb::Slice(merged));
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) const {
-  auto status =
-    txn->Put(cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
-  if (!status.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
-  }
-}
-
-void DuckDBColumnSerializer::SstWriter::Write(
-  const std::vector<rocksdb::Slice>& slices, std::string_view key) const {
-  if (!writer) {
+  const std::vector<rocksdb::Slice>& slices, std::string_view key) {
+  if (IsIndexOnly()) {
+    // No main-storage write: emit a [CP] WAL marker instead. The marker
+    // rides in this transaction's WriteBatch so it's covered by the same
+    // WAL fsync as the regular Puts; wal_recovery replays it on restart.
+    //
+    // wal_recovery's LogData handler routes the replayed Put to the Default
+    // CF unconditionally (PutLogData blobs carry no CF id, unlike regular
+    // Put/Delete records). If this assertion ever fires, a future writer
+    // started using a non-Default CF for table rows and the [CP] replay path
+    // in search/wal_recovery.cpp::LogData would silently route to the wrong
+    // CF -- you'll need to encode cf_id in the marker payload there.
+    SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
+                        RocksDBColumnFamilyManager::Family::Default));
+    indexonly_marker::EmitCP(*_txn, key, slices);
     return;
   }
   auto merged = MergeSlices(slices);
+  auto status = _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()),
+                          rocksdb::Slice(merged));
+  if (!status.ok()) {
+    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
+  }
+}
+
+void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
+  if (IsIndexOnly()) {
+    // NULL is encoded as a [CP] marker with empty value bytes. See the
+    // Default-CF assertion comment in Write() above.
+    SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
+                        RocksDBColumnFamilyManager::Family::Default));
+    indexonly_marker::EmitCP(*_txn, key, {});
+    return;
+  }
   auto status =
-    writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice(merged));
+    _txn->Put(_cf, rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
+  if (!status.ok()) {
+    SDB_THROW(ERROR_INTERNAL, "RocksDB write failed: ", status.ToString());
+  }
+}
+
+void DuckDBColumnSerializer::TxnWriter::EmitRowDelete(std::string_view key) {
+  // [RD] is replayed by wal_recovery via ApplyMarkerRowDelete which walks
+  // every shard on the table (col_id is ignored); see the Default-CF
+  // assertion comment in Write() above for the broader CF-routing caveat.
+  SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
+                      RocksDBColumnFamilyManager::Family::Default));
+  indexonly_marker::EmitRD(*_txn, key);
+}
+
+void DuckDBColumnSerializer::SstWriter::Write(
+  const std::vector<rocksdb::Slice>& slices, std::string_view key) {
+  if (!_writer || IsIndexOnly()) {
+    // SST + IndexOnly: best-effort durability matching the existing
+    // regular-column SST path -- iresearch's own commit cadence is the
+    // only guarantee here. Skipping silently.
+    return;
+  }
+  auto merged = MergeSlices(slices);
+  auto status = _writer->Put(rocksdb::Slice(key.data(), key.size()),
+                             rocksdb::Slice(merged));
   if (!status.ok()) {
     SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
   }
 }
 
-void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) const {
-  if (!writer) {
+void DuckDBColumnSerializer::SstWriter::WriteNull(std::string_view key) {
+  if (!_writer || IsIndexOnly()) {
     return;
   }
   auto status =
-    writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
+    _writer->Put(rocksdb::Slice(key.data(), key.size()), rocksdb::Slice());
   if (!status.ok()) {
     SDB_THROW(ERROR_INTERNAL, "SST write failed: ", status.ToString());
   }
@@ -307,9 +345,9 @@ template<typename Writer>
 void DuckDBColumnSerializer::WriteRowSlices(
   Writer& writer, std::string_view key,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
-  if (!IsIndexOnly()) {
-    writer.Write(_row_slices, key);
-  }
+  // Writer decides what "Write" means for the current column (regular Put,
+  // IndexOnly WAL marker, or Option-C silent skip on the SST path).
+  writer.Write(_row_slices, key);
   for (auto* iw : index_writers) {
     iw->Write(_row_slices, key);
   }
@@ -325,9 +363,7 @@ void DuckDBColumnSerializer::WriteConstantColumn(
       if (row_keys[row].empty()) {
         continue;
       }
-      if (!IsIndexOnly()) {
-        writer.WriteNull(row_keys[row]);
-      }
+      writer.WriteNull(row_keys[row]);
       for (auto* iw : index_writers) {
         iw->Write({}, row_keys[row]);
       }
@@ -374,9 +410,7 @@ void DuckDBColumnSerializer::WriteUnifiedColumn(
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers) {
   auto write_null = [&](duckdb::idx_t row) {
-    if (!IsIndexOnly()) {
-      writer.WriteNull(row_keys[row]);
-    }
+    writer.WriteNull(row_keys[row]);
     for (auto* iw : index_writers) {
       iw->Write({}, row_keys[row]);
     }
@@ -494,7 +528,9 @@ void DuckDBColumnSerializer::WriteColumn(
   Writer& writer, const duckdb::Vector& vec, duckdb::idx_t num_rows,
   std::vector<std::string>& row_keys,
   std::span<DuckDBSinkIndexWriter*> index_writers, ColumnDescriptor col) {
-  _current_col = col;
+  // Tell the writer which column we're streaming so its Write/WriteNull
+  // can branch (regular Put vs IndexOnly WAL marker vs SST silent skip).
+  writer.SwitchColumn(col);
   const auto& type = col.type;
   switch (vec.GetVectorType()) {
     case duckdb::VectorType::FLAT_VECTOR:
@@ -634,9 +670,7 @@ void DuckDBColumnSerializer::WriteFlatColumn(
       continue;
     }
     if (may_have_nulls && !validity.RowIsValid(row)) {
-      if (!IsIndexOnly()) {
-        writer.WriteNull(row_keys[row]);
-      }
+      writer.WriteNull(row_keys[row]);
       const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);
@@ -663,9 +697,7 @@ void DuckDBColumnSerializer::WriteComplexColumn(
     }
     auto idx = rdata.unified.sel->get_index(row);
     if (!rdata.unified.validity.RowIsValid(idx)) {
-      if (!IsIndexOnly()) {
-        writer.WriteNull(row_keys[row]);
-      }
+      writer.WriteNull(row_keys[row]);
       const rocksdb::Slice null_slice;
       for (auto* iw : index_writers) {
         iw->Write({&null_slice, 1}, row_keys[row]);

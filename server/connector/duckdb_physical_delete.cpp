@@ -28,6 +28,7 @@
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "connector/duckdb_table_entry.h"
+#include "connector/indexonly_marker.h"
 #include "connector/key_utils.hpp"
 #include "pg/connection_context.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -53,6 +54,16 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+
+  // True iff at least one inverted index on the table covers ONLY
+  // sdb_indexonly columns. In that case the existing DeleteCF-based
+  // wal_recovery path cannot propagate the row delete to that index
+  // (no main-storage Delete for any of its indexed columns ever reaches
+  // replay), so we emit a row-level [RD] WAL marker per delete. When the
+  // table has at least one inverted index with at least one non-IndexOnly
+  // column, the existing DeleteCF replay covers the deletion and no
+  // marker is needed.
+  bool needs_rd_markers = false;
 
   // Index writers
   std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> index_writers;
@@ -123,6 +134,15 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   conn_ctx.AddRocksDBWrite();
   state->txn = &conn_ctx.EnsureRocksDBTransaction();
 
+  // Snapshot + indexes are reused by both the [RD]-marker check and the
+  // non-PK indexed-column reconstruction below.
+  auto snapshot = conn_ctx.EnsureCatalogSnapshot();
+  auto indexes = snapshot->GetIndexesByRelation(state->table_id);
+
+  // Decide whether row deletes need [RD] WAL markers; see
+  // NeedsRowDeleteMarkers for the precise rule.
+  state->needs_rd_markers = NeedsRowDeleteMarkers(indexes, columns);
+
   // Build column-ID-to-chunk-position mapping for index writers.
   // The scan output has: [..., pk_cols, indexed_cols, rowid].
   ColumnChunkMapping col_mapping;
@@ -143,8 +163,6 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
     // We need to figure out which column IDs correspond to _indexed_col_indices
     // They're the non-PK indexed columns in sorted order
     std::vector<catalog::Column::Id> non_pk_idx_col_ids;
-    auto snapshot = conn_ctx.EnsureCatalogSnapshot();
-    auto indexes = snapshot->GetIndexesByRelation(state->table_id);
     containers::FlatHashSet<size_t> pk_table_indices;
     for (auto pk_id : pk_col_ids) {
       for (size_t i = 0; i < columns.size(); ++i) {
@@ -246,6 +264,15 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
       if (!status.ok()) {
         SDB_THROW(ERROR_INTERNAL, "RocksDB delete failed: ", status.ToString());
       }
+    }
+
+    // Row-level [RD] WAL marker for inverted indexes whose entire column
+    // set is sdb_indexonly -- those indexes have no main-storage Delete
+    // to ride on, so the existing DeleteCF replay can't reach them.
+    // key_buffer holds a valid row key for this row; the marker decoder
+    // reads its table_id + PK portion and ignores the trailing column id.
+    if (gstate.needs_rd_markers) {
+      indexonly_marker::EmitRD(*txn, key_buffer);
     }
   }
 

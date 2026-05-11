@@ -88,6 +88,17 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
+// Returns true iff at least one inverted index in `indexes` covers ONLY
+// sdb_indexonly columns of `columns`. In that case the DML path must emit
+// row-level [RD] WAL markers on delete, because the existing DeleteCF
+// wal_recovery replay cannot reach inverted indexes whose every indexed
+// column has no main-storage Delete to ride on. When every inverted index
+// has at least one non-IndexOnly column, DeleteCF replay covers the row
+// delete and no marker is needed.
+bool NeedsRowDeleteMarkers(
+  std::span<const std::shared_ptr<catalog::Index>> indexes,
+  std::span<const catalog::Column> columns);
+
 // Returns the chunk-order list of catalog column positions to project for a
 // CREATE INDEX backfill scan over a base table:
 //   1. columns the index keys on (in `index_column_positions` order, deduped),

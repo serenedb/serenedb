@@ -341,12 +341,17 @@ inline void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) 
     norm_code = (data.norm > 0 ? ByteSize124ForSkipEntry(data.norm) : 0);
   }
 
-  // 2 encoding bytes
-  out.WriteU16((doc_size - 1) | (doc_ptr_code << 2) | (pos_ptr_code << 4) | (pay_ptr_code << 6) | (freq_code << 8) | (norm_code << 10));
-
+  out.WriteByte((doc_size - 1) | (freq_code << 2) | (norm_code << 4));
   Serialize124(doc_size, doc_delta, out);
-  Serialize1248ForSkipEntry(doc_ptr_code, doc_ptr_delta, out);
+  if (HasValidWandWriter()) {
+    Serialize124ForSkipEntry(freq_code, data.freq, out);
+    if (norm_code > 0) {
+      Serialize124ForSkipEntry(norm_code, data.norm, out);
+    }
+  }
 
+  out.WriteByte(doc_ptr_code | (pos_ptr_code << 2) | (pay_ptr_code << 4));
+  Serialize1248ForSkipEntry(doc_ptr_code, doc_ptr_delta, out);
   if (_features.HasPosition()) {
     Serialize1248ForSkipEntry(pos_ptr_code, pos_ptr_delta, out);
     if (_features.HasOffset()) {
@@ -356,12 +361,27 @@ inline void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) 
     out.WriteByte(_pos.size);
   }
 
-  if (HasValidWandWriter()) {
-    Serialize124ForSkipEntry(freq_code, data.freq, out);
-    if (norm_code > 0) {
-      Serialize124ForSkipEntry(norm_code, data.norm, out);
-    }
-  }
+  // // 2 encoding bytes
+  // out.WriteU16((doc_size - 1) | (doc_ptr_code << 2) | (pos_ptr_code << 4) | (pay_ptr_code << 6) | (freq_code << 8) | (norm_code << 10));
+
+  // Serialize124(doc_size, doc_delta, out);
+  // Serialize1248ForSkipEntry(doc_ptr_code, doc_ptr_delta, out);
+
+  // if (_features.HasPosition()) {
+  //   Serialize1248ForSkipEntry(pos_ptr_code, pos_ptr_delta, out);
+  //   if (_features.HasOffset()) {
+  //     Serialize1248ForSkipEntry(pay_ptr_code, pay_ptr_delta, out);
+  //   }
+  //   SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
+  //   out.WriteByte(_pos.size);
+  // }
+
+  // if (HasValidWandWriter()) {
+  //   Serialize124ForSkipEntry(freq_code, data.freq, out);
+  //   if (norm_code > 0) {
+  //     Serialize124ForSkipEntry(norm_code, data.norm, out);
+  //   }
+  // }
 }
 
 inline void PostingsWriterBase::Prepare(IndexOutput& out,

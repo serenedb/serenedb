@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <iresearch/formats/posting/common.hpp>
+#include <iresearch/search/scorer.hpp>
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -442,22 +443,46 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       // Store previous step on the same level
       CopyState<IteratorTraits>(*_prev, next);
 
-      uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
-      
-      next.doc += ReadByteSize124((encoding & 3) + 1, in);
-      next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
-
-      if constexpr (FieldTraits::Position()) {
-        next.pos_ptr += ReadByteSize1248ForSkipEntry((encoding >> 4) & 3, in);
-        if constexpr (FieldTraits::Offset()) {
-          next.pay_ptr += ReadByteSize1248ForSkipEntry((encoding >> 6) & 3, in);
+      uint8_t encoding = in.ReadByte();
+      WandWriter::WandData wand_data;
+      if constexpr (HasWand) {
+        ReadFirstSkipPart(encoding, next, wand_data, in);
+      } else {
+        switch (encoding) {
+          case 0:
+            next.doc += in.ReadByte();
+            break;
+          case 1:
+            next.doc += static_cast<uint16_t>(in.ReadI16());
+            break;
+          case 3:
+            next.doc += static_cast<uint16_t>(in.ReadI16());
+            break;
+          default: SDB_UNREACHABLE();
         }
+      }
+      encoding = in.ReadByte();
+      ReadSecondSkipPart<FieldTraits>(encoding, next, in);
+      if constexpr (FieldTraits::Position()) {
         next.pos_offset = in.ReadByte();
       }
 
-      if constexpr (HasWand) {
-        ReadWandImpl((encoding >> 8) & 15, in);
-      }
+      // uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
+      
+      // next.doc += ReadByteSize124((encoding & 3) + 1, in);
+      // next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
+
+      // if constexpr (FieldTraits::Position()) {
+      //   next.pos_ptr += ReadByteSize1248ForSkipEntry((encoding >> 4) & 3, in);
+      //   if constexpr (FieldTraits::Offset()) {
+      //     next.pay_ptr += ReadByteSize1248ForSkipEntry((encoding >> 6) & 3, in);
+      //   }
+      //   next.pos_offset = in.ReadByte();
+      // }
+
+      // if constexpr (HasWand) {
+      //   ReadWandImpl((encoding >> 8) & 15, in);
+      // }
     }
 
     void Seal(size_t level) {

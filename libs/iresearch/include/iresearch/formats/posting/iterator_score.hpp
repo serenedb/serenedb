@@ -206,20 +206,29 @@ class SingleWandIterator : public DocIterator {
       auto& next = _skip_levels[level];
       CopyState<IteratorTraits>(_prev_skip, next);
 
-      uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
-
-      next.doc += ReadByteSize124((encoding & 3) + 1, in);
-      next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
-
+      uint8_t encoding = in.ReadByte();
+      WandWriter::WandData wand_data;
+      ReadFirstSkipPart(encoding, next, wand_data, in);
+      encoding = in.ReadByte();
+      ReadSecondSkipPart<FieldTraits>(encoding, next, in);
       if constexpr (FieldTraits::Position()) {
-        next.pos_ptr += ReadByteSize1248ForSkipEntry((encoding >> 4) & 3, in);
-        if constexpr (FieldTraits::Offset()) {
-          next.pay_ptr += ReadByteSize1248ForSkipEntry((encoding >> 6) & 3, in);
-        }
         next.pos_offset = in.ReadByte();
       }
 
-      auto wand_data = ReadWandImpl((encoding >> 8) & 15, in);
+      // uint32_t encoding = static_cast<uint16_t>(in.ReadI16());
+
+      // next.doc += ReadByteSize124((encoding & 3) + 1, in);
+      // next.doc_ptr += ReadByteSize1248ForSkipEntry((encoding >> 2) & 3, in);
+
+      // if constexpr (FieldTraits::Position()) {
+      //   next.pos_ptr += ReadByteSize1248ForSkipEntry((encoding >> 4) & 3, in);
+      //   if constexpr (FieldTraits::Offset()) {
+      //     next.pay_ptr += ReadByteSize1248ForSkipEntry((encoding >> 6) & 3, in);
+      //   }
+      //   next.pos_offset = in.ReadByte();
+      // }
+
+      // auto wand_data = ReadWandImpl((encoding >> 8) & 15, in);
 
       if (!(_skip_wand_below && next.doc < _skip_wand_below)) [[likely]] {
         _skip_scores[level] = ReadWandScore(wand_data);

@@ -52,9 +52,8 @@ constexpr ObjectId kSerializerTableId{654321};
 
 class DuckDBColumnSerializerTest : public ::testing::Test {
  public:
-  // In-memory DuckDB is here only to give us a real duckdb::ClientContext
-  // for the query::Transaction (Config base requires it). The tests don't
-  // run any SQL through it.
+  // In-memory DuckDB exists only to supply a ClientContext; no SQL is
+  // executed through it.
   DuckDBColumnSerializerTest() : _duckdb{nullptr}, _conn{_duckdb} {}
 
   void SetUp() final {
@@ -174,8 +173,7 @@ class DuckDBColumnSerializerTest : public ::testing::Test {
     query::Transaction sdb_txn{*_conn.context, std::move(txn)};
 
     WriteColumn(sdb_txn, row_keys, col_id, vec, type, num_rows);
-    // Tests only care about the rocksdb commit -- skip the iresearch /
-    // table-stats machinery that the full sdb_txn.Commit() would run.
+    // Bypass the full sdb commit -- only the rocksdb write matters here.
     ASSERT_TRUE(sdb_txn.GetRocksDBTransaction().Commit().ok());
     sdb_txn.Destroy();
 

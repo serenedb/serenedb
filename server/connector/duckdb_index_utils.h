@@ -88,35 +88,20 @@ CreateDuckDBIndexWriters<DuckDBWriteKind::Update>(
   std::span<const catalog::Column::Id> updated_col_ids,
   const ColumnChunkMapping& old_col_id_to_chunk_pos);
 
-// Returns true iff at least one inverted index in `indexes` covers ONLY
-// sdb_indexonly columns of `columns`. In that case the DML path must emit
-// row-level [RD] WAL markers on delete, because the existing DeleteCF
-// wal_recovery replay cannot reach inverted indexes whose every indexed
-// column has no main-storage Delete to ride on. When every inverted index
-// has at least one non-IndexOnly column, DeleteCF replay covers the row
-// delete and no marker is needed.
+// True iff some inverted index in `indexes` is built exclusively over
+// IndexOnly columns -- such an index has no main-storage cells to feed the
+// normal WAL row-delete replay, so DML must emit per-row marker on deletes.
 bool NeedsRowDeleteMarkers(
   std::span<const std::shared_ptr<catalog::Index>> indexes,
   std::span<const catalog::Column> columns);
 
-// Returns the chunk-order list of catalog column positions to project for a
-// CREATE INDEX backfill scan over a base table: the union of
-//   - `index_column_positions` (columns the index keys on),
-//   - `pk_column_ids` resolved to positions,
-// sorted ascending by position and deduped. Position == catalog index and
-// columns are stored in id-ascending order, so the returned order is the
-// table's catalog column order -- stable across call sites and matches the
-// projection pre-existing EXPLAIN tests assert.
+// Catalog column positions to project for a CREATE INDEX backfill scan:
+// union of index-key columns and PK columns, sorted+deduped (== catalog
+// column order). For tables with a generated PK the caller appends ROW_ID
+// at chunk position equal to projection.size().
 //
-// `index_column_positions` are positions into `columns` (matching how
-// CreateIndexInfo::column_ids is populated -- positional, not Column::Id).
-// `pk_column_ids` are Column::Id values; the helper resolves them to
-// positions internally.
-//
-// For tables with a generated PK the caller separately appends ROW_ID at
-// chunk position equal to projection.size(). Only the base-table CREATE INDEX
-// path uses this helper -- view-backed indexes get their projection from the
-// view body, not from us.
+// `index_column_positions` are positions into `columns` (positional, not
+// Column::Id). `pk_column_ids` are Column::Id values, resolved internally.
 std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,

@@ -119,12 +119,8 @@ void ApplyColumnModes(
                       ERR_MSG("WITH option \"", kIndexOnlyKey,
                               "\" references unknown column \"", name, "\""));
     }
-    // VIRTUAL generated columns are not materialized at insert time --
-    // DuckDB computes them on read, so the chunk reaching our writers has
-    // no value for them. The IndexOnly write path (which expects to emit
-    // a [CP] marker carrying the cell value) has nothing to ride on, so
-    // the combination is rejected up-front rather than producing empty
-    // markers or asserting in the writer.
+    // VIRTUAL columns aren't materialized at insert time, so there's no
+    // value for the marker to carry.
     if (col_it->generated_type == catalog::Column::GeneratedType::kVirtual) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

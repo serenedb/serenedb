@@ -330,10 +330,8 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
   }
 
   void LogData(const rocksdb::Slice& blob) final {
-    // Decode sdb_indexonly markers (see connector/indexonly_marker.h).
-    // Other PutLogData uses (e.g. DDL events) carry different magics --
-    // Decode returns std::nullopt for those and we silently skip them,
-    // matching this handler's prior no-op contract for unknown blobs.
+    // Replay sdb_indexonly markers; unrecognised blobs (different magic)
+    // are silently ignored.
     namespace iom = connector::indexonly_marker;
     auto decoded = iom::Decode(blob);
     if (!decoded) {
@@ -379,9 +377,8 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
   bool NeedsFlush() const noexcept { return _needs_flush; }
 
  private:
-  // Apply an [RD] marker. Row delete fires for every shard on the table
-  // regardless of which column id rides in `key` -- iresearch deletes by
-  // PK across all fields, so the col_id portion is ignored.
+  // Row delete fires for every shard on the table; the col_id portion of
+  // `key` is ignored because the inverted index deletes by PK.
   void ApplyMarkerRowDelete(std::string_view key) {
     if (key.size() < kKeyPrefixSize) {
       return;

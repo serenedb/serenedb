@@ -100,9 +100,8 @@ void TruncateResolvedTable(
                     ERR_MSG("TRUNCATE: atomic write failed: ", s.ToString()));
   }
 
-  // Crash window simulator: rocksdb WAL is durable but iresearch state
-  // is still pre-truncate. WAL recovery's DeleteRangeCF must catch up
-  // every inverted shard on restart.
+  // Crash window for recovery tests: rocksdb is durable but iresearch
+  // hasn't seen the truncate yet.
   SDB_IF_FAILURE("TRUNCATE::CrashAfterRocksdbWrite") { SDB_IMMEDIATE_ABORT(); }
 
   // Phase 2: rocksdb is durable. Anchor the in-memory state to the

@@ -81,18 +81,13 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
-  // sdb-side transaction (== ConnectionContext); needed for
-  // RegisterLogDataMarker when IndexOnly writers emit PutLogData blobs.
+  // sdb-side transaction; the IndexOnly writer registers markers on it.
   query::Transaction* sdb_txn = nullptr;
 
-  // True iff at least one inverted index on the table covers ONLY
-  // sdb_indexonly columns. In that case the PK-update path's main-
-  // storage row deletes are insufficient -- the existing DeleteCF
-  // wal_recovery replay misses any inverted index whose entire column
-  // set is IndexOnly. We emit a row-level [RD] WAL marker per deleted
-  // old row to close the gap. When at least one indexed column of every
-  // inverted index has main storage, DeleteCF replay covers the
-  // deletion and no marker is needed.
+  // True iff some inverted index on the table is built exclusively over
+  // IndexOnly columns and would not see the row delete through normal
+  // WAL replay. Drives the per-row [RD] marker emission in the PK-update
+  // path.
   bool needs_rd_markers = false;
 
   // Single set of Update writers that handle both DeleteRow and Write.
@@ -297,13 +292,10 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
                                 duckdb::OnConflictAction::THROW,
                                 state->table_name);
 
-  // Snapshot + indexes are reused by both the [RD]-marker check and the
-  // index-column chunk-position mapping below.
+  // Reused by both the marker-need check and the indexed-column mapping.
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto indexes = snapshot->GetIndexesByRelation(state->table_id);
 
-  // Decide whether the PK-update delete loop needs to emit [RD] WAL
-  // markers; see NeedsRowDeleteMarkers for the precise rule.
   state->needs_rd_markers = NeedsRowDeleteMarkers(indexes, columns);
 
   // Build column-ID-to-chunk-position mapping.
@@ -571,11 +563,8 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
           SDB_THROW(ERROR_INTERNAL, "RocksDB Delete error: ", s.ToString());
         }
       }
-      // Row-level [RD] WAL marker so wal_recovery can propagate the
-      // delete to the inverted index for IndexOnly cells (whose main-
-      // storage DeleteCF doesn't exist and so doesn't drive the existing
-      // replay path). row_keys[row] is a valid row key; only its
-      // table_id + PK portion are read on replay.
+      // Row-level marker for indexes that normal WAL replay would miss;
+      // see `needs_rd_markers` in the gstate definition.
       if (gstate.needs_rd_markers) {
         indexonly_marker::EmitRD(*gstate.sdb_txn, gstate.row_keys[row]);
       }

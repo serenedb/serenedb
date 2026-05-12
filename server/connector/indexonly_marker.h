@@ -33,38 +33,20 @@
 #include "query/transaction.h"
 #include "rocksdb_engine_catalog/wal_log_data_magics.h"
 
-// WAL markers used to make sdb_indexonly column writes crash-safe.
+// WAL markers that make sdb_indexonly column writes crash-safe: ride in the
+// same rocksdb WriteBatch as the surrounding puts so they share its fsync
+// and sequence number, and carry enough information for recovery to
+// re-feed the value into the inverted index.
 //
-// Why: IndexOnly columns are not written to main RocksDB storage -- their
-// values live only inside the inverted index. Without an extra durability
-// hop, a crash between the rocksdb transaction commit and the iresearch
-// segment commit would lose the IndexOnly value entirely.
+// Marker layouts:
 //
-// Mechanism: alongside the rocksdb writes, emit a small log-data record
-// via rocksdb::Transaction::PutLogData. The record rides in the same
-// WriteBatch as the regular puts, so it inherits the WAL fsync and the
-// per-batch sequence number wal_recovery uses to decide whether replay
-// should pick it up. On recovery, wal_recovery's per-batch handler decodes
-// these markers and feeds them into the same Row reconstruction path that
-// the existing PutCF records use.
+//   CP  [magic] [u32 key_len] [full_key_bytes] [value_bytes]
+//   RD  [magic] [full_key_bytes]
 //
-// Format (each marker is one PutLogData blob; first byte is the magic, see
-// rocksdb_engine_catalog/wal_log_data_magics.h for the registry):
-//
-//   CP  [0x01] [u32 key_len] [full_key_bytes] [value_bytes]
-//   RD  [0x02] [full_key_bytes]
-//
-// `full_key_bytes` is exactly the row-key encoding the rocksdb writer
-// would have used: [ObjectId table_id (8B big-endian)]
-//                  [Column::Id col_id (8B big-endian)]
-//                  [PK bytes (variable)]
-// We re-use it verbatim so encode/decode is just a memcpy and the on-wire
-// byte order matches what wal_recovery already understands. For [RD],
-// only the table_id portion of the key is meaningful -- col_id is
-// irrelevant because the inverted index deletes by PK across all fields.
-//
-// Forward compatibility: a future record class can pick a different magic
-// byte (see the registry). Decoders skip unrecognised magics.
+// `full_key_bytes` is the same row-key encoding the main writer uses:
+//   [ObjectId table_id (8B BE)][Column::Id col_id (8B BE)][PK bytes].
+// Reused verbatim so encode/decode is a memcpy. For [RD] only the
+// table_id + PK portion matters.
 
 namespace sdb::connector::indexonly_marker {
 
@@ -112,10 +94,9 @@ inline std::string EncodeRD(std::string_view full_key) {
 
 // --- decoder --------------------------------------------------------------
 
-// Returns std::nullopt for blobs we don't recognise (callers should ignore
-// them -- they may belong to an unrelated PutLogData consumer or a future
-// marker version) and for malformed-but-claimed-by-us blobs (the caller
-// should treat that as a recovery error).
+// Returns std::nullopt for blobs whose magic is not in our registry, and
+// for malformed-but-claimed-by-us blobs (callers should ignore the former
+// and treat the latter as a recovery error).
 inline std::optional<Decoded> Decode(rocksdb::Slice blob) {
   std::string_view in{blob.data(), blob.size()};
   if (in.empty()) {
@@ -149,13 +130,11 @@ inline std::optional<Decoded> Decode(rocksdb::Slice blob) {
 
 // --- thin emit helpers ----------------------------------------------------
 //
-// Each helper takes the sdb-side Transaction so it can both look up the
-// rocksdb txn and call RegisterLogDataMarker -- this keeps the Commit-gate
-// (num_ops > 0) honest. Callers that go through these helpers cannot
-// forget to bump the marker counter.
+// Take the sdb-side Transaction so marker emission and the counter that
+// keeps the commit gate honest stay paired -- direct callers cannot forget
+// one or the other.
 
-// Emits a [CP] marker into the txn's WriteBatch. `full_key` is the same
-// row key the main writer would Put for this cell. Empty `slices` = NULL.
+// Emit a [CP] marker. Empty `slices` = NULL.
 inline void EmitCP(query::Transaction& sdb_txn, std::string_view full_key,
                    std::span<const rocksdb::Slice> slices) {
   auto blob = EncodeCP(full_key, slices);
@@ -164,9 +143,8 @@ inline void EmitCP(query::Transaction& sdb_txn, std::string_view full_key,
   sdb_txn.RegisterLogDataMarker();
 }
 
-// Emits an [RD] marker into the txn's WriteBatch. `full_key` is any row
-// key for the deleted row -- only the table_id and PK portion are read on
-// replay (col_id is ignored for row-level delete).
+// Emit an [RD] marker. Any row key for the deleted row works -- replay
+// uses only the table_id + PK portion.
 inline void EmitRD(query::Transaction& sdb_txn, std::string_view full_key) {
   auto blob = EncodeRD(full_key);
   sdb_txn.GetRocksDBTransaction().PutLogData(

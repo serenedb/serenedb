@@ -68,8 +68,7 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
-  // sdb-side transaction (== ConnectionContext); needed for
-  // RegisterLogDataMarker when IndexOnly writers emit PutLogData blobs.
+  // sdb-side transaction; the IndexOnly writer registers markers on it.
   query::Transaction* sdb_txn = nullptr;
 
   std::shared_ptr<catalog::Sequence> generated_pk_seq;

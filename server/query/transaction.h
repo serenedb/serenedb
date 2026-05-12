@@ -41,11 +41,8 @@ class Transaction : public Config {
   using Config::Config;
 
 #ifdef SDB_GTEST
-  // Test-only: take ownership of an externally-built rocksdb::Transaction.
-  // Lets unit tests use query::Transaction (and anything that takes one,
-  // e.g. TxnWriter) without spinning up the storage engine + catalog.
-  // After this ctor, the regular Get/Has/Commit paths see the injected
-  // txn through the production _rocksdb_transaction member.
+  // Test-only: wrap a pre-built rocksdb::Transaction so unit tests can use
+  // query::Transaction without spinning up the storage engine.
   Transaction(duckdb::ClientContext& client_ctx,
               std::unique_ptr<rocksdb::Transaction> rocksdb_txn) noexcept
     : Config{client_ctx} {
@@ -93,12 +90,8 @@ class Transaction : public Config {
     return *_rocksdb_transaction;
   }
 
-  // Writers that emit PutLogData blobs (e.g. IndexOnly [CP]/[RD] markers)
-  // call this so the marker counts toward "txn has work to commit". rocksdb's
-  // GetNumPuts/GetNumDeletes never include PutLogData, so a txn that only
-  // emitted markers would otherwise be silently skipped by Commit() and the
-  // markers would never reach the WAL. Reset in Destroy() because the
-  // Transaction object (ConnectionContext) survives Commit/Rollback.
+  // Counts PutLogData blobs (marker-only writes) so the commit gate sees
+  // them as work -- rocksdb's own counters ignore PutLogData.
   void RegisterLogDataMarker() noexcept { ++_num_log_data_markers; }
   uint64_t GetNumLogDataMarkers() const noexcept {
     return _num_log_data_markers;

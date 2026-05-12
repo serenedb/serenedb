@@ -271,16 +271,8 @@ DuckDBColumnSerializer::TxnWriter::TxnWriter(
 void DuckDBColumnSerializer::TxnWriter::Write(
   const std::vector<rocksdb::Slice>& slices, std::string_view key) {
   if (IsIndexOnly()) {
-    // No main-storage write: emit a [CP] WAL marker instead. The marker
-    // rides in this transaction's WriteBatch so it's covered by the same
-    // WAL fsync as the regular Puts; wal_recovery replays it on restart.
-    //
-    // wal_recovery's LogData handler routes the replayed Put to the Default
-    // CF unconditionally (PutLogData blobs carry no CF id, unlike regular
-    // Put/Delete records). If this assertion ever fires, a future writer
-    // started using a non-Default CF for table rows and the [CP] replay path
-    // in search/wal_recovery.cpp::LogData would silently route to the wrong
-    // CF -- you'll need to encode cf_id in the marker payload there.
+    // IndexOnly columns skip main storage; replay only knows the Default
+    // CF for marker blobs, so non-Default CF would silently lose the value.
     SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
                         RocksDBColumnFamilyManager::Family::Default));
     indexonly_marker::EmitCP(*_sdb_txn, key, slices);
@@ -296,8 +288,8 @@ void DuckDBColumnSerializer::TxnWriter::Write(
 
 void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
   if (IsIndexOnly()) {
-    // NULL is encoded as a [CP] marker with empty value bytes. See the
-    // Default-CF assertion comment in Write() above.
+    // IndexOnly NULL is a marker with empty value bytes; same Default-CF
+    // constraint as Write().
     SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
                         RocksDBColumnFamilyManager::Family::Default));
     indexonly_marker::EmitCP(*_sdb_txn, key, {});
@@ -311,9 +303,7 @@ void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
 }
 
 void DuckDBColumnSerializer::TxnWriter::EmitRowDelete(std::string_view key) {
-  // [RD] is replayed by wal_recovery via ApplyMarkerRowDelete which walks
-  // every shard on the table (col_id is ignored); see the Default-CF
-  // assertion comment in Write() above for the broader CF-routing caveat.
+  // Same Default-CF constraint as Write().
   SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
                       RocksDBColumnFamilyManager::Family::Default));
   indexonly_marker::EmitRD(*_sdb_txn, key);
@@ -322,9 +312,8 @@ void DuckDBColumnSerializer::TxnWriter::EmitRowDelete(std::string_view key) {
 void DuckDBColumnSerializer::SstWriter::Write(
   const std::vector<rocksdb::Slice>& slices, std::string_view key) {
   if (!_writer || IsIndexOnly()) {
-    // SST + IndexOnly: best-effort durability matching the existing
-    // regular-column SST path -- iresearch's own commit cadence is the
-    // only guarantee here. Skipping silently.
+    // SST has no marker channel; durability of IndexOnly values relies on
+    // the inverted index's own commit.
     return;
   }
   auto merged = MergeSlices(slices);

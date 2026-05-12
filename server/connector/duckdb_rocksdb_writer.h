@@ -54,32 +54,21 @@ void AppendPKValue(std::string& key, const duckdb::UnifiedVectorFormat& fmt,
 
 class DuckDBColumnSerializer {
  public:
-  // Writes column cells into a rocksdb transaction. For IndexOnly columns,
-  // emits a [CP] WAL marker via PutLogData instead of a regular Put -- the
-  // marker rides in the same WriteBatch so it is durable, and wal_recovery
-  // replays it into the inverted index on restart. Single source of truth
-  // for IndexOnly write policy: the serializer is unaware.
+  // Writes column cells into a rocksdb transaction. IndexOnly columns
+  // bypass main storage and emit a WAL marker instead so the value can be
+  // recovered into the inverted index on restart.
   class TxnWriter {
    public:
-    // sdb_txn carries the rocksdb txn (cached locally to avoid repeated
-    // GetRocksDBTransaction calls) AND lets IndexOnly branches register
-    // PutLogData markers on it (rocksdb's GetNumPuts/GetNumDeletes don't
-    // count them, so Transaction::Commit would otherwise skip the txn).
-    // Ctor defined out-of-line in the .cpp so the header doesn't need the
-    // full query::Transaction definition.
     TxnWriter(query::Transaction& sdb_txn,
               rocksdb::ColumnFamilyHandle* cf) noexcept;
 
-    // Set per-column context. Subsequent Write/WriteNull calls apply to
-    // this column.
     void SwitchColumn(const ColumnDescriptor& col) noexcept { _cur_col = col; }
 
     void Write(const std::vector<rocksdb::Slice>& slices, std::string_view key);
     void WriteNull(std::string_view key);
 
-    // Per-row delete marker. Caller emits one per row when the table has at
-    // least one IndexOnly column (otherwise the existing DeleteCF for any
-    // non-IndexOnly column already drives wal_recovery's row-delete path).
+    // Per-row delete marker. Only meaningful when an inverted index covers
+    // exclusively IndexOnly columns and would otherwise miss the row delete.
     void EmitRowDelete(std::string_view key);
 
    private:
@@ -93,10 +82,9 @@ class DuckDBColumnSerializer {
     ColumnDescriptor _cur_col{};
   };
 
-  // Writes column cells into an SST file. For IndexOnly columns: silently
-  // skips (Option C -- bulk-insert durability for IndexOnly is best-effort
-  // matching the existing regular-column SST behaviour, where iresearch's
-  // own commit cadence is the only guarantee).
+  // Writes column cells into an SST file. IndexOnly columns are skipped
+  // silently -- bulk ingest has no marker channel; durability of the value
+  // depends on the inverted index's own commit.
   class SstWriter {
    public:
     explicit SstWriter(rocksdb::SstFileWriter* writer) noexcept

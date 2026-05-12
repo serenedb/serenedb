@@ -59,18 +59,12 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
-  // sdb-side transaction (== ConnectionContext); needed for
-  // RegisterLogDataMarker when IndexOnly writers emit PutLogData blobs.
+  // sdb-side transaction; the IndexOnly writer registers markers on it.
   query::Transaction* sdb_txn = nullptr;
 
-  // True iff at least one inverted index on the table covers ONLY
-  // sdb_indexonly columns. In that case the existing DeleteCF-based
-  // wal_recovery path cannot propagate the row delete to that index
-  // (no main-storage Delete for any of its indexed columns ever reaches
-  // replay), so we emit a row-level [RD] WAL marker per delete. When the
-  // table has at least one inverted index with at least one non-IndexOnly
-  // column, the existing DeleteCF replay covers the deletion and no
-  // marker is needed.
+  // True iff some inverted index on the table is built exclusively over
+  // IndexOnly columns and would not see the row delete through normal
+  // WAL replay. Drives the per-row [RD] marker emission.
   bool needs_rd_markers = false;
 
   // Index writers
@@ -150,8 +144,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   state->txn = &conn_ctx.GetRocksDBTransaction();
   state->sdb_txn = &conn_ctx;
 
-  // Snapshot + indexes are reused by both the [RD]-marker check and the
-  // non-PK indexed-column reconstruction below.
+  // Reused by both the marker-need check and the indexed-column setup.
   auto snapshot = conn_ctx.EnsureCatalogSnapshot();
   auto indexes = snapshot->GetIndexesByRelation(state->table_id);
 
@@ -282,11 +275,8 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
       }
     }
 
-    // Row-level [RD] WAL marker for inverted indexes whose entire column
-    // set is sdb_indexonly -- those indexes have no main-storage Delete
-    // to ride on, so the existing DeleteCF replay can't reach them.
-    // key_buffer holds a valid row key for this row; the marker decoder
-    // reads its table_id + PK portion and ignores the trailing column id.
+    // Row-level marker for indexes that normal WAL replay would miss; see
+    // `needs_rd_markers` in the gstate definition.
     if (gstate.needs_rd_markers) {
       indexonly_marker::EmitRD(*gstate.sdb_txn, key_buffer);
     }

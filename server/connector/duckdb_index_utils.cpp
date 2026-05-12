@@ -255,11 +255,9 @@ std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,
   std::span<const duckdb::idx_t> index_column_positions) {
-  // Collect index-column + PK-column positions, then sort + unique to
-  // dedupe. Sorted output matches catalog column order (columns are stored
-  // in id-ascending order, and position == catalog index), which is what
-  // pre-existing EXPLAIN tests assert. With the column counts we see in
-  // practice this is faster than a FlatHashSet and avoids an allocation.
+  // Sort + unique on a small vector is faster than a hash set and avoids
+  // an allocation. Sorted order == catalog order, which keeps the
+  // projection stable across call sites.
   std::vector<size_t> projection;
   projection.reserve(index_column_positions.size() + pk_column_ids.size());
 

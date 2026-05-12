@@ -141,22 +141,11 @@ void InitCommonState(CommonScanGlobalState& state,
         // optimizer actually swapped the function to one that bypasses
         // materialisation (e.g. IRESEARCH_COUNT for count(*)).
         //
-        // sdb_indexonly columns have no main-storage data; they exist only
-        // inside an inverted index. They are valid in inverted-index search
-        // predicates (which the optimizer claims into the IRESEARCH_* scan
-        // path and removes from the projected column list). If the column
-        // still reaches this point one of two things is happening:
-        //
-        //   1. A user query needs the value materialised. Reject -- there is
-        //      no main-storage source to read it from.
-        //
-        //   2. CREATE INDEX backfill is reading the table to populate a
-        //      newly created index that includes the IndexOnly column.
-        //      Pre-existing rows have no main-storage value to backfill, so
-        //      the honest answer is to backfill nothing for this index --
-        //      mark the scan as already-finished. Future INSERTs flow
-        //      through the regular insert path and populate the index
-        //      normally.
+        // An IndexOnly column reaching the materialisation path means one
+        // of: (1) a query asks for its value -- reject, no main-storage
+        // source exists; (2) CREATE INDEX backfill -- mark finished so
+        // pre-existing rows are skipped honestly (future INSERTs will
+        // index normally).
         if (!bind_data.IsViewBacked()) {
           const auto& tbd = bind_data.As<TableScanBindData>();
           for (const auto& col : tbd.table->Columns()) {

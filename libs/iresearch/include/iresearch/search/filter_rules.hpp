@@ -1,34 +1,17 @@
-////////////////////////////////////////////////////////////////////////////////
-/// DISCLAIMER
-///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-///     http://www.apache.org/licenses/LICENSE-2.0
-///
-/// Unless required by applicable law or agreed to in writing, software
-/// distributed under the License is distributed on an "AS IS" BASIS,
-/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-/// See the License for the specific language governing permissions and
-/// limitations under the License.
-///
-/// Copyright holder is SereneDB GmbH, Berlin, Germany
-////////////////////////////////////////////////////////////////////////////////
-
 #pragma once
 
 #include <span>
 
 #include "absl/container/btree_set.h"
 #include "absl/container/flat_hash_map.h"
+#include "iresearch/search/automaton_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/regexp_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 
 namespace irs {
 
@@ -182,6 +165,28 @@ class LevenshteinPrefixFilterRule : public FilterRulesConstructor::FilterRule {
 
   FilterRuleResult ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
                                 FilterRuleOptions options) const override;
+};
+
+class AutomatonFilterRule : public FilterRulesConstructor::FilterRule {
+ public:
+  using FilterRule::ApplyBoolean;
+  using FilterRule::ApplyNot;
+
+  explicit AutomatonFilterRule(AutomatonUnionMethod union_method =
+                                 AutomatonUnionMethod::RefinedDeterminize)
+    : _union_method(union_method) {
+    AddFilterType(irs::Type<irs::ByWildcard>::id());
+    AddFilterType(irs::Type<irs::ByRegexp>::id());
+    AddFilterType(irs::Type<irs::ByAutomaton>::id());
+  }
+
+  FilterRuleResult ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
+  FilterRuleResult ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
+
+ private:
+  AutomatonUnionMethod _union_method;
 };
 
 }  // namespace irs

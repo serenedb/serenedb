@@ -72,6 +72,7 @@ set(iresearch-tests_sources
     ./search/filter_test_case_base.cpp
     ./search/boolean_filter_tests.cpp
     ./search/all_filter_tests.cpp
+    ./search/automaton_combinators_tests.cpp
     ./search/term_filter_tests.cpp
     ./search/terms_filter_test.cpp
     ./search/prefix_filter_test.cpp

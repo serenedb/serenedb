@@ -1,29 +1,11 @@
-////////////////////////////////////////////////////////////////////////////////
-/// DISCLAIMER
-///
-/// Copyright 2026 SereneDB GmbH, Berlin, Germany
-///
-/// Licensed under the Apache License, Version 2.0 (the "License");
-/// you may not use this file except in compliance with the License.
-/// You may obtain a copy of the License at
-///
-///     http://www.apache.org/licenses/LICENSE-2.0
-///
-/// Unless required by applicable law or agreed to in writing, software
-/// distributed under the License is distributed on an "AS IS" BASIS,
-/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-/// See the License for the specific language governing permissions and
-/// limitations under the License.
-///
-/// Copyright holder is SereneDB GmbH, Berlin, Germany
-////////////////////////////////////////////////////////////////////////////////
-
 #include <benchmark/benchmark.h>
 
 #include <memory>
 #include <string_view>
 
 #include "iresearch/search/filter_rules.hpp"
+#include "iresearch/search/regexp_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 
 namespace {
 
@@ -153,6 +135,51 @@ void BmApplyNotChain(benchmark::State& state) {
   }
 }
 
+auto MakeWildcard(std::string_view field,
+                  std::string_view pattern) -> std::unique_ptr<irs::ByWildcard> {
+  auto f = std::make_unique<irs::ByWildcard>();
+  *f->mutable_field() = field;
+  f->mutable_options()->term = irs::ViewCast<irs::byte_type>(pattern);
+  return f;
+}
+
+auto MakeRegexp(std::string_view field,
+                std::string_view pattern) -> std::unique_ptr<irs::ByRegexp> {
+  auto f = std::make_unique<irs::ByRegexp>();
+  *f->mutable_field() = field;
+  f->mutable_options()->pattern = irs::ViewCast<irs::byte_type>(pattern);
+  return f;
+}
+
+auto BuildFlatAndOfWildcards(size_t n) -> irs::Filter::ptr {
+  auto root = std::make_unique<irs::And>();
+  for (size_t i = 0; i < n; ++i) {
+    root->add((i & 1u) == 0u ? MakeWildcard("field", "pro%")
+                              : MakeWildcard("field", "%ing"));
+  }
+  return root;
+}
+
+auto BuildFlatOrOfWildcards(size_t n) -> irs::Filter::ptr {
+  auto root = std::make_unique<irs::Or>();
+  for (size_t i = 0; i < n; ++i) {
+    root->add((i & 1u) == 0u ? MakeWildcard("field", "cat%")
+                              : MakeWildcard("field", "dog%"));
+  }
+  return root;
+}
+
+auto BuildAndOfOrFilters() -> irs::Filter::ptr {
+  auto root = std::make_unique<irs::And>();
+  auto& or1 = root->add<irs::Or>();
+  or1.add(MakeWildcard("field", "cat%"));
+  or1.add(MakeWildcard("field", "dog%"));
+  auto& or2 = root->add<irs::Or>();
+  or2.add(MakeRegexp("field", "^[a-z]+$"));
+  or2.add(MakeRegexp("field", "^[0-9]+$"));
+  return root;
+}
+
 void BmApplyChainedRules(benchmark::State& state) {
   irs::FilterRulesConstructor constructor;
   constructor.Add<irs::NotFilterRule>();
@@ -166,6 +193,36 @@ void BmApplyChainedRules(benchmark::State& state) {
   }
 }
 
+void BmAutomatonRuleIntersection(benchmark::State& state) {
+  irs::FilterRulesConstructor constructor;
+  constructor.Add<irs::AutomatonFilterRule>();
+  for (auto _ : state) {
+    auto tree = BuildFlatAndOfWildcards(state.range(0));
+    tree = constructor.Apply(std::move(tree));
+    benchmark::DoNotOptimize(tree);
+  }
+}
+
+void BmAutomatonRuleUnion(benchmark::State& state) {
+  irs::FilterRulesConstructor constructor;
+  constructor.Add<irs::AutomatonFilterRule>();
+  for (auto _ : state) {
+    auto tree = BuildFlatOrOfWildcards(state.range(0));
+    tree = constructor.Apply(std::move(tree));
+    benchmark::DoNotOptimize(tree);
+  }
+}
+
+void BmAutomatonRuleAndOfOr(benchmark::State& state) {
+  irs::FilterRulesConstructor constructor;
+  constructor.Add<irs::AutomatonFilterRule>();
+  for (auto _ : state) {
+    auto tree = BuildAndOfOrFilters();
+    tree = constructor.Apply(std::move(tree));
+    benchmark::DoNotOptimize(tree);
+  }
+}
+
 BENCHMARK(BmBuildFlatAndOfByTerms)->RangeMultiplier(4)->Range(1, 1024);
 BENCHMARK(BmApplyEmptyPipeline)->RangeMultiplier(4)->Range(1, 1024);
 BENCHMARK(BmApplyNonMatchingRule)->RangeMultiplier(4)->Range(1, 1024);
@@ -174,6 +231,10 @@ BENCHMARK(BmApplyByTermsMixed)->RangeMultiplier(4)->Range(1, 1024);
 BENCHMARK(BmApplyAndFlatteningNested)->RangeMultiplier(4)->Range(1, 1024);
 BENCHMARK(BmApplyNotChain)->RangeMultiplier(4)->Range(1, 1024);
 BENCHMARK(BmApplyChainedRules)->RangeMultiplier(4)->Range(1, 1024);
+
+BENCHMARK(BmAutomatonRuleIntersection)->RangeMultiplier(2)->Range(2, 16);
+BENCHMARK(BmAutomatonRuleUnion)->RangeMultiplier(2)->Range(2, 16);
+BENCHMARK(BmAutomatonRuleAndOfOr);
 
 }  // namespace
 

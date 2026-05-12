@@ -56,3 +56,6 @@ tests/drivers/c/harness
 # Matches the stuff that's gonna replace developers
 
 /.claude/
+
+
+/scripts/perf/results/

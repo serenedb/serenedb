@@ -51,9 +51,8 @@ namespace sdb::connector {
 class SegmentPkSequentialFetcher {
  public:
   // Bind to segment `seg_idx` of `reader`. Returns false if the segment
-  // has no PK column.
-  bool Open(const irs::IndexReader& reader, size_t seg_idx,
-            duckdb::DatabaseInstance& db);
+  // has no PK column.  Borrows the segment's cached columnstore::Reader.
+  bool Open(const irs::IndexReader& reader, size_t seg_idx);
 
   explicit operator bool() const noexcept { return _pk_col != nullptr; }
 
@@ -65,7 +64,6 @@ class SegmentPkSequentialFetcher {
   void Close() noexcept;
 
  private:
-  std::optional<irs::columnstore::Reader> _reader;
   const irs::columnstore::ColumnReader* _pk_col = nullptr;
 };
 
@@ -76,8 +74,7 @@ class SegmentPkSequentialFetcher {
 // scan_state init dominates regardless.
 class SegmentPkRandomFetcher {
  public:
-  bool Open(const irs::IndexReader& reader, size_t seg_idx,
-            duckdb::DatabaseInstance& db);
+  bool Open(const irs::IndexReader& reader, size_t seg_idx);
 
   explicit operator bool() const noexcept { return _pk_col != nullptr; }
 
@@ -89,7 +86,6 @@ class SegmentPkRandomFetcher {
   void Close() noexcept;
 
  private:
-  std::optional<irs::columnstore::Reader> _reader;
   const irs::columnstore::ColumnReader* _pk_col = nullptr;
   duckdb::unique_ptr<duckdb::ColumnSegment> _seg;
   duckdb::ColumnFetchState _fetch_state;
@@ -146,7 +142,6 @@ void LookupSegmentsValues(const Hits& hits, Proj&& proj,
   absl::c_iota(scratch_idx, uint32_t{0});
   std::ranges::sort(scratch_idx, {}, [&](uint32_t i) { return proj(hits[i]); });
 
-  auto& db_engine = query::DuckDBEngine::Instance().GetDB();
   SegmentPkSequentialFetcher fetcher;
   std::vector<irs::doc_id_t> seg_docs;
 
@@ -159,7 +154,7 @@ void LookupSegmentsValues(const Hits& hits, Proj&& proj,
     }
     const size_t seg_count = i - seg_begin;
 
-    if (!fetcher.Open(reader, seg_id, *db_engine.instance)) {
+    if (!fetcher.Open(reader, seg_id)) {
       continue;
     }
 

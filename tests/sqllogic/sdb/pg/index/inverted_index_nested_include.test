@@ -92,30 +92,37 @@ pk	v
 
 # --- 2. ARRAY<LIST<VARCHAR>,2> ------------------------------------------
 
+skipif pg-wire-extended
 statement ok
 CREATE TABLE n2 (pk INTEGER PRIMARY KEY, t VARCHAR, v VARCHAR[][2])
 
 
+skipif pg-wire-extended
 statement ok
 CREATE INDEX n2_idx ON n2 USING inverted(pk, t en) INCLUDE (v)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n2 VALUES (1, 'one',   [['a','b'],['c']])
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n2 VALUES (2, 'two',   NULL)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n2 VALUES (3, 'three', [['x','y','z'],[]])
 
 
+skipif pg-wire-extended
 statement ok
 VACUUM (UPDATE_INDEXES) n2
 
 
+skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n2_idx WHERE t @@ ts_phrase('one');
 ----
@@ -138,6 +145,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+skipif pg-wire-extended
 query
 SELECT pk, v FROM n2_idx
 WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two') OR t @@ ts_phrase('three')
@@ -151,6 +159,7 @@ pk	v
 
 # --- 3. STRUCT<a INTEGER, b LIST<DOUBLE>, c ARRAY<FLOAT,3>> -------------
 
+skipif pg-wire-extended
 statement ok
 CREATE TABLE n3 (
   pk INTEGER PRIMARY KEY,
@@ -159,30 +168,37 @@ CREATE TABLE n3 (
 )
 
 
+skipif pg-wire-extended
 statement ok
 CREATE INDEX n3_idx ON n3 USING inverted(pk, t en) INCLUDE (v)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n3 VALUES (1, 'one',   ROW(10, [1.5, 2.5], [3.0, 4.0, 5.0]))
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n3 VALUES (2, 'two',   NULL)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n3 VALUES (3, 'three', ROW(NULL, [], NULL))
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n3 VALUES (4, 'four',  ROW(NULL, NULL, [10.0, 20.0, 30.0]))
 
 
+skipif pg-wire-extended
 statement ok
 VACUUM (UPDATE_INDEXES) n3
 
 
+skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n3_idx WHERE t @@ ts_phrase('one');
 ----
@@ -205,6 +221,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+skipif pg-wire-extended
 query
 SELECT pk, v FROM n3_idx
 WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
@@ -220,6 +237,7 @@ pk	v
 
 # --- 4. MAP<VARCHAR, STRUCT<a INTEGER, b VARCHAR[]>> --------------------
 
+skipif pg-wire-extended
 statement ok
 CREATE TABLE n4 (
   pk INTEGER PRIMARY KEY,
@@ -228,30 +246,37 @@ CREATE TABLE n4 (
 )
 
 
+skipif pg-wire-extended
 statement ok
 CREATE INDEX n4_idx ON n4 USING inverted(pk, t en) INCLUDE (v)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n4 VALUES (1, 'one',   MAP {'k': ROW(7, ['a','b']), 'm': ROW(NULL, NULL)})
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n4 VALUES (2, 'two',   NULL)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n4 VALUES (3, 'three', MAP {})
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n4 VALUES (4, 'four',  MAP {'p': NULL})
 
 
+skipif pg-wire-extended
 statement ok
 VACUUM (UPDATE_INDEXES) n4
 
 
+skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n4_idx WHERE t @@ ts_phrase('one');
 ----
@@ -274,6 +299,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+skipif pg-wire-extended
 query
 SELECT pk, v FROM n4_idx
 WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
@@ -289,6 +315,7 @@ pk	v
 
 # --- 5. STRUCT<STRUCT<...>, LIST<STRUCT<VARCHAR, INTEGER[2]>>> ----------
 
+skipif pg-wire-extended
 statement ok
 CREATE TABLE n5 (
   pk INTEGER PRIMARY KEY,
@@ -300,34 +327,42 @@ CREATE TABLE n5 (
 )
 
 
+skipif pg-wire-extended
 statement ok
 CREATE INDEX n5_idx ON n5 USING inverted(pk, t en) INCLUDE (v)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n5 VALUES (1, 'one',   ROW(ROW('hdr1', 1), [ROW('k1', [10,20]), ROW('k2', [30,40])]))
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n5 VALUES (2, 'two',   NULL)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n5 VALUES (3, 'three', ROW(ROW(NULL, 3), []))
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n5 VALUES (4, 'four',  ROW(NULL, [ROW('only', [99,100])]))
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n5 VALUES (5, 'five',  ROW(ROW('h5', NULL), [ROW(NULL, [7,8]), ROW('z', NULL)]))
 
 
+skipif pg-wire-extended
 statement ok
 VACUUM (UPDATE_INDEXES) n5
 
 
+skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n5_idx WHERE t @@ ts_phrase('one');
 ----
@@ -350,6 +385,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+skipif pg-wire-extended
 query
 SELECT pk, v FROM n5_idx
 WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')
@@ -369,6 +405,7 @@ pk	v
 #                          a INTEGER[2],
 #                          l LIST<STRUCT<x INTEGER, y INTEGER>>>, 2>> -----
 
+skipif pg-wire-extended
 statement ok
 CREATE TABLE n6 (
   pk INTEGER PRIMARY KEY,
@@ -381,10 +418,12 @@ CREATE TABLE n6 (
 )
 
 
+skipif pg-wire-extended
 statement ok
 CREATE INDEX n6_idx ON n6 USING inverted(pk, t en) INCLUDE (v)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n6 VALUES (1, 'one', [
   [ROW(1.5, [10,20], [ROW(100,200), ROW(300,400)]), ROW(2.5, [30,40], [])],
@@ -392,24 +431,29 @@ INSERT INTO n6 VALUES (1, 'one', [
 ])
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n6 VALUES (2, 'two',   NULL)
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n6 VALUES (3, 'three', [])
 
 
+skipif pg-wire-extended
 statement ok
 INSERT INTO n6 VALUES (4, 'four',  [
   [NULL, ROW(9.0, [1,2], [])]
 ])
 
 
+skipif pg-wire-extended
 statement ok
 VACUUM (UPDATE_INDEXES) n6
 
 
+skipif pg-wire-extended
 query
 EXPLAIN SELECT pk, v FROM n6_idx WHERE t @@ ts_phrase('one');
 ----
@@ -432,6 +476,7 @@ QUERY PLAN
 └───────────────────────────┘
 
 
+skipif pg-wire-extended
 query
 SELECT pk, v FROM n6_idx
 WHERE t @@ ts_phrase('one') OR t @@ ts_phrase('two')

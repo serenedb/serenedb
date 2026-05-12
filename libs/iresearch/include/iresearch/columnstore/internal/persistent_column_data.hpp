@@ -59,6 +59,10 @@ struct PersistentColumnData {
   std::vector<duckdb::DataPointer> pointers;
   std::vector<duckdb::DataPointer> validity_pointers;
   std::vector<PersistentColumnData> child_columns;
+  // LIST/MAP only, transient writer state -- not serialised. Cumulative
+  // child element count across all row groups written so far for this
+  // node, used to bias per-RG offsets into the column-global space.
+  uint64_t list_global_running = 0;
 };
 
 // Top-level entry for one column: id + name + recursive metadata root.

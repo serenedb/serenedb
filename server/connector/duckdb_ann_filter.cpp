@@ -87,8 +87,7 @@ ANNFilter::ANNFilter(const ANNFilterContext& ctx)
 }
 
 void ANNFilter::Reset(const irs::IndexReader& reader, size_t seg_idx) {
-  auto& db_engine = query::DuckDBEngine::Instance().GetDB();
-  const bool opened = _it.Open(reader, seg_idx, *db_engine.instance);
+  const bool opened = _it.Open(reader, seg_idx);
   SDB_ASSERT(opened);
 }
 

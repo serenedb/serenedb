@@ -20,17 +20,6 @@ transactions/etc.) are out of scope.
   segment fail or fall back wrongly. Fix: in `MergeInto`, when a source has
   an HNSW reader for a field, AttachHNSW on the output and let Writer::Commit
   rebuild the graph from the just-written ARRAY data. Add merge+ANN test.
-- **Re-`OpenColumn` validates only `Type()`** but ignores mismatched
-  `row_group_size` / `skip_validity` / `compression`
-  ([`format.cpp:278`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Comment claims all must match; only one is checked. Either assert all or
-  document that only the first call's args take effect.
-- **`Reader::Reader` silently treats truncation as missing.**
-  ([`format.cpp:537,551,563`](../libs/iresearch/include/iresearch/columnstore/format.cpp))
-  Missing file: correct. Truncated header / invalid footer_offset /
-  size-too-small: currently same path. A crashed writer that left half a
-  `.cs` looks identical to "segment has no .cs file". Distinguish or at
-  least log.
 
 ## Performance (sure)
 
@@ -459,6 +448,48 @@ who hit the failure.
   on `UncompressedStringSegmentState`. Upstream them or document divergence.
   The `Executor::ExecuteTask` callback patch from the previous session is
   separate; both should be tracked in one place.
+
+- **View-backed `CREATE INDEX` does not re-bind its SQL alias on server
+  restart** (catalog bug, out of scope for columnstore review but found
+  while building the cs perf bench). Reproduces with `build/bin/serened`
+  on a clean data dir:
+    ```
+    CREATE VIEW v AS SELECT * FROM range(100) t(i);
+    CREATE INDEX vi ON v USING inverted() INCLUDE (i);
+    SELECT COUNT(*) FROM vi;          -- 100, works
+    \di                               -- vi listed
+    -- kill -9 + restart serened
+    \di                               -- empty
+    SELECT COUNT(*) FROM vi;          -- ERROR: Table with name vi does not exist
+    SELECT COUNT(*) FROM v;           -- 100, the view itself survived
+    ```
+  The view persists, the underlying `.cs` files persist on disk under the
+  serened data dir, but the SQL-callable index name is unresolvable on
+  the new session.  Either the rocksdb catalog row for the view-backed
+  index isn't written (or isn't loaded on startup), or it is and the
+  startup path doesn't register it into the in-memory DuckDB catalog.
+  Table-backed indexes don't have this issue -- `\di` lists them and
+  `SELECT FROM <index_name>` works after restart.
+
+- **View-backed `CREATE INDEX IF NOT EXISTS` after restart silently
+  duplicates the index data** (catalog bug, related to the one above).
+  Continuing the repro:
+    ```
+    -- after restart, alias gone
+    CREATE INDEX IF NOT EXISTS vi ON v USING inverted() INCLUDE (i);
+    SELECT COUNT(*), SUM(i) FROM vi;   -- 200, 9900 -- doubled
+    ```
+  Expected: either no-op (rebind to existing) or `ERROR: index already
+  exists`.  Actual: runs a fresh full build that appends a new set of
+  segments to the existing catalog name.  Surfaced first as `2x` SUM
+  results in the cs vs duckdb-native bench when the per-query cold
+  cycle tried to "recover" the alias with `CREATE INDEX IF NOT EXISTS`.
+  Workaround in `scripts/perf/run_types_perf.sh PERF_DROP_CACHES=1`:
+  don't restart -- drop OS caches in-place while serened stays up.
+
+  Both alias-not-persisted and IF-NOT-EXISTS-duplicates should land in
+  one fix pass with sqllogic coverage for table-backed AND view-backed
+  CREATE INDEX surviving a restart.
 
 ---
 

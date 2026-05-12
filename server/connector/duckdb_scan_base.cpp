@@ -217,12 +217,6 @@ void MaterializeIncludeColumnsScoreOrder(
     return;
   }
 
-  const auto& dir_reader = basics::downCast<const irs::DirectoryReader>(reader);
-  const auto& dir_reader_impl = *dir_reader.GetImpl();
-  const auto& dir = dir_reader_impl.Dir();
-  const auto& segments = dir_reader_impl.Meta().index_meta.segments;
-  auto& db_engine = query::DuckDBEngine::Instance().GetDB();
-
   std::vector<uint32_t> perm(num_rows);
   absl::c_iota(perm, uint32_t{0});
   std::ranges::sort(perm, {}, [&](uint32_t i) {
@@ -261,19 +255,22 @@ void MaterializeIncludeColumnsScoreOrder(
       ++i;
     } while (i < num_rows &&
              seg_doc_score_order[perm[i]].segment_idx == seg_id);
-    if (seg_id >= segments.size()) {
+    if (seg_id >= reader.size()) {
       continue;
     }
     const PermDocIds seg_docs{.hits = seg_doc_score_order,
                               .perm_run = perm.data() + seg_start,
                               .count = i - seg_start};
-    irs::columnstore::Reader cs_reader{dir, segments[seg_id].meta.name,
-                                       *db_engine.instance};
+    const auto* cs_reader = reader[seg_id].CsReader();
+    if (!cs_reader) {
+      continue;
+    }
     for (size_t b = 0; b < n_bindings; ++b) {
       const auto fid =
         static_cast<irs::field_id>(gstate.cs_projections[b].column_id);
-      if (const auto* col = cs_reader.Column(fid)) {
-        MaterializeColumnRange(*col, seg_docs, seg_vecs[b],
+      if (const auto* col = cs_reader->Column(fid)) {
+        auto state = cs_internal::MakeMaterializerNodeState(*col);
+        MaterializeColumnRange(*col, *state, seg_docs, seg_vecs[b],
                                static_cast<duckdb::idx_t>(seg_start));
       }
     }

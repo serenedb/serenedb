@@ -30,6 +30,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <utility>
 
 #include "iresearch/columnstore/internal/overflow_string_io.hpp"
@@ -40,6 +41,22 @@ namespace {
 
 const duckdb::LogicalType kLengthsType{duckdb::LogicalTypeId::UBIGINT};
 const duckdb::LogicalType kValidityType{duckdb::LogicalTypeId::VALIDITY};
+
+}  // namespace
+namespace {
+
+// Validity pointers are always present (one per RG) but each pointer
+// can be COMPRESSION_EMPTY, meaning that RG had no nulls and nothing
+// was actually written.  A column is "validity-bearing" only if some
+// RG carries non-EMPTY validity bits.
+bool AnyNonEmptyValidity(const std::vector<duckdb::DataPointer>& pointers) {
+  for (const auto& p : pointers) {
+    if (p.compression_type != duckdb::CompressionType::COMPRESSION_EMPTY) {
+      return true;
+    }
+  }
+  return false;
+}
 
 }  // namespace
 
@@ -53,6 +70,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _in{&in},
     _db{&db} {
   auto build_offsets = [](const std::vector<duckdb::DataPointer>& pointers,
@@ -81,6 +99,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _name{std::move(name)},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _array_size{array_size},
     _in{&in},
@@ -110,6 +129,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _in{&in},
     _db{&db} {
@@ -129,10 +149,20 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     vtotal += p.tuple_count;
   }
   _validity_offsets.push_back(vtotal);
-  _list_offsets_per_rg.resize(_data_pointers.size());
-  _rg_element_starts.assign(_data_pointers.size() + 1,
-                            std::numeric_limits<uint64_t>::max());
-  _rg_element_starts[0] = 0;
+  // Stored offsets are column-global cumulative; each RG's max stat is
+  // the running total at end of that RG. `_rg_element_starts[r]` is the
+  // child element start of row group r (== running total at end of RG
+  // r-1); only used as the seed for ListOffsetState's first row.
+  _rg_element_starts.reserve(_data_pointers.size() + 1);
+  _rg_element_starts.push_back(0);
+  for (const auto& p : _data_pointers) {
+    if (p.tuple_count == 0) {
+      _rg_element_starts.push_back(_rg_element_starts.back());
+    } else {
+      _rg_element_starts.push_back(
+        duckdb::NumericStats::Max(p.statistics).GetValue<uint64_t>());
+    }
+  }
 }
 
 ColumnReader::ColumnReader(
@@ -144,6 +174,7 @@ ColumnReader::ColumnReader(
     _name{std::move(name)},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _struct_fields{std::move(struct_children)},
     _in{&in},
     _db{&db} {
@@ -209,23 +240,38 @@ RgWindow ColumnReader::LocateValidity(uint64_t row_pos,
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
                                    duckdb::Vector& out,
-                                   duckdb::idx_t out_offset) {
+                                   duckdb::idx_t out_offset,
+                                   bool may_use_entire) {
   if (!_validity && _reader->Type().id() == duckdb::LogicalTypeId::ARRAY) {
     const auto* child = _reader->Child();
     SDB_ASSERT(child != nullptr);
     const auto array_size = _reader->ArraySize();
     auto& child_out = duckdb::ArrayVector::GetChildMutable(out);
     ScanImpl(*child, row_pos * array_size, count * array_size, child_out,
-             out_offset * array_size);
+             out_offset * array_size, may_use_entire);
     return;
   }
-  ScanImpl(*_reader, row_pos, count, out, out_offset);
+  ScanImpl(*_reader, row_pos, count, out, out_offset, may_use_entire);
 }
 
 void ColumnReader::RangeScan::ScanImpl(const ColumnReader& reader,
                                        uint64_t row_pos, duckdb::idx_t count,
                                        duckdb::Vector& out,
-                                       duckdb::idx_t out_offset) {
+                                       duckdb::idx_t out_offset,
+                                       bool may_use_entire) {
+  // Mirrors duckdb::ColumnData::GetVectorScanType: SCAN_ENTIRE_VECTOR
+  // lets codecs (dict_fsst, dictionary, RLE) hand back compact vector
+  // shapes -- e.g. a 1k-entry DICTIONARY_VECTOR for a 2k-row scan of a
+  // dict-encoded varchar -- which downstream SUM(length()) can then
+  // operate over without expanding every row.  We only request it when:
+  //   - caller said it's safe (single Scan call into this Vector),
+  //   - this scan fits entirely in one segment (SCAN_ENTIRE_VECTOR
+  //     forbids out_offset > 0, and a follow-up SCAN_FLAT_VECTOR into
+  //     a now-DICT vector would assert),
+  //   - this isn't the validity side (validity codec writes per-row
+  //     bits, not a dict-shaped data vector),
+  //   - the column has no parent validity the caller already wrote
+  //     into FLAT validity bits -- a dict overwrite would lose them.
   while (count > 0) {
     if (row_pos < _window.begin || _window.end <= row_pos) {
       _window = _validity ? reader.LocateValidity(row_pos, _window)
@@ -235,7 +281,12 @@ void ColumnReader::RangeScan::ScanImpl(const ColumnReader& reader,
     }
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);
-    _cursor.Scan(take, out, out_offset);
+    const bool single_shot = (out_offset == 0 && take == count);
+    const auto scan_type =
+      (may_use_entire && single_shot && !_validity && !_reader->HasValidity())
+        ? duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
+        : duckdb::ScanVectorType::SCAN_FLAT_VECTOR;
+    _cursor.Scan(take, out, out_offset, scan_type);
     row_pos += take;
     count -= take;
     out_offset += take;
@@ -306,52 +357,59 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenValiditySegment(
   return OpenSegmentImpl(_validity_pointers[vrg], kValidityType, *_in);
 }
 
-std::span<const uint64_t> ColumnReader::ListOffsets(size_t rg) const {
+void ColumnReader::ReadListOffset(ColumnReader::ListOffsetState& state,
+                                  size_t rg, uint64_t in_rg, uint64_t& start,
+                                  uint64_t& end) const {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST ||
              _type.id() == duckdb::LogicalTypeId::MAP);
-  SDB_ASSERT(rg < _list_offsets_per_rg.size());
-  auto& cache = _list_offsets_per_rg[rg];
-  if (!cache.empty()) {
-    return cache;
+  if (state.rg != rg) {
+    state.cursor = ScanCursor{OpenSegment(rg)};
+    state.rg = rg;
+    state.next_pos = 0;
+    state.prev_offset = _rg_element_starts[rg];
   }
-  const auto rg_rows =
-    static_cast<duckdb::idx_t>(_data_pointers[rg].tuple_count);
-  if (rg_rows == 0) {
-    cache.assign(1, 0);
-    return cache;
+  SDB_ASSERT(in_rg >= state.next_pos);
+  auto* buf_data = duckdb::FlatVector::GetDataMutable<uint64_t>(state.buf);
+  while (state.next_pos < in_rg) {
+    state.cursor.Scan(1, state.buf, 0);
+    state.prev_offset = buf_data[0];
+    ++state.next_pos;
   }
-  ScanCursor cursor{OpenSegment(rg)};
-  duckdb::Vector lengths_vec{duckdb::LogicalType::UBIGINT, rg_rows};
-  cursor.Scan(rg_rows, lengths_vec, 0);
-  const auto* lengths = duckdb::FlatVector::GetData<uint64_t>(lengths_vec);
-  cache.resize(rg_rows + 1);
-  cache[0] = 0;
-  uint64_t running = 0;
-  for (duckdb::idx_t i = 0; i < rg_rows; ++i) {
-    running += lengths[i];
-    cache[i + 1] = running;
-  }
-  return cache;
+  state.cursor.Scan(1, state.buf, 0);
+  end = buf_data[0];
+  start = state.prev_offset;
+  state.prev_offset = end;
+  ++state.next_pos;
 }
 
-uint64_t ColumnReader::RowGroupElementStart(size_t rg) const {
+uint64_t ColumnReader::ReadListOffsets(ColumnReader::ListOffsetState& state,
+                                       size_t rg, uint64_t first_in_rg,
+                                       duckdb::idx_t count,
+                                       duckdb::Vector& out_buf) const {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST ||
              _type.id() == duckdb::LogicalTypeId::MAP);
-  SDB_ASSERT(rg < _rg_element_starts.size());
-  constexpr auto kSentinel = std::numeric_limits<uint64_t>::max();
-  if (_rg_element_starts[rg] != kSentinel) {
-    return _rg_element_starts[rg];
+  SDB_ASSERT(count > 0);
+  if (state.rg != rg) {
+    state.cursor = ScanCursor{OpenSegment(rg)};
+    state.rg = rg;
+    state.next_pos = 0;
+    state.prev_offset = _rg_element_starts[rg];
   }
-  size_t cur = rg;
-  while (_rg_element_starts[cur] == kSentinel) {
-    --cur;  // ctor sets _rg_element_starts[0] = 0, so this stops.
+  SDB_ASSERT(first_in_rg >= state.next_pos);
+  // Advance the cursor to `first_in_rg` one element at a time so the
+  // pre-batch cumulative offset is captured for the run's anchor.
+  auto* buf_data = duckdb::FlatVector::GetDataMutable<uint64_t>(state.buf);
+  while (state.next_pos < first_in_rg) {
+    state.cursor.Scan(1, state.buf, 0);
+    state.prev_offset = buf_data[0];
+    ++state.next_pos;
   }
-  while (cur < rg) {
-    const auto offsets = ListOffsets(cur);
-    _rg_element_starts[cur + 1] = _rg_element_starts[cur] + offsets.back();
-    ++cur;
-  }
-  return _rg_element_starts[rg];
+  const uint64_t first_start = state.prev_offset;
+  state.cursor.Scan(count, out_buf, 0);
+  const auto* out_data = duckdb::FlatVector::GetData<uint64_t>(out_buf);
+  state.prev_offset = out_data[count - 1];
+  state.next_pos += count;
+  return first_start;
 }
 
 ColumnReader::PointReadCursor ColumnReader::NewPointCursor() const {

@@ -38,6 +38,7 @@ namespace columnstore {
 
 class ColumnReader;
 class HNSWReader;
+class Reader;
 
 }  // namespace columnstore
 struct SegmentMeta;
@@ -189,6 +190,12 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const columnstore::HNSWReader* HNSW(field_id /*field*/) const {
     return nullptr;
   }
+
+  // The whole columnstore Reader for this segment (parses the `.cs`
+  // footer once at SegmentReader construction, reused across queries).
+  // Returns nullptr when the segment was opened without a
+  // duckdb::DatabaseInstance.
+  virtual const columnstore::Reader* CsReader() const { return nullptr; }
 };
 
 template<typename Visitor, typename FilterVisitor>

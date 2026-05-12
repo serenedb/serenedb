@@ -22,6 +22,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstring>
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -31,6 +32,8 @@
 #include <utility>
 #include <vector>
 
+#include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/column_writer.hpp"
 #include "iresearch/columnstore/hnsw.hpp"
@@ -284,10 +287,20 @@ ColumnWriter& Writer::OpenColumn(field_id id, std::string_view name,
   // writer so batches accumulate into one footer entry.
   if (auto it = _impl->column_by_id.find(id); it != _impl->column_by_id.end()) {
     auto& existing = *_impl->column_writers[it->second];
-    SDB_ASSERT(existing.Type() == type,
+    const auto normalized_row_group_size =
+      row_group_size != 0 ? row_group_size : kDefaultRowGroupSize;
+    SDB_ASSERT(existing.Type() == type &&
+                 existing.RowGroupSize() == normalized_row_group_size &&
+                 existing.SkipValidity() == skip_validity &&
+                 existing.Compression() == compression,
                "columnstore::Writer::OpenColumn: re-opened id ", id,
-               " with type ", type.ToString(), " mismatched against ",
-               existing.Type().ToString());
+               " with mismatched settings (type ", type.ToString(), " vs ",
+               existing.Type().ToString(), ", row_group_size ",
+               normalized_row_group_size, " vs ", existing.RowGroupSize(),
+               ", skip_validity ", skip_validity, " vs ",
+               existing.SkipValidity(), ", compression ",
+               duckdb::CompressionTypeToString(compression), " vs ",
+               duckdb::CompressionTypeToString(existing.Compression()), ")");
     return existing;
   }
   auto entry = std::make_unique<FooterColumnEntry>();
@@ -487,19 +500,22 @@ Reader::Reader(const Directory& dir, std::string_view segment_name,
   const uint64_t kIrsFooterLen = format_utils::kFooterLen;
   const uint64_t header_len =
     static_cast<uint64_t>(format_utils::HeaderLength(kFormatName));
-  if (file_len <= header_len + sizeof(uint64_t) + kIrsFooterLen) {
-    return;
-  }
+  SDB_ENSURE(file_len > header_len + sizeof(uint64_t) + kIrsFooterLen,
+             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
+             "columnstore: truncated `.cs` file ", filename, " (length ",
+             file_len,
+             " is not large enough to contain header + footer offset + "
+             "iresearch footer)");
   const uint64_t footer_offset_pos =
     file_len - kIrsFooterLen - sizeof(uint64_t);
   _impl->in->Seek(footer_offset_pos);
   const uint64_t footer_offset = _impl->in->ReadI64();
 
-  // Sanity-check footer_offset so a corrupt file can't underflow the
-  // size computation below into a huge allocation request.
-  if (footer_offset < header_len || footer_offset >= footer_offset_pos) {
-    return;
-  }
+  SDB_ENSURE(footer_offset >= header_len && footer_offset < footer_offset_pos,
+             sdb::ERROR_SERVER_CORRUPTED_DATAFILE,
+             "columnstore: corrupted `.cs` file ", filename, ": footer offset ",
+             footer_offset, " is out of range [", header_len, ", ",
+             footer_offset_pos, ")");
   const uint64_t footer_size = footer_offset_pos - footer_offset;
   std::vector<byte_type> footer_buf(footer_size);
   _impl->in->Seek(footer_offset);

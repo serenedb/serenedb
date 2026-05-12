@@ -29,9 +29,16 @@ add_bench(config_var_lookup)
 add_bench(norm_gather)
 add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
+add_bench(sloppy_phrase_vs_disjunction)
 
 target_include_directories(
     serenedb-bench-micro-regexp_vs_wildcard
+    SYSTEM
+    PRIVATE $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
+target_include_directories(
+    serenedb-bench-micro-sloppy_phrase_vs_disjunction
     SYSTEM
     PRIVATE $<TARGET_PROPERTY:iresearch-utfcpp,INTERFACE_INCLUDE_DIRECTORIES>
 )

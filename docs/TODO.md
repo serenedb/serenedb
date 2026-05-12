@@ -31,23 +31,6 @@ transactions/etc.) are out of scope.
   size-too-small: currently same path. A crashed writer that left half a
   `.cs` looks identical to "segment has no .cs file". Distinguish or at
   least log.
-- **ARRAY null reads return wrong data.** Writer emits array-level
-  validity through the codec
-  ([`column_writer.cpp::FlushNode ARRAY branch`](../libs/iresearch/include/iresearch/columnstore/column_writer.cpp))
-  but the read-side materializer
-  ([`columnstore_materializer.h::MaterializeArrayRange`](../server/connector/columnstore_materializer.h))
-  scans only the element child and never opens the parent validity
-  segment. A row inserted as NULL roundtrips as a non-null array of
-  default values; `IS NULL` returns false on it. Plumb the validity
-  read + test for `INSERT NULL` / `WHERE arr IS NULL`.
-- **LIST null reads return wrong data.** Same shape:
-  [`column_writer.cpp::FlushNode LIST branch`](../libs/iresearch/include/iresearch/columnstore/column_writer.cpp)
-  emits both row-level and element-level validity; the materializer
-  ([`columnstore_materializer.h::MaterializeListRow`](../server/connector/columnstore_materializer.h))
-  reads neither. NULL list rows roundtrip as empty-and-valid; null
-  elements roundtrip as default values. Plumb validity reads on both
-  levels + tests for `INSERT NULL`, `WHERE l IS NULL`,
-  `WHERE l[1] IS NULL`.
 
 ## Performance (sure)
 

@@ -1,0 +1,160 @@
+hash-threshold 100
+
+# Repro: NULL LIST values, plus NULL elements inside non-null lists, must
+# round-trip through the new cs columnstore.
+#
+# Writer (irs::columnstore::ColumnWriter::FlushNode LIST branch) emits a
+# top-level row-validity payload and recurses into the element child
+# (which itself emits element-level validity). The materializer
+# (MaterializeListRow in columnstore_materializer.h) reads neither: NULL
+# list rows roundtrip as empty-and-valid, NULL elements roundtrip as
+# default values. These cases pin down the correct behavior.
+
+statement ok
+CREATE TABLE list_n (
+  pk INTEGER PRIMARY KEY,
+  text_for_search VARCHAR,
+  tags VARCHAR[]
+)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+)
+
+
+statement ok
+CREATE INDEX list_n_idx ON list_n USING inverted(pk, text_for_search en)
+  INCLUDE (tags)
+
+
+statement ok
+INSERT INTO list_n VALUES (1, 'first',  ['alpha', 'beta'])
+
+
+# Whole-row NULL: distinct from an empty list.
+statement ok
+INSERT INTO list_n VALUES (2, 'second', NULL)
+
+
+# NULL element inside a non-null list.
+statement ok
+INSERT INTO list_n VALUES (3, 'third',  ['gamma', NULL, 'delta'])
+
+
+# Empty list (the existing list test already covers this -- keep here too
+# so the NULL-row case can be compared against it in one place).
+statement ok
+INSERT INTO list_n VALUES (4, 'fourth', [])
+
+
+statement ok
+VACUUM (UPDATE_INDEXES) list_n
+
+
+# Sanity: the LIST column is served by the iresearch columnstore (i), so
+# the NULL/empty/null-element roundtrip below proves the cs materialiser
+# handles parent + element validity (the bug this test was written for).
+query
+EXPLAIN SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('second');
+----
+QUERY PLAN
+┌───────────────────────────┐
+│       IRESEARCH_SCAN      │
+│    ────────────────────   │
+│     Index: list_n_idx     │
+│      Lookup: rocksdb      │
+│                           │
+│          Filter:          │
+│ AND[PHRASE[text_for_search│
+│ (string) = <Term:second(0,│
+│           0); >]]         │
+│                           │
+│        Projections:       │
+│           pk (l)          │
+│          tags (i)         │
+│                           │
+│          ~4 rows          │
+└───────────────────────────┘
+
+
+# NULL row must come back as NULL, not as {} and not as {default}.
+query
+SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('second')
+ORDER BY pk;
+----
+pk	tags
+2	NULL
+
+
+# Empty list stays distinct from NULL.
+query
+SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('fourth')
+ORDER BY pk;
+----
+pk	tags
+4	{}
+
+
+# NULL element inside a non-null list must roundtrip; tags[2] is NULL.
+query
+SELECT pk, tags FROM list_n_idx WHERE text_for_search @@ ts_phrase('third')
+ORDER BY pk;
+----
+pk	tags
+3	{gamma,NULL,delta}
+
+
+# All rows materialised side by side -- NULL row vs empty list vs NULL element.
+query
+SELECT pk, tags FROM list_n_idx
+WHERE text_for_search @@ ts_phrase('first')
+   OR text_for_search @@ ts_phrase('second')
+   OR text_for_search @@ ts_phrase('third')
+   OR text_for_search @@ ts_phrase('fourth')
+ORDER BY pk;
+----
+pk	tags
+1	{alpha,beta}
+2	NULL
+3	{gamma,NULL,delta}
+4	{}
+
+
+# IS NULL / IS NOT NULL on an INCLUDE-only column: the filter falls
+# through as a residual that DuckDB evaluates against the cs-materialised
+# value (the index has no postings to scan for tags).
+query
+SELECT pk FROM list_n_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third')
+       OR text_for_search @@ ts_phrase('fourth'))
+  AND tags IS NULL
+ORDER BY pk;
+----
+pk
+2
+
+
+# Empty list is NOT NULL; only pk=2 should be excluded.
+query
+SELECT pk FROM list_n_idx
+WHERE (text_for_search @@ ts_phrase('first')
+       OR text_for_search @@ ts_phrase('second')
+       OR text_for_search @@ ts_phrase('third')
+       OR text_for_search @@ ts_phrase('fourth'))
+  AND tags IS NOT NULL
+ORDER BY pk;
+----
+pk
+1
+3
+4

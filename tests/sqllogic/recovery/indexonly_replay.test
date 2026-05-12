@@ -127,3 +127,90 @@ id
 connection after_delete
 statement ok
 DROP TABLE indexonly_replay;
+
+
+# --- UPDATE replay --------------------------------------------------------
+#
+# Update the IndexOnly column itself (so the scan doesn't need to read its
+# old value -- Gap 1 blocks other UPDATE shapes). Crash after rocksdb
+# commit but before iresearch commits the change. wal_recovery must
+# replay the [CP] marker carrying the new value so the post-update term
+# is searchable and the pre-update term is gone.
+
+connection after_delete
+statement ok
+CREATE TABLE indexonly_update (
+  id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  PRIMARY KEY (id)
+) WITH (sdb_indexonly = [body]);
+
+connection after_delete
+statement ok
+CREATE INDEX indexonly_update_idx
+  ON indexonly_update USING inverted(body indexonly_replay_english);
+
+connection after_delete
+statement ok
+INSERT INTO indexonly_update VALUES
+  (1, 'before update mango'),
+  (2, 'before update nectarine');
+
+# Seal the pre-update state into iresearch so the recovery range starts
+# AFTER it -- the [CP] from the UPDATE batch is what must be replayed.
+connection after_delete
+statement ok
+VACUUM (UPDATE_INDEXES) indexonly_update;
+
+# Sanity: original phrase searchable.
+connection after_delete
+query
+SELECT id FROM indexonly_update_idx WHERE body @@ ts_phrase('before update mango');
+----
+id
+1
+
+connection after_delete
+statement ok
+SET sdb_faults = 'crash_after_rocksdb_commit';
+
+connection after_delete
+statement error connection closed
+UPDATE indexonly_update SET body = 'after update orange' WHERE id = 1;
+
+connection after_update
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+connection after_update
+statement ok
+VACUUM (UPDATE_INDEXES) indexonly_update;
+
+# New phrase must be searchable -- wal_recovery replayed the [CP] for
+# the post-update value.
+connection after_update
+query
+SELECT id FROM indexonly_update_idx WHERE body @@ ts_phrase('after update orange');
+----
+id
+1
+
+# Old phrase must be gone -- FlushShard issues delete-by-PK before
+# re-inserting cells, so id=1's pre-update body disappears.
+connection after_update
+query
+SELECT id FROM indexonly_update_idx WHERE body @@ ts_phrase('before update mango');
+----
+id
+
+# Untouched row is still indexed.
+connection after_update
+query
+SELECT id FROM indexonly_update_idx WHERE body @@ ts_phrase('before update nectarine');
+----
+id
+2
+
+connection after_update
+statement ok
+DROP TABLE indexonly_update;

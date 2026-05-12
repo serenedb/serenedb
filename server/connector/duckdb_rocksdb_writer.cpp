@@ -31,6 +31,7 @@
 #include "basics/string_utils.h"
 #include "connector/common.h"
 #include "connector/indexonly_marker.h"
+#include "query/transaction.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
 namespace sdb::connector {
@@ -263,6 +264,10 @@ std::string MergeSlices(const std::vector<rocksdb::Slice>& slices) {
 
 }  // namespace
 
+DuckDBColumnSerializer::TxnWriter::TxnWriter(
+  query::Transaction& sdb_txn, rocksdb::ColumnFamilyHandle* cf) noexcept
+  : _sdb_txn{&sdb_txn}, _txn{&sdb_txn.GetRocksDBTransaction()}, _cf{cf} {}
+
 void DuckDBColumnSerializer::TxnWriter::Write(
   const std::vector<rocksdb::Slice>& slices, std::string_view key) {
   if (IsIndexOnly()) {
@@ -278,7 +283,7 @@ void DuckDBColumnSerializer::TxnWriter::Write(
     // CF -- you'll need to encode cf_id in the marker payload there.
     SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
                         RocksDBColumnFamilyManager::Family::Default));
-    indexonly_marker::EmitCP(*_txn, key, slices);
+    indexonly_marker::EmitCP(*_sdb_txn, key, slices);
     return;
   }
   auto merged = MergeSlices(slices);
@@ -295,7 +300,7 @@ void DuckDBColumnSerializer::TxnWriter::WriteNull(std::string_view key) {
     // Default-CF assertion comment in Write() above.
     SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
                         RocksDBColumnFamilyManager::Family::Default));
-    indexonly_marker::EmitCP(*_txn, key, {});
+    indexonly_marker::EmitCP(*_sdb_txn, key, {});
     return;
   }
   auto status =
@@ -311,7 +316,7 @@ void DuckDBColumnSerializer::TxnWriter::EmitRowDelete(std::string_view key) {
   // assertion comment in Write() above for the broader CF-routing caveat.
   SDB_ASSERT(_cf == RocksDBColumnFamilyManager::get(
                       RocksDBColumnFamilyManager::Family::Default));
-  indexonly_marker::EmitRD(*_txn, key);
+  indexonly_marker::EmitRD(*_sdb_txn, key);
 }
 
 void DuckDBColumnSerializer::SstWriter::Write(

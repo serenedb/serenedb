@@ -59,6 +59,9 @@ struct SereneDBDeleteGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+  // sdb-side transaction (== ConnectionContext); needed for
+  // RegisterLogDataMarker when IndexOnly writers emit PutLogData blobs.
+  query::Transaction* sdb_txn = nullptr;
 
   // True iff at least one inverted index on the table covers ONLY
   // sdb_indexonly columns. In that case the existing DeleteCF-based
@@ -145,6 +148,7 @@ SereneDBPhysicalDelete::GetGlobalSinkState(
   }
 
   state->txn = &conn_ctx.GetRocksDBTransaction();
+  state->sdb_txn = &conn_ctx;
 
   // Snapshot + indexes are reused by both the [RD]-marker check and the
   // non-PK indexed-column reconstruction below.
@@ -284,7 +288,7 @@ duckdb::SinkResultType SereneDBPhysicalDelete::Sink(
     // key_buffer holds a valid row key for this row; the marker decoder
     // reads its table_id + PK portion and ignores the trailing column id.
     if (gstate.needs_rd_markers) {
-      indexonly_marker::EmitRD(*txn, key_buffer);
+      indexonly_marker::EmitRD(*gstate.sdb_txn, key_buffer);
     }
   }
 

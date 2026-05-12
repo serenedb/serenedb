@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 
+#include "query/transaction.h"
 #include "rocksdb_engine_catalog/wal_log_data_magics.h"
 
 // WAL markers used to make sdb_indexonly column writes crash-safe.
@@ -147,21 +148,30 @@ inline std::optional<Decoded> Decode(rocksdb::Slice blob) {
 }
 
 // --- thin emit helpers ----------------------------------------------------
+//
+// Each helper takes the sdb-side Transaction so it can both look up the
+// rocksdb txn and call RegisterLogDataMarker -- this keeps the Commit-gate
+// (num_ops > 0) honest. Callers that go through these helpers cannot
+// forget to bump the marker counter.
 
-// Emits a [CP] marker into `txn`'s WriteBatch. `full_key` is the same row
-// key the main writer would Put for this cell. Empty `slices` = NULL.
-inline void EmitCP(rocksdb::Transaction& txn, std::string_view full_key,
+// Emits a [CP] marker into the txn's WriteBatch. `full_key` is the same
+// row key the main writer would Put for this cell. Empty `slices` = NULL.
+inline void EmitCP(query::Transaction& sdb_txn, std::string_view full_key,
                    std::span<const rocksdb::Slice> slices) {
   auto blob = EncodeCP(full_key, slices);
-  txn.PutLogData(rocksdb::Slice{blob.data(), blob.size()});
+  sdb_txn.GetRocksDBTransaction().PutLogData(
+    rocksdb::Slice{blob.data(), blob.size()});
+  sdb_txn.RegisterLogDataMarker();
 }
 
-// Emits an [RD] marker into `txn`'s WriteBatch. `full_key` is any row
+// Emits an [RD] marker into the txn's WriteBatch. `full_key` is any row
 // key for the deleted row -- only the table_id and PK portion are read on
 // replay (col_id is ignored for row-level delete).
-inline void EmitRD(rocksdb::Transaction& txn, std::string_view full_key) {
+inline void EmitRD(query::Transaction& sdb_txn, std::string_view full_key) {
   auto blob = EncodeRD(full_key);
-  txn.PutLogData(rocksdb::Slice{blob.data(), blob.size()});
+  sdb_txn.GetRocksDBTransaction().PutLogData(
+    rocksdb::Slice{blob.data(), blob.size()});
+  sdb_txn.RegisterLogDataMarker();
 }
 
 }  // namespace sdb::connector::indexonly_marker

@@ -68,6 +68,9 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   // RocksDB handles
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+  // sdb-side transaction (== ConnectionContext); needed for
+  // RegisterLogDataMarker when IndexOnly writers emit PutLogData blobs.
+  query::Transaction* sdb_txn = nullptr;
 
   std::shared_ptr<catalog::Sequence> generated_pk_seq;
 
@@ -152,6 +155,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   }
 
   state->txn = &conn_ctx.GetRocksDBTransaction();
+  state->sdb_txn = &conn_ctx;
   state->conflict_resolver.Init(*state->txn, *state->cf, _on_conflict,
                                 state->table_name);
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(
@@ -229,7 +233,7 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   }
 
   // 4. Write each column via DuckDBColumnSerializer
-  DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+  DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
   for (const auto& col : gstate.columns) {
     if (col.input_col_idx >= chunk.ColumnCount()) {

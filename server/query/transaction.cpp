@@ -56,6 +56,18 @@ Result Transaction::Commit() {
                        : 0;
   SDB_ASSERT(!_rocksdb_transaction || _rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
+  // PutLogData blobs (IndexOnly [CP]/[RD] markers) don't bump
+  // GetNumPuts/GetNumDeletes and don't consume a rocksdb seq number. A txn
+  // whose only payload is markers (e.g. UPDATE of an only-IndexOnly column)
+  // would skip the commit block entirely and the markers would never reach
+  // the WAL -- and iresearch would have no tick to anchor its own Commit
+  // on. Force a no-op Delete so a seq number is consumed and the existing
+  // inner logic that compares num_ops to iresearch query counts works as
+  // designed.
+  if (num_ops == 0 && _num_log_data_markers > 0 && _rocksdb_transaction) {
+    _rocksdb_transaction->Delete(rocksdb::Slice{});
+    ++num_ops;
+  }
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -214,6 +226,7 @@ void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _table_rows_deltas.clear();
   _search_snapshots.clear();
+  _num_log_data_markers = 0;
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {

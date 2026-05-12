@@ -40,6 +40,19 @@ class Transaction : public Config {
  public:
   using Config::Config;
 
+#ifdef SDB_GTEST
+  // Test-only: take ownership of an externally-built rocksdb::Transaction.
+  // Lets unit tests use query::Transaction (and anything that takes one,
+  // e.g. TxnWriter) without spinning up the storage engine + catalog.
+  // After this ctor, the regular Get/Has/Commit paths see the injected
+  // txn through the production _rocksdb_transaction member.
+  Transaction(duckdb::ClientContext& client_ctx,
+              std::unique_ptr<rocksdb::Transaction> rocksdb_txn) noexcept
+    : Config{client_ctx} {
+    _rocksdb_transaction = std::move(rocksdb_txn);
+  }
+#endif
+
 #ifdef SDB_DEV
   virtual ~Transaction() {
     // Search transactions have implicit commit in destructor (historical
@@ -78,6 +91,17 @@ class Transaction : public Config {
   rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
     SDB_ASSERT(_rocksdb_transaction);
     return *_rocksdb_transaction;
+  }
+
+  // Writers that emit PutLogData blobs (e.g. IndexOnly [CP]/[RD] markers)
+  // call this so the marker counts toward "txn has work to commit". rocksdb's
+  // GetNumPuts/GetNumDeletes never include PutLogData, so a txn that only
+  // emitted markers would otherwise be silently skipped by Commit() and the
+  // markers would never reach the WAL. Reset in Destroy() because the
+  // Transaction object (ConnectionContext) survives Commit/Rollback.
+  void RegisterLogDataMarker() noexcept { ++_num_log_data_markers; }
+  uint64_t GetNumLogDataMarkers() const noexcept {
+    return _num_log_data_markers;
   }
 
   const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
@@ -161,6 +185,7 @@ class Transaction : public Config {
   containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
+  uint64_t _num_log_data_markers = 0;
 };
 
 }  // namespace sdb::query

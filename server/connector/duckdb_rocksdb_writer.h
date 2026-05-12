@@ -41,6 +41,11 @@ class ColumnFamilyHandle;
 class SstFileWriter;
 
 }  // namespace rocksdb
+namespace sdb::query {
+
+class Transaction;
+
+}  // namespace sdb::query
 namespace sdb::connector {
 
 // Big-endian sorted PK encoding.
@@ -56,9 +61,14 @@ class DuckDBColumnSerializer {
   // for IndexOnly write policy: the serializer is unaware.
   class TxnWriter {
    public:
-    TxnWriter(rocksdb::Transaction* txn,
-              rocksdb::ColumnFamilyHandle* cf) noexcept
-      : _txn{txn}, _cf{cf} {}
+    // sdb_txn carries the rocksdb txn (cached locally to avoid repeated
+    // GetRocksDBTransaction calls) AND lets IndexOnly branches register
+    // PutLogData markers on it (rocksdb's GetNumPuts/GetNumDeletes don't
+    // count them, so Transaction::Commit would otherwise skip the txn).
+    // Ctor defined out-of-line in the .cpp so the header doesn't need the
+    // full query::Transaction definition.
+    TxnWriter(query::Transaction& sdb_txn,
+              rocksdb::ColumnFamilyHandle* cf) noexcept;
 
     // Set per-column context. Subsequent Write/WriteNull calls apply to
     // this column.
@@ -77,6 +87,7 @@ class DuckDBColumnSerializer {
       return _cur_col.store_mode == catalog::ColumnStoreMode::kIndexOnly;
     }
 
+    query::Transaction* _sdb_txn;
     rocksdb::Transaction* _txn;
     rocksdb::ColumnFamilyHandle* _cf;
     ColumnDescriptor _cur_col{};

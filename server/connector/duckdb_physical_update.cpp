@@ -81,6 +81,9 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
 
   rocksdb::ColumnFamilyHandle* cf = nullptr;
   rocksdb::Transaction* txn = nullptr;
+  // sdb-side transaction (== ConnectionContext); needed for
+  // RegisterLogDataMarker when IndexOnly writers emit PutLogData blobs.
+  query::Transaction* sdb_txn = nullptr;
 
   // True iff at least one inverted index on the table covers ONLY
   // sdb_indexonly columns. In that case the PK-update path's main-
@@ -289,6 +292,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   }
 
   state->txn = &conn_ctx.GetRocksDBTransaction();
+  state->sdb_txn = &conn_ctx;
   state->conflict_resolver.Init(*state->txn, *state->cf,
                                 duckdb::OnConflictAction::THROW,
                                 state->table_name);
@@ -573,12 +577,12 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
       // replay path). row_keys[row] is a valid row key; only its
       // table_id + PK portion are read on replay.
       if (gstate.needs_rd_markers) {
-        indexonly_marker::EmitRD(*txn, gstate.row_keys[row]);
+        indexonly_marker::EmitRD(*gstate.sdb_txn, gstate.row_keys[row]);
       }
     }
 
     // 6. Write ALL columns at new keys.
-    DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+    DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
     // Updated columns: from SET positions in the chunk.
     for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
@@ -669,7 +673,7 @@ duckdb::SinkResultType SereneDBPhysicalUpdate::Sink(
     }
 
     // 2. Write updated columns (index writers get new values via Write)
-    DuckDBColumnSerializer::TxnWriter txn_writer{txn, gstate.cf};
+    DuckDBColumnSerializer::TxnWriter txn_writer{*gstate.sdb_txn, gstate.cf};
 
     for (duckdb::idx_t i = 0; i < gstate.update_columns.size(); ++i) {
       const auto& col = gstate.update_columns[i];

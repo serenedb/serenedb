@@ -193,13 +193,15 @@ void FlushShard(ShardState& s,
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
     connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_paths_provider = connector::MakeJsonPathsProvider(
+  auto json_path_tokenizer_provider = connector::MakeJsonPathTokenizerProvider(
     snapshot, *s.index, &client_context);
+  auto json_path_entries = connector::MakeJsonPathBoundEntries(
+    *s.index, s.indexed_column_ids, &client_context);
   // Use the DuckDB-facing wrapper so SwitchColumn / Write / Finish /
   // JsonExpressionEvals are available (the impl base only exposes *Impl).
   connector::DuckDBSearchSinkInsertWriter insert_sink{
-    trx, std::move(tokenizer_provider), s.indexed_column_ids,
-    std::move(json_paths_provider)};
+    trx, std::move(tokenizer_provider), std::move(json_path_tokenizer_provider),
+    std::move(json_path_entries), s.indexed_column_ids};
   connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
   delete_sink.InitImpl(s.pk2row.size());
@@ -274,7 +276,7 @@ void FlushShard(ShardState& s,
     // columns (the JSON column itself), and the chunk's bound expression
     // bindings reference positions within s.indexed_columns.
     const auto eval_evals = sink.JsonExpressionEvals();
-    if (false && !eval_evals.empty()) {
+    if (!eval_evals.empty()) {
       duckdb::vector<duckdb::LogicalType> chunk_types;
       chunk_types.reserve(s.indexed_columns.size());
       for (const auto& col : s.indexed_columns) {
@@ -312,58 +314,29 @@ void FlushShard(ShardState& s,
       }
       duckdb::Allocator& allocator = duckdb::Allocator::DefaultAllocator();
       connector::DuckDBColumnSerializer serializer{allocator};
-      // connector::DuckDBColumnSerializer::SstWriter noop{nullptr};
-      // chunk.data[i] mirrors s.indexed_columns[i] -- chunk slot i carries
-      // s.indexed_columns[i].id as its catalog Column::Id.
+      // chunk.data[i] mirrors s.indexed_columns[i]; build slot -> col id so
+      // ResolveBoundColumnRefsForChunk can rewrite the catalog-keyed
+      // BoundColumnRef bindings to chunk slot positions.
       std::vector<catalog::Column::Id> slot_to_col_id;
       slot_to_col_id.reserve(s.indexed_columns.size());
       for (const auto& col : s.indexed_columns) {
         slot_to_col_id.push_back(col.id);
       }
-      // TODO fix wal_error
-      // for (const auto& je : eval_evals) {
-      //   auto resolved = connector::ResolveBoundColumnRefsForChunk(
-      //     *je.bound_expr, chunk, s.table_object_id, slot_to_col_id);
-      //   duckdb::ExpressionExecutor executor(client_context, *resolved);
-      //   duckdb::Vector result(resolved->return_type, num_rows);
-      //   executor.ExecuteExpression(chunk, result);
-      //   connector::RejectJsonObjectArrayLeaves(result, num_rows);
+      for (const auto& je : eval_evals) {
+        auto result = connector::EvaluateJsonPathOverChunk(
+          *je.bound_expr, chunk, s.table_object_id, slot_to_col_id,
+          client_context);
 
-      //   std::vector<bool> missing_mask;
-      //   const auto src_slot = connector::ExtractJsonSourceColId(*resolved);
-      //   std::vector<std::string> path_keys;
-      //   if (src_slot != static_cast<duckdb::idx_t>(-1) &&
-      //       src_slot < chunk.ColumnCount() &&
-      //       connector::ExtractJsonPathKeys(*je.bound_expr, path_keys)) {
-      //     connector::ComputeJsonMissingMask(chunk.data[src_slot], num_rows,
-      //                                       path_keys, missing_mask);
-      //   } else {
-      //     missing_mask.assign(num_rows, false);
-      //   }
-
-      //   if (!sink.SwitchJsonExpression(resolved->return_type,
-      //                                  /*have_nulls=*/true, je.column_id,
-      //                                  je.serialized)) {
-      //     continue;
-      //   }
-      //   std::vector<std::string> saved_keys(num_rows);
-      //   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-      //     if (missing_mask[row_idx]) {
-      //       std::swap(saved_keys[row_idx], row_keys[row_idx]);
-      //     } else {
-      //       connector::key_utils::SetupColumnForKey(row_keys[row_idx],
-      //                                               je.column_id);
-      //     }
-      //   }
-      //   connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
-      //   serializer.WriteColumn(noop, result, resolved->return_type, num_rows,
-      //                          row_keys, {&writer_ptr, 1});
-      //   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-      //     if (missing_mask[row_idx]) {
-      //       std::swap(saved_keys[row_idx], row_keys[row_idx]);
-      //     }
-      //   }
-      // }
+        const bool switched = sink.SwitchJsonExpression(
+          result.GetType(), /*have_nulls=*/true, je.column_id, je.serialized);
+        SDB_ASSERT(switched,
+                   "Cannot switch to JSON expression during WAL "
+                   "recovery");
+        connector::DuckDBSinkIndexWriter* writer_ptr = &sink;
+        serializer.WriteColumn<connector::DuckDBColumnSerializer::TxnWriter>(
+          nullptr, result, result.GetType(), num_rows, row_keys,
+          {&writer_ptr, 1});
+      }
     }
     sink.Finish();
   }

@@ -103,19 +103,22 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSecondaryWriter(
 std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
   DuckDBWriteKind kind, irs::IndexWriter::Transaction& trx,
   TokenizerProvider&& tokenizer_provider,
-  JsonPathsProvider&& json_paths_provider,
+  JsonPathTokenizerProvider&& json_path_tokenizer_provider,
+  std::vector<JsonPathBoundEntry>&& json_path_entries,
   std::span<const catalog::Column::Id> columns) {
   switch (kind) {
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
-        trx, std::move(tokenizer_provider), columns,
-        std::move(json_paths_provider));
+        trx, std::move(tokenizer_provider),
+        std::move(json_path_tokenizer_provider), std::move(json_path_entries),
+        columns);
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
-        trx, std::move(tokenizer_provider), columns,
-        std::move(json_paths_provider));
+        trx, std::move(tokenizer_provider),
+        std::move(json_path_tokenizer_provider), std::move(json_path_entries),
+        columns);
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;
@@ -172,12 +175,15 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
       auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
-      auto json_paths_provider = MakeJsonPathsProvider(
+      auto json_path_tokenizer_provider = MakeJsonPathTokenizerProvider(
         snapshot, inverted_index, &conn_ctx.GetClientContext());
+      auto json_path_entries = MakeJsonPathBoundEntries(
+        inverted_index, index.GetColumnIds(), &conn_ctx.GetClientContext());
 
       writers.push_back(MakeDuckDBSearchWriter(
         Kind, index_txn, std::move(tokenizer_provider),
-        std::move(json_paths_provider), index.GetColumnIds()));
+        std::move(json_path_tokenizer_provider), std::move(json_path_entries),
+        index.GetColumnIds()));
     }
   };
 

@@ -390,8 +390,7 @@ connector::JsonPathGetter MakeJsonPathGetter(SearchColumnContext& ctx,
     auto normalised = connector::NormalizeBoundExpression(
       path_expr, table_id, ctx.projected_column_ids);
     out_serialized = connector::SerializeBoundExpression(*normalised);
-    auto tokenizer =
-      ctx.json_path_tokenizer_provider(col_id, out_serialized);
+    auto tokenizer = ctx.json_path_tokenizer_provider(col_id, out_serialized);
     if (!tokenizer) {
       return std::nullopt;
     }
@@ -614,8 +613,7 @@ bool TryAnnTopk(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 *resolved, snapshot, options.client_context);
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter =
-    MakeJsonPathGetter(sctx, resolved->index->GetRelationId());
+  auto json_getter = MakeJsonPathGetter(sctx, resolved->index->GetRelationId());
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -842,8 +840,7 @@ bool TryAnnRange(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   InitSearchColumnContextForGet(sctx, proj_ids_storage, get, bind_data,
                                 *resolved, snapshot, options.client_context);
   auto getter = MakeColumnGetter(sctx);
-  auto json_getter =
-    MakeJsonPathGetter(sctx, resolved->index->GetRelationId());
+  auto json_getter = MakeJsonPathGetter(sctx, resolved->index->GetRelationId());
 
   auto proxy = std::make_unique<irs::ProxyFilter>();
   auto [and_root, cache] =
@@ -938,8 +935,7 @@ bool TrySearchFilter(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
   InitSearchColumnContextForGet(ctx, projected_ids, get, bind_data, *resolved,
                                 snapshot, options.client_context);
   auto getter = MakeColumnGetter(ctx);
-  auto json_getter =
-    MakeJsonPathGetter(ctx, resolved->index->GetRelationId());
+  auto json_getter = MakeJsonPathGetter(ctx, resolved->index->GetRelationId());
 
   // Try each expression individually -- non-iresearch predicates stay on the
   // LogicalFilter.

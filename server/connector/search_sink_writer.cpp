@@ -114,47 +114,25 @@ inline constexpr bool kIsNumericKind =
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
-  JsonPathsProvider&& json_paths_provider,
+  JsonPathTokenizerProvider&& json_path_tokenizer_provider,
+  std::vector<JsonPathBoundEntry>&& json_path_entries,
   std::span<const catalog::Column::Id> columns)
   : ColumnSinkWriterImplBase{columns},
     _tokenizer_provider{std::move(tokenizer_provider)},
-    _json_paths_provider{std::move(json_paths_provider)},
-    _trx{trx} {
+    _json_path_tokenizer_provider{std::move(json_path_tokenizer_provider)},
+    _trx{trx},
+    _json_exprs_owned{std::move(json_path_entries)} {
   _pk_field.PrepareForVerbatimStringValue();
   _pk_field.name = kPkFieldName;
 
-  // Pre-load JSON-extract expressions across every indexed column. When the
-  // provider hands back a deserialised bound_expression, ownership moves
-  // onto the sink and a non-owning view goes into _json_expr_views; the
-  // caller (CreateIndex/Insert/Update sink loops) iterates those to drive
-  // ExpressionExecutor. When bound_expression is missing (e.g. WAL replay
-  // without a ClientContext), _json_expr_views is empty for that path and
-  // SwitchColumnImpl falls back to the simdjson SetupJsonColumnWriter path.
-  if (_json_paths_provider) {
-    for (auto col_id : columns) {
-      auto paths = _json_paths_provider(col_id);
-      bool any_executor_eval = false;
-      for (auto& p : paths) {
-        if (!p.bound_expression) {
-          continue;
-        }
-        any_executor_eval = true;
-        // Structural canonical -> iresearch field-name suffix (matches
-        // SELECT-side filter exactly). Tokenizer factory produces the
-        // path-specific analyzer (text_dict/verbatim_dict) on demand.
-        _owned_json_exprs.push_back({std::move(p.bound_expression),
-                                     std::move(p.path_canonical), col_id,
-                                     std::move(p.make_tokenizer)});
-      }
-      if (any_executor_eval) {
-        _columns_via_executor.insert(col_id);
-      }
+  _json_expr_views.reserve(_json_exprs_owned.size());
+  for (const auto& owned : _json_exprs_owned) {
+    if (!owned.bound_expression) {
+      continue;
     }
-    _json_expr_views.reserve(_owned_json_exprs.size());
-    for (const auto& owned : _owned_json_exprs) {
-      _json_expr_views.push_back(
-        {owned.expr.get(), owned.serialized, owned.column_id});
-    }
+    _json_expr_views.push_back(
+      {owned.bound_expression.get(), owned.serialized_expr, owned.column_id});
+    _json_columns.insert(owned.column_id);
   }
 }
 
@@ -167,10 +145,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const duckdb::LogicalType& type,
 #endif
     return false;
   }
-  // Columns served by ExpressionExecutor (bound expressions deserialised at
-  // construction time) are written by the caller via SwitchJsonExpression
-  // after this loop. Skip them here.
-  if (_columns_via_executor.contains(column_id)) {
+  if (_json_columns.contains(column_id)) {
 #ifdef SDB_DEV
     _current_writer = nullptr;
 #endif
@@ -250,33 +225,15 @@ bool SearchSinkInsertBaseImpl::SwitchJsonExpressionImpl(
 #endif
     return false;
   }
-  // Find the path-specific tokenizer factory so SetupColumnWriter wires up
-  // the analyzer the user configured (text_dict / verbatim_dict / ...).
-  // Without this the VARCHAR path falls back to
-  // `_tokenizer_provider(column_id)`
-  // -- the BASE column's tokenizer, which on a JSON column with no top-level
-  // opclass is the default position-less StringTokenizer, breaking phrase
-  // queries.
-  JsonPathTokenizerFactory* tokenizer_override = nullptr;
-  for (auto& owned : _owned_json_exprs) {
-    if (owned.column_id == column_id && owned.serialized == serialized_expr) {
-      tokenizer_override = &owned.make_tokenizer;
-      break;
-    }
-  }
-  // The bound expression must produce a primitive type. Reuse the existing
-  // SetupColumnWriter machinery with the canonical expression as the field
-  // suffix -- the rest of the row pipeline is identical to a real column.
+  // Reuse SetupColumnWriter with the canonical expression as field suffix --
+  // a non-empty suffix routes the VARCHAR/BLOB tokenizer through
+  // `_json_path_tokenizer_provider`, picking up the path-specific dictionary
+  // instead of the base column's tokenizer.
   switch (return_type.id()) {
     case duckdb::LogicalTypeId::VARCHAR:
-      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(
-        column_id, have_nulls, serialized_expr, tokenizer_override);
-      // json_extract_string returns VARCHAR, but the user may query the leaf
-      // through `::int`/`::double`/`::bool` casts. Set up aux numeric+bool
-      // fields under the same canonical suffix so the SELECT-side filter
-      // (which mangles per cast type) finds matching iresearch fields, and
-      // wrap the row writer to dispatch each cell to all applicable
-      // variants.
+      SetupColumnWriter<duckdb::LogicalTypeId::VARCHAR>(column_id, have_nulls,
+                                                        serialized_expr);
+      // Also emit numeric/bool variants so cast filters (e.g. ::int) match.
       SetupJsonAuxTypedFields(column_id, serialized_expr);
       break;
     case duckdb::LogicalTypeId::BOOLEAN:
@@ -360,23 +317,20 @@ void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
   _aux_bool_field.name = _aux_bool_name_buffer;
   _aux_bool_field.store_attr = nullptr;
 
-  // Wrap the existing string writer so each cell is parsed once and
-  // additionally inserted into whichever typed field its content matches.
-  // Keeping the string emit intact preserves verbatim/text queries.
+  // Route each cell to one field by parsing the text: numeric/bool/string.
+  // TODO(mkornaukhov): all values arrive as TEXT today; once typed JSON leaf
+  // extractors land, dispatch by return_type and drop these aux fields.
   _current_writer = [this, string_writer = std::move(_current_writer)](
                       std::string_view full_key,
                       std::span<const rocksdb::Slice> cell_slices) {
-    string_writer(full_key, cell_slices);
-    if (cell_slices.empty()) {
-      return;
-    }
-    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
-      // Null row -- the string writer's nullable path already emitted the
-      // null marker on the string field; numeric/bool variants are skipped.
+    if (cell_slices.empty() ||
+        (cell_slices.size() == 1 && cell_slices.front().empty())) {
+      string_writer(full_key, cell_slices);
       return;
     }
     auto raw = ExtractRawString(cell_slices);
     if (raw.empty()) {
+      string_writer(full_key, cell_slices);
       return;
     }
     double numeric_val = 0.0;
@@ -400,7 +354,9 @@ void SearchSinkInsertBaseImpl::SetupJsonAuxTypedFields(
                   "Failed to insert JSON-path bool variant into "
                   "IResearch document");
       }
+      return;
     }
+    string_writer(full_key, cell_slices);
   };
 }
 
@@ -415,9 +371,9 @@ void SearchSinkInsertBaseImpl::WriteImpl(
 void SearchSinkInsertBaseImpl::FinishImpl() { _document.reset(); }
 
 template<duckdb::LogicalTypeId Kind>
-void SearchSinkInsertBaseImpl::SetupColumnWriter(
-  catalog::Column::Id column_id, bool have_nulls, std::string_view name_suffix,
-  JsonPathTokenizerFactory* tokenizer_override) {
+void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
+                                                 bool have_nulls,
+                                                 std::string_view name_suffix) {
   MakeColumnFieldName(column_id, name_suffix, _name_buffer);
 
   if (have_nulls || Kind == duckdb::LogicalTypeId::SQLNULL) {
@@ -460,8 +416,12 @@ void SearchSinkInsertBaseImpl::SetupColumnWriter(
   } else if constexpr (Kind == duckdb::LogicalTypeId::VARCHAR ||
                        Kind == duckdb::LogicalTypeId::BLOB) {
     search::mangling::MangleString(_name_buffer);
-    auto tokenizer = tokenizer_override ? (*tokenizer_override)()
-                                        : _tokenizer_provider(column_id);
+    // A non-empty `name_suffix` indicates a JSON-path field; route through
+    // the per-path provider so the configured dictionary (text_dict /
+    // verbatim_dict) is used instead of the base column's tokenizer.
+    auto tokenizer = name_suffix.empty()
+                       ? _tokenizer_provider(column_id)
+                       : _json_path_tokenizer_provider(column_id, name_suffix);
     _field.PrepareForStringValue(std::move(tokenizer));
     const bool has_store = _field.store_attr != nullptr;
     if (has_store) {

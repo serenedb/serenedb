@@ -212,18 +212,11 @@ Result ApplyHNSWOptions(
 
 Result ValidateInvertedIndexColumns(
   std::span<CreateIndexColumn> indexed_columns) {
-  // Whitelist must stay in sync with SearchSinkInsertBaseImpl::SwitchColumnImpl
-  // (search_sink_writer.cpp): every kind here MUST have a writer setup case
-  // there, otherwise inserts/updates would silently drop the column at write
-  // time. TIMESTAMP is supported by the writer but not by the search filter
-  // path yet, so it stays rejected explicitly.
   for (const auto& c : indexed_columns) {
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
     if (!c.serialized_json_expr.empty()) {
-      // JSON-path entries target a JSON column (stored as VARCHAR). The
-      // whitelist below applies to whole-column entries; path entries
-      // get their own type-dispatch at write time per leaf JSON value.
+      // TODO(mkornaukhov) deal with varchar/json confusion
       if (kind != duckdb::LogicalTypeId::VARCHAR) {
         return {ERROR_BAD_PARAMETER, "Column ", c.name,
                 " must be a JSON/VARCHAR column to be indexed by path"};
@@ -434,7 +427,7 @@ ResultOr<std::shared_ptr<InvertedIndex>> CreateInvertedIndex(
           c.name, "')"};
       }
       JsonPathInfo path_info{
-        .serialized_bound_expression = c.serialized_json_expr,
+        .serialized_expr = c.serialized_json_expr,
       };
       if (!c.opclass.empty()) {
         auto dict = resolve_dict(c.name, c.opclass);

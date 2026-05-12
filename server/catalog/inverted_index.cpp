@@ -148,11 +148,11 @@ std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
   if (!info) {
     return std::nullopt;
   }
-  if (auto it = absl::c_find_if(
-        info->json_paths,
-        [&](const auto& path_info) {
-          return path_info.serialized_bound_expression == serialized_expr;
-        });
+  if (auto it = absl::c_find_if(info->json_paths,
+                                [&](const auto& path_info) {
+                                  return path_info.serialized_expr ==
+                                         serialized_expr;
+                                });
       it != info->json_paths.end()) {
     auto tokenizer =
       BuildColumnTokenizer(snapshot, it->text_dictionary, it->features);

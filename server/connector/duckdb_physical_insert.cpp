@@ -254,15 +254,13 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
       }
     }
 
-    gstate.serializer->WriteColumn(txn_writer, chunk.data[col.input_col_idx],
+    gstate.serializer->WriteColumn(&txn_writer, chunk.data[col.input_col_idx],
                                    col.duckdb_type, num_rows, gstate.row_keys,
                                    gstate.active_writers);
   }
 
-  // 4b. Evaluate per-writer JSON expressions and write them as virtual
-  // columns. Each writer that has bound expressions for this column drives
-  // its own ExpressionExecutor; the evaluated Vector flows through the same
-  // serializer + SwitchJsonExpression path used by CREATE INDEX backfill.
+  // 4b. Evaluate per-writer JSON expressions and
+  // write them as virtual columns
   std::vector<catalog::Column::Id> slot_to_col_id(chunk.ColumnCount(),
                                                   catalog::Column::Id{});
   for (const auto& col : gstate.columns) {
@@ -273,32 +271,19 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
   for (auto& writer : gstate.index_writers) {
     auto evals = writer->JsonExpressionEvals();
     for (const auto& je : evals) {
-      auto resolved = ResolveBoundColumnRefsForChunk(
-        *je.bound_expr, chunk, gstate.table_id, slot_to_col_id);
-      duckdb::ExpressionExecutor executor(context.client, *resolved);
-      duckdb::Vector result(resolved->return_type, num_rows);
-      executor.ExecuteExpression(chunk, result);
-      RejectJsonObjectArrayLeaves(result, num_rows);
+      auto result = EvaluateJsonPathOverChunk(
+        *je.bound_expr, chunk, gstate.table_id, slot_to_col_id, context.client);
 
-      if (!writer->SwitchJsonExpression(resolved->return_type,
-                                        /*have_nulls=*/true, je.column_id,
-                                        je.serialized)) {
-        continue;
-      }
-      for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-        if (!gstate.row_keys[row].empty()) {
-          key_utils::SetupColumnForKey(gstate.row_keys[row], je.column_id);
-        }
-      }
+      const bool need = writer->SwitchJsonExpression(
+        result.GetType(), /*have_nulls=*/true, je.column_id, je.serialized);
+      SDB_ASSERT(need, "Cannot switch to JSON expression");
+
       DuckDBSinkIndexWriter* writer_ptr = writer.get();
-      // JSON-eval values feed only the iresearch index -- the source JSON
-      // column was already written to RocksDB in step 4 above. Routing this
-      // through `txn_writer` would re-key the same (table, source_col_id, pk)
-      // entry and overwrite the original JSON with the extracted leaf.
-      DuckDBColumnSerializer::SstWriter noop_writer{nullptr};
-      gstate.serializer->WriteColumn(noop_writer, result, resolved->return_type,
-                                     num_rows, gstate.row_keys,
-                                     {&writer_ptr, 1});
+      // JSON-eval values feed only the iresearch index; the source JSON
+      // column was already persisted in step above.
+      gstate.serializer->WriteColumn<DuckDBColumnSerializer::TxnWriter>(
+        nullptr, result, result.GetType(), num_rows, gstate.row_keys,
+        {&writer_ptr, 1});
     }
   }
 

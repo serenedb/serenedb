@@ -23,7 +23,6 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -33,11 +32,6 @@
 #include "catalog/tokenizer.h"
 #include "storage_engine/index_shard.h"
 
-namespace duckdb {
-
-class ClientContext;
-
-}  // namespace duckdb
 namespace sdb::catalog {
 
 struct HNSWColumnConfig {
@@ -48,15 +42,9 @@ struct HNSWColumnConfig {
 };
 
 struct JsonPathInfo {
-  // Binder-state-independent identifier for this JSON path. Built from the
-  // expression's *structure* (sequence of `->`/`->>` ops + key constants),
-  // not from its serialised bytes -- so CREATE INDEX, INSERT, and SELECT
-  // always produce identical strings for equivalent inputs.
-  // std::string path_canonical;
-  // Binary serialised bound expression, used by INSERT/UPDATE/WAL recovery
-  // to reconstruct an Expression for ExpressionExecutor at evaluation time.
-  // Not used for matching (binder state would leak in).
-  std::string serialized_bound_expression;
+  // Normalized serialized json access expression,
+  // see `NormalizeBoundExpression()`
+  std::string serialized_expr;
   ObjectId text_dictionary = ObjectId::none();
   search::Features features;
 };
@@ -66,6 +54,7 @@ struct InvertedIndexColumnInfo {
   bool store_values = false;
   search::Features features;
   std::optional<HNSWColumnConfig> hnsw_config;
+  // There is maybe multiple json expression indexed on single json column
   std::vector<JsonPathInfo> json_paths;
 };
 

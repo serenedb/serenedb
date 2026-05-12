@@ -108,6 +108,16 @@ duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);
 
+// One-shot helper used by INSERT, UPDATE, CREATE INDEX backfill, and WAL
+// recovery: resolves the catalog-keyed `bound_expr` to chunk-relative slots
+// (via ResolveBoundColumnRefsForChunk), evaluates it with ExpressionExecutor
+// against `chunk`, and rejects object/array leaves. The returned Vector has
+// the resolved expression's return type and cardinality `chunk.size()`.
+duckdb::Vector EvaluateJsonPathOverChunk(
+  const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
+  ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
+  duckdb::ClientContext& context);
+
 // Walks a bound JSON-extract chain (post-`ResolveBoundColumnRefsForChunk`
 // or pre-resolution) and returns the chunk slot of the source JSON column
 // it ultimately references. Returns `idx_t(-1)` if the leaf isn't a

@@ -28,6 +28,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/execution/column_binding_resolver.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
@@ -72,6 +73,8 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   duckdb::MemoryStream stream(
     reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
     bytes.size());
+  // TODO(mkornaukhov)
+  // table id and column id are not correct after deserializing...
   duckdb::bound_parameter_map_t params;
   return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
     stream, context, params);
@@ -121,8 +124,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, ObjectId table_id,
   std::span<const catalog::Column::Id> col_index_to_id) {
   auto copy = expr.Copy();
-  // ExpressionIterator::EnumerateChildren only walks one level; recurse
-  // explicitly so every node in the tree is normalised.
   auto visit = [&](auto& self, duckdb::Expression& e) -> void {
     e.SetAlias("");
     e.SetQueryLocation(duckdb::optional_idx());
@@ -188,6 +189,7 @@ bool IsValidJsonExpr(const duckdb::Expression& expr) {
   return cur->expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF;
 }
 
+// TODO(mkornaukhov) get rid of such a function, #597
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows) {
   if (result.GetType().id() != duckdb::LogicalTypeId::VARCHAR) {
@@ -203,16 +205,31 @@ void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
       continue;
     }
     const auto& s = data[idx];
-    if (s.GetSize() == 0) {
+    const std::string_view view{s.GetData(), s.GetSize()};
+    const auto first = view.find_first_not_of(" \t\n\r");
+    if (first == std::string_view::npos) {
       continue;
     }
-    const char first = *s.GetData();
-    if (first == '{' || first == '[') {
+    if (view[first] == '{' || view[first] == '[') {
       throw duckdb::InvalidInputException(
         "JSON path indexed by an inverted index must point to a primitive "
         "(string/number/boolean/null) leaf; got an object or array");
     }
   }
+}
+
+duckdb::Vector EvaluateJsonPathOverChunk(
+  const duckdb::Expression& bound_expr, duckdb::DataChunk& chunk,
+  ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id,
+  duckdb::ClientContext& context) {
+  auto resolved =
+    ResolveBoundColumnRefsForChunk(bound_expr, chunk, table_id, slot_to_col_id);
+  const auto num_rows = chunk.size();
+  duckdb::Vector result(resolved->return_type, num_rows);
+  duckdb::ExpressionExecutor executor(context, *resolved);
+  executor.ExecuteExpression(chunk, result);
+  RejectJsonObjectArrayLeaves(result, num_rows);
+  return result;
 }
 
 namespace {
@@ -235,6 +252,7 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
 
 }  // namespace
 
+// TODO(mkornaukhov) maybe somehow share among different expression
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id) {

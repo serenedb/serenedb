@@ -20,7 +20,6 @@
 
 #pragma once
 
-
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <span>
@@ -44,30 +43,21 @@ class SearchRemoveFilterBase;
 using TokenizerProvider =
   absl::AnyInvocable<catalog::ColumnTokenizer(catalog::Column::Id)>;
 
-// Factory that builds a fresh tokenizer for a JSON-path field per call. The
-// writer needs a fresh instance every time SwitchJsonExpression runs because
-// each call moves the analyzer into `_field`; the per-path tokenizer cannot
-// be a single moveable value.
-using JsonPathTokenizerFactory = absl::AnyInvocable<catalog::ColumnTokenizer()>;
+// Keyed tokenizer accessor for JSON-path fields. The writer calls it every
+// time SwitchJsonExpression runs because each call moves the analyzer into
+// `_field`; a single moveable value would not suffice.
+using JsonPathTokenizerProvider = absl::AnyInvocable<catalog::ColumnTokenizer(
+  catalog::Column::Id, std::string_view)>;
 
-// One JSON path's worth of indexing config, resolved against the catalog.
-struct JsonPathSinkConfig {
+// Bound JSON-path expression + its canonical serialized form, owned by the
+// caller and handed off to the writer. The writer drives ExpressionExecutor
+// against the bound expression and uses the serialized form as the iresearch
+// field-name suffix (matching the SELECT-side filter exactly).
+struct JsonPathBoundEntry {
   duckdb::unique_ptr<duckdb::Expression> bound_expression;
-  JsonPathTokenizerFactory make_tokenizer;
-  // Structural canonical for this path (e.g. `->>|host`). Used as the
-  // iresearch field-name suffix so writer and SELECT-side filter agree on
-  // the field identity regardless of binder state.
-  std::string path_canonical;
+  std::string serialized_expr;
+  catalog::Column::Id column_id;
 };
-
-using JsonPathsProvider =
-  absl::AnyInvocable<std::vector<JsonPathSinkConfig>(catalog::Column::Id)>;
-
-// A JsonPathsProvider that returns an empty vector for every column. Useful
-// for code paths that do not yet support path-based JSON indexing.
-inline JsonPathsProvider NoJsonPaths() {
-  return [](catalog::Column::Id) { return std::vector<JsonPathSinkConfig>{}; };
-}
 
 inline TokenizerProvider MakeTokenizerProvider(
   const std::shared_ptr<const catalog::Snapshot>& snapshot,
@@ -77,66 +67,56 @@ inline TokenizerProvider MakeTokenizerProvider(
   };
 }
 
-// Resolves every configured JSON path for `column_id` against the catalog.
-// `client_context` is required when entries carry a serialised bound
-// expression (DuckDB's deserializer resolves catalog references through it).
-// Returns an empty vector for columns without path-based indexing.
-inline JsonPathsProvider MakeJsonPathsProvider(
+// Builds the keyed tokenizer accessor for JSON-path fields. Captures the
+// snapshot + index reference + client-context pointer so each call can
+// resolve the path-specific dictionary lazily.
+inline JsonPathTokenizerProvider MakeJsonPathTokenizerProvider(
   std::shared_ptr<const catalog::Snapshot> snapshot,
   const catalog::InvertedIndex& index, duckdb::ClientContext* client_context) {
   return [snapshot = std::move(snapshot), &index, client_context](
-           catalog::Column::Id column_id) -> std::vector<JsonPathSinkConfig> {
-    const auto* col = index.FindColumnInfo(column_id);
-    if (!col) {
-      return {};
-    }
-    std::vector<JsonPathSinkConfig> out;
-    // GetJsonPathTokenizer needs a ClientContext to deserialise candidate
-    // paths' bound expressions. Without one (e.g. early-init paths) we
-    // can't resolve anything -- return empty.
-    if (!client_context) {
-      return out;
-    }
-    out.reserve(col->json_paths.size());
-    for (const auto& json_subexpr : col->json_paths) {
-      // Probe once so columns without a usable tokenizer are filtered out.
-      auto probe = index.GetJsonPathTokenizer(
-        snapshot, column_id, json_subexpr.serialized_bound_expression,
-        *client_context);
-      if (!probe) {
-        continue;
-      }
-      duckdb::unique_ptr<duckdb::Expression> bound;
-      if (!json_subexpr.serialized_bound_expression.empty()) {
-        bound = DeserializeBoundExpression(
-          json_subexpr.serialized_bound_expression, *client_context);
-      }
-      // Capture pointer BY VALUE -- the outer closure's parameter goes out
-      // of scope once MakeJsonPathsProvider returns, so a `&` capture would
-      // dangle. The pointee (ClientContext) outlives the writer.
-      auto serialized = json_subexpr.serialized_bound_expression;
-      JsonPathTokenizerFactory factory =
-        [ctx = client_context, snapshot, &index, column_id,
-         ser = std::move(serialized)]() -> catalog::ColumnTokenizer {
-        auto t = index.GetJsonPathTokenizer(snapshot, column_id, ser, *ctx);
-        SDB_ASSERT(t,
-                   "JSON-path tokenizer disappeared between probe and "
-                   "writer setup");
-        return *std::move(t);
-      };
-      out.emplace_back(std::move(bound), std::move(factory),
-                       json_subexpr.serialized_bound_expression);
-    }
-    return out;
+           catalog::Column::Id column_id,
+           std::string_view serialized_expr) -> catalog::ColumnTokenizer {
+    SDB_ASSERT(client_context,
+               "JSON-path tokenizer lookup requires a ClientContext");
+    auto tokenizer = index.GetJsonPathTokenizer(
+      snapshot, column_id, std::string{serialized_expr}, *client_context);
+    SDB_ASSERT(tokenizer, "JSON-path tokenizer not found for serialized expr");
+    return *std::move(tokenizer);
   };
+}
+
+inline std::vector<JsonPathBoundEntry> MakeJsonPathBoundEntries(
+  const catalog::InvertedIndex& index,
+  std::span<const catalog::Column::Id> columns,
+  duckdb::ClientContext* client_context) {
+  std::vector<JsonPathBoundEntry> entries;
+  if (!client_context) {
+    return entries;
+  }
+  for (auto col_id : columns) {
+    const auto* col = index.FindColumnInfo(col_id);
+    if (!col) {
+      continue;
+    }
+    for (const auto& json_subexpr : col->json_paths) {
+      SDB_ASSERT(!json_subexpr.serialized_expr.empty(),
+                 "Any json expr should be serialized in non-empty string");
+      auto bound = DeserializeBoundExpression(json_subexpr.serialized_expr,
+                                              *client_context);
+      entries.push_back(
+        {std::move(bound), json_subexpr.serialized_expr, col_id});
+    }
+  }
+  return entries;
 }
 
 class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
-  SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
-                           TokenizerProvider&& tokenizer_provider,
-                           JsonPathsProvider&& json_paths_provider,
-                           std::span<const catalog::Column::Id> columns);
+  SearchSinkInsertBaseImpl(
+    irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
+    JsonPathTokenizerProvider&& json_path_tokenizer_provider,
+    std::vector<JsonPathBoundEntry>&& json_path_entries,
+    std::span<const catalog::Column::Id> columns);
 
   void InitImpl(size_t batch_size);
 
@@ -266,16 +246,14 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   // Setup column writer according to type kind.
   // Builds actual executor to avoid switch/case on each row whenever possible.
   // `name_suffix`, when non-empty, is appended to the field-name prefix as a
-  // JSON-Pointer-escaped segment (used by the JSON-expression path).
-  // When `tokenizer_override` is non-null, the VARCHAR/BLOB path uses it
-  // instead of `_tokenizer_provider(column_id)` -- needed for JSON-path
-  // fields whose tokenizer (text_dict/verbatim_dict) is per-path, not
-  // per-column.
+  // JSON-Pointer-escaped segment (used by the JSON-expression path). A
+  // non-empty suffix also tells the VARCHAR/BLOB path to source the
+  // tokenizer from `_json_path_tokenizer_provider(column_id, name_suffix)`
+  // instead of `_tokenizer_provider(column_id)` -- the per-path dictionary
+  // (text_dict/verbatim_dict) is what gives phrase queries their positions.
   template<duckdb::LogicalTypeId Kind>
-  void SetupColumnWriter(
-    catalog::Column::Id column_id, bool have_nulls,
-    std::string_view name_suffix = {},
-    JsonPathTokenizerFactory* tokenizer_override = nullptr);
+  void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls,
+                         std::string_view name_suffix = {});
 
   // Sets up `_aux_numeric_field` + `_aux_bool_field` for a JSON-path VARCHAR
   // emission (under the same canonical suffix as `_field`) and wraps
@@ -285,7 +263,7 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
                                std::string_view name_suffix);
 
   TokenizerProvider _tokenizer_provider;
-  JsonPathsProvider _json_paths_provider;
+  JsonPathTokenizerProvider _json_path_tokenizer_provider;
   Field _field;
   Field _pk_field;
   Field _null_field;
@@ -306,25 +284,13 @@ class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
   Writer _current_writer;
   bool _emit_pk{true};
 
-  // Bound JSON-extract expressions resolved at writer construction time.
+  // Bound JSON-extract expressions handed off at writer construction time.
   // Owned here; views into them are exposed via JsonExpressionEvals so the
   // caller can drive ExpressionExecutor against the input chunk.
-  struct OwnedJsonExpr {
-    duckdb::unique_ptr<duckdb::Expression> expr;
-    std::string serialized;
-    catalog::Column::Id column_id;
-    // Factory the writer calls per SwitchJsonExpression to mint a fresh
-    // tokenizer for this path's iresearch field. Carries the path's
-    // dictionary + features (verbatim_dict / text_dict) so phrase queries
-    // get the position-bearing analyzer the user configured.
-    JsonPathTokenizerFactory make_tokenizer;
-  };
-  std::vector<OwnedJsonExpr> _owned_json_exprs;
+  std::vector<JsonPathBoundEntry> _json_exprs_owned;
   std::vector<JsonExpressionEval> _json_expr_views;
-  // Columns whose JSON expressions are evaluated externally via
-  // ExpressionExecutor. SwitchColumnImpl skips them so the simdjson and
-  // whole-column paths don't double-write.
-  containers::FlatHashSet<catalog::Column::Id> _columns_via_executor;
+
+  containers::FlatHashSet<catalog::Column::Id> _json_columns;
 
  public:
   std::span<const JsonExpressionEval> JsonExpressionEvalsImpl() const noexcept {

@@ -50,8 +50,8 @@ void RevertBoolean(BooleanFilter& current_filter,
 
 }  // namespace
 
-auto FilterRulesConstructor::FilterRule::ApplyWrapper(Filter::ptr filter) const
-  -> Filter::ptr {
+Filter::ptr FilterRulesConstructor::FilterRule::ApplyWrapper(
+  Filter::ptr filter) const {
   auto current_filter_type_id = filter->type();
   SDB_VERIFY(CheckBooleanNodeType(current_filter_type_id),
              "ApplyWrapper called with non-boolean filter node");
@@ -110,7 +110,7 @@ auto FilterRulesConstructor::FilterRule::ApplyWrapper(Filter::ptr filter) const
   return filter;
 }
 
-auto FilterRulesConstructor::Apply(Filter::ptr filter) const -> Filter::ptr {
+Filter::ptr FilterRulesConstructor::Apply(Filter::ptr filter) const {
   for (auto& rule : _rules) {
     if (rule->traversal_type() == FilterRule::FilterRuleTraversalType::Bottom) {
       filter = AstTraversalFromBottom(std::move(filter), *rule);
@@ -119,8 +119,8 @@ auto FilterRulesConstructor::Apply(Filter::ptr filter) const -> Filter::ptr {
   return filter;
 }
 
-auto FilterRulesConstructor::AstTraversalFromBottom(
-  Filter::ptr filter, const FilterRule& rule) const -> Filter::ptr {
+Filter::ptr FilterRulesConstructor::AstTraversalFromBottom(
+  Filter::ptr filter, const FilterRule& rule) const {
   auto current_filter_type_id = filter->type();
   if (!CheckBooleanNodeType(current_filter_type_id)) {
     return filter;
@@ -146,9 +146,9 @@ auto FilterRulesConstructor::AstTraversalFromBottom(
   return filter;
 }
 
-auto NotFilterRule::ApplyNot(Not& current_filter, Filter::ptr sub_filter,
-                             FilterRuleOptions /*options*/) const
-  -> FilterRuleResult {
+FilterRulesConstructor::FilterRule::FilterRuleResult NotFilterRule::ApplyNot(
+  Not& current_filter, Filter::ptr sub_filter,
+  FilterRuleOptions /*options*/) const {
   if (sub_filter->type() != Type<Not>::id()) {
     RevertNot(current_filter, std::move(sub_filter));
     return FilterRuleResult{};
@@ -161,9 +161,10 @@ auto NotFilterRule::ApplyNot(Not& current_filter, Filter::ptr sub_filter,
   };
 }
 
-auto AndFlatteningFilterRule::ApplyBoolean(
-  And& current_filter, TypesMap&& sub_filters,
-  FilterRuleOptions /*options*/) const -> FilterRuleResult {
+FilterRulesConstructor::FilterRule::FilterRuleResult
+AndFlatteningFilterRule::ApplyBoolean(And& current_filter,
+                                      TypesMap&& sub_filters,
+                                      FilterRuleOptions /*options*/) const {
   for (auto& and_filter_ptr : sub_filters[Type<And>::id()]) {
     auto& and_filter = sdb::basics::downCast<And>(*and_filter_ptr);
     for (auto& sub_and_filter : and_filter.release()) {
@@ -175,9 +176,9 @@ auto AndFlatteningFilterRule::ApplyBoolean(
   };
 }
 
-auto OrFlatteningFilterRule::ApplyBoolean(
-  Or& current_filter, TypesMap&& sub_filters,
-  FilterRuleOptions /*options*/) const -> FilterRuleResult {
+FilterRulesConstructor::FilterRule::FilterRuleResult
+OrFlatteningFilterRule::ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                                     FilterRuleOptions /*options*/) const {
   for (auto& or_filter_ptr : sub_filters[Type<Or>::id()]) {
     auto& or_filter = sdb::basics::downCast<Or>(*or_filter_ptr);
     for (auto& sub_or_filter : or_filter.release()) {
@@ -189,9 +190,9 @@ auto OrFlatteningFilterRule::ApplyBoolean(
   };
 }
 
-auto ByTermsFilterRule::ApplyBoolean(
-  And& current_filter, TypesMap&& sub_filters,
-  FilterRuleOptions options) const -> FilterRuleResult {
+FilterRulesConstructor::FilterRule::FilterRuleResult
+ByTermsFilterRule::ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const {
   absl::flat_hash_map<std::string, std::vector<Filter::ptr>> match;
   for (auto& term_filter_ptr : sub_filters[Type<ByTerm>::id()]) {
     auto& term_filter = sdb::basics::downCast<ByTerm>(*term_filter_ptr);
@@ -223,9 +224,9 @@ auto ByTermsFilterRule::ApplyBoolean(
   };
 }
 
-auto ByTermsFilterRule::ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
-                                     FilterRuleOptions options) const
-  -> FilterRuleResult {
+FilterRulesConstructor::FilterRule::FilterRuleResult
+ByTermsFilterRule::ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const {
   absl::flat_hash_map<std::string, std::vector<Filter::ptr>> match;
   for (auto& term_filter_ptr : sub_filters[Type<ByTerm>::id()]) {
     auto& term_filter = sdb::basics::downCast<ByTerm>(*term_filter_ptr);
@@ -257,9 +258,10 @@ auto ByTermsFilterRule::ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
   };
 }
 
-auto LevenshteinPrefixFilterRule::ApplyBoolean(
-  And& current_filter, TypesMap&& sub_filters,
-  FilterRuleOptions options) const -> FilterRuleResult {
+FilterRulesConstructor::FilterRule::FilterRuleResult
+LevenshteinPrefixFilterRule::ApplyBoolean(And& current_filter,
+                                          TypesMap&& sub_filters,
+                                          FilterRuleOptions options) const {
   if (!sub_filters.contains(Type<ByEditDistance>::id()) ||
       !sub_filters.contains(Type<ByPrefix>::id())) {
     RevertBoolean(current_filter, std::move(sub_filters));
@@ -279,7 +281,7 @@ auto LevenshteinPrefixFilterRule::ApplyBoolean(
       if (prefix.field() != levenshtein.field()) {
         continue;
       }
-      auto& mutable_levenshtein_options = *levenshtein.mutable_options();      
+      auto& mutable_levenshtein_options = *levenshtein.mutable_options();
       if (mutable_levenshtein_options.term.starts_with(prefix_term)) {
         auto& mutable_levenshtein_prefix = mutable_levenshtein_options.prefix;
         if (prefix_term.starts_with(mutable_levenshtein_prefix)) {

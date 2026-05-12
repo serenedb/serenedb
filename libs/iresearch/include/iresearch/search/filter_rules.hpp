@@ -51,21 +51,21 @@ class FilterRulesConstructor {
     explicit FilterRule(std::span<const TypeInfo::type_id> filter_types)
       : _desired_filter_types(filter_types.begin(), filter_types.end()) {}
 
-    auto SetTraversalType(FilterRuleTraversalType type) -> FilterRule& {
+    FilterRule& SetTraversalType(FilterRuleTraversalType type) {
       _traversal_type = type;
       return *this;
     }
 
-    auto traversal_type() const noexcept -> FilterRuleTraversalType {
+    FilterRuleTraversalType traversal_type() const noexcept {
       return _traversal_type;
     }
 
-    auto AddFilterType(TypeInfo::type_id type_id) -> FilterRule& {
+    FilterRule& AddFilterType(TypeInfo::type_id type_id) {
       _desired_filter_types.emplace(type_id);
       return *this;
     }
 
-    [[nodiscard]] auto ApplyWrapper(Filter::ptr filter) const -> Filter::ptr;
+    [[nodiscard]] Filter::ptr ApplyWrapper(Filter::ptr filter) const;
 
     struct FilterRuleOptions {
       // sub-filters outside of desired_filter_types are present in the current
@@ -78,20 +78,21 @@ class FilterRulesConstructor {
       bool is_applied = false;
     };
 
-    virtual auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
-                              FilterRuleOptions options) const
-      -> FilterRuleResult {
+    virtual FilterRuleResult ApplyBoolean(And& current_filter,
+                                          TypesMap&& sub_filters,
+                                          FilterRuleOptions options) const {
       return FilterRuleResult{};
     }
 
-    virtual auto ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
-                              FilterRuleOptions options) const
-      -> FilterRuleResult {
+    virtual FilterRuleResult ApplyBoolean(Or& current_filter,
+                                          TypesMap&& sub_filters,
+                                          FilterRuleOptions options) const {
       return FilterRuleResult{};
     }
 
-    virtual auto ApplyNot(Not& current_filter, Filter::ptr sub_filter,
-                          FilterRuleOptions options) const -> FilterRuleResult {
+    virtual FilterRuleResult ApplyNot(Not& current_filter,
+                                      Filter::ptr sub_filter,
+                                      FilterRuleOptions options) const {
       return FilterRuleResult{};
     }
 
@@ -112,11 +113,11 @@ class FilterRulesConstructor {
     _rules.push_back(std::make_unique<FilterType>(std::forward<Args>(args)...));
   }
 
-  [[nodiscard]] auto Apply(Filter::ptr filter) const -> Filter::ptr;
+  [[nodiscard]] Filter::ptr Apply(Filter::ptr filter) const;
 
  private:
-  [[nodiscard]] auto AstTraversalFromBottom(
-    Filter::ptr filter, const FilterRule& rule) const -> Filter::ptr;
+  [[nodiscard]] Filter::ptr AstTraversalFromBottom(
+    Filter::ptr filter, const FilterRule& rule) const;
 
   std::vector<ptr> _rules;
 };
@@ -128,8 +129,8 @@ class NotFilterRule : public FilterRulesConstructor::FilterRule {
 
   explicit NotFilterRule() { AddFilterType(irs::Type<irs::Not>::id()); }
 
-  auto ApplyNot(Not& current_filter, Filter::ptr sub_filter,
-                FilterRuleOptions options) const -> FilterRuleResult override;
+  FilterRuleResult ApplyNot(Not& current_filter, Filter::ptr sub_filter,
+                            FilterRuleOptions options) const override;
 };
 
 class AndFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
@@ -141,9 +142,8 @@ class AndFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
     AddFilterType(irs::Type<irs::And>::id());
   }
 
-  auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
-                    FilterRuleOptions options) const
-    -> FilterRuleResult override;
+  FilterRuleResult ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
 };
 
 class OrFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
@@ -153,9 +153,8 @@ class OrFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
 
   explicit OrFlatteningFilterRule() { AddFilterType(irs::Type<irs::Or>::id()); }
 
-  auto ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
-                    FilterRuleOptions options) const
-    -> FilterRuleResult override;
+  FilterRuleResult ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
 };
 
 class ByTermsFilterRule : public FilterRulesConstructor::FilterRule {
@@ -165,12 +164,10 @@ class ByTermsFilterRule : public FilterRulesConstructor::FilterRule {
 
   explicit ByTermsFilterRule() { AddFilterType(irs::Type<irs::ByTerm>::id()); }
 
-  auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
-                    FilterRuleOptions options) const
-    -> FilterRuleResult override;
-  auto ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
-                    FilterRuleOptions options) const
-    -> FilterRuleResult override;
+  FilterRuleResult ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
+  FilterRuleResult ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
 };
 
 class LevenshteinPrefixFilterRule : public FilterRulesConstructor::FilterRule {
@@ -183,9 +180,8 @@ class LevenshteinPrefixFilterRule : public FilterRulesConstructor::FilterRule {
     AddFilterType(irs::Type<irs::ByPrefix>::id());
   }
 
-  auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
-                    FilterRuleOptions options) const
-    -> FilterRuleResult override;
+  FilterRuleResult ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                                FilterRuleOptions options) const override;
 };
 
 }  // namespace irs

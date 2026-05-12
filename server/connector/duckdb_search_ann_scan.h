@@ -78,7 +78,7 @@ struct SearchAnnScanGlobalState : public CommonScanGlobalState {
 struct SearchAnnScanLocalState : public CommonScanLocalState {
   SearchAnnScanLocalState(float* dis_data, int64_t* ids_data, size_t size)
     : buffer{dis_data, ids_data, size} {}
-  irs::HNSWSearchBuffer buffer;
+  irs::HNSWAnnSearchBuffer buffer;
   irs::Filter::Query::ptr text_filter_query;
 };
 

@@ -26,8 +26,11 @@
 #include <faiss/impl/ResultHandler.h>
 #include <faiss/impl/io.h>
 
+#include <optional>
+
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -134,14 +137,18 @@ class ColumnIndexDistance final : public ColumnDistanceBase {
   ResettableDocIterator::ptr _rit;
 };
 
-struct HNSWSearchBuffer {
+struct HNSWSearchBaseBuffer {
+  faiss::VisitedTable vt{0};
+  std::optional<columnstore::ChunkedVectorCache> cache;
+};
+
+struct HNSWAnnSearchBuffer : HNSWSearchBaseBuffer {
   std::span<float> dis;
   std::span<int64_t> ids;
   float max_dist;
-  faiss::VisitedTable vt{0};
 
-  HNSWSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
-                   float max_dist = std::numeric_limits<float>::max())
+  HNSWAnnSearchBuffer(float* dis_data, int64_t* ids_data, size_t size,
+                      float max_dist = std::numeric_limits<float>::max())
     : dis{dis_data, size}, ids{ids_data, size}, max_dist{max_dist} {
     ResetValues();
   }
@@ -168,6 +175,7 @@ struct HNSWSearchContext {
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWResultHandler& handler;
+  columnstore::ChunkedVectorCache& cache;
 };
 
 struct HNSWRangeSearchInfo {
@@ -176,10 +184,9 @@ struct HNSWRangeSearchInfo {
   faiss::SearchParametersHNSW params;
 };
 
-struct HNSWRangeSearchBuffer {
+struct HNSWRangeSearchBuffer : HNSWSearchBaseBuffer {
   std::vector<float> dis;
   std::vector<int64_t> ids;
-  faiss::VisitedTable vt{0};
 };
 
 struct HNSWRangeSearchContext {
@@ -187,6 +194,7 @@ struct HNSWRangeSearchContext {
   uint32_t segment_id;
   faiss::VisitedTable& vt;
   HNSWRangeResultHandler& handler;
+  columnstore::ChunkedVectorCache& cache;
 };
 
 class HNSWIndexWriter {

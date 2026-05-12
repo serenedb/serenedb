@@ -22,41 +22,21 @@
 #include <faiss/impl/ResultHandler.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <duckdb/common/types.hpp>
-#include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 
 #include "basics/assert.h"
-#include "basics/containers/node_hash_map.h"
-#include "basics/containers/s3_fifo.h"
 #include "basics/exceptions.h"
-#include "iresearch/columnstore/column_reader.hpp"
+#include "iresearch/formats/column/hnsw_index.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/vector.hpp"
 
 namespace irs::columnstore {
 namespace {
-
-// Cache granularity. Each chunk holds up to `kChunkSizeFloats` child
-// elements (and at least one ARRAY row when d exceeds it); number of
-// chunks resident is bounded by `kChunkCacheSlots`. Defaults picked
-// from the cross-product sweep in scripts/perf/sweep_hnsw_cross.sh:
-// chunk=8192 / cache=64 minimizes vector_search.test_slow runtime
-// (matches main pre-deferral baseline). Memory ceiling per HNSW
-// writer/reader is `chunk * cache * 4 bytes` ~ 2 MB for typical d.
-constexpr uint64_t kChunkSizeFloats = 4 * STANDARD_VECTOR_SIZE;
-constexpr size_t kChunkCacheSlots = 64;
-// Row-group ColumnSegments kept open. OpenSegmentImpl reads the entire
-// row-group payload from disk into a BufferManager block; reusing the
-// segment across chunk loads landing in the same row group is the
-// dominant speedup on chunk misses (was 16% of build CPU on memmove
-// alone before this cache).
-constexpr size_t kRgCacheSlots = 8;
 
 float ComputeNegativeInnerProduct(const byte_type* l, const byte_type* r,
                                   uint16_t d) {
@@ -82,217 +62,6 @@ auto ResolveDistanceFunction(HNSWMetric metric) {
       return ComputeCosine;
   }
   SDB_UNREACHABLE();
-}
-
-class ChunkedVectorCache;
-
-using PendingHook = boost::intrusive::list_member_hook<
-  boost::intrusive::link_mode<boost::intrusive::auto_unlink>>;
-
-struct ChunkSlot : public sdb::containers::s3_fifo::CacheHook {
-  uint64_t chunk_id = std::numeric_limits<uint64_t>::max();
-  duckdb::Vector data;
-  const float* base;
-  // Pin count, not a flag: HNSWWriter::Build pins the outer chunk and
-  // ColumnDistance::symmetric_dis can pin a slot already in the outer
-  // pin (when i happens to be a row of the outer chunk). Decrement on
-  // Unpin so the inner Unpin doesn't drop the outer's pin.
-  uint8_t pinned = 0;
-  PendingHook pending_hook;
-
-  explicit ChunkSlot(duckdb::idx_t size)
-    : data{duckdb::LogicalType::FLOAT, size,
-           duckdb::VectorDataInitialization::ZERO_INITIALIZE},
-      base{duckdb::FlatVector::GetData<float>(data)} {}
-
-  ChunkSlot(const ChunkSlot&) = delete;
-  ChunkSlot& operator=(const ChunkSlot&) = delete;
-  ChunkSlot(ChunkSlot&&) = delete;
-  ChunkSlot& operator=(ChunkSlot&&) = delete;
-};
-
-struct RgSlot : public sdb::containers::s3_fifo::CacheHook {
-  size_t rg = std::numeric_limits<size_t>::max();
-  ColumnReader::ScanCursor cursor;
-  PendingHook pending_hook;
-
-  RgSlot() = default;
-  RgSlot(const RgSlot&) = delete;
-  RgSlot& operator=(const RgSlot&) = delete;
-  RgSlot(RgSlot&&) = delete;
-  RgSlot& operator=(RgSlot&&) = delete;
-};
-
-using ChunkPendingList =
-  boost::intrusive::list<ChunkSlot,
-                         boost::intrusive::member_hook<
-                           ChunkSlot, PendingHook, &ChunkSlot::pending_hook>,
-                         boost::intrusive::constant_time_size<false>>;
-using RgPendingList = boost::intrusive::list<
-  RgSlot,
-  boost::intrusive::member_hook<RgSlot, PendingHook, &RgSlot::pending_hook>,
-  boost::intrusive::constant_time_size<false>>;
-
-struct ChunkEvictor {
-  ChunkedVectorCache* self;
-  bool operator()(ChunkSlot& slot) const noexcept;
-};
-
-struct RgEvictor {
-  ChunkedVectorCache* self;
-  bool operator()(RgSlot& slot) const noexcept;
-};
-
-class ChunkedVectorCache {
- public:
-  using ChunkMap = sdb::containers::NodeHashMap<uint64_t, ChunkSlot>;
-  using RgMap = sdb::containers::NodeHashMap<size_t, RgSlot>;
-
-  ChunkedVectorCache(const ColumnReader& child, uint64_t array_size,
-                     size_t capacity)
-    : _child{&child},
-      _d{array_size},
-      _chunk_rows{
-        std::max<uint64_t>(kChunkSizeFloats / std::max<uint64_t>(_d, 1), 1)},
-      _slots{{.cache_size = capacity,
-              .small_size = std::max<size_t>(capacity / 10, 1)},
-             ChunkEvictor{this}},
-      _rgs{{.cache_size = kRgCacheSlots,
-            .small_size = std::max<size_t>(kRgCacheSlots / 4, 1)},
-           RgEvictor{this}} {}
-
-  const float* Get(uint64_t row) { return SliceOf(*FindOrLoad(row), row); }
-
-  // Pin/Unpin nest LIFO: HNSWWriter::Build's outer pin must survive
-  // ColumnDistance::symmetric_dis's inner Pin/Unpin, even when both
-  // target the same slot. `slot.pinned` is a counter so the inner
-  // decrement leaves the outer's pin in place; the stack records
-  // which slot each Unpin maps to. Two-deep is enough today (Build
-  // outer + symmetric_dis inner).
-  const float* Pin(uint64_t row) {
-    auto* slot = FindOrLoad(row);
-    SDB_ASSERT(_pin_depth < _pin_stack.size());
-    SDB_ASSERT(slot->pinned < std::numeric_limits<uint8_t>::max());
-    ++slot->pinned;
-    _pin_stack[_pin_depth++] = slot;
-    return SliceOf(*slot, row);
-  }
-
-  void Unpin() noexcept {
-    SDB_ASSERT(_pin_depth > 0);
-    auto* slot = _pin_stack[--_pin_depth];
-    SDB_ASSERT(slot->pinned > 0);
-    --slot->pinned;
-  }
-
-  RgSlot& GetRgSlot(size_t rg) {
-    auto [it, inserted] = _rg_index.try_emplace(rg);
-    if (!inserted) {
-      it->second.touch();
-      return it->second;
-    }
-    RgSlot& slot = it->second;
-    slot.rg = rg;
-    slot.cursor = ColumnReader::ScanCursor{_child->OpenSegment(rg)};
-    _rgs.Insert(slot);
-    // s3_fifo evicts inside insert(); the evictor parks evicted slots
-    // on `_rg_evicted` because it can't free them itself (cache iterator
-    // would dangle). Erase here, after insert() returns.
-    while (!_rg_evicted.empty()) {
-      auto& s = _rg_evicted.front();
-      _rg_evicted.pop_front();
-      _rg_index.erase(s.rg);
-    }
-    return slot;
-  }
-
-  friend struct ChunkEvictor;
-  friend struct RgEvictor;
-
- private:
-  ChunkSlot* FindOrLoad(uint64_t row) {
-    const uint64_t chunk_id = row / _chunk_rows;
-    auto [it, inserted] = _chunk_index.try_emplace(
-      chunk_id, static_cast<duckdb::idx_t>(_chunk_rows * _d));
-    if (!inserted) {
-      it->second.touch();
-      return &it->second;
-    }
-    ChunkSlot& slot = it->second;
-    slot.chunk_id = chunk_id;
-    slot.pinned = false;
-    Load(slot, chunk_id);
-    _slots.Insert(slot);
-    // s3_fifo evicts inside insert(); the evictor parks evicted slots
-    // on `_chunk_evicted` because it can't free them itself (cache
-    // iterator would dangle). Erase here, after insert() returns.
-    while (!_chunk_evicted.empty()) {
-      auto& s = _chunk_evicted.front();
-      _chunk_evicted.pop_front();
-      _chunk_index.erase(s.chunk_id);
-    }
-    return &slot;
-  }
-
-  const float* SliceOf(const ChunkSlot& slot, uint64_t row) const noexcept {
-    const uint64_t in_chunk = row - slot.chunk_id * _chunk_rows;
-    return slot.base + in_chunk * _d;
-  }
-
-  void Load(ChunkSlot& slot, uint64_t chunk_id) {
-    const uint64_t total_rows = _child->RowCount() / _d;
-    const uint64_t start_row = chunk_id * _chunk_rows;
-    const uint64_t take =
-      std::min<uint64_t>(_chunk_rows, total_rows - start_row);
-    const uint64_t start_elem = start_row * _d;
-    const uint64_t take_elems = take * _d;
-
-    uint64_t produced = 0;
-    while (produced < take_elems) {
-      const uint64_t pos = start_elem + produced;
-      _locate_hint = _child->Locate(pos, _locate_hint);
-      const uint64_t in_rg = pos - _locate_hint.begin;
-      const uint64_t to_take =
-        std::min<uint64_t>(take_elems - produced, _locate_hint.end - pos);
-
-      auto& rgs = GetRgSlot(_locate_hint.rg);
-      if (in_rg < rgs.cursor.Position()) {
-        rgs.cursor.Rewind();
-      }
-      rgs.cursor.SeekTo(in_rg);
-      rgs.cursor.Scan(to_take, slot.data, static_cast<duckdb::idx_t>(produced));
-      produced += to_take;
-    }
-  }
-
-  const ColumnReader* _child;
-  uint64_t _d;
-  uint64_t _chunk_rows;
-
-  std::array<ChunkSlot*, 2> _pin_stack{};
-  size_t _pin_depth = 0;
-
-  ChunkMap _chunk_index;
-  sdb::containers::s3_fifo::Cache<ChunkSlot, ChunkEvictor> _slots;
-  ChunkPendingList _chunk_evicted;
-
-  RgMap _rg_index;
-  sdb::containers::s3_fifo::Cache<RgSlot, RgEvictor> _rgs;
-  RgPendingList _rg_evicted;
-  RgWindow _locate_hint;
-};
-
-inline bool ChunkEvictor::operator()(ChunkSlot& slot) const noexcept {
-  if (slot.pinned != 0) {
-    return false;
-  }
-  self->_chunk_evicted.push_back(slot);
-  return true;
-}
-
-inline bool RgEvictor::operator()(RgSlot& slot) const noexcept {
-  self->_rg_evicted.push_back(slot);
-  return true;
 }
 
 // Distance computer over the ARRAY child column. doc_id space is 1-based
@@ -401,11 +170,7 @@ HNSWReader::~HNSWReader() = default;
 
 void HNSWReader::Search(HNSWSearchContext& ctx) const {
   const auto& hnsw = *_hnsw;
-  const auto* child = _vector_column.Child();
-  SDB_ASSERT(child);
-  ChunkedVectorCache cache{*child, _vector_column.ArraySize(),
-                           kChunkCacheSlots};
-  ColumnDistance dis{_info, &cache};
+  ColumnDistance dis{_info, &ctx.cache};
   dis.set_query(reinterpret_cast<const float*>(ctx.info.query));
 
   HNSWSegmentResultHandler res{ctx.segment_id, ctx.handler,
@@ -418,11 +183,7 @@ void HNSWReader::Search(HNSWSearchContext& ctx) const {
 
 void HNSWReader::RangeSearch(HNSWRangeSearchContext& ctx) const {
   const auto& hnsw = *_hnsw;
-  const auto* child = _vector_column.Child();
-  SDB_ASSERT(child);
-  ChunkedVectorCache cache{*child, _vector_column.ArraySize(),
-                           kChunkCacheSlots};
-  ColumnDistance dis{_info, &cache};
+  ColumnDistance dis{_info, &ctx.cache};
   dis.set_query(reinterpret_cast<const float*>(ctx.info.query));
 
   HNSWRangeSegmentResultHandler res{ctx.segment_id, ctx.handler};
@@ -430,6 +191,105 @@ void HNSWReader::RangeSearch(HNSWRangeSearchContext& ctx) const {
   ctx.vt.advance();
   res.begin(0);
   hnsw.search(dis, nullptr, res, ctx.vt, &ctx.info.params);
+}
+
+ChunkedVectorCache& HNSWReader::PrepareCache(
+  std::optional<ChunkedVectorCache>& slot) const {
+  const auto* child = _vector_column.Child();
+  SDB_ASSERT(child);
+  if (!slot.has_value()) {
+    slot.emplace(*child, _vector_column.ArraySize(), kChunkCacheSlots);
+  } else {
+    slot->Rebind(*child);
+  }
+  return *slot;
+}
+
+void ChunkedVectorCache::Rebind(const ColumnReader& child) {
+  SDB_ASSERT(_pin_depth == 0);
+  _slots.Clear();
+  _rgs.Clear();
+  _chunk_index.clear();
+  _rg_index.clear();
+  _locate_hint = {};
+  _child = &child;
+}
+
+ChunkSlot* ChunkedVectorCache::FindOrLoad(uint64_t row) {
+  const uint64_t chunk_id = row / _chunk_rows;
+  auto [it, inserted] = _chunk_index.try_emplace(
+    chunk_id, static_cast<duckdb::idx_t>(_chunk_rows * _d));
+  if (!inserted) {
+    it->second.touch();
+    return &it->second;
+  }
+  ChunkSlot& slot = it->second;
+  slot.chunk_id = chunk_id;
+  slot.pinned = 0;
+  Load(slot, chunk_id);
+  _slots.Insert(slot);
+  while (!_chunk_evicted.empty()) {
+    auto& s = _chunk_evicted.front();
+    _chunk_evicted.pop_front();
+    _chunk_index.erase(s.chunk_id);
+  }
+  return &slot;
+}
+
+RgSlot& ChunkedVectorCache::GetRgSlot(size_t rg) {
+  auto [it, inserted] = _rg_index.try_emplace(rg);
+  if (!inserted) {
+    it->second.touch();
+    return it->second;
+  }
+  RgSlot& slot = it->second;
+  slot.rg = rg;
+  slot.cursor = ColumnReader::ScanCursor{_child->OpenSegment(rg)};
+  _rgs.Insert(slot);
+  while (!_rg_evicted.empty()) {
+    auto& s = _rg_evicted.front();
+    _rg_evicted.pop_front();
+    _rg_index.erase(s.rg);
+  }
+  return slot;
+}
+
+void ChunkedVectorCache::Load(ChunkSlot& slot, uint64_t chunk_id) {
+  const uint64_t total_rows = _child->RowCount() / _d;
+  const uint64_t start_row = chunk_id * _chunk_rows;
+  const uint64_t take = std::min<uint64_t>(_chunk_rows, total_rows - start_row);
+  const uint64_t start_elem = start_row * _d;
+  const uint64_t take_elems = take * _d;
+
+  uint64_t produced = 0;
+  while (produced < take_elems) {
+    const uint64_t pos = start_elem + produced;
+    _locate_hint = _child->Locate(pos, _locate_hint);
+    const uint64_t in_rg = pos - _locate_hint.begin;
+    const uint64_t to_take =
+      std::min<uint64_t>(take_elems - produced, _locate_hint.end - pos);
+
+    auto& rgs = GetRgSlot(_locate_hint.rg);
+    if (in_rg < rgs.cursor.Position()) {
+      rgs.cursor.Rewind();
+    }
+    rgs.cursor.SeekTo(in_rg);
+    rgs.cursor.Scan(to_take, slot.data, static_cast<duckdb::idx_t>(produced));
+    produced += to_take;
+  }
+}
+
+bool ChunkEvictor::operator()(ChunkSlot& slot) const noexcept {
+  if (slot.pinned != 0) {
+    return false;
+  }
+  self->_chunk_evicted.push_back(slot);
+  return true;
+}
+
+bool RgEvictor::operator()(RgSlot& slot) const noexcept {
+  self->_rg_evicted.push_back(slot);
+  return true;
 }
 
 }  // namespace irs::columnstore

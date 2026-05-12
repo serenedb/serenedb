@@ -127,6 +127,8 @@ class Cache {
 
   bool Evict() noexcept;
 
+  void Clear() noexcept;
+
   struct Stat {
     size_t small_queue_size;
     size_t main_queue_size;
@@ -238,6 +240,16 @@ void Cache<T, Evictor, Cost>::Remove(const T& entry) noexcept {
       _small_fifo.erase(_small_fifo.iterator_to(entry));
       break;
   }
+}
+
+template<typename T, CacheEvictor<T> Evictor, CacheCost<T> Cost>
+  requires std::derived_from<T, CacheHook>
+void Cache<T, Evictor, Cost>::Clear() noexcept {
+  _small_fifo.clear();
+  _main_fifo.clear();
+  _small_queue_size = 0;
+  _main_queue_size = 0;
+  _ghost_queue_age = 0;
 }
 
 template<typename T, CacheEvictor<T> Evictor, CacheCost<T> Cost>

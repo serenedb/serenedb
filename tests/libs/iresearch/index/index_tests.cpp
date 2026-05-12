@@ -14778,7 +14778,7 @@ TEST_P(ANNSearchTest, hnsw_search_basic) {
         f.top_k,
         params,
       };
-      irs::HNSWSearchBuffer buffer{dis.data(), docs.data(), f.top_k};
+      irs::HNSWAnnSearchBuffer buffer{dis.data(), docs.data(), f.top_k};
       reader.Search("vec", info, buffer);
       buffer.ReorderResult();
       size_t correct = 0;

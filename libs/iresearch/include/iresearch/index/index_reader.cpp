@@ -48,7 +48,7 @@ const EmptySubReader kEmpty;
 }  // namespace
 
 void IndexReader::Search(field_id field, HNSWSearchInfo info,
-                         HNSWSearchBuffer& buffer) const {
+                         HNSWAnnSearchBuffer& buffer) const {
   for (size_t segment_id = 0; segment_id < this->size(); ++segment_id) {
     const auto& segment = (*this)[segment_id];
     segment.Search(field, std::move(info), buffer, segment_id);
@@ -64,7 +64,7 @@ void IndexReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
 }
 
 void SubReader::Search(field_id field, HNSWSearchInfo info,
-                       HNSWSearchBuffer& buffer, uint32_t segment_id) const {
+                       HNSWAnnSearchBuffer& buffer, uint32_t segment_id) const {
   const auto* hr = HNSW(field);
   if (hr == nullptr) {
     return;
@@ -75,11 +75,9 @@ void SubReader::Search(field_id field, HNSWSearchInfo info,
     buffer.ids.data(),
     info.top_k,
   };
+  auto& cache = hr->PrepareCache(buffer.cache);
   HNSWSearchContext context{
-    info,
-    segment_id,
-    buffer.vt,
-    handler,
+    info, segment_id, buffer.vt, handler, cache,
   };
   hr->Search(context);
 }
@@ -93,11 +91,9 @@ void SubReader::RangeSearch(field_id field, HNSWRangeSearchInfo info,
   }
   faiss::RangeSearchResult seg_result{1};
   HNSWRangeResultHandler handler{&seg_result, info.radius};
+  auto& cache = hr->PrepareCache(buffer.cache);
   HNSWRangeSearchContext context{
-    info,
-    segment_id,
-    buffer.vt,
-    handler,
+    info, segment_id, buffer.vt, handler, cache,
   };
   hr->RangeSearch(context);
   size_t sz = seg_result.lims[1] - seg_result.lims[0];

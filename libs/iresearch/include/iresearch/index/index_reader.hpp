@@ -108,7 +108,7 @@ struct IndexReader {
   virtual const SubReader& operator[](size_t i) const = 0;
 
   void Search(field_id field, HNSWSearchInfo info,
-              HNSWSearchBuffer& buffer) const;
+              HNSWAnnSearchBuffer& buffer) const;
 
   void RangeSearch(field_id field, HNSWRangeSearchInfo info,
                    HNSWRangeSearchBuffer& buffer) const;
@@ -148,7 +148,7 @@ struct SubReader : public IndexReader, public NormProvider {
     return *this;
   }
 
-  void Search(field_id field, HNSWSearchInfo info, HNSWSearchBuffer& buffer,
+  void Search(field_id field, HNSWSearchInfo info, HNSWAnnSearchBuffer& buffer,
               uint32_t segment_id) const;
 
   void RangeSearch(field_id field, HNSWRangeSearchInfo info,

@@ -20,10 +20,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 BUILD_DIR="${PERF_BUILD_DIR:-${ROOT}/build_perf}"
 SERENED_BIN="${BUILD_DIR}/bin/serened"
-DATA_DIR="${PERF_PK_DATA_DIR:-${ROOT}/build_perf_pk_data}"
-NATIVE_DB="${PERF_PK_NATIVE_DB:-${ROOT}/build_perf_pk_native.duckdb}"
-PORT="${PERF_PK_PORT:-6464}"
 RESULTS_DIR="${ROOT}/scripts/perf/results"
+DATA_DIR="${PERF_PK_DATA_DIR:-${RESULTS_DIR}/pk_perf_data}"
+NATIVE_DB="${PERF_PK_NATIVE_DB:-${RESULTS_DIR}/pk_perf_native.duckdb}"
+PORT="${PERF_PK_PORT:-6464}"
 LOG="/tmp/${USER}-serened-pk-bench.log"
 
 ROW_COUNT="${PERF_PK_ROWS:-100000}"

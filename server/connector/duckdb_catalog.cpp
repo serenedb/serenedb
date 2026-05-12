@@ -1048,12 +1048,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   // base table's PK when there is one, otherwise the first column of the
   // relation (which is the standard convention for view-backed indexes
   // over read_parquet etc.).
-  const bool has_indexed_column = std::any_of(
-    create_index_info->column_opclasses.begin(),
-    create_index_info->column_opclasses.end(),
-    [](const std::string& c) { return c != "included"; });
-  if (!has_indexed_column &&
-      create_index_info->index_type == "inverted") {
+  const bool has_indexed_column =
+    absl::c_any_of(create_index_info->column_opclasses,
+                   [](const auto& c) { return c != "included"; });
+  if (!has_indexed_column && create_index_info->index_type == "inverted") {
     std::string inject_name = pk_column_name;
     if (inject_name.empty() && !rel_columns.empty()) {
       inject_name = rel_columns.front().first;

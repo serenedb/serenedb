@@ -14,10 +14,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 BUILD_DIR="${PERF_BUILD_DIR:-${ROOT}/build_perf}"
-SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${ROOT}/build_perf_nested_data}"
-NATIVE_DB="${PERF_NATIVE_DB:-${ROOT}/build_perf_nested.duckdb}"
-SERENED_BIN="${BUILD_DIR}/bin/serened"
 RESULTS_DIR="${ROOT}/scripts/perf/results"
+SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${RESULTS_DIR}/nested_perf_data}"
+NATIVE_DB="${PERF_NATIVE_DB:-${RESULTS_DIR}/nested_perf_native.duckdb}"
+SERENED_BIN="${BUILD_DIR}/bin/serened"
 PORT="${PERF_PORT:-6263}"
 LOG="/tmp/${USER}-serened-nested-perf.log"
 N="${PERF_NESTED_ROWS:-1000000}"

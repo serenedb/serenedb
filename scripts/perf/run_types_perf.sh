@@ -20,11 +20,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")"/../.. && pwd)"
 BUILD_DIR="${PERF_BUILD_DIR:-${ROOT}/build_perf}"
-SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${ROOT}/build_perf_types_data}"
-NATIVE_DB="${PERF_NATIVE_DB:-${ROOT}/build_perf_types.duckdb}"
-PARQUET_FILE="${PERF_PARQUET_FILE:-${ROOT}/build_perf_types.parquet}"
-SERENED_BIN="${BUILD_DIR}/bin/serened"
 RESULTS_DIR="${ROOT}/scripts/perf/results"
+PARQUET_DIR="${PERF_PARQUET_DIR:-${HOME}/data}"
+# .duckdb stays in scripts/perf/results/ which is in .gitignore.  The
+# synthetic source parquet lives next to ${HOME}/data/hits.parquet so
+# every perf script shares one parquet directory.
+SERENED_DATA_DIR="${PERF_SERENED_DATA_DIR:-${RESULTS_DIR}/types_perf_data}"
+NATIVE_DB="${PERF_NATIVE_DB:-${RESULTS_DIR}/types_perf_native.duckdb}"
+PARQUET_FILE="${PERF_PARQUET_FILE:-${PARQUET_DIR}/types_perf.parquet}"
+SERENED_BIN="${BUILD_DIR}/bin/serened"
 PORT="${PERF_PORT:-6263}"
 LOG="/tmp/${USER}-serened-types-perf.log"
 N="${PERF_ROWS:-1000000}"
@@ -34,7 +38,7 @@ if [[ ! -x "${SERENED_BIN}" ]]; then
 	exit 1
 fi
 
-mkdir -p "${RESULTS_DIR}"
+mkdir -p "${RESULTS_DIR}" "${PARQUET_DIR}"
 RUN_LOG="${RESULTS_DIR}/types-$(date -u +%Y%m%dT%H%M%SZ).log"
 
 declare -A TIMINGS=()
@@ -99,13 +103,13 @@ run_setup() {
 # Done on a transient serened that we throw away afterwards -- only the
 # parquet file survives. This avoids landing the synthetic source data
 # in the perf serened's rocksdb base store.
-rm -rf "${SERENED_DATA_DIR}" /tmp/types_genparquet_data
+rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
 rm -f "${NATIVE_DB}" "${NATIVE_DB}.wal" "${PARQUET_FILE}"
 
 PQ_SQL_PATH=$(printf '%s' "${PARQUET_FILE}" | sed "s/'/''/g")
 
 echo "generating ${PARQUET_FILE} (${N} rows) via temporary serened"
-"${SERENED_BIN}" /tmp/types_genparquet_data \
+"${SERENED_BIN}" ${RESULTS_DIR}/types_genparquet_data \
 	--server.endpoint "pgsql+tcp://0.0.0.0:${PORT}" \
 	--log.foreground-tty true \
 	>"${LOG}" 2>&1 &
@@ -148,7 +152,7 @@ human_pq=$(awk -v b="${PQ_SIZE}" 'BEGIN{split("B KB MB GB",u); i=1; while(b>=102
 echo "parquet file: ${PARQUET_FILE} (${human_pq})"
 
 # --- 2. Fresh serened for the actual benchmark -----------------------------
-rm -rf "${SERENED_DATA_DIR}" /tmp/types_genparquet_data
+rm -rf "${SERENED_DATA_DIR}" ${RESULTS_DIR}/types_genparquet_data
 echo "starting bench serened with data dir ${SERENED_DATA_DIR}"
 start_server
 trap "killall -9 serened >/dev/null 2>&1 || true" EXIT

@@ -199,8 +199,10 @@ search_path	<slt:ignore>	Sets <slt:ignore>
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
+server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
 storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
 storage_compatibility_version	v0.10.2	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)
@@ -430,8 +432,10 @@ search_path	<slt:ignore>	Sets the default catalog search path as a comma-separat
 secret_directory	<slt:ignore>	Set the directory to which persistent secrets are stored
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
+server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
 storage_block_prefetch	REMOTE_ONLY	In which scenarios to use storage block prefetching
 storage_compatibility_version	v0.10.2	Serialize on checkpoint with compatibility for a given duckdb version
 streaming_buffer_size	976.5 KiB	The maximum memory to buffer between fetching from a streaming result (e.g. 1GB)

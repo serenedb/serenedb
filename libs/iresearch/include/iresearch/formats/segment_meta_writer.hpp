@@ -75,7 +75,7 @@ inline uint64_t WriteDocumentMaskV0(IndexOutput& out, const DocumentMask* docs_m
 
   out.WriteV32(mask_size);
   const auto pos = out.Position();
-  docs_mask->ForEach([&out](doc_id_t doc_id) {
+  docs_mask->ForEachDeleted([&out](doc_id_t doc_id) {
     out.WriteV32(doc_id);
   });
   return out.Position() - pos;
@@ -93,14 +93,14 @@ inline uint64_t WriteDocumentMask(IndexOutput& out, const DocumentMask* docs_mas
   // TODO: consider deletion-ratio based choice of format, rather than straighforward counting
   // Estimate on-disk size
   size_t varint_list_size = 0;
-  docs_mask->ForEach([&varint_list_size](doc_id_t doc_id) {
+  docs_mask->ForEachDeleted([&varint_list_size](doc_id_t doc_id) {
     varint_list_size += bytes_io<doc_id_t, sizeof(doc_id_t)>::vsize(doc_id);
   });
   auto fixed_bitset_size = ManagedBitset::bits_to_words(doc_count) * sizeof(ManagedBitset::word_t);
   if (varint_list_size < fixed_bitset_size) {
     out.WriteV32(DocumentMaskOnDiskFormat::DeletedVarintList);
     const auto pos = out.Position();
-    docs_mask->ForEach([&out](doc_id_t doc_id) {
+    docs_mask->ForEachDeleted([&out](doc_id_t doc_id) {
       out.WriteV32(doc_id);
     });
     return out.Position() - pos;
@@ -108,7 +108,7 @@ inline uint64_t WriteDocumentMask(IndexOutput& out, const DocumentMask* docs_mas
     out.WriteV32(DocumentMaskOnDiskFormat::DeletedDenseBitset);
     // TODO: consider manual bytes filling, rather than using ManagedBitset
     ManagedBitset deleted_docs(doc_count);
-    docs_mask->ForEach([&deleted_docs](doc_id_t doc_id) { deleted_docs.set(doc_id - doc_limits::min()); });
+    docs_mask->ForEachDeleted([&deleted_docs](doc_id_t doc_id) { deleted_docs.set(doc_id - doc_limits::min()); });
     const auto pos = out.Position();
     out.WriteBytes(reinterpret_cast<const byte_type*>(deleted_docs.data()), deleted_docs.words() * sizeof(ManagedBitset::word_t));
     return out.Position() - pos;

@@ -962,8 +962,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.live_docs_count = 451;
     meta.byte_size = 666;
     meta.version = 100;
-    meta.docs_mask = std::make_shared<irs::DocumentHashMask>([&] {
-      irs::DocumentHashMask docs_mask{irs::IResourceManager::gNoop};
+    meta.docs_mask = std::make_shared<irs::DocumentDeletedHashMask>([&] {
+      irs::DocumentDeletedHashMask docs_mask{irs::IResourceManager::gNoop, 453, 2};
       docs_mask.MarkDeleted(42);
       docs_mask.MarkDeleted(100);
       return docs_mask;
@@ -1130,7 +1130,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     };
 
     irs::SegmentMeta meta;
-    irs::DocumentHashMask docs_mask{irs::IResourceManager::gNoop};
+    irs::DocumentDeletedHashMask docs_mask{irs::IResourceManager::gNoop, 1453, 3};
     docs_mask.MarkDeleted(42);
     docs_mask.MarkDeleted(100);
     docs_mask.MarkDeleted(200);

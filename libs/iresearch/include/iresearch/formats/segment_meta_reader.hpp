@@ -51,15 +51,14 @@ inline std::vector<std::string> ReadStrings(DataInput& in) {
 }
 
 inline std::pair<std::shared_ptr<DocumentMask>, uint64_t>
-ReadDocumentMaskV0(DataInput& in, IResourceManager& rm) {
+ReadDocumentMaskV0(DataInput& in, IResourceManager& rm, size_t live_docs_count) {
   auto count = in.ReadV32();
 
   if (!count) {
     return {};
   }
 
-  auto docs_mask = std::make_shared<DocumentHashMask>(rm);
-  docs_mask->HintDeletedDocCount(count);
+  auto docs_mask = std::make_shared<DocumentDeletedHashMask>(rm, live_docs_count + count, count);
 
   const auto pos = in.Position();
   while (count--) {
@@ -75,12 +74,12 @@ std::pair<std::shared_ptr<DocumentMask>, uint64_t>
 ReadDocumentMaskDeletedVarintList(DataInput& in, IResourceManager& rm,
                                   size_t doc_count, size_t deleted_doc_count) {
   auto pos = in.Position();
-  DocumentHashMask docs_mask(rm, doc_count, deleted_doc_count);
+  DocumentDeletedHashMask docs_mask(rm, doc_count, deleted_doc_count);
   while (deleted_doc_count--) {
     static_assert(sizeof(doc_id_t) == sizeof(decltype(in.ReadV32())));
     docs_mask.MarkDeleted(in.ReadV32());
   }
-  return {std::make_shared<DocumentHashMask>(std::move(docs_mask)),
+  return {std::make_shared<DocumentDeletedHashMask>(std::move(docs_mask)),
           in.Position() - pos};
 }
 
@@ -156,7 +155,7 @@ inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
   const auto live_docs_count = in->ReadV32();
   auto [docs_mask, docs_mask_size] = [&]() {
     if (format_version == 0) {
-      return ReadDocumentMaskV0(*in, *dir.ResourceManager().readers);
+      return ReadDocumentMaskV0(*in, *dir.ResourceManager().readers, live_docs_count);
     } else {
       return ReadDocumentMask(*in, *dir.ResourceManager().readers);
     }

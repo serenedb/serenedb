@@ -1754,7 +1754,12 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       max_doc_count = std::max(max_doc_count, existing_segment->Meta().docs_count);
     }
   }
-  for (DocumentBitMask deleted_docs{*dir.ResourceManager().transactions, max_doc_count};
+  // NB: This is NOT a real segment's mask and it may expose higher DocCount
+  // than the real document count in a segment. Thus, it's neccessary to use
+  // this storage carefully and not blindly set it to be some segment's document
+  // mask as is.
+  for (DocumentBitMask deleted_docs{*dir.ResourceManager().transactions,
+                                    max_doc_count};
        const auto& existing_segment : committed_reader.GetReaders()) {
     auto& index_segment =
       committed_meta.index_meta.segments[current_segment_index];

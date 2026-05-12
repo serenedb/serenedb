@@ -7,7 +7,8 @@
 
 using irs::doc_id_t;
 using irs::DocumentBitMask;
-using irs::DocumentHashMask;
+using irs::DocumentDeletedHashMask;
+using irs::DocumentAliveHashMask;
 using irs::DocumentMask;
 using irs::DocumentMaskKind;
 using std::vector;
@@ -20,10 +21,9 @@ static constexpr size_t kPostingListSize = 1000;
 static constexpr size_t kPostingListCount = 20;
 
 // Build uniformly random set of deleted_count ids to be put as deleted in mask
-DocumentHashMask BuildHashMask(size_t doc_count, size_t deleted_count,
+DocumentDeletedHashMask BuildHashMask(size_t doc_count, size_t deleted_count,
                                int seed) {
-  DocumentHashMask mask{irs::IResourceManager::gNoop};
-  mask.HintDeletedDocCount(deleted_count);
+  DocumentDeletedHashMask mask{irs::IResourceManager::gNoop, doc_count, deleted_count};
   vector<doc_id_t> all_ids(doc_count);
   std::iota(all_ids.begin(), all_ids.end(), 1);
   std::shuffle(all_ids.begin(), all_ids.end(), std::mt19937(seed));
@@ -35,12 +35,12 @@ DocumentHashMask BuildHashMask(size_t doc_count, size_t deleted_count,
 
 template<typename MaskType>
 MaskType BuildMask(size_t doc_count, size_t deleted_count, int seed) {
-  auto source = BuildMask<DocumentHashMask>(doc_count, deleted_count, seed);
+  auto source = BuildMask<DocumentDeletedHashMask>(doc_count, deleted_count, seed);
   return MaskType(irs::IResourceManager::gNoop, source);
 }
 
 template<>
-DocumentHashMask BuildMask<DocumentHashMask>(size_t doc_count,
+DocumentDeletedHashMask BuildMask<DocumentDeletedHashMask>(size_t doc_count,
                                              size_t deleted_count, int seed) {
   return BuildHashMask(doc_count, deleted_count, seed);
 }
@@ -146,11 +146,12 @@ void BmDispatchInsideLoop(benchmark::State& state) {
   const auto doc_count = static_cast<size_t>(state.range(0));
   const auto delete_permille = static_cast<size_t>(state.range(1));
 
-  auto mask = BuildMask<DocumentBitMask>(
+  auto mask_src = BuildMask<DocumentBitMask>(
     doc_count, doc_count * delete_permille / 1000, kSeed);
-  const auto doc_mask_view = irs::DocumentMaskView(irs::MakeDocumentMask(irs::IResourceManager::gNoop,
-                                                  DocumentMaskKind::DenseBitset,
-                                                  std::move(mask)).get());
+  auto mask =
+    irs::MakeDocumentMask(irs::IResourceManager::gNoop,
+                          DocumentMaskKind::DenseBitset, std::move(mask_src));
+  const auto doc_mask_view = irs::DocumentMaskView(mask.get());
   for (auto _ : state) {
     for (doc_id_t doc_id = irs::doc_limits::min();
          doc_id < irs::doc_limits::min() + doc_count; ++doc_id) {
@@ -175,27 +176,32 @@ void BmDispatchOutsideLoop(benchmark::State& state) {
 
   auto bit_mask = BuildMask<DocumentBitMask>(
     doc_count, doc_count * delete_permille / 1000, kSeed);
-  const irs::DocumentMaskView doc_mask_view(irs::MakeDocumentMask(
-    irs::IResourceManager::gNoop, DocumentMaskKind::DenseBitset,
-    std::move(bit_mask)).get());
+  auto mask =
+    irs::MakeDocumentMask(irs::IResourceManager::gNoop,
+                          DocumentMaskKind::DenseBitset, std::move(bit_mask));
+  const irs::DocumentMaskView doc_mask_view(mask.get());
   for (auto _ : state) {
     switch (doc_mask_view.Kind()) {
+      case DocumentMaskKind::None:
+        break;
       case DocumentMaskKind::DenseBitset:
         RunLoopIsDeleted<DocumentBitMask>(doc_mask_view, doc_count);
         break;
       case DocumentMaskKind::DeletedHashSet:
-        RunLoopIsDeleted<DocumentHashMask>(doc_mask_view, doc_count);
+        RunLoopIsDeleted<DocumentDeletedHashMask>(doc_mask_view, doc_count);
         break;
-      case DocumentMaskKind::None:
-        break;
+      case DocumentMaskKind::AliveHashSet:
+        RunLoopIsDeleted<DocumentAliveHashMask>(doc_mask_view, doc_count);
     }
   }
 }
 
-BENCHMARK_TEMPLATE(BmIsDeleted, DocumentHashMask)->Apply(MaskArgs);
+BENCHMARK_TEMPLATE(BmIsDeleted, DocumentDeletedHashMask)->Apply(MaskArgs);
 BENCHMARK_TEMPLATE(BmIsDeleted, DocumentBitMask)->Apply(MaskArgs);
-BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentHashMask)->Apply(MaskArgs);
+BENCHMARK_TEMPLATE(BmIsDeleted, DocumentAliveHashMask)->Apply(MaskArgs);
+BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentDeletedHashMask)->Apply(MaskArgs);
 BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentBitMask)->Apply(MaskArgs);
+BENCHMARK_TEMPLATE(BmScanIsDeleted, DocumentAliveHashMask)->Apply(MaskArgs);
 BENCHMARK(BmDispatchInsideLoop)->Args({1000000, 30});
 BENCHMARK(BmDispatchOutsideLoop)->Args({1000000, 30});
 

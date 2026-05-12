@@ -426,7 +426,7 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.version = 0;
     expected.docs_mask = [&] {
       auto docs_mask =
-        std::make_shared<irs::DocumentHashMask>(irs::IResourceManager::gNoop);
+        std::make_shared<irs::DocumentDeletedHashMask>(irs::IResourceManager::gNoop, 43, 1);
       docs_mask->MarkDeleted(4);
       return docs_mask;
     }();
@@ -452,7 +452,7 @@ TEST(segment_reader_test, segment_reader_has) {
     expected.version = 1;
     expected.docs_mask = [&] {
       auto docs_mask =
-        std::make_shared<irs::DocumentHashMask>(irs::IResourceManager::gNoop);
+        std::make_shared<irs::DocumentDeletedHashMask>(irs::IResourceManager::gNoop, 43, 1);
       docs_mask->MarkDeleted(4);
       return docs_mask;
     }();

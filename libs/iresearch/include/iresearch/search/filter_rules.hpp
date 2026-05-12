@@ -20,10 +20,13 @@
 
 #pragma once
 
-#include <initializer_list>
-#include <unordered_map>
+#include <span>
 
+#include "absl/container/btree_set.h"
+#include "absl/container/flat_hash_map.h"
 #include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
 
@@ -32,80 +35,72 @@ namespace irs {
 class FilterRulesConstructor {
  public:
   class FilterRule;
-  using ptr = std::shared_ptr<FilterRule>;
-  class FilterRule {  // think about managed_ptr like in Filter::Query
+  using ptr = std::unique_ptr<FilterRule>;
+
+  class FilterRule {
    public:
-    using Base = FilterRule;
-    using TypesMap =
-      std::unordered_map<irs::TypeInfo::type_id, std::vector<irs::Filter::ptr>>;
+    using TypesMap = absl::flat_hash_map<irs::TypeInfo::type_id,
+                                         std::vector<irs::Filter::ptr>>;
+
     enum class FilterRuleTraversalType : uint8_t {
       Bottom = 0,  // dfs from the bottom to the top
-      Top = 1      // bfs from the top to the bottom
+      Top = 1,     // bfs from the top to the bottom
     };
 
     FilterRule() = default;
-    FilterRule(std::initializer_list<TypeInfo::type_id> filter_types)
-      : _desired_filter_types(std::move(filter_types)) {}
+    explicit FilterRule(std::span<const TypeInfo::type_id> filter_types)
+      : _desired_filter_types(filter_types.begin(), filter_types.end()) {}
 
-    FilterRule& SetTraversalType(FilterRuleTraversalType type) {
+    auto SetTraversalType(FilterRuleTraversalType type) -> FilterRule& {
       _traversal_type = type;
       return *this;
     }
 
-    FilterRuleTraversalType traversal_type() const noexcept {
+    auto traversal_type() const noexcept -> FilterRuleTraversalType {
       return _traversal_type;
     }
 
-    FilterRule& AddFilterType(TypeInfo::type_id type_id) {
+    auto AddFilterType(TypeInfo::type_id type_id) -> FilterRule& {
       _desired_filter_types.emplace(type_id);
       return *this;
     }
 
-    // filter can be only AND, OR or NOT
-    Filter::ptr ApplyWrapper(Filter::ptr filter) const;
+    [[nodiscard]] auto ApplyWrapper(Filter::ptr filter) const -> Filter::ptr;
 
     struct FilterRuleOptions {
-      bool has_other_filters =
-        false;  // for cases when current filter has filters which differ from
-                // desired_filter_types
+      // sub-filters outside of desired_filter_types are present in the current
+      // node
+      bool has_other_filters = false;
     };
 
-    struct FilterRuleResult {
-      Filter::ptr filter =
-        nullptr;  // return filter value - could be the same or new
-      bool is_new_filter = false;  // signify that new filter was created
-      bool is_applied = false;     // show if rule was applied
+    struct [[nodiscard]] FilterRuleResult {
+      Filter::ptr filter;
+      bool is_applied = false;
     };
 
-    // call of these functions depends on current_filter type
-    // current_filter can be only AND, OR or NOT
-    inline virtual FilterRuleResult ApplyBoolean(
-      And& current_filter, TypesMap&& sub_filters,
-      FilterRuleOptions options) const {
+    virtual auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                              FilterRuleOptions options) const
+      -> FilterRuleResult {
       return FilterRuleResult{};
-    };
+    }
 
-    inline virtual FilterRuleResult ApplyBoolean(
-      Or& current_filter, TypesMap&& sub_filters,
-      FilterRuleOptions options) const {
+    virtual auto ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                              FilterRuleOptions options) const
+      -> FilterRuleResult {
       return FilterRuleResult{};
-    };
+    }
 
-    inline virtual FilterRuleResult ApplyNot(Not& current_filter,
-                                             Filter::ptr sub_filter,
-                                             FilterRuleOptions options) const {
+    virtual auto ApplyNot(Not& current_filter, Filter::ptr sub_filter,
+                          FilterRuleOptions options) const -> FilterRuleResult {
       return FilterRuleResult{};
-    };
+    }
 
     virtual ~FilterRule() = default;
 
    private:
-    // parameters like make traversal from top or bottom
     FilterRuleTraversalType _traversal_type = FilterRuleTraversalType::Bottom;
-    std::set<TypeInfo::type_id> _desired_filter_types;
-    bool _works_with_empty_filters =
-      false;  // think about that, maybe want to have rule with zero suitable
-              // subfilters
+    absl::btree_set<TypeInfo::type_id> _desired_filter_types;
+    bool _works_with_empty_filters = false;
   };
 
   FilterRulesConstructor() = default;
@@ -114,13 +109,14 @@ class FilterRulesConstructor {
 
   template<typename FilterType, typename... Args>
   void Add(Args&&... args) {
-    _rules.push_back(std::make_shared<FilterType>(std::forward<Args>(args)...));
+    _rules.push_back(std::make_unique<FilterType>(std::forward<Args>(args)...));
   }
 
-  Filter::ptr Apply(Filter::ptr filter) const;
+  [[nodiscard]] auto Apply(Filter::ptr filter) const -> Filter::ptr;
 
  private:
-  Filter::ptr AstTraversalFromBottom(Filter::ptr filter, ptr rule) const;
+  [[nodiscard]] auto AstTraversalFromBottom(
+    Filter::ptr filter, const FilterRule& rule) const -> Filter::ptr;
 
   std::vector<ptr> _rules;
 };
@@ -130,13 +126,10 @@ class NotFilterRule : public FilterRulesConstructor::FilterRule {
   using FilterRule::ApplyBoolean;
   using FilterRule::ApplyNot;
 
-  NotFilterRule() : FilterRule({irs::Type<irs::Not>::id()}) {}
+  explicit NotFilterRule() { AddFilterType(irs::Type<irs::Not>::id()); }
 
-  // think about boost in that context
-  virtual FilterRuleResult ApplyNot(Not& current_filter, Filter::ptr sub_filter,
-                                    FilterRuleOptions options) const override;
-
- private:
+  auto ApplyNot(Not& current_filter, Filter::ptr sub_filter,
+                FilterRuleOptions options) const -> FilterRuleResult override;
 };
 
 class AndFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
@@ -144,14 +137,13 @@ class AndFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
   using FilterRule::ApplyBoolean;
   using FilterRule::ApplyNot;
 
-  AndFlatteningFilterRule() : FilterRule({irs::Type<irs::And>::id()}) {}
+  explicit AndFlatteningFilterRule() {
+    AddFilterType(irs::Type<irs::And>::id());
+  }
 
-  // think about boost in that context
-  virtual FilterRuleResult ApplyBoolean(
-    And& current_filter, TypesMap&& sub_filters,
-    FilterRuleOptions options) const override;
-
- private:
+  auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                    FilterRuleOptions options) const
+    -> FilterRuleResult override;
 };
 
 class OrFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
@@ -159,14 +151,11 @@ class OrFlatteningFilterRule : public FilterRulesConstructor::FilterRule {
   using FilterRule::ApplyBoolean;
   using FilterRule::ApplyNot;
 
-  OrFlatteningFilterRule() : FilterRule({irs::Type<irs::Or>::id()}) {}
+  explicit OrFlatteningFilterRule() { AddFilterType(irs::Type<irs::Or>::id()); }
 
-  // think about boost in that context
-  virtual FilterRuleResult ApplyBoolean(
-    Or& current_filter, TypesMap&& sub_filters,
-    FilterRuleOptions options) const override;
-
- private:
+  auto ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                    FilterRuleOptions options) const
+    -> FilterRuleResult override;
 };
 
 class ByTermsFilterRule : public FilterRulesConstructor::FilterRule {
@@ -174,16 +163,29 @@ class ByTermsFilterRule : public FilterRulesConstructor::FilterRule {
   using FilterRule::ApplyBoolean;
   using FilterRule::ApplyNot;
 
-  ByTermsFilterRule() : FilterRule({irs::Type<irs::ByTerm>::id()}) {}
+  explicit ByTermsFilterRule() { AddFilterType(irs::Type<irs::ByTerm>::id()); }
 
-  // think about boost in that context
-  virtual FilterRuleResult ApplyBoolean(
-    And& current_filter, TypesMap&& sub_filters,
-    FilterRuleOptions options) const override;
-  // virtual FilterRuleResult ApplyBoolean(Or& current_filter, TypesMap&&
-  // sub_filters, FilterRuleOptions options) const override;
+  auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                    FilterRuleOptions options) const
+    -> FilterRuleResult override;
+  auto ApplyBoolean(Or& current_filter, TypesMap&& sub_filters,
+                    FilterRuleOptions options) const
+    -> FilterRuleResult override;
+};
 
- private:
+class LevenshteinPrefixFilterRule : public FilterRulesConstructor::FilterRule {
+ public:
+  using FilterRule::ApplyBoolean;
+  using FilterRule::ApplyNot;
+
+  explicit LevenshteinPrefixFilterRule() {
+    AddFilterType(irs::Type<irs::ByEditDistance>::id());
+    AddFilterType(irs::Type<irs::ByPrefix>::id());
+  }
+
+  auto ApplyBoolean(And& current_filter, TypesMap&& sub_filters,
+                    FilterRuleOptions options) const
+    -> FilterRuleResult override;
 };
 
 }  // namespace irs

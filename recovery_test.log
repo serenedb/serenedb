@@ -132,8 +132,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 38099
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/faults.test
 [test] JUnit Path: tests-serenedb-recovery-w15
@@ -145,24 +145,24 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 38099 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_faults_test
 [test] [TEST IN PROGRESS]
 [test] recovery/faults.test                                         .. [OK] in 14 ms
-[test] 
+[test]
 [test] Finished in 17 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 15] PASS recovery/faults.test
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 41543
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/log_level.test
 [test] JUnit Path: tests-serenedb-recovery-w22
@@ -174,17 +174,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 41543 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_log_level_test
 [test] [TEST IN PROGRESS]
 [test] recovery/log_level.test                                      .. [OK] in 17 ms
-[test] 
+[test]
 [test] Finished in 22 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 22] PASS recovery/log_level.test
 
@@ -198,8 +198,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 58009
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/unable_to_create.test
 [test] JUnit Path: tests-serenedb-recovery-w31
@@ -211,17 +211,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 58009 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_unable_to_create_test
 [test] [TEST IN PROGRESS]
 [test] recovery/unable_to_create.test                               .. [OK] in 22 ms
-[test] 
+[test]
 [test] Finished in 37 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 31] PASS recovery/unable_to_create.test
 
@@ -231,8 +231,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 59055
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/read_your_own_writes.test
 [test] JUnit Path: tests-serenedb-recovery-w25
@@ -244,17 +244,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 59055 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_read_your_own_writes_test
 [test] [TEST IN PROGRESS]
 [test] recovery/read_your_own_writes.test                           .. [OK] in 103 ms
-[test] 
+[test]
 [test] Finished in 109 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 25] PASS recovery/read_your_own_writes.test
 
@@ -264,8 +264,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 38931
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/inverted_index_wand_faults.test
 [test] JUnit Path: tests-serenedb-recovery-w21
@@ -277,17 +277,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 38931 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_inverted_index_wand_faults_test
 [test] [TEST IN PROGRESS]
 [test] recovery/inverted_index_wand_faults.test                     .. [OK] in 222 ms
-[test] 
+[test]
 [test] Finished in 226 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 21] PASS recovery/inverted_index_wand_faults.test
 
@@ -297,8 +297,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 51381
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_database.test
 [test] JUnit Path: tests-serenedb-recovery-w3
@@ -310,17 +310,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 51381 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_database_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_database.test                               .. [OK] in 520 ms
-[test] 
+[test]
 [test] Finished in 523 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_database_test_gqdsulu6;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -333,8 +333,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 36053
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/crash_on_packet.test
 [test] JUnit Path: tests-serenedb-recovery-w11
@@ -346,17 +346,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 36053 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_crash_on_packet_test
 [test] [TEST IN PROGRESS]
 [test] recovery/crash_on_packet.test                                .. [OK] in 530 ms
-[test] 
+[test]
 [test] Finished in 536 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_crash_on_packet_test_j3f5t58z;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -365,8 +365,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 34701
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_tokenizer.test
 [test] JUnit Path: tests-serenedb-recovery-w9
@@ -378,17 +378,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 34701 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_tokenizer_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_tokenizer.test                              .. [OK] in 525 ms
-[test] 
+[test]
 [test] Finished in 538 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_tokenizer_test_wj4nscom;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -397,8 +397,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 43283
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_attach.test
 [test] JUnit Path: tests-serenedb-recovery-w2
@@ -410,17 +410,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 43283 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_attach_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_attach.test                                 .. [OK] in 526 ms
-[test] 
+[test]
 [test] Finished in 531 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_attach_test_pafdzdaj;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -429,8 +429,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 41083
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/enum.test
 [test] JUnit Path: tests-serenedb-recovery-w14
@@ -442,17 +442,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 41083 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_enum_test
 [test] [TEST IN PROGRESS]
 [test] recovery/enum.test                                           .. [OK] in 551 ms
-[test] 
+[test]
 [test] Finished in 555 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_enum_test_7aslhkvr;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -465,8 +465,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 53763
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/sequence_gap_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w26
@@ -478,17 +478,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 53763 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_sequence_gap_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/sequence_gap_recovery.test                          .. [OK] in 573 ms
-[test] 
+[test]
 [test] Finished in 577 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_sequence_gap_recovery_test_obhs3zb2;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -509,8 +509,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 35137
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_function.test
 [test] JUnit Path: tests-serenedb-recovery-w4
@@ -522,17 +522,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 35137 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_function_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_function.test                               .. [OK] in 533 ms
-[test] 
+[test]
 [test] Finished in 538 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_function_test_qm12pyv8;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -549,8 +549,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 48591
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_table.test
 [test] JUnit Path: tests-serenedb-recovery-w8
@@ -562,17 +562,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 48591 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_table_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_table.test                                  .. [OK] in 611 ms
-[test] 
+[test]
 [test] Finished in 615 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_table_test_colps7kr;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -581,8 +581,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 49581
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_schema.test
 [test] JUnit Path: tests-serenedb-recovery-w6
@@ -594,17 +594,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 49581 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_schema_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_schema.test                                 .. [OK] in 592 ms
-[test] 
+[test]
 [test] Finished in 601 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_schema_test_mwbhjgte;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -621,8 +621,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 44597
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_inverted_index.test
 [test] JUnit Path: tests-serenedb-recovery-w5
@@ -634,17 +634,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 44597 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_inverted_index_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_inverted_index.test                         .. [OK] in 628 ms
-[test] 
+[test]
 [test] Finished in 634 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_inverted_index_test_1ffqpi0n;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -653,8 +653,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 45739
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_secondary_index.test
 [test] JUnit Path: tests-serenedb-recovery-w7
@@ -666,27 +666,27 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 45739 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_secondary_index_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_secondary_index.test                        .. [OK] in 598 ms
 [test] (DROP DATABASE IF EXISTS recovery_catalog_secondary_index_test_epeaxbff;) error: connection closed
 [test]   Retrying with new connection (1/1)...
-[test] 
+[test]
 [test] Finished in 602 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test]   Succeed
 [worker 7] PASS recovery/catalog_secondary_index.test
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57875
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/catalog_view.test
 [test] JUnit Path: tests-serenedb-recovery-w10
@@ -698,17 +698,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57875 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_catalog_view_test
 [test] [TEST IN PROGRESS]
 [test] recovery/catalog_view.test                                   .. [OK] in 620 ms
-[test] 
+[test]
 [test] Finished in 625 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_catalog_view_test_0z1wsq5f;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -721,8 +721,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 33431
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/indexonly_no_double_apply.test
 [test] JUnit Path: tests-serenedb-recovery-w19
@@ -734,19 +734,19 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 33431 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_indexonly_no_double_apply_test
 [test] [TEST IN PROGRESS]
 [test] recovery/indexonly_no_double_apply.test                      .. [FAILED] after 654 ms
-[test] 
+[test]
 [test] failed to run `recovery/indexonly_no_double_apply.test`
-[test] 
+[test]
 [test] Caused by:
 [test]     query result mismatch:
 [test]     [SQL] SELECT COUNT(*) FROM indexonly_no_double_idx WHERE body @@ ts_phrase('pudge unique phrase one');
@@ -754,9 +754,9 @@ Pre-building sqllogictest...
 [test]     +   count
 [test]         1
 [test]     at recovery/indexonly_no_double_apply.test:52
-[test]     
-[test] 
-[test] 
+[test]
+[test]
+[test]
 [test] Finished in 657 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_indexonly_no_double_apply_test_t5q08iqj;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -815,8 +815,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 60305
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/table_size.test
 [test] JUnit Path: tests-serenedb-recovery-w29
@@ -828,17 +828,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 60305 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_table_size_test
 [test] [TEST IN PROGRESS]
 [test] recovery/table_size.test                                     .. [OK] in 614 ms
-[test] 
+[test]
 [test] Finished in 620 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_table_size_test_bohxktyv;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -859,8 +859,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 34255
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/many_sequences_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w23
@@ -872,17 +872,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 34255 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_many_sequences_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/many_sequences_recovery.test                        .. [OK] in 673 ms
-[test] 
+[test]
 [test] Finished in 677 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_many_sequences_recovery_test_q4icm3sg;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -895,8 +895,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 41467
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/many_serials_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w24
@@ -908,17 +908,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 41467 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_many_serials_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/many_serials_recovery.test                          .. [OK] in 867 ms
-[test] 
+[test]
 [test] Finished in 870 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_many_serials_recovery_test_rmtcsilp;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -931,8 +931,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57967
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/sequence_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w27
@@ -944,17 +944,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57967 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_sequence_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/sequence_recovery.test                              .. [OK] in 1044 ms
-[test] 
+[test]
 [test] Finished in 1055 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_sequence_recovery_test_7hpmdyne;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -963,8 +963,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57153
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/serial_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w28
@@ -976,17 +976,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57153 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_serial_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/serial_recovery.test                                .. [OK] in 1068 ms
-[test] 
+[test]
 [test] Finished in 1073 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_serial_recovery_test_2ecrvzta;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1003,8 +1003,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 36265
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/indexonly_replay.test
 [test] JUnit Path: tests-serenedb-recovery-w20
@@ -1016,17 +1016,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 36265 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_indexonly_replay_test
 [test] [TEST IN PROGRESS]
 [test] recovery/indexonly_replay.test                               .. [OK] in 1106 ms
-[test] 
+[test]
 [test] Finished in 1112 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_indexonly_replay_test_td4obhbf;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1039,8 +1039,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 58583
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/auto_pk_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w1
@@ -1052,17 +1052,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 58583 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_auto_pk_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/auto_pk_recovery.test                               .. [OK] in 1298 ms
-[test] 
+[test]
 [test] Finished in 1302 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_auto_pk_recovery_test_2n18sqi7;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1075,8 +1075,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 50451
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/txn.test
 [test] JUnit Path: tests-serenedb-recovery-w30
@@ -1088,17 +1088,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 50451 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_txn_test
 [test] [TEST IN PROGRESS]
 [test] recovery/txn.test                                            .. [OK] in 1588 ms
-[test] 
+[test]
 [test] Finished in 1592 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_txn_test_y9guepp3;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1111,8 +1111,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 60313
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_update.test
 [test] JUnit Path: tests-serenedb-recovery-w31
@@ -1124,17 +1124,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 60313 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_update_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_update.test                      .. [OK] in 574 ms
-[test] 
+[test]
 [test] Finished in 576 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_update_test_2dvvh5vq;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1143,8 +1143,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 60273
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_only_non_indexed_writes.test
 [test] JUnit Path: tests-serenedb-recovery-w22
@@ -1156,17 +1156,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 60273 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_only_non_indexed_writes_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_only_non_indexed_writes.test     .. [OK] in 649 ms
-[test] 
+[test]
 [test] Finished in 652 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_only_non_indexed_writes_te_sw084jdl;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1175,8 +1175,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 41295
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/index_backfill.test
 [test] JUnit Path: tests-serenedb-recovery-w17
@@ -1188,17 +1188,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 41295 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_index_backfill_test
 [test] [TEST IN PROGRESS]
 [test] recovery/index_backfill.test                                 .. [OK] in 1716 ms
-[test] 
+[test]
 [test] Finished in 1721 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_index_backfill_test_lnxqzvda;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1211,8 +1211,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 53059
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_many_tables_mixed.test
 [test] JUnit Path: tests-serenedb-recovery-w15
@@ -1224,17 +1224,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 53059 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_many_tables_mixed_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_many_tables_mixed.test           .. [OK] in 708 ms
-[test] 
+[test]
 [test] Finished in 711 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_many_tables_mixed_test_49z0xijk;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1243,8 +1243,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 37667
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_noop.test
 [test] JUnit Path: tests-serenedb-recovery-w21
@@ -1256,17 +1256,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 37667 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_noop_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_noop.test                        .. [OK] in 564 ms
-[test] 
+[test]
 [test] Finished in 566 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_noop_test_r9a9jsso;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1275,8 +1275,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57427
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/alter_rename.test
 [test] JUnit Path: tests-serenedb-recovery-w0
@@ -1288,17 +1288,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57427 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_alter_rename_test
 [test] [TEST IN PROGRESS]
 [test] recovery/alter_rename.test                                   .. [OK] in 2155 ms
-[test] 
+[test]
 [test] Finished in 2161 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_alter_rename_test_o5wnhfu3;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1311,8 +1311,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57373
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_populate_crash.test
 [test] JUnit Path: tests-serenedb-recovery-w25
@@ -1324,17 +1324,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57373 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_populate_crash_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_populate_crash.test              .. [OK] in 1464 ms
-[test] 
+[test]
 [test] Finished in 1467 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_populate_crash_test_oqbi8tjq;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1343,8 +1343,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 50551
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/drop.test
 [test] JUnit Path: tests-serenedb-recovery-w13
@@ -1356,17 +1356,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 50551 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_drop_test
 [test] [TEST IN PROGRESS]
 [test] recovery/drop.test                                           .. [OK] in 2708 ms
-[test] 
+[test]
 [test] Finished in 2715 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_drop_test_glrx0gnt;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1379,8 +1379,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 46345
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/index_backfill_segments.test
 [test] JUnit Path: tests-serenedb-recovery-w18
@@ -1392,17 +1392,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 46345 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_index_backfill_segments_test
 [test] [TEST IN PROGRESS]
 [test] recovery/index_backfill_segments.test                        .. [OK] in 3911 ms
-[test] 
+[test]
 [test] Finished in 3915 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 18] PASS recovery/index_backfill_segments.test
 
@@ -1412,8 +1412,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 55813
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_delete.test
 [test] JUnit Path: tests-serenedb-recovery-w4
@@ -1425,17 +1425,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 55813 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_delete_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_delete.test                      .. [OK] in 567 ms
-[test] 
+[test]
 [test] Finished in 569 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_delete_test_oqhizerc;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1444,8 +1444,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 56681
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_drop_table.test
 [test] JUnit Path: tests-serenedb-recovery-w9
@@ -1457,17 +1457,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 56681 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_drop_table_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_drop_table.test                  .. [OK] in 595 ms
-[test] 
+[test]
 [test] Finished in 598 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_drop_table_test_niyqgqbc;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1476,8 +1476,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 59417
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_revival.test
 [test] JUnit Path: tests-serenedb-recovery-w26
@@ -1489,17 +1489,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 59417 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_revival_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_revival.test                     .. [OK] in 587 ms
-[test] 
+[test]
 [test] Finished in 589 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_revival_test_prtlc9o7;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1508,8 +1508,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 42395
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_drop_database.test
 [test] JUnit Path: tests-serenedb-recovery-w6
@@ -1521,17 +1521,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 42395 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_drop_database_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_drop_database.test               .. [OK] in 578 ms
-[test] 
+[test]
 [test] Finished in 580 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_drop_database_test_bgenewbb;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1540,8 +1540,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57017
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_delete_then_insert.test
 [test] JUnit Path: tests-serenedb-recovery-w5
@@ -1553,17 +1553,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57017 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_delete_then_insert_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_delete_then_insert.test          .. [OK] in 554 ms
-[test] 
+[test]
 [test] Finished in 557 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_delete_then_insert_test_6eeko1xs;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1572,8 +1572,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 40175
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_drop_schema.test
 [test] JUnit Path: tests-serenedb-recovery-w8
@@ -1585,17 +1585,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 40175 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_drop_schema_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_drop_schema.test                 .. [OK] in 613 ms
-[test] 
+[test]
 [test] Finished in 615 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_drop_schema_test_inep8jaj;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1604,8 +1604,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 40765
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/update.test
 [test] JUnit Path: tests-serenedb-recovery-w0
@@ -1617,24 +1617,24 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 40765 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_update_test
 [test] [TEST IN PROGRESS]
 [test] recovery/update.test                                         .. [OK] in 53 ms
-[test] 
+[test]
 [test] Finished in 55 ms. Engine: pg-wire-simple, labels: [serenedb]
 [worker 0] PASS recovery/update.test
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 35707
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_drop_index.test
 [test] JUnit Path: tests-serenedb-recovery-w7
@@ -1646,17 +1646,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 35707 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_drop_index_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_drop_index.test                  .. [OK] in 592 ms
-[test] 
+[test]
 [test] Finished in 595 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_drop_index_test_rjsagdx2;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1669,8 +1669,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 55147
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_types.test
 [test] JUnit Path: tests-serenedb-recovery-w29
@@ -1682,17 +1682,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 55147 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_types_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_types.test                       .. [OK] in 590 ms
-[test] 
+[test]
 [test] Finished in 592 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_types_test_kcfmfeoy;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1701,8 +1701,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 37507
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_partial_lag.test
 [test] JUnit Path: tests-serenedb-recovery-w23
@@ -1714,17 +1714,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 37507 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_partial_lag_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_partial_lag.test                 .. [OK] in 586 ms
-[test] 
+[test]
 [test] Finished in 590 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_partial_lag_test_6rcrlo9t;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1733,8 +1733,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 51019
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_no_index_tables.test
 [test] JUnit Path: tests-serenedb-recovery-w19
@@ -1746,17 +1746,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 51019 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_no_index_tables_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_no_index_tables.test             .. [OK] in 642 ms
-[test] 
+[test]
 [test] Finished in 644 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_no_index_tables_test_dbpo7ycx;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1765,8 +1765,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 53785
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_pk_update.test
 [test] JUnit Path: tests-serenedb-recovery-w24
@@ -1778,17 +1778,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 53785 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_pk_update_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_pk_update.test                   .. [OK] in 594 ms
-[test] 
+[test]
 [test] Finished in 598 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_pk_update_test_eufm1mnm;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1797,8 +1797,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 49489
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_non_indexed_update.test
 [test] JUnit Path: tests-serenedb-recovery-w20
@@ -1810,17 +1810,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 49489 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_non_indexed_update_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_non_indexed_update.test          .. [OK] in 568 ms
-[test] 
+[test]
 [test] Finished in 570 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_non_indexed_update_test_isamjezi;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1829,8 +1829,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 45179
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_bulk.test
 [test] JUnit Path: tests-serenedb-recovery-w2
@@ -1842,17 +1842,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 45179 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_bulk_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_bulk.test                        .. [OK] in 1159 ms
-[test] 
+[test]
 [test] Finished in 1161 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_bulk_test_pxccvacf;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1861,8 +1861,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 45509
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_tick_in_past.test
 [test] JUnit Path: tests-serenedb-recovery-w28
@@ -1874,17 +1874,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 45509 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_tick_in_past_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_tick_in_past.test                .. [OK] in 649 ms
-[test] 
+[test]
 [test] Finished in 652 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_tick_in_past_test_oovh61gf;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1893,8 +1893,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 38801
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_empty_to_full.test
 [test] JUnit Path: tests-serenedb-recovery-w10
@@ -1906,17 +1906,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 38801 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_empty_to_full_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_empty_to_full.test               .. [OK] in 1217 ms
-[test] 
+[test]
 [test] Finished in 1220 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_empty_to_full_test_htrvh1pf;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1925,8 +1925,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 44033
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery.test
 [test] JUnit Path: tests-serenedb-recovery-w1
@@ -1938,17 +1938,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 44033 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery.test                             .. [OK] in 558 ms
-[test] 
+[test]
 [test] Finished in 560 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_test_qyp9n1vc;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1961,8 +1961,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 37485
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_long_strings.test
 [test] JUnit Path: tests-serenedb-recovery-w14
@@ -1974,17 +1974,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 37485 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_long_strings_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_long_strings.test                .. [OK] in 1377 ms
-[test] 
+[test]
 [test] Finished in 1379 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_long_strings_test_evtolsun;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -1993,8 +1993,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 45803
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_unicode.test
 [test] JUnit Path: tests-serenedb-recovery-w30
@@ -2006,17 +2006,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 45803 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_unicode_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_unicode.test                     .. [OK] in 565 ms
-[test] 
+[test]
 [test] Finished in 568 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_unicode_test_3s5gyxgs;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2025,8 +2025,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 54693
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_multi_index.test
 [test] JUnit Path: tests-serenedb-recovery-w17
@@ -2038,17 +2038,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 54693 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_multi_index_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_multi_index.test                 .. [OK] in 575 ms
-[test] 
+[test]
 [test] Finished in 577 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_multi_index_test_guar6twk;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2057,8 +2057,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 59139
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_chain.test
 [test] JUnit Path: tests-serenedb-recovery-w3
@@ -2070,17 +2070,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 59139 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_chain_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_chain.test                       .. [OK] in 2734 ms
-[test] 
+[test]
 [test] Finished in 2737 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_chain_test_481oyovb;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2089,8 +2089,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 57739
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/ctas.test
 [test] JUnit Path: tests-serenedb-recovery-w12
@@ -2102,17 +2102,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 57739 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_ctas_test
 [test] [TEST IN PROGRESS]
 [test] recovery/ctas.test                                           .. [OK] in 5281 ms
-[test] 
+[test]
 [test] Finished in 5288 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_ctas_test_mnippa1x;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2125,8 +2125,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 48429
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_keep_other_cols.test
 [test] JUnit Path: tests-serenedb-recovery-w13
@@ -2138,17 +2138,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 48429 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_keep_other_cols_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_keep_other_cols.test             .. [OK] in 589 ms
-[test] 
+[test]
 [test] Finished in 592 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_keep_other_cols_test_xirhigfj;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2157,8 +2157,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 39081
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_multicolumn.test
 [test] JUnit Path: tests-serenedb-recovery-w18
@@ -2170,17 +2170,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 39081 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_multicolumn_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_multicolumn.test                 .. [OK] in 561 ms
-[test] 
+[test]
 [test] Finished in 563 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_multicolumn_test_0okb6she;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2189,8 +2189,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 60645
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_update_all_cols.test
 [test] JUnit Path: tests-serenedb-recovery-w0
@@ -2202,17 +2202,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 60645 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_update_all_cols_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_update_all_cols.test             .. [OK] in 598 ms
-[test] 
+[test]
 [test] Finished in 600 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_update_all_cols_test_ws41y6ee;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2221,8 +2221,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 34107
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_with_secondary.test
 [test] JUnit Path: tests-serenedb-recovery-w1
@@ -2234,17 +2234,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 34107 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_with_secondary_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_with_secondary.test              .. [OK] in 582 ms
-[test] 
+[test]
 [test] Finished in 584 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_with_secondary_test_qya5xpnm;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2253,8 +2253,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 55253
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_interleaved_writes.test
 [test] JUnit Path: tests-serenedb-recovery-w12
@@ -2266,17 +2266,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 55253 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_interleaved_writes_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_interleaved_writes.test          .. [OK] in 661 ms
-[test] 
+[test]
 [test] Finished in 663 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_interleaved_writes_test_4ghavoh2;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2285,8 +2285,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 51073
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/index.test
 [test] JUnit Path: tests-serenedb-recovery-w16
@@ -2298,17 +2298,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 51073 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_index_test
 [test] [TEST IN PROGRESS]
 [test] recovery/index.test                                          .. [OK] in 8232 ms
-[test] 
+[test]
 [test] Finished in 8238 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_index_test_j0uubkus;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2321,8 +2321,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 51491
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_huge.test_slow
 [test] JUnit Path: tests-serenedb-recovery-w11
@@ -2334,17 +2334,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 51491 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_huge_test_slow
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_huge.test_slow                   .. [OK] in 8174 ms
-[test] 
+[test]
 [test] Finished in 8176 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_huge_test_slow_difojwdl;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2353,8 +2353,8 @@ Pre-building sqllogictest...
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 53561
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_mixed.test
 [test] JUnit Path: tests-serenedb-recovery-w16
@@ -2366,17 +2366,17 @@ Pre-building sqllogictest...
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 53561 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_mixed_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_mixed.test                       .. [OK] in 569 ms
-[test] 
+[test]
 [test] Finished in 572 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_mixed_test_9ismwhzt;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2386,8 +2386,8 @@ Worker 19 failed (exit 1)
 [test] Database: serenedb
 [test] Host: localhost
 [test] Single Port: 42233
-[test] Single Port SSL: 
-[test] Cluster Port: 
+[test] Single Port SSL:
+[test] Cluster Port:
 [test] Engines: pg-wire-simple
 [test] Test Paths: recovery/wal_index_recovery_stress_loop.test
 [test] JUnit Path: tests-serenedb-recovery-w27
@@ -2399,17 +2399,17 @@ Worker 19 failed (exit 1)
 [test] Format: false
 [test] Show all errors: false
 [test] Fast: false
-[test] Skip failed: 
-[test] Skip: 
+[test] Skip failed:
+[test] Skip:
 [test] Iterations: 1
 [test] Cancellation: false
-[test] 
+[test]
 [test] Running tests for serenedb database on port 42233 with pg-wire-simple engine
-[test] 
+[test]
 [test] + Discovered Test: recovery_wal_index_recovery_stress_loop_test
 [test] [TEST IN PROGRESS]
 [test] recovery/wal_index_recovery_stress_loop.test                 .. [OK] in 10815 ms
-[test] 
+[test]
 [test] Finished in 10818 ms. Engine: pg-wire-simple, labels: [serenedb]
 [test] (DROP DATABASE IF EXISTS recovery_wal_index_recovery_stress_loop_test_aoor6hse;) error: connection closed
 [test]   Retrying with new connection (1/1)...
@@ -2425,4 +2425,4 @@ Failed tests:
 Serened logs: /tmp/serened-logs-vqX6Hw (per-worker worker-N.log)
 Recovery tests FAILED
 Cleaning up serened instances...
-Killing leftover recovery processes: 3124030 3124031 3124032 3124034 3124040 3124041 3124042 3124043 3124045 3124046 3124047 3124048 3124052 3124057 3124064 3124065 3124073 3124075 3124088 3124109 3124112 3124114 3124116 3124119 3124120 3124122 3124129 3124130 3124142 3124149 3124150 3124193 3124220 3124224 3124232 3124254 3124263 3124292 3129008 3129895 3129982 3129988 3129993 3129995 3130031 3130033 3130041 3130043 3130132 3130373 3130457 3130586 3130589 3130590 3130662 3130743 3131222 3131563 3132206 3134786 3134793 3134911 3134915 3135585 3136713 3136825 3137013 3137015 3137034 3137970 3138186 3138265 3138276 3138285 3138293 3138306 3138318 3138476 3138477 3138763 3138770 3138777 3138851 3138856 3138859 3138890 3139152 3140733 3140892 3140901 3141008 3141083 3141584 3142095 3142218 3142219 3142227 3142501 3142648 3142687 3142811 3142814 3142881 3142914 3143022 3143085 3143961 3144475 3144755 3145397 3145447 3145501 3145610 3146189 3146563 3146566 3146903 3147091 3147679 3148131 3148231 3148250 3148680 3148751 3149029 3149609 3149768 3149967 3150273 3150968 3151327 3151848 
+Killing leftover recovery processes: 3124030 3124031 3124032 3124034 3124040 3124041 3124042 3124043 3124045 3124046 3124047 3124048 3124052 3124057 3124064 3124065 3124073 3124075 3124088 3124109 3124112 3124114 3124116 3124119 3124120 3124122 3124129 3124130 3124142 3124149 3124150 3124193 3124220 3124224 3124232 3124254 3124263 3124292 3129008 3129895 3129982 3129988 3129993 3129995 3130031 3130033 3130041 3130043 3130132 3130373 3130457 3130586 3130589 3130590 3130662 3130743 3131222 3131563 3132206 3134786 3134793 3134911 3134915 3135585 3136713 3136825 3137013 3137015 3137034 3137970 3138186 3138265 3138276 3138285 3138293 3138306 3138318 3138476 3138477 3138763 3138770 3138777 3138851 3138856 3138859 3138890 3139152 3140733 3140892 3140901 3141008 3141083 3141584 3142095 3142218 3142219 3142227 3142501 3142648 3142687 3142811 3142814 3142881 3142914 3143022 3143085 3143961 3144475 3144755 3145397 3145447 3145501 3145610 3146189 3146563 3146566 3146903 3147091 3147679 3148131 3148231 3148250 3148680 3148751 3149029 3149609 3149768 3149967 3150273 3150968 3151327 3151848

@@ -125,10 +125,14 @@ inline std::optional<Decoded> Decode(rocksdb::Slice blob) {
 
   Decoded d;
   if (magic == wal_log_data::kIndexOnlyCp) {
-    if (rest.size() < sizeof(uint32_t)) return std::nullopt;
+    if (rest.size() < sizeof(uint32_t)) {
+      return std::nullopt;
+    }
     auto key_len = absl::big_endian::Load32(rest.data());
     rest.remove_prefix(sizeof(uint32_t));
-    if (rest.size() < key_len) return std::nullopt;
+    if (rest.size() < key_len) {
+      return std::nullopt;
+    }
     d.key = rest.substr(0, key_len);
     d.value = rest.substr(key_len);
     d.kind = MarkerKind::CP;

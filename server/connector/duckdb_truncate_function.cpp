@@ -26,8 +26,10 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/object.h"
 #include "catalog/table.h"
@@ -97,6 +99,11 @@ void TruncateResolvedTable(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("TRUNCATE: atomic write failed: ", s.ToString()));
   }
+
+  // Crash window simulator: rocksdb WAL is durable but iresearch state
+  // is still pre-truncate. WAL recovery's DeleteRangeCF must catch up
+  // every inverted shard on restart.
+  SDB_IF_FAILURE("TRUNCATE::CrashAfterRocksdbWrite") { SDB_IMMEDIATE_ABORT(); }
 
   // Phase 2: rocksdb is durable. Anchor the in-memory state to the
   // post-write seq while still holding every inverted shard's commit mutex

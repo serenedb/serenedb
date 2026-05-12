@@ -61,12 +61,20 @@ class ColumnReader final {
 
   // LIST<child> ctor. data_pointers carry per-row UBIGINT lengths; offsets
   // are recovered as cumulative sums per row group (cached in
-  // _list_offsets_per_rg).
+  // _list_offsets_per_rg). Also used for MAP, which DuckDB encodes as
+  // LIST<STRUCT<key,value>> at PhysicalType::LIST.
   ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
                std::vector<duckdb::DataPointer> data_pointers,
                std::vector<duckdb::DataPointer> validity_pointers,
                std::unique_ptr<ColumnReader> element_child, IndexInput& in,
                duckdb::DatabaseInstance& db);
+
+  // STRUCT ctor. No top-level data of its own; row count is taken from
+  // child[0]. Each child mirrors duckdb::StructColumnData::sub_columns.
+  ColumnReader(field_id id, std::string name, duckdb::LogicalType type,
+               std::vector<duckdb::DataPointer> validity_pointers,
+               std::vector<std::unique_ptr<ColumnReader>> struct_children,
+               IndexInput& in, duckdb::DatabaseInstance& db);
 
   ColumnReader(const ColumnReader&) = delete;
   ColumnReader& operator=(const ColumnReader&) = delete;
@@ -177,6 +185,13 @@ class ColumnReader final {
   const ColumnReader* Child() const noexcept { return _child.get(); }
   uint64_t ArraySize() const noexcept { return _array_size; }
 
+  // STRUCT field access. Empty for non-STRUCT.
+  size_t StructFieldCount() const noexcept { return _struct_fields.size(); }
+  const ColumnReader& StructField(size_t i) const noexcept {
+    SDB_ASSERT(i < _struct_fields.size());
+    return *_struct_fields[i];
+  }
+
   // LIST<T> per-row-group offsets. Cached prefix sum of size rg_rows + 1:
   // row i's element span is [offsets[i], offsets[i+1]).
   std::span<const uint64_t> ListOffsets(size_t rg) const;
@@ -233,6 +248,7 @@ class ColumnReader final {
   uint64_t _row_count = 0;
   std::unique_ptr<ColumnReader> _child;
   uint64_t _array_size = 0;  // 0 for non-ARRAY
+  std::vector<std::unique_ptr<ColumnReader>> _struct_fields;  // empty for non-STRUCT
   IndexInput* _in;
   duckdb::DatabaseInstance* _db;
 

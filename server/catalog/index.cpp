@@ -338,17 +338,16 @@ Result ValidateInvertedIndexColumns(
     }
     if (c.opclass == "included") {
       // INCLUDE accepts whatever the new-cs columnstore can write+read.
-      // Supported: every flat scalar type, LIST<T> and ARRAY<T,N>
-      // (recursive PersistentColumnData with element child).
-      // Not yet supported: STRUCT / MAP / UNION / VARIANT (no shredded
-      // writer/materializer) and GEOMETRY (DuckDB may shred it into
-      // nested children -- see types.cpp SupportsRegularUpdate). All
-      // other "weird" ids (TABLE / AGGREGATE_STATE / LAMBDA / TYPE /
-      // template/literal placeholders) aren't real storage types and
-      // shouldn't reach this path, but reject defensively.
+      // Supported: every flat scalar type plus LIST<T>, ARRAY<T,N>,
+      // STRUCT<...>, MAP<K,V>. Nested compositions of those work too.
+      // Not yet supported: UNION / VARIANT (writer treats them as plain
+      // STRUCT, dropping the discriminator semantics) and GEOMETRY
+      // (DuckDB may shred into nested children -- see types.cpp
+      // SupportsRegularUpdate). All other "weird" ids (TABLE /
+      // AGGREGATE_STATE / LAMBDA / TYPE / template/literal placeholders)
+      // aren't real storage types and shouldn't reach this path, but
+      // reject defensively.
       const bool unsupported =
-        kind == duckdb::LogicalTypeId::STRUCT ||
-        kind == duckdb::LogicalTypeId::MAP ||
         kind == duckdb::LogicalTypeId::UNION ||
         kind == duckdb::LogicalTypeId::VARIANT ||
         kind == duckdb::LogicalTypeId::GEOMETRY ||

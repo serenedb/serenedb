@@ -24,6 +24,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
 #include <span>
@@ -51,96 +52,126 @@ namespace sdb::connector {
 template<typename T>
 concept DocIdRange = requires(const T& t, size_t i) {
   { t.size() } -> std::convertible_to<size_t>;
-  { t[i] } -> std::convertible_to<irs::doc_id_t>;
+  { t[i] } -> std::convertible_to<uint64_t>;
 };
 
 namespace cs_internal {
 
-inline void MaterializeListRow(const irs::columnstore::ColumnReader& reader,
-                               uint64_t doc_id, duckdb::Vector& out_vec,
-                               duckdb::idx_t out_idx) {
-  const auto window = reader.Locate(doc_id);
-  const uint64_t in_rg = doc_id - window.begin;
-  const auto offsets = reader.ListOffsets(window.rg);
-  SDB_ASSERT(in_rg + 1 < offsets.size());
-  const uint64_t local_start = offsets[in_rg];
-  const uint64_t length = offsets[in_rg + 1] - local_start;
-  const uint64_t global_start =
-    reader.RowGroupElementStart(window.rg) + local_start;
+// Contiguous integer range [start, start+count) shaped as a DocIdRange.
+// Used to recurse into ARRAY element ranges and LIST per-row element
+// ranges where the doc-id range is purely arithmetic from the parent row.
+struct IotaRange {
+  uint64_t start;
+  uint64_t count;
+  constexpr size_t size() const noexcept {
+    return static_cast<size_t>(count);
+  }
+  constexpr uint64_t operator[](size_t i) const noexcept { return start + i; }
+};
+static_assert(DocIdRange<IotaRange>);
 
-  auto* list_entries =
-    duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(out_vec);
-  const duckdb::idx_t prior_size = duckdb::ListVector::GetListSize(out_vec);
-  list_entries[out_idx] = duckdb::list_entry_t{prior_size, length};
-  if (length == 0) {
+// Generic recursive materializer. Mirrors duckdb::ColumnData::ScanCount's
+// per-type recursion: scan parent validity into the output vector first,
+// then dispatch on the structural payload (primitive data / ARRAY child /
+// LIST length+child). Recursing through the same entry point honours the
+// child's own validity and nested structural layout, so e.g. NULL elements
+// inside a non-null list roundtrip correctly.
+template<DocIdRange DocIds>
+void MaterializeNode(const irs::columnstore::ColumnReader& reader,
+                     const DocIds& doc_ids, duckdb::Vector& out_vec,
+                     duckdb::idx_t output_start) {
+  if (doc_ids.size() == 0) {
     return;
   }
-  duckdb::ListVector::Reserve(out_vec, prior_size + length);
-  duckdb::Vector& child_out = duckdb::ListVector::GetChildMutable(out_vec);
-  const auto* child_reader = reader.Child();
-  SDB_ASSERT(child_reader);
-
-  irs::columnstore::ColumnReader::RangeScan range{*child_reader};
-  range.Scan(global_start, length, child_out, prior_size);
-  duckdb::ListVector::SetListSize(out_vec, prior_size + length);
-}
-
-template<DocIdRange DocIds>
-void MaterializeArrayRange(const irs::columnstore::ColumnReader& reader,
-                           const DocIds& doc_ids, duckdb::Vector& out_vec,
-                           duckdb::idx_t output_start) {
-  const auto array_size = reader.ArraySize();
-  SDB_ASSERT(array_size > 0);
-  const auto* child_reader = reader.Child();
-  SDB_ASSERT(child_reader);
-  duckdb::Vector& child_out = duckdb::ArrayVector::GetChildMutable(out_vec);
-
-  irs::columnstore::ColumnReader::RangeScan range{*child_reader};
-  for (size_t i = 0; i < doc_ids.size(); ++i) {
-    const uint64_t elem_start = static_cast<uint64_t>(doc_ids[i]) * array_size;
-    const duckdb::idx_t child_out_start =
-      (output_start + i) * static_cast<duckdb::idx_t>(array_size);
-    range.Scan(elem_start, array_size, child_out, child_out_start);
+  using irs::columnstore::ColumnReader;
+  if (reader.HasValidity()) {
+    ColumnReader::RangeScan validity_scan{reader, /*validity_side=*/true};
+    ColumnReader::ScanRowsBatched(validity_scan, doc_ids, out_vec,
+                                  output_start);
+  }
+  switch (reader.Type().id()) {
+    case duckdb::LogicalTypeId::ARRAY: {
+      const auto* child = reader.Child();
+      SDB_ASSERT(child);
+      const auto array_size = reader.ArraySize();
+      SDB_ASSERT(array_size > 0);
+      auto& child_out = duckdb::ArrayVector::GetChildMutable(out_vec);
+      for (size_t i = 0; i < doc_ids.size(); ++i) {
+        const uint64_t parent_doc = static_cast<uint64_t>(doc_ids[i]);
+        const uint64_t elem_start = parent_doc * array_size;
+        const auto child_out_start =
+          static_cast<duckdb::idx_t>((output_start + i) * array_size);
+        MaterializeNode(*child, IotaRange{elem_start, array_size}, child_out,
+                        child_out_start);
+      }
+      return;
+    }
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::LIST: {
+      // MAP shares LIST's physical layout (PhysicalType::LIST with a
+      // STRUCT<k,v> element vector); the same accessors work.
+      if (reader.RowGroupCount() == 0) {
+        return;
+      }
+      const auto* child = reader.Child();
+      SDB_ASSERT(child);
+      auto* list_entries =
+        duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(out_vec);
+      auto& child_out = duckdb::ListVector::GetChildMutable(out_vec);
+      for (size_t i = 0; i < doc_ids.size(); ++i) {
+        const uint64_t doc = static_cast<uint64_t>(doc_ids[i]);
+        const auto window = reader.Locate(doc);
+        const uint64_t in_rg = doc - window.begin;
+        const auto offsets = reader.ListOffsets(window.rg);
+        SDB_ASSERT(in_rg + 1 < offsets.size());
+        const uint64_t local_start = offsets[in_rg];
+        const uint64_t length = offsets[in_rg + 1] - local_start;
+        const uint64_t global_start =
+          reader.RowGroupElementStart(window.rg) + local_start;
+        const auto prior_size = duckdb::ListVector::GetListSize(out_vec);
+        list_entries[output_start + i] =
+          duckdb::list_entry_t{prior_size, length};
+        if (length == 0) {
+          continue;
+        }
+        duckdb::ListVector::Reserve(out_vec, prior_size + length);
+        MaterializeNode(*child, IotaRange{global_start, length}, child_out,
+                        prior_size);
+        duckdb::ListVector::SetListSize(out_vec, prior_size + length);
+      }
+      return;
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      // Same recursion as duckdb::StructColumnData::ScanCount: validity
+      // already on out_vec, each field scans the same doc_ids into its
+      // own slot.
+      auto& entries = duckdb::StructVector::GetEntries(out_vec);
+      SDB_ASSERT(entries.size() == reader.StructFieldCount());
+      for (size_t fi = 0; fi < entries.size(); ++fi) {
+        MaterializeNode(reader.StructField(fi), doc_ids, entries[fi],
+                        output_start);
+      }
+      return;
+    }
+    default: {
+      if (reader.RowGroupCount() == 0) {
+        return;
+      }
+      ColumnReader::RangeScan data{reader, /*validity_side=*/false};
+      ColumnReader::ScanRowsBatched(data, doc_ids, out_vec, output_start);
+      return;
+    }
   }
 }
 
 }  // namespace cs_internal
 
-// Materializes one column for sorted-ascending doc_ids into
-// out_vec[output_start..]. Handles primitives, ARRAY and LIST.
+// Materialises `doc_ids` from `reader` into out_vec[output_start..].
 template<DocIdRange DocIds>
 void MaterializeColumnRange(const irs::columnstore::ColumnReader& reader,
                             const DocIds& doc_ids, duckdb::Vector& out_vec,
                             duckdb::idx_t output_start) {
-  if (doc_ids.size() == 0) {
-    return;
-  }
-  const auto type_id = reader.Type().id();
-  // ARRAY has no top-level data side; short-circuit before the
-  // RowGroupCount == 0 guard.
-  if (type_id == duckdb::LogicalTypeId::ARRAY) {
-    cs_internal::MaterializeArrayRange(reader, doc_ids, out_vec, output_start);
-    return;
-  }
-  if (reader.RowGroupCount() == 0) {
-    return;
-  }
-  if (type_id == duckdb::LogicalTypeId::LIST) {
-    for (size_t i = 0; i < doc_ids.size(); ++i) {
-      cs_internal::MaterializeListRow(reader, static_cast<uint64_t>(doc_ids[i]),
-                                      out_vec, output_start + i);
-    }
-    return;
-  }
-  using irs::columnstore::ColumnReader;
-  {
-    ColumnReader::RangeScan data{reader, /*validity_side=*/false};
-    ColumnReader::ScanRowsBatched(data, doc_ids, out_vec, output_start);
-  }
-  if (reader.HasValidity()) {
-    ColumnReader::RangeScan validity{reader, /*validity_side=*/true};
-    ColumnReader::ScanRowsBatched(validity, doc_ids, out_vec, output_start);
-  }
+  cs_internal::MaterializeNode(reader, doc_ids, out_vec, output_start);
 }
 
 // One instance per (segment, projection set) for INCLUDEd columns flagged

@@ -42,6 +42,22 @@ const duckdb::LogicalType kLengthsType{duckdb::LogicalTypeId::UBIGINT};
 const duckdb::LogicalType kValidityType{duckdb::LogicalTypeId::VALIDITY};
 
 }  // namespace
+namespace {
+
+// Validity pointers are always present (one per RG) but each pointer
+// can be COMPRESSION_EMPTY, meaning that RG had no nulls and nothing
+// was actually written.  A column is "validity-bearing" only if some
+// RG carries non-EMPTY validity bits.
+bool AnyNonEmptyValidity(const std::vector<duckdb::DataPointer>& pointers) {
+  for (const auto& p : pointers) {
+    if (p.compression_type != duckdb::CompressionType::COMPRESSION_EMPTY) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
 
 ColumnReader::ColumnReader(field_id id, std::string name,
                            duckdb::LogicalType type,
@@ -53,6 +69,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _in{&in},
     _db{&db} {
   auto build_offsets = [](const std::vector<duckdb::DataPointer>& pointers,
@@ -81,6 +98,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _name{std::move(name)},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _array_size{array_size},
     _in{&in},
@@ -110,6 +128,7 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     _type{std::move(type)},
     _data_pointers{std::move(data_pointers)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _child{std::move(element_child)},
     _in{&in},
     _db{&db} {
@@ -154,6 +173,7 @@ ColumnReader::ColumnReader(
     _name{std::move(name)},
     _type{std::move(type)},
     _validity_pointers{std::move(validity_pointers)},
+    _has_validity{AnyNonEmptyValidity(_validity_pointers)},
     _struct_fields{std::move(struct_children)},
     _in{&in},
     _db{&db} {
@@ -219,7 +239,21 @@ RgWindow ColumnReader::LocateValidity(uint64_t row_pos,
 
 void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
                                    duckdb::Vector& out,
-                                   duckdb::idx_t out_offset) {
+                                   duckdb::idx_t out_offset,
+                                   bool may_use_entire) {
+  // Mirrors duckdb::ColumnData::GetVectorScanType: SCAN_ENTIRE_VECTOR
+  // lets codecs (dict_fsst, dictionary, RLE) hand back compact vector
+  // shapes -- e.g. a 1k-entry DICTIONARY_VECTOR for a 2k-row scan of a
+  // dict-encoded varchar -- which downstream SUM(length()) can then
+  // operate over without expanding every row.  We only request it when:
+  //   - caller said it's safe (single Scan call into this Vector),
+  //   - this scan fits entirely in one segment (SCAN_ENTIRE_VECTOR
+  //     forbids out_offset > 0, and a follow-up SCAN_FLAT_VECTOR into
+  //     a now-DICT vector would assert),
+  //   - this isn't the validity side (validity codec writes per-row
+  //     bits, not a dict-shaped data vector),
+  //   - the column has no parent validity the caller already wrote
+  //     into FLAT validity bits -- a dict overwrite would lose them.
   while (count > 0) {
     if (row_pos < _window.begin || _window.end <= row_pos) {
       _window = _validity ? _reader->LocateValidity(row_pos, _window)
@@ -229,7 +263,12 @@ void ColumnReader::RangeScan::Scan(uint64_t row_pos, duckdb::idx_t count,
     }
     _cursor.SeekTo(row_pos - _window.begin);
     const auto take = std::min<duckdb::idx_t>(count, _window.end - row_pos);
-    _cursor.Scan(take, out, out_offset);
+    const bool single_shot = (out_offset == 0 && take == count);
+    const auto scan_type =
+      (may_use_entire && single_shot && !_validity && !_reader->HasValidity())
+        ? duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR
+        : duckdb::ScanVectorType::SCAN_FLAT_VECTOR;
+    _cursor.Scan(take, out, out_offset, scan_type);
     row_pos += take;
     count -= take;
     out_offset += take;

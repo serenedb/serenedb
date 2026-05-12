@@ -109,7 +109,6 @@ ATTACH '${NDB_SQL_PATH}' AS native_db (TYPE duckdb);
 SET search_path TO public, native_db.main;
 "
 
-
 # --- 1. Schema + data --------------------------------------------------------
 # All four nested columns are INCLUDE-only -- no text/posting machinery is
 # exercised. `inverted()` with no indexed columns is accepted: the catalog

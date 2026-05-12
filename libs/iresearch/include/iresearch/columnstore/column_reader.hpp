@@ -20,6 +20,8 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/vector_buffer.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_pointer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
@@ -44,6 +46,24 @@ struct RgWindow {
   duckdb::idx_t begin = 0;
   duckdb::idx_t end = 0;
 };
+
+// Length of the longest run starting at rows[i] where consecutive
+// elements differ by exactly 1, optionally capped by `upper_bound`
+// (exclusive). Shared by every site that coalesces doc_id batches into
+// contiguous sub-runs before issuing a Scan.
+template<typename Rows>
+inline size_t ConsecutiveRunLength(
+  const Rows& rows, size_t i,
+  uint64_t upper_bound = std::numeric_limits<uint64_t>::max()) noexcept {
+  size_t run = 1;
+  while (i + run < rows.size() &&
+         static_cast<uint64_t>(rows[i + run]) ==
+           static_cast<uint64_t>(rows[i + run - 1]) + 1 &&
+         static_cast<uint64_t>(rows[i + run]) < upper_bound) {
+    ++run;
+  }
+  return run;
+}
 
 class ColumnReader final {
  public:
@@ -91,7 +111,12 @@ class ColumnReader final {
   uint64_t RowGroupRowCount(size_t rg) const noexcept {
     return _data_pointers[rg].tuple_count;
   }
-  bool HasValidity() const noexcept { return !_validity_pointers.empty(); }
+  // True iff at least one row-group has a non-EMPTY validity codec.  An
+  // all-valid column still ships per-RG validity DataPointers (with codec
+  // = COMPRESSION_EMPTY) so the *array* is non-empty; callers care
+  // whether any actual validity bits need to be scanned, so we cache the
+  // real answer at construction.
+  bool HasValidity() const noexcept { return _has_validity; }
 
   RgWindow Locate(uint64_t row_pos, RgWindow hint = {}) const noexcept;
 
@@ -128,12 +153,29 @@ class ColumnReader final {
     }
 
     void Scan(duckdb::idx_t count, duckdb::Vector& out_vec,
-              duckdb::idx_t out_offset) {
-      _seg->Scan(_state, count, out_vec, out_offset,
-                 duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+              duckdb::idx_t out_offset,
+              duckdb::ScanVectorType scan_type =
+                duckdb::ScanVectorType::SCAN_FLAT_VECTOR) {
+      _seg->Scan(_state, count, out_vec, out_offset, scan_type);
       _state.offset_in_column += count;
       _state.internal_index += count;
       _cursor += count;
+      // SCAN_ENTIRE_VECTOR lets the codec zero-copy into `out_vec` --
+      // FixedSizeScan does `FlatVector::SetData(result, segment_data, ...)`
+      // pointing the result Vector at the segment's pinned page.  Our
+      // ScanCursor owns the segment and would drop the page the moment
+      // we move to a new row-group, so we pin a second reference to the
+      // BlockHandle and stash it on the result Vector's auxiliary data.
+      // The buffer then stays in memory until the downstream consumer
+      // resets the vector.
+      if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR &&
+          _seg->block) {
+        auto& bm = duckdb::BufferManager::GetBufferManager(_seg->db);
+        auto& block = _seg->block;
+        auto handle = bm.Pin(block);
+        out_vec.BufferMutable().AddAuxiliaryData(
+          std::make_unique<duckdb::PinnedBufferHolder>(std::move(handle)));
+      }
     }
 
     uint64_t Position() const noexcept { return _cursor; }
@@ -156,8 +198,12 @@ class ColumnReader final {
     RangeScan(RangeScan&&) noexcept = default;
     RangeScan& operator=(RangeScan&&) noexcept = default;
 
+    // `may_use_entire` lets the caller opt in to SCAN_ENTIRE_VECTOR when
+    // safe (single Scan call into `out`, no validity scan pre-write).
+    // Multi-run scans (random doc_ids) must keep it false: a follow-up
+    // SCAN_FLAT_VECTOR into the same vector would assert.
     void Scan(uint64_t row_pos, duckdb::idx_t count, duckdb::Vector& out,
-              duckdb::idx_t out_offset);
+              duckdb::idx_t out_offset, bool may_use_entire = false);
 
    private:
     const ColumnReader* _reader;
@@ -166,18 +212,33 @@ class ColumnReader final {
     RgWindow _window;
   };
 
+  // Default form: walk `rows`, coalesce consecutive doc_ids into runs
+  // (one range.Scan per run).
   template<typename Rows>
   static void ScanRowsBatched(RangeScan& range, const Rows& rows,
                               duckdb::Vector& out, duckdb::idx_t out_offset) {
-    size_t i = 0;
-    while (i < rows.size()) {
-      size_t run_len = 1;
-      while (i + run_len < rows.size() &&
-             rows[i + run_len] - rows[i + run_len - 1] == 1) {
-        ++run_len;
+    if constexpr (requires { typename Rows::contiguous_range_tag; }) {
+      // Caller has already attested the range is fully contiguous --
+      // skip the per-element consecutive-check loop and issue one scan.
+      // Since this is the only Scan call into `out`, SCAN_ENTIRE_VECTOR
+      // is safe (no follow-up FLAT write that would assert on a DICT
+      // result).
+      if (rows.size() != 0) {
+        range.Scan(rows[0], rows.size(), out, out_offset,
+                   /*may_use_entire=*/true);
       }
-      range.Scan(rows[i], run_len, out, out_offset + i);
-      i += run_len;
+      return;
+    } else {
+      // Random doc_ids: each run is a separate Scan call into the same
+      // output Vector.  Force SCAN_FLAT_VECTOR (default), otherwise the
+      // first run could leave the vector as DICTIONARY and the next
+      // run's FLAT write would assert.
+      size_t i = 0;
+      while (i < rows.size()) {
+        const size_t run_len = ConsecutiveRunLength(rows, i);
+        range.Scan(rows[i], run_len, out, out_offset + i);
+        i += run_len;
+      }
     }
   }
 
@@ -265,6 +326,7 @@ class ColumnReader final {
   std::vector<uint64_t> _data_offsets;      // size = data_pointers + 1
   std::vector<uint64_t> _validity_offsets;  // size = validity_pointers + 1
   uint64_t _row_count = 0;
+  bool _has_validity = false;  // any RG with non-EMPTY validity codec
   std::unique_ptr<ColumnReader> _child;
   uint64_t _array_size = 0;  // 0 for non-ARRAY
   std::vector<std::unique_ptr<ColumnReader>>

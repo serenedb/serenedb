@@ -18,20 +18,16 @@
 
 #include "connector/columnstore_materializer.h"
 
-#include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
-
 namespace sdb::connector {
 
 ColumnstoreMaterializer::ColumnstoreMaterializer(
-  const irs::Directory& dir, const irs::SegmentMeta& meta,
-  duckdb::DatabaseInstance& db, std::span<const irs::field_id> column_ids,
-  std::span<const duckdb::idx_t> output_slots)
-  : _reader{dir, meta.name, db} {
+  const irs::columnstore::Reader& reader,
+  std::span<const irs::field_id> column_ids,
+  std::span<const duckdb::idx_t> output_slots) {
   SDB_ASSERT(column_ids.size() == output_slots.size());
   _bound.reserve(column_ids.size());
   for (size_t i = 0; i < column_ids.size(); ++i) {
-    if (const auto* r = _reader.Column(column_ids[i])) {
+    if (const auto* r = reader.Column(column_ids[i])) {
       _bound.push_back(Binding{
         .reader = r,
         .output_slot = output_slots[i],
@@ -71,7 +67,8 @@ void ColumnstoreMaterializer::Scan(uint64_t start_doc, duckdb::idx_t count,
       duckdb::ListVector::SetListSize(out_vec, 0);
     }
     MaterializeColumnRange(*b.reader, *b.state,
-                           cs_internal::IotaRange{start_doc, count}, out_vec, 0);
+                           cs_internal::IotaRange{start_doc, count}, out_vec,
+                           0);
   }
 }
 

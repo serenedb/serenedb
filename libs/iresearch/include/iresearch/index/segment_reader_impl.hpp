@@ -82,6 +82,9 @@ class SegmentReaderImpl final : public SubReader {
 
   const columnstore::ColumnReader* Column(field_id field) const final;
   const columnstore::HNSWReader* HNSW(field_id field) const final;
+  const columnstore::Reader* CsReader() const final {
+    return _data ? _data->cs_reader.get() : nullptr;
+  }
 
  private:
   struct ColumnData {

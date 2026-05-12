@@ -64,6 +64,7 @@ namespace cs_internal {
 // Used to recurse into ARRAY element ranges and LIST per-row element
 // ranges where the doc-id range is purely arithmetic from the parent row.
 struct IotaRange {
+  using contiguous_range_tag = void;
   uint64_t start;
   uint64_t count;
   constexpr size_t size() const noexcept { return static_cast<size_t>(count); }
@@ -150,12 +151,7 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       // recursion -- the element ranges are contiguous in child space.
       size_t i = 0;
       while (i < doc_ids.size()) {
-        size_t run = 1;
-        while (i + run < doc_ids.size() &&
-               static_cast<uint64_t>(doc_ids[i + run]) ==
-                 static_cast<uint64_t>(doc_ids[i + run - 1]) + 1) {
-          ++run;
-        }
+        const size_t run = irs::columnstore::ConsecutiveRunLength(doc_ids, i);
         const uint64_t elem_start =
           static_cast<uint64_t>(doc_ids[i]) * array_size;
         const auto child_out_start =
@@ -189,13 +185,8 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
         const uint64_t doc0 = static_cast<uint64_t>(doc_ids[i]);
         state.rg_hint = reader.Locate(doc0, state.rg_hint);
         const auto& window = state.rg_hint;
-        size_t run = 1;
-        while (i + run < doc_ids.size() &&
-               static_cast<uint64_t>(doc_ids[i + run]) ==
-                 static_cast<uint64_t>(doc_ids[i + run - 1]) + 1 &&
-               static_cast<uint64_t>(doc_ids[i + run]) < window.end) {
-          ++run;
-        }
+        const size_t run =
+          irs::columnstore::ConsecutiveRunLength(doc_ids, i, window.end);
         const uint64_t first_in_rg = doc0 - window.begin;
         const uint64_t first_start = reader.ReadListOffsets(
           state.list_offsets, window.rg, first_in_rg,
@@ -265,9 +256,7 @@ class ColumnstoreMaterializer {
  public:
   // column_ids[i] -> output.data[output_slots[i]]. Columns absent from
   // this segment's .cs are skipped (caller materializes via IndexSource).
-  ColumnstoreMaterializer(const irs::Directory& dir,
-                          const irs::SegmentMeta& meta,
-                          duckdb::DatabaseInstance& db,
+  ColumnstoreMaterializer(const irs::columnstore::Reader& reader,
                           std::span<const irs::field_id> column_ids,
                           std::span<const duckdb::idx_t> output_slots);
 
@@ -288,7 +277,6 @@ class ColumnstoreMaterializer {
     std::unique_ptr<cs_internal::MaterializerNodeState> state;
   };
 
-  irs::columnstore::Reader _reader;
   std::vector<Binding> _bound;
 };
 

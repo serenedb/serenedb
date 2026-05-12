@@ -565,13 +565,6 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
     }
   }
   if (gstate.bulk_scan_active) {
-    auto& db_engine = query::DuckDBEngine::Instance().GetDB();
-    const auto& dir_reader =
-      basics::downCast<const irs::DirectoryReader>(reader);
-    const auto& dir_reader_impl = *dir_reader.GetImpl();
-    const auto& dir = dir_reader_impl.Dir();
-    const auto& segments = dir_reader_impl.Meta().index_meta.segments;
-
     duckdb::idx_t produced = 0;
     while (produced == 0 && gstate.bulk_scan_segment_idx < reader.size()) {
       auto& segment = reader[gstate.bulk_scan_segment_idx];
@@ -583,15 +576,17 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
         gstate.bulk_scan_materializer_seg = std::numeric_limits<size_t>::max();
         continue;
       }
-      // Open / reopen materializer at segment boundary. Construction parses
-      // the .cs footer so the per-call cost is amortised across many Scan
-      // batches in the same segment.
+      // Reopen the materializer at segment boundary, borrowing the
+      // segment's cached columnstore::Reader (the footer was parsed
+      // once when SegmentReaderImpl opened the segment, not per query).
       if (!gstate.bulk_scan_materializer ||
           gstate.bulk_scan_materializer_seg != gstate.bulk_scan_segment_idx) {
+        const auto* cs_reader = segment.CsReader();
+        SDB_ENSURE(cs_reader, sdb::ERROR_INTERNAL,
+                   "bulk cs scan: segment has no columnstore reader");
         gstate.bulk_scan_materializer =
           std::make_unique<ColumnstoreMaterializer>(
-            dir, segments[gstate.bulk_scan_segment_idx].meta,
-            *db_engine.instance, gstate.cs_field_ids, gstate.cs_output_slots);
+            *cs_reader, gstate.cs_field_ids, gstate.cs_output_slots);
         gstate.bulk_scan_materializer_seg = gstate.bulk_scan_segment_idx;
       }
       // Scan writes to output slots starting at index 0; stop at the
@@ -687,9 +682,7 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
           .segment = segment,
           .scorer = gstate.scorer_obj.get(),
         }));
-        auto& db_engine = query::DuckDBEngine::Instance().GetDB();
-        if (!gstate.search_segment_pk.Open(reader, seg_idx_to_open,
-                                           *db_engine.instance)) {
+        if (!gstate.search_segment_pk.Open(reader, seg_idx_to_open)) {
           gstate.search_doc.reset();
           continue;
         }
@@ -804,20 +797,17 @@ void SearchFullScanFunction(duckdb::ClientContext& context,
       // segment's doc_ids occupy a contiguous output range since run_scan
       // drains a segment before advancing.
       if (!gstate.cs_projections.empty()) {
-        auto& db_engine = query::DuckDBEngine::Instance().GetDB();
-        const auto& dir_reader =
-          basics::downCast<const irs::DirectoryReader>(reader);
-        const auto& dir_reader_impl = *dir_reader.GetImpl();
-        const auto& dir = dir_reader_impl.Dir();
-        const auto& segments = dir_reader_impl.Meta().index_meta.segments;
         for (size_t seg_idx = 0; seg_idx < gstate.cs_segment_doc_ids.size();
              ++seg_idx) {
           auto& doc_ids = gstate.cs_segment_doc_ids[seg_idx];
           if (doc_ids.empty()) {
             continue;
           }
-          ColumnstoreMaterializer mat{dir, segments[seg_idx].meta,
-                                      *db_engine.instance, gstate.cs_field_ids,
+          const auto* cs_reader = reader[seg_idx].CsReader();
+          if (!cs_reader) {
+            continue;
+          }
+          ColumnstoreMaterializer mat{*cs_reader, gstate.cs_field_ids,
                                       gstate.cs_output_slots};
           if (!mat.HasAny()) {
             continue;

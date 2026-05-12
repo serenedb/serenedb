@@ -40,7 +40,12 @@ struct JsonExpressionEval {
   catalog::Column::Id column_id;
 };
 
-bool IsValidJsonExpr(const duckdb::Expression& expr);
+// Walks a JSON-extract chain and validates every step (JSON-extract function
+// with a non-null constant key bottoming out at a BoundColumnRef). Returns
+// the leaf column ref on success, nullptr if the expression isn't a valid
+// JSON path.
+const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
+  const duckdb::Expression& expr);
 
 // Serialise a bound expression to an opaque byte buffer suitable for
 // catalog persistence and cross-context byte-comparison. The caller is

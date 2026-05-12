@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <span>
+#include <cstring>
 #include <string>
 
 #include "basics/string_utils.h"
@@ -29,53 +29,25 @@
 namespace sdb::connector {
 
 // Builds the iresearch field name for a column, optionally qualified by a
-// JSON path.
+// JSON-path entry's serialized canonical expression (the byte output of
+// `SerializeBoundExpression`). The suffix is opaque bytes -- both sides
+// produce it through the same canonicaliser, so we copy verbatim.
 //
 // Layout:
 //   [8 bytes BE column_id]      -- fixed-width column identifier
-//   [JSON Pointer (RFC 6901)]   -- empty when no path; "/k1/k2/..." otherwise
+//   [serialized_expr]           -- omitted when suffix is empty
 //   [type mangle byte]          -- caller-applied
 //
 // Caller is expected to apply the appropriate `search::mangling::Mangle*` on
 // the result before using it as an iresearch field name.
-// Overload for an already-canonicalised single-segment suffix (most callers
-// after the JSON-expression redesign).
-// TODO(mkornaukhov) make faster
 inline void MakeColumnFieldName(catalog::Column::Id column_id,
-                                std::string_view suffix, std::string& out) {
-  basics::StrResize(out, sizeof(column_id));
-  absl::big_endian::Store(out.data(), column_id);
-  if (suffix.empty()) {
-    return;
-  }
-  out.push_back('/');
-  for (char c : suffix) {
-    if (c == '~') {
-      out.append("~0");
-    } else if (c == '/') {
-      out.append("~1");
-    } else {
-      out.push_back(c);
-    }
-  }
-}
-
-inline void MakeColumnFieldName(catalog::Column::Id column_id,
-                                std::span<const std::string> path,
+                                std::string_view serialized_expr,
                                 std::string& out) {
-  basics::StrResize(out, sizeof(column_id));
+  basics::StrResize(out, sizeof(column_id) + serialized_expr.size());
   absl::big_endian::Store(out.data(), column_id);
-  for (const auto& key : path) {
-    out.push_back('/');
-    for (char c : key) {
-      if (c == '~') {
-        out.append("~0");
-      } else if (c == '/') {
-        out.append("~1");
-      } else {
-        out.push_back(c);
-      }
-    }
+  if (!serialized_expr.empty()) {
+    std::memcpy(out.data() + sizeof(column_id), serialized_expr.data(),
+                serialized_expr.size());
   }
 }
 

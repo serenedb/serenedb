@@ -1288,31 +1288,15 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
 
 const duckdb::BoundColumnRefExpression* TryGetJsonColumnRef(
   const duckdb::Expression& expr) {
-  // Outermost step must be a JSON-extract function -- otherwise this is not
-  // a JSON-path expression at all (e.g. `ts_like(...)` on the @@ RHS) and
-  // serialising it would pollute the catalog lookup with junk bytes.
+  // Outermost expression should be json_extract_string -- a non-string
+  // JSON-extract or anything else (e.g. ts_like on @@ RHS) is not the
+  // shape we index.
   if (expr.expression_class != duckdb::ExpressionClass::BOUND_FUNCTION ||
-      !IsJsonExtract(
+      !IsJsonExtractString(
         expr.Cast<duckdb::BoundFunctionExpression>().function.name)) {
     return nullptr;
   }
-  const duckdb::Expression* cur = &expr;
-  while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
-    const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
-    if (!IsJsonExtract(f.function.name) || f.children.empty()) {
-      // A non-JSON function in the chain disqualifies the expression.
-      return nullptr;
-    }
-    cur = f.children[0].get();
-  }
-
-  // Build the structural canonical (chunk-layout-AND-binder-state-
-  // independent) so this matches what CREATE INDEX stored in the catalog
-  // regardless of how the SELECT-side binder shaped its bound expression.
-  if (!IsValidJsonExpr(expr)) {
-    return nullptr;
-  }
-  return TryGetColumnRef(*cur);
+  return TryGetJsonLeafColumnRef(expr);
 }
 
 struct UnwrappedField {
@@ -1347,7 +1331,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   // to a base catalog column. The structural walk doesn't compute path
   // bytes anymore; the lambda does that itself via NormalizeBoundExpression
   // since it has the (table_id, col_index_to_id) context.
-  const auto* col_ref = TryGetJsonColumnRef(*unwrapped.expr);
+  const auto* col_ref = TryGetJsonLeafColumnRef(*unwrapped.expr);
   if (!col_ref) {
     return nullptr;
   }

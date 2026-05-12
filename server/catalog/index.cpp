@@ -216,7 +216,7 @@ Result ValidateInvertedIndexColumns(
     SDB_ASSERT(c.catalog_column);
     const auto kind = c.catalog_column->type.id();
     if (!c.serialized_json_expr.empty()) {
-      // TODO(mkornaukhov) deal with varchar/json confusion
+      // TODO(mkornaukhov) support JSON-typed (->>) expression
       if (kind != duckdb::LogicalTypeId::VARCHAR) {
         return {ERROR_BAD_PARAMETER, "Column ", c.name,
                 " must be a JSON/VARCHAR column to be indexed by path"};

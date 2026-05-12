@@ -73,8 +73,6 @@ duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   duckdb::MemoryStream stream(
     reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(bytes.data())),
     bytes.size());
-  // TODO(mkornaukhov)
-  // table id and column id are not correct after deserializing...
   duckdb::bound_parameter_map_t params;
   return duckdb::BinaryDeserializer::Deserialize<duckdb::Expression>(
     stream, context, params);
@@ -165,28 +163,28 @@ const duckdb::Expression* PeelBoundCasts(const duckdb::Expression* expr) {
   return expr;
 }
 
-bool IsValidJsonExpr(const duckdb::Expression& expr) {
+const duckdb::BoundColumnRefExpression* TryGetJsonLeafColumnRef(
+  const duckdb::Expression& expr) {
   const duckdb::Expression* cur = PeelBoundCasts(&expr);
   while (cur->expression_class == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& f = cur->Cast<duckdb::BoundFunctionExpression>();
     if (!IsJsonExtract(f.function.name) || f.children.size() != 2) {
-      return false;
+      return nullptr;
     }
     const auto* key_expr = PeelBoundCasts(f.children[1].get());
     if (key_expr->expression_class != duckdb::ExpressionClass::BOUND_CONSTANT) {
-      return false;
+      return nullptr;
     }
     const auto& key_const = key_expr->Cast<duckdb::BoundConstantExpression>();
-    if (key_const.value.IsNull()) {
-      return false;
-    }
-    std::string key_str;
-    if (!IsValidKey(key_const.value)) {
-      return false;
+    if (key_const.value.IsNull() || !IsValidKey(key_const.value)) {
+      return nullptr;
     }
     cur = PeelBoundCasts(f.children[0].get());
   }
-  return cur->expression_class == duckdb::ExpressionClass::BOUND_COLUMN_REF;
+  if (cur->expression_class != duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+    return nullptr;
+  }
+  return &cur->Cast<duckdb::BoundColumnRefExpression>();
 }
 
 // TODO(mkornaukhov) get rid of such a function, #597
@@ -234,10 +232,8 @@ duckdb::Vector EvaluateJsonPathOverChunk(
 
 namespace {
 
-// Subclass of ColumnBindingResolver that takes pre-built (binding, type)
-// arrays, so callers can wire any (table_index, column_index) scheme they
-// like instead of being constrained to the default
-// `LogicalCreateIndex` (TableIndex(0), 0..N) shape.
+// ColumnBindingResolver that uses caller-supplied bindings/types instead of
+// building them from a LogicalOperator tree.
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
@@ -252,7 +248,6 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
 
 }  // namespace
 
-// TODO(mkornaukhov) maybe somehow share among different expression
 duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
   const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
   ObjectId table_id, std::span<const catalog::Column::Id> slot_to_col_id) {

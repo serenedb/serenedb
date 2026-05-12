@@ -123,6 +123,7 @@ class Reader final {
   // HNSW(id) returns nullptr if id is not an HNSW column in this segment.
   bool HasHNSW(field_id id) const noexcept;
   const HNSWReader* HNSW(field_id id) const noexcept;
+  std::span<std::unique_ptr<HNSWReader>> HNSWReaders() const;
 
  private:
   struct Impl;

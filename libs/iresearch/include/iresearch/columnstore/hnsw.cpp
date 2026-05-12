@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -391,16 +392,43 @@ HNSWReader::HNSWReader(field_id id, std::string name, HNSWInfo info,
 
 HNSWReader::~HNSWReader() = default;
 
+std::shared_ptr<const faiss::HNSW> HNSWReader::GraphIfLoaded() const noexcept {
+  return std::atomic_load_explicit(&_hnsw, std::memory_order_acquire);
+}
+
+void HNSWReader::UpdateGraph(
+  std::shared_ptr<const faiss::HNSW> g) const noexcept {
+  SDB_ASSERT(g);
+  std::shared_ptr<const faiss::HNSW> expected;
+  std::atomic_compare_exchange_strong_explicit(&_hnsw, &expected, std::move(g),
+                                               std::memory_order_release,
+                                               std::memory_order_acquire);
+}
+
+std::shared_ptr<const faiss::HNSW> HNSWReader::Graph() const {
+  ResolveGraph();
+  return std::atomic_load_explicit(&_hnsw, std::memory_order_acquire);
+}
+
 const faiss::HNSW& HNSWReader::ResolveGraph() const {
-  absl::call_once(_hnsw_once, [&] {
+  if (auto g = std::atomic_load_explicit(&_hnsw, std::memory_order_acquire)) {
+    return *g;
+  }
+  auto graph = std::make_shared<faiss::HNSW>();
+  {
     auto in = _in_source->Reopen();
     in->Seek(_graph_offset);
-    faiss::HNSW hnsw;
-    irs::ReadHNSW(*in, hnsw);
-    _hnsw.emplace(std::move(hnsw));
+    irs::ReadHNSW(*in, *graph);
     SDB_ASSERT(in->Position() - _graph_offset == _graph_byte_size);
-  });
-  return *_hnsw;
+  }
+  std::shared_ptr<const faiss::HNSW> g{std::move(graph)};
+  std::shared_ptr<const faiss::HNSW> expected;
+  if (!std::atomic_compare_exchange_strong_explicit(
+        &_hnsw, &expected, g, std::memory_order_release,
+        std::memory_order_acquire)) {
+    return *expected;
+  }
+  return *g;
 }
 
 void HNSWReader::Search(HNSWSearchContext& ctx) const {

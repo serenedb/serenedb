@@ -18,13 +18,11 @@
 
 #pragma once
 
-#include <absl/base/call_once.h>
 #include <faiss/impl/HNSW.h>
 
 #include <cstdint>
-#include <optional>
+#include <memory>
 #include <string>
-#include <vector>
 
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/formats/column/hnsw_index.hpp"
@@ -87,6 +85,10 @@ class HNSWReader final {
   void Search(HNSWSearchContext& ctx) const;
   void RangeSearch(HNSWRangeSearchContext& ctx) const;
 
+  std::shared_ptr<const faiss::HNSW> Graph() const;
+  std::shared_ptr<const faiss::HNSW> GraphIfLoaded() const noexcept;
+  void UpdateGraph(std::shared_ptr<const faiss::HNSW> g) const noexcept;
+
  private:
   const faiss::HNSW& ResolveGraph() const;
 
@@ -97,8 +99,7 @@ class HNSWReader final {
   const IndexInput* _in_source;
   uint64_t _graph_offset;
   uint64_t _graph_byte_size;
-  mutable absl::once_flag _hnsw_once;
-  mutable std::optional<const faiss::HNSW> _hnsw;
+  mutable std::shared_ptr<const faiss::HNSW> _hnsw;
 };
 
 }  // namespace columnstore

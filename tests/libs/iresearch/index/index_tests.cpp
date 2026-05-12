@@ -32,6 +32,7 @@
 #include <unordered_set>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -14815,6 +14816,121 @@ TEST_P(ANNSearchTest, hnsw_search_basic) {
       irs::PackSegmentWithDoc(0, doc + f.values_per_segment * seg), p.second);
   });
   check_recall(reader, vectors);
+}
+
+TEST_P(ANNSearchTest, hnsw_deserialised_once_across_two_readers) {
+  constexpr std::string_view kColumnName = "vec"sv;
+  constexpr std::string_view kNameField = "name"sv;
+  auto& f = feature();
+
+  irs::IndexWriterOptions writer_options;
+  writer_options.column_info = [&kColumnName, &f](std::string_view name) {
+    if (name == kColumnName) {
+      return irs::ColumnInfo{
+        .compression = irs::Type<irs::compression::None>::get(),
+        .options = {},
+        .track_prev_doc = false,
+        .value_type = irs::ValueType::VectorF32,
+        .hnsw_info =
+          irs::HNSWInfo{
+            .d = static_cast<int>(f.dim),
+            .metric = f.metric,
+          },
+      };
+    }
+    return irs::ColumnInfo{
+      irs::Type<irs::compression::None>::get(),
+      {},
+      false,
+    };
+  };
+
+  struct VectorField {
+    std::string_view name;
+    const std::vector<float>& data;
+    std::string_view Name() const { return name; }
+    bool Write(irs::DataOutput& out) const {
+      out.WriteBytes(reinterpret_cast<const irs::byte_type*>(data.data()),
+                     data.size() * sizeof(float));
+      return true;
+    }
+  };
+
+  auto writer = open_writer(irs::kOmCreate, writer_options);
+
+  // One writer commits a single segment. Each doc carries the vector
+  // (STORE) plus a unique name term (INDEX) used later for soft-delete.
+  {
+    auto trx = writer->GetBatch();
+    for (size_t i = 0; i < f.values_per_segment; ++i) {
+      auto doc = trx.Insert();
+      VectorField vf{kColumnName, f.vectors[i].second};
+      ASSERT_TRUE(doc.Insert<irs::Action::STORE>(vf));
+      tests::StringField name_field{std::string{kNameField},
+                                    absl::StrCat("doc_", i)};
+      ASSERT_TRUE(doc.Insert<irs::Action::INDEX>(name_field));
+    }
+    trx.Commit();
+  }
+  ASSERT_TRUE(writer->Begin());
+  writer->Commit();
+
+  // Reader #1: opens the index and forces the HNSW graph to deserialise
+  // via a one-shot Search.
+  auto reader1 = irs::DirectoryReader{dir(), codec(), {}};
+  ASSERT_EQ(1u, reader1.size());
+
+  const irs::columnstore::HNSWReader* hr1 = nullptr;
+  irs::field_id hnsw_id = irs::field_limits::invalid();
+  for (irs::field_id id = 0; id < 32 && !hr1; ++id) {
+    if (const auto* hr = reader1[0].HNSW(id)) {
+      hr1 = hr;
+      hnsw_id = id;
+    }
+  }
+  ASSERT_NE(hr1, nullptr);
+  ASSERT_EQ(hr1->GraphIfLoaded(), nullptr);
+
+  faiss::SearchParametersHNSW params;
+  params.efSearch = 8;
+  std::vector<float> dis(1, 0.f);
+  std::vector<int64_t> docs(1);
+  irs::HNSWSearchInfo info{
+    reinterpret_cast<const irs::byte_type*>(f.query_vectors[0].data()), 1,
+    params};
+  irs::HNSWSearchBuffer buffer{dis.data(), docs.data(), 1};
+  reader1[0].Search(hnsw_id, info, buffer, 0);
+
+  auto graph1 = hr1->GraphIfLoaded();
+  ASSERT_NE(graph1, nullptr);
+
+  // Soft-delete one doc: bumps live_docs_count on the segment, leaves
+  // the .cs file byte-identical. Forces DirectoryReaderImpl::Open to
+  // rebuild SegmentReaderImpl on reopen, which is the only path that
+  // runs UpdateHNSWGraphsFrom in production.
+  {
+    auto filter = std::make_unique<irs::ByTerm>();
+    *filter->mutable_field() = std::string{kNameField};
+    filter->mutable_options()->term =
+      irs::ViewCast<irs::byte_type>(std::string_view{"doc_0"});
+    writer->GetBatch().Remove(std::move(filter));
+  }
+  ASSERT_TRUE(writer->Begin());
+  writer->Commit();
+
+  // Reader #2: Reopen produces a fresh DirectoryReader (segment meta
+  // changed). If sharing works, it must observe the same faiss::HNSW
+  // instance - proof the graph was deserialised exactly once across
+  // the two readers.
+  auto reader2 = reader1.Reopen();
+  ASSERT_NE(reader1, reader2);
+  ASSERT_EQ(1u, reader2.size());
+
+  const auto* hr2 = reader2[0].HNSW(hnsw_id);
+  ASSERT_NE(hr2, nullptr);
+  auto graph2 = hr2->GraphIfLoaded();
+  ASSERT_NE(graph2, nullptr);
+  EXPECT_EQ(graph2.get(), graph1.get());
 }
 
 TEST_P(RangeSearchTest, hnsw_range_search_basic) {

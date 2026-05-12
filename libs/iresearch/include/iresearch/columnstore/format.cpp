@@ -623,6 +623,10 @@ const HNSWReader* Reader::HNSW(field_id id) const noexcept {
   return _impl->hnsw_readers[it->second].get();
 }
 
+std::span<std::unique_ptr<HNSWReader>> Reader::HNSWReaders() const {
+  return _impl->hnsw_readers;
+}
+
 std::vector<const NormColumnReader*> Reader::NormColumns() const {
   std::vector<const NormColumnReader*> out;
   out.reserve(_impl->norm_readers.size());

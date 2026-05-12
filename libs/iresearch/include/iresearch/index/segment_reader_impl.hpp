@@ -83,6 +83,8 @@ class SegmentReaderImpl final : public SubReader {
   const columnstore::ColumnReader* Column(field_id field) const final;
   const columnstore::HNSWReader* HNSW(field_id field) const final;
 
+  void UpdateHNSWGraphsFrom(const SegmentReaderImpl& other) const;
+
  private:
   struct ColumnData {
     // Per-segment columnstore reader. Opened when IndexReaderOptions::db

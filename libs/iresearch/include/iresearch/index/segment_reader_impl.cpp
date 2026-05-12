@@ -29,6 +29,7 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/columnstore/column_reader.hpp"
 #include "iresearch/columnstore/format.hpp"
+#include "iresearch/columnstore/hnsw.hpp"
 #include "iresearch/columnstore/norm_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/norm_column_reader.hpp"
@@ -254,6 +255,22 @@ const columnstore::HNSWReader* SegmentReaderImpl::HNSW(field_id field) const {
     return nullptr;
   }
   return _data->cs_reader->HNSW(field);
+}
+
+void SegmentReaderImpl::UpdateHNSWGraphsFrom(
+  const SegmentReaderImpl& other) const {
+  if (!_data->cs_reader || !other._data->cs_reader) {
+    return;
+  }
+  for (const auto& reader : _data->cs_reader->HNSWReaders()) {
+    if (!other._data->cs_reader->HasHNSW(reader->Id())) {
+      continue;
+    }
+    const auto* other_reader = other._data->cs_reader->HNSW(reader->Id());
+    if (auto g = other_reader->GraphIfLoaded()) {
+      reader->UpdateGraph(std::move(g));
+    }
+  }
 }
 
 DocIterator::ptr SegmentReaderImpl::docs_iterator() const {

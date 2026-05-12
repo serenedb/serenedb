@@ -20,17 +20,6 @@ transactions/etc.) are out of scope.
   segment fail or fall back wrongly. Fix: in `MergeInto`, when a source has
   an HNSW reader for a field, AttachHNSW on the output and let Writer::Commit
   rebuild the graph from the just-written ARRAY data. Add merge+ANN test.
-- **Re-`OpenColumn` validates only `Type()`** but ignores mismatched
-  `row_group_size` / `skip_validity` / `compression`
-  ([`format.cpp:278`](../libs/iresearch/include/iresearch/columnstore/format.cpp)).
-  Comment claims all must match; only one is checked. Either assert all or
-  document that only the first call's args take effect.
-- **`Reader::Reader` silently treats truncation as missing.**
-  ([`format.cpp:537,551,563`](../libs/iresearch/include/iresearch/columnstore/format.cpp))
-  Missing file: correct. Truncated header / invalid footer_offset /
-  size-too-small: currently same path. A crashed writer that left half a
-  `.cs` looks identical to "segment has no .cs file". Distinguish or at
-  least log.
 
 ## Performance (sure)
 

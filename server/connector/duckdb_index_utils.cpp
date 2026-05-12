@@ -112,15 +112,13 @@ std::unique_ptr<DuckDBSinkIndexWriter> MakeDuckDBSearchWriter(
     case DuckDBWriteKind::Insert:
       return std::make_unique<DuckDBSearchSinkInsertWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_path_tokenizer_provider),
-        std::move(json_path_entries));
+        std::move(json_path_tokenizer_provider), std::move(json_path_entries));
     case DuckDBWriteKind::Delete:
       return std::make_unique<DuckDBSearchSinkDeleteWriter>(trx);
     case DuckDBWriteKind::Update:
       return std::make_unique<DuckDBSearchSinkUpdateWriter>(
         trx, std::move(tokenizer_provider), columns,
-        std::move(json_path_tokenizer_provider),
-        std::move(json_path_entries));
+        std::move(json_path_tokenizer_provider), std::move(json_path_entries));
   }
   SDB_ASSERT(false, "Unknown DuckDBWriteKind");
   return nullptr;

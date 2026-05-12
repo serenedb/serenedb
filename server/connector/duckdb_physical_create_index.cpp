@@ -649,8 +649,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
     *lstate->search_trx, std::move(tokenizer_provider),
     gstate.index_for_providers->GetColumnIds(),
-    std::move(json_path_tokenizer_provider),
-    std::move(json_path_entries));
+    std::move(json_path_tokenizer_provider), std::move(json_path_entries));
 
   return lstate;
 }

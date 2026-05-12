@@ -1096,7 +1096,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
     duckdb::IndexBinder index_binder(binder, binder.context, resolved_table,
                                      create_index_info.get());
     for (auto& parsed : create_index_info->expressions) {
-      expressions.push_back(index_binder.Bind(parsed));
+      expressions.emplace_back(index_binder.Bind(parsed));
     }
   } else {
     create_index_info->names.assign_range(rel_columns | std::views::keys);

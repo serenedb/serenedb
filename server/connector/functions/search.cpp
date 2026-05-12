@@ -322,6 +322,19 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(fn));
   }
 
+  // ts_sloppy_phrase(text, slop [, gap, text, ...]) -- same grammar
+  // as ts_phrase plus a non-negative INTEGER slop budget. slop=0
+  // falls through to the exact path; slop>0 picks the sloppy DP
+  // matcher. Interval gaps + slop is rejected at filter-build time.
+  {
+    duckdb::ScalarFunction fn(
+      std::string{kTSQSloppyPhrase},
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER},
+      MakeTSQueryType(), TSQueryStubFn);
+    fn.varargs = duckdb::LogicalType::ANY;
+    loader.RegisterFunction(std::move(fn));
+  }
+
   // NGRAM(text [, threshold]) -- tokenises via ambient analyzer.
   {
     duckdb::ScalarFunctionSet set{std::string{kTSQNgram}};

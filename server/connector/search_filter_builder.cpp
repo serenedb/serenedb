@@ -83,6 +83,8 @@ customize::enum_name<sdb::connector::TSQueryOp>(
   switch (value) {
     case Phrase:
       return sdb::connector::kTSQPhrase;
+    case SloppyPhrase:
+      return sdb::connector::kTSQSloppyPhrase;
     case Like:
       return sdb::connector::kTSQLike;
     case Prefix:
@@ -1549,6 +1551,9 @@ Result GetDoubleArg(const duckdb::Expression& expr, std::string_view label,
 void FromPhrase(irs::BooleanFilter&, const FilterContext&,
                 const SearchColumnInfo&,
                 const duckdb::BoundFunctionExpression&);
+void FromSloppyPhrase(irs::BooleanFilter&, const FilterContext&,
+                      const SearchColumnInfo&,
+                      const duckdb::BoundFunctionExpression&);
 void FromNgram(irs::BooleanFilter&, const FilterContext&,
                const SearchColumnInfo&, const duckdb::BoundFunctionExpression&);
 void FromLevenshtein(irs::BooleanFilter&, const FilterContext&,
@@ -1673,6 +1678,8 @@ void BuildTSQuery(irs::BooleanFilter& parent, const FilterContext& ctx,
   switch (op) {
     case TSQueryOp::Phrase:
       return FromPhrase(parent, ctx, column_info, func);
+    case TSQueryOp::SloppyPhrase:
+      return FromSloppyPhrase(parent, ctx, column_info, func);
     case TSQueryOp::Term:
       return FromTerm(parent, ctx, column_info, func);
     case TSQueryOp::Like:

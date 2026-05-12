@@ -216,6 +216,7 @@ void EmitPhraseSeq(irs::BooleanFilter& parent, const FilterContext& ctx,
 enum class TSQueryOp {
   Unknown,
   Phrase,
+  SloppyPhrase,
   Term,
   Like,
   Prefix,

@@ -164,6 +164,8 @@ inline constexpr std::string_view kGeoContains = "ST_Contains";
 //   offsets(col)                          -> BIGINT[]
 inline constexpr std::string_view kOffsets = "offsets";
 
+inline constexpr std::string_view kTSQSloppyPhrase = "ts_sloppy_phrase";
+
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::connector

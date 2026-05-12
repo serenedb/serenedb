@@ -218,4 +218,35 @@ struct PostingAdapter {
   DocIterator::ptr _it;
 };
 
+inline constexpr uint32_t ByteSize1234(uint32_t value) {
+  if (value < (uint32_t{1} << 8)) {
+    return 1;
+  }
+  if (value < (uint32_t{1} << 16)) {
+    return 2;
+  }
+  if (value < (uint32_t{1} << 24)) {
+    return 3;
+  }
+  return 4;
+}
+
+class Features {
+ public:
+  void Reset(IndexFeatures features) noexcept {
+    _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
+    _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
+    _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
+  }
+
+  bool HasFrequency() const noexcept { return _has_freq; }
+  bool HasPosition() const noexcept { return _has_pos; }
+  bool HasOffset() const noexcept { return _has_offs; }
+
+ private:
+  bool _has_freq{};
+  bool _has_pos{};
+  bool _has_offs{};
+};
+
 }  // namespace irs

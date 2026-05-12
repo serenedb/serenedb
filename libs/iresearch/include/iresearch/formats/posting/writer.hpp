@@ -20,6 +20,11 @@
 
 #pragma once
 
+#include <iresearch/formats/posting/format_block_128.hpp>
+#include <iresearch/types.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
+#include "basics/assert.h"
 #include "basics/containers/bitset.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -62,6 +67,8 @@ struct DocBuffer : SkipBuffer {
   std::span<uint32_t>::iterator freq{freqs.begin()};
   doc_id_t last{doc_limits::invalid()};        // last buffered document id
   doc_id_t block_last{doc_limits::invalid()};  // last document id in a block
+  static_assert(doc_limits::invalid() ==
+                0);  // Delta with invalid document should be measure correctly
 };
 
 // Buffer for storing positions
@@ -157,7 +164,7 @@ class PostingsWriterBase : public PostingsWriter {
                      uint32_t* offs_len_buf, uint64_t* pay_skip_ptr,
                      uint32_t* enc_buf, PostingsFormat postings_format_version,
                      TermsFormat terms_format_version, IResourceManager& rm)
-    : _skip{block_size, doc_limits::kSkipSize, rm},
+    : _new_skip(rm),
       _doc{docs, freqs, skip_doc, doc_skip_ptr},
       _pos{prox_buf, prox_skip_ptr},
       _pay{offs_start_buf, offs_len_buf, pay_skip_ptr},
@@ -189,24 +196,6 @@ class PostingsWriterBase : public PostingsWriter {
   void Encode(BufferedOutput& out, const TermMeta& attrs) final;
 
  protected:
-  class Features {
-   public:
-    void Reset(IndexFeatures features) noexcept {
-      _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
-      _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
-      _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-    }
-
-    bool HasFrequency() const noexcept { return _has_freq; }
-    bool HasPosition() const noexcept { return _has_pos; }
-    bool HasOffset() const noexcept { return _has_offs; }
-
-   private:
-    bool _has_freq{};
-    bool _has_pos{};
-    bool _has_offs{};
-  };
-
   struct Attributes final : AttributeProvider {
     ValueIndex doc;
     FreqAttr freq;
@@ -238,9 +227,9 @@ class PostingsWriterBase : public PostingsWriter {
     }
   };
 
-  void WriteSkip(size_t level, MemoryIndexOutput& out) const;
+  SkipEntry GetSkipEntryAndRecalcDelta();
   void BeginTerm(TermMetaImpl& meta);
-  void EndDocument();
+  void EndDocument(size_t processed_docs);
   virtual void FlushTailDoc() = 0;
   void EndTerm(TermMetaImpl& meta);
   void PrepareWriters(const FieldProperties& meta);
@@ -252,7 +241,10 @@ class PostingsWriterBase : public PostingsWriter {
     }
   }
 
-  SkipWriter _skip;
+  bool HasValidWandWriter() const { return _valid_writer; }
+
+  NewSkipWriter _new_skip;
+  // SkipWriter _skip;
   TermMetaImpl _last_state;   // Last final term state
   bitset _docs;               // Set of all processed documents
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
@@ -286,32 +278,35 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   }
 }
 
-inline void PostingsWriterBase::WriteSkip(size_t level,
-                                          MemoryIndexOutput& out) const {
+inline SkipEntry PostingsWriterBase::GetSkipEntryAndRecalcDelta() {
   SDB_ASSERT(_doc_out);
-  const doc_id_t doc = _doc.block_last;
+  const doc_id_t doc = _doc.last;
   const uint64_t doc_ptr = _doc_out->Position();
 
-  out.WriteV32(doc);  // - doc_.skip_doc[level];
-  out.WriteV64(doc_ptr - _doc.skip_ptr[level]);
+  SkipEntry result;
 
-  _doc.skip_doc[level] = doc;
-  _doc.skip_ptr[level] = doc_ptr;
+  result.max_doc_delta = doc - _doc.skip_doc[1];
+  result.doc_ptr = doc_ptr - _doc.skip_ptr[1];
+
+  _doc.skip_doc[1] = doc;
+  _doc.skip_ptr[1] = doc_ptr;
 
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);
     const uint64_t pos_ptr = _pos_out->Position();
-    out.WriteV64(pos_ptr - _pos.skip_ptr[level]);
-    _pos.skip_ptr[level] = pos_ptr;
+    result.meta.pos_ptr = pos_ptr - _pos.skip_ptr[1];
+    _pos.skip_ptr[1] = pos_ptr;
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
       const uint64_t pay_ptr = _pay_out->Position();
-      out.WriteV64(pay_ptr - _pay.skip_ptr[level]);
-      _pay.skip_ptr[level] = pay_ptr;
+      result.meta.pay_ptr = pay_ptr - _pay.skip_ptr[1];
+      _pay.skip_ptr[1] = pay_ptr;
     }
     SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(_pos.size);
+    result.meta.pos_block_idx = _pos.size;
   }
+
+  return result;
 }
 
 inline void PostingsWriterBase::Prepare(IndexOutput& out,
@@ -340,11 +335,11 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
     }
   }
 
-  _skip.Prepare(doc_limits::kMaxSkipLevels, state.doc_count);
+  _new_skip.Prepare(state.doc_count);
 
   format_utils::WriteHeader(out, kTermsFormatName,
                             static_cast<int32_t>(_terms_format_version));
-  out.WriteV32(_skip.Skip0());  // Write postings block size
+  out.WriteV32(_new_skip.Skip0());  // Write postings block size
 
   // Prepare wand writers
   _writer = PrepareWandWriter(state.scorer, doc_limits::kMaxSkipLevels);
@@ -376,7 +371,7 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
 
   if (meta.docs_count == 1) {
     out.WriteV32(meta.e_single_doc);
-  } else if (meta.docs_count > _skip.Skip0()) {
+  } else if (meta.docs_count >= _new_skip.Skip0()) {
     out.WriteV64(meta.e_skip_start);
   }
 
@@ -385,6 +380,7 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
 
 inline void PostingsWriterBase::BeginTerm(TermMetaImpl& meta) {
   meta.doc_start = _doc_out->Position();
+  std::fill_n(_doc.skip_doc, doc_limits::kMaxSkipLevels, doc_limits::invalid());
   std::fill_n(_doc.skip_ptr, doc_limits::kMaxSkipLevels, meta.doc_start);
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);
@@ -400,15 +396,7 @@ inline void PostingsWriterBase::BeginTerm(TermMetaImpl& meta) {
 
   _doc.last = doc_limits::invalid();
   _doc.block_last = doc_limits::invalid();
-  _skip.Reset();
-}
-
-inline void PostingsWriterBase::EndDocument() {
-  if (_doc.Full()) {
-    _doc.block_last = _doc.last;
-    _doc.doc = _doc.docs.begin();
-    _doc.freq = _doc.freqs.begin();
-  }
+  _new_skip.Reset();
 }
 
 inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
@@ -416,13 +404,12 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
     return;  // no documents to write
   }
 
-  const bool has_skip_list = _skip.Skip0() < meta.docs_count;
+  const bool has_skip_list = NewSkipWriter::Skip0() <= meta.docs_count;
   auto write_max_score = [&](size_t level) {
-    ApplyToWriter([&](auto& writer) {
-      const uint8_t size = writer.SizeRoot(level);
-      _doc_out->WriteByte(size);
-    });
-    ApplyToWriter([&](auto& writer) { writer.WriteRoot(level, *_doc_out); });
+    if (HasValidWandWriter()) {
+      auto wand_data = _valid_writer->CalculateAndGetWandDataRoot(level);
+      NewSkipWriter::WriteWandData(wand_data, *_doc_out);
+    }
   };
 
   if (1 == meta.docs_count) {
@@ -431,7 +418,7 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
     if (!has_skip_list) {
       write_max_score(0);
     }
-    if ((meta.docs_count & (_skip.Skip0() - 1)) != 0) {
+    if ((meta.docs_count & (NewSkipWriter::Skip0() - 1)) != 0) {
       FlushTailDoc();
     }
   }
@@ -441,9 +428,9 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
   // skip data, so we need to flush it
   if (has_skip_list) {
     meta.e_skip_start = _doc_out->Position() - meta.doc_start;
-    const auto num_levels = _skip.CountLevels();
+    const auto num_levels = NewSkipWriter::CountLevels(meta.docs_count);
     write_max_score(num_levels);
-    _skip.FlushLevels(num_levels, *_doc_out);
+    _new_skip.FlushLevel(num_levels, *_doc_out);
   }
 
   _doc.doc = _doc.docs.begin();
@@ -486,6 +473,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   void FlushTailPay();
   void AddPosition(uint32_t pos);
   void BeginDocument();
+  void EndDocument(size_t processed_docs);
 
   struct {
     // Buffer for document deltas
@@ -589,14 +577,6 @@ void PostingsWriterImpl<FormatTraits>::BeginDocument() {
   if (const auto id = _attrs.doc.value; _doc.last < id) [[likely]] {
     _doc.Push(id, _attrs.freq.value);
 
-    if (_doc.Full()) {
-      FormatTraits::WriteBlockDelta(*_doc_out, _doc.docs.data(),
-                                    _doc.block_last, _buf);
-      if (_features.HasFrequency()) {
-        FormatTraits::WriteBlock(*_doc_out, _doc.freqs.data(), _buf);
-      }
-    }
-
     _docs.set(id);
 
     // First position offsets now is format dependent
@@ -607,6 +587,91 @@ void PostingsWriterImpl<FormatTraits>::BeginDocument() {
       absl::StrCat("While beginning document in postings_writer, error: "
                    "docs out of order '",
                    id, "' < '", _doc.last, "'")};
+  }
+}
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::EndDocument(size_t processed_docs) {
+  if (_doc.Full()) {
+    InlineSkipEntry skip_entry;
+    skip_entry.max_doc_delta = _doc.last - _doc.block_last;
+    if (HasValidWandWriter()) {
+      skip_entry.wand_data = _valid_writer->CalculateAndGetWandData(0);
+      skip_entry.has_wand = true;
+    }
+
+    auto [best_encoding_doc, best_size_doc] =
+      FormatTraits::CalculateBestEncodingAndSizeBlockDelta(
+        _doc.docs.data(), _doc.block_last, _buf);
+    auto best_encoding_freq_opt =
+      _features.HasFrequency()
+        ? std::optional(
+            FormatTraits::CalculateBestEncodingBlock(_doc.freqs.data(), _buf))
+        : std::nullopt;
+
+    PosPayMetadata meta;
+    if (_features.HasPosition()) {
+      SDB_ASSERT(_pos_out);
+      const uint64_t pos_ptr = _pos_out->Position();
+      meta.pos_ptr = pos_ptr - _pos.skip_ptr[0];
+      _pos.skip_ptr[0] = pos_ptr;
+      if (_features.HasOffset()) {
+        SDB_ASSERT(_pay_out);
+        const uint64_t pay_ptr = _pay_out->Position();
+        meta.pay_ptr = pay_ptr - _pay.skip_ptr[0];
+        _pay.skip_ptr[0] = pay_ptr;
+      }
+      SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
+      meta.pos_block_idx = _pos.size;
+    }
+    auto pos_pay_meta_serialized_size =
+      NewSkipWriter::CalculatePosPayMetaSize(meta, _features);
+
+    skip_entry.rest_block_size =
+      (1 + best_size_doc) +
+      (_features.HasFrequency() ? 1 + best_encoding_freq_opt->best_size : 0) +
+      pos_pay_meta_serialized_size;
+
+    // Serializing Inline Block
+    {
+      NewSkipWriter::WriteInlineSkipEntry(skip_entry, *_doc_out);
+
+      auto decode_zone_start = _doc_out->Position();
+      FormatTraits::WriteBlockDelta(best_encoding_doc, best_size_doc, *_doc_out,
+                                    _doc.docs.data(), _doc.block_last, _buf);
+      SDB_ASSERT(best_size_doc + 1 == _doc_out->Position() - decode_zone_start);
+      if (_features.HasFrequency()) {
+        auto frequencies_zone_start = _doc_out->Position();
+        FormatTraits::WriteBlock(*best_encoding_freq_opt, *_doc_out,
+                                 _doc.freqs.data(), _buf);
+        SDB_ASSERT(_doc_out->Position() - frequencies_zone_start ==
+                   best_encoding_freq_opt.value().best_size + 1);
+      }
+
+      NewSkipWriter::WriteInlinePosPayMetadata(meta, _features, *_doc_out);
+      SDB_ASSERT(skip_entry.rest_block_size ==
+                 _doc_out->Position() - decode_zone_start);
+    }
+
+    _new_skip.AddLevel1IfNeed(processed_docs, [this](MemoryIndexOutput& out) {
+      NewSkipWriter::WriteSkipEntry(GetSkipEntryAndRecalcDelta(), _features,
+                                    out);
+      
+      if (HasValidWandWriter()) {
+        NewSkipWriter::WriteWandData(_valid_writer->CalculateAndGetWandData(1), out);
+      }
+
+      // ApplyToWriter([&](auto& writer) {
+      //   const uint8_t size = writer.Size(1);
+      //   SDB_ASSERT(size <= WandWriter::kMaxSize);
+      //   out.WriteByte(size);
+      // });
+      // ApplyToWriter([&](auto& writer) { writer.Write(1, out); });
+    });
+
+    _doc.block_last = _doc.last;
+    _doc.doc = _doc.docs.begin();
+    _doc.freq = _doc.freqs.begin();
   }
 }
 
@@ -696,21 +761,6 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
     _attrs.doc.value = doc;
     _attrs.freq.value = docs.GetFreq();
 
-    if (doc_limits::valid(_doc.last) && _doc.Empty()) {
-      _skip.Skip(docs_count, [this](size_t level, MemoryIndexOutput& out) {
-        WriteSkip(level, out);
-
-        // FIXME(gnusi): optimize for 1 writer case? compile? maybe just 1
-        // composite wand writer?
-        ApplyToWriter([&](auto& writer) {
-          const uint8_t size = writer.Size(level);
-          SDB_ASSERT(size <= WandWriter::kMaxSize);
-          out.WriteByte(size);
-        });
-        ApplyToWriter([&](auto& writer) { writer.Write(level, out); });
-      });
-    }
-
     BeginDocument();
     ApplyToWriter([](auto& writer) { writer.Update(); });
     SDB_ASSERT(_attrs.pos);
@@ -720,7 +770,7 @@ void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
     }
     ++docs_count;
     total_freq += _attrs.freq.value;
-    EndDocument();
+    EndDocument(docs_count);
   }
 
   // FIXME(gnusi): do we need to write terminal skip if present?

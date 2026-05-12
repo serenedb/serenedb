@@ -20,6 +20,9 @@
 
 #pragma once
 
+#include <iresearch/formats/posting/skip_list.hpp>
+#include <iresearch/utils/type_limits.hpp>
+
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
@@ -58,7 +61,7 @@ struct WandPostingAdapter : PostingAdapter<PostingImpl> {
   using PostingAdapter<PostingImpl>::PostingAdapter;
 
   IRS_FORCE_INLINE doc_id_t SeekToBlock(doc_id_t doc) {
-    return this->self().ShallowSeekToBlock(doc);
+    return this->self().SeekToBlock(doc);
   }
 
   IRS_FORCE_INLINE score_t GetMaxScore(doc_id_t doc) {
@@ -73,10 +76,6 @@ struct WandPostingAdapter : PostingAdapter<PostingImpl> {
   template<typename... Args>
   IRS_FORCE_INLINE auto ScoreCandidates(Args&&... args) {
     return this->self().ScoreCandidates(std::forward<Args>(args)...);
-  }
-
-  void SetSkipWandBelow(doc_id_t max) noexcept {
-    this->self().SetSkipWandBelow(max);
   }
 };
 
@@ -203,7 +202,7 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
 
   if (1 == term_meta.docs_count) {
     term_meta.e_single_doc = vread<uint32_t>(p);
-  } else if (_block_size < term_meta.docs_count) {
+  } else if (_block_size <= term_meta.docs_count) {
     term_meta.e_skip_start = vread<uint64_t>(p);
   }
 
@@ -281,55 +280,72 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   const IndexFeatures field_features, const term_provider_f& provider,
   size_t* set, bool has_wand) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  uint32_t enc_buf[doc_limits::kBlockSize];
-  doc_id_t docs[doc_limits::kBlockSize
-#ifdef __AVX2__
-                + 8  // placeholder for bitset materialize
-#endif
-  ];
-  const bool has_freq =
-    IndexFeatures::None != (field_features & IndexFeatures::Freq);
+  //   uint32_t enc_buf[doc_limits::kBlockSize];
+  //   doc_id_t docs[doc_limits::kBlockSize
+  // #ifdef __AVX2__
+  //                 + 8  // placeholder for bitset materialize
+  // #endif
+  //   ];
+  //   const bool has_freq =
+  //     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 
-  SDB_ASSERT(_doc_in);
-  auto doc_in = _doc_in->Reopen();
+  //   SDB_ASSERT(_doc_in);
+  //   auto doc_in = _doc_in->Reopen();
 
-  if (!doc_in) {
-    // implementation returned wrong pointer
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to reopen document input");
+  //   if (!doc_in) {
+  //     // implementation returned wrong pointer
+  //     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+  //               "Failed to reopen document input");
 
-    throw IoError("failed to reopen document input");
-  }
+  //     throw IoError("failed to reopen document input");
+  //   }
 
   size_t count = 0;
   while (const TermMeta* meta = provider()) {
     auto& term_state = static_cast<const TermMetaImpl&>(*meta);
 
-    if (term_state.docs_count > 1) {
-      doc_in->Seek(term_state.doc_start);
-      SDB_ASSERT(!doc_in->IsEOF());
-      if (term_state.docs_count < doc_limits::kBlockSize) {
-        CommonSkipWandData(has_wand, *doc_in);
-      }
-      SDB_ASSERT(!doc_in->IsEOF());
+    CookieImpl cookie(term_state);
+    PostingCookie post_cookie{.cookie = &cookie};
 
-      if (has_freq) {
-        using FieldTraits = IteratorTraits<true, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
-      } else {
-        using FieldTraits = IteratorTraits<false, false, false>;
-        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
-                                  set);
-      }
+    IndexFeatures required = field_features & IndexFeatures::Freq;
 
-      count += term_state.docs_count;
-    } else {
-      const doc_id_t doc = doc_limits::min() + term_state.e_single_doc;
+    auto it = Iterator(field_features, required,
+                       std::span<const PostingCookie>{&post_cookie, 1},
+                       IteratorFieldOptions{has_wand}, 1, ScoreMergeType::Noop);
+    it->advance();
+    for (; it->value() != doc_limits::eof(); it->advance()) {
+      auto doc = it->value();
       SetBit(set[doc / kBits], doc % kBits);
-
       ++count;
     }
+
+    // if (term_state.docs_count > 1) {
+    //   doc_in->Seek(term_state.doc_start);
+    //   SDB_ASSERT(!doc_in->IsEOF());
+    //   if (term_state.docs_count < doc_limits::kBlockSize) {
+    //     CommonSkipWandData(has_wand, *doc_in);
+    //   }
+    //   SDB_ASSERT(!doc_in->IsEOF());
+
+    //   if (has_freq) {
+    //     using FieldTraits = IteratorTraits<true, false, false>;
+    //     BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs,
+    //     enc_buf,
+    //                               set);
+    //   } else {
+    //     using FieldTraits = IteratorTraits<false, false, false>;
+    //     BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs,
+    //     enc_buf,
+    //                               set);
+    //   }
+
+    //   count += term_state.docs_count;
+    // } else {
+    //   const doc_id_t doc = doc_limits::min() + term_state.e_single_doc;
+    //   SetBit(set[doc / kBits], doc % kBits);
+
+    //   ++count;
+    // }
   }
 
   return count;

@@ -29,6 +29,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <utility>
 
 #include "iresearch/columnstore/internal/overflow_string_io.hpp"
@@ -128,10 +129,20 @@ ColumnReader::ColumnReader(field_id id, std::string name,
     vtotal += p.tuple_count;
   }
   _validity_offsets.push_back(vtotal);
-  _list_offsets_per_rg.resize(_data_pointers.size());
-  _rg_element_starts.assign(_data_pointers.size() + 1,
-                            std::numeric_limits<uint64_t>::max());
-  _rg_element_starts[0] = 0;
+  // Stored offsets are column-global cumulative; each RG's max stat is
+  // the running total at end of that RG. `_rg_element_starts[r]` is the
+  // child element start of row group r (== running total at end of RG
+  // r-1); only used as the seed for ListOffsetState's first row.
+  _rg_element_starts.reserve(_data_pointers.size() + 1);
+  _rg_element_starts.push_back(0);
+  for (const auto& p : _data_pointers) {
+    if (p.tuple_count == 0) {
+      _rg_element_starts.push_back(_rg_element_starts.back());
+    } else {
+      _rg_element_starts.push_back(
+        duckdb::NumericStats::Max(p.statistics).GetValue<uint64_t>());
+    }
+  }
 }
 
 ColumnReader::ColumnReader(
@@ -289,52 +300,59 @@ duckdb::unique_ptr<duckdb::ColumnSegment> ColumnReader::OpenValiditySegment(
   return OpenSegmentImpl(_validity_pointers[vrg], kValidityType, *_in);
 }
 
-std::span<const uint64_t> ColumnReader::ListOffsets(size_t rg) const {
+void ColumnReader::ReadListOffset(ColumnReader::ListOffsetState& state,
+                                  size_t rg, uint64_t in_rg, uint64_t& start,
+                                  uint64_t& end) const {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST ||
              _type.id() == duckdb::LogicalTypeId::MAP);
-  SDB_ASSERT(rg < _list_offsets_per_rg.size());
-  auto& cache = _list_offsets_per_rg[rg];
-  if (!cache.empty()) {
-    return cache;
+  if (state.rg != rg) {
+    state.cursor = ScanCursor{OpenSegment(rg)};
+    state.rg = rg;
+    state.next_pos = 0;
+    state.prev_offset = _rg_element_starts[rg];
   }
-  const auto rg_rows =
-    static_cast<duckdb::idx_t>(_data_pointers[rg].tuple_count);
-  if (rg_rows == 0) {
-    cache.assign(1, 0);
-    return cache;
+  SDB_ASSERT(in_rg >= state.next_pos);
+  auto* buf_data = duckdb::FlatVector::GetDataMutable<uint64_t>(state.buf);
+  while (state.next_pos < in_rg) {
+    state.cursor.Scan(1, state.buf, 0);
+    state.prev_offset = buf_data[0];
+    ++state.next_pos;
   }
-  ScanCursor cursor{OpenSegment(rg)};
-  duckdb::Vector lengths_vec{duckdb::LogicalType::UBIGINT, rg_rows};
-  cursor.Scan(rg_rows, lengths_vec, 0);
-  const auto* lengths = duckdb::FlatVector::GetData<uint64_t>(lengths_vec);
-  cache.resize(rg_rows + 1);
-  cache[0] = 0;
-  uint64_t running = 0;
-  for (duckdb::idx_t i = 0; i < rg_rows; ++i) {
-    running += lengths[i];
-    cache[i + 1] = running;
-  }
-  return cache;
+  state.cursor.Scan(1, state.buf, 0);
+  end = buf_data[0];
+  start = state.prev_offset;
+  state.prev_offset = end;
+  ++state.next_pos;
 }
 
-uint64_t ColumnReader::RowGroupElementStart(size_t rg) const {
+uint64_t ColumnReader::ReadListOffsets(ColumnReader::ListOffsetState& state,
+                                       size_t rg, uint64_t first_in_rg,
+                                       duckdb::idx_t count,
+                                       duckdb::Vector& out_buf) const {
   SDB_ASSERT(_type.id() == duckdb::LogicalTypeId::LIST ||
              _type.id() == duckdb::LogicalTypeId::MAP);
-  SDB_ASSERT(rg < _rg_element_starts.size());
-  constexpr auto kSentinel = std::numeric_limits<uint64_t>::max();
-  if (_rg_element_starts[rg] != kSentinel) {
-    return _rg_element_starts[rg];
+  SDB_ASSERT(count > 0);
+  if (state.rg != rg) {
+    state.cursor = ScanCursor{OpenSegment(rg)};
+    state.rg = rg;
+    state.next_pos = 0;
+    state.prev_offset = _rg_element_starts[rg];
   }
-  size_t cur = rg;
-  while (_rg_element_starts[cur] == kSentinel) {
-    --cur;  // ctor sets _rg_element_starts[0] = 0, so this stops.
+  SDB_ASSERT(first_in_rg >= state.next_pos);
+  // Advance the cursor to `first_in_rg` one element at a time so the
+  // pre-batch cumulative offset is captured for the run's anchor.
+  auto* buf_data = duckdb::FlatVector::GetDataMutable<uint64_t>(state.buf);
+  while (state.next_pos < first_in_rg) {
+    state.cursor.Scan(1, state.buf, 0);
+    state.prev_offset = buf_data[0];
+    ++state.next_pos;
   }
-  while (cur < rg) {
-    const auto offsets = ListOffsets(cur);
-    _rg_element_starts[cur + 1] = _rg_element_starts[cur] + offsets.back();
-    ++cur;
-  }
-  return _rg_element_starts[rg];
+  const uint64_t first_start = state.prev_offset;
+  state.cursor.Scan(count, out_buf, 0);
+  const auto* out_data = duckdb::FlatVector::GetData<uint64_t>(out_buf);
+  state.prev_offset = out_data[count - 1];
+  state.next_pos += count;
+  return first_start;
 }
 
 ColumnReader::PointReadCursor ColumnReader::NewPointCursor() const {

@@ -403,23 +403,27 @@ void FlushNode(duckdb::DatabaseInstance& db, duckdb::PartialBlockManager& pbm,
                        node.validity_pointers,
                        duckdb::CompressionType::COMPRESSION_AUTO);
       }
+      // Store column-global cumulative offsets per row (matches
+      // duckdb::ListColumnData::Append). Row i's element span is
+      // [offsets[i-1], offsets[i]) in the child column's address
+      // space, with the implicit offsets[-1] == 0 at column start.
+      // Invalid parent rows contribute zero elements.
       const auto* entries =
         duckdb::FlatVector::GetData<duckdb::list_entry_t>(vec);
       const auto& parent_validity = duckdb::FlatVector::Validity(vec);
-      duckdb::Vector lengths{duckdb::LogicalType::UBIGINT, row_count};
-      auto* lp = duckdb::FlatVector::GetDataMutable<uint64_t>(lengths);
-      uint64_t total_elems = 0;
+      duckdb::Vector offsets{duckdb::LogicalType::UBIGINT, row_count};
+      auto* op = duckdb::FlatVector::GetDataMutable<uint64_t>(offsets);
+      uint64_t running = node.list_global_running;
       for (duckdb::idx_t i = 0; i < row_count; ++i) {
-        // Mirror duckdb::ListColumnData::Append: invalid parent rows
-        // contribute zero elements to the child column (their length
-        // slot may carry uninitialised bytes).
-        const uint64_t len =
-          parent_validity.RowIsValid(i) ? entries[i].length : 0;
-        lp[i] = len;
-        total_elems += len;
+        if (parent_validity.RowIsValid(i)) {
+          running += entries[i].length;
+        }
+        op[i] = running;
       }
-      const auto lengths_type = duckdb::LogicalType::UBIGINT;
-      CompressColumn(db, pbm, out, lengths_type, lengths, row_count, row_start,
+      const uint64_t total_elems = running - node.list_global_running;
+      node.list_global_running = running;
+      const auto offsets_type = duckdb::LogicalType::UBIGINT;
+      CompressColumn(db, pbm, out, offsets_type, offsets, row_count, row_start,
                      node.pointers, duckdb::CompressionType::COMPRESSION_AUTO);
       if (node.child_columns.empty()) {
         node.child_columns.emplace_back();

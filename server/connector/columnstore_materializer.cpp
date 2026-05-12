@@ -35,8 +35,7 @@ ColumnstoreMaterializer::ColumnstoreMaterializer(
       _bound.push_back(Binding{
         .reader = r,
         .output_slot = output_slots[i],
-        .data_scan = irs::columnstore::ColumnReader::RangeScan{*r, false},
-        .validity_scan = irs::columnstore::ColumnReader::RangeScan{*r, true},
+        .state = cs_internal::MakeMaterializerNodeState(*r),
       });
     }
   }
@@ -55,7 +54,7 @@ void ColumnstoreMaterializer::SelectByDocIds(
                               type_id == duckdb::LogicalTypeId::MAP)) {
       duckdb::ListVector::SetListSize(out_vec, 0);
     }
-    MaterializeColumnRange(*b.reader, doc_ids, out_vec, output_start);
+    MaterializeColumnRange(*b.reader, *b.state, doc_ids, out_vec, output_start);
   }
 }
 
@@ -68,25 +67,11 @@ void ColumnstoreMaterializer::Scan(uint64_t start_doc, duckdb::idx_t count,
     auto& out_vec = output.data[b.output_slot];
     const auto type_id = b.reader->Type().id();
     if (type_id == duckdb::LogicalTypeId::LIST ||
-        type_id == duckdb::LogicalTypeId::MAP ||
-        type_id == duckdb::LogicalTypeId::ARRAY ||
-        type_id == duckdb::LogicalTypeId::STRUCT) {
-      // Nested types are walked from scratch each Scan; cached cursors
-      // only help the primitive leaf path.
-      if (type_id == duckdb::LogicalTypeId::LIST ||
-          type_id == duckdb::LogicalTypeId::MAP) {
-        duckdb::ListVector::SetListSize(out_vec, 0);
-      }
-      MaterializeColumnRange(
-        *b.reader, cs_internal::IotaRange{start_doc, count}, out_vec, 0);
-      continue;
+        type_id == duckdb::LogicalTypeId::MAP) {
+      duckdb::ListVector::SetListSize(out_vec, 0);
     }
-    if (b.reader->RowGroupCount() > 0) {
-      b.data_scan.Scan(start_doc, count, out_vec, 0);
-    }
-    if (b.reader->HasValidity()) {
-      b.validity_scan.Scan(start_doc, count, out_vec, 0);
-    }
+    MaterializeColumnRange(*b.reader, *b.state,
+                           cs_internal::IotaRange{start_doc, count}, out_vec, 0);
   }
 }
 

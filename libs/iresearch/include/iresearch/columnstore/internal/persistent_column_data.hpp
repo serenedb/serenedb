@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "basics/assert.h"
 #include "iresearch/types.hpp"
 
 // Internal header shared between format.cpp (footer ser/de + Writer impl)
@@ -66,5 +67,35 @@ struct FooterColumnEntry {
   std::string name;
   PersistentColumnData root;
 };
+
+inline duckdb::DataPointer CloneDataPointer(const duckdb::DataPointer& p) {
+  SDB_ASSERT(!p.segment_state,
+             "columnstore::CloneDataPointer: codec segment_state is not "
+             "supported (mirrors ColumnReader::OpenSegment)");
+  duckdb::DataPointer out{p.statistics.Copy()};
+  out.row_start = p.row_start;
+  out.tuple_count = p.tuple_count;
+  out.block_pointer = p.block_pointer;
+  out.compression_type = p.compression_type;
+  return out;
+}
+
+inline PersistentColumnData Clone(const PersistentColumnData& src) {
+  PersistentColumnData out;
+  out.type = src.type;
+  out.pointers.reserve(src.pointers.size());
+  for (const auto& p : src.pointers) {
+    out.pointers.emplace_back(CloneDataPointer(p));
+  }
+  out.validity_pointers.reserve(src.validity_pointers.size());
+  for (const auto& p : src.validity_pointers) {
+    out.validity_pointers.emplace_back(CloneDataPointer(p));
+  }
+  out.child_columns.reserve(src.child_columns.size());
+  for (const auto& c : src.child_columns) {
+    out.child_columns.emplace_back(Clone(c));
+  }
+  return out;
+}
 
 }  // namespace irs::columnstore

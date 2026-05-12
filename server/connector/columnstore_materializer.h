@@ -19,6 +19,7 @@
 #pragma once
 
 #include <algorithm>
+#include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -27,6 +28,8 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
+#include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -68,23 +71,71 @@ struct IotaRange {
 };
 static_assert(DocIdRange<IotaRange>);
 
+// Recursive scan state mirrored after duckdb::ColumnScanState's
+// child_states. Lives on the binding and persists across batches so the
+// open ColumnSegments inside ScanCursor / ListOffsetState are reused --
+// otherwise every batch re-opens (and re-reads) every cs segment.
+struct MaterializerNodeState {
+  // Primitive-leaf cursors (lazy-init on first use; ColumnReader's
+  // RangeScan is move-only and needs a reader reference, so optional
+  // works as a deferred slot).
+  std::optional<irs::columnstore::ColumnReader::RangeScan> data_scan;
+  std::optional<irs::columnstore::ColumnReader::RangeScan> validity_scan;
+  // LIST/MAP cursors and helpers.
+  irs::columnstore::ColumnReader::ListOffsetState list_offsets;
+  duckdb::Vector offsets_scratch{duckdb::LogicalType::UBIGINT,
+                                 STANDARD_VECTOR_SIZE};
+  irs::columnstore::RgWindow rg_hint;
+  // Pre-allocated child states for ARRAY/LIST/MAP (1 entry) and
+  // STRUCT (one per field).
+  std::vector<std::unique_ptr<MaterializerNodeState>> children;
+};
+
+inline std::unique_ptr<MaterializerNodeState> MakeMaterializerNodeState(
+  const irs::columnstore::ColumnReader& reader) {
+  auto state = std::make_unique<MaterializerNodeState>();
+  switch (reader.Type().id()) {
+    case duckdb::LogicalTypeId::ARRAY:
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::LIST: {
+      const auto* child = reader.Child();
+      SDB_ASSERT(child);
+      state->children.push_back(MakeMaterializerNodeState(*child));
+      break;
+    }
+    case duckdb::LogicalTypeId::STRUCT: {
+      state->children.reserve(reader.StructFieldCount());
+      for (size_t fi = 0; fi < reader.StructFieldCount(); ++fi) {
+        state->children.push_back(
+          MakeMaterializerNodeState(reader.StructField(fi)));
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return state;
+}
+
 // Generic recursive materializer. Mirrors duckdb::ColumnData::ScanCount's
 // per-type recursion: scan parent validity into the output vector first,
 // then dispatch on the structural payload (primitive data / ARRAY child /
-// LIST length+child). Recursing through the same entry point honours the
-// child's own validity and nested structural layout, so e.g. NULL elements
-// inside a non-null list roundtrip correctly.
+// LIST length+child / STRUCT fields). The state argument keeps cursors
+// alive across batches so the same ColumnSegment objects (and their
+// BufferManager-pinned pages) are reused without re-reading the file.
 template<DocIdRange DocIds>
 void MaterializeNode(const irs::columnstore::ColumnReader& reader,
-                     const DocIds& doc_ids, duckdb::Vector& out_vec,
-                     duckdb::idx_t output_start) {
+                     MaterializerNodeState& state, const DocIds& doc_ids,
+                     duckdb::Vector& out_vec, duckdb::idx_t output_start) {
   if (doc_ids.size() == 0) {
     return;
   }
   using irs::columnstore::ColumnReader;
   if (reader.HasValidity()) {
-    ColumnReader::RangeScan validity_scan{reader, /*validity_side=*/true};
-    ColumnReader::ScanRowsBatched(validity_scan, doc_ids, out_vec,
+    if (!state.validity_scan) {
+      state.validity_scan.emplace(reader, /*validity_side=*/true);
+    }
+    ColumnReader::ScanRowsBatched(*state.validity_scan, doc_ids, out_vec,
                                   output_start);
   }
   switch (reader.Type().id()) {
@@ -94,13 +145,25 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       const auto array_size = reader.ArraySize();
       SDB_ASSERT(array_size > 0);
       auto& child_out = duckdb::ArrayVector::GetChildMutable(out_vec);
-      for (size_t i = 0; i < doc_ids.size(); ++i) {
-        const uint64_t parent_doc = static_cast<uint64_t>(doc_ids[i]);
-        const uint64_t elem_start = parent_doc * array_size;
+      auto& child_state = *state.children[0];
+      // Coalesce runs of consecutive parent doc_ids into one child
+      // recursion -- the element ranges are contiguous in child space.
+      size_t i = 0;
+      while (i < doc_ids.size()) {
+        size_t run = 1;
+        while (i + run < doc_ids.size() &&
+               static_cast<uint64_t>(doc_ids[i + run]) ==
+                 static_cast<uint64_t>(doc_ids[i + run - 1]) + 1) {
+          ++run;
+        }
+        const uint64_t elem_start =
+          static_cast<uint64_t>(doc_ids[i]) * array_size;
         const auto child_out_start =
           static_cast<duckdb::idx_t>((output_start + i) * array_size);
-        MaterializeNode(*child, IotaRange{elem_start, array_size}, child_out,
+        MaterializeNode(*child, child_state,
+                        IotaRange{elem_start, run * array_size}, child_out,
                         child_out_start);
+        i += run;
       }
       return;
     }
@@ -116,26 +179,46 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       auto* list_entries =
         duckdb::FlatVector::GetDataMutable<duckdb::list_entry_t>(out_vec);
       auto& child_out = duckdb::ListVector::GetChildMutable(out_vec);
-      for (size_t i = 0; i < doc_ids.size(); ++i) {
-        const uint64_t doc = static_cast<uint64_t>(doc_ids[i]);
-        const auto window = reader.Locate(doc);
-        const uint64_t in_rg = doc - window.begin;
-        const auto offsets = reader.ListOffsets(window.rg);
-        SDB_ASSERT(in_rg + 1 < offsets.size());
-        const uint64_t local_start = offsets[in_rg];
-        const uint64_t length = offsets[in_rg + 1] - local_start;
-        const uint64_t global_start =
-          reader.RowGroupElementStart(window.rg) + local_start;
-        const auto prior_size = duckdb::ListVector::GetListSize(out_vec);
-        list_entries[output_start + i] =
-          duckdb::list_entry_t{prior_size, length};
-        if (length == 0) {
-          continue;
+      auto& child_state = *state.children[0];
+      // Coalesce consecutive parent doc_ids that fall inside the same
+      // row group: scan their offsets in one ColumnSegment::Scan call,
+      // build list_entries from the cumulative offsets, then recurse on
+      // the child once with the full element range.
+      size_t i = 0;
+      while (i < doc_ids.size()) {
+        const uint64_t doc0 = static_cast<uint64_t>(doc_ids[i]);
+        state.rg_hint = reader.Locate(doc0, state.rg_hint);
+        const auto& window = state.rg_hint;
+        size_t run = 1;
+        while (i + run < doc_ids.size() &&
+               static_cast<uint64_t>(doc_ids[i + run]) ==
+                 static_cast<uint64_t>(doc_ids[i + run - 1]) + 1 &&
+               static_cast<uint64_t>(doc_ids[i + run]) < window.end) {
+          ++run;
         }
-        duckdb::ListVector::Reserve(out_vec, prior_size + length);
-        MaterializeNode(*child, IotaRange{global_start, length}, child_out,
-                        prior_size);
-        duckdb::ListVector::SetListSize(out_vec, prior_size + length);
+        const uint64_t first_in_rg = doc0 - window.begin;
+        const uint64_t first_start = reader.ReadListOffsets(
+          state.list_offsets, window.rg, first_in_rg,
+          static_cast<duckdb::idx_t>(run), state.offsets_scratch);
+        const auto* ends =
+          duckdb::FlatVector::GetData<uint64_t>(state.offsets_scratch);
+        const auto child_run_start = duckdb::ListVector::GetListSize(out_vec);
+        uint64_t prev = first_start;
+        for (size_t k = 0; k < run; ++k) {
+          const uint64_t end = ends[k];
+          list_entries[output_start + i + k] = duckdb::list_entry_t{
+            child_run_start + (prev - first_start), end - prev};
+          prev = end;
+        }
+        const uint64_t total_len = prev - first_start;
+        if (total_len > 0) {
+          duckdb::ListVector::Reserve(out_vec, child_run_start + total_len);
+          MaterializeNode(*child, child_state,
+                          IotaRange{first_start, total_len}, child_out,
+                          child_run_start);
+          duckdb::ListVector::SetListSize(out_vec, child_run_start + total_len);
+        }
+        i += run;
       }
       return;
     }
@@ -146,8 +229,8 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       auto& entries = duckdb::StructVector::GetEntries(out_vec);
       SDB_ASSERT(entries.size() == reader.StructFieldCount());
       for (size_t fi = 0; fi < entries.size(); ++fi) {
-        MaterializeNode(reader.StructField(fi), doc_ids, entries[fi],
-                        output_start);
+        MaterializeNode(reader.StructField(fi), *state.children[fi], doc_ids,
+                        entries[fi], output_start);
       }
       return;
     }
@@ -155,8 +238,11 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
       if (reader.RowGroupCount() == 0) {
         return;
       }
-      ColumnReader::RangeScan data{reader, /*validity_side=*/false};
-      ColumnReader::ScanRowsBatched(data, doc_ids, out_vec, output_start);
+      if (!state.data_scan) {
+        state.data_scan.emplace(reader, /*validity_side=*/false);
+      }
+      ColumnReader::ScanRowsBatched(*state.data_scan, doc_ids, out_vec,
+                                    output_start);
       return;
     }
   }
@@ -167,9 +253,10 @@ void MaterializeNode(const irs::columnstore::ColumnReader& reader,
 // Materialises `doc_ids` from `reader` into out_vec[output_start..].
 template<DocIdRange DocIds>
 void MaterializeColumnRange(const irs::columnstore::ColumnReader& reader,
+                            cs_internal::MaterializerNodeState& state,
                             const DocIds& doc_ids, duckdb::Vector& out_vec,
                             duckdb::idx_t output_start) {
-  cs_internal::MaterializeNode(reader, doc_ids, out_vec, output_start);
+  cs_internal::MaterializeNode(reader, state, doc_ids, out_vec, output_start);
 }
 
 // One instance per (segment, projection set) for INCLUDEd columns flagged
@@ -198,8 +285,7 @@ class ColumnstoreMaterializer {
   struct Binding {
     const irs::columnstore::ColumnReader* reader;
     duckdb::idx_t output_slot;
-    irs::columnstore::ColumnReader::RangeScan data_scan;
-    irs::columnstore::ColumnReader::RangeScan validity_scan;
+    std::unique_ptr<cs_internal::MaterializerNodeState> state;
   };
 
   irs::columnstore::Reader _reader;

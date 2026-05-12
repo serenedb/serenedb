@@ -192,11 +192,30 @@ class ColumnReader final {
     return *_struct_fields[i];
   }
 
-  // LIST<T> per-row-group offsets. Cached prefix sum of size rg_rows + 1:
-  // row i's element span is [offsets[i], offsets[i+1]).
-  std::span<const uint64_t> ListOffsets(size_t rg) const;
-  // Sum of lengths for row groups [0..rg). Cached.
-  uint64_t RowGroupElementStart(size_t rg) const;
+  // Stateful per-row-group cursor over a LIST/MAP column's cumulative
+  // offsets. Caller advances through monotonically non-decreasing
+  // (rg, in_rg) pairs; on each call, ReadListOffset yields the row's
+  // element span [start, end) as column-global child positions.
+  // The scratch UBIGINT vector is reused across calls so the hot loop
+  // doesn't reallocate per row.
+  struct ListOffsetState {
+    size_t rg = std::numeric_limits<size_t>::max();
+    ScanCursor cursor;
+    uint64_t next_pos = 0;
+    uint64_t prev_offset = 0;
+    duckdb::Vector buf{duckdb::LogicalType::UBIGINT, 1};
+  };
+  void ReadListOffset(ListOffsetState& state, size_t rg, uint64_t in_rg,
+                      uint64_t& start, uint64_t& end) const;
+
+  // Batched form: read `count` consecutive cumulative offsets starting
+  // at row `first_in_rg` in row group `rg`. Writes `count` values into
+  // `out_buf` (must be UBIGINT, capacity >= count); returns the
+  // pre-batch cumulative offset that anchors the run's start.
+  // Callers must NOT mix this with ReadListOffset on the same state.
+  uint64_t ReadListOffsets(ListOffsetState& state, size_t rg,
+                           uint64_t first_in_rg, duckdb::idx_t count,
+                           duckdb::Vector& out_buf) const;
 
   // Per-cursor point-access for roughly-monotonic per-doc lookups.
   // Caches the open ColumnSegment + fetch state across calls in the same
@@ -253,11 +272,9 @@ class ColumnReader final {
   IndexInput* _in;
   duckdb::DatabaseInstance* _db;
 
-  // LIST lazy caches. ListOffsets(rg) populates _list_offsets_per_rg[rg]
-  // as a prefix-sum span of size rg_rows + 1. _rg_element_starts[rg] has
-  // sentinel uint64_t(-1) until computed.
-  mutable std::vector<std::vector<uint64_t>> _list_offsets_per_rg;
-  mutable std::vector<uint64_t> _rg_element_starts;
+  // Element-start prefix sums across LIST/MAP row groups, derived
+  // eagerly from each segment's stats (max stored cumulative offset).
+  std::vector<uint64_t> _rg_element_starts;
 };
 
 }  // namespace columnstore

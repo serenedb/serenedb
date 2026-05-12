@@ -97,6 +97,11 @@ class Transaction : public Config {
     return _num_log_data_markers;
   }
 
+#ifdef SDB_FAULT_INJECTION
+  void CrashAfterRocksdbCommit() noexcept {
+    _crash_after_rocksdb_commit = true;
+  }
+#endif
   const rocksdb::Snapshot& GetRocksDBSnapshot() const noexcept {
     SDB_ASSERT(_rocksdb_snapshot);
     return *_rocksdb_snapshot;
@@ -179,6 +184,10 @@ class Transaction : public Config {
     _search_snapshots;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
   uint64_t _num_log_data_markers = 0;
+#ifdef SDB_FAULT_INJECTION
+  // Recovery-test arming -- see ArmCrashAfterRocksdbCommit().
+  bool _crash_after_rocksdb_commit = false;
+#endif
 };
 
 }  // namespace sdb::query

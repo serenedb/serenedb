@@ -1,0 +1,67 @@
+control substitution on
+
+# JSON-path inverted index WAL-recovery: a row whose rocksdb txn committed
+# (durable in WAL) but whose iresearch txn never committed (lost on crash)
+# must be replayed into the inverted index on restart.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY json_crash_vd(template = 'keyword');
+
+statement ok
+CREATE TABLE jc_t(id INTEGER PRIMARY KEY, content JSON);
+
+statement ok
+CREATE INDEX jc_idx ON jc_t USING inverted(id, (content->>'host') json_crash_vd);
+
+# Seed row, inserted before the fault is armed.
+statement ok
+INSERT INTO jc_t VALUES (1, '{"host":"server-01"}'::json);
+
+statement ok
+VACUUM (UPDATE_INDEXES) jc_t;
+
+query
+SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-01');
+----
+id
+1
+
+# Table-scoped failpoint: an INSERT into `jc_t` will let rocksdb commit
+# normally, then crash before iresearch picks up the write.
+statement ok
+SET sdb_faults = 'Insert::CrashAfterRocksdb:jc_t';
+
+# Statement-level commit succeeds (rocksdb WAL has row 2), then crash.
+query error connection closed
+INSERT INTO jc_t VALUES (2, '{"host":"server-02"}'::json);
+
+# --- server restarts here. WAL recovery replays row 2 into iresearch. ---
+
+connection jc_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (UPDATE_INDEXES) jc_t;
+
+# Seed row still indexed.
+connection jc_after
+query
+SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-01');
+----
+id
+1
+
+# Row 2 survived in rocksdb...
+connection jc_after
+query
+SELECT id FROM jc_t ORDER BY id;
+----
+id
+1
+2
+
+# ...and was replayed into the inverted index by WAL recovery.
+connection jc_after
+query
+SELECT id FROM jc_idx WHERE content->>'host' @@ ts_like('server-02');
+----
+id
+2

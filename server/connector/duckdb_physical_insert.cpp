@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_physical_insert.h"
 
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/common/types/data_chunk.hpp>
@@ -28,6 +29,7 @@
 #include <shared_mutex>
 
 #include "basics/assert.h"
+#include "basics/debugging.h"
 #include "catalog/catalog.h"
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
@@ -296,6 +298,13 @@ duckdb::SinkResultType SereneDBPhysicalInsert::Sink(
         json_desc);
     }
   }
+
+#ifdef SDB_FAULT_INJECTION
+  SDB_IF_FAILURE(
+    absl::StrCat("Insert::CrashAfterRocksdb:", gstate.table_name)) {
+    gstate.sdb_txn->CrashAfterRocksdbCommit();
+  }
+#endif
 
   // 5. Finish index writers
   for (auto& writer : gstate.index_writers) {

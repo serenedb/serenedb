@@ -444,11 +444,10 @@ void InitSearchColumnContextForGet(
   ctx.tokenizer_provider = [index_ptr, snapshot](catalog::Column::Id col_id) {
     return index_ptr->GetColumnTokenizer(snapshot, col_id);
   };
-  ctx.json_path_tokenizer_provider = [index_ptr, snapshot, &client_context](
+  ctx.json_path_tokenizer_provider = [index_ptr, snapshot](
                                        catalog::Column::Id col_id,
                                        const std::string& serialized_expr) {
-    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, serialized_expr,
-                                           client_context);
+    return index_ptr->GetJsonPathTokenizer(snapshot, col_id, serialized_expr);
   };
 }
 

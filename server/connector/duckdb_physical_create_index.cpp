@@ -658,7 +658,7 @@ SereneDBPhysicalCreateIndex::GetLocalSinkState(
   auto tokenizer_provider =
     MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
   auto json_path_tokenizer_provider = MakeJsonPathTokenizerProvider(
-    gstate.snapshot_for_providers, inverted_index, &context.client);
+    gstate.snapshot_for_providers, inverted_index);
   auto json_path_entries = MakeJsonPathBoundEntries(
     inverted_index, gstate.index_for_providers->GetColumnIds(),
     &context.client);

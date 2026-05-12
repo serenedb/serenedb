@@ -96,13 +96,11 @@ class InvertedIndex final : public Index {
     const std::shared_ptr<const Snapshot>& snapshot,
     catalog::Column::Id columnd_id) const;
 
-  // `context` is required: matching a JSON-path entry deserialises its
-  // stored bound expression, and DuckDB's BinaryDeserializer looks the
-  // referenced scalar functions up via `ClientContext` in the live catalog.
+  // Resolves a configured JSON-path entry by its normalized and
+  // returns the per-path tokenizer.
   std::optional<ColumnTokenizer> GetJsonPathTokenizer(
     const std::shared_ptr<const Snapshot>& snapshot,
-    catalog::Column::Id column_id, const std::string& serialized_expr,
-    duckdb::ClientContext& context) const;
+    catalog::Column::Id column_id, const std::string& serialized_expr) const;
 
   std::optional<irs::HNSWInfo> GetColumnHNSWInfo(
     catalog::Column::Id column_id) const;

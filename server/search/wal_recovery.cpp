@@ -195,8 +195,8 @@ void FlushShard(ShardState& s,
   auto trx = s.shard->GetTransaction();
   auto tokenizer_provider =
     connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_path_tokenizer_provider = connector::MakeJsonPathTokenizerProvider(
-    snapshot, *s.index, &client_context);
+  auto json_path_tokenizer_provider =
+    connector::MakeJsonPathTokenizerProvider(snapshot, *s.index);
   auto json_path_entries = connector::MakeJsonPathBoundEntries(
     *s.index, s.indexed_column_ids, &client_context);
   // Use the DuckDB-facing wrapper so SwitchColumn / Write / Finish /
@@ -329,7 +329,6 @@ void FlushShard(ShardState& s,
         auto result = connector::EvaluateJsonPathOverChunk(
           *json_expr.bound_expr, chunk, s.table_object_id, slot_to_col_id,
           client_context);
-
         const bool switched =
           sink.SwitchJsonExpression(connector::JsonExprDescriptor{
             json_expr.column_id, result.GetType(), /*have_nulls=*/true,
@@ -735,9 +734,15 @@ void InitInvertedIndexes(bool skip_wal_recovery) {
   // ExpressionExecutor during replay. The Connection is local to this
   // recovery run.
   auto recovery_conn = query::DuckDBEngine::Instance().CreateConnection();
+
+  // DuckDB transaction is needed for expression deserialization and evaluation.
+  // SereneDB' specific machinery with transaction
+  // is not executed automatically.
+  recovery_conn->BeginTransaction();
   auto& client_context = *recovery_conn->context;
   RunWalRecovery(recovery_shards, snapshot, client_context, *db, min_start_tick,
                  end_tick);
+  recovery_conn->Commit();
 
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);

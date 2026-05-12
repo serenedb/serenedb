@@ -68,18 +68,16 @@ inline TokenizerProvider MakeTokenizerProvider(
 }
 
 // Builds the keyed tokenizer accessor for JSON-path fields. Captures the
-// snapshot + index reference + client-context pointer so each call can
-// resolve the path-specific dictionary lazily.
+// snapshot + index reference so each call resolves the path-specific
+// dictionary lazily by matching the catalog's stored serialized bytes.
 inline JsonPathTokenizerProvider MakeJsonPathTokenizerProvider(
   std::shared_ptr<const catalog::Snapshot> snapshot,
-  const catalog::InvertedIndex& index, duckdb::ClientContext* client_context) {
-  return [snapshot = std::move(snapshot), &index, client_context](
+  const catalog::InvertedIndex& index) {
+  return [snapshot = std::move(snapshot), &index](
            catalog::Column::Id column_id,
            std::string_view serialized_expr) -> catalog::ColumnTokenizer {
-    SDB_ASSERT(client_context,
-               "JSON-path tokenizer lookup requires a ClientContext");
-    auto tokenizer = index.GetJsonPathTokenizer(
-      snapshot, column_id, std::string{serialized_expr}, *client_context);
+    auto tokenizer = index.GetJsonPathTokenizer(snapshot, column_id,
+                                                std::string{serialized_expr});
     SDB_ASSERT(tokenizer, "JSON-path tokenizer not found for serialized expr");
     return *std::move(tokenizer);
   };

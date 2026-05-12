@@ -138,12 +138,7 @@ ColumnTokenizer InvertedIndex::GetColumnTokenizer(
 
 std::optional<ColumnTokenizer> InvertedIndex::GetJsonPathTokenizer(
   const std::shared_ptr<const Snapshot>& snapshot,
-  catalog::Column::Id column_id, const std::string& serialized_expr,
-  duckdb::ClientContext& /*context*/) const {
-  // Both sides serialise through `NormalizeBoundExpression` ->
-  // `SerializeBoundExpression`, so we can match by raw bytes here -- no
-  // need to deserialise. The ClientContext stays in the signature for
-  // any future canonical-form changes that would require it.
+  catalog::Column::Id column_id, const std::string& serialized_expr) const {
   const auto* info = FindColumnInfo(column_id);
   if (!info) {
     return std::nullopt;

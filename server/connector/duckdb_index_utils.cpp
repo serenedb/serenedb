@@ -175,8 +175,8 @@ std::vector<std::unique_ptr<DuckDBSinkIndexWriter>> CreateDuckDBIndexWriters(
       auto& inverted_index =
         basics::downCast<const catalog::InvertedIndex>(index);
       auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
-      auto json_path_tokenizer_provider = MakeJsonPathTokenizerProvider(
-        snapshot, inverted_index, &conn_ctx.GetClientContext());
+      auto json_path_tokenizer_provider =
+        MakeJsonPathTokenizerProvider(snapshot, inverted_index);
       auto json_path_entries = MakeJsonPathBoundEntries(
         inverted_index, index.GetColumnIds(), &conn_ctx.GetClientContext());
 

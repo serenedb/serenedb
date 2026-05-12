@@ -29,6 +29,7 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_tokenizer_function.h"
+#include "connector/duckdb_truncate_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/array.h"
 #include "connector/functions/cast.h"
@@ -236,6 +237,8 @@ void DuckDBEngine::Initialize() {
   connector::RegisterPgJsonFunctions(*_db->instance);
 
   connector::RegisterVacuumFunction(*_db->instance);
+
+  connector::RegisterTruncateFunction(*_db->instance);
 
   connector::RegisterSearchFunctions(*_db->instance);
 

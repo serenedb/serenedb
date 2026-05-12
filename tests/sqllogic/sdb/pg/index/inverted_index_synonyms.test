@@ -1,0 +1,149 @@
+hash-threshold 100
+
+# --- Standalone solr_synonyms dictionary -----------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY syn_solr_basic(
+    template = 'solr_synonyms',
+    synonyms = 'foo, bar
+baz => qux'
+)
+
+# Bidirectional line: 'foo' expands to its full equivalence class.
+query
+SELECT ts_lexize('syn_solr_basic', 'foo');
+----
+ts_lexize
+{bar,foo}
+
+# Bidirectional symmetry.
+query
+SELECT ts_lexize('syn_solr_basic', 'bar');
+----
+ts_lexize
+{bar,foo}
+
+# One-way mapping: 'baz' rewrites to 'qux'.
+query
+SELECT ts_lexize('syn_solr_basic', 'baz');
+----
+ts_lexize
+{qux}
+
+# Unknown input passes through unchanged.
+query
+SELECT ts_lexize('syn_solr_basic', 'unknown');
+----
+ts_lexize
+{unknown}
+
+# Required `synonyms` field cannot be omitted.
+statement error required parameter "synonyms" was not found
+CREATE TEXT SEARCH DICTIONARY syn_solr_missing(
+    template = 'solr_synonyms'
+)
+
+# Malformed input is rejected at DDL time.
+statement error Failed to create text search dictionary "syn_solr_malformed"
+CREATE TEXT SEARCH DICTIONARY syn_solr_malformed(
+    template = 'solr_synonyms',
+    synonyms = 'foo => => bar'
+)
+
+# --- Standalone wordnet_synonyms dictionary --------------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY syn_wordnet_basic(
+    template = 'wordnet_synonyms',
+    synonyms = 's(100000002,1,''come'',v,1,0).
+s(100000002,2,''advance'',v,1,0).'
+)
+
+query
+SELECT ts_lexize('syn_wordnet_basic', 'come');
+----
+ts_lexize
+{100000002}
+
+query
+SELECT ts_lexize('syn_wordnet_basic', 'advance');
+----
+ts_lexize
+{100000002}
+
+# Unknown word: dictionary emits no tokens.
+query
+SELECT ts_lexize('syn_wordnet_basic', 'missing');
+----
+ts_lexize
+{}
+
+statement error Failed to create text search dictionary "syn_wordnet_malformed"
+CREATE TEXT SEARCH DICTIONARY syn_wordnet_malformed(
+    template = 'wordnet_synonyms',
+    synonyms = 'not a wordnet record'
+)
+
+# --- Pipeline: text (lowercase) -> solr_synonyms ---------------------------
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY syn_pipeline(
+    template = 'pipeline',
+    step1_template = 'text',
+    step1_locale = 'en_US.UTF-8',
+    step1_case = 'lower',
+    step1_stemming = false,
+    step2_template = 'solr_synonyms',
+    step2_synonyms = 'foo, bar
+baz => qux',
+    frequency = true,
+    position = true
+)
+
+# Mixed-case input is lowercased then synonym-expanded per token.
+query
+SELECT ts_lexize('syn_pipeline', 'Foo');
+----
+ts_lexize
+{bar,foo}
+
+query
+SELECT ts_lexize('syn_pipeline', 'BAZ');
+----
+ts_lexize
+{qux}
+
+# --- Inverted index built on the synonym pipeline --------------------------
+
+statement ok
+CREATE TABLE docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO docs VALUES
+    (1, 'i love foo'),
+    (2, 'try the baz today'),
+    (3, 'nothing relevant here');
+
+statement ok
+CREATE INDEX docs_idx ON docs USING inverted(id, body syn_pipeline);
+
+# Synonym expansion at index time: row 1 indexes both 'foo' and 'bar'.
+query
+SELECT id FROM docs_idx WHERE body @@ 'bar' ORDER BY id;
+----
+id
+1
+
+# One-way: row 2 had 'baz' indexed as 'qux'.
+query
+SELECT id FROM docs_idx WHERE body @@ 'qux' ORDER BY id;
+----
+id
+2
+
+# Querying with the original ('foo') still matches row 1 via the bidirectional set.
+query
+SELECT id FROM docs_idx WHERE body @@ 'foo' ORDER BY id;
+----
+id
+1

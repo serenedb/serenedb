@@ -22,11 +22,13 @@
 
 #include <duckdb.hpp>
 #include <duckdb/execution/physical_operator.hpp>
+#include <shared_mutex>
 
 #include "catalog/table.h"
 #include "connector/duckdb_primary_key.h"
 #include "connector/duckdb_rocksdb_writer.h"
 #include "rocksdb/sst_file_writer.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::catalog {
 
@@ -70,6 +72,9 @@ struct SSTInsertGlobalState : public duckdb::GlobalSinkState {
 
   bool has_data = false;
   bool finalized = false;
+
+  std::shared_ptr<TableShard> table_shard;
+  std::unique_lock<std::shared_mutex> table_lock;
 
   ~SSTInsertGlobalState() override;
 };

@@ -21,7 +21,9 @@
 #include "connector/duckdb_physical_create_index.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/match.h>
 
+#include <atomic>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -56,6 +58,7 @@
 #include "connector/search_sink_writer.hpp"
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
+#include "pg/progress_tracker.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/secondary_index_shard.h"
 
@@ -167,8 +170,6 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   duckdb::idx_t file_row_number_col_idx = 0;
   duckdb::idx_t file_index_col_idx = 0;
   duckdb::idx_t generated_pk_col_idx = 0;
-  int64_t external_row_counter = 0;
-  int64_t view_row_counter = 0;
   bool is_external = false;
   bool is_glob_external = false;
   bool has_generated_pk_col = false;
@@ -176,14 +177,26 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
   bool is_view_synth_pk = false;
   bool is_view_rocksdb_pk = false;
 
+  std::atomic<int64_t> view_row_counter_atomic{0};
+  std::atomic<duckdb::idx_t> backfill_count_atomic{0};
+  int64_t external_row_counter = 0;
+
   std::unique_ptr<DuckDBSinkIndexWriter> writer;
   std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
-  std::shared_ptr<IndexShard> index_shard;
-
   std::vector<std::string> row_keys;
-  std::string value_buffer;
-  duckdb::idx_t backfill_count = 0;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
+
+  std::shared_ptr<IndexShard> index_shard;
+  std::shared_ptr<const catalog::Snapshot> snapshot_for_providers;
+  std::shared_ptr<catalog::Index> index_for_providers;
+
+  std::string value_buffer;
+
+  // Surfaces ingest progress through pg_stat_progress_create_index. Lives
+  // for the duration of the build pipeline; phases advance Initializing ->
+  // BuildingIndex (after catalog row exists) -> Committing (Finalize before
+  // CommitWait) -> Finalizing (Finalize after CommitWait, before tombstone).
+  std::unique_ptr<pg::IndexProgressReporter> progress;
 
   ~CreateIndexGlobalState() {
     search_trx.reset();
@@ -196,6 +209,18 @@ struct CreateIndexGlobalState : public duckdb::GlobalSinkState {
       } catch (...) {
       }
     }
+  }
+};
+
+struct CreateIndexLocalState : public duckdb::LocalSinkState {
+  std::unique_ptr<irs::IndexWriter::Transaction> search_trx;
+  std::unique_ptr<DuckDBSinkIndexWriter> writer;
+  duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
+  std::vector<std::string> row_keys;
+
+  ~CreateIndexLocalState() override {
+    writer.reset();
+    search_trx.reset();
   }
 };
 
@@ -249,6 +274,18 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   state->schema_name = _schema_entry.name;
   state->table_name = std::string{_relation->GetName()};
   state->index_name = _info->index_name;
+
+  // Surface progress in pg_stat_progress_create_index. We don't yet know the
+  // catalog index_relid (it's assigned by
+  // CreateInvertedIndex/CreateSecondaryIndex below), so start with an empty one
+  // and patch it in after the catalog row exists.
+  state->progress = std::make_unique<pg::IndexProgressReporter>(
+    _database_id, _relation->GetId(),
+    pg::create_index_progress::Command::CreateIndex,
+    pg::create_index_progress::Phase::Initializing, ObjectId{});
+  if (estimated_cardinality > 0) {
+    state->progress->SetTuplesTotal(estimated_cardinality);
+  }
 
   auto& catalog_feature =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
@@ -380,6 +417,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto catalog_index =
     snapshot->GetRelation(_database_id, _schema_entry.name, _info->index_name);
   SDB_ASSERT(catalog_index);
+  state->progress->SetIndexRelid(catalog_index->GetId());
+  state->progress->SetPhase(pg::create_index_progress::Phase::BuildingIndex);
   auto shard = snapshot->GetIndexShard(catalog_index->GetId());
   SDB_ASSERT(shard);
   state->index_shard = shard;
@@ -503,14 +542,13 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   }
 
   auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
   auto index = snapshot->GetObject<catalog::Index>(catalog_index->GetId());
   SDB_ASSERT(index);
 
   if (state->index_type == catalog::ObjectType::SecondaryIndex) {
     auto& sec_index = basics::downCast<const catalog::SecondaryIndex>(*index);
     auto sk_columns = BuildSKColumnsForBackfill(*index, state->columns);
-    auto& trx = conn_ctx.EnsureRocksDBTransaction();
+    auto& trx = conn_ctx.GetRocksDBTransaction();
 
     if (sec_index.IsUnique()) {
       state->writer = std::make_unique<DuckDBSecondarySinkInsertWriter<true>>(
@@ -520,18 +558,56 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         trx, shard->GetId(), index->GetColumnIds(), std::move(sk_columns));
     }
   } else {
-    auto& inverted_shard = basics::downCast<search::InvertedIndexShard>(*shard);
-    state->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
-      inverted_shard.GetTransaction());
-    auto& inverted_index =
-      basics::downCast<const catalog::InvertedIndex>(*index);
-    auto tokenizer_provider = MakeTokenizerProvider(snapshot, inverted_index);
-    auto json_paths_provider = MakeJsonPathsProvider(snapshot, inverted_index);
-    state->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
-      *state->search_trx, std::move(tokenizer_provider), index->GetColumnIds(),
-      std::move(json_paths_provider));
+    // Parallel-Sink build context: each CreateIndexLocalState pulls a
+    // fresh transaction off the shard and builds its own writer using
+    // providers resolved against the snapshot and InvertedIndex stored
+    // on gstate.
+    state->snapshot_for_providers = snapshot;
+    state->index_for_providers = index;
   }
   return state;
+}
+
+// --- Parallelism toggles ---
+
+bool SereneDBPhysicalCreateIndex::ParallelSink() const {
+  return _info && absl::EqualsIgnoreCase(_info->index_type, "inverted");
+}
+
+duckdb::unique_ptr<duckdb::LocalSinkState>
+SereneDBPhysicalCreateIndex::GetLocalSinkState(
+  duckdb::ExecutionContext& context) const {
+  if (!ParallelSink()) {
+    return duckdb::make_uniq<duckdb::LocalSinkState>();
+  }
+  auto* gstate_ptr =
+    sink_state ? &sink_state->Cast<CreateIndexGlobalState>() : nullptr;
+  if (!gstate_ptr || !gstate_ptr->created || !gstate_ptr->index_shard ||
+      !gstate_ptr->index_for_providers) {
+    return duckdb::make_uniq<duckdb::LocalSinkState>();
+  }
+  auto& gstate = *gstate_ptr;
+
+  auto& inverted_shard =
+    basics::downCast<search::InvertedIndexShard>(*gstate.index_shard);
+  const auto& inverted_index =
+    basics::downCast<const catalog::InvertedIndex>(*gstate.index_for_providers);
+
+  auto lstate = duckdb::make_uniq<CreateIndexLocalState>();
+  lstate->search_trx = std::make_unique<irs::IndexWriter::Transaction>(
+    inverted_shard.GetTransaction());
+  lstate->serializer = duckdb::make_uniq<DuckDBColumnSerializer>(
+    duckdb::BufferAllocator::Get(context.client));
+
+  auto tokenizer_provider =
+    MakeTokenizerProvider(gstate.snapshot_for_providers, inverted_index);
+  auto json_paths_provider =
+    MakeJsonPathsProvider(gstate.snapshot_for_providers, inverted_index);
+  lstate->writer = std::make_unique<DuckDBSearchSinkInsertWriter>(
+    *lstate->search_trx, std::move(tokenizer_provider),
+    gstate.index_for_providers->GetColumnIds(), std::move(json_paths_provider));
+
+  return lstate;
 }
 
 // --- Sink: backfill existing data ---
@@ -540,7 +616,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSinkInput& input) const {
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
-  if (!gstate.created || !gstate.writer) {
+  if (!gstate.created) {
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
@@ -549,11 +625,29 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     return duckdb::SinkResultType::NEED_MORE_INPUT;
   }
 
+  // Pick which writer/buffers to use. Inverted-index parallel path keeps a
+  // CreateIndexLocalState per scan thread (its own iresearch transaction
+  // = its own segment). Secondary-index serial path uses gstate.
+  const bool parallel = ParallelSink();
+  CreateIndexLocalState* lstate = nullptr;
+  if (parallel) {
+    lstate = dynamic_cast<CreateIndexLocalState*>(&input.local_state);
+    if (!lstate || !lstate->writer) {
+      return duckdb::SinkResultType::NEED_MORE_INPUT;
+    }
+  } else if (!gstate.writer) {
+    return duckdb::SinkResultType::NEED_MORE_INPUT;
+  }
+  auto* writer = parallel ? lstate->writer.get() : gstate.writer.get();
+  auto* serializer =
+    parallel ? lstate->serializer.get() : gstate.serializer.get();
+  auto& row_keys = parallel ? lstate->row_keys : gstate.row_keys;
+
   // Row key layout: [ObjectId][ColumnId(reserved)][PK bytes].
-  gstate.row_keys.clear();
-  gstate.row_keys.reserve(num_rows);
+  row_keys.clear();
+  row_keys.reserve(num_rows);
   auto append_row_number_key = [&](int64_t row_number) {
-    auto& key = gstate.row_keys.emplace_back();
+    auto& key = row_keys.emplace_back();
     basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
     std::memcpy(key.data() + sizeof(catalog::Column::Id),
                 gstate.table_key.data(), sizeof(ObjectId));
@@ -561,7 +655,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     std::memcpy(key.data(), gstate.table_key.data(), sizeof(ObjectId));
   };
   auto append_glob_key = [&](int64_t file_index, int64_t row_number) {
-    auto& key = gstate.row_keys.emplace_back();
+    auto& key = row_keys.emplace_back();
     basics::StrResize(key, sizeof(catalog::Column::Id) + sizeof(ObjectId));
     std::memcpy(key.data() + sizeof(catalog::Column::Id),
                 gstate.table_key.data(), sizeof(ObjectId));
@@ -597,9 +691,13 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
       append_row_number_key(rownums[fmt.sel->get_index(row)]);
     }
   } else if (gstate.is_view_synth_pk) {
-    // View-backed: no PK column in chunk; synthesise monotonic counter.
+    // View-backed: no PK column in chunk; synthesise a monotonic counter.
+    // fetch_add reserves a contiguous run of ids per Sink call so PKs stay
+    // unique even when N threads are sinking concurrently.
+    const int64_t base = gstate.view_row_counter_atomic.fetch_add(
+      static_cast<int64_t>(num_rows), std::memory_order_relaxed);
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      append_row_number_key(gstate.view_row_counter++);
+      append_row_number_key(base + static_cast<int64_t>(row));
     }
   } else if (gstate.has_generated_pk_col) {
     SDB_ASSERT(gstate.generated_pk_col_idx < chunk.ColumnCount());
@@ -616,11 +714,11 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
       duckdb_primary_key::MakeColumnKey(
         pk_formats, gstate.pk_columns, row, gstate.table_key, [](auto) {},
-        gstate.row_keys.emplace_back());
+        row_keys.emplace_back());
     }
   }
 
-  gstate.writer->Init(num_rows, chunk);
+  writer->Init(num_rows, chunk);
 
   DuckDBColumnSerializer::SstWriter noop{nullptr};
   for (const auto& col : gstate.columns) {
@@ -630,22 +728,24 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
 
     const ColumnDescriptor desc{col.id, col.store_mode, col.duckdb_type,
                                 /*have_nulls=*/true};
-    if (!gstate.writer->SwitchColumn(desc)) {
+    if (!writer->SwitchColumn(desc)) {
       continue;
     }
 
     for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-      key_utils::SetupColumnForKey(gstate.row_keys[row], col.id);
+      key_utils::SetupColumnForKey(row_keys[row], col.id);
     }
 
-    DuckDBSinkIndexWriter* writer_ptr = gstate.writer.get();
-    gstate.serializer->WriteColumn(noop, chunk.data[col.input_col_idx],
-                                   num_rows, gstate.row_keys, {&writer_ptr, 1},
-                                   desc);
+    DuckDBSinkIndexWriter* writer_ptr = writer;
+    serializer->WriteColumn(noop, chunk.data[col.input_col_idx], num_rows,
+                            row_keys, {&writer_ptr, 1}, desc);
   }
 
-  gstate.writer->Finish();
-  gstate.backfill_count += num_rows;
+  writer->Finish();
+  gstate.backfill_count_atomic.fetch_add(num_rows, std::memory_order_relaxed);
+  if (gstate.progress) {
+    gstate.progress->ReportBatch(num_rows);
+  }
   return duckdb::SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -662,6 +762,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
 
   if (gstate.index_type == catalog::ObjectType::InvertedIndex &&
       gstate.index_shard) {
+    if (gstate.progress) {
+      gstate.progress->SetPhase(pg::create_index_progress::Phase::Committing);
+    }
     gstate.writer.reset();
     gstate.search_trx.reset();
 
@@ -673,6 +776,9 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     inverted_shard.FinishCreation();
   }
 
+  if (gstate.progress) {
+    gstate.progress->SetPhase(pg::create_index_progress::Phase::Finalizing);
+  }
   SDB_IF_FAILURE("crash_before_remove_tombstone") { SDB_IMMEDIATE_ABORT(); }
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
@@ -706,7 +812,10 @@ duckdb::SourceResultType SereneDBPhysicalCreateIndex::GetDataInternal(
 
   auto& gstate = sink_state->Cast<CreateIndexGlobalState>();
   chunk.SetCardinality(1);
-  chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.backfill_count));
+  chunk.SetValue(
+    0, 0,
+    duckdb::Value::BIGINT(static_cast<int64_t>(
+      gstate.backfill_count_atomic.load(std::memory_order_relaxed))));
   return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
 }
 

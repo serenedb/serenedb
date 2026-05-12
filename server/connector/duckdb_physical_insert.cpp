@@ -20,10 +20,14 @@
 
 #include "connector/duckdb_physical_insert.h"
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <shared_mutex>
 
 #include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "catalog/sequence.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_constraint_verify.h"
@@ -36,6 +40,9 @@
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -73,6 +80,9 @@ struct SereneDBInsertGlobalState : public duckdb::GlobalSinkState {
   std::string value_buffer;
   duckdb::unique_ptr<DuckDBColumnSerializer> serializer;
   DuckDBWriteConflictResolver conflict_resolver;
+
+  std::shared_ptr<TableShard> table_shard;
+  std::shared_lock<std::shared_mutex> table_lock;
 };
 
 struct SereneDBInsertSourceState : public duckdb::GlobalSourceState {
@@ -108,6 +118,12 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
   state->table_id = _table->GetId();
   state->table_key = key_utils::PrepareTableKey(state->table_id);
 
+  auto& conn_ctx = GetSereneDBContext(context);
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
+
   // Build column metadata
   const auto& columns = _table->Columns();
   size_t input_idx = 0;
@@ -135,10 +151,7 @@ SereneDBPhysicalInsert::GetGlobalSinkState(
     }
   }
 
-  // Set up transaction and index writers once
-  auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
   state->conflict_resolver.Init(*state->txn, *state->cf, _on_conflict,
                                 state->table_name);
   state->index_writers = CreateDuckDBIndexWriters<DuckDBWriteKind::Insert>(

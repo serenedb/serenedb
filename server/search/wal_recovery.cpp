@@ -97,10 +97,6 @@ struct ShardState {
 
   containers::FlatHashMap<std::string_view, Row> pk2row;
 
-  std::optional<irs::IndexWriter::Transaction> trx;
-  std::optional<connector::SearchSinkInsertBaseImpl> insert_sink;
-  std::optional<connector::SearchSinkDeleteBaseImpl> delete_sink;
-
   std::string full_key_prefix;
 
   uint64_t total_inserted = 0;
@@ -164,21 +160,6 @@ bool ResolveShardMetadata(ShardState& s, const catalog::Snapshot& snapshot) {
   return true;
 }
 
-void EnsureTrxOpen(ShardState& s,
-                   const std::shared_ptr<const catalog::Snapshot>& snapshot) {
-  if (s.trx) {
-    return;
-  }
-  s.trx.emplace(s.shard->GetTransaction());
-  auto tokenizer_provider =
-    connector::MakeTokenizerProvider(snapshot, *s.index);
-  auto json_paths_provider =
-    connector::MakeJsonPathsProvider(snapshot, *s.index);
-  s.insert_sink.emplace(*s.trx, std::move(tokenizer_provider),
-                        std::move(json_paths_provider), s.indexed_column_ids);
-  s.delete_sink.emplace(*s.trx);
-}
-
 void FlushShard(ShardState& s,
                 const std::shared_ptr<const catalog::Snapshot>& snapshot,
                 rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
@@ -203,17 +184,25 @@ void FlushShard(ShardState& s,
     }
   }
 
-  EnsureTrxOpen(s, snapshot);
+  auto trx = s.shard->GetTransaction();
+  auto tokenizer_provider =
+    connector::MakeTokenizerProvider(snapshot, *s.index);
+  auto json_paths_provider =
+    connector::MakeJsonPathsProvider(snapshot, *s.index);
+  connector::SearchSinkInsertBaseImpl insert_sink{
+    trx, std::move(tokenizer_provider), std::move(json_paths_provider),
+    s.indexed_column_ids};
+  connector::SearchSinkDeleteBaseImpl delete_sink{trx};
 
-  s.delete_sink->InitImpl(s.pk2row.size());
+  delete_sink.InitImpl(s.pk2row.size());
   for (const auto& [pk, _] : s.pk2row) {
-    s.delete_sink->DeleteRowImpl(pk);
+    delete_sink.DeleteRowImpl(pk);
   }
-  s.delete_sink->FinishImpl();
+  delete_sink.FinishImpl();
   s.total_deleted += s.pk2row.size() - insert_entries.size();
 
   if (!insert_entries.empty()) {
-    auto& sink = *s.insert_sink;
+    auto& sink = insert_sink;
     sink.InitImpl(insert_entries.size());
     auto& get_key_buffer = s.full_key_prefix;
     rocksdb::ReadOptions read_opts;
@@ -254,15 +243,11 @@ void FlushShard(ShardState& s,
 
   s.total_inserted += insert_entries.size();
 
-  s.delete_sink.reset();
-  s.insert_sink.reset();
-  SDB_ASSERT(s.trx.has_value());
   SDB_ASSERT(last_tick != 0);
-  const bool committed = s.trx->Commit(last_tick);
+  const bool committed = trx.Commit(last_tick);
   SDB_FATAL_IF("xxxxx", Logger::SEARCH, !committed,
                "WAL recovery: iresearch trx Commit failed for index '",
                s.shard->GetId().id(), "' last_tick=", last_tick, kSkipHint);
-  s.trx.reset();
 }
 
 struct PerTableShards {
@@ -309,18 +294,38 @@ class WalBatchReplay final : public rocksdb::WriteBatch::Handler {
     return DeleteCF(cf_id, key);
   }
 
+  rocksdb::Status MergeCF(uint32_t cf_id, const rocksdb::Slice& /*key*/,
+                          const rocksdb::Slice& /*value*/) final {
+    return rocksdb::Status::OK();
+  }
+
   rocksdb::Status DeleteRangeCF(uint32_t cf_id, const rocksdb::Slice& begin,
-                                const rocksdb::Slice&) final {
+                                const rocksdb::Slice& end) final {
     if (cf_id != _default_cf_id) {
       return rocksdb::Status::OK();
     }
-    // We meet this only when we delete the table.
-    // So we are not supposed to find a shard because
-    // table is deleted -> indexes too.
+
     ObjectId id{absl::big_endian::Load64(begin.data())};
-    SDB_FATAL_IF("xxxxx", Logger::SEARCH, _table2shards.contains(id),
-                 "WAL recovery: DeleteRangeCF for live table ", id.id(),
-                 " (TRUNCATE not implemented)", kSkipHint);
+    auto table_it = _table2shards.find(id);
+    if (table_it == _table2shards.end()) {
+      // DROP table
+      return rocksdb::Status::OK();
+    }
+
+    // we expect that this is TRUNCATE case.
+    SDB_ASSERT(begin.size() == sizeof(ObjectId));
+    SDB_ASSERT(end.size() == sizeof(ObjectId));
+    SDB_ASSERT(absl::big_endian::Load64(end.data()) == id.id() + 1);
+
+    auto& shards = table_it->second.shards;
+    for (auto* s : shards) {
+      if (s->start_tick >= _batch_sequence) {
+        break;
+      }
+      s->pk2row.clear();
+      auto guard = s->shard->TruncateBegin();
+      s->shard->TruncateCommit(std::move(guard), _batch_sequence, nullptr);
+    }
     return rocksdb::Status::OK();
   }
 
@@ -535,10 +540,12 @@ void RunWalRecovery(std::vector<ShardState>& shards,
   yaclib::Wait(commits.begin(), commits.end());
 
   for (auto& shard : shards) {
-    SDB_INFO("xxxxx", Logger::SEARCH, "WAL recovery: index '",
-             shard.shard->GetId().id(), "' replayed (", shard.start_tick, ", ",
-             end_tick, "], inserted=", shard.total_inserted,
-             ", deleted=", shard.total_deleted);
+    SDB_INFO_IF("xxxxx", Logger::SEARCH,
+                shard.total_deleted > 0 || shard.total_inserted > 0,
+                "WAL recovery: index '", shard.shard->GetId().id(),
+                "' replayed (", shard.start_tick, ", ", end_tick,
+                "], inserted=", shard.total_inserted,
+                ", deleted=", shard.total_deleted);
   }
 }
 

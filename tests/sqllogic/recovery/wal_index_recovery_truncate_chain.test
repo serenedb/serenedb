@@ -1,0 +1,143 @@
+control substitution on
+
+# WAL index recovery: multiple TRUNCATEs interleaved with inserts and deletes.
+#
+# Forces RunWalRecovery to handle several DeleteRangeCFs for the same table
+# inside one recovery range. Each truncate must reset the per-shard
+# accumulator AND the iresearch on-disk state at its own seq; the final
+# state must reflect only the writes performed AFTER the last truncate.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gayazov_dict(
+    template = 'text',
+    locale = 'en_US.UTF-8',
+    case = 'none',
+    stemming = false,
+    accent = false,
+    frequency = true,
+    position = true
+);
+
+statement ok
+CREATE TABLE gayazov_t(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO gayazov_t VALUES (1, 'first batch alpha'), (2, 'first batch bravo');
+
+statement ok
+CREATE INDEX gayazov_idx ON gayazov_t USING inverted(id, body gayazov_dict);
+
+statement ok
+VACUUM (UPDATE_INDEXES) gayazov_t;
+
+# Block search commits. Everything below this stays in the WAL until restart.
+statement ok
+SET sdb_faults = 'SearchCommitTask::commitUnsafe';
+
+# round 1: insert + truncate
+statement ok
+INSERT INTO gayazov_t VALUES (10, 'round1 charlie'), (11, 'round1 delta');
+
+statement ok
+TRUNCATE gayazov_t;
+
+# round 2: insert + delete + truncate
+statement ok
+INSERT INTO gayazov_t VALUES (20, 'round2 echo'), (21, 'round2 foxtrot'), (22, 'round2 golf');
+
+statement ok
+DELETE FROM gayazov_t WHERE id = 20;
+
+statement ok
+TRUNCATE gayazov_t;
+
+# round 3 (final): only these survive recovery
+statement ok
+INSERT INTO gayazov_t VALUES (30, 'round3 hotel'), (31, 'round3 india');
+
+statement ok
+DELETE FROM gayazov_t WHERE id = 31;
+
+statement ok
+INSERT INTO gayazov_t VALUES (32, 'round3 juliet');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+# --- restart ---
+
+connection gayazov_after
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+# Rocksdb side: only round-3 survivors.
+connection gayazov_after
+query
+SELECT id, body FROM gayazov_t ORDER BY id;
+----
+id	body
+30	round3 hotel
+32	round3 juliet
+
+# Pre-truncate seed terms must not be searchable.
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('first batch alpha');
+----
+id
+
+# Round-1 and round-2 terms (between truncates) must not be searchable.
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('round1 charlie');
+----
+id
+
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('round2 echo');
+----
+id
+
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('round2 foxtrot');
+----
+id
+
+# Round-3 survivors must be searchable.
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('round3 hotel');
+----
+id
+30
+
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('round3 juliet');
+----
+id
+32
+
+# Round-3 deleted row must not surface either.
+connection gayazov_after
+query
+SELECT id FROM gayazov_idx WHERE body @@ ts_phrase('round3 india');
+----
+id
+
+connection gayazov_after
+statement ok
+DROP INDEX gayazov_idx;
+
+connection gayazov_after
+statement ok
+DROP TABLE gayazov_t;
+
+connection gayazov_after
+statement ok
+DROP TEXT SEARCH DICTIONARY gayazov_dict;

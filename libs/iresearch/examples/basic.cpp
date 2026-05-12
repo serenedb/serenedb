@@ -197,8 +197,8 @@ void QueryTopK(const irs::DirectoryReader& reader, const irs::Scorer& scorer,
   std::cout << "Top " << kTopK << " results for 'search' "
             << "(total matches: " << total << "):\n";
   for (size_t i = 0; i < std::min<size_t>(kTopK, total); ++i) {
-    std::cout << "  #" << (i + 1) << "  doc=" << results[i].second
-              << "  score=" << results[i].first << "\n";
+    std::cout << "  #" << (i + 1) << "  doc=" << results[i].doc
+              << "  score=" << results[i].score << "\n";
   }
   std::cout << "\n";
 }

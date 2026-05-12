@@ -37,9 +37,11 @@
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_data/transaction_info.hpp>
+#include <duckdb/parser/query_node/delete_query_node.hpp>
 #include <duckdb/parser/sql_statement.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
+#include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
@@ -606,7 +608,7 @@ void PgSQLCommTaskBase::DescribeStatement(DuckDBStatement& statement) {
       }
       dummy.emplace_back(std::move(v));
     }
-    pending = prepared.PendingQuery(dummy, true);
+    pending = PendingQueryEnsured(prepared, dummy, true);
     if (!pending->HasError()) {
       types = &pending->types;
       names = &pending->names;
@@ -697,7 +699,6 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   if (IsCancelled()) {
     return;
   }
-  _connection_ctx->DropCatalogSnapshot();
 
   // Strip trailing null bytes from PG wire protocol
   while (!query_string.empty() && query_string.back() == '\0') {
@@ -757,8 +758,6 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
     return;  // error
   }
 
-  _connection_ctx->DropCatalogSnapshot();
-
   // Advance to next statement if any
   ++stmt.current_stmt_idx;
   while (stmt.current_stmt_idx < stmt.extracted.size()) {
@@ -766,7 +765,7 @@ void PgSQLCommTaskBase::ExecuteNextSimpleStatement() {
       return;
     }
     auto& next = stmt.extracted[stmt.current_stmt_idx];
-    stmt.prepared = _duckdb_conn->Prepare(next->query);
+    stmt.prepared = _duckdb_conn->Prepare(std::move(next));
     if (stmt.prepared->HasError()) {
       SendError(stmt.prepared->GetErrorObject());
       return;
@@ -1084,6 +1083,25 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
   _success_packet = true;
 }
 
+duckdb::unique_ptr<duckdb::PendingQueryResult>
+PgSQLCommTaskBase::PendingQueryEnsured(duckdb::PreparedStatement& prepared,
+                                       duckdb::vector<duckdb::Value>& values,
+                                       bool allow_stream_result) {
+  const auto& props = prepared.GetStatementProperties();
+  const auto db_name = DatabaseName();
+  _connection_ctx->EnsureCatalogSnapshot();
+  if (props.modified_databases.contains(db_name)) {
+    _connection_ctx->EnsureRocksDBTransaction();
+    _connection_ctx->EnsureRocksDBSnapshot();
+  } else if (props.read_databases.contains(db_name)) {
+    if (_connection_ctx->IsExplicitTransaction()) {
+      _connection_ctx->EnsureRocksDBTransaction();
+    }
+    _connection_ctx->EnsureRocksDBSnapshot();
+  }
+  return prepared.PendingQuery(values, allow_stream_result);
+}
+
 void PgSQLCommTaskBase::ExecutePortal(DuckDBPortal& portal) {
   SDB_ASSERT(_pop_packet);
   SDB_ASSERT(portal.stmt);
@@ -1116,7 +1134,8 @@ auto PgSQLCommTaskBase::BindStatement(DuckDBStatement& stmt,
   portal.bind_info = std::move(bind_info);
 
   auto& prepared = *stmt.prepared;
-  portal.pending = prepared.PendingQuery(portal.bind_info.param_values, true);
+  portal.pending =
+    PendingQueryEnsured(prepared, portal.bind_info.param_values, true);
   if (portal.pending->HasError()) {
     SendError(portal.pending->GetErrorObject());
     portal.pending.reset();
@@ -1216,9 +1235,11 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   auto& portal = *_current_portal;
   SDB_ASSERT(portal.stmt);
 
-  // If we have a pending query, drive execution
   if (portal.pending) {
-    auto status = portal.pending->ExecuteTask();
+    auto status = portal.pending->ExecuteTask(
+      [weak = weak_from_this(), feature = &_feature] {
+        feature->ScheduleProcessWakeup(weak);
+      });
     switch (status) {
       case duckdb::PendingExecutionResult::RESULT_READY: {
         // Execution complete -- get the streaming result
@@ -1238,12 +1259,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
         // More work needed -- continue polling
         return ProcessState::More;
       case duckdb::PendingExecutionResult::BLOCKED:
-        // Blocked -- register callback and return Wait
-        duckdb::Executor::Get(*_duckdb_conn->context)
-          .SetTaskRescheduledCallback(
-            [weak = weak_from_this(), feature = &_feature] {
-              feature->ScheduleProcessWakeup(weak);
-            });
+        // Blocked -- callback was registered by ExecuteTask.
         return ProcessState::Wait;
       case duckdb::PendingExecutionResult::EXECUTION_FINISHED:
         // Same as RESULT_READY -- execution complete
@@ -1366,6 +1382,9 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared) {
     case StatementType::UPDATE_STATEMENT:
       return make("UPDATE");
     case StatementType::DELETE_STATEMENT:
+      if (unbound->Cast<duckdb::DeleteStatement>().node->is_truncate) {
+        return make("TRUNCATE TABLE");
+      }
       return make("DELETE");
     case StatementType::COPY_STATEMENT:
       return make("COPY");
@@ -1795,7 +1814,11 @@ void PgSQLCommTask<T>::Start() {
 template<rest::SocketType T>
 void PgSQLCommTask<T>::SendAsync(message::SequenceView data) noexcept {
   if (_send_should_close.load(std::memory_order_acquire)) {
-    Base::Close(this->_close_error);
+    asio_ns::dispatch(
+      this->_protocol->context.io_context,
+      [self = this->shared_from_this(), ec = this->_close_error] {
+        basics::downCast<PgSQLCommTask<T>>(*self).Base::Close(ec);
+      });
     return;
   }
   if (data.Empty()) {

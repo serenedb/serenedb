@@ -1763,17 +1763,66 @@ Result LocalCatalog::CreateType(ObjectId database_id, std::string_view schema,
 }
 
 template<typename T>
+Result LocalCatalog::RenameObjectImpl(ObjectId schema_id, std::string_view name,
+                                      std::string_view new_name,
+                                      std::shared_ptr<T> object) {
+  constexpr auto kResolveType = std::is_same_v<T, PgSqlFunction>
+                                  ? ResolveType::Function
+                                  : ResolveType::Relation;
+
+  if (object->GetName() == new_name) {
+    return Result{ERROR_SERVER_DUPLICATE_NAME};
+  }
+
+  auto cloned = object->Clone();
+  if (!cloned) {
+    return Result{ERROR_INTERNAL, "Failed to clone object"};
+  }
+  auto new_object = basics::downCast<T>(std::move(cloned));
+  SDB_ASSERT(new_object);
+  new_object->SetName(new_name);
+
+  return Apply(
+    _snapshot,
+    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
+      auto r = clone->ReplaceObject<kResolveType>(schema_id, name, new_object);
+      if (!r.ok()) {
+        return r;
+      }
+
+      vpack::Builder b;
+      new_object->WriteInternal(b);
+
+      ObjectId parent_id;
+      if constexpr (std::is_same_v<T, Index>) {
+        parent_id = object->GetRelationId();
+      } else {
+        parent_id = schema_id;
+      }
+
+      return _engine->CreateDefinition(parent_id, new_object->GetType(),
+                                       new_object->GetId(),
+                                       [&](bool) { return b.slice(); });
+    },
+    [&](const std::shared_ptr<SnapshotImpl>& clone) {
+      auto current = clone->GetObject<T>(new_object->GetId());
+      if (current->GetName() == new_object->GetName()) {
+        auto r =
+          clone->ReplaceObject<kResolveType>(schema_id, new_name, object);
+        SDB_ASSERT(r.ok());
+      }
+    });
+}
+
+template<typename T>
 Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
                                       std::string_view schema,
                                       std::string_view name,
                                       std::string_view new_name) {
-  constexpr auto kResolveType = []() {
-    if constexpr (std::is_same_v<T, PgSqlFunction>) {
-      return ResolveType::Function;
-    } else {
-      return ResolveType::Relation;
-    }
-  }();
+  static constexpr auto kResolveType = std::is_same_v<T, PgSqlFunction>
+                                         ? ResolveType::Function
+                                         : ResolveType::Relation;
+  absl::MutexLock lock{&_mutex};
 
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
@@ -1786,61 +1835,19 @@ Result LocalCatalog::RenameObjectImpl(ObjectId database_id,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto obj = _snapshot->GetObject(*object_id);
-  if (!obj) {
+  auto object = _snapshot->GetObject(*object_id);
+  if (!object) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto obj_type = obj->GetType();
-  auto old_obj = std::dynamic_pointer_cast<T>(std::move(obj));
-  if (!old_obj) {
+  auto type = object->GetType();
+  auto typed = std::dynamic_pointer_cast<T>(std::move(object));
+  if (!typed) {
     return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                  pg::ToPgObjectTypeName(obj_type)};
+                  pg::ToPgObjectTypeName(type)};
   }
 
-  if (old_obj->GetName() == new_name) {
-    return Result{ERROR_SERVER_DUPLICATE_NAME};
-  }
-
-  auto cloned = old_obj->Clone();
-  if (!cloned) {
-    return Result{ERROR_INTERNAL, "Failed to clone object"};
-  }
-  auto new_obj = basics::downCast<T>(std::move(cloned));
-  SDB_ASSERT(new_obj);
-  new_obj->SetName(new_name);
-
-  absl::MutexLock lock{&_mutex};
-  return Apply(
-    _snapshot,
-    [&](std::shared_ptr<SnapshotImpl>& clone) -> Result {
-      auto r = clone->ReplaceObject<kResolveType>(*schema_id, name, new_obj);
-      if (!r.ok()) {
-        return r;
-      }
-
-      vpack::Builder b;
-      new_obj->WriteInternal(b);
-
-      ObjectId parent_id;
-      if constexpr (std::is_same_v<T, Index>) {
-        parent_id = old_obj->GetRelationId();
-      } else {
-        parent_id = *schema_id;
-      }
-
-      return _engine->CreateDefinition(parent_id, new_obj->GetType(),
-                                       new_obj->GetId(),
-                                       [&](bool) { return b.slice(); });
-    },
-    [&](const std::shared_ptr<SnapshotImpl>& clone) {
-      auto current = clone->GetObject<T>(new_obj->GetId());
-      if (current->GetName() == new_obj->GetName()) {
-        auto r =
-          clone->ReplaceObject<kResolveType>(*schema_id, new_name, old_obj);
-        SDB_ASSERT(r.ok());
-      }
-    });
+  return RenameObjectImpl<T>(*schema_id, name, new_name, std::move(typed));
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
@@ -1865,6 +1872,8 @@ Result LocalCatalog::RenameRelation(ObjectId database_id,
                                     std::string_view schema,
                                     std::string_view name,
                                     std::string_view new_name) {
+  absl::MutexLock lock{&_mutex};
+
   auto schema_id =
     _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
   if (!schema_id) {
@@ -1877,22 +1886,26 @@ Result LocalCatalog::RenameRelation(ObjectId database_id,
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  auto obj = _snapshot->GetObject(*object_id);
-  if (!obj) {
+  auto object = _snapshot->GetObject(*object_id);
+  if (!object) {
     return Result{ERROR_SERVER_DATA_SOURCE_NOT_FOUND};
   }
 
-  switch (obj->GetType()) {
+  switch (object->GetType()) {
     case ObjectType::Table:
-      return RenameTable(database_id, schema, name, new_name);
+      return RenameObjectImpl<Table>(*schema_id, name, new_name,
+                                     std::static_pointer_cast<Table>(object));
     case ObjectType::PgSqlView:
-      return RenameView(database_id, schema, name, new_name);
+      return RenameObjectImpl<PgSqlView>(
+        *schema_id, name, new_name,
+        std::static_pointer_cast<PgSqlView>(object));
     case ObjectType::SecondaryIndex:
     case ObjectType::InvertedIndex:
-      return RenameIndex(database_id, schema, name, new_name);
+      return RenameObjectImpl<Index>(*schema_id, name, new_name,
+                                     std::static_pointer_cast<Index>(object));
     default:
       return Result{ERROR_SERVER_OBJECT_TYPE_MISMATCH,
-                    pg::ToPgObjectTypeName(obj->GetType())};
+                    pg::ToPgObjectTypeName(object->GetType())};
   }
 }
 
@@ -2328,13 +2341,13 @@ Result LocalCatalog::DropSequence(std::string_view database,
                     pg::ToPgObjectTypeName(object->GetType())};
     }
     auto seq = basics::downCast<Sequence>(std::move(object));
-    auto r =
-      _engine->DropDefinition(*schema_id, ObjectType::Sequence, seq->GetId());
+    auto seq_id = seq->GetId();
+    auto r = _engine->Write([&](auto& ctx) {
+      ctx.DropDefinition(*schema_id, ObjectType::Sequence, seq_id);
+      ctx.DropSequence(seq_id);
+    });
     if (!r.ok()) {
       return r;
-    }
-    if (auto cr = _engine->DropSequence(seq->GetId()); !cr.ok()) {
-      return cr;
     }
     clone->UnregisterObject(std::move(seq), *schema_id);
     return Result{};

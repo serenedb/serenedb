@@ -49,6 +49,7 @@
 #include "catalog/scorer_options.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
+#include "query/transaction.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -281,6 +282,98 @@ InvertedIndexShard::InvertedIndexShard(ObjectId id,
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& b) const {
   vpack::WriteTuple(b, _options.base);
+}
+
+void InvertedIndexShard::TruncateCommit(TruncateGuard&& guard, Tick tick,
+                                        query::Transaction* user_txn)
+  ABSL_NO_THREAD_SAFETY_ANALYSIS {
+  // Bump _num_failed_commits if anything below throws so the metric stays
+  // consistent with the legacy SearchDataStore::truncateCommit path.
+  bool ok = false;
+  irs::Finally compute_metrics = [&]() noexcept {
+    // We don't measure time because we believe that it should tend to zero
+    if (!ok && _num_failed_commits != nullptr) {
+      _num_failed_commits->fetch_add(1, std::memory_order_relaxed);
+    }
+  };
+
+  SDB_IF_FAILURE("SereneSearchTruncateFailure") {
+    CrashHandler::setHardKill();
+    SDB_THROW(ERROR_DEBUG);
+  }
+
+  SDB_ASSERT(_writer);
+
+  // If we're inside a user transaction, drop its per-conn iresearch staging
+  // for this shard (the new-arch analog of the old SearchTrxState cookie
+  // cleanup). Throws away pending operations -- Clear will overwrite them
+  // anyway -- and forces release of any active segment context so the
+  // _writer->Clear below doesn't deadlock waiting for it.
+  if (user_txn != nullptr) {
+    user_txn->EraseSearchTransaction(GetId());
+  }
+
+  // Allow callers to pass an empty guard -- self-lock in that case so this
+  // is callable from paths that didn't go through TruncateBegin (e.g. WAL
+  // recovery).
+  if (!guard.mutex) {
+    guard = TruncateBegin();
+  }
+  SDB_ASSERT(guard.mutex.get() == &_commit_mutex);
+
+  // Roll _last_committed_tick back to its prior value if the iresearch Clear
+  // throws partway through. Once Clear returns, we cancel the rollback and
+  // commit to the new tick -- same ordering as the legacy code.
+  absl::Cleanup clear_guard = [&, last = _last_committed_tick]() noexcept {
+    _last_committed_tick = last;
+  };
+  try {
+    _writer->Clear(tick);
+    std::move(clear_guard).Cancel();
+    // payload will not be called if index already empty
+    _last_committed_tick = std::max(tick, _last_committed_tick);
+
+    auto engine_snapshot = _engine.currentSnapshot();
+    if (!engine_snapshot) [[unlikely]] {
+      // we reuse the previous storage snapshot here. Technically not right
+      // (it's most likely outdated) but the index is empty so it makes no
+      // difference -- we won't materialize anything anyway.
+      auto prev = GetInvertedIndexSnapshot();
+      if (prev) {
+        engine_snapshot = prev->snapshot;
+      }
+      if (!engine_snapshot) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to get engine snapshot while truncating Search "
+                  "index '",
+                  GetId().id(), "'");
+      }
+    }
+    auto reader = _writer->GetSnapshot();
+    SDB_ASSERT(reader);
+
+    // update reader
+    auto data = std::make_shared<InvertedIndexSnapshot>(
+      std::move(reader), std::move(engine_snapshot));
+    StoreInvertedIndexSnapshot(data);
+
+    UpdateStatsUnsafe(std::move(data));
+
+    auto& subscription =
+      basics::downCast<LowerBoundSubscription>(*_flush_subscription);
+    subscription.tick(_last_committed_tick);
+    ok = true;
+  } catch (const std::exception& e) {
+    SDB_ERROR("xxxxx", Logger::SEARCH,
+              "caught exception while truncating Search index '", GetId().id(),
+              "': ", e.what());
+    throw;
+  } catch (...) {
+    SDB_WARN("xxxxx", Logger::SEARCH,
+             "caught exception while truncating Search index '", GetId().id(),
+             "'");
+    throw;
+  }
 }
 
 void InvertedIndexShard::ScheduleConsolidation(absl::Duration delay) {

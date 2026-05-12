@@ -61,18 +61,16 @@ void InitCommonState(CommonScanGlobalState& state,
   // If sdb_read_your_own_writes is false, always use a DB snapshot so reads
   // see only committed data even within an explicit transaction.
   auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBRead();
   const bool is_search_scan = bind_data.scan_source->IsSearchLike();
   if (is_search_scan && conn_ctx.GetReadYourOwnWrites() &&
-      (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
+      conn_ctx.HasRocksDBTransaction()) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "querying an index within a transaction is not supported when "
               "sdb_read_your_own_writes is enabled");
   }
-  if (conn_ctx.GetReadYourOwnWrites() &&
-      (!context.transaction.IsAutoCommit() || conn_ctx.HasRocksDBWrite())) {
-    state.txn = &conn_ctx.EnsureRocksDBTransaction();
-    state.snapshot = state.txn->GetSnapshot();
+  if (conn_ctx.GetReadYourOwnWrites() && conn_ctx.HasRocksDBTransaction()) {
+    state.txn = &conn_ctx.GetRocksDBTransaction();
+    state.snapshot = &conn_ctx.GetRocksDBSnapshot();
   } else {
     state.snapshot = db->GetSnapshot();
   }

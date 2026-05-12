@@ -20,11 +20,15 @@
 
 #include "connector/duckdb_physical_update.h"
 
+#include <absl/synchronization/mutex.h>
+
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/execution_context.hpp>
+#include <shared_mutex>
 
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
+#include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_constraint_verify.h"
 // THROW_SQL_ERROR + ERRCODE_UNIQUE_VIOLATION for intra-batch duplicate check
@@ -41,6 +45,7 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -120,6 +125,9 @@ struct SereneDBUpdateGlobalState : public duckdb::GlobalSinkState {
   std::vector<NonUpdateIdxColMeta> non_update_idx_cols;
 
   DuckDBWriteConflictResolver conflict_resolver;
+
+  std::shared_ptr<TableShard> table_shard;
+  std::shared_lock<std::shared_mutex> table_lock;
 };
 
 struct SereneDBUpdateSourceState : public duckdb::GlobalSourceState {
@@ -205,6 +213,12 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
   state->table_name = _table->GetName();
   state->update_pk = _update_pk;
 
+  auto& conn_ctx = GetSereneDBContext(context);
+  state->table_shard =
+    conn_ctx.EnsureCatalogSnapshot()->GetTableShard(state->table_id);
+  SDB_ASSERT(state->table_shard);
+  state->table_lock = std::shared_lock{state->table_shard->GetTableLock()};
+
   const auto& columns = _table->Columns();
   const auto& pk_col_ids = _table->PKColumns();
 
@@ -274,9 +288,7 @@ SereneDBPhysicalUpdate::GetGlobalSinkState(
     }
   }
 
-  auto& conn_ctx = GetSereneDBContext(context);
-  conn_ctx.AddRocksDBWrite();
-  state->txn = &conn_ctx.EnsureRocksDBTransaction();
+  state->txn = &conn_ctx.GetRocksDBTransaction();
   state->conflict_resolver.Init(*state->txn, *state->cf,
                                 duckdb::OnConflictAction::THROW,
                                 state->table_name);

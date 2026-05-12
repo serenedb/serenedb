@@ -60,8 +60,15 @@ class SereneDBPhysicalCreateIndex final : public duckdb::PhysicalOperator {
 
   // Sink interface
   bool IsSink() const final { return true; }
+  // Parallel Sink for inverted indexes (each thread builds its own segment
+  // via its own iresearch IndexWriter::Transaction). Secondary indexes stay
+  // serial because they share a per-connection RocksDB transaction that
+  // isn't safe to drive from N threads.
+  bool ParallelSink() const final;
   duckdb::unique_ptr<duckdb::GlobalSinkState> GetGlobalSinkState(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSinkState> GetLocalSinkState(
+    duckdb::ExecutionContext& context) const final;
   duckdb::SinkResultType Sink(duckdb::ExecutionContext& context,
                               duckdb::DataChunk& chunk,
                               duckdb::OperatorSinkInput& input) const final;

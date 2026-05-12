@@ -411,6 +411,10 @@ Result OpenDatabase::RegisterSequences(ObjectId db_id, ObjectId schema_id) {
         return ErrorMeta(ERROR_INTERNAL, "sequence",
                          "Failed to read sequence definition", slice);
       }
+      if (auto owner = seq->GetOwnerTableId();
+          owner.isSet() && IsDeleted(owner, DeletedScope::Schema)) {
+        return {};
+      }
       return _catalog.RegisterSequence(db_id, schema_id, std::move(seq));
     });
 }

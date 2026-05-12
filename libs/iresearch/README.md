@@ -51,7 +51,7 @@ To build the examples, enable the `IRESEARCH_BUILD_EXAMPLES` CMake option:
 ```bash
 cmake -S . -B build -DIRESEARCH_BUILD_EXAMPLES=ON
 cmake --build build --target iresearch-example-basic
-./build/bin/iresearch-example-basic
+./build/iresearch/examples/iresearch-example-basic
 ```
 
 ## Architecture

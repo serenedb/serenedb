@@ -150,27 +150,16 @@ Result TableDrop::Finalize() {
     return r;
   }
 
-  for (auto seq_id : _owned_sequences) {
-    r =
-      server.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
-    if (!r.ok()) {
-      return r;
+  return server.Write([&](auto& ctx) {
+    for (auto seq_id : _owned_sequences) {
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Sequence, seq_id);
+      ctx.DropSequence(seq_id);
     }
-    r = server.DropSequence(seq_id);
-    if (!r.ok()) {
-      return r;
+    if (_is_root) {
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
+      ctx.DropDefinition(_parent_id, catalog::ObjectType::Tombstone, _id);
     }
-  }
-
-  if (_is_root) {
-    r = server.DropDefinition(_parent_id, catalog::ObjectType::Table, _id);
-    if (!r.ok()) {
-      return r;
-    }
-    return server.DropDefinition(_parent_id, catalog::ObjectType::Tombstone,
-                                 _id);
-  }
-  return {};
+  });
 }
 
 AsyncResult TableDrop::Execute() {

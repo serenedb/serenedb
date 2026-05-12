@@ -480,16 +480,7 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
     // intentionally mark the commit as failed
     result.reset(ERROR_DEBUG);
   }
-  SDB_IF_FAILURE("Search::CrashAfterCommit") {
-    // Crash AFTER a successful iresearch commit (segment + committed_tick
-    // are durable on disk). On restart, wal_recovery starts from the new
-    // committed_tick and must NOT re-apply any IndexOnly markers that
-    // sit at sequence numbers <= committed_tick -- regression test in
-    // tests/sqllogic/recovery/.
-    if (result.ok()) {
-      SDB_IMMEDIATE_ABORT();
-    }
-  }
+  SDB_IF_FAILURE("Search::CrashAfterCommit") { SDB_IMMEDIATE_ABORT(); }
 
   if (bool ok = result.ok(); !ok && _num_failed_commits != nullptr) {
     _num_failed_commits->fetch_add(1, std::memory_order_relaxed);

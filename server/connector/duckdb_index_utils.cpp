@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_index_utils.h"
 
+#include <absl/algorithm/container.h>
+
 #include "basics/assert.h"
 #include "basics/string_utils.h"
 #include "catalog/inverted_index.h"
@@ -233,8 +235,8 @@ bool NeedsRowDeleteMarkers(
     }
     bool all_indexonly = true;
     for (auto col_id : index->GetColumnIds()) {
-      auto it = std::ranges::find_if(
-        columns, [&](const auto& c) { return c.id == col_id; });
+      auto it =
+        absl::c_find_if(columns, [&](const auto& c) { return c.id == col_id; });
       SDB_ASSERT(it != columns.end(),
                  "inverted index references unknown column id ", col_id);
       if (it->store_mode != catalog::ColumnStoreMode::kIndexOnly) {
@@ -253,27 +255,29 @@ std::vector<size_t> BuildCreateIndexProjection(
   std::span<const catalog::Column> columns,
   std::span<const catalog::Column::Id> pk_column_ids,
   std::span<const duckdb::idx_t> index_column_positions) {
+  // Collect index-column + PK-column positions, then sort + unique to
+  // dedupe. Sorted output matches catalog column order (columns are stored
+  // in id-ascending order, and position == catalog index), which is what
+  // pre-existing EXPLAIN tests assert. With the column counts we see in
+  // practice this is faster than a FlatHashSet and avoids an allocation.
   std::vector<size_t> projection;
   projection.reserve(index_column_positions.size() + pk_column_ids.size());
-  containers::FlatHashSet<size_t> seen;
-  seen.reserve(index_column_positions.size() + pk_column_ids.size());
 
   for (auto pos : index_column_positions) {
     SDB_ASSERT(pos < columns.size());
-    if (seen.insert(static_cast<size_t>(pos)).second) {
-      projection.push_back(static_cast<size_t>(pos));
-    }
+    projection.push_back(static_cast<size_t>(pos));
   }
   for (auto pk_id : pk_column_ids) {
     for (size_t i = 0; i < columns.size(); ++i) {
       if (columns[i].id == pk_id) {
-        if (seen.insert(i).second) {
-          projection.push_back(i);
-        }
+        projection.push_back(i);
         break;
       }
     }
   }
+  absl::c_sort(projection);
+  projection.erase(std::unique(projection.begin(), projection.end()),
+                   projection.end());
   return projection;
 }
 

@@ -33,6 +33,8 @@
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "pg/connection_context.h"
+#include "pg/errcodes.h"
+#include "pg/sql_exception_macro.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
@@ -165,11 +167,13 @@ void InitCommonState(CommonScanGlobalState& state,
             if (bind_data.is_create_index) {
               state.finished = true;
             } else {
-              throw duckdb::CatalogException(
-                "column \"%s\" has sdb_indexonly storage and cannot be read "
-                "directly; it is only accessible through an inverted-index "
-                "search predicate",
-                col.name);
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                ERR_MSG(
+                  "column \"", col.name,
+                  "\" has sdb_indexonly storage and cannot be read directly;"
+                  " it is only accessible through an inverted-index search"
+                  " predicate"));
             }
             break;
           }

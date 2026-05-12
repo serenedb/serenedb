@@ -74,23 +74,25 @@ namespace {
 std::vector<std::string> ExtractColumnList(
   std::string_view option_key, const duckdb::ParsedExpression& expr) {
   if (expr.GetExpressionType() != duckdb::ExpressionType::FUNCTION) {
-    throw duckdb::CatalogException(
-      "WITH option \"%s\" expects a list literal, e.g. [col1, col2]",
-      option_key);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("WITH option \"", option_key,
+                            "\" expects a list literal, e.g. [col1, col2]"));
   }
   auto& fn = expr.Cast<duckdb::FunctionExpression>();
   if (duckdb::StringUtil::Lower(fn.function_name) != "list_value") {
-    throw duckdb::CatalogException(
-      "WITH option \"%s\" expects a list literal [col1, col2, ...], got "
-      "\"%s\"",
-      option_key, fn.function_name);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      ERR_MSG("WITH option \"", option_key,
+              "\" expects a list literal [col1, col2, ...], got \"",
+              fn.function_name, "\""));
   }
   std::vector<std::string> result;
   result.reserve(fn.children.size());
   for (auto& child : fn.children) {
     if (child->GetExpressionType() != duckdb::ExpressionType::COLUMN_REF) {
-      throw duckdb::CatalogException(
-        "WITH option \"%s\" list element is not a column name", option_key);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("WITH option \"", option_key,
+                              "\" list element is not a column name"));
     }
     result.push_back(
       child->Cast<duckdb::ColumnRefExpression>().GetColumnName());
@@ -110,12 +112,25 @@ void ApplyColumnModes(
     return;
   }
   for (auto& name : ExtractColumnList(kIndexOnlyKey, *it->second)) {
-    auto col_it = std::ranges::find_if(
-      columns, [&](const auto& c) { return c.name == name; });
+    auto col_it =
+      absl::c_find_if(columns, [&](const auto& c) { return c.name == name; });
     if (col_it == columns.end()) {
-      throw duckdb::CatalogException(
-        "WITH option \"%s\" references unknown column \"%s\"", kIndexOnlyKey,
-        name);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      ERR_MSG("WITH option \"", kIndexOnlyKey,
+                              "\" references unknown column \"", name, "\""));
+    }
+    // VIRTUAL generated columns are not materialized at insert time --
+    // DuckDB computes them on read, so the chunk reaching our writers has
+    // no value for them. The IndexOnly write path (which expects to emit
+    // a [CP] marker carrying the cell value) has nothing to ride on, so
+    // the combination is rejected up-front rather than producing empty
+    // markers or asserting in the writer.
+    if (col_it->generated_type == catalog::Column::GeneratedType::kVirtual) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("WITH option \"", kIndexOnlyKey,
+                "\" cannot be applied to VIRTUAL generated column \"", name,
+                "\""));
     }
     col_it->store_mode = catalog::ColumnStoreMode::kIndexOnly;
   }

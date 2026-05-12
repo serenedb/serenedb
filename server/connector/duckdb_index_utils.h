@@ -100,9 +100,13 @@ bool NeedsRowDeleteMarkers(
   std::span<const catalog::Column> columns);
 
 // Returns the chunk-order list of catalog column positions to project for a
-// CREATE INDEX backfill scan over a base table:
-//   1. columns the index keys on (in `index_column_positions` order, deduped),
-//   2. PK columns not already included (in `pk_column_ids` order).
+// CREATE INDEX backfill scan over a base table: the union of
+//   - `index_column_positions` (columns the index keys on),
+//   - `pk_column_ids` resolved to positions,
+// sorted ascending by position and deduped. Position == catalog index and
+// columns are stored in id-ascending order, so the returned order is the
+// table's catalog column order -- stable across call sites and matches the
+// projection pre-existing EXPLAIN tests assert.
 //
 // `index_column_positions` are positions into `columns` (matching how
 // CreateIndexInfo::column_ids is populated -- positional, not Column::Id).

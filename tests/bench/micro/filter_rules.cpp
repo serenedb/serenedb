@@ -600,8 +600,8 @@ constexpr Pattern kUnionPatterns[] = {
 };
 
 constexpr Pattern kIntersectionPatterns[] = {
-  {false, "%a%"}, {false, "%e%"}, {false, "%i%"}, {false, "%t%"},
-  {false, "%n%"}, {false, "%o%"}, {false, "%r%"}, {false, "%s%"},
+  {false, "%a%"}, {true, ".*e.*"}, {false, "%i%"}, {true, ".*t.*"},
+  {false, "%n%"}, {true, ".*o.*"}, {false, "%r%"}, {true, ".*s.*"},
 };
 
 constexpr size_t kMaxMergePatterns = std::size(kUnionPatterns);
